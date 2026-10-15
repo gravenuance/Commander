@@ -19,6 +19,11 @@
   cards to consider cutting, with EUR prices. Ideas that would lift a deck above its Archidekt bracket are
   marked; `--within-bracket` hides them and `--max-price` caps the price. Role targets can be set in the
   config file's `[targets]` table.
+- `cmdr apply`: preview a plan file's cards to add and remove against the deck on Archidekt, and with
+  `--save` make the changes there, after saving a snapshot of the deck on Archidekt. Plans state the end
+  result, so applying one twice is safe.
+- `cmdr login` and `cmdr logout`: keep or remove the Archidekt login token for `apply --save` in Windows
+  Credential Manager; the password is never stored.
 
 ### Changed
 - The card database now stores EDHREC popularity ranks, so the first `cmdr sync` after updating rebuilds it.

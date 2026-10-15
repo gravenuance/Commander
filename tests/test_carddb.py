@@ -134,3 +134,30 @@ def test_rank_is_read_and_basics_have_none(card_db_file: Path) -> None:
         cards = db.cards_named(["Magda, Brazen Outlaw", "Mountain"])
     assert cards["magda, brazen outlaw"].edhrec_rank == 1220
     assert cards["mountain"].edhrec_rank is None
+
+
+def test_card_named_matches_the_full_name_or_the_front_face(card_db_file: Path) -> None:
+    with CardDb(card_db_file) as db:
+        full = db.card_named("SUNDERING ERUPTION // VOLCANIC FISSURE")
+        front = db.card_named("sundering eruption")
+        assert db.card_named("Volcanic Fissure") is None
+        assert db.card_named("Sundering") is None
+        assert db.card_named("Mountain") is not None
+
+    assert full is not None
+    assert front == full
+
+
+def test_printings_of_lists_every_printing_in_set_order(card_db_file: Path) -> None:
+    with CardDb(card_db_file) as db:
+        printings = db.printings_of(MAGDA_ORACLE)
+        assert db.printings_of("no-such-card") == []
+
+    assert [(p.set_code, p.collector_number) for p in printings] == [
+        ("khm", "142"),
+        ("khm", "312"),
+        ("pkhm", "142p"),
+        ("pkhm", "142s"),
+        ("plst", "KHM-142"),
+        ("sld", "1688"),
+    ]

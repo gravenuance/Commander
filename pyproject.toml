@@ -7,6 +7,7 @@ license = "MIT"
 requires-python = ">=3.13,<3.14"
 dependencies = [
     "httpx==0.28.1",
+    "keyring==25.7.0",
 ]
 
 [project.scripts]
@@ -48,6 +49,8 @@ ignore = [
     "S101",    # pytest asserts
     "PLR2004", # literal expected values are the point of a test
     "INP001",  # tests are not a package
+    "S105",    # made-up passwords and tokens for the fake Archidekt
+    "S106",    # same
 ]
 
 [tool.pyright]

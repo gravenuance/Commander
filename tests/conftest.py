@@ -2,11 +2,14 @@ import copy
 import functools
 import gzip
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
 import httpx
+import keyring
+import keyring.backend
+import keyring.errors
 import pytest
 
 from commander.carddb import CARD_DB_FILE, CardDataMeta, write_card_db
@@ -277,9 +280,65 @@ class FakeSpellbook:
         return httpx.Response(200, json=answer) if status == HTTP_OK else httpx.Response(status)
 
 
+class MemoryKeyring(keyring.backend.KeyringBackend):
+    """Stands in for Windows Credential Manager, so no test can read or write the real one."""
+
+    priority = 1  # pyright: ignore[reportAssignmentType] — keyring declares it as a classproperty
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.secrets: dict[tuple[str, str], str] = {}
+
+    def get_password(self, service: str, username: str) -> str | None:
+        return self.secrets.get((service, username))
+
+    def set_password(self, service: str, username: str, password: str) -> None:
+        self.secrets[(service, username)] = password
+
+    def delete_password(self, service: str, username: str) -> None:
+        if self.secrets.pop((service, username), None) is None:
+            raise keyring.errors.PasswordDeleteError(username)
+
+
+@pytest.fixture(autouse=True)
+def memory_keyring() -> Iterator[MemoryKeyring]:
+    previous = keyring.get_keyring()
+    backend = MemoryKeyring()
+    keyring.set_keyring(backend)
+    yield backend
+    keyring.set_keyring(previous)
+
+
+class MemoryTokenStore:
+    def __init__(self, tokens: dict[str, str] | None = None) -> None:
+        self.tokens = dict(tokens or {})
+
+    def get(self, user: str) -> str | None:
+        return self.tokens.get(user.casefold())
+
+    def put(self, user: str, token: str) -> None:
+        self.tokens[user.casefold()] = token
+
+    def delete(self, user: str) -> bool:
+        return self.tokens.pop(user.casefold(), None) is not None
+
+
+PASSWORD = "correct horse battery staple"
+REFRESH_TOKEN = "refresh-token-1"
+ACCESS_TOKEN = "access-token-1"
+# Archidekt's ids for the fixture printings: a fixed offset on a number taken from the Scryfall id.
+ARCHIDEKT_CARD_ID_BASE = 500_000
+
+
+def archidekt_card_id(scryfall_id: str) -> int:
+    return ARCHIDEKT_CARD_ID_BASE + int(scryfall_id[:6], 16)
+
+
 class FakeArchidekt:
     """Serves deck pages and decks from dicts, like the real API, and records every request.
 
+    It also signs in, looks up cards from the Scryfall fixture, saves snapshots and applies modifyCards
+    edits to its decks, recording each write with its JSON body and Authorization header.
     Requests to Scryfall and Commander Spellbook go to its fakes of those, so one client covers any command.
     """
 
@@ -288,6 +347,11 @@ class FakeArchidekt:
         self.decks: dict[int, Json] = {}
         self.failing: dict[int, int] = {}
         self.requests: list[str] = []
+        self.writes: list[tuple[str, str, Json, str | None]] = []
+        self.write_status: dict[str, int] = {}
+        self.refresh_tokens = {REFRESH_TOKEN}
+        self.private: set[int] = set()
+        self.next_entry = 9_000_000_000
         self.scryfall = FakeScryfall()
         self.spellbook = FakeSpellbook()
 
@@ -304,18 +368,110 @@ class FakeArchidekt:
 
     def archidekt(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request.url.path)
+        if request.method != "GET":
+            return self._write(request)
         path = request.url.path
+        if path == "/api/cards/v2/":
+            return httpx.Response(200, json=self._card_search(request.url.params))
         if path == "/api/decks/v3/":
             if request.url.params.get("ownerUsername") != self.user:
                 return httpx.Response(200, json=deck_page([]))
             rows = [summary_row(d["id"], d["name"], d["updatedAt"]) for d in self.decks.values()]
             return httpx.Response(200, json=deck_page(rows))
-        deck_id = int(path.removeprefix("/api/decks/").rstrip("/"))
+        return self._get_deck(request)
+
+    def _get_deck(self, request: httpx.Request) -> httpx.Response:
+        deck_id = int(request.url.path.removeprefix("/api/decks/").rstrip("/"))
         if deck_id in self.failing:
             return httpx.Response(self.failing[deck_id])
-        if deck_id not in self.decks:
+        if deck_id not in self.decks or (deck_id in self.private and not self._signed_in(request)):
             return httpx.Response(404)
         return httpx.Response(200, json=self.decks[deck_id])
 
     def client(self) -> httpx.Client:
         return httpx.Client(transport=httpx.MockTransport(self.handler))
+
+    def card_writes(self) -> list[Json]:
+        """The card entries of every modifyCards request, in order."""
+        return [entry for _, path, body, _ in self.writes if "modifyCards" in path for entry in body["cards"]]
+
+    @staticmethod
+    def _signed_in(request: httpx.Request) -> bool:
+        return request.headers.get("Authorization") == f"JWT {ACCESS_TOKEN}"
+
+    def _card_search(self, params: httpx.QueryParams) -> Json:
+        assert "exact" in params, "card lookups must ask for the exact name"
+        results: list[Json] = []
+        for line in fixture_lines("scryfall_cards.jsonl"):
+            card = json.loads(line)
+            if card["name"] == params.get("name") and card["set"] == params.get("edition"):
+                results.append(
+                    {
+                        "id": archidekt_card_id(card["id"]),
+                        "uid": card["id"],
+                        "edition": {"editioncode": card["set"]},
+                    }
+                )
+        return {"count": len(results), "next": None, "results": results}
+
+    def _write(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        body: Json = json.loads(request.content)
+        self.writes.append((request.method, path, body, request.headers.get("Authorization")))
+        for fragment, status in self.write_status.items():
+            if fragment in path:
+                return httpx.Response(status)
+        if path.startswith("/api/rest-auth/"):
+            return self._auth(path, body)
+        if not self._signed_in(request):
+            return httpx.Response(401)
+        return self._deck_write(path, body)
+
+    def _auth(self, path: str, body: Json) -> httpx.Response:
+        if path == "/api/rest-auth/login/":
+            if body.get("password") != PASSWORD or (body.get("username") or body.get("email")) is None:
+                return httpx.Response(400, json={"non_field_errors": ["Unable to log in."]})
+            user = {"username": self.user, "id": 1}
+            return httpx.Response(
+                200, json={"token": ACCESS_TOKEN, "refresh_token": REFRESH_TOKEN, "user": user}
+            )
+        if body.get("refresh") not in self.refresh_tokens:
+            return httpx.Response(401)
+        return httpx.Response(200, json={"access": ACCESS_TOKEN})
+
+    def _deck_write(self, path: str, body: Json) -> httpx.Response:
+        deck_id = int(path.split("/")[3])
+        if deck_id not in self.decks:
+            return httpx.Response(404)
+        if path.endswith("/snapshots/"):
+            return httpx.Response(201, json={"id": 1, "name": body["name"]})
+        if path.endswith("/modifyCards/v2/"):
+            return httpx.Response(200, json=self._modify(self.decks[deck_id], body["cards"]))
+        return httpx.Response(404)
+
+    def _modify(self, deck: Json, edits: list[Json]) -> Json:
+        added: list[Json] = []
+        for edit in edits:
+            quantity = edit["modifications"]["quantity"]
+            if edit["action"] == "add":
+                self.next_entry += 1
+                cards = map(json.loads, fixture_lines("scryfall_cards.jsonl"))
+                card = next(c for c in cards if archidekt_card_id(c["id"]) == edit["cardid"])
+                entry = card_entry(self.next_entry, card["name"], edit["categories"], quantity)
+                entry["card"].update(
+                    id=edit["cardid"],
+                    uid=card["id"],
+                    collectorNumber=card["collector_number"],
+                    edition={"editioncode": card["set"]},
+                    oracleCard={"name": card["name"], "cmc": card["cmc"]},
+                )
+                deck["cards"].append(entry)
+                added.append({"patchId": edit["patchId"], "deckRelationId": self.next_entry})
+                continue
+            entry = next(e for e in deck["cards"] if e["id"] == edit["deckRelationId"])
+            if edit["action"] == "remove":
+                deck["cards"].remove(entry)
+            else:
+                entry["quantity"] = quantity
+        deck["updatedAt"] = "2026-10-15T12:00:00.000000Z"
+        return {"add": added, "createdCategories": []}

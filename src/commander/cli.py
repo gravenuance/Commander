@@ -1,6 +1,7 @@
 """`cmdr` entry point: argument parsing, output formatting and exit codes."""
 
 import argparse
+import getpass
 import json
 import logging
 import sys
@@ -11,13 +12,15 @@ from datetime import UTC, datetime, timedelta
 from decimal import ROUND_FLOOR, Decimal, InvalidOperation
 from enum import Enum
 from pathlib import Path
-from typing import TextIO
+from typing import BinaryIO, TextIO
 
 import httpx
 
 from commander import __version__
 from commander.analysis import ANALYZED_ROLES, CURVE_TOP, DeckAnalysis, analyze
+from commander.apply import Change, ChangeKind, Resolution, SaveError, SaveResult, resolve_plan, save
 from commander.archidekt import ArchidektClient, ArchidektError
+from commander.archidekt_edit import ArchidektAuth, ArchidektEditor, AuthError
 from commander.background import in_background
 from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
 from commander.bracket import BracketReport, EstimateResult, bracket_cards, estimate_cache, estimate_decks
@@ -36,14 +39,17 @@ from commander.config import (
     resolve_workspace,
     write_config,
 )
+from commander.credentials import CredentialError, KeyringTokenStore, TokenStore
 from commander.deckcache import Answer, AnswerSource
 from commander.diff import DeckDiff
 from commander.models import Deck
 from commander.net import Fetcher, NetworkError, make_client
+from commander.plan import EXAMPLE as PLAN_EXAMPLE
+from commander.plan import PlanError, read_plan
 from commander.pricing import DeckPrice, PriceSource, format_eur, price_deck
 from commander.scryfall import CardRefresh, RefreshStatus, ScryfallClient, ScryfallError, refresh_card_db
 from commander.spellbook import BracketTag, Combo, SpellbookClient, SpellbookError, TwoCard, Variant
-from commander.store import StoredDeck, Workspace
+from commander.store import StoredDeck, Workspace, WorkspaceError
 from commander.suggest import CACHE_FOLDER as COMBOS_CACHE_FOLDER
 from commander.suggest import (
     DEFAULT_COUNT,
@@ -65,8 +71,10 @@ EXIT_INTERRUPTED = 130
 
 STALE_CARD_DATA = timedelta(days=3)
 DEFAULT_TOP = 15
+MAX_PASSWORD_BYTES = 1024
 
 ClientFactory = Callable[[], httpx.Client]
+PasswordPrompt = Callable[[str], str]
 Clock = Callable[[], datetime]
 
 _DEFAULT_TARGETS_TEXT = ", ".join(
@@ -89,6 +97,9 @@ examples:
   cmdr bracket magda --details                game changers, tutors and combos of one deck
   cmdr suggest                                combo pieces and roles short of target, every deck
   cmdr suggest magda --max-price 5            ideas and cut candidates for one deck, cards up to EUR 5
+  cmdr login                                  sign in to Archidekt once, so `apply --save` can edit decks
+  cmdr apply plan.toml                        preview a plan's changes against the deck on Archidekt
+  cmdr apply plan.toml --save                 make them, after saving a snapshot of the deck there
 """
 
 _EPILOG = f"""\
@@ -99,7 +110,22 @@ card data from Scryfall is kept in %LOCALAPPDATA%\\Commander (or {ENV_CACHE}); `
 for 7 days.
 role targets for `cmdr suggest` (default {_DEFAULT_TARGETS_TEXT}) can be changed
 in a [targets] table in the config file.
+`cmdr login` keeps an Archidekt login token in Windows Credential Manager, never the password.
 exit codes: 0 success, 1 failure, 2 usage error, 130 interrupted.
+"""
+
+_APPLY_DESCRIPTION = f"""\
+Preview a plan's changes to one deck, and with --save make them on Archidekt.
+
+a plan file looks like this:
+
+{PLAN_EXAMPLE}
+
+add: the deck ends with at least that many copies (default 1), in the cheapest EUR printing
+unless set says which, filed under its card type unless category says otherwise.
+remove: the deck ends with none of the card, or with keep copies.
+a plan the deck already meets changes nothing, so applying it twice is safe.
+--save first saves a snapshot of the deck on Archidekt, then reads the deck back to check it.
 """
 
 
@@ -111,6 +137,9 @@ def main(  # noqa: PLR0911 — one exit code per failure class, mapped in one pl
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
     now: Clock = lambda: datetime.now(UTC),
+    token_store: TokenStore | None = None,
+    prompt_password: PasswordPrompt = getpass.getpass,
+    stdin: BinaryIO | None = None,
 ) -> int:
     out = stdout or _utf8(sys.stdout)
     err = stderr or _utf8(sys.stderr)
@@ -129,17 +158,37 @@ def main(  # noqa: PLR0911 — one exit code per failure class, mapped in one pl
         format="%(levelname)s: %(message)s",
         force=True,
     )
-    context = _Context(env or environment(), client_factory, out, err, now)
+    context = _Context(
+        env or environment(),
+        client_factory,
+        out,
+        err,
+        now,
+        token_store or KeyringTokenStore(),
+        prompt_password,
+        stdin or sys.stdin.buffer,
+    )
     command: Callable[[argparse.Namespace, _Context], int] | None = getattr(args, "handler", None)
     if command is None:
         parser.print_usage(err)
         return EXIT_USAGE
     try:
         return command(args, context)
-    except (ConfigError, UsageError) as error:
+    except (ConfigError, UsageError, PlanError) as error:
         print(f"cmdr: {error}", file=err)
         return EXIT_USAGE
-    except (NetworkError, ArchidektError, ScryfallError, SpellbookError, CardDataError, OSError) as error:
+    except (
+        NetworkError,
+        ArchidektError,
+        AuthError,
+        CredentialError,
+        SaveError,
+        ScryfallError,
+        SpellbookError,
+        CardDataError,
+        WorkspaceError,
+        OSError,
+    ) as error:
         print(f"cmdr: {error}", file=err)
         return EXIT_FAILURE
     except KeyboardInterrupt:
@@ -152,14 +201,25 @@ class UsageError(Exception):
 
 
 class _Context:
-    def __init__(
-        self, env: Mapping[str, str], client_factory: ClientFactory, out: TextIO, err: TextIO, now: Clock
+    def __init__(  # noqa: PLR0917 — every outside dependency, injected for tests
+        self,
+        env: Mapping[str, str],
+        client_factory: ClientFactory,
+        out: TextIO,
+        err: TextIO,
+        now: Clock,
+        token_store: TokenStore,
+        prompt_password: PasswordPrompt,
+        stdin: BinaryIO,
     ) -> None:
         self.env = env
         self.client_factory = client_factory
         self.out = out
         self.err = err
         self.now = now
+        self.token_store = token_store
+        self.prompt_password = prompt_password
+        self.stdin = stdin
 
 
 class _CardState(Enum):
@@ -246,7 +306,35 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_suggest_arguments(
         commands.add_parser("suggest", help="cards to add for combos and short roles, cuts to weigh")
     )
+    _add_edit_commands(commands.add_parser)
     return parser
+
+
+def _add_edit_commands(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
+    login = add_parser("login", help="sign in to Archidekt so `apply --save` can edit your decks")
+    login.add_argument("--user", help="Archidekt username cmdr is set up for")
+    login.add_argument("--as", dest="login_name", metavar="NAME", help="sign in with this name or email")
+    login.add_argument(
+        "--password-stdin", action="store_true", help="read the password from stdin instead of asking"
+    )
+    login.set_defaults(handler=_cmd_login)
+    logout = add_parser("logout", help="forget the saved Archidekt login")
+    logout.add_argument("--user", help="Archidekt username cmdr is set up for")
+    logout.set_defaults(handler=_cmd_logout)
+    apply_ = add_parser(
+        "apply",
+        help="preview a plan of cards to add and remove; --save makes the changes on Archidekt",
+        description=_APPLY_DESCRIPTION,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    apply_.add_argument("plan", help="plan file (TOML), or - to read it from stdin")
+    apply_.add_argument("--user", help="Archidekt username cmdr is set up for")
+    apply_.add_argument("--workspace", help="folder that holds the deck folders")
+    apply_.add_argument(
+        "--save", action="store_true", help="make the changes on Archidekt (without it, only a preview)"
+    )
+    apply_.add_argument("--json", action="store_true", help="print the changes as JSON")
+    apply_.set_defaults(handler=_cmd_apply)
 
 
 def _add_suggest_arguments(suggest_: argparse.ArgumentParser) -> None:
@@ -453,6 +541,86 @@ def _cmd_suggest(args: argparse.Namespace, ctx: _Context) -> int:
     return EXIT_FAILURE if unavailable else EXIT_OK
 
 
+def _cmd_login(args: argparse.Namespace, ctx: _Context) -> int:
+    user = resolve_user(args.user, ctx.env, read_config(config_path(args.config, ctx.env)))
+    name = args.login_name or user
+    if args.password_stdin:
+        password = ctx.stdin.readline(MAX_PASSWORD_BYTES).decode("utf-8").rstrip("\r\n")
+    elif ctx.stdin.isatty():
+        password = ctx.prompt_password(f"Archidekt password for {name}: ")
+    else:
+        raise UsageError("no terminal to ask for the password on; pass --password-stdin")
+    with ctx.client_factory() as http:
+        ArchidektAuth(Fetcher(http), ctx.token_store).login(user, name, password)
+    print(f"signed in to Archidekt as {user}; the login is kept in Windows Credential Manager", file=ctx.out)
+    return EXIT_OK
+
+
+def _cmd_logout(args: argparse.Namespace, ctx: _Context) -> int:
+    user = resolve_user(args.user, ctx.env, read_config(config_path(args.config, ctx.env)))
+    with ctx.client_factory() as http:
+        removed = ArchidektAuth(Fetcher(http), ctx.token_store).logout(user)
+    print(f"removed the saved login for {user}" if removed else f"no saved login for {user}", file=ctx.out)
+    return EXIT_OK
+
+
+def _cmd_apply(args: argparse.Namespace, ctx: _Context) -> int:
+    plan = read_plan(ctx.stdin if args.plan == "-" else Path(args.plan))
+    file = read_config(config_path(args.config, ctx.env))
+    user = resolve_user(args.user, ctx.env, file)
+    deck_id, workspace = _plan_deck(plan.deck, args, ctx)
+    result: SaveResult | None = None
+    with _open_card_db(ctx) as db, ctx.client_factory() as http:
+        fetcher = Fetcher(http)
+        token = _access_token(ArchidektAuth(fetcher, ctx.token_store), user, args, ctx)
+        editor = ArchidektEditor(fetcher, token)
+        live = editor.get_deck(deck_id)
+        if live.deck.owner.casefold() != user.casefold():
+            raise UsageError(
+                f"deck {deck_id} belongs to {live.deck.owner}, not {user}; cmdr edits only yours"
+            )
+        resolution = resolve_plan(live.deck, plan, db)
+        if args.save and resolution.changes and not resolution.problems:
+            result = save(editor, live, resolution, now=ctx.now, on_progress=_progress_printer(ctx.err))
+    folder = None
+    if result is not None and workspace is not None and workspace.folder_for(deck_id) is not None:
+        folder = workspace.save(result.deck)
+    if args.json:
+        json.dump(_apply_json(resolution, result), ctx.out, ensure_ascii=False, indent=2)
+        ctx.out.write("\n")
+    else:
+        _print_resolution(resolution, ctx.out)
+        _print_apply_outcome(resolution, result, folder, ctx.out, save=args.save)
+    if resolution.problems:
+        return EXIT_USAGE
+    return EXIT_FAILURE if result is not None and result.mismatches else EXIT_OK
+
+
+def _plan_deck(query: str, args: argparse.Namespace, ctx: _Context) -> tuple[int, Workspace | None]:
+    """The plan's deck id, and the workspace when there is one (a deck id works without it)."""
+    file = read_config(config_path(args.config, ctx.env))
+    if not query.isdigit():
+        workspace = Workspace(resolve_workspace(args.workspace, ctx.env, file))
+        return _one_deck(workspace, query).deck.id, workspace
+    try:
+        return int(query), Workspace(resolve_workspace(args.workspace, ctx.env, file))
+    except ConfigError:
+        return int(query), None
+
+
+def _access_token(auth: ArchidektAuth, user: str, args: argparse.Namespace, ctx: _Context) -> str | None:
+    """A token for saving, or for previewing a private deck; a preview goes on without one."""
+    if args.save:
+        return auth.access_token(user)
+    if not auth.has_login(user):
+        return None
+    try:
+        return auth.access_token(user)
+    except AuthError as error:
+        print(f"cmdr: {error}; previewing without signing in", file=ctx.err)
+        return None
+
+
 def _selected_decks(args: argparse.Namespace, ctx: _Context) -> list[StoredDeck]:
     file = read_config(config_path(args.config, ctx.env))
     workspace = Workspace(resolve_workspace(args.workspace, ctx.env, file))
@@ -461,15 +629,19 @@ def _selected_decks(args: argparse.Namespace, ctx: _Context) -> list[StoredDeck]
         if not decks:
             raise UsageError(f"no decks in {workspace.root}; run `cmdr sync` first")
         return decks
-    if not args.deck.strip():
+    return [_one_deck(workspace, args.deck)]
+
+
+def _one_deck(workspace: Workspace, query: str) -> StoredDeck:
+    if not query.strip():
         raise UsageError("the deck to look up is empty")
-    matches = workspace.find(args.deck)
+    matches = workspace.find(query)
     if not matches:
-        raise UsageError(f"no deck matches {args.deck!r}; `cmdr list` shows them all")
+        raise UsageError(f"no deck matches {query!r}; `cmdr list` shows them all")
     if len(matches) > 1:
         names = "; ".join(f"{s.deck.id} {s.deck.name}" for s in matches)
-        raise UsageError(f"{args.deck!r} matches {len(matches)} decks ({names}); use the deck id")
-    return matches
+        raise UsageError(f"{query!r} matches {len(matches)} decks ({names}); use the deck id")
+    return matches[0]
 
 
 def _open_card_db(ctx: _Context) -> CardDb:
@@ -986,6 +1158,92 @@ def _suggestions_json(result: Suggestions) -> dict[str, object]:
             {"name": c.name, "priceCents": c.cheapest_cents, "edhrecRank": c.edhrec_rank} for c in result.cuts
         ],
         "hidden": result.hidden,
+    }
+
+
+_CHANGE_MARKS = {ChangeKind.ADD: "+", ChangeKind.MORE: "+", ChangeKind.FEWER: "-", ChangeKind.REMOVE: "-"}
+
+
+def _print_resolution(resolution: Resolution, out: TextIO) -> None:
+    deck = resolution.deck
+    bracket = f"bracket {deck.bracket}" if deck.bracket else "no bracket set"
+    print(f"{deck.name} ({deck.id}), {bracket}: {deck.url}", file=out)
+    if resolution.changes:
+        print(f"  cards in deck: {resolution.main_before} -> {resolution.main_after}", file=out)
+    for change in resolution.changes:
+        print(f"  {_change_text(change)}", file=out)
+    for line in resolution.skipped:
+        print(f"  skipped, {line}", file=out)
+    for line in resolution.warnings:
+        print(f"  warning: {line}", file=out)
+    for line in resolution.problems:
+        print(f"  problem: {line}", file=out)
+
+
+def _change_text(change: Change) -> str:
+    mark = _CHANGE_MARKS[change.kind]
+    board = "" if change.in_deck else f" [{change.category}]"
+    if change.kind is ChangeKind.ADD:
+        price = "no price" if change.price_cents is None else format_eur(change.price_cents)
+        printing = f"{change.set_code.upper()} {change.collector_number}, {price}"
+        copies = f"{change.after} " if change.after > 1 else ""
+        return f"{mark} {copies}{change.name} ({printing}) in {change.category}{_raise_text(change.raises)}"
+    if change.kind is ChangeKind.REMOVE:
+        copies = f"{change.before} " if change.before > 1 else ""
+        return f"{mark} {copies}{change.name}{board}"
+    return f"{mark} {change.name}{board}: {change.before} -> {change.after} copies"
+
+
+def _print_apply_outcome(
+    resolution: Resolution, result: SaveResult | None, folder: Path | None, out: TextIO, *, save: bool
+) -> None:
+    if resolution.problems:
+        print("nothing was changed: fix the problems above, then run it again", file=out)
+    elif not resolution.changes:
+        print("nothing to change: the deck already matches the plan", file=out)
+    elif not save:
+        print("preview only: run it again with --save to make these changes on Archidekt", file=out)
+    elif result is not None:
+        print(
+            f"saved {len(resolution.changes)} change(s); snapshot '{result.snapshot}' is on Archidekt",
+            file=out,
+        )
+        for line in result.mismatches:
+            print(f"  not as planned: {line}", file=out)
+        if folder is not None:
+            print(f"local copy updated: {folder}", file=out)
+        else:
+            print("the deck is not in your deck folder, so no local copy was written", file=out)
+
+
+def _apply_json(resolution: Resolution, result: SaveResult | None) -> dict[str, object]:
+    deck = resolution.deck
+    return {
+        "deck": {"id": deck.id, "name": deck.name, "url": deck.url, "bracket": deck.bracket},
+        "cardsBefore": resolution.main_before,
+        "cardsAfter": resolution.main_after,
+        "changes": [
+            {
+                "kind": c.kind.value,
+                "name": c.name,
+                "before": c.before,
+                "after": c.after,
+                "category": c.category,
+                "inDeck": c.in_deck,
+                "set": c.set_code,
+                "collectorNumber": c.collector_number,
+                "scryfallId": c.scryfall_id,
+                "priceCents": c.price_cents,
+                "raises": _raise_json(c.raises),
+            }
+            for c in resolution.changes
+        ],
+        "skipped": list(resolution.skipped),
+        "warnings": list(resolution.warnings),
+        "problems": list(resolution.problems),
+        "saved": result is not None,
+        "snapshot": result.snapshot if result else None,
+        "mismatches": list(result.mismatches) if result else [],
     }
 
 

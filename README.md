@@ -4,9 +4,8 @@
 copy of each deck in this repository, so every change shows up in git history, and gives you a place for
 research notes on each deck. It also analyses each deck (curve, types, colours, roles), prices it in EUR
 from Cardmarket prices via [Scryfall](https://scryfall.com), estimates its bracket with
-[Commander Spellbook](https://commanderspellbook.com), and suggests cards to add and to cut.
-
-Planned: applying approved changes back to Archidekt.
+[Commander Spellbook](https://commanderspellbook.com), suggests cards to add and to cut, and makes the
+changes you approve on Archidekt.
 
 ## Requirements
 
@@ -35,9 +34,12 @@ uv run cmdr bracket                                 # estimated bracket of every
 uv run cmdr bracket gator --details                 # one deck: game changers, tutors, combos with links
 uv run cmdr suggest                                 # combo pieces and short roles of every deck side by side
 uv run cmdr suggest magda --max-price 5             # one deck: cards to add up to EUR 5, cards to consider cutting
+uv run cmdr login                                   # one-time: sign in so apply can change decks
+uv run cmdr apply plan.toml                         # preview a plan of cards to add and remove
+uv run cmdr apply plan.toml --save                  # make those changes on Archidekt
 ```
 
-`cmdr --help` and `cmdr <command> --help` show every option. Every command takes `--json` for scripts.
+`cmdr --help` and `cmdr <command> --help` show every option. Every command that reports on decks takes `--json` for scripts.
 
 ### Card data
 
@@ -115,6 +117,45 @@ shows (default 5).
 EDHREC's own pages are not used: its terms of use forbid automated requests. See
 [ADR 0003](docs/adr/0003-suggestions-from-spellbook-and-scryfall.md).
 
+### Changing decks
+
+`apply` makes the changes in a plan file to one deck on Archidekt. Write the plan as TOML:
+
+```toml
+deck = "magda"   # deck id, or part of its name as in other commands
+add = ["Arcane Signet", {name = "Sol Ring", set = "c21", category = "Ramp"}]
+remove = ["Wild Growth", {name = "Mountain", keep = 10}]
+```
+
+A plan says how the deck should end up. `add` means the deck ends with at least that many copies
+(`quantity`, default 1); `remove` means it ends with none, or with `keep` copies. Lines the deck already
+meets are skipped, so running a plan twice is safe. A new card gets its cheapest EUR printing unless
+`set` names one, and goes under its card type (Land, Creature, Instant and so on) unless `category`
+names another. Cards on the maybeboard are left alone.
+
+```sh
+uv run cmdr login                      # once: asks for your Archidekt password
+uv run cmdr apply plan.toml            # preview the changes; nothing is written
+uv run cmdr apply plan.toml --save     # make them on Archidekt
+```
+
+The preview reads the deck as it is on Archidekt now and lists every change, the card count before and
+after, and the lines it skips. It stops with a problem (exit code 2) when a card doesn't exist, isn't legal
+in Commander or is outside the commander's colours; a card that would lift the deck above its bracket is
+marked as in `suggest`. `--save` first saves a snapshot of the deck on Archidekt called
+`before cmdr apply <date> <time> UTC`, then sends all changes at once, reads the deck back to check each
+one, and rewrites the local copy if the deck is in your deck folder. To undo a save, restore that snapshot
+on Archidekt. `apply -` reads the plan from stdin, and `--json` prints the result as JSON.
+
+`cmdr login` keeps only Archidekt's login token in Windows Credential Manager (under
+`Commander (cmdr) Archidekt`), never your password. When the token expires, `apply --save` asks you to run
+`cmdr login` again; `cmdr logout` removes it. For scripts, `cmdr login --password-stdin` reads the password
+from stdin.
+
+Archidekt's written terms forbid automated requests, but its co-founder has said on the Archidekt forum
+that the API is open to use. `apply` relies on that and keeps requests few. See
+[ADR 0004](docs/adr/0004-deck-changes-through-archidekts-site-api.md).
+
 ### Deck folders
 
 `sync` writes one folder per deck, `decks/<archidekt-id>-<name>/`, containing:
@@ -140,6 +181,7 @@ defaults.
 | Config file | `--config` | `CMDR_CONFIG` | n/a | `%APPDATA%\Commander\config.toml` |
 | Card data and Spellbook answers folder | n/a | `CMDR_CACHE_DIR` | n/a | `%LOCALAPPDATA%\Commander` |
 | Role targets for `suggest` | n/a | n/a | `[targets]` table | ramp 10, draw 10, removal 8, board_wipe 2 |
+| Archidekt login for `apply --save` | `cmdr login` | n/a | n/a | none; the token is kept in Windows Credential Manager |
 
 ## Test
 
@@ -156,7 +198,7 @@ Tests use recorded fixture data and never touch the network.
 
 | Service | Used for | Notes |
 |---|---|---|
-| Archidekt (`archidekt.com/api`) | Reading decks | Public decks need no login. The API is undocumented, so `sync` checks every response's shape and fails with a clear message if Archidekt changes it. |
+| Archidekt (`archidekt.com/api`) | Reading decks; changing them with `apply --save` | Public decks need no login; changes need `cmdr login`, whose token lives in Windows Credential Manager and is refreshed on each save. The API is undocumented, so every response's shape is checked and a clear message names what changed. A save makes a handful of requests, never retried. Its written terms forbid automated requests; its co-founder has said on its forum that the API is open to use. See [ADR 0004](docs/adr/0004-deck-changes-through-archidekts-site-api.md). |
 | Scryfall (`api.scryfall.com/bulk-data`, files on `data.scryfall.io`) | Card facts, EUR prices, role tags | One API call per `sync` for the file list; the files themselves have no rate limit. Scryfall updates prices once a day and asks for bulk files rather than per-card calls for lookups like these. Tag data is community-maintained and can change. See [ADR 0001](docs/adr/0001-scryfall-bulk-card-data.md). |
 | Commander Spellbook (`backend.commanderspellbook.com`: `estimate-bracket`, `find-my-combos`) | Bracket estimates, combos, and combos one card short | One request per deck and command, at most four at a time, and none while a cached answer is under 7 days old. Spellbook asks tools to name themselves in the User-Agent, keep to a few calls per user action, stay under about 80 requests a minute, handle 429, and credit and link back to commanderspellbook.com, which `bracket` and `suggest` do in their output. Only card names and quantities are sent. See [ADR 0002](docs/adr/0002-bracket-estimates-from-commander-spellbook.md) and [ADR 0003](docs/adr/0003-suggestions-from-spellbook-and-scryfall.md). |
 | EDHREC (via Scryfall's `edhrec_rank`) | Popularity ranks for `suggest` | Never contacted: the rank comes inside Scryfall's bulk files. EDHREC's terms forbid automated requests to its site. |

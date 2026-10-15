@@ -21,11 +21,20 @@ BASE_DELAY_SECONDS = 1.0
 MAX_DELAY_SECONDS = 30.0
 SLOW_CALL_SECONDS = 5.0
 HTTP_OK = 200
+_SUCCESS = range(200, 300)
 _RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 
 
 class NetworkError(Exception):
     """A request failed in a way the user should hear about (offline, server error, bad response)."""
+
+
+class HttpStatusError(NetworkError):
+    """The server answered a write with a status outside 2xx; callers map some statuses to advice."""
+
+    def __init__(self, message: str, status: int) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 def make_client() -> httpx.Client:
@@ -57,15 +66,50 @@ class Fetcher:
         self._wall_clock = wall_clock
         self._jitter = jitter
 
-    def get_json(self, url: str, params: Mapping[str, str | int] | None = None) -> object:
+    def get_json(
+        self,
+        url: str,
+        params: Mapping[str, str | int] | None = None,
+        *,
+        headers: Mapping[str, str] | None = None,
+    ) -> object:
         """GET a JSON document, retrying only transient failures."""
-        body = self._send("GET", url, params, None, lambda r: _read_capped(r, url, MAX_RESPONSE_BYTES))
+        body = self._send(
+            "GET", url, params, None, lambda r: _read_capped(r, url, MAX_RESPONSE_BYTES), headers=headers
+        )
         return _decode_json(url, body)
 
     def post_json(self, url: str, payload: object) -> object:
         """POST a JSON query and read the JSON answer; only for read-only queries, as it retries like GET."""
         body = self._send("POST", url, None, payload, lambda r: _read_capped(r, url, MAX_RESPONSE_BYTES))
         return _decode_json(url, body)
+
+    def send_json(
+        self, method: str, url: str, payload: object, *, headers: Mapping[str, str] | None = None
+    ) -> object:
+        """Send a write once, never retried, as repeating it could apply it twice; any 2xx answer counts.
+
+        Returns the decoded answer, or None for an empty one. Other statuses raise HttpStatusError. The
+        payload and headers may hold secrets, so neither is ever logged or put in an error message.
+        """
+        started = self._monotonic()
+        try:
+            with self._client.stream(method, url, json=payload, headers=headers) as response:
+                status = response.status_code
+                body = _read_capped(response, url, MAX_RESPONSE_BYTES) if status in _SUCCESS else b""
+        except (httpx.TimeoutException, httpx.TransportError) as error:
+            log.warning("%s %s failed: %s", method, url, error.__class__.__name__)
+            # A timeout leaves it unknown whether the server applied the write.
+            raise NetworkError(
+                f"{method} {url} failed ({error.__class__.__name__}); it may or may not have been applied"
+            ) from error
+        elapsed = self._monotonic() - started
+        if elapsed > SLOW_CALL_SECONDS:
+            log.warning("slow request: %s %s took %.1fs", method, url, elapsed)
+        if status not in _SUCCESS:
+            log.info("%s %s returned HTTP %d", method, url, status)
+            raise HttpStatusError(f"{method} {url} returned HTTP {status}", status)
+        return _decode_json(url, body) if body.strip() else None
 
     def download(self, url: str, dest: Path, *, max_bytes: int) -> int:
         """Stream a file into dest (replacing it), retrying only transient failures; returns its size."""
@@ -78,11 +122,15 @@ class Fetcher:
         params: Mapping[str, str | int] | None,
         payload: object,
         read: Callable[[httpx.Response], T],
+        *,
+        headers: Mapping[str, str] | None = None,
     ) -> T:
         for attempt in range(1, self._max_attempts + 1):
             started = self._monotonic()
             try:
-                with self._client.stream(method, url, params=params, json=payload) as response:
+                with self._client.stream(
+                    method, url, params=params, json=payload, headers=headers
+                ) as response:
                     status = response.status_code
                     retry_after = response.headers.get("Retry-After")
                     value = read(response) if status == HTTP_OK else None

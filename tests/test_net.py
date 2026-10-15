@@ -5,7 +5,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from commander.net import MAX_RESPONSE_BYTES, Fetcher, NetworkError
+from commander.net import MAX_RESPONSE_BYTES, Fetcher, HttpStatusError, NetworkError
 
 URL = "https://archidekt.com/api/decks/1/"
 
@@ -164,3 +164,46 @@ def test_post_sends_the_payload_as_json_and_retries_like_get() -> None:
     assert json.loads(seen[1].content) == {"main": [{"card": "Sol Ring"}]}
     assert seen[1].headers["Content-Type"] == "application/json"
     assert sleeps == [1.0]
+
+
+def test_send_json_goes_out_once_and_takes_any_2xx() -> None:
+    sleeps: list[float] = []
+    created = Script(httpx.Response(201, json={"id": 1}))
+    empty = Script(httpx.Response(204))
+
+    assert fetcher(created, sleeps).send_json("POST", URL, {"a": 1}) == {"id": 1}
+    assert fetcher(empty, sleeps).send_json("PATCH", URL, {}) is None
+    assert (created.calls, empty.calls, sleeps) == (1, 1, [])
+
+
+def test_send_json_never_retries_a_failed_write() -> None:
+    sleeps: list[float] = []
+    script = Script(httpx.Response(503), httpx.Response(200, json={}))
+
+    with pytest.raises(HttpStatusError, match=r"PATCH .* returned HTTP 503") as raised:
+        fetcher(script, sleeps).send_json("PATCH", URL, {})
+
+    assert raised.value.status == 503
+    assert (script.calls, sleeps) == (1, [])
+
+
+def test_send_json_says_a_timed_out_write_may_have_landed() -> None:
+    script = Script(httpx.ReadTimeout("slow"))
+
+    with pytest.raises(NetworkError, match="may or may not have been applied"):
+        fetcher(script, []).send_json("POST", URL, {"password": "secret"})
+
+
+def test_send_json_and_get_json_pass_headers() -> None:
+    seen: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("Authorization"))
+        return httpx.Response(200, json={})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        Fetcher(client).send_json("POST", URL, {}, headers={"Authorization": "JWT a"})
+        Fetcher(client).get_json(URL, headers={"Authorization": "JWT b"})
+        Fetcher(client).get_json(URL)
+
+    assert seen == ["JWT a", "JWT b", None]

@@ -23,6 +23,10 @@ _CARD_QUERIES = {
     "name_key": "SELECT oracle_id, name, mana_cost, cmc, type_line, color_identity, game_changer,"
     " commander_legal, cheapest_cents, edhrec_rank FROM oracle WHERE name_key IN ({}) ORDER BY oracle_id",
 }
+_FRONT_FACE_QUERY = (
+    "SELECT oracle_id, name, mana_cost, cmc, type_line, color_identity, game_changer, commander_legal,"
+    " cheapest_cents, edhrec_rank FROM oracle WHERE substr(name_key, 1, length(?1)) = ?1 ORDER BY oracle_id"
+)
 # A card fits when each colour of its identity is in :identity; a NULL :max_cents means no price limit.
 # CROSS JOIN keeps oracle as the outer loop, so cards are read in rank order through oracle_rank and a
 # caller that stops after a few rows never sorts the whole role (23 ms down to 0.1 ms for ramp).
@@ -216,6 +220,24 @@ class CardDb:
             # Ordered by oracle id, so a name shared by several cards resolves the same way every time.
             found.setdefault(info.name.casefold(), info)
         return found
+
+    def card_named(self, name: str) -> CardInfo | None:
+        """One card by its full name or, for cards with two faces, its front face; case is ignored."""
+        key = name.casefold()
+        found = self.cards_named([key]).get(key)
+        if found is not None or " // " in key:
+            return found
+        rows = self._query(_FRONT_FACE_QUERY, [key + " // "])
+        return self._infos(rows[:1])[0] if rows else None
+
+    def printings_of(self, oracle_id: str) -> list[Printing]:
+        """Every printing of a card, ordered by set and collector number."""
+        rows = self._query(
+            "SELECT scryfall_id, oracle_id, set_code, collector_number, eur_cents, eur_foil_cents"
+            " FROM printing WHERE oracle_id = ? ORDER BY set_code, collector_number",
+            [oracle_id],
+        )
+        return [Printing(*row) for row in rows]
 
     def resolve(self, cards: Sequence[DeckCard]) -> list[ResolvedCard]:
         """Match deck cards by printing, falling back to the card name when the printing is unknown."""
