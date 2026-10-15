@@ -318,3 +318,16 @@ def test_bad_plans_are_usage_errors(
     assert result.code == 2
     assert message in result.err
     assert archidekt.writes == []
+
+
+def test_a_password_on_stdin_that_is_not_utf8_is_a_usage_error(
+    home: Path, archidekt: FakeArchidekt, memory_keyring: MemoryKeyring
+) -> None:
+    stdin = io.BytesIO("pässword\n".encode("cp1252"))
+
+    result = run(["login", "--password-stdin"], home, archidekt, stdin=stdin)
+
+    assert result.code == 2
+    assert result.err == "cmdr: the password on stdin must be UTF-8 text\n"
+    assert archidekt.writes == []
+    assert memory_keyring.secrets == {}

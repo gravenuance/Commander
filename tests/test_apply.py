@@ -432,3 +432,85 @@ def test_save_refuses_a_resolution_with_problems_or_no_changes(deck: Deck, raw_d
         save(editor, live, Resolution(deck, (), ("bad",), ()), now=lambda: NOW)
     with pytest.raises(ValueError, match="nothing to save"):
         save(editor, live, Resolution(deck, (), (), ()), now=lambda: NOW)
+
+
+def test_one_card_named_two_ways_in_add_is_a_problem(deck: Deck, db: CardDb) -> None:
+    adds = [AddCard("Sundering Eruption"), AddCard("Sundering Eruption // Volcanic Fissure")]
+
+    resolution = resolve_plan(without_commander(deck), plan(adds), db)
+
+    assert resolution.problems == (
+        "add Sundering Eruption // Volcanic Fissure: the plan already adds this card",
+    )
+
+
+def test_one_card_both_added_and_removed_under_two_names_is_a_problem(deck: Deck, db: CardDb) -> None:
+    sundering = Deck(
+        deck.id,
+        deck.name,
+        deck.owner,
+        deck.bracket,
+        deck.updated_at,
+        (
+            *deck.cards,
+            replace(
+                deck.cards[0],
+                name="Sundering Eruption // Volcanic Fissure",
+                categories=("Removal",),
+                entry_id=5,
+                scryfall_id="50686ac7",
+            ),
+        ),
+    )
+
+    resolution = resolve_plan(
+        sundering,
+        plan([AddCard("Sundering Eruption // Volcanic Fissure")], [RemoveCard("sundering eruption")]),
+        db,
+    )
+
+    assert resolution.problems == (
+        "add Sundering Eruption // Volcanic Fissure: the plan also removes this card",
+    )
+
+
+def test_two_removes_of_one_card_are_a_problem(deck: Deck, db: CardDb) -> None:
+    sundering = Deck(
+        deck.id,
+        deck.name,
+        deck.owner,
+        deck.bracket,
+        deck.updated_at,
+        (
+            *deck.cards,
+            replace(
+                deck.cards[0],
+                name="Sundering Eruption // Volcanic Fissure",
+                categories=("Removal",),
+                entry_id=5,
+            ),
+        ),
+    )
+
+    resolution = resolve_plan(
+        sundering,
+        plan(remove=[RemoveCard("Sundering Eruption"), RemoveCard("Sundering Eruption // Volcanic Fissure")]),
+        db,
+    )
+
+    assert resolution.problems == (
+        "remove Sundering Eruption // Volcanic Fissure: the plan already removes this card",
+    )
+
+
+def test_a_failed_read_back_says_the_changes_were_sent(
+    fake: FakeArchidekt, editor: ArchidektEditor, db: CardDb
+) -> None:
+    live = editor.get_deck(DECK_ID)
+    resolution = resolve_plan(live.deck, plan(remove=[RemoveCard("Disruptor Flute")]), db)
+    fake.failing[DECK_ID] = 404
+
+    with pytest.raises(SaveError, match="Archidekt accepted the changes, but reading the deck back failed"):
+        save(editor, live, resolution, now=lambda: NOW)
+
+    assert len(fake.writes) == 2

@@ -1,3 +1,4 @@
+import importlib
 import json
 from collections.abc import Iterator
 
@@ -325,3 +326,51 @@ def test_keyring_token_store_round_trip(memory_keyring: MemoryKeyring) -> None:
 def test_keyring_token_store_refuses_odd_tokens(token: str) -> None:
     with pytest.raises(CredentialError, match="unexpected length"):
         KeyringTokenStore().put("MAKKIS", token)
+
+
+def test_a_rejected_change_shows_archidekts_reason_instead_of_login_advice() -> None:
+    answer = {"cards": ["Invalid action 'modify' for card 77."]}
+    edit = CardEdit(EditKind.ADD, 77, 1, new_entry_state("Ramp"))
+
+    with (
+        httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(400, json=answer))) as client,
+        pytest.raises(ArchidektError) as raised,
+    ):
+        ArchidektEditor(Fetcher(client), ACCESS_TOKEN).modify_cards(DECK_ID, [edit])
+
+    message = str(raised.value)
+    assert "rejected the change (HTTP 400)" in message
+    assert "Invalid action 'modify' for card 77." in message
+    assert "cmdr login" not in message
+
+
+def test_a_refresh_answered_with_400_shows_the_reason_not_expiry() -> None:
+    answer = {"refresh_token": ["This field is required."]}
+
+    with (
+        httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(400, json=answer))) as client,
+        pytest.raises(ArchidektError, match="This field is required"),
+    ):
+        ArchidektAuth(Fetcher(client), MemoryTokenStore({"makkis": "r1"})).access_token("MAKKIS")
+
+
+def test_keyring_backend_errors_become_credential_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    windows_error = importlib.import_module("win32ctypes.pywin32.pywintypes").error
+
+    def refuse(*_: object) -> None:
+        raise windows_error(1783, "CredWrite", "The stub received bad data.")
+
+    monkeypatch.setattr("keyring.set_password", refuse)
+    monkeypatch.setattr("keyring.get_password", refuse)
+
+    with pytest.raises(CredentialError, match="could not save"):
+        KeyringTokenStore().put("MAKKIS", "token")
+    with pytest.raises(CredentialError, match="could not read"):
+        KeyringTokenStore().get("MAKKIS")
+
+
+def test_keyring_token_store_refuses_tokens_windows_cannot_hold() -> None:
+    KeyringTokenStore().put("MAKKIS", "x" * 1280)
+
+    with pytest.raises(CredentialError, match="unexpected length"):
+        KeyringTokenStore().put("MAKKIS", "x" * 1281)

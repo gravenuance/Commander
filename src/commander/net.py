@@ -20,6 +20,7 @@ MAX_ATTEMPTS = 4
 BASE_DELAY_SECONDS = 1.0
 MAX_DELAY_SECONDS = 30.0
 SLOW_CALL_SECONDS = 5.0
+ERROR_DETAIL_BYTES = 300
 HTTP_OK = 200
 _SUCCESS = range(200, 300)
 _RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
@@ -30,11 +31,16 @@ class NetworkError(Exception):
 
 
 class HttpStatusError(NetworkError):
-    """The server answered a write with a status outside 2xx; callers map some statuses to advice."""
+    """The server answered a write with a status outside 2xx; callers map some statuses to advice.
 
-    def __init__(self, message: str, status: int) -> None:
+    detail holds the start of the server's answer, which usually says what it rejected. It is kept out of
+    the message, so a caller chooses whether to show it.
+    """
+
+    def __init__(self, message: str, status: int, detail: str = "") -> None:
         super().__init__(message)
         self.status = status
+        self.detail = detail
 
 
 def make_client() -> httpx.Client:
@@ -96,7 +102,10 @@ class Fetcher:
         try:
             with self._client.stream(method, url, json=payload, headers=headers) as response:
                 status = response.status_code
-                body = _read_capped(response, url, MAX_RESPONSE_BYTES) if status in _SUCCESS else b""
+                if status in _SUCCESS:
+                    body = _read_capped(response, url, MAX_RESPONSE_BYTES)
+                else:
+                    body = _read_start(response, ERROR_DETAIL_BYTES)
         except (httpx.TimeoutException, httpx.TransportError) as error:
             log.warning("%s %s failed: %s", method, url, error.__class__.__name__)
             # A timeout leaves it unknown whether the server applied the write.
@@ -108,7 +117,7 @@ class Fetcher:
             log.warning("slow request: %s %s took %.1fs", method, url, elapsed)
         if status not in _SUCCESS:
             log.info("%s %s returned HTTP %d", method, url, status)
-            raise HttpStatusError(f"{method} {url} returned HTTP {status}", status)
+            raise HttpStatusError(f"{method} {url} returned HTTP {status}", status, _detail_text(body))
         return _decode_json(url, body) if body.strip() else None
 
     def download(self, url: str, dest: Path, *, max_bytes: int) -> int:
@@ -196,6 +205,21 @@ def _write_capped(response: httpx.Response, url: str, dest: Path, max_bytes: int
                 raise NetworkError(f"{url} sent more than {_megabytes(max_bytes)} MB")
             handle.write(chunk)
     return size
+
+
+def _read_start(response: httpx.Response, limit: int) -> bytes:
+    start = b""
+    for chunk in response.iter_bytes():
+        start += chunk
+        if len(start) >= limit:
+            break
+    return start[:limit]
+
+
+def _detail_text(body: bytes) -> str:
+    # One line of printable text, so a hostile or HTML answer cannot garble the terminal.
+    text = body.decode("utf-8", errors="replace")
+    return " ".join("".join(c if c.isprintable() else " " for c in text).split())
 
 
 def _megabytes(size: int) -> int:

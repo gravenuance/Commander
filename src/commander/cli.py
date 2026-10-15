@@ -545,7 +545,10 @@ def _cmd_login(args: argparse.Namespace, ctx: _Context) -> int:
     user = resolve_user(args.user, ctx.env, read_config(config_path(args.config, ctx.env)))
     name = args.login_name or user
     if args.password_stdin:
-        password = ctx.stdin.readline(MAX_PASSWORD_BYTES).decode("utf-8").rstrip("\r\n")
+        try:
+            password = ctx.stdin.readline(MAX_PASSWORD_BYTES).decode("utf-8").rstrip("\r\n")
+        except UnicodeDecodeError:
+            raise UsageError("the password on stdin must be UTF-8 text") from None
     elif ctx.stdin.isatty():
         password = ctx.prompt_password(f"Archidekt password for {name}: ")
     else:

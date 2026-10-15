@@ -32,7 +32,10 @@ log = logging.getLogger(__name__)
 # Archidekt's colour label for a card with none, as its own pages send it.
 DEFAULT_LABEL = ",#656565"
 MAX_NAME_LENGTH = 200
-_UNAUTHORIZED = frozenset({400, 401, 403})
+# A refused login answers 400; elsewhere 400 means the request itself was rejected, with a reason.
+_LOGIN_REFUSED = frozenset({400, 401, 403})
+_UNAUTHORIZED = frozenset({401, 403})
+_BAD_REQUEST = 400
 _TOO_MANY = 429
 
 
@@ -107,7 +110,7 @@ class ArchidektAuth:
                 "POST", f"{self._base_url}/rest-auth/login/", {field: name_or_email, "password": password}
             )
         except HttpStatusError as error:
-            if error.status in _UNAUTHORIZED:
+            if error.status in _LOGIN_REFUSED:
                 raise AuthError("Archidekt refused the login; check the name and password") from None
             raise
         try:
@@ -136,6 +139,8 @@ class ArchidektAuth:
         except HttpStatusError as error:
             if error.status in _UNAUTHORIZED:
                 raise AuthError("the saved Archidekt login has expired; run `cmdr login` again") from None
+            if error.status == _BAD_REQUEST:
+                raise ArchidektError(f"Archidekt rejected the token refresh: {error.detail}") from None
             raise
         try:
             answer = as_object(raw, "token refresh")
@@ -198,6 +203,8 @@ class ArchidektEditor:
                     f"Archidekt refused the change (HTTP {error.status}); is the deck yours? "
                     "If it is, run `cmdr login` again"
                 ) from None
+            if error.status == _BAD_REQUEST:
+                raise ArchidektError(f"Archidekt rejected the change (HTTP 400): {error.detail}") from None
             if error.status == _TOO_MANY:
                 raise ArchidektError(
                     "Archidekt is limiting requests; wait a few minutes and try again"

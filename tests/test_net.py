@@ -5,7 +5,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from commander.net import MAX_RESPONSE_BYTES, Fetcher, HttpStatusError, NetworkError
+from commander.net import ERROR_DETAIL_BYTES, MAX_RESPONSE_BYTES, Fetcher, HttpStatusError, NetworkError
 
 URL = "https://archidekt.com/api/decks/1/"
 
@@ -207,3 +207,16 @@ def test_send_json_and_get_json_pass_headers() -> None:
         Fetcher(client).get_json(URL)
 
     assert seen == ["JWT a", "JWT b", None]
+
+
+def test_a_rejected_write_keeps_a_short_printable_excerpt_of_the_answer() -> None:
+    answer = b'{"error":\n  "bad\x1b[31m card"}' + b"x" * 1000
+    script = Script(httpx.Response(400, content=answer))
+
+    with pytest.raises(HttpStatusError) as raised:
+        fetcher(script, []).send_json("PATCH", URL, {})
+
+    detail = raised.value.detail
+    assert detail.startswith('{"error": "bad [31m card"}xxx')
+    assert len(detail) <= ERROR_DETAIL_BYTES
+    assert "x" * 50 not in str(raised.value)

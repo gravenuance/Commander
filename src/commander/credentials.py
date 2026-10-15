@@ -1,13 +1,28 @@
 """Archidekt refresh tokens in the OS secret store (Windows Credential Manager); never in a file."""
 
+import importlib
 from typing import Protocol
 
 import keyring
 import keyring.errors
 
+
+def _store_errors() -> tuple[type[Exception], ...]:
+    # keyring passes the Windows backend's own error through rather than wrapping it in KeyringError.
+    try:
+        windows = importlib.import_module("win32ctypes.pywin32.pywintypes")
+    except ImportError:
+        return (keyring.errors.KeyringError,)
+    error: object = getattr(windows, "error", None)
+    if isinstance(error, type) and issubclass(error, Exception):
+        return (keyring.errors.KeyringError, error)
+    return (keyring.errors.KeyringError,)
+
+
 SERVICE = "Commander (cmdr) Archidekt"
-# Windows Credential Manager holds at most 2560 bytes per secret; a refresh token is a few hundred.
-MAX_TOKEN_LENGTH = 2000
+# Windows Credential Manager holds at most 2560 bytes per secret, stored as UTF-16: 1280 characters.
+MAX_TOKEN_LENGTH = 1280
+_STORE_ERRORS = _store_errors()
 
 
 class CredentialError(Exception):
@@ -28,7 +43,7 @@ class KeyringTokenStore:
     def get(self, user: str) -> str | None:
         try:
             return keyring.get_password(SERVICE, user.casefold())
-        except keyring.errors.KeyringError as error:
+        except _STORE_ERRORS as error:
             raise CredentialError(f"could not read the saved Archidekt login: {error}") from error
 
     def put(self, user: str, token: str) -> None:
@@ -36,7 +51,7 @@ class KeyringTokenStore:
             raise CredentialError(f"Archidekt sent a login token of unexpected length ({len(token)})")
         try:
             keyring.set_password(SERVICE, user.casefold(), token)
-        except keyring.errors.KeyringError as error:
+        except _STORE_ERRORS as error:
             raise CredentialError(f"could not save the Archidekt login: {error}") from error
 
     def delete(self, user: str) -> bool:
@@ -45,6 +60,6 @@ class KeyringTokenStore:
             keyring.delete_password(SERVICE, user.casefold())
         except keyring.errors.PasswordDeleteError:
             return False
-        except keyring.errors.KeyringError as error:
+        except _STORE_ERRORS as error:
             raise CredentialError(f"could not remove the saved Archidekt login: {error}") from error
         return True

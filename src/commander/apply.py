@@ -92,10 +92,18 @@ class _Resolver:
     warnings: list[str] = field(default_factory=list[str])
     skipped: list[str] = field(default_factory=list[str])
     changes: list[Change] = field(default_factory=list[Change])
+    # A card can be named by its full name or its front face, so the plan's own check on names
+    # misses repeats; these catch them by card and by deck entry.
+    added: set[str] = field(default_factory=set[str])
+    removed_entries: set[int] = field(default_factory=set[int])
 
     def remove(self, wanted: RemoveCard) -> None:
         # Only cards counted in the deck; a maybeboard copy stays.
         entries = [e for e in _entries_named(self.deck, wanted.name) if e.in_deck]
+        if any(e.entry_id in self.removed_entries for e in entries):
+            self.problems.append(f"remove {wanted.name}: the plan already removes this card")
+            return
+        self.removed_entries.update(e.entry_id for e in entries)
         held = sum(e.quantity for e in entries)
         if held <= wanted.keep:
             what = "not in the deck" if not entries else f"already {held}"
@@ -118,21 +126,15 @@ class _Resolver:
         if info is None:
             self.problems.append(f"add {wanted.name}: no such card in the card data (check the spelling)")
             return changers
-        if not info.commander_legal:
-            self.problems.append(f"add {info.name}: not legal in Commander")
+        held = [e for e in _entries_named(self.deck, info.name) if e.in_deck]
+        problem = self._add_problem(info, identity, held)
+        if problem is not None:
+            self.problems.append(f"add {info.name}: {problem}")
             return changers
-        if identity is not None and not set(info.color_identity) <= set(identity):
-            self.problems.append(
-                f"add {info.name}: its colours ({info.color_identity}) are outside the deck's"
-                f" ({identity or 'colourless'})"
-            )
-            return changers
-        is_basic = info.front_type_line.startswith("Basic")
-        if wanted.quantity > 1 and not is_basic:
+        if wanted.quantity > 1 and not info.front_type_line.startswith("Basic"):
             self.warnings.append(
                 f"{info.name}: {wanted.quantity} copies; Commander allows one unless the card says so"
             )
-        held = [e for e in _entries_named(self.deck, info.name) if e.in_deck]
         if held:
             entry = held[0]
             have = sum(e.quantity for e in held)
@@ -161,6 +163,18 @@ class _Resolver:
             )
         )
         return changers + 1 if info.game_changer else changers
+
+    def _add_problem(self, info: CardInfo, identity: str | None, held: Sequence[DeckCard]) -> str | None:
+        if info.oracle_id in self.added:
+            return "the plan already adds this card"
+        self.added.add(info.oracle_id)
+        if not info.commander_legal:
+            return "not legal in Commander"
+        if identity is not None and not set(info.color_identity) <= set(identity):
+            return f"its colours ({info.color_identity}) are outside the deck's ({identity or 'colourless'})"
+        if any(e.entry_id in self.removed_entries for e in held):
+            return "the plan also removes this card"
+        return None
 
     def _printing(self, info: CardInfo, wanted: AddCard) -> Printing | None:
         printings = self.db.printings_of(info.oracle_id)
@@ -258,7 +272,13 @@ def save(
             f"{error}. The snapshot '{snapshot}' is on Archidekt; check the deck there before trying again"
         ) from error
     on_progress("reading the deck back")
-    after = editor.get_deck(deck.id).deck
+    try:
+        after = editor.get_deck(deck.id).deck
+    except (NetworkError, ArchidektError) as error:
+        raise SaveError(
+            f"Archidekt accepted the changes, but reading the deck back failed ({error}); "
+            "run `cmdr sync` to check the deck and update the local copy"
+        ) from error
     return SaveResult(after, snapshot, tuple(verify(resolution.changes, after)))
 
 

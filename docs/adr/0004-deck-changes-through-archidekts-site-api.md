@@ -73,8 +73,12 @@ Option 1, chosen by the user on 2026-10-15, kept small and careful:
   did not land. A deck in the deck folder gets its local copy rewritten.
 - **Few requests, never repeated.** A save costs one token refresh, one card lookup per new card, one
   snapshot, one change request and two deck reads. Writes go out once and are never retried; a timeout
-  says the write may or may not have landed. 401 and 403 ask the user to sign in again, and 429 says to
-  wait. The User-Agent names the tool, as for every other request.
+  says the write may or may not have landed. 401 and 403 ask the user to sign in again, 400 shows the
+  first 300 bytes of Archidekt's answer (its reason for rejecting the request), and 429 says to wait. If
+  the read-back fails, the message says the changes were accepted. The User-Agent names the tool, as for
+  every other request.
+- **Repeats by another name.** A plan's names are checked for repeats as written, and the resolver also
+  catches one card listed twice under its full and front-face names, or both added and removed.
 
 ## Consequences
 
