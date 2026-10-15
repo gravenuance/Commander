@@ -582,7 +582,7 @@ def _cmd_apply(args: argparse.Namespace, ctx: _Context) -> int:
             raise UsageError(
                 f"deck {deck_id} belongs to {live.deck.owner}, not {user}; cmdr edits only yours"
             )
-        resolution = resolve_plan(live.deck, plan, db)
+        resolution = resolve_plan(live.deck, plan, db, categories=live.categories)
         if args.save and resolution.changes and not resolution.problems:
             result = save(editor, live, resolution, now=ctx.now, on_progress=_progress_printer(ctx.err))
     folder = None

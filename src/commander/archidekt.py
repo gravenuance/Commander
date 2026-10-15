@@ -4,7 +4,6 @@ from collections.abc import Mapping
 
 from commander.jsonshape import (
     ShapeError,
-    as_list,
     as_object,
     opt_int,
     opt_str,
@@ -89,7 +88,7 @@ def parse_deck_page(raw: object) -> tuple[list[DeckSummary], str | None]:
 
 def parse_deck(raw: object) -> Deck:
     deck = as_object(raw, "deck")
-    excluded = _excluded_categories(req_list(deck, "categories", "deck"))
+    excluded = frozenset(name for name, counts in category_flags(raw).items() if not counts)
     cards: list[DeckCard] = []
     for index, item in enumerate(req_list(deck, "cards", "deck")):
         card = _parse_card(as_object(item, f"deck.cards[{index}]"), f"deck.cards[{index}]", excluded)
@@ -106,14 +105,14 @@ def parse_deck(raw: object) -> Deck:
     )
 
 
-def _excluded_categories(categories: object) -> frozenset[str]:
-    excluded: set[str] = set()
-    for index, item in enumerate(as_list(categories, "deck.categories")):
+def category_flags(raw: object) -> dict[str, bool]:
+    """Each of the deck's categories and whether its cards count in the deck; each deck sets its own."""
+    flags: dict[str, bool] = {}
+    for index, item in enumerate(req_list(as_object(raw, "deck"), "categories", "deck")):
         where = f"deck.categories[{index}]"
         category = as_object(item, where)
-        if not req_bool(category, "includedInDeck", where):
-            excluded.add(req_str(category, "name", where))
-    return frozenset(excluded)
+        flags[req_str(category, "name", where)] = req_bool(category, "includedInDeck", where)
+    return flags
 
 
 def _parse_card(entry: Mapping[str, object], where: str, excluded: frozenset[str]) -> DeckCard | None:

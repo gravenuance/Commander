@@ -102,3 +102,6 @@ Option 1, chosen by the user on 2026-10-15, kept small and careful:
   not in the deck was refused with 400 `{"error":"Unable to update card not in this deck"}`, shown as is.
   Archidekt accepts snapshots with equal names, so snapshot names carry seconds, and an add is checked
   against new entries only, as a maybeboard copy of the same printing once made a failed add look done.
+  Each deck sets which categories count in the deck (`categories[].includedInDeck`), and `apply` counts an
+  added card by that setting. A category the deck lacks is created by the save: Archidekt created
+  Maybeboard outside the deck but Sideboard inside it, so a new Sideboard draws a warning.

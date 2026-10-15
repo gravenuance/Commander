@@ -4,7 +4,7 @@ from collections.abc import Callable
 import httpx
 import pytest
 
-from commander.archidekt import ArchidektClient, ArchidektError, parse_deck
+from commander.archidekt import ArchidektClient, ArchidektError, category_flags, parse_deck
 from commander.jsonshape import ShapeError
 from commander.net import Fetcher
 from conftest import Handler, Json, card_entry, deck_page, summary_row
@@ -178,3 +178,11 @@ def test_list_rejects_lookalike_next_links(next_url: str) -> None:
 
     with pytest.raises(ArchidektError, match="outside the Archidekt API"):
         client_for(handler).list_commander_decks("MAKKIS")
+
+
+def test_category_flags_say_which_categories_count_in_the_deck(raw_deck: Json) -> None:
+    flags = category_flags(raw_deck)
+
+    assert flags["Maybeboard"] is False
+    assert flags["Sideboard"] is True
+    assert flags["Commander"] is True

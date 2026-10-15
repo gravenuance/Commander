@@ -7,10 +7,10 @@ shape-checked and every write is sent once, never retried.
 import logging
 import uuid
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
-from commander.archidekt import API_BASE, ArchidektError, parse_deck
+from commander.archidekt import API_BASE, ArchidektError, category_flags, parse_deck
 from commander.credentials import TokenStore
 from commander.jsonshape import (
     ShapeError,
@@ -65,6 +65,8 @@ class EntryState:
 class LiveDeck:
     deck: Deck
     entries: Mapping[int, EntryState]
+    # Each category and whether its cards count in the deck, as this deck has it set.
+    categories: Mapping[str, bool] = field(default_factory=dict[str, bool])
 
 
 @dataclass(slots=True, frozen=True)
@@ -164,7 +166,7 @@ class ArchidektEditor:
     def get_deck(self, deck_id: int) -> LiveDeck:
         raw = self._fetcher.get_json(f"{self._base_url}/decks/{deck_id}/", headers=self._headers)
         try:
-            return LiveDeck(parse_deck(raw), parse_entry_states(raw))
+            return LiveDeck(parse_deck(raw), parse_entry_states(raw), category_flags(raw))
         except (ShapeError, ValueError) as error:
             raise ArchidektError(f"unexpected data for deck {deck_id}: {error}") from error
 

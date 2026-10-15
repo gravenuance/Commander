@@ -534,3 +534,37 @@ def test_a_failed_read_back_says_the_changes_were_sent(
         save(editor, live, resolution, now=lambda: NOW)
 
     assert len(fake.writes) == 2
+
+
+@pytest.mark.parametrize(
+    ("category", "categories", "counts"),
+    [
+        # The deck's own setting wins: Archidekt lets each deck choose which categories count.
+        ("Maybeboard", {"Maybeboard": False}, False),
+        ("Sideboard", {"Sideboard": True}, True),
+        ("Burn", {"Burn": False}, False),
+        # A category the deck lacks is created by the save; seen live on 2026-10-15, Archidekt creates
+        # Maybeboard outside the deck but Sideboard, like any other name, inside it.
+        ("Sideboard", {}, True),
+        ("maybeboard", {}, False),
+        ("Burn", {}, True),
+    ],
+)
+def test_an_add_counts_in_the_deck_as_its_category_says(
+    deck: Deck, db: CardDb, category: str, categories: dict[str, bool], *, counts: bool
+) -> None:
+    wanted = AddCard("Arcane Signet", category=category)
+
+    resolution = resolve_plan(deck, plan([wanted]), db, categories=categories)
+
+    assert resolution.changes[0].in_deck is counts
+    assert resolution.main_after == MAIN_CARDS + (1 if counts else 0)
+
+
+def test_a_new_sideboard_category_warns_that_it_will_count(deck: Deck, db: CardDb) -> None:
+    resolution = resolve_plan(deck, plan([AddCard("Arcane Signet", category="Sideboard")]), db, categories={})
+
+    assert resolution.warnings[0] == (
+        "Arcane Signet: Archidekt creates the new category Sideboard counting in the deck; "
+        "untick it on Archidekt to keep it out"
+    )

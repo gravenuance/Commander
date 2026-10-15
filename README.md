@@ -133,6 +133,11 @@ meets are skipped, so running a plan twice is safe. A new card gets its cheapest
 `set` names one, and goes under its card type (Land, Creature, Instant and so on) unless `category`
 names another. Cards on the maybeboard are left alone.
 
+Whether an added card counts in the deck follows the category's "in deck" setting on Archidekt,
+which each deck sets for itself. A category the deck doesn't have yet is created by the save: Archidekt
+creates Maybeboard outside the deck and every other name inside it, Sideboard included, so `apply`
+warns before it creates a Sideboard; untick it on Archidekt to keep those cards out.
+
 ```sh
 uv run cmdr login                      # once: asks for your Archidekt password
 uv run cmdr apply plan.toml            # preview the changes; nothing is written

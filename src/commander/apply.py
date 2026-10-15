@@ -37,6 +37,10 @@ _TYPE_CATEGORIES = (
     "Enchantment",
 )
 COMMANDER_DECK_SIZE = 100
+# A save creates a category the deck lacks. Seen live on 2026-10-15: Archidekt creates Maybeboard outside
+# the deck, and every other name, Sideboard included, inside it.
+_ASIDE_WHEN_CREATED = frozenset({"maybeboard"})
+_USUALLY_ASIDE = frozenset({"sideboard"})
 
 
 class ChangeKind(Enum):
@@ -88,6 +92,7 @@ class Resolution:
 class _Resolver:
     deck: Deck
     db: CardDb
+    categories: Mapping[str, bool]
     problems: list[str] = field(default_factory=list[str])
     warnings: list[str] = field(default_factory=list[str])
     skipped: list[str] = field(default_factory=list[str])
@@ -147,14 +152,20 @@ class _Resolver:
         if printing is None:
             return changers
         raises = card_raise(info, self.deck.bracket, changers)
+        category = wanted.category or default_category(info)
+        if category not in self.categories and category.casefold() in _USUALLY_ASIDE:
+            self.warnings.append(
+                f"{info.name}: Archidekt creates the new category {category} counting in the deck; "
+                "untick it on Archidekt to keep it out"
+            )
         self.changes.append(
             Change(
                 kind=ChangeKind.ADD,
                 name=info.name,
                 before=0,
                 after=wanted.quantity,
-                category=wanted.category or default_category(info),
-                in_deck=True,
+                category=category,
+                in_deck=counts_in_deck(category, self.categories),
                 set_code=printing.set_code,
                 collector_number=printing.collector_number,
                 scryfall_id=printing.scryfall_id,
@@ -192,9 +203,14 @@ class _Resolver:
         return None
 
 
-def resolve_plan(live: Deck, plan: Plan, db: CardDb) -> Resolution:
-    """Check every change in the plan against the deck; problems block saving, warnings do not."""
-    resolver = _Resolver(live, db)
+def resolve_plan(
+    live: Deck, plan: Plan, db: CardDb, *, categories: Mapping[str, bool] | None = None
+) -> Resolution:
+    """Check every change in the plan against the deck; problems block saving, warnings do not.
+
+    categories holds the deck's own setting of which categories count in the deck.
+    """
+    resolver = _Resolver(live, db, categories or {})
     main = db.resolve(live.main_cards)
     identity = deck_identity(main)
     if identity is None:
@@ -215,6 +231,13 @@ def resolve_plan(live: Deck, plan: Plan, db: CardDb) -> Resolution:
         size = f"the deck will have {resolution.main_after} cards, not {COMMANDER_DECK_SIZE}"
         resolution = replace(resolution, warnings=(*resolution.warnings, size))
     return resolution
+
+
+def counts_in_deck(category: str, categories: Mapping[str, bool]) -> bool:
+    """Whether a card filed under category counts in the deck, by the deck's setting or else by default."""
+    if category in categories:
+        return categories[category]
+    return category.casefold() not in _ASIDE_WHEN_CREATED
 
 
 def default_category(info: CardInfo) -> str:
