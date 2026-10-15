@@ -112,3 +112,11 @@ def test_bad_targets_are_rejected(tmp_path: Path, toml: str, message: str) -> No
     path.write_text("version = 1\n" + toml, encoding="utf-8")
     with pytest.raises(ConfigError, match=message):
         read_config(path)
+
+
+def test_a_byte_order_mark_is_accepted(tmp_path: Path) -> None:
+    # Windows PowerShell 5.1 writes one with Set-Content -Encoding utf8.
+    path = tmp_path / "config.toml"
+    path.write_bytes(b"\xef\xbb\xbf" + b'version = 1\nuser = "MAKKIS"\n')
+
+    assert read_config(path).user == "MAKKIS"

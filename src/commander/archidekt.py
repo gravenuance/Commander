@@ -19,6 +19,7 @@ from commander.models import Deck, DeckCard, DeckSummary
 from commander.net import Fetcher
 
 API_BASE = "https://archidekt.com/api"
+_PLAIN_API_BASE = "http://archidekt.com/api"
 COMMANDER_FORMAT = 3
 PAGE_SIZE = 50
 MAX_PAGES = 20
@@ -64,8 +65,12 @@ class ArchidektClient:
 def parse_deck_page(raw: object) -> tuple[list[DeckSummary], str | None]:
     page = as_object(raw, "page")
     next_url = opt_str(page, "next", "page")
-    if next_url is not None and not next_url.startswith(API_BASE + "/"):
-        raise ShapeError(f"page.next points outside the Archidekt API: {next_url}")
+    if next_url is not None:
+        # Archidekt writes next links with http://; the request still goes over https.
+        if next_url.startswith(_PLAIN_API_BASE + "/"):
+            next_url = API_BASE + next_url.removeprefix(_PLAIN_API_BASE)
+        if not next_url.startswith(API_BASE + "/"):
+            raise ShapeError(f"page.next points outside the Archidekt API: {next_url}")
     decks: list[DeckSummary] = []
     for index, item in enumerate(req_list(page, "results", "page")):
         where = f"page.results[{index}]"

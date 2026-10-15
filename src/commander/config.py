@@ -59,7 +59,8 @@ def config_path(flag: str | None, env: Mapping[str, str]) -> Path:
 
 def read_config(path: Path) -> FileConfig:
     try:
-        raw = tomllib.loads(path.read_text(encoding="utf-8"))
+        # utf-8-sig drops the byte-order mark Windows PowerShell 5.1 puts at the start of UTF-8 files.
+        raw = tomllib.loads(path.read_text(encoding="utf-8-sig"))
     except FileNotFoundError:
         return FileConfig(None, None)
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:

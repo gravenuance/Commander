@@ -144,3 +144,37 @@ def test_list_rejects_next_link_to_another_host() -> None:
 
     with pytest.raises(ArchidektError, match="outside the Archidekt API"):
         client_for(handler).list_commander_decks("MAKKIS")
+
+
+def test_list_follows_archidekts_plain_http_next_link_over_https() -> None:
+    # Archidekt writes its next links with http://, as seen live on 2026-10-15; its own site swaps in https.
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        if request.url.params.get("page") == "2":
+            return httpx.Response(200, json=deck_page([summary_row(2, "Second", "t2")]))
+        next_url = "http://archidekt.com/api/decks/v3/?ownerUsername=MAKKIS&page=2"
+        return httpx.Response(200, json=deck_page([summary_row(1, "First", "t1")], next_url=next_url))
+
+    decks = client_for(handler).list_commander_decks("MAKKIS")
+
+    assert [d.id for d in decks] == [1, 2]
+    assert seen[1] == "https://archidekt.com/api/decks/v3/?ownerUsername=MAKKIS&page=2"
+
+
+@pytest.mark.parametrize(
+    "next_url",
+    [
+        "http://archidekt.com.evil.example/api/decks/v3/",
+        "http://evil.example/archidekt.com/api/decks/v3/",
+        "http://archidekt.com@evil.example/api/decks/v3/",
+        "ftp://archidekt.com/api/decks/v3/",
+    ],
+)
+def test_list_rejects_lookalike_next_links(next_url: str) -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=deck_page([], next_url=next_url))
+
+    with pytest.raises(ArchidektError, match="outside the Archidekt API"):
+        client_for(handler).list_commander_decks("MAKKIS")
