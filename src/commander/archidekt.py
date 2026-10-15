@@ -1,6 +1,8 @@
 """Read access to Archidekt's undocumented JSON API; every response is shape-checked before use."""
 
 from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import datetime
 
 from commander.jsonshape import (
     ShapeError,
@@ -14,14 +16,17 @@ from commander.jsonshape import (
     req_str,
     str_list,
 )
-from commander.models import Deck, DeckCard, DeckSummary
-from commander.net import Fetcher
+from commander.models import ARCHIDEKT_DECK_URL, Deck, DeckCard, DeckSummary
+from commander.net import Fetcher, Pacer
 
 API_BASE = "https://archidekt.com/api"
 _PLAIN_API_BASE = "http://archidekt.com/api"
 COMMANDER_FORMAT = 3
 PAGE_SIZE = 50
 MAX_PAGES = 20
+# Reading other players' decks: newest first, at most this many pages, one request every two seconds.
+SEARCH_PAGES = 5
+SEARCH_INTERVAL_SECONDS = 2.0
 
 
 class ArchidektError(Exception):
@@ -61,15 +66,107 @@ class ArchidektClient:
             raise ArchidektError(f"unexpected data for deck {deck_id}: {error}") from error
 
 
+@dataclass(slots=True, frozen=True)
+class PeerDeck:
+    """Another player's deck as the search lists it."""
+
+    id: int
+    name: str
+    owner: str
+    views: int
+    updated_at: datetime
+    bracket: int | None
+
+    @property
+    def url(self) -> str:
+        return ARCHIDEKT_DECK_URL.format(id=self.id)
+
+
+class ArchidektSearch:
+    """Other players' public decks.
+
+    Archidekt's written terms forbid automated searches, but its co-founder has said the API is open to use
+    (ADR 0004), so this stays at a few paced requests a run and callers cache what it finds.
+    """
+
+    def __init__(self, fetcher: Fetcher, pacer: Pacer, base_url: str = API_BASE) -> None:
+        self._fetcher = fetcher
+        self._pacer = pacer
+        self._base_url = base_url.rstrip("/")
+
+    def recent_decks(self, commander: str, *, bracket: int | None, since: datetime) -> list[PeerDeck]:
+        """Commander decks led by `commander` (full name) and updated at or after `since`, newest first."""
+        url: str | None = f"{self._base_url}/decks/v3/"
+        params: Mapping[str, str | int] | None = {
+            "commanderName": commander,
+            "formats": COMMANDER_FORMAT,
+            "orderBy": "-updatedAt",
+            "pageSize": PAGE_SIZE,
+        } | ({"edhBracket": bracket} if bracket is not None else {})
+        found: list[PeerDeck] = []
+        for _ in range(SEARCH_PAGES):
+            if url is None:
+                break
+            self._pacer.wait()
+            raw = self._fetcher.get_json(url, params)
+            try:
+                page, url = parse_search_page(raw)
+            except (ShapeError, ValueError) as error:
+                raise ArchidektError(f"unexpected search answer from Archidekt: {error}") from error
+            params = None
+            found.extend(deck for deck in page if deck.updated_at >= since)
+            if any(deck.updated_at < since for deck in page):
+                break
+        return found
+
+    def deck(self, deck_id: int) -> Deck:
+        self._pacer.wait()
+        raw = self._fetcher.get_json(f"{self._base_url}/decks/{deck_id}/")
+        try:
+            return parse_deck(raw)
+        except (ShapeError, ValueError) as error:
+            raise ArchidektError(f"unexpected data for deck {deck_id}: {error}") from error
+
+
+def parse_search_page(raw: object) -> tuple[list[PeerDeck], str | None]:
+    page = as_object(raw, "page")
+    decks: list[PeerDeck] = []
+    for index, item in enumerate(req_list(page, "results", "page")):
+        where = f"page.results[{index}]"
+        deck = as_object(item, where)
+        if req_int(deck, "deckFormat", where) != COMMANDER_FORMAT:
+            continue
+        updated_at = datetime.fromisoformat(req_str(deck, "updatedAt", where))
+        if updated_at.tzinfo is None:
+            raise ShapeError(f"{where}.updatedAt: no time zone")
+        decks.append(
+            PeerDeck(
+                id=req_int(deck, "id", where),
+                name=req_str(deck, "name", where),
+                owner=req_str(req_object(deck, "owner", where), "username", f"{where}.owner"),
+                views=req_int(deck, "viewCount", where),
+                updated_at=updated_at,
+                bracket=opt_int(deck, "edhBracket", where),
+            )
+        )
+    return decks, _next_link(page)
+
+
+def _next_link(page: Mapping[str, object]) -> str | None:
+    next_url = opt_str(page, "next", "page")
+    if next_url is None:
+        return None
+    # Archidekt writes next links with http://; the request still goes over https.
+    if next_url.startswith(_PLAIN_API_BASE + "/"):
+        next_url = API_BASE + next_url.removeprefix(_PLAIN_API_BASE)
+    if not next_url.startswith(API_BASE + "/"):
+        raise ShapeError(f"page.next points outside the Archidekt API: {next_url}")
+    return next_url
+
+
 def parse_deck_page(raw: object) -> tuple[list[DeckSummary], str | None]:
     page = as_object(raw, "page")
-    next_url = opt_str(page, "next", "page")
-    if next_url is not None:
-        # Archidekt writes next links with http://; the request still goes over https.
-        if next_url.startswith(_PLAIN_API_BASE + "/"):
-            next_url = API_BASE + next_url.removeprefix(_PLAIN_API_BASE)
-        if not next_url.startswith(API_BASE + "/"):
-            raise ShapeError(f"page.next points outside the Archidekt API: {next_url}")
+    next_url = _next_link(page)
     decks: list[DeckSummary] = []
     for index, item in enumerate(req_list(page, "results", "page")):
         where = f"page.results[{index}]"

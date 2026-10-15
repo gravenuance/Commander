@@ -170,6 +170,34 @@ class Fetcher:
         self._sleep(delay)
 
 
+class Pacer:
+    """Spaces calls at least `interval` seconds apart, for services that ask for unhurried requests."""
+
+    def __init__(
+        self,
+        interval: float,
+        *,
+        sleep: Callable[[float], None] = time.sleep,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
+        if interval < 0:
+            raise ValueError("interval must not be negative")
+        self._interval = interval
+        self._sleep = sleep
+        self._monotonic = monotonic
+        self._last: float | None = None
+
+    def wait(self) -> None:
+        """Block until the next call may go out, then count it as sent."""
+        now = self._monotonic()
+        if self._last is not None:
+            remaining = self._last + self._interval - now
+            if remaining > 0:
+                self._sleep(remaining)
+                now += remaining
+        self._last = now
+
+
 def _retry_after_seconds(value: str | None, now: float) -> float | None:
     if value is None:
         return None

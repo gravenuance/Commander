@@ -50,6 +50,14 @@ def opt_int(obj: Mapping[str, object], key: str, where: str) -> int | None:
     return req_int(obj, key, where)
 
 
+def req_float(obj: Mapping[str, object], key: str, where: str) -> float:
+    """A number; JSON writes whole numbers such as 0 without a fraction, so an integer counts too."""
+    value = obj.get(key)
+    if not isinstance(value, int | float) or isinstance(value, bool):
+        raise ShapeError(f"{where}.{key}: expected a number")
+    return float(value)
+
+
 def req_bool(obj: Mapping[str, object], key: str, where: str) -> bool:
     value = obj.get(key)
     if not isinstance(value, bool):

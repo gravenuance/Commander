@@ -5,7 +5,14 @@ from pathlib import Path
 import httpx
 import pytest
 
-from commander.net import ERROR_DETAIL_BYTES, MAX_RESPONSE_BYTES, Fetcher, HttpStatusError, NetworkError
+from commander.net import (
+    ERROR_DETAIL_BYTES,
+    MAX_RESPONSE_BYTES,
+    Fetcher,
+    HttpStatusError,
+    NetworkError,
+    Pacer,
+)
 
 URL = "https://archidekt.com/api/decks/1/"
 
@@ -220,3 +227,26 @@ def test_a_rejected_write_keeps_a_short_printable_excerpt_of_the_answer() -> Non
     assert detail.startswith('{"error": "bad [31m card"}xxx')
     assert len(detail) <= ERROR_DETAIL_BYTES
     assert "x" * 50 not in str(raised.value)
+
+
+def test_pacer_spaces_calls_apart() -> None:
+    now = [10.0]
+    sleeps: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    pacer = Pacer(2.0, sleep=sleep, monotonic=lambda: now[0])
+    pacer.wait()
+    pacer.wait()
+    now[0] += 0.5
+    pacer.wait()
+    now[0] += 5.0
+    pacer.wait()
+    assert sleeps == [2.0, 1.5]
+
+
+def test_pacer_refuses_a_negative_interval() -> None:
+    with pytest.raises(ValueError, match="must not be negative"):
+        Pacer(-1.0)

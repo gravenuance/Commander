@@ -291,6 +291,44 @@ class FakeSpellbook:
         return httpx.Response(200, json=answer) if status == HTTP_OK else httpx.Response(status)
 
 
+EDHTOP16_API = "https://edhtop16.com/api/graphql"
+
+
+class FakeEdhtop16:
+    """Answers EDHTop16 GraphQL queries with trimmed real answers, one queued page per entries request.
+
+    `pages` maps a commander name to the answers its entries requests get, in order; an unknown commander gets
+    the real "no rows" answer. Every request's variables are recorded.
+    """
+
+    def __init__(self) -> None:
+        self.pages: dict[str, list[Json]] = {
+            "Ellivere of the Wild Court": [load_fixture("edhtop16_entries_ellivere.json")],
+            "Kinnan, Bonder Prodigy": [load_fixture("edhtop16_entries_kinnan_top.json")],
+        }
+        self.commanders: Json = load_fixture("edhtop16_commanders.json")
+        self.status = HTTP_OK
+        self.requests: list[Json] = []
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        if request.method != "POST" or str(request.url) != EDHTOP16_API:
+            return httpx.Response(404)
+        body: Json = json.loads(request.content)
+        variables: Json = body["variables"]
+        self.requests.append(variables)
+        if self.status != HTTP_OK:
+            return httpx.Response(self.status)
+        if "query Commanders" in body["query"]:
+            return httpx.Response(200, json=self.commanders)
+        queued = self.pages.get(variables["name"])
+        if not queued:
+            return httpx.Response(200, json=load_fixture("edhtop16_missing.json"))
+        return httpx.Response(200, json=queued.pop(0) if len(queued) > 1 else queued[0])
+
+    def client(self) -> httpx.Client:
+        return httpx.Client(transport=httpx.MockTransport(self.handler))
+
+
 class MemoryKeyring(keyring.backend.KeyringBackend):
     """Stands in for Windows Credential Manager, so no test can read or write the real one."""
 

@@ -1,0 +1,163 @@
+{
+ "data": {
+  "commander": {
+   "name": "Kinnan, Bonder Prodigy",
+   "entries": {
+    "pageInfo": {
+     "hasNextPage": true,
+     "endCursor": "2"
+    },
+    "edges": [
+     {
+      "node": {
+       "standing": 1,
+       "wins": 5,
+       "losses": 1,
+       "draws": 3,
+       "decklistUrl": "/tournament/test-open-5/decklist/TestDeckEeee0005",
+       "tournament": {
+        "TID": "test-open-5",
+        "name": "Test Open 5",
+        "tournamentDate": "2026-09-05T08:00:00.000Z",
+        "size": 120,
+        "topCut": 32
+       },
+       "decklistItems": [
+        {
+         "count": 1,
+         "spice": 0,
+         "card": {
+          "name": "Mana Crypt"
+         }
+        },
+        {
+         "count": 1,
+         "spice": 0,
+         "card": {
+          "name": "Sol Ring"
+         }
+        },
+        {
+         "count": 1,
+         "spice": 1,
+         "card": {
+          "name": "Basalt Monolith"
+         }
+        },
+        {
+         "count": 1,
+         "spice": 1,
+         "card": {
+          "name": "Rhystic Study"
+         }
+        },
+        {
+         "count": 1,
+         "spice": 1,
+         "card": {
+          "name": "Mystic Remora"
+         }
+        },
+        {
+         "count": 1,
+         "spice": 2,
+         "card": {
+          "name": "Walking Ballista"
+         }
+        },
+        {
+         "count": 1,
+         "spice": 0,
+         "card": {
+          "name": "Misty Rainforest"
+         }
+        },
+        {
+         "count": 1,
+         "spice": 1,
+         "card": {
+          "name": "Lotus Petal"
+         }
+        }
+       ]
+      }
+     },
+     {
+      "node": {
+       "standing": 1,
+       "wins": 5,
+       "losses": 2,
+       "draws": 0,
+       "decklistUrl": "/tournament/test-open-6/decklist/TestDeckFfff0006",
+       "tournament": {
+        "TID": "test-open-6",
+        "name": "Test Open 6",
+        "tournamentDate": "2026-10-07T16:00:00.000Z",
+        "size": 80,
+        "topCut": 16
+       },
+       "decklistItems": [
+        {
+         "count": 1,
+         "spice": 0,
+         "card": {
+          "name": "Mana Crypt"
+         }
+        },
+        {
+         "count": 1,
+         "spice": 0,
+         "card": {
+          "name": "Sol Ring"
+         }
+        },
+        {
+         "count": 1,
+         "spice": 1,
+         "card": {
+          "name": "Rhystic Study"
+         }
+        },
+        {
+         "count": 1,
+         "spice": 1,
+         "card": {
+          "name": "Mystic Remora"
+         }
+        },
+        {
+         "count": 1,
+         "spice": 4,
+         "card": {
+          "name": "Aluren"
+         }
+        },
+        {
+         "count": 1,
+         "spice": 3,
+         "card": {
+          "name": "Gemstone Caverns"
+         }
+        },
+        {
+         "count": 1,
+         "spice": 4,
+         "card": {
+          "name": "Circle of Dreams Druid"
+         }
+        },
+        {
+         "count": 1,
+         "spice": 1,
+         "card": {
+          "name": "Lotus Petal"
+         }
+        }
+       ]
+      }
+     }
+    ]
+   }
+  }
+ }
+}

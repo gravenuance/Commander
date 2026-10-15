@@ -1,0 +1,261 @@
+{
+ "count": 48,
+ "next": "http://archidekt.com/api/decks/v3/?commanderName=Ellivere+of+the+Wild+Court&edhBracket=5&formats=3&orderBy=-updatedAt&page=2&pageSize=50",
+ "results": [
+  {
+   "id": 10078393,
+   "name": "Let's not play together 🥂",
+   "owner": {
+    "id": 424063,
+    "username": "MAKKIS"
+   },
+   "viewCount": 1606,
+   "updatedAt": "2026-10-15T20:22:13.008608Z",
+   "createdAt": "2024-11-13T23:50:07.696146Z",
+   "edhBracket": 5,
+   "deckFormat": 3,
+   "size": 100,
+   "private": false,
+   "unlisted": false,
+   "theorycrafted": false
+  },
+  {
+   "id": 23204858,
+   "name": "Ellivere 500 BRL CEDH",
+   "owner": {
+    "id": 1001,
+    "username": "player1"
+   },
+   "viewCount": 171,
+   "updatedAt": "2026-10-15T00:04:51.756857Z",
+   "createdAt": "2026-06-04T06:29:56.343221Z",
+   "edhBracket": 5,
+   "deckFormat": 3,
+   "size": 100,
+   "private": false,
+   "unlisted": false,
+   "theorycrafted": false
+  },
+  {
+   "id": 7432856,
+   "name": "Ellivere,  Attorney at Claw",
+   "owner": {
+    "id": 1002,
+    "username": "player2"
+   },
+   "viewCount": 1782,
+   "updatedAt": "2026-10-07T02:30:42.162281Z",
+   "createdAt": "2024-04-21T01:14:26.552249Z",
+   "edhBracket": 5,
+   "deckFormat": 3,
+   "size": 100,
+   "private": false,
+   "unlisted": false,
+   "theorycrafted": false
+  },
+  {
+   "id": 11862500,
+   "name": "P.S. I Hate You 😌🫰🏾",
+   "owner": {
+    "id": 1003,
+    "username": "player3"
+   },
+   "viewCount": 673,
+   "updatedAt": "2026-10-02T03:14:49.455349Z",
+   "createdAt": "2025-03-12T18:05:51.895565Z",
+   "edhBracket": 5,
+   "deckFormat": 3,
+   "size": 100,
+   "private": false,
+   "unlisted": false,
+   "theorycrafted": false
+  },
+  {
+   "id": 13668856,
+   "name": "Welcome to Fight-Club",
+   "owner": {
+    "id": 1004,
+    "username": "player4"
+   },
+   "viewCount": 1847,
+   "updatedAt": "2026-09-28T17:02:59.833536Z",
+   "createdAt": "2025-06-08T16:31:40.053179Z",
+   "edhBracket": 5,
+   "deckFormat": 3,
+   "size": 101,
+   "private": false,
+   "unlisted": false,
+   "theorycrafted": false
+  },
+  {
+   "id": 26605316,
+   "name": "cellivere 2",
+   "owner": {
+    "id": 1005,
+    "username": "player5"
+   },
+   "viewCount": 20,
+   "updatedAt": "2026-09-20T16:52:11.255101Z",
+   "createdAt": "2026-09-20T16:35:25.127147Z",
+   "edhBracket": 5,
+   "deckFormat": 3,
+   "size": 96,
+   "private": false,
+   "unlisted": false,
+   "theorycrafted": false
+  },
+  {
+   "id": 26605393,
+   "name": "cellivere 3",
+   "owner": {
+    "id": 1005,
+    "username": "player5"
+   },
+   "viewCount": 27,
+   "updatedAt": "2026-09-20T16:39:58.332137Z",
+   "createdAt": "2026-09-20T16:37:40.248172Z",
+   "edhBracket": 5,
+   "deckFormat": 3,
+   "size": 100,
+   "private": false,
+   "unlisted": false,
+   "theorycrafted": false
+  },
+  {
+   "id": 26605186,
+   "name": "cellivere 1",
+   "owner": {
+    "id": 1005,
+    "username": "player5"
+   },
+   "viewCount": 41,
+   "updatedAt": "2026-09-20T16:34:56.996686Z",
+   "createdAt": "2026-09-20T16:31:20.703332Z",
+   "edhBracket": 5,
+   "deckFormat": 3,
+   "size": 100,
+   "private": false,
+   "unlisted": false,
+   "theorycrafted": false
+  },
+  {
+   "id": 20366951,
+   "name": "cEDH - Beatdown",
+   "owner": {
+    "id": 1006,
+    "username": "player6"
+   },
+   "viewCount": 244,
+   "updatedAt": "2026-09-19T23:12:06.418660Z",
+   "createdAt": "2026-02-26T23:49:50.784666Z",
+   "edhBracket": 5,
+   "deckFormat": 3,
+   "size": 100,
+   "private": false,
+   "unlisted": false,
+   "theorycrafted": false
+  },
+  {
+   "id": 5553433,
+   "name": "Ellivere of the Hateful Court [cEDH]",
+   "owner": {
+    "id": 1007,
+    "username": "player7"
+   },
+   "viewCount": 2131,
+   "updatedAt": "2026-09-08T19:23:58.963528Z",
+   "createdAt": "2023-10-05T04:57:21.042071Z",
+   "edhBracket": 5,
+   "deckFormat": 3,
+   "size": 100,
+   "private": false,
+   "unlisted": false,
+   "theorycrafted": false
+  },
+  {
+   "id": 26157222,
+   "name": "Ellivere, Mandaluyong Hatebears",
+   "owner": {
+    "id": 1008,
+    "username": "player8"
+   },
+   "viewCount": 62,
+   "updatedAt": "2026-09-07T06:43:22.343950Z",
+   "createdAt": "2026-09-07T06:27:10.193281Z",
+   "edhBracket": 5,
+   "deckFormat": 3,
+   "size": 100,
+   "private": false,
+   "unlisted": false,
+   "theorycrafted": false
+  },
+  {
+   "id": 25161352,
+   "name": "Elllivere beat down!",
+   "owner": {
+    "id": 1009,
+    "username": "player9"
+   },
+   "viewCount": 90,
+   "updatedAt": "2026-08-24T16:32:31.092646Z",
+   "createdAt": "2026-08-09T15:19:44.178394Z",
+   "edhBracket": 5,
+   "deckFormat": 3,
+   "size": 100,
+   "private": false,
+   "unlisted": false,
+   "theorycrafted": false
+  },
+  {
+   "id": 23074747,
+   "name": "Ellivere of the Wild Court cEDH",
+   "owner": {
+    "id": 1010,
+    "username": "player10"
+   },
+   "viewCount": 607,
+   "updatedAt": "2026-08-23T17:15:17.235049Z",
+   "createdAt": "2026-05-30T23:54:57.168274Z",
+   "edhBracket": 5,
+   "deckFormat": 3,
+   "size": 100,
+   "private": false,
+   "unlisted": false,
+   "theorycrafted": true
+  },
+  {
+   "id": 8155703,
+   "name": "cEDH Ellivere, Hate bears but swol",
+   "owner": {
+    "id": 1011,
+    "username": "player11"
+   },
+   "viewCount": 124,
+   "updatedAt": "2026-07-20T23:58:35.386720Z",
+   "createdAt": "2024-06-23T18:27:24.992184Z",
+   "edhBracket": 5,
+   "deckFormat": 3,
+   "size": 100,
+   "private": false,
+   "unlisted": false,
+   "theorycrafted": false
+  },
+  {
+   "id": 23333329,
+   "name": "Ellvire",
+   "owner": {
+    "id": 1012,
+    "username": "player12"
+   },
+   "viewCount": 56,
+   "updatedAt": "2026-06-08T20:37:46.309947Z",
+   "createdAt": "2026-06-08T17:42:52.121986Z",
+   "edhBracket": 5,
+   "deckFormat": 3,
+   "size": 108,
+   "private": false,
+   "unlisted": false,
+   "theorycrafted": false
+  }
+ ]
+}
