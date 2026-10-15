@@ -104,3 +104,14 @@ def test_missing_workspace_is_empty(tmp_path: Path) -> None:
     workspace = Workspace(tmp_path / "absent")
     assert workspace.load_all() == []
     assert workspace.load(1) is None
+
+
+def test_deck_folders_come_from_folder_names(tmp_path: Path) -> None:
+    for name in ("10004639-magda", "22344867", "notes", "x-123"):
+        (tmp_path / name).mkdir()
+    (tmp_path / "123-file.txt").write_text("", encoding="utf-8")
+    assert Workspace(tmp_path).deck_folders() == [
+        (10004639, tmp_path / "10004639-magda"),
+        (22344867, tmp_path / "22344867"),
+    ]
+    assert Workspace(tmp_path / "missing").deck_folders() == []

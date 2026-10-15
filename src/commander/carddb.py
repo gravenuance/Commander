@@ -59,6 +59,18 @@ _TAG_COUNT_QUERY = (
     + " SELECT count(DISTINCT oracle_id) FROM tag_member JOIN subtree ON tag_member.tag_id = subtree.tag_id"
 )
 MAX_TAG_MATCHES = 50
+MAX_NAME_MATCHES = 20
+_NAME_SEARCH_QUERY = f"""
+SELECT {_INFO_COLUMNS} FROM oracle
+WHERE commander_legal = 1 AND instr(name_key, :needle) > 0
+    AND (instr(:identity, 'W') > 0 OR instr(color_identity, 'W') = 0)
+    AND (instr(:identity, 'U') > 0 OR instr(color_identity, 'U') = 0)
+    AND (instr(:identity, 'B') > 0 OR instr(color_identity, 'B') = 0)
+    AND (instr(:identity, 'R') > 0 OR instr(color_identity, 'R') = 0)
+    AND (instr(:identity, 'G') > 0 OR instr(color_identity, 'G') = 0)
+ORDER BY instr(name_key, :needle) != 1, edhrec_rank IS NULL, edhrec_rank, name_key
+LIMIT :limit
+"""  # noqa: S608 — built from constant fragments; every value is bound
 
 _SCHEMA = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -353,6 +365,14 @@ class CardDb:
                     yield info
         except sqlite3.Error as error:
             raise CardDataError(f"card data is unreadable ({error}); run `cmdr sync --force`") from error
+
+    def search_names(self, text: str, identity: str, *, limit: int = MAX_NAME_MATCHES) -> list[CardInfo]:
+        """Legal cards in the identity whose name holds text: names starting with it first, then by play."""
+        needle = text.strip().casefold()
+        if not needle:
+            return []
+        params = {"needle": needle, "identity": identity, "limit": max(1, min(limit, MAX_NAME_MATCHES))}
+        return self._infos(self._query_named(_NAME_SEARCH_QUERY, params))
 
     def theme_candidates(
         self, theme: Theme, identity: str, *, exclude: Collection[str], max_cents: int | None = None

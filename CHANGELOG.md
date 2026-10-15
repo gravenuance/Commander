@@ -20,6 +20,11 @@
 - `cmdr suggest <deck> --to-board` puts its ideas on the board as suggested, with the deck's cut candidates as
   cards to replace; cards turned down on the board are never suggested again.
 
+- Desktop app: `cmdr app`, or `Commander.exe` built with PyInstaller, opens a window over every deck's
+  board (WebView2 through pywebview; no web server). Propose cards with name search, pick the card to cut,
+  add or turn down, review the queued changes against Archidekt and save them; it follows changes made from
+  the CLI or by Claude as they land. It logs to `%LOCALAPPDATA%\Commander\logs\commander.log`.
+
 ### Changed
 - The card database (schema 4) keeps each card's rules text, keywords and power/toughness, and every Tagger
   oracle tag with its sub-tags, not only the role tags. The next `cmdr sync` rebuilds it.

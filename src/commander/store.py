@@ -61,6 +61,13 @@ class Workspace:
             return None
         return _read_snapshot(folder / SNAPSHOT_FILE)
 
+    def deck_folders(self) -> list[tuple[int, Path]]:
+        """Each deck folder with its deck id, from the folder names alone; nothing is read."""
+        if not self.root.is_dir():
+            return []
+        found = ((_folder_deck_id(p.name), p) for p in sorted(self.root.iterdir()) if p.is_dir())
+        return [(deck_id, folder) for deck_id, folder in found if deck_id is not None]
+
     def load_all(self) -> list[StoredDeck]:
         if not self.root.is_dir():
             return []

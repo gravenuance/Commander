@@ -8,12 +8,19 @@ requires-python = ">=3.13,<3.14"
 dependencies = [
     "httpx==0.28.1",
     "keyring==25.7.0",
+    "pywebview==6.2.1",
 ]
 
 [project.scripts]
 cmdr = "commander.cli:main"
 
+[project.gui-scripts]
+commander = "commander.app_main:main"
+
 [dependency-groups]
+build = [
+    "pyinstaller==6.22.3",
+]
 dev = [
     "pytest==9.1.1",
     "ruff==0.17.0",

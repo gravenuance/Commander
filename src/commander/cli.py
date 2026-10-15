@@ -30,6 +30,7 @@ from commander.board import BoardError, BoardService, feed_suggestions, read_boa
 from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
 from commander.bracket import BracketReport, EstimateResult, bracket_cards, estimate_cache, estimate_decks
 from commander.carddb import CardDataError, Role
+from commander.cli_app import add_app_command
 from commander.cli_board import add_board_commands
 from commander.cli_cards import add_card_commands
 from commander.cli_output import (
@@ -306,6 +307,7 @@ def _build_parser() -> argparse.ArgumentParser:
     add_card_commands(commands.add_parser)
     add_profile_commands(commands.add_parser)
     add_board_commands(commands.add_parser)
+    add_app_command(commands.add_parser)
     _add_edit_commands(commands.add_parser)
     return parser
 

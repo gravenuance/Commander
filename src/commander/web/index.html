@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https://cards.scryfall.io; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Commander</title>
+<style>/*APP_CSS*/</style>
+</head>
+<body>
+<div class="app">
+  <nav class="decks" aria-label="Decks">
+    <p class="brand" aria-hidden="true">Commander</p>
+    <ul id="deck-list" class="deck-list"></ul>
+  </nav>
+
+  <main id="main" class="main" tabindex="-1">
+    <div id="loading" class="state" role="status">
+      <span class="spinner" aria-hidden="true"></span>
+      <span>Loading decks…</span>
+    </div>
+    <div id="no-decks" class="state" hidden>
+      <span class="state-icon" aria-hidden="true">🂠</span>
+      <span>No decks yet. Run <code>cmdr sync</code>.</span>
+    </div>
+
+    <section id="deck" class="deck" hidden aria-labelledby="deck-short">
+      <header class="deck-head">
+        <div class="deck-names">
+          <h1 id="deck-short" class="deck-short"></h1>
+          <p class="deck-sub">
+            <a id="deck-link" class="deck-title" href="#" title="Open on Archidekt"></a>
+            <span id="deck-bracket" class="chip"></span>
+          </p>
+          <p id="deck-archetype" class="archetype"></p>
+        </div>
+        <div class="head-actions">
+          <div class="propose" role="combobox" aria-haspopup="listbox" aria-owns="propose-results" aria-expanded="false" id="propose-box">
+            <input id="propose-input" type="search" placeholder="Propose a card" aria-label="Propose a card"
+                   aria-autocomplete="list" aria-controls="propose-results" autocomplete="off" spellcheck="false">
+            <ul id="propose-results" class="results" role="listbox" aria-label="Matching cards" hidden></ul>
+          </div>
+          <button id="review" class="button primary" type="button" disabled>Review changes</button>
+        </div>
+      </header>
+
+      <div class="columns">
+        <section class="column" aria-labelledby="h-suggested">
+          <h2 id="h-suggested" class="column-title">Suggested <span class="count" id="count-suggested"></span></h2>
+          <div id="list-suggested" class="cards"></div>
+          <p id="empty-suggested" class="empty" hidden>Nothing suggested. <code>cmdr suggest --to-board</code> adds ideas.</p>
+        </section>
+        <section class="column" aria-labelledby="h-considered">
+          <h2 id="h-considered" class="column-title">Considered <span class="count" id="count-considered"></span></h2>
+          <div id="list-considered" class="cards"></div>
+          <p id="empty-considered" class="empty" hidden>Nothing considered. Propose a card above.</p>
+        </section>
+      </div>
+
+      <details id="decided" class="decided">
+        <summary>Decided <span class="count" id="count-decided"></span></summary>
+        <div id="list-decided" class="cards compact"></div>
+      </details>
+    </section>
+  </main>
+
+  <aside class="activity" aria-labelledby="h-activity">
+    <h2 id="h-activity" class="column-title">Activity</h2>
+    <ol id="activity" class="activity-list"></ol>
+  </aside>
+</div>
+
+<dialog id="review-dialog" class="dialog" aria-labelledby="review-title">
+  <h2 id="review-title">Changes to <span id="review-deck"></span></h2>
+  <p id="review-size" class="muted"></p>
+  <div id="review-busy" class="state inline" role="status" hidden>
+    <span class="spinner" aria-hidden="true"></span><span id="review-busy-text"></span>
+  </div>
+  <ul id="review-changes" class="changes"></ul>
+  <ul id="review-problems" class="notes problems"></ul>
+  <ul id="review-warnings" class="notes warnings"></ul>
+  <div class="dialog-actions">
+    <button id="review-cancel" class="button" type="button">Keep editing</button>
+    <button id="review-save" class="button primary" type="button">Save to Archidekt</button>
+  </div>
+</dialog>
+
+<div id="status" class="status" role="status" aria-live="polite" hidden></div>
+<script>/*APP_JS*/</script>
+</body>
+</html>
