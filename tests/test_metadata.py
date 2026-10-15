@@ -191,3 +191,17 @@ def test_zero_peer_decks_and_meta_commanders_ask_nothing(rig: Rig) -> None:
     assert rig.archidekt.requests == []
     assert data.field.data == ()
     assert len(rig.edhtop16.requests) == 1
+
+
+def test_offline_reads_only_the_cache_whatever_its_age(rig: Rig) -> None:
+    empty = gather(ellivere_deck(), rig.sources(), rig.cache, now=lambda: NOW, refresh=False, offline=True)
+    assert empty.lists.source is AnswerSource.UNAVAILABLE
+    assert rig.edhtop16.requests == []
+    assert rig.archidekt.requests == []
+    rig.gather()
+    asked = len(rig.edhtop16.requests)
+    later = NOW + timedelta(days=3)
+    old = gather(ellivere_deck(), rig.sources(), rig.cache, now=lambda: later, refresh=False, offline=True)
+    assert old.lists.source is AnswerSource.STALE
+    assert old.lists.data is not None
+    assert len(rig.edhtop16.requests) == asked

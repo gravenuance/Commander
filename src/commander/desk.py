@@ -8,7 +8,7 @@ several threads, and a SQLite connection belongs to one.
 import logging
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from functools import wraps
 from pathlib import Path
@@ -16,7 +16,7 @@ from pathlib import Path
 import httpx
 
 from commander.apply import NotYourDeckError, Resolution, SaveError
-from commander.archidekt import ArchidektError
+from commander.archidekt import SEARCH_INTERVAL_SECONDS, ArchidektError, ArchidektSearch
 from commander.archidekt_edit import ArchidektAuth, ArchidektEditor, AuthError
 from commander.board import (
     Actor,
@@ -32,11 +32,15 @@ from commander.board import (
 )
 from commander.boardsave import preview_board, save_board
 from commander.carddb import CardDataError, CardDb, CardInfo
+from commander.cli_meta import report_json
 from commander.cli_output import change_mark, change_text
-from commander.config import ConfigError
+from commander.config import ConfigError, MetaSettings
 from commander.credentials import CredentialError, TokenStore
 from commander.deckprofile import read_profile
-from commander.net import Fetcher, NetworkError
+from commander.edhtop16 import REQUEST_INTERVAL_SECONDS, SLOW_QUERY_SECONDS, Edhtop16Client, Edhtop16Error
+from commander.meta import analyse
+from commander.metadata import MetaSources, gather
+from commander.net import Fetcher, NetworkError, Pacer
 from commander.store import StoredDeck, Workspace, WorkspaceError
 from commander.suggest import deck_identity
 
@@ -50,6 +54,7 @@ _EXPECTED = (
     ConfigError,
     NetworkError,
     ArchidektError,
+    Edhtop16Error,
     AuthError,
     CredentialError,
     SaveError,
@@ -84,8 +89,14 @@ def _guarded[**P](method: Callable[P, Json]) -> Callable[P, Json]:
 class DeskSettings:
     workspace: Path
     card_db: Path
-    # None until `cmdr init` sets a username; previews and saves need it.
+    # None until `cmdr init` sets a username; previews, saves and meta refreshes need it.
     user: str | None
+    meta: MetaSettings = field(default_factory=MetaSettings)
+
+    @property
+    def cache(self) -> Path:
+        # The card database lives in the cache folder, beside the meta answers.
+        return self.card_db.parent
 
 
 class Desk:
@@ -96,8 +107,10 @@ class Desk:
         client_factory: Callable[[], httpx.Client],
         token_store: TokenStore,
         now: Callable[[], datetime],
+        pacer_factory: Callable[[float], Pacer] = Pacer,
     ) -> None:
         self._settings = settings
+        self._pacer_factory = pacer_factory
         self._workspace = Workspace(settings.workspace)
         self._client_factory = client_factory
         self._token_store = token_store
@@ -218,6 +231,42 @@ class Desk:
         view["mismatches"] = list(result.mismatches) if result else []
         view["applied"] = list(saved.applied)
         return view
+
+    @_guarded
+    def meta(self, deck_id: int) -> Json:
+        """The deck's meta report from cached answers only, so the panel opens at once."""
+        return self._meta(deck_id, offline=True)
+
+    @_guarded
+    def refresh_meta(self, deck_id: int) -> Json:
+        """Fetch the meta answers again (about a minute when nothing is cached), then report."""
+        self._user()
+        return self._meta(deck_id, offline=False)
+
+    def _meta(self, deck_id: int, *, offline: bool) -> Json:
+        stored = self._stored(deck_id)
+        with self._db() as db, self._client_factory() as http:
+            sources = MetaSources(
+                Edhtop16Client(
+                    Fetcher(http, slow_after=SLOW_QUERY_SECONDS),
+                    self._pacer_factory(REQUEST_INTERVAL_SECONDS),
+                ),
+                ArchidektSearch(Fetcher(http), self._pacer_factory(SEARCH_INTERVAL_SECONDS)),
+                self._settings.user or "",
+                self._settings.meta,
+            )
+            data = gather(
+                stored.deck,
+                sources,
+                self._settings.cache,
+                now=self._now,
+                refresh=not offline,
+                offline=offline,
+            )
+            report = analyse(stored.deck, data, read_profile(stored.folder), db)
+        if data.lists.data is None and data.field.data is None and data.peers.data is None:
+            return {"report": None, "errors": [] if offline else [s.error for s in report.sources if s.error]}
+        return {"report": report_json(report)}
 
     def _stored(self, deck_id: int) -> StoredDeck:
         folder = self._workspace.folder_for(int(deck_id))

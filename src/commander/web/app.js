@@ -112,6 +112,9 @@ async function openDeck(id) {
     state.tiles.clear();
     for (const name of ["suggested", "considered", "decided"]) $(`list-${name}`).replaceChildren();
     renderDecks();
+    renderMeta(id, null);
+    $("meta-empty").hidden = true;
+    loadMeta();
   }
   await loadDeck();
 }
@@ -407,6 +410,108 @@ async function saveChanges() {
   }
 }
 
+/* Meta: tournament and Archidekt lists for the deck's commander */
+
+const metaState = { key: null, deck: null, busy: false };
+const pct = (share) => `${Math.round(share * 100)}%`;
+
+function setupMeta() {
+  $("meta").addEventListener("toggle", () => { if ($("meta").open) loadMeta(); });
+  $("meta-refresh").addEventListener("click", refreshMeta);
+}
+
+async function loadMeta() {
+  if (state.current === null || !$("meta").open || metaState.busy) return;
+  const deck = state.current;
+  try {
+    const answer = await api("meta", deck);
+    if (deck === state.current) renderMeta(deck, answer.report);
+  } catch { /* shown in the status line */ }
+}
+
+async function refreshMeta() {
+  const deck = state.current;
+  metaState.busy = true;
+  $("meta-busy").hidden = false;
+  $("meta-refresh").disabled = true;
+  try {
+    const answer = await api("refresh_meta", deck);
+    if (deck === state.current) renderMeta(deck, answer.report);
+    if (!answer.report && answer.errors.length) showStatus(answer.errors[0], true);
+  } catch { /* shown in the status line */ }
+  metaState.busy = false;
+  $("meta-busy").hidden = true;
+  $("meta-refresh").disabled = false;
+}
+
+function renderMeta(deck, report) {
+  const key = JSON.stringify(report);
+  if (metaState.deck === deck && metaState.key === key) return;
+  metaState.deck = deck;
+  metaState.key = key;
+  $("meta-empty").hidden = Boolean(report);
+  $("meta-thin").hidden = !report || !report.sample.thin;
+  $("meta-count").textContent = report ? `(${report.missing.length})` : "";
+  if (!report) {
+    $("meta-sample").textContent = "";
+    $("meta-body").replaceChildren();
+    return;
+  }
+  const s = report.sample;
+  const fetched = report.sources.map((src) => src.fetchedAt).filter(Boolean).sort()[0];
+  $("meta-sample").textContent = [
+    s.known ? `${s.withLists} lists, ${s.topCuts} top cuts since ${report.since}` : "No EDHTop16 lists",
+    fetched ? `data from ${new Date(fetched).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}` : "",
+  ].filter(Boolean).join(" · ");
+  const peers = report.peers.length;
+  $("meta-body").replaceChildren(
+    metaTable("Staples you don't play", ["Lists", "Archidekt", "Card", ""], report.missing.map((c) => [
+      pct(c.share), `${c.peerLists}/${peers}`,
+      el("span", {}, document.createTextNode(c.name), c.onSideboard ? el("span", { class: "badge status", text: "Maybeboard" }) : null),
+      el("button", { class: "button small", type: "button", text: "Consider", "aria-label": `Consider ${c.name}`, onclick: () => propose(c.name) }),
+    ])),
+    metaTable("Spicy picks", ["Spice", "Lists", "Card", "Best finish"], report.spicy.map((p) => [
+      String(p.spice), String(p.lists), p.name, `${p.best.standing} of ${p.best.size}, ${p.best.date}`,
+    ])),
+    metaTable("Your own picks", ["Lists", "Archidekt", "Card"], report.outliers.map((c) => [
+      pct(c.share), `${c.peerLists}/${peers}`,
+      el("span", {}, document.createTextNode(c.name), c.kept ? el("span", { class: "badge status", text: "Kept" }) : null),
+    ])),
+    metaThreats(report),
+    metaTable("Top commanders", ["Entries", "Top cuts", "Conversion", "Commander"], report.field.map((f) => [
+      String(f.entries), String(f.topCuts), pct(f.conversion), f.commander,
+    ])),
+    metaTable("Archidekt decks", ["Views", "Updated", "Deck"], report.peers.map((p) => [
+      String(p.views), p.updatedAt.slice(0, 10),
+      el("a", { href: p.url, target: "_blank", rel: "noopener", text: p.name, title: "Open on Archidekt" }),
+    ])),
+  );
+}
+
+function metaThreats(report) {
+  const total = report.field.reduce((sum, f) => sum + f.metaShare, 0);
+  const rows = report.threats.slice(0, 15).map((t) => [
+    total ? pct(t.exposure / total) : "",
+    t.name,
+    t.kinds.join(", "),
+    t.hits.length === report.keyPieces.length ? "every key piece" : t.hits.join(", "),
+  ]);
+  return metaTable("Meta answers to your key pieces", ["Share", "Card", "Kind", "Hits"], rows);
+}
+
+function metaTable(title, headings, rows) {
+  const id = `meta-${title.toLowerCase().replace(/[^a-z]+/g, "-")}`;
+  const section = el("section", { class: "meta-section", "aria-labelledby": id }, el("h3", { id, text: title }));
+  if (!rows.length) {
+    section.append(el("p", { class: "empty", text: "None" }));
+    return section;
+  }
+  const head = el("tr", {}, ...headings.map((h) => el("th", { scope: "col", text: h })));
+  const body = rows.map((cells) => el("tr", {}, ...cells.map((cell) => el("td", {}, typeof cell === "string" ? document.createTextNode(cell) : cell))));
+  section.append(el("table", { class: "meta-table" }, el("thead", {}, head), el("tbody", {}, ...body)));
+  return section;
+}
+
 /* Keeping up with changes from the CLI and Claude */
 
 async function refresh() {
@@ -434,6 +539,7 @@ async function poll() {
 window.addEventListener("pywebviewready", async () => {
   setupPropose();
   setupReview();
+  setupMeta();
   try {
     await loadDecks();
     const answer = await window.pywebview.api.stamps();

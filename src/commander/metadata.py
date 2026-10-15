@@ -51,7 +51,13 @@ CACHE_VERSION = 1
 CACHE_FOLDER = "meta"
 # Enough for the busiest commanders' two months; the client stops at its page cap before this anyway.
 MAX_OWN_ENTRIES = 400
-_ERRORS = (NetworkError, Edhtop16Error, ArchidektError)
+
+
+class NotFetchedError(Exception):
+    """Raised in place of a request when gathering may only read the cache."""
+
+
+_ERRORS = (NetworkError, Edhtop16Error, ArchidektError, NotFetchedError)
 
 Progress = Callable[[str], None]
 
@@ -112,9 +118,13 @@ def gather(
     *,
     now: Clock,
     refresh: bool,
+    offline: bool = False,
     on_progress: Progress | None = None,
 ) -> MetaData:
-    """Everything `cmdr meta` reads about the deck's commander, from cache when it is under a day old."""
+    """Everything `cmdr meta` reads about the deck's commander, from cache when it is under a day old.
+
+    offline reads only the cache, whatever its age: an older copy comes back stale, none unavailable.
+    """
     if not deck.commanders:
         raise ValueError(f"{deck.name} has no commander")
     name = commander_name(deck.commanders)
@@ -132,7 +142,7 @@ def gather(
         return cached_answer(
             cache_item("edhtop16", name),
             request,
-            lambda _: _own_entries(sources.edhtop16, name, since, settings),
+            _live(offline, lambda: _own_entries(sources.edhtop16, name, since, settings)),
             _cache(folder, "EDHTop16 lists", _encode_entries, _decode_entries),
             now=now,
             refresh=refresh,
@@ -151,7 +161,7 @@ def gather(
         return cached_answer(
             "edhtop16-meta",
             request,
-            lambda _: _meta_field(sources.edhtop16, since, settings),
+            _live(offline, lambda: _meta_field(sources.edhtop16, since, settings)),
             _cache(folder, "EDHTop16 meta", _encode_field, _decode_field),
             now=now,
             refresh=refresh,
@@ -170,7 +180,7 @@ def gather(
         return cached_answer(
             cache_item("archidekt", deck.commanders[0], str(deck.bracket)),
             request,
-            lambda _: _peer_lists(sources, deck, since, settings),
+            _live(offline, lambda: _peer_lists(sources, deck, since, settings)),
             _cache(folder, "Archidekt decks", _encode_peers, _decode_peers),
             now=now,
             refresh=refresh,
@@ -183,6 +193,15 @@ def gather(
     meta = in_background(field, name="meta-field")
     peer = in_background(peers, name="meta-peers")
     return MetaData(name, since, own.result(), meta.result(), peer.result())
+
+
+def _live[T](offline: bool, fetch: Callable[[], T]) -> Callable[[Mapping[str, object]], T]:  # noqa: FBT001 — mirrors gather's flag
+    def run(_: Mapping[str, object]) -> T:
+        if offline:
+            raise NotFetchedError("not fetched yet")
+        return fetch()
+
+    return run
 
 
 def _own_entries(client: Edhtop16Client, name: str, since: date, settings: MetaSettings) -> CommanderEntries:

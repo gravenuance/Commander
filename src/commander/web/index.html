@@ -29,7 +29,7 @@
         <div class="deck-names">
           <h1 id="deck-short" class="deck-short"></h1>
           <p class="deck-sub">
-            <a id="deck-link" class="deck-title" href="#" title="Open on Archidekt"></a>
+            <a id="deck-link" class="deck-title" href="#" target="_blank" rel="noopener" title="Open on Archidekt"></a>
             <span id="deck-bracket" class="chip"></span>
           </p>
           <p id="deck-archetype" class="archetype"></p>
@@ -60,6 +60,21 @@
       <details id="decided" class="decided">
         <summary>Decided <span class="count" id="count-decided"></span></summary>
         <div id="list-decided" class="cards compact"></div>
+      </details>
+
+      <details id="meta" class="decided meta">
+        <summary>Meta <span class="count" id="meta-count"></span></summary>
+        <div class="meta-head">
+          <p id="meta-sample" class="muted"></p>
+          <span id="meta-thin" class="badge status thin" title="Few top cuts or lists: shares are hints" hidden>Thin data</span>
+          <span class="spacer"></span>
+          <button id="meta-refresh" class="button small" type="button">Refresh meta</button>
+        </div>
+        <div id="meta-busy" class="state inline" role="status" hidden>
+          <span class="spinner" aria-hidden="true"></span><span>Fetching tournament and Archidekt data…</span>
+        </div>
+        <p id="meta-empty" class="empty" hidden><span aria-hidden="true">📊</span> No meta data yet. Refresh to fetch it.</p>
+        <div id="meta-body" class="meta-body"></div>
       </details>
     </section>
   </main>

@@ -12,8 +12,10 @@ from commander import desk as desk_module
 from commander.app import desk_settings, page_html
 from commander.carddb import CARD_DB_FILE
 from commander.desk import Desk, DeskSettings
+from commander.net import Pacer
 from conftest import REFRESH_TOKEN, FakeArchidekt, Json, MemoryTokenStore
 from test_cli_apply import run
+from test_cli_meta import MAGDA, magda_page
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 DECK = 10004639
@@ -41,7 +43,13 @@ def settings(tmp_path: Path, card_db_file: Path, fake: FakeArchidekt) -> DeskSet
 
 def make_desk(settings: DeskSettings, fake: FakeArchidekt, *, signed_in: bool = True) -> Desk:
     tokens = MemoryTokenStore({"makkis": REFRESH_TOKEN} if signed_in else {})
-    return Desk(settings, client_factory=fake.client, token_store=tokens, now=lambda: NOW)
+    return Desk(
+        settings,
+        client_factory=fake.client,
+        token_store=tokens,
+        now=lambda: NOW,
+        pacer_factory=lambda _: Pacer(0),
+    )
 
 
 @pytest.fixture
@@ -173,3 +181,29 @@ def test_settings_without_a_username_still_open(tmp_path: Path) -> None:
     settings = desk_settings(env, config=None, workspace=None, user=None)
     assert (settings.workspace, settings.user) == (tmp_path / "decks", None)
     assert settings.card_db == tmp_path / "Commander" / CARD_DB_FILE
+
+
+def test_meta_opens_from_cache_and_refreshes_on_demand(desk: Desk, fake: FakeArchidekt) -> None:
+    fake.edhtop16.pages[MAGDA] = [magda_page()]
+    assert desk.meta(DECK) == {"report": None, "errors": []}
+    assert fake.edhtop16.requests == []
+    fresh = desk.refresh_meta(DECK)
+    report = cast("Json", fresh["report"])
+    assert [m["name"] for m in cast("list[Json]", report["missing"])] == ["Mind Stone", "Jeska's Will"]
+    asked = len(fake.edhtop16.requests)
+    cached = cast("Json", desk.meta(DECK)["report"])
+    assert cached["missing"] == report["missing"]
+    assert len(fake.edhtop16.requests) == asked
+
+
+def test_a_failed_refresh_with_nothing_cached_says_why(desk: Desk, fake: FakeArchidekt) -> None:
+    fake.edhtop16.status = 403
+    fake.peer_page = {"bad": True}
+    answer = desk.refresh_meta(DECK)
+    assert answer["report"] is None
+    assert any("HTTP 403" in str(e) for e in names(answer, "errors"))
+
+
+def test_refreshing_meta_needs_a_username(settings: DeskSettings, fake: FakeArchidekt) -> None:
+    nameless = make_desk(DeskSettings(settings.workspace, settings.card_db, None), fake)
+    assert nameless.refresh_meta(DECK) == {"error": "no Archidekt username; run `cmdr init` first"}
