@@ -147,7 +147,8 @@ class Edhtop16Client:
         self, commander: str, *, since: date, min_event_size: int, sort: EntrySort, limit: int
     ) -> tuple[Entry, ...] | None:
         """The commander's entries from events on or after `since`, in `sort` order, or None for a commander
-        EDHTop16 doesn't know. Newest-first reading stops at the first page that reaches past `since`."""
+        EDHTop16 doesn't know. Newest-first reading stops at the first page that reaches past `since`;
+        best-first reading reads one page of `limit` and keeps the entries inside the window."""
         found: list[Entry] = []
         after: str | None = None
         for _ in range(MAX_PAGES):
@@ -168,7 +169,8 @@ class Edhtop16Client:
             entries, after = page
             found.extend(entry for entry in entries if entry.tournament.held_on >= since)
             reached_past = any(entry.tournament.held_on < since for entry in entries)
-            if after is None or len(found) >= limit or (sort is EntrySort.NEW and reached_past):
+            # Best-first reading takes one page: further pages only hold worse placings.
+            if after is None or len(found) >= limit or sort is EntrySort.TOP or reached_past:
                 break
         return tuple(found[:limit])
 

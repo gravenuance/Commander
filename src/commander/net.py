@@ -3,6 +3,7 @@
 import json
 import logging
 import random
+import threading
 import time
 from collections.abc import Callable, Mapping
 from email.utils import parsedate_to_datetime
@@ -171,7 +172,8 @@ class Fetcher:
 
 
 class Pacer:
-    """Spaces calls at least `interval` seconds apart, for services that ask for unhurried requests."""
+    """Spaces calls at least `interval` seconds apart, across threads, for services that ask for unhurried
+    requests."""
 
     def __init__(
         self,
@@ -186,16 +188,19 @@ class Pacer:
         self._sleep = sleep
         self._monotonic = monotonic
         self._last: float | None = None
+        self._lock = threading.Lock()
 
     def wait(self) -> None:
         """Block until the next call may go out, then count it as sent."""
-        now = self._monotonic()
-        if self._last is not None:
-            remaining = self._last + self._interval - now
-            if remaining > 0:
-                self._sleep(remaining)
-                now += remaining
-        self._last = now
+        # Sleeping under the lock queues the other threads behind this call, each its interval later.
+        with self._lock:
+            now = self._monotonic()
+            if self._last is not None:
+                remaining = self._last + self._interval - now
+                if remaining > 0:
+                    self._sleep(remaining)
+                    now += remaining
+            self._last = now
 
 
 def _retry_after_seconds(value: str | None, now: float) -> float | None:

@@ -23,6 +23,32 @@ TARGET_KEYS: Mapping[str, Role] = {role.value.replace(" ", "_"): role for role i
 MAX_TARGET = 99
 
 
+@dataclass(slots=True, frozen=True)
+class MetaSettings:
+    """How `cmdr meta` samples tournament and Archidekt data; set in the config's [meta] table."""
+
+    # Only events and deck updates this many days back count.
+    window_days: int = 60
+    # Smaller events say little about a list; EDHTop16 itself defaults to 16 players.
+    min_event_size: int = 16
+    # Most-viewed recent Archidekt decks read in full per commander.
+    peer_decks: int = 10
+    # Most-played commanders whose lists are searched for answers to the deck's key pieces.
+    meta_commanders: int = 10
+    # Best-placed lists read per meta commander.
+    meta_lists: int = 30
+
+
+# Each [meta] key with its smallest and largest allowed value; the window can't exceed the API's three months.
+META_LIMITS: Mapping[str, tuple[int, int]] = {
+    "window_days": (7, 90),
+    "min_event_size": (0, 1000),
+    "peer_decks": (0, 25),
+    "meta_commanders": (0, 25),
+    "meta_lists": (1, 50),
+}
+
+
 class ConfigError(Exception):
     """Settings are missing or invalid; the message says how to fix it."""
 
@@ -33,6 +59,7 @@ class FileConfig:
     workspace: Path | None
     # How many cards of a role a deck should have, overriding suggest's defaults.
     targets: Mapping[Role, int] = field(default_factory=dict[Role, int])
+    meta: MetaSettings = field(default_factory=MetaSettings)
 
 
 def default_config_path(env: Mapping[str, str]) -> Path:
@@ -73,7 +100,8 @@ def read_config(path: Path) -> FileConfig:
     if workspace is not None and not isinstance(workspace, str):
         raise ConfigError(f"{path}: 'workspace' must be a string")
     targets = parse_targets(raw.get("targets"), str(path))
-    return FileConfig(user, Path(workspace) if workspace else None, targets)
+    meta = parse_meta(raw.get("meta"), str(path))
+    return FileConfig(user, Path(workspace) if workspace else None, targets, meta)
 
 
 def write_config(path: Path, user: str, workspace: Path) -> None:
@@ -137,6 +165,24 @@ def parse_targets(table: object, path: str) -> dict[Role, int]:
             raise ConfigError(f"{path}: targets.{key} must be a whole number from 0 to {MAX_TARGET}")
         targets[role] = value
     return targets
+
+
+def parse_meta(table: object, path: str) -> MetaSettings:
+    """The config's [meta] table, checked; keys left out keep their defaults."""
+    if table is None:
+        return MetaSettings()
+    if not isinstance(table, dict):
+        raise ConfigError(f"{path}: 'meta' must be a table, like [meta] with window_days = 60")
+    values: dict[str, int] = {}
+    for key, value in cast("dict[str, object]", table).items():
+        limits = META_LIMITS.get(key)
+        if limits is None:
+            raise ConfigError(f"{path}: unknown key {key!r} in [meta]; use {', '.join(META_LIMITS)}")
+        low, high = limits
+        if not isinstance(value, int) or isinstance(value, bool) or not low <= value <= high:
+            raise ConfigError(f"{path}: meta.{key} must be a whole number from {low} to {high}")
+        values[key] = value
+    return MetaSettings(**values)
 
 
 def _toml_string(value: str) -> str:

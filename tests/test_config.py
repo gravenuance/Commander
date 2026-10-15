@@ -6,6 +6,7 @@ from commander.carddb import Role
 from commander.config import (
     ConfigError,
     FileConfig,
+    MetaSettings,
     config_path,
     read_config,
     resolve_user,
@@ -120,3 +121,27 @@ def test_a_byte_order_mark_is_accepted(tmp_path: Path) -> None:
     path.write_bytes(b"\xef\xbb\xbf" + b'version = 1\nuser = "MAKKIS"\n')
 
     assert read_config(path).user == "MAKKIS"
+
+
+def test_meta_settings_default_and_read_from_the_file(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text("version = 1\n[meta]\nwindow_days = 30\npeer_decks = 0\n", encoding="utf-8")
+    assert read_config(path).meta == MetaSettings(window_days=30, peer_decks=0)
+    assert MetaSettings() == MetaSettings(60, 16, 10, 10, 30)
+
+
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        ("meta = 3", "'meta' must be a table"),
+        ("[meta]\nwindow = 30", r"unknown key 'window' in \[meta\]"),
+        ("[meta]\nwindow_days = 91", "meta.window_days must be a whole number from 7 to 90"),
+        ("[meta]\nmeta_lists = 0", "meta.meta_lists must be a whole number from 1 to 50"),
+        ("[meta]\npeer_decks = true", "meta.peer_decks must be a whole number from 0 to 25"),
+    ],
+)
+def test_bad_meta_settings_are_refused(tmp_path: Path, body: str, message: str) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(f"version = 1\n{body}\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match=message):
+        read_config(path)

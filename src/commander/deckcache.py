@@ -3,6 +3,7 @@
 import hashlib
 import json
 import logging
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -13,6 +14,9 @@ from commander.fsutil import write_text_atomic
 from commander.jsonshape import ShapeError, as_object, req_str
 
 log = logging.getLogger(__name__)
+
+# Cache entries named by text instead of a deck id must be safe as a file name on their own.
+_SAFE_ITEM = re.compile(r"[a-z0-9][a-z0-9-]{0,99}")
 
 Clock = Callable[[], datetime]
 
@@ -44,7 +48,8 @@ class CachedAnswer[T]:
 
 
 class DeckCache[T]:
-    """One JSON file per deck; unreadable files, other versions and other card lists count as missing."""
+    """One JSON file per deck (or per named item); unreadable files, other versions and other requests count
+    as missing."""
 
     def __init__(
         self,
@@ -61,8 +66,8 @@ class DeckCache[T]:
         self._encode = encode
         self._decode = decode
 
-    def load(self, deck_id: int, key: str) -> CachedAnswer[T] | None:
-        path = self._path(deck_id)
+    def load(self, item: int | str, key: str) -> CachedAnswer[T] | None:
+        path = self._path(item)
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except FileNotFoundError:
@@ -84,17 +89,19 @@ class DeckCache[T]:
             return None
         return CachedAnswer(data, fetched_at)
 
-    def save(self, deck_id: int, key: str, data: T, fetched_at: datetime) -> None:
+    def save(self, item: int | str, key: str, data: T, fetched_at: datetime) -> None:
         document = {
             "version": self._version,
             "key": key,
             "fetchedAt": fetched_at.isoformat(),
             "answer": self._encode(data),
         }
-        write_text_atomic(self._path(deck_id), json.dumps(document, ensure_ascii=False, indent=1) + "\n")
+        write_text_atomic(self._path(item), json.dumps(document, ensure_ascii=False, indent=1) + "\n")
 
-    def _path(self, deck_id: int) -> Path:
-        return self._folder / f"{deck_id}.json"
+    def _path(self, item: int | str) -> Path:
+        if isinstance(item, str) and not _SAFE_ITEM.fullmatch(item):
+            raise ValueError(f"cache item {item!r} is not a safe file name")
+        return self._folder / f"{item}.json"
 
 
 def request_key(request: Mapping[str, object]) -> str:
@@ -103,8 +110,15 @@ def request_key(request: Mapping[str, object]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def cache_item(*parts: str) -> str:
+    """A safe cache item name for text such as a commander's name: a readable slug plus a short hash."""
+    text = " ".join(parts)
+    slug = re.sub(r"[^a-z0-9]+", "-", text.casefold()).strip("-")[:60] or "item"
+    return f"{slug}-{hashlib.sha256(text.encode('utf-8')).hexdigest()[:8]}"
+
+
 def cached_answer[T](
-    deck_id: int,
+    item: int | str,
     request: Mapping[str, object],
     fetch: Callable[[Mapping[str, object]], T],
     cache: DeckCache[T],
@@ -116,19 +130,23 @@ def cached_answer[T](
 ) -> Answer[T]:
     """A recent cached answer, else a fresh one; if fetching fails with one of errors, the last good one."""
     key = request_key(request)
-    cached = cache.load(deck_id, key)
+    cached = cache.load(item, key)
     if cached is not None and not refresh and now() - cached.fetched_at < fresh_for:
         return Answer(cached.data, AnswerSource.CACHED, cached.fetched_at, None)
     try:
         data = fetch(request)
     except errors as error:
-        log.info("%s for deck %d failed: %s", cache.what, deck_id, error)
+        log.info("%s for %s failed: %s", cache.what, _label(item), error)
         if cached is not None:
             return Answer(cached.data, AnswerSource.STALE, cached.fetched_at, str(error))
         return Answer(None, AnswerSource.UNAVAILABLE, None, str(error))
     fetched_at = now()
     try:
-        cache.save(deck_id, key, data, fetched_at)
+        cache.save(item, key, data, fetched_at)
     except OSError as error:
-        log.warning("could not cache the %s for deck %d: %s", cache.what, deck_id, error)
+        log.warning("could not cache the %s for %s: %s", cache.what, _label(item), error)
     return Answer(data, AnswerSource.FETCHED, fetched_at, None)
+
+
+def _label(item: int | str) -> str:
+    return f"deck {item}" if isinstance(item, int) else item

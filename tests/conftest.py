@@ -175,8 +175,8 @@ def write_bulk(
     return cards_gz, tags_gz
 
 
-def build_card_db(folder: Path) -> Path:
-    cards_gz, tags_gz = write_bulk(folder / "bulk")
+def build_card_db(folder: Path, extra_tags: list[str] | None = None) -> Path:
+    cards_gz, tags_gz = write_bulk(folder / "bulk", tags=tag_lines() + (extra_tags or []))
     path = folder / CARD_DB_FILE
     meta = CardDataMeta(CARDS_UPDATED_AT, TAGS_UPDATED_AT, "2026-10-15T12:00:00+00:00")
     tags = read_tags(tags_gz)
