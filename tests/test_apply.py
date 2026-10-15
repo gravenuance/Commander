@@ -576,3 +576,93 @@ def test_add_skips_non_regular_printings_unless_the_plan_names_the_set(deck: Dec
 
     assert (default.changes[0].set_code, default.changes[0].price_cents) == ("uma", 10264)
     assert (named.changes[0].set_code, named.changes[0].price_cents) == ("wc99", 4163)
+
+
+HOVERBIKE_ENTRY = 3096264032
+TEMPESTRA_ENTRY = 3115861444
+
+
+def test_a_cut_to_the_maybeboard_keeps_the_entry_and_its_categories(deck: Deck, db: CardDb) -> None:
+    resolution = resolve_plan(deck, plan(remove=[RemoveCard("Battered Golem", maybeboard=True)]), db)
+    [moved] = resolution.changes
+    assert (moved.kind, moved.entry_id, moved.before, moved.after) == (
+        ChangeKind.SET_ASIDE,
+        GOLEM_ENTRY,
+        1,
+        1,
+    )
+    # Maybeboard first, so the card leaves the deck; its own categories stay for moving it back.
+    assert (moved.category, moved.categories, moved.in_deck) == (
+        "Maybeboard",
+        ("Maybeboard", "Combo Pieces", "Ramp"),
+        False,
+    )
+    assert (resolution.main_before, resolution.main_after) == (MAIN_CARDS, MAIN_CARDS - 1)
+
+
+def test_adding_a_maybeboard_card_moves_its_entry_into_the_deck(deck: Deck, db: CardDb) -> None:
+    resolution = resolve_plan(deck, plan([AddCard("High-Speed Hoverbike")]), db)
+    [moved] = resolution.changes
+    assert (moved.kind, moved.entry_id, moved.after) == (ChangeKind.MOVE_IN, HOVERBIKE_ENTRY, 1)
+    # Its printing stays; with no category of its own besides Maybeboard it is filed by type.
+    assert (moved.category, moved.categories, moved.in_deck) == ("Artifact", ("Artifact",), True)
+    assert moved.set_code == next(c for c in deck.cards if c.name == "High-Speed Hoverbike").set_code
+    assert resolution.main_after == MAIN_CARDS + 1
+
+
+def test_moving_back_restores_the_categories_kept_behind_the_maybeboard(deck: Deck, db: CardDb) -> None:
+    golem = next(c for c in deck.cards if c.name == "Battered Golem")
+    aside = replace(golem, categories=("Maybeboard", "Combo Pieces", "Ramp"), in_deck=False)
+    cards = tuple(aside if c is golem else c for c in deck.cards)
+    resolution = resolve_plan(replace(deck, cards=cards), plan([AddCard("Battered Golem")]), db)
+    [moved] = resolution.changes
+    assert (moved.kind, moved.categories) == (ChangeKind.MOVE_IN, ("Combo Pieces", "Ramp"))
+
+
+def test_drop_takes_a_card_off_the_maybeboard_only(deck: Deck, db: CardDb) -> None:
+    dropping = Plan("magda", (), (), ("Tempestra, Dame of Games", "Battered Golem"))
+    resolution = resolve_plan(deck, dropping, db)
+    assert kinds(resolution) == [(ChangeKind.DROP, "Tempestra, Dame of Games", 1, 0)]
+    assert resolution.skipped == ("drop Battered Golem: not on the Sideboard or Maybeboard",)
+    assert resolution.main_after == MAIN_CARDS
+
+
+def test_a_swap_both_ways_keeps_the_deck_size(deck: Deck, db: CardDb) -> None:
+    swap = plan([AddCard("High-Speed Hoverbike")], [RemoveCard("Battered Golem", maybeboard=True)])
+    resolution = resolve_plan(deck, swap, db)
+    assert [c.kind for c in resolution.changes] == [ChangeKind.SET_ASIDE, ChangeKind.MOVE_IN]
+    assert resolution.main_after == MAIN_CARDS
+
+
+def test_moves_are_sent_as_modifies_with_the_new_categories(raw_deck: Json, deck: Deck, db: CardDb) -> None:
+    swap = plan([AddCard("High-Speed Hoverbike")], [RemoveCard("Battered Golem", maybeboard=True)])
+    dropping = Plan("magda", (), (), ("Tempestra, Dame of Games",))
+    changes = [*resolve_plan(deck, swap, db).changes, *resolve_plan(deck, dropping, db).changes]
+    edits = card_edits(changes, parse_entry_states(raw_deck), {})
+    assert [(e.kind, e.entry_id, e.state.categories) for e in edits] == [
+        (EditKind.MODIFY, GOLEM_ENTRY, ("Maybeboard", "Combo Pieces", "Ramp")),
+        (EditKind.MODIFY, HOVERBIKE_ENTRY, ("Artifact",)),
+        (EditKind.REMOVE, TEMPESTRA_ENTRY, ("Maybeboard",)),
+    ]
+
+
+def test_verify_reports_a_move_archidekt_did_not_make(deck: Deck, db: CardDb) -> None:
+    resolution = resolve_plan(deck, plan(remove=[RemoveCard("Battered Golem", maybeboard=True)]), db)
+    assert verify(resolution.changes, deck, deck) == [
+        "Battered Golem: expected it in Maybeboard, Archidekt shows Combo Pieces"
+    ]
+
+
+def test_save_moves_cards_both_ways_on_archidekt(
+    fake: FakeArchidekt, editor: ArchidektEditor, db: CardDb
+) -> None:
+    live = editor.get_deck(DECK_ID)
+    swap = plan([AddCard("High-Speed Hoverbike")], [RemoveCard("Battered Golem", maybeboard=True)])
+    result = save(
+        editor, live, resolve_plan(live.deck, swap, db, categories=live.categories), now=lambda: NOW
+    )
+    assert result.mismatches == ()
+    by_name = {c.name: c for c in result.deck.cards}
+    assert (by_name["Battered Golem"].aside, by_name["High-Speed Hoverbike"].in_deck) == (True, True)
+    # Moves need no card lookup: the entries are already in the deck.
+    assert "/api/cards/v2/" not in fake.requests

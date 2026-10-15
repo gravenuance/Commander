@@ -136,10 +136,10 @@ function renderDeck() {
   link.href = view.url;
   $("deck-bracket").textContent = view.bracket ? `Bracket ${view.bracket}` : "";
   $("deck-archetype").textContent = view.archetype || "";
-  const queued = view.cards.filter((c) => c.status === "add").length;
+  const pending = view.pending;
   const review = $("review");
-  review.disabled = queued === 0;
-  review.textContent = queued ? `Review ${queued} change${queued === 1 ? "" : "s"}` : "Review changes";
+  review.disabled = pending === 0;
+  review.textContent = pending ? `Review ${pending} change${pending === 1 ? "" : "s"}` : "Review changes";
 
   const groups = { suggested: [], considered: [], decided: [] };
   for (const card of view.cards) {
@@ -197,6 +197,7 @@ function buildTile(card) {
 
   if (card.status === "open" && card.replace.length) body.append(cutPicker(card));
   if (card.status === "add" && card.choice) body.append(el("p", { class: "note", text: `Cuts ${card.choice}` }));
+  if (card.dropping) body.append(el("p", { class: "note", text: "Leaves the Maybeboard when you save" }));
   if (card.note) body.append(el("p", { class: "note", text: card.note }));
   body.append(actionsFor(card, decided));
 

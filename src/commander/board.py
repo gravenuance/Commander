@@ -55,6 +55,8 @@ class Actor(Enum):
     YOU = "you"
     CLAUDE = "claude"
     CMDR = "cmdr"
+    # Put on the deck's Sideboard or Maybeboard on archidekt.com, and picked up by a sync.
+    ARCHIDEKT = "archidekt"
 
 
 class Status(Enum):
@@ -121,6 +123,15 @@ class Board:
     @property
     def rejected_names(self) -> tuple[str, ...]:
         return tuple(card.name for card in self.cards if card.status is Status.REJECTED)
+
+    def to_drop(self, deck: Deck) -> tuple[str, ...]:
+        """Turned-down cards still on the deck's Sideboard or Maybeboard: the next save takes them off."""
+        aside = {key for card in deck.aside_cards for key in name_keys(card.name)}
+        return tuple(c.name for c in self.cards if c.status is Status.REJECTED and name_keys(c.name) & aside)
+
+    def pending(self, deck: Deck) -> int:
+        """Changes the next save would make: cards to add and cards to take off the Maybeboard."""
+        return len(self.queued) + len(self.to_drop(deck))
 
 
 def board_stamp(folder: Path) -> str:
@@ -233,14 +244,20 @@ def activity_json(entry: Activity) -> dict[str, object]:
 
 
 def board_plan(deck: Deck, board: Board) -> Plan | None:
-    """The plan that adds every queued card and cuts its chosen card; None when nothing is queued."""
+    """The plan for the next save; None when it would change nothing.
+
+    It adds every queued card and moves its chosen cut to the Maybeboard, so the swap can be weighed the
+    other way round later, and takes turned-down cards off the Sideboard or Maybeboard.
+    """
     queued = board.queued
-    if not queued:
+    drop = board.to_drop(deck)
+    if not queued and not drop:
         return None
     return Plan(
         str(deck.id),
         tuple(AddCard(card.name) for card in queued),
-        tuple(RemoveCard(card.choice) for card in queued if card.choice),
+        tuple(RemoveCard(card.choice, maybeboard=True) for card in queued if card.choice),
+        drop,
     )
 
 
@@ -262,14 +279,14 @@ class BoardService:
         reason: str = "",
         replace_options: Sequence[ReplaceOption] = (),
     ) -> BoardCard:
-        """Put a card on the board; a card turned down before is reopened rather than listed twice."""
+        """Put a card on the board; a card turned down or applied before is reopened, not listed twice."""
         info = self._card(name)
         options = self._options(replace_options)
         reason = _bounded(reason, MAX_REASON, "the reason")
         with self._editing() as (board, save):
             existing = board.find(info.name)
             stamp = self._stamp()
-            if existing is not None and existing.status is not Status.REJECTED:
+            if existing is not None and existing.status not in {Status.REJECTED, Status.APPLIED}:
                 raise BoardError(f"{info.name} is already on the board ({existing.status.value})")
             if existing is not None:
                 card = replace(
@@ -278,6 +295,7 @@ class BoardService:
                     reason=reason or existing.reason,
                     replace=options or existing.replace,
                     status=Status.OPEN,
+                    choice=None,
                     note="",
                     updated_at=stamp,
                 )
@@ -574,4 +592,23 @@ def feed_suggestions(service: BoardService, result: Suggestions, board: Board) -
             log.info("not putting %s on the board: %s", name, error)
             continue
         added.append(card)
+    return added
+
+
+def import_aside(service: BoardService, deck: Deck, board: Board) -> list[BoardCard]:
+    """Put the deck's Sideboard and Maybeboard cards on the board as considered, as picked on Archidekt.
+
+    A card already on the board stays as it is, unless it was applied: one cut back to the Maybeboard since
+    is reopened, so a swap can be weighed the other way round.
+    """
+    added: list[BoardCard] = []
+    for card in deck.aside_cards:
+        existing = board.find(card.name)
+        if existing is not None and existing.status is not Status.APPLIED:
+            continue
+        where = card.primary_category
+        try:
+            added.append(service.propose(card.name, Actor.ARCHIDEKT, reason=f"on the {where} on Archidekt"))
+        except BoardError as error:
+            log.info("not putting %s from the %s on the board: %s", card.name, where, error)
     return added

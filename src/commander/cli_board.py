@@ -300,9 +300,16 @@ def activity_line(entry: Activity, deck: str) -> str:
 
 def plan_toml(plan: Plan) -> str:
     lines = [f"deck = {_toml(plan.deck)}"]
-    lines.append("add = [" + ", ".join(_toml(a.name) for a in plan.add) + "]")
+    if plan.add:
+        lines.append("add = [" + ", ".join(_toml(a.name) for a in plan.add) + "]")
     if plan.remove:
-        lines.append("remove = [" + ", ".join(_toml(r.name) for r in plan.remove) + "]")
+        removes = (
+            f"{{name = {_toml(r.name)}, maybeboard = true}}" if r.maybeboard else _toml(r.name)
+            for r in plan.remove
+        )
+        lines.append("remove = [" + ", ".join(removes) + "]")
+    if plan.drop:
+        lines.append("drop = [" + ", ".join(_toml(name) for name in plan.drop) + "]")
     return "\n".join(lines) + "\n"
 
 

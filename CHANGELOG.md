@@ -25,6 +25,14 @@
   add or turn down, review the queued changes against Archidekt and save them; it follows changes made from
   the CLI or by Claude as they land. It logs to `%LOCALAPPDATA%\Commander\logs\commander.log`.
 
+- Sideboard and Maybeboard as "considering": `cmdr sync` puts the cards you keep there on Archidekt on the
+  deck's board as considered. Adding one moves its own entry into the deck, printing and all. A card cut on
+  the board moves to the Maybeboard instead of being deleted, keeping its categories behind it, and comes
+  back on the board as considered, so a swap can be weighed the other way round. Turning down a Sideboard
+  or Maybeboard card takes it off there with the next save.
+- Plan files: a remove line takes `maybeboard = true` to move the card instead of deleting it, and
+  `drop = [...]` takes cards off the Sideboard or Maybeboard.
+
 ### Changed
 - The card database (schema 4) keeps each card's rules text, keywords and power/toughness, and every Tagger
   oracle tag with its sub-tags, not only the role tags. The next `cmdr sync` rebuilds it.

@@ -305,7 +305,7 @@ def test_apply_json(home: Path, archidekt: FakeArchidekt, decks: Path) -> None:
 @pytest.mark.parametrize(
     ("plan", "message"),
     [
-        ('deck = "magda"\n', "nothing to add or remove"),
+        ('deck = "magda"\n', "nothing to add, remove or drop"),
         ('deck = "nomatch"\nadd = ["Sol Ring"]\n', "no deck matches 'nomatch'"),
         ("deck = ", "cannot read plan"),
     ],

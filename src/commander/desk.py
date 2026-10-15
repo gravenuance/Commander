@@ -32,7 +32,7 @@ from commander.board import (
 )
 from commander.boardsave import preview_board, save_board
 from commander.carddb import CardDataError, CardDb, CardInfo
-from commander.cli_output import change_text
+from commander.cli_output import change_mark, change_text
 from commander.config import ConfigError
 from commander.credentials import CredentialError, TokenStore
 from commander.deckprofile import read_profile
@@ -113,7 +113,7 @@ class Desk:
                     "id": stored.deck.id,
                     "short": stored.deck.short_name,
                     "name": stored.deck.name,
-                    "queued": len(board.queued),
+                    "queued": board.pending(stored.deck),
                     "open": sum(1 for c in board.cards if c.status is Status.OPEN),
                 }
             )
@@ -130,9 +130,10 @@ class Desk:
         stored = self._stored(deck_id)
         board = read_board(stored.folder)
         profile = read_profile(stored.folder)
+        drop = set(board.to_drop(stored.deck))
         with self._db() as db:
             identity = deck_identity(db.resolve(stored.deck.main_cards))
-            cards = [self._card_view(db, card) for card in board.cards]
+            cards = [{**self._card_view(db, card), "dropping": card.name in drop} for card in board.cards]
         activity = read_activity(stored.folder)[-ACTIVITY_SHOWN:]
         return {
             "id": stored.deck.id,
@@ -144,6 +145,7 @@ class Desk:
             "archetype": profile.archetype,
             "identity": identity,
             "stamp": board_stamp(stored.folder),
+            "pending": board.pending(stored.deck),
             "cards": cards,
             "deckCards": sorted({c.name for c in stored.deck.main_cards if "Commander" not in c.categories}),
             "activity": [activity_json(entry) for entry in reversed(activity)],
@@ -270,11 +272,10 @@ def _image_url(db: CardDb, info: CardInfo) -> str | None:
 
 
 def _resolution_json(resolution: Resolution) -> Json:
-    marks = {"add": "+", "more copies": "+", "fewer copies": "-", "remove": "-"}
     return {
         "deck": resolution.deck.id,
         "changes": [
-            {"kind": c.kind.value, "mark": marks[c.kind.value], "name": c.name, "text": change_text(c)}
+            {"kind": c.kind.value, "mark": change_mark(c), "name": c.name, "text": change_text(c)}
             for c in resolution.changes
         ],
         "problems": list(resolution.problems),

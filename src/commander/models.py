@@ -3,6 +3,9 @@
 from dataclasses import dataclass
 
 COMMANDER_CATEGORY = "Commander"
+MAYBEBOARD_CATEGORY = "Maybeboard"
+# Casefolded names of the categories that hold cards under consideration, outside the deck.
+ASIDE_CATEGORIES = frozenset({"sideboard", "maybeboard"})
 ARCHIDEKT_DECK_URL = "https://archidekt.com/decks/{id}"
 
 
@@ -30,6 +33,11 @@ class DeckCard:
     def primary_category(self) -> str:
         return self.categories[0] if self.categories else "Uncategorized"
 
+    @property
+    def aside(self) -> bool:
+        """On the Sideboard or Maybeboard: kept with the deck, under consideration, not played."""
+        return not self.in_deck and self.primary_category.casefold() in ASIDE_CATEGORIES
+
 
 @dataclass(slots=True, frozen=True)
 class Deck:
@@ -53,6 +61,10 @@ class Deck:
     @property
     def main_cards(self) -> tuple[DeckCard, ...]:
         return tuple(card for card in self.cards if card.in_deck)
+
+    @property
+    def aside_cards(self) -> tuple[DeckCard, ...]:
+        return tuple(card for card in self.cards if card.aside)
 
     @property
     def main_count(self) -> int:

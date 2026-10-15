@@ -6,7 +6,7 @@ from datetime import datetime
 
 from commander.apply import ApplyOutcome, Resolution, SaveError, SaveResult, apply_plan
 from commander.archidekt_edit import ArchidektEditor
-from commander.board import Actor, BoardError, BoardService, board_plan, read_board
+from commander.board import Actor, BoardCard, BoardError, BoardService, board_plan, import_aside, read_board
 from commander.carddb import CardDb
 from commander.store import StoredDeck, Workspace
 
@@ -60,7 +60,8 @@ def save_board(
     result = outcome.result
     if result is None:
         return BoardSave(outcome.resolution, None, ())
-    workspace.save(result.deck)
+    folder = workspace.save(result.deck)
+    pick_up_aside(StoredDeck(folder, result.deck), db, now=now)
     failed = {
         c.name
         for c in outcome.resolution.changes
@@ -71,3 +72,9 @@ def save_board(
     if result.mismatches:
         service.note(actor, "Archidekt shows differences", "; ".join(result.mismatches))
     return BoardSave(outcome.resolution, result, tuple(card.name for card in applied))
+
+
+def pick_up_aside(stored: StoredDeck, db: CardDb, *, now: Callable[[], datetime]) -> list[BoardCard]:
+    """Put the deck's Sideboard and Maybeboard cards on its board as considered; returns the new ones."""
+    service = BoardService(stored.folder, stored.deck, db, now=now)
+    return import_aside(service, stored.deck, read_board(stored.folder))

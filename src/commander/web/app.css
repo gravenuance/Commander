@@ -19,6 +19,7 @@
   --you: #6a3fa0;
   --claude: #b4531a;
   --cmdr: #3d5f8a;
+  --archidekt: #8a4a12;
   --radius: 8px;
   --radius-s: 5px;
   --space-1: 4px;
@@ -56,6 +57,7 @@
     --you: #c3a2ee;
     --claude: #f0a46c;
     --cmdr: #93b4dc;
+    --archidekt: #e6b07a;
     --shadow: 0 1px 2px rgb(0 0 0 / 40%);
   }
 }
@@ -309,6 +311,7 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .badge.you { color: var(--you); }
 .badge.claude { color: var(--claude); }
 .badge.cmdr { color: var(--cmdr); }
+.badge.archidekt { color: var(--archidekt); }
 .badge.status { border-color: transparent; background: var(--accent-soft); color: var(--text); }
 .badge.status.rejected { background: var(--danger-soft); }
 .badge.status.gc { background: var(--warn-soft); }
@@ -351,6 +354,7 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .activity-list .who.you { color: var(--you); }
 .activity-list .who.claude { color: var(--claude); }
 .activity-list .who.cmdr { color: var(--cmdr); }
+.activity-list .who.archidekt { color: var(--archidekt); }
 .activity-list .detail { color: var(--muted); overflow-wrap: anywhere; }
 @media (width < 900px) {
   .app { grid-template-columns: 180px minmax(0, 1fr); }

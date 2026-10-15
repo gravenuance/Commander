@@ -3,6 +3,7 @@ import os
 import re
 import time
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from commander.board import (
     Status,
     board_plan,
     board_stamp,
+    import_aside,
     read_activity,
     read_board,
 )
@@ -139,7 +141,9 @@ def test_queued_cards_make_a_plan_with_their_chosen_cuts(
     service.decide(bolt.id, Status.ADD, Actor.YOU, choice="battered golem", note="better early")
     service.decide(signet.name, Status.ADD, Actor.YOU)
     assert board_plan(deck, read_board(tmp_path)) == Plan(
-        "10004639", (AddCard("Lightning Bolt"), AddCard("Arcane Signet")), (RemoveCard("Battered Golem"),)
+        "10004639",
+        (AddCard("Lightning Bolt"), AddCard("Arcane Signet")),
+        (RemoveCard("Battered Golem", maybeboard=True),),
     )
     assert read_activity(tmp_path)[-2].detail == "cut Battered Golem; better early"
 
@@ -234,3 +238,45 @@ def test_a_stale_lock_is_cleared(tmp_path: Path, service: BoardService) -> None:
     service.propose("Lightning Bolt", Actor.YOU)
     assert not lock.exists()
     assert len(read_board(tmp_path).cards) == 1
+
+
+def test_sideboard_and_maybeboard_cards_come_in_as_considered_once(
+    tmp_path: Path, deck: Deck, service: BoardService
+) -> None:
+    added = import_aside(service, deck, read_board(tmp_path))
+    # The fixture keeps High-Speed Hoverbike and Tempestra on its Maybeboard.
+    assert [(c.name, c.source, c.section, c.reason) for c in added] == [
+        ("High-Speed Hoverbike", Actor.ARCHIDEKT, Section.CONSIDERED, "on the Maybeboard on Archidekt"),
+        ("Tempestra, Dame of Games", Actor.ARCHIDEKT, Section.CONSIDERED, "on the Maybeboard on Archidekt"),
+    ]
+    assert import_aside(service, deck, read_board(tmp_path)) == []
+
+
+def test_an_applied_card_cut_back_to_the_maybeboard_is_reopened(
+    tmp_path: Path, deck: Deck, db: CardDb
+) -> None:
+    golem = next(c for c in deck.cards if c.name == "Battered Golem")
+    before = replace(deck, cards=tuple(c for c in deck.cards if c is not golem))
+    first = BoardService(tmp_path, before, db, now=Clock())
+    card = first.propose("Battered Golem", Actor.YOU)
+    first.decide(card.id, Status.ADD, Actor.YOU)
+    first.mark_applied([card.id], Actor.YOU, "snap")
+    aside = replace(golem, categories=("Maybeboard", "Ramp"), in_deck=False)
+    after = replace(deck, cards=(*before.cards, aside))
+    added = import_aside(BoardService(tmp_path, after, db, now=Clock()), after, read_board(tmp_path))
+    [again] = [c for c in added if c.name == "Battered Golem"]
+    assert (again.id, again.status, again.choice) == (card.id, Status.OPEN, None)
+
+
+def test_turned_down_maybeboard_cards_are_dropped_by_the_next_save(
+    tmp_path: Path, deck: Deck, service: BoardService
+) -> None:
+    import_aside(service, deck, read_board(tmp_path))
+    service.decide("Tempestra, Dame of Games", Status.REJECTED, Actor.YOU)
+    board = read_board(tmp_path)
+    assert board.to_drop(deck) == ("Tempestra, Dame of Games",)
+    assert board.pending(deck) == 1
+    assert board_plan(deck, board) == Plan("10004639", (), (), ("Tempestra, Dame of Games",))
+    # Once it is off the Maybeboard there is nothing left to drop.
+    gone = replace(deck, cards=tuple(c for c in deck.cards if not c.name.startswith("Tempestra")))
+    assert board_plan(gone, board) is None

@@ -27,9 +27,10 @@ from commander.archidekt import ArchidektClient, ArchidektError
 from commander.archidekt_edit import ArchidektAuth, ArchidektEditor, AuthError
 from commander.background import in_background
 from commander.board import BoardError, BoardService, feed_suggestions, read_board
+from commander.boardsave import pick_up_aside
 from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
 from commander.bracket import BracketReport, EstimateResult, bracket_cards, estimate_cache, estimate_decks
-from commander.carddb import CardDataError, Role
+from commander.carddb import CARD_DB_FILE, CardDataError, CardDb, Role
 from commander.cli_app import add_app_command
 from commander.cli_board import add_board_commands
 from commander.cli_cards import add_card_commands
@@ -415,6 +416,7 @@ def _cmd_sync(args: argparse.Namespace, ctx: Context) -> int:
             on_progress=progress,
         )
         cards = _card_status(cards_job, dry_run=args.dry_run)
+    picked = {} if args.dry_run else _pick_up_aside(workspace, ctx)
     if args.json:
         document = {
             "decks": [_result_json(r) for r in results],
@@ -425,8 +427,33 @@ def _cmd_sync(args: argparse.Namespace, ctx: Context) -> int:
     else:
         _print_sync_report(results, ctx.out, dry_run=args.dry_run)
         print(f"card data: {cards.state.value}, {cards.detail}", file=ctx.out)
+        for short, names in picked.items():
+            print(
+                f"{short} board: considering {', '.join(names)} (from the Sideboard or Maybeboard)",
+                file=ctx.out,
+            )
     failed = any(r.status is SyncStatus.FAILED for r in results) or cards.state is _CardState.FAILED
     return EXIT_FAILURE if failed else EXIT_OK
+
+
+def _pick_up_aside(workspace: Workspace, ctx: Context) -> dict[str, list[str]]:
+    """Each deck's Sideboard and Maybeboard cards new to its board, put there as considered."""
+    try:
+        db = CardDb(cache_dir(ctx.env) / CARD_DB_FILE)
+    except CardDataError as error:
+        print(f"cmdr: boards not updated from the Sideboards and Maybeboards: {error}", file=ctx.err)
+        return {}
+    picked: dict[str, list[str]] = {}
+    with db:
+        for stored in workspace.load_all():
+            try:
+                added = pick_up_aside(stored, db, now=ctx.now)
+            except BoardError as error:
+                print(f"cmdr: {stored.deck.short_name} board not updated: {error}", file=ctx.err)
+                continue
+            if added:
+                picked[stored.deck.short_name] = [card.name for card in added]
+    return picked
 
 
 def _card_status(job: Future[CardRefresh] | None, *, dry_run: bool) -> _CardStatus:

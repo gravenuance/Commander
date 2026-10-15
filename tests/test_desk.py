@@ -33,6 +33,9 @@ def settings(tmp_path: Path, card_db_file: Path, fake: FakeArchidekt) -> DeskSet
     shutil.copy(card_db_file, cache / CARD_DB_FILE)
     assert run(["sync", "--no-cards", "--workspace", str(tmp_path / "decks")], tmp_path, fake).code == 0
     fake.requests.clear()
+    # Start from an empty board: the sync put the fixture's two Maybeboard cards on it.
+    for name in ("board.json", "activity.jsonl"):
+        (tmp_path / "decks" / "10004639-honestly-though" / name).unlink()
     return DeskSettings(tmp_path / "decks", cache / CARD_DB_FILE, "MAKKIS")
 
 
