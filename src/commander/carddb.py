@@ -14,7 +14,7 @@ from commander.models import DeckCard
 log = logging.getLogger(__name__)
 
 # Bump whenever the tables or the meaning of a column change; an old file is rebuilt, never migrated.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 CARD_DB_FILE = "cards.sqlite"
 _QUERY_CHUNK = 500
 _CARD_QUERIES = {
@@ -27,23 +27,38 @@ _FRONT_FACE_QUERY = (
     "SELECT oracle_id, name, mana_cost, cmc, type_line, color_identity, game_changer, commander_legal,"
     " cheapest_cents, edhrec_rank FROM oracle WHERE substr(name_key, 1, length(?1)) = ?1 ORDER BY oracle_id"
 )
+_INFO_COLUMNS = (
+    "oracle.oracle_id, name, mana_cost, cmc, type_line, color_identity, game_changer, commander_legal,"
+    " cheapest_cents, edhrec_rank"
+)
 # A card fits when each colour of its identity is in :identity; a NULL :max_cents means no price limit.
-# CROSS JOIN keeps oracle as the outer loop, so cards are read in rank order through oracle_rank and a
-# caller that stops after a few rows never sorts the whole role (23 ms down to 0.1 ms for ramp).
-_CANDIDATE_QUERY = """
-SELECT oracle.oracle_id, name, mana_cost, cmc, type_line, color_identity, game_changer, commander_legal,
-    cheapest_cents, edhrec_rank
-FROM oracle CROSS JOIN role_member ON role_member.oracle_id = oracle.oracle_id
-WHERE role = :role AND commander_legal = 1 AND edhrec_rank IS NOT NULL
+_FITS_DECK = """commander_legal = 1 AND edhrec_rank IS NOT NULL
     AND (instr(:identity, 'W') > 0 OR instr(color_identity, 'W') = 0)
     AND (instr(:identity, 'U') > 0 OR instr(color_identity, 'U') = 0)
     AND (instr(:identity, 'B') > 0 OR instr(color_identity, 'B') = 0)
     AND (instr(:identity, 'R') > 0 OR instr(color_identity, 'R') = 0)
     AND (instr(:identity, 'G') > 0 OR instr(color_identity, 'G') = 0)
-    AND (:max_cents IS NULL OR cheapest_cents <= :max_cents)
+    AND (:max_cents IS NULL OR cheapest_cents <= :max_cents)"""
+# CROSS JOIN keeps oracle as the outer loop, so cards are read in rank order through oracle_rank and a
+# caller that stops after a few rows never sorts the whole role (23 ms down to 0.1 ms for ramp).
+_CANDIDATE_QUERY = f"""
+SELECT {_INFO_COLUMNS}
+FROM oracle CROSS JOIN role_member ON role_member.oracle_id = oracle.oracle_id
+WHERE role = :role AND {_FITS_DECK}
 ORDER BY edhrec_rank, oracle.oracle_id
-"""
+"""  # noqa: S608 — built from constant fragments and placeholders; every value is bound
 COLORS = "WUBRG"
+FACE_SEPARATOR = "\n//\n"
+# The tags given, grown by every sub-tag; UNION drops repeats, so a cycle in the tag tree still ends.
+_SUBTREE_CTE = """WITH RECURSIVE subtree(tag_id) AS (
+    SELECT tag_id FROM tag WHERE tag_id IN ({})
+    UNION SELECT tag_child.child_id FROM tag_child JOIN subtree ON tag_child.parent_id = subtree.tag_id
+)"""
+_TAG_COUNT_QUERY = (
+    _SUBTREE_CTE.format("?")  # noqa: S608 — built from constant fragments and placeholders; every value is bound
+    + " SELECT count(DISTINCT oracle_id) FROM tag_member JOIN subtree ON tag_member.tag_id = subtree.tag_id"
+)
+MAX_TAG_MATCHES = 50
 
 _SCHEMA = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -58,6 +73,11 @@ CREATE TABLE oracle (
     game_changer INTEGER NOT NULL,
     commander_legal INTEGER NOT NULL,
     edhrec_rank INTEGER,
+    oracle_text TEXT NOT NULL,
+    -- Casefolded keywords between bars, like |flying|discover|, so one instr() finds a whole keyword.
+    keywords TEXT NOT NULL,
+    power TEXT,
+    toughness TEXT,
     cheapest_cents INTEGER
 );
 CREATE INDEX oracle_name ON oracle (name_key);
@@ -74,6 +94,13 @@ CREATE TABLE printing (
 CREATE TABLE role_member (role TEXT NOT NULL, oracle_id TEXT NOT NULL, PRIMARY KEY (role, oracle_id))
     WITHOUT ROWID;
 CREATE TABLE role_available (role TEXT PRIMARY KEY);
+CREATE TABLE tag (tag_id TEXT PRIMARY KEY, slug TEXT NOT NULL);
+CREATE INDEX tag_slug ON tag (slug);
+CREATE TABLE tag_child (parent_id TEXT NOT NULL, child_id TEXT NOT NULL, PRIMARY KEY (parent_id, child_id))
+    WITHOUT ROWID;
+CREATE TABLE tag_member (tag_id TEXT NOT NULL, oracle_id TEXT NOT NULL, PRIMARY KEY (tag_id, oracle_id))
+    WITHOUT ROWID;
+CREATE INDEX tag_member_card ON tag_member (oracle_id);
 """
 
 
@@ -153,6 +180,52 @@ class ParsedCard:
     game_changer: bool
     commander_legal: bool
     edhrec_rank: int | None
+    # Faces of a two-faced card are joined by FACE_SEPARATOR; power and toughness are the front face's.
+    oracle_text: str = ""
+    keywords: tuple[str, ...] = ()
+    power: str | None = None
+    toughness: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class Tag:
+    """A Tagger oracle tag: what a card does or is about, such as ramp, stax or blink."""
+
+    id: str
+    slug: str
+    child_ids: tuple[str, ...]
+    oracle_ids: frozenset[str]
+
+
+@dataclass(slots=True, frozen=True)
+class CardText:
+    oracle_id: str
+    text: str
+    keywords: tuple[str, ...]
+    power: str | None
+    toughness: str | None
+    # Slugs of the tags put on the card itself, not their parents.
+    tags: tuple[str, ...]
+
+
+@dataclass(slots=True, frozen=True)
+class Theme:
+    """Cards that match any one of these: a type word, a keyword or a tag (by id, sub-tags included)."""
+
+    types: tuple[str, ...] = ()
+    keywords: tuple[str, ...] = ()
+    tag_ids: tuple[str, ...] = ()
+
+    @property
+    def empty(self) -> bool:
+        return not (self.types or self.keywords or self.tag_ids)
+
+
+@dataclass(slots=True, frozen=True)
+class TagCount:
+    slug: str
+    # Cards with the tag or any of its sub-tags.
+    cards: int
 
 
 @dataclass(slots=True, frozen=True)
@@ -278,6 +351,84 @@ class CardDb:
         except sqlite3.Error as error:
             raise CardDataError(f"card data is unreadable ({error}); run `cmdr sync --force`") from error
 
+    def theme_candidates(
+        self, theme: Theme, identity: str, *, exclude: Collection[str], max_cents: int | None = None
+    ) -> Iterator[CardInfo]:
+        """Like candidates, for the cards matching a theme instead of a role; nothing for an empty theme."""
+        if theme.empty:
+            return
+        cte, condition, params = _theme_sql(theme)
+        sql = (
+            f"{cte} SELECT {_INFO_COLUMNS} FROM oracle WHERE {_FITS_DECK} AND ({condition})"  # noqa: S608 — built from constant fragments and placeholders; every value is bound
+            " ORDER BY edhrec_rank, oracle_id"
+        )
+        try:
+            for row in self._db.execute(sql, {**params, "identity": identity, "max_cents": max_cents}):
+                if row[0] in exclude:
+                    continue
+                info = self._infos([row])[0]
+                if not info.is_land:
+                    yield info
+        except sqlite3.Error as error:
+            raise CardDataError(f"card data is unreadable ({error}); run `cmdr sync --force`") from error
+
+    def matching(self, theme: Theme, oracle_ids: Iterable[str]) -> frozenset[str]:
+        """The given cards that match the theme."""
+        if theme.empty:
+            return frozenset()
+        cte, condition, params = _theme_sql(theme)
+        unique = sorted(set(oracle_ids))
+        found: set[str] = set()
+        for start in range(0, len(unique), _QUERY_CHUNK):
+            chunk = {f"o{i}": key for i, key in enumerate(unique[start : start + _QUERY_CHUNK])}
+            placeholders = ", ".join(f":{name}" for name in chunk)
+            where = f"oracle_id IN ({placeholders}) AND ({condition})"
+            sql = f"{cte} SELECT oracle_id FROM oracle WHERE {where}"  # noqa: S608 — built from constant fragments and placeholders; every value is bound
+            found.update(row[0] for row in self._query_named(sql, {**params, **chunk}))
+        return frozenset(found)
+
+    def tag_ids(self, slugs: Iterable[str]) -> dict[str, str]:
+        """Tag ids by slug; slugs Scryfall does not have are left out."""
+        rows = self._select_in("SELECT slug, tag_id FROM tag WHERE slug IN ({})", slugs)
+        return dict(rows)
+
+    def find_tags(self, text: str) -> list[TagCount]:
+        """Tags whose slug contains text, most cards first, at most MAX_TAG_MATCHES."""
+        needle = text.strip().casefold()
+        if not needle:
+            return []
+        rows = self._query("SELECT tag_id, slug FROM tag WHERE instr(slug, ?) > 0", [needle])
+        counts = [TagCount(slug, self._query(_TAG_COUNT_QUERY, [tag_id])[0][0]) for tag_id, slug in rows]
+        counts.sort(key=lambda t: (-t.cards, t.slug))
+        return counts[:MAX_TAG_MATCHES]
+
+    def card_text(self, oracle_id: str) -> CardText | None:
+        rows = self._query(
+            "SELECT oracle_text, keywords, power, toughness FROM oracle WHERE oracle_id = ?", [oracle_id]
+        )
+        if not rows:
+            return None
+        text, keywords, power, toughness = rows[0]
+        tags = self._query(
+            "SELECT slug FROM tag JOIN tag_member ON tag.tag_id = tag_member.tag_id"
+            " WHERE oracle_id = ? ORDER BY slug",
+            [oracle_id],
+        )
+        return CardText(
+            oracle_id,
+            text,
+            tuple(k for k in keywords.split("|") if k),
+            power,
+            toughness,
+            tuple(t[0] for t in tags),
+        )
+
+    def _query_named(self, sql: str, params: Mapping[str, object]) -> list[Any]:
+        try:
+            return self._db.execute(sql, params).fetchall()
+        except sqlite3.Error as error:
+            raise CardDataError(f"card data is unreadable ({error}); run `cmdr sync --force`") from error
+
     def _cards_where(self, column: Literal["oracle_id", "name_key"], keys: Iterable[str]) -> list[CardInfo]:
         return self._infos(self._select_in(_CARD_QUERIES[column], keys))
 
@@ -306,6 +457,31 @@ class CardDb:
             return self._db.execute(sql, params).fetchall()
         except sqlite3.Error as error:
             raise CardDataError(f"card data is unreadable ({error}); run `cmdr sync --force`") from error
+
+
+def _theme_sql(theme: Theme) -> tuple[str, str, dict[str, object]]:
+    """The WITH clause, the condition on oracle and the named parameters that match a theme."""
+    params: dict[str, object] = {}
+    parts: list[str] = []
+    for index, word in enumerate(theme.types):
+        params[f"type{index}"] = f" {word.casefold()} "
+        # Spaces around each word of the type line, so "Elf" never matches "Elfball" or "Self".
+        parts.append(
+            f"instr(' ' || lower(replace(replace(type_line, '—', ' '), '//', ' ')) || ' ', :type{index}) > 0"
+        )
+    for index, keyword in enumerate(theme.keywords):
+        params[f"keyword{index}"] = f"|{keyword.casefold()}|"
+        parts.append(f"instr(keywords, :keyword{index}) > 0")
+    cte = ""
+    if theme.tag_ids:
+        names = [f":tag{index}" for index in range(len(theme.tag_ids))]
+        params.update({name[1:]: tag_id for name, tag_id in zip(names, theme.tag_ids, strict=True)})
+        cte = _SUBTREE_CTE.format(", ".join(names))
+        parts.append(
+            "oracle.oracle_id IN"
+            " (SELECT oracle_id FROM tag_member WHERE tag_id IN (SELECT tag_id FROM subtree))"
+        )
+    return cte, " OR ".join(parts), params
 
 
 def _row_info(row: Sequence[Any], roles: frozenset[Role]) -> CardInfo:
@@ -339,12 +515,13 @@ def write_card_db(
     cards: Iterable[ParsedCard],
     role_members: Mapping[Role, frozenset[str]],
     meta: CardDataMeta,
+    tags: Mapping[str, Tag] | None = None,
 ) -> int:
     """Build a fresh database next to dest and swap it in; returns the number of printings written."""
     temp = dest.with_name(f".{dest.name}.building")
     temp.unlink(missing_ok=True)
     try:
-        count = _fill(temp, cards, role_members, meta)
+        count = _fill(temp, cards, role_members, meta, tags or {})
         temp.replace(dest)
     except sqlite3.Error as error:
         temp.unlink(missing_ok=True)
@@ -356,7 +533,11 @@ def write_card_db(
 
 
 def _fill(
-    path: Path, cards: Iterable[ParsedCard], role_members: Mapping[Role, frozenset[str]], meta: CardDataMeta
+    path: Path,
+    cards: Iterable[ParsedCard],
+    role_members: Mapping[Role, frozenset[str]],
+    meta: CardDataMeta,
+    tags: Mapping[str, Tag],
 ) -> int:
     # Built whole and swapped in by rename, never edited in place, so the default rollback journal is enough.
     db = sqlite3.connect(path)
@@ -381,7 +562,7 @@ def _fill(
                     if card.printing.regular:
                         _keep_lowest(cheapest, oracle_id, *prices)
             db.executemany(
-                "INSERT INTO oracle VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO oracle VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     (*row, cheapest.get(oracle_id, cheapest_any.get(oracle_id)))
                     for oracle_id, row in oracle.items()
@@ -392,6 +573,7 @@ def _fill(
                 ((role.value, oracle_id) for role, members in role_members.items() for oracle_id in members),
             )
             db.executemany("INSERT INTO role_available VALUES (?)", ((role.value,) for role in role_members))
+            _insert_tags(db, tags)
             db.executemany(
                 "INSERT INTO meta VALUES (?, ?)",
                 [
@@ -432,6 +614,22 @@ def _oracle_row(card: ParsedCard) -> tuple[object, ...]:
         int(card.game_changer),
         int(card.commander_legal),
         card.edhrec_rank,
+        card.oracle_text,
+        "".join(f"|{keyword.casefold()}" for keyword in card.keywords) + "|" if card.keywords else "",
+        card.power,
+        card.toughness,
+    )
+
+
+def _insert_tags(db: sqlite3.Connection, tags: Mapping[str, Tag]) -> None:
+    db.executemany("INSERT INTO tag VALUES (?, ?)", ((tag.id, tag.slug) for tag in tags.values()))
+    db.executemany(
+        "INSERT OR IGNORE INTO tag_child VALUES (?, ?)",
+        ((tag.id, child) for tag in tags.values() for child in tag.child_ids if child in tags),
+    )
+    db.executemany(
+        "INSERT INTO tag_member VALUES (?, ?)",
+        ((tag.id, oracle_id) for tag in tags.values() for oracle_id in tag.oracle_ids),
     )
 
 

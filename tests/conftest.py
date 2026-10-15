@@ -178,7 +178,8 @@ def build_card_db(folder: Path) -> Path:
     cards_gz, tags_gz = write_bulk(folder / "bulk")
     path = folder / CARD_DB_FILE
     meta = CardDataMeta(CARDS_UPDATED_AT, TAGS_UPDATED_AT, "2026-10-15T12:00:00+00:00")
-    write_card_db(path, read_cards(cards_gz), role_members(read_tags(tags_gz)), meta)
+    tags = read_tags(tags_gz)
+    write_card_db(path, read_cards(cards_gz), role_members(tags), meta, tags)
     return path
 
 

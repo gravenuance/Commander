@@ -5,8 +5,17 @@ from pathlib import Path
 import pytest
 
 from commander.archidekt import parse_deck
-from commander.carddb import SCHEMA_VERSION, CardDataError, CardDb, Role, read_meta
-from conftest import CARDS_UPDATED_AT, MAGDA_ORACLE, Json
+from commander.carddb import (
+    FACE_SEPARATOR,
+    SCHEMA_VERSION,
+    CardDataError,
+    CardDb,
+    Role,
+    TagCount,
+    Theme,
+    read_meta,
+)
+from conftest import ARCANE_SIGNET, CARDS_UPDATED_AT, LIGHTNING_BOLT, MAGDA_ORACLE, Json
 
 MAGDA_PLST = "338380ba-8415-40a2-8b81-2b30218ea16a"
 
@@ -173,3 +182,95 @@ def test_cheapest_price_comes_from_regular_printings(card_db_file: Path) -> None
     assert tomb.cheapest_cents == 10264
     assert (printings["wc99"].eur_cents, printings["wc99"].regular) == (4163, False)
     assert printings["uma"].regular
+
+
+RAMP_TAG = "2f3e4ad7-5e60-41b4-bdbc-653f16869cf6"
+TUTOR_TAG = "c768d2ec-3264-4a90-a98f-bea8467857d3"
+
+
+def test_card_text_carries_rules_text_keywords_stats_and_own_tags(card_db_file: Path) -> None:
+    with CardDb(card_db_file) as db:
+        text = db.card_text(MAGDA_ORACLE)
+    assert text is not None
+    assert text.text.startswith("Other Dwarves you control get +1/+0.\nWhenever a Dwarf you control")
+    assert (text.keywords, text.power, text.toughness) == (("treasure",), "2", "1")
+    # The real tag lines put Magda under combat-ramp and tutor-artifact.
+    assert text.tags == ("combat-ramp", "tutor-artifact")
+
+
+def test_card_text_of_a_two_faced_card_joins_the_faces(card_db_file: Path) -> None:
+    with CardDb(card_db_file) as db:
+        info = db.card_named("Sundering Eruption")
+        assert info is not None
+        text = db.card_text(info.oracle_id)
+    assert text is not None
+    front, back = text.text.split(FACE_SEPARATOR)
+    assert front.startswith("Destroy target land.")
+    assert "{T}: Add {R}." in back
+
+
+def test_card_text_of_an_unknown_card_is_none(card_db_file: Path) -> None:
+    with CardDb(card_db_file) as db:
+        assert db.card_text("00000000-0000-0000-0000-000000000000") is None
+
+
+def test_theme_matches_whole_type_words_only(card_db_file: Path) -> None:
+    deck = {MAGDA_ORACLE, ARCANE_SIGNET}
+    with CardDb(card_db_file) as db:
+        assert db.matching(Theme(types=("Dwarf",)), deck) == {MAGDA_ORACLE}
+        assert db.matching(Theme(types=("dwarf",)), deck) == {MAGDA_ORACLE}
+        assert db.matching(Theme(types=("Dwar",)), deck) == set()
+        assert db.matching(Theme(), deck) == set()
+
+
+def test_theme_matches_keywords_whole(card_db_file: Path) -> None:
+    with CardDb(card_db_file) as db:
+        flute = db.card_named("Disruptor Flute")
+        hoverbike = db.card_named("High-Speed Hoverbike")
+        assert flute is not None
+        assert hoverbike is not None
+        cards = {flute.oracle_id, hoverbike.oracle_id, MAGDA_ORACLE}
+        assert db.matching(Theme(keywords=("Flash",)), cards) == {flute.oracle_id, hoverbike.oracle_id}
+        assert db.matching(Theme(keywords=("fly",)), cards) == set()
+
+
+def test_theme_tags_include_their_sub_tags(card_db_file: Path) -> None:
+    with CardDb(card_db_file) as db:
+        combat_ramp = db.tag_ids(["combat-ramp"])["combat-ramp"]
+        assert db.matching(Theme(tag_ids=(combat_ramp,)), {MAGDA_ORACLE, ARCANE_SIGNET}) == {MAGDA_ORACLE}
+        assert db.matching(Theme(tag_ids=(RAMP_TAG,)), {MAGDA_ORACLE, ARCANE_SIGNET, LIGHTNING_BOLT}) == {
+            MAGDA_ORACLE,
+            ARCANE_SIGNET,
+        }
+
+
+def test_a_cycle_in_the_tag_tree_still_ends(card_db_file: Path) -> None:
+    # tutor and tutor-artifact list each other as children in the real tag file; Magda is tutor-artifact.
+    with CardDb(card_db_file) as db:
+        assert db.matching(Theme(tag_ids=(TUTOR_TAG,)), {MAGDA_ORACLE, ARCANE_SIGNET}) == {MAGDA_ORACLE}
+        assert any(t.slug == "tutor" for t in db.find_tags("tutor"))
+
+
+def test_tag_ids_leave_out_unknown_slugs(card_db_file: Path) -> None:
+    with CardDb(card_db_file) as db:
+        assert db.tag_ids(["ramp", "no-such-tag"]) == {"ramp": RAMP_TAG}
+
+
+def test_find_tags_counts_cards_with_sub_tags_most_first(card_db_file: Path) -> None:
+    with CardDb(card_db_file) as db:
+        found = db.find_tags(" RAMP ")
+        assert db.find_tags("  ") == []
+    # ramp: Magda (also via combat-ramp), Arcane Signet, Mind Stone, Jeska's Will, Ancient Tomb, Mana Crypt
+    # and the unranked filler card; combat-ramp: Magda alone.
+    assert found == [TagCount("ramp", 7), TagCount("combat-ramp", 1)]
+
+
+def test_theme_candidates_are_ranked_nonland_cards_in_identity(card_db_file: Path) -> None:
+    with CardDb(card_db_file) as db:
+        names = [c.name for c in db.theme_candidates(Theme(tag_ids=(RAMP_TAG,)), "R", exclude={MAGDA_ORACLE})]
+        dwarves = [c.name for c in db.theme_candidates(Theme(types=("Dwarf",)), "R", exclude=())]
+        assert list(db.theme_candidates(Theme(), "R", exclude=())) == []
+        assert [c.name for c in db.theme_candidates(Theme(types=("Dwarf",)), "U", exclude=())] == []
+    # Same order and exclusions as the ramp role: no land, no banned card, no unranked card.
+    assert names == ["Arcane Signet", "Mind Stone", "Jeska's Will"]
+    assert dwarves == ["Magda, Brazen Outlaw"]

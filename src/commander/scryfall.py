@@ -17,10 +17,12 @@ from pathlib import Path
 from commander.carddb import (
     CARD_DB_FILE,
     COLORS,
+    FACE_SEPARATOR,
     CardDataMeta,
     ParsedCard,
     Printing,
     Role,
+    Tag,
     read_meta,
     write_card_db,
 )
@@ -95,13 +97,6 @@ class BulkFile:
     size: int | None
 
 
-@dataclass(slots=True, frozen=True)
-class Tag:
-    id: str
-    child_ids: tuple[str, ...]
-    oracle_ids: frozenset[str]
-
-
 class RefreshStatus(Enum):
     CURRENT = "current"
     UPDATED = "updated"
@@ -164,9 +159,9 @@ def refresh_card_db(
         client.download(cards_file, cards_gz)
         client.download(tags_file, tags_gz)
         on_progress("building the card database")
-        members = role_members(read_tags(tags_gz))
+        tags = read_tags(tags_gz)
         meta = CardDataMeta(cards_file.updated_at, tags_file.updated_at, now().isoformat())
-        count = write_card_db(db_path, read_cards(cards_gz), members, meta)
+        count = write_card_db(db_path, read_cards(cards_gz), role_members(tags), meta, tags)
     finally:
         cards_gz.unlink(missing_ok=True)
         tags_gz.unlink(missing_ok=True)
@@ -226,7 +221,18 @@ def parse_card(raw: object) -> ParsedCard | None:
         game_changer=card.get("game_changer") is True,
         commander_legal=req_object(card, "legalities", where).get("commander") == "legal",
         edhrec_rank=opt_int(card, "edhrec_rank", where),
+        oracle_text=_oracle_text(card, faces, where),
+        keywords=str_list(card, "keywords", where),
+        power=opt_str(card, "power", where) or opt_str(front, "power", where),
+        toughness=opt_str(card, "toughness", where) or opt_str(front, "toughness", where),
     )
+
+
+def _oracle_text(card: Mapping[str, object], faces: list[Mapping[str, object]], where: str) -> str:
+    # A two-faced card keeps each face's text on the face; a split or adventure card has both too.
+    if faces and all("oracle_text" in face for face in faces):
+        return FACE_SEPARATOR.join(opt_str(face, "oracle_text", where) or "" for face in faces)
+    return opt_str(card, "oracle_text", where) or ""
 
 
 def read_cards(path: Path) -> Iterator[ParsedCard]:
@@ -249,7 +255,12 @@ def parse_tag(raw: object) -> Tag | None:
         oracle_id = opt_str(as_object(item, f"{where}.taggings[{index}]"), "oracle_id", where)
         if oracle_id:
             oracle_ids.add(oracle_id)
-    return Tag(req_str(tag, "id", where), str_list(tag, "child_ids", where), frozenset(oracle_ids))
+    return Tag(
+        req_str(tag, "id", where),
+        req_str(tag, "slug", where),
+        str_list(tag, "child_ids", where),
+        frozenset(oracle_ids),
+    )
 
 
 def role_members(tags: Mapping[str, Tag]) -> dict[Role, frozenset[str]]:

@@ -8,13 +8,11 @@ import sys
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import Future
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from decimal import ROUND_FLOOR, Decimal, InvalidOperation
 from enum import Enum
 from pathlib import Path
 from typing import BinaryIO, TextIO
-
-import httpx
 
 from commander import __version__
 from commander.analysis import ANALYZED_ROLES, CURVE_TOP, DeckAnalysis, analyze
@@ -24,7 +22,23 @@ from commander.archidekt_edit import ArchidektAuth, ArchidektEditor, AuthError
 from commander.background import in_background
 from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
 from commander.bracket import BracketReport, EstimateResult, bracket_cards, estimate_cache, estimate_decks
-from commander.carddb import CARD_DB_FILE, CardDataError, CardDataMeta, CardDb, Role
+from commander.carddb import CardDataError, Role
+from commander.cli_cards import add_card_commands
+from commander.clibase import (
+    EXIT_FAILURE,
+    EXIT_INTERRUPTED,
+    EXIT_OK,
+    EXIT_USAGE,
+    ClientFactory,
+    Clock,
+    Context,
+    PasswordPrompt,
+    UsageError,
+    day,
+    one_deck,
+    open_card_db,
+    selected_decks,
+)
 from commander.config import (
     ENV_CACHE,
     ENV_CONFIG,
@@ -49,7 +63,7 @@ from commander.plan import PlanError, read_plan
 from commander.pricing import DeckPrice, PriceSource, format_eur, price_deck
 from commander.scryfall import CardRefresh, RefreshStatus, ScryfallClient, ScryfallError, refresh_card_db
 from commander.spellbook import BracketTag, Combo, SpellbookClient, SpellbookError, TwoCard, Variant
-from commander.store import StoredDeck, Workspace, WorkspaceError
+from commander.store import Workspace, WorkspaceError
 from commander.suggest import CACHE_FOLDER as COMBOS_CACHE_FOLDER
 from commander.suggest import (
     DEFAULT_COUNT,
@@ -64,18 +78,9 @@ from commander.suggest import (
 )
 from commander.sync import SyncResult, SyncStatus, sync_decks
 
-EXIT_OK = 0
-EXIT_FAILURE = 1
-EXIT_USAGE = 2
-EXIT_INTERRUPTED = 130
-
-STALE_CARD_DATA = timedelta(days=3)
 DEFAULT_TOP = 15
 MAX_PASSWORD_BYTES = 1024
 
-ClientFactory = Callable[[], httpx.Client]
-PasswordPrompt = Callable[[str], str]
-Clock = Callable[[], datetime]
 
 _DEFAULT_TARGETS_TEXT = ", ".join(
     f"{role.value.replace(' ', '_')} {n}" for role, n in DEFAULT_TARGETS.items()
@@ -158,7 +163,7 @@ def main(  # noqa: PLR0911 — one exit code per failure class, mapped in one pl
         format="%(levelname)s: %(message)s",
         force=True,
     )
-    context = _Context(
+    context = Context(
         env or environment(),
         client_factory,
         out,
@@ -168,7 +173,7 @@ def main(  # noqa: PLR0911 — one exit code per failure class, mapped in one pl
         prompt_password,
         stdin or sys.stdin.buffer,
     )
-    command: Callable[[argparse.Namespace, _Context], int] | None = getattr(args, "handler", None)
+    command: Callable[[argparse.Namespace, Context], int] | None = getattr(args, "handler", None)
     if command is None:
         parser.print_usage(err)
         return EXIT_USAGE
@@ -194,32 +199,6 @@ def main(  # noqa: PLR0911 — one exit code per failure class, mapped in one pl
     except KeyboardInterrupt:
         print("cmdr: interrupted", file=err)
         return EXIT_INTERRUPTED
-
-
-class UsageError(Exception):
-    """The command line names something that does not exist or is ambiguous."""
-
-
-class _Context:
-    def __init__(  # noqa: PLR0917 — every outside dependency, injected for tests
-        self,
-        env: Mapping[str, str],
-        client_factory: ClientFactory,
-        out: TextIO,
-        err: TextIO,
-        now: Clock,
-        token_store: TokenStore,
-        prompt_password: PasswordPrompt,
-        stdin: BinaryIO,
-    ) -> None:
-        self.env = env
-        self.client_factory = client_factory
-        self.out = out
-        self.err = err
-        self.now = now
-        self.token_store = token_store
-        self.prompt_password = prompt_password
-        self.stdin = stdin
 
 
 class _CardState(Enum):
@@ -306,6 +285,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_suggest_arguments(
         commands.add_parser("suggest", help="cards to add for combos and short roles, cuts to weigh")
     )
+    add_card_commands(commands.add_parser)
     _add_edit_commands(commands.add_parser)
     return parser
 
@@ -373,7 +353,7 @@ def _add_suggest_arguments(suggest_: argparse.ArgumentParser) -> None:
     suggest_.set_defaults(handler=_cmd_suggest)
 
 
-def _cmd_init(args: argparse.Namespace, ctx: _Context) -> int:
+def _cmd_init(args: argparse.Namespace, ctx: Context) -> int:
     path = config_path(args.config, ctx.env)
     if path.exists() and not args.force:
         print(f"cmdr: {path} already exists; pass --force to replace it", file=ctx.err)
@@ -384,7 +364,7 @@ def _cmd_init(args: argparse.Namespace, ctx: _Context) -> int:
     return EXIT_OK
 
 
-def _cmd_sync(args: argparse.Namespace, ctx: _Context) -> int:
+def _cmd_sync(args: argparse.Namespace, ctx: Context) -> int:
     file = read_config(config_path(args.config, ctx.env))
     user = resolve_user(args.user, ctx.env, file)
     workspace = Workspace(resolve_workspace(args.workspace, ctx.env, file))
@@ -432,15 +412,15 @@ def _card_status(job: Future[CardRefresh] | None, *, dry_run: bool) -> _CardStat
     except (NetworkError, ScryfallError, CardDataError, OSError) as error:
         logging.getLogger(__name__).info("card data refresh failed: %s", error)
         return _CardStatus(_CardState.FAILED, f"{error}; the previous card data is kept")
-    source = f"Scryfall data of {_day(refresh.meta.cards_updated_at)}"
+    source = f"Scryfall data of {day(refresh.meta.cards_updated_at)}"
     if refresh.status is RefreshStatus.CURRENT:
         return _CardStatus(_CardState.CURRENT, source)
     return _CardStatus(_CardState.UPDATED, f"{source}, {refresh.printings or 0:,} printings")
 
 
-def _cmd_analyze(args: argparse.Namespace, ctx: _Context) -> int:
-    decks = _selected_decks(args, ctx)
-    with _open_card_db(ctx) as db:
+def _cmd_analyze(args: argparse.Namespace, ctx: Context) -> int:
+    decks = selected_decks(args, ctx)
+    with open_card_db(ctx) as db:
         analyses = [analyze(s.deck, db.resolve(s.deck.main_cards), db.available_roles) for s in decks]
     if args.json:
         json.dump([_analysis_json(a) for a in analyses], ctx.out, ensure_ascii=False, indent=2)
@@ -453,16 +433,16 @@ def _cmd_analyze(args: argparse.Namespace, ctx: _Context) -> int:
     return EXIT_OK
 
 
-def _cmd_price(args: argparse.Namespace, ctx: _Context) -> int:
-    decks = _selected_decks(args, ctx)
-    with _open_card_db(ctx) as db:
+def _cmd_price(args: argparse.Namespace, ctx: Context) -> int:
+    decks = selected_decks(args, ctx)
+    with open_card_db(ctx) as db:
         prices = [price_deck(s.deck, db.resolve(s.deck.main_cards)) for s in decks]
         meta = db.meta()
     if args.json:
         json.dump([_price_json(p) for p in prices], ctx.out, ensure_ascii=False, indent=2)
         ctx.out.write("\n")
         return EXIT_OK
-    print(f"Cardmarket prices in EUR, from Scryfall data of {_day(meta.cards_updated_at)}", file=ctx.out)
+    print(f"Cardmarket prices in EUR, from Scryfall data of {day(meta.cards_updated_at)}", file=ctx.out)
     if args.deck:
         for price in prices:
             _print_deck_price(price, ctx.out, top=args.top)
@@ -471,9 +451,9 @@ def _cmd_price(args: argparse.Namespace, ctx: _Context) -> int:
     return EXIT_OK
 
 
-def _cmd_bracket(args: argparse.Namespace, ctx: _Context) -> int:
-    decks = [s.deck for s in _selected_decks(args, ctx)]
-    with _open_card_db(ctx) as db:
+def _cmd_bracket(args: argparse.Namespace, ctx: Context) -> int:
+    decks = [s.deck for s in selected_decks(args, ctx)]
+    with open_card_db(ctx) as db:
         cards = [bracket_cards(db.resolve(deck.main_cards), db.available_roles) for deck in decks]
     with ctx.client_factory() as http:
         results = estimate_decks(
@@ -499,16 +479,16 @@ def _cmd_bracket(args: argparse.Namespace, ctx: _Context) -> int:
     return EXIT_FAILURE if unavailable else EXIT_OK
 
 
-def _cmd_suggest(args: argparse.Namespace, ctx: _Context) -> int:
+def _cmd_suggest(args: argparse.Namespace, ctx: Context) -> int:
     file = read_config(config_path(args.config, ctx.env))
-    decks = [s.deck for s in _selected_decks(args, ctx)]
+    decks = [s.deck for s in selected_decks(args, ctx)]
     options = SuggestOptions(
         targets={**DEFAULT_TARGETS, **file.targets},
         count=args.count,
         max_cents=args.max_price,
         within_bracket=args.within_bracket,
     )
-    with _open_card_db(ctx) as db:
+    with open_card_db(ctx) as db:
         with ctx.client_factory() as http:
             combos = find_combos(
                 decks,
@@ -529,7 +509,7 @@ def _cmd_suggest(args: argparse.Namespace, ctx: _Context) -> int:
         ctx.out.write("\n")
     elif args.deck:
         print(
-            f"prices: each card's cheapest printing in EUR, Scryfall data of {_day(meta.cards_updated_at)}",
+            f"prices: each card's cheapest printing in EUR, Scryfall data of {day(meta.cards_updated_at)}",
             file=ctx.out,
         )
         for result in results:
@@ -541,7 +521,7 @@ def _cmd_suggest(args: argparse.Namespace, ctx: _Context) -> int:
     return EXIT_FAILURE if unavailable else EXIT_OK
 
 
-def _cmd_login(args: argparse.Namespace, ctx: _Context) -> int:
+def _cmd_login(args: argparse.Namespace, ctx: Context) -> int:
     user = resolve_user(args.user, ctx.env, read_config(config_path(args.config, ctx.env)))
     name = args.login_name or user
     if args.password_stdin:
@@ -559,7 +539,7 @@ def _cmd_login(args: argparse.Namespace, ctx: _Context) -> int:
     return EXIT_OK
 
 
-def _cmd_logout(args: argparse.Namespace, ctx: _Context) -> int:
+def _cmd_logout(args: argparse.Namespace, ctx: Context) -> int:
     user = resolve_user(args.user, ctx.env, read_config(config_path(args.config, ctx.env)))
     with ctx.client_factory() as http:
         removed = ArchidektAuth(Fetcher(http), ctx.token_store).logout(user)
@@ -567,13 +547,13 @@ def _cmd_logout(args: argparse.Namespace, ctx: _Context) -> int:
     return EXIT_OK
 
 
-def _cmd_apply(args: argparse.Namespace, ctx: _Context) -> int:
+def _cmd_apply(args: argparse.Namespace, ctx: Context) -> int:
     plan = read_plan(ctx.stdin if args.plan == "-" else Path(args.plan))
     file = read_config(config_path(args.config, ctx.env))
     user = resolve_user(args.user, ctx.env, file)
     deck_id, workspace = _plan_deck(plan.deck, args, ctx)
     result: SaveResult | None = None
-    with _open_card_db(ctx) as db, ctx.client_factory() as http:
+    with open_card_db(ctx) as db, ctx.client_factory() as http:
         fetcher = Fetcher(http)
         token = _access_token(ArchidektAuth(fetcher, ctx.token_store), user, args, ctx)
         editor = ArchidektEditor(fetcher, token)
@@ -599,19 +579,19 @@ def _cmd_apply(args: argparse.Namespace, ctx: _Context) -> int:
     return EXIT_FAILURE if result is not None and result.mismatches else EXIT_OK
 
 
-def _plan_deck(query: str, args: argparse.Namespace, ctx: _Context) -> tuple[int, Workspace | None]:
+def _plan_deck(query: str, args: argparse.Namespace, ctx: Context) -> tuple[int, Workspace | None]:
     """The plan's deck id, and the workspace when there is one (a deck id works without it)."""
     file = read_config(config_path(args.config, ctx.env))
     if not query.isdigit():
         workspace = Workspace(resolve_workspace(args.workspace, ctx.env, file))
-        return _one_deck(workspace, query).deck.id, workspace
+        return one_deck(workspace, query).deck.id, workspace
     try:
         return int(query), Workspace(resolve_workspace(args.workspace, ctx.env, file))
     except ConfigError:
         return int(query), None
 
 
-def _access_token(auth: ArchidektAuth, user: str, args: argparse.Namespace, ctx: _Context) -> str | None:
+def _access_token(auth: ArchidektAuth, user: str, args: argparse.Namespace, ctx: Context) -> str | None:
     """A token for saving, or for previewing a private deck; a preview goes on without one."""
     if args.save:
         return auth.access_token(user)
@@ -624,53 +604,7 @@ def _access_token(auth: ArchidektAuth, user: str, args: argparse.Namespace, ctx:
         return None
 
 
-def _selected_decks(args: argparse.Namespace, ctx: _Context) -> list[StoredDeck]:
-    file = read_config(config_path(args.config, ctx.env))
-    workspace = Workspace(resolve_workspace(args.workspace, ctx.env, file))
-    if args.deck is None:
-        decks = workspace.load_all()
-        if not decks:
-            raise UsageError(f"no decks in {workspace.root}; run `cmdr sync` first")
-        return decks
-    return [_one_deck(workspace, args.deck)]
-
-
-def _one_deck(workspace: Workspace, query: str) -> StoredDeck:
-    if not query.strip():
-        raise UsageError("the deck to look up is empty")
-    matches = workspace.find(query)
-    if not matches:
-        raise UsageError(f"no deck matches {query!r}; `cmdr list` shows them all")
-    if len(matches) > 1:
-        names = "; ".join(f"{s.deck.id} {s.deck.name}" for s in matches)
-        raise UsageError(f"{query!r} matches {len(matches)} decks ({names}); use the deck id")
-    return matches[0]
-
-
-def _open_card_db(ctx: _Context) -> CardDb:
-    db = CardDb(cache_dir(ctx.env) / CARD_DB_FILE)
-    _warn_if_stale(db.meta(), ctx)
-    return db
-
-
-def _warn_if_stale(meta: CardDataMeta, ctx: _Context) -> None:
-    try:
-        updated = datetime.fromisoformat(meta.cards_updated_at)
-    except ValueError:
-        return
-    if updated.tzinfo is not None and ctx.now() - updated > STALE_CARD_DATA:
-        print(
-            f"cmdr: card data is from {_day(meta.cards_updated_at)}; run `cmdr sync` for fresh prices",
-            file=ctx.err,
-        )
-
-
-def _day(timestamp: str) -> str:
-    # Scryfall timestamps are ISO 8601 in UTC; the date part is all a reader needs.
-    return timestamp[:10]
-
-
-def _cmd_list(args: argparse.Namespace, ctx: _Context) -> int:
+def _cmd_list(args: argparse.Namespace, ctx: Context) -> int:
     file = read_config(config_path(args.config, ctx.env))
     workspace = Workspace(resolve_workspace(args.workspace, ctx.env, file))
     stored = workspace.load_all()

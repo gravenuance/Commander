@@ -6,7 +6,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from commander.carddb import CARD_DB_FILE, CardDb, Role
+from commander.carddb import CARD_DB_FILE, FACE_SEPARATOR, CardDb, Role
 from commander.jsonshape import ShapeError
 from commander.net import Fetcher, NetworkError
 from commander.scryfall import (
@@ -15,6 +15,7 @@ from commander.scryfall import (
     ScryfallError,
     parse_bulk_listing,
     parse_card,
+    parse_tag,
     read_cards,
     read_tags,
     refresh_card_db,
@@ -342,3 +343,47 @@ def test_regular_printings_are_the_ones_sanctioned_play_accepts(
 
     assert card is not None
     assert card.printing.regular is regular
+
+
+def test_card_text_keywords_and_stats_are_read() -> None:
+    card = parse_card(real_card("High-Speed Hoverbike", real_card_set("High-Speed Hoverbike")))
+    assert card is not None
+    assert card.oracle_text.startswith(
+        "Flash\nFlying\nWhen this Vehicle enters, tap up to one target creature."
+    )
+    assert (card.keywords, card.power, card.toughness) == (("Flying", "Crew", "Flash"), "2", "2")
+
+
+def test_two_faced_card_joins_the_text_of_its_faces() -> None:
+    card = parse_card(real_card("Sundering Eruption // Volcanic Fissure", "mh3"))
+    assert card is not None
+    front, back = card.oracle_text.split(FACE_SEPARATOR)
+    assert front.startswith("Destroy target land.")
+    assert back.endswith("{T}: Add {R}.")
+    assert (card.power, card.toughness) == (None, None)
+
+
+def test_tag_slug_is_read_and_required() -> None:
+    raw: Json = {"object": "tag", "id": "t1", "slug": "stax", "type": "oracle", "child_ids": None}
+    raw["taggings"] = []
+    tag = parse_tag(raw)
+    assert tag is not None
+    assert (tag.id, tag.slug, tag.child_ids, tag.oracle_ids) == ("t1", "stax", (), frozenset())
+    del raw["slug"]
+    with pytest.raises(ShapeError, match="slug"):
+        parse_tag(raw)
+
+
+def test_refresh_stores_every_oracle_tag(tmp_path: Path) -> None:
+    refresh(FakeScryfall(), tmp_path)
+    with CardDb(tmp_path / CARD_DB_FILE) as db:
+        # Filler tags have no role, yet are kept; the art tag is not.
+        assert set(db.tag_ids(["combat-ramp", "filler-0", "dwarf"])) == {"combat-ramp", "filler-0"}
+
+
+def real_card_set(name: str) -> str:
+    for line in fixture_lines("scryfall_cards.jsonl"):
+        card: Json = json.loads(line)
+        if card["name"] == name:
+            return card["set"]
+    raise AssertionError(f"{name} is not in the fixture")

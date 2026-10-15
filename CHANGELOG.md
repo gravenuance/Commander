@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+- `cmdr card <name>...`: a card's rules text, type, power/toughness, price, EDHREC rank, roles and Scryfall
+  Tagger tags; `cmdr tags <text>` finds Tagger tags by name with their card counts.
+
+### Changed
+- The card database (schema 4) keeps each card's rules text, keywords and power/toughness, and every Tagger
+  oracle tag with its sub-tags, not only the role tags. The next `cmdr sync` rebuilds it.
+
 ## 0.1.0 - 2026-10-15
 
 First version.
