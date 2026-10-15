@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from commander.carddb import Role
 from commander.config import (
     ConfigError,
     FileConfig,
@@ -75,4 +76,39 @@ def test_newer_config_version_is_rejected(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
     path.write_text('version = 2\nuser = "x"\n', encoding="utf-8")
     with pytest.raises(ConfigError, match="version 2 is not supported"):
+        read_config(path)
+
+
+def test_targets_are_read_by_role(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text('version = 1\nuser = "x"\n\n[targets]\nramp = 12\nboard_wipe = 0\n', encoding="utf-8")
+    assert read_config(path).targets == {Role.RAMP: 12, Role.BOARD_WIPE: 0}
+
+
+def test_no_targets_table_means_no_overrides(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text('version = 1\nuser = "x"\n', encoding="utf-8")
+    assert read_config(path).targets == {}
+
+
+@pytest.mark.parametrize(
+    ("toml", "message"),
+    [
+        (
+            "[targets]\nlands = 36\n",
+            r"unknown role 'lands' in \[targets\]; use ramp, draw, removal, board_wipe",
+        ),
+        ('[targets]\n"board wipe" = 3\n', "unknown role 'board wipe'"),
+        ("[targets]\nextra_turn = 1\n", "unknown role 'extra_turn'"),
+        ("[targets]\nramp = -1\n", "targets.ramp must be a whole number from 0 to 99"),
+        ("[targets]\nramp = 100\n", "from 0 to 99"),
+        ("[targets]\nramp = 9.5\n", "from 0 to 99"),
+        ("[targets]\nramp = true\n", "from 0 to 99"),
+        ("targets = 10\n", "'targets' must be a table"),
+    ],
+)
+def test_bad_targets_are_rejected(tmp_path: Path, toml: str, message: str) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text("version = 1\n" + toml, encoding="utf-8")
+    with pytest.raises(ConfigError, match=message):
         read_config(path)

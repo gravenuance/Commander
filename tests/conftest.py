@@ -112,12 +112,43 @@ def gzip_lines(lines: list[str]) -> bytes:
 
 
 def card_lines() -> list[str]:
-    """The fixture deck's cards from the real bulk file, plus filler up to a believable size."""
+    """Real bulk-file lines for the fixture deck and the cards suggested to it, plus filler."""
     return fixture_lines("scryfall_cards.jsonl") + [filler_card(i) for i in range(FILLER_CARDS)]
 
 
+MAGDA_ORACLE = "3d268e48-3004-4384-bf52-e63243fb5e02"
+ARCANE_SIGNET = "0bc7f093-bef0-4f1a-852c-4b75ebf54838"
+MIND_STONE = "c97361b5-af16-4a7b-af85-a429dbaf4ad2"
+JESKAS_WILL = "0fd114c4-092b-4e28-b0dc-ef529f3bc73e"
+ANCIENT_TOMB = "23467047-6dba-4498-b783-1ebc4f74b8c2"
+MANA_CRYPT = "2c63e4e1-89d2-4bc6-a232-94e75c4b1c8a"
+LIGHTNING_BOLT = "4457ed35-7c10-48c8-9776-456485fdf070"
+CHAOS_WARP = "07a0cba9-8768-4fd9-a3d5-b0f83b4bf8e8"
+RHYSTIC_STUDY = "53236dd7-845a-444c-96d5-f41ed7325d8f"
+UNRANKED_FILLER = "eeeeeeee-0000-4000-8000-000000000000"
+# Made up for the tests: the trimmed real tag lines only tag the fixture deck's own cards.
+EXTRA_TAGGINGS: dict[str, tuple[str, ...]] = {
+    "2f3e4ad7-5e60-41b4-bdbc-653f16869cf6": (  # ramp
+        ARCANE_SIGNET,
+        MIND_STONE,
+        JESKAS_WILL,
+        ANCIENT_TOMB,
+        MANA_CRYPT,
+        UNRANKED_FILLER,
+    ),
+    "444f824c-f910-4530-9dbe-ede7a84cd7f9": (LIGHTNING_BOLT, CHAOS_WARP),  # removal
+    "b6448c45-ce65-4848-aa98-2151e4e07437": (RHYSTIC_STUDY,),  # draw
+}
+
+
 def tag_lines() -> list[str]:
-    return fixture_lines("scryfall_tags.jsonl") + [filler_tag(i) for i in range(FILLER_TAGS)]
+    lines: list[str] = []
+    for line in fixture_lines("scryfall_tags.jsonl"):
+        tag = json.loads(line)
+        extra = EXTRA_TAGGINGS.get(tag["id"], ())
+        tag["taggings"] = [*tag["taggings"], *({"oracle_id": o, "weight": "median"} for o in extra)]
+        lines.append(json.dumps(tag) if extra else line)
+    return lines + [filler_tag(i) for i in range(FILLER_TAGS)]
 
 
 @functools.cache
@@ -212,27 +243,38 @@ class FakeScryfall:
         return httpx.Client(transport=httpx.MockTransport(self.handler))
 
 
-SPELLBOOK_URL = "https://backend.commanderspellbook.com/estimate-bracket"
+SPELLBOOK_API = "https://backend.commanderspellbook.com"
 
 
 class FakeSpellbook:
-    """Answers estimate-bracket with a trimmed real answer, and records each request body."""
+    """Answers estimate-bracket and find-my-combos with trimmed real answers; records each request body."""
 
     def __init__(self) -> None:
         self.answer: Json = load_fixture("spellbook_estimate.json")
-        self.status = 200
+        self.combos: Json = load_fixture("spellbook_combos.json")
+        self.status = HTTP_OK
+        self.combos_status = HTTP_OK
         self.bodies: list[Json] = []
+        self.combo_bodies: list[Json] = []
 
     def handler(self, request: httpx.Request) -> httpx.Response:
-        if request.method != "POST" or str(request.url) != SPELLBOOK_URL:
-            return httpx.Response(404)
-        self.bodies.append(json.loads(request.content))
-        if self.status != HTTP_OK:
-            return httpx.Response(self.status)
-        return httpx.Response(200, json=self.answer)
+        if request.method != "POST":
+            return httpx.Response(405)
+        url = str(request.url)
+        if url == f"{SPELLBOOK_API}/estimate-bracket":
+            self.bodies.append(json.loads(request.content))
+            return self._reply(self.status, self.answer)
+        if url == f"{SPELLBOOK_API}/find-my-combos":
+            self.combo_bodies.append(json.loads(request.content))
+            return self._reply(self.combos_status, self.combos)
+        return httpx.Response(404)
 
     def client(self) -> httpx.Client:
         return httpx.Client(transport=httpx.MockTransport(self.handler))
+
+    @staticmethod
+    def _reply(status: int, answer: Json) -> httpx.Response:
+        return httpx.Response(200, json=answer) if status == HTTP_OK else httpx.Response(status)
 
 
 class FakeArchidekt:

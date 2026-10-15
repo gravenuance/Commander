@@ -3,10 +3,10 @@
 `cmdr` is a command-line tool that tracks your Commander decks on [Archidekt](https://archidekt.com). It keeps a
 copy of each deck in this repository, so every change shows up in git history, and gives you a place for
 research notes on each deck. It also analyses each deck (curve, types, colours, roles), prices it in EUR
-from Cardmarket prices via [Scryfall](https://scryfall.com), and estimates its bracket with
-[Commander Spellbook](https://commanderspellbook.com).
+from Cardmarket prices via [Scryfall](https://scryfall.com), estimates its bracket with
+[Commander Spellbook](https://commanderspellbook.com), and suggests cards to add and to cut.
 
-Planned: upgrade suggestions, and applying approved changes back to Archidekt.
+Planned: applying approved changes back to Archidekt.
 
 ## Requirements
 
@@ -33,6 +33,8 @@ uv run cmdr price                                   # value of every deck in EUR
 uv run cmdr price 10004639 --top 0                  # every card in one deck, most valuable first
 uv run cmdr bracket                                 # estimated bracket of every deck beside the one on Archidekt
 uv run cmdr bracket gator --details                 # one deck: game changers, tutors, combos with links
+uv run cmdr suggest                                 # combo pieces and short roles of every deck side by side
+uv run cmdr suggest magda --max-price 5             # one deck: cards to add up to EUR 5, cards to consider cutting
 ```
 
 `cmdr --help` and `cmdr <command> --help` show every option. Every command takes `--json` for scripts.
@@ -80,6 +82,39 @@ Each answer is kept for 7 days in `%LOCALAPPDATA%\Commander\spellbook`, and aske
 cards change or with `--refresh`. If Spellbook cannot be reached, an older answer for the same cards is
 shown with a warning; with none, the estimate shows as unavailable and `bracket` exits with 1.
 
+### Suggestions
+
+`suggest` gives each deck three lists. Prices are each card's cheapest printing in EUR.
+
+- **Cards that complete a combo:** Commander Spellbook's combos that the deck is exactly one card short of,
+  within its colours. A card that completes several combos comes first. Some combos also need a piece
+  that Spellbook describes rather than names ("also needs: a sacrifice outlet"). Combos with a banned
+  card are left out.
+- **Roles below target:** for each role whose count of nonland cards falls short of its target, the most
+  played cards with that role that fit the commander's colours and are legal, by
+  [EDHREC](https://edhrec.com)'s popularity rank as Scryfall publishes it. The ideas are not specific to
+  your commander. The default targets are ramp 10, draw 10, removal 8 and board wipes 2; change them in
+  the config file:
+
+  ```toml
+  [targets]
+  ramp = 12
+  board_wipe = 3
+  counterspell = 4   # any role analyze counts can have a target; 0 turns a default off
+  ```
+
+- **Cards to consider cutting:** nonland cards that fill none of the roles and are in no combo, least
+  played first. These are only candidates: a theme card often fills no role on paper.
+
+An idea marked `! bracket 3+ (game changer)` would lift the deck above the bracket set on Archidekt, by
+the official rules (no game changers in brackets 1 and 2, at most three in bracket 3, no mass land denial
+below bracket 4) or by the tag of the combo it completes. `--within-bracket` leaves these out, and
+`--max-price 5` leaves out cards over EUR 5 and cards with no price. `-n` sets how many ideas each list
+shows (default 5).
+
+EDHREC's own pages are not used: its terms of use forbid automated requests. See
+[ADR 0003](docs/adr/0003-suggestions-from-spellbook-and-scryfall.md).
+
 ### Deck folders
 
 `sync` writes one folder per deck, `decks/<archidekt-id>-<name>/`, containing:
@@ -103,7 +138,8 @@ defaults.
 | Archidekt username | `--user` | `CMDR_USER` | `user` | none (required) |
 | Deck folder | `--workspace` | `CMDR_WORKSPACE` | `workspace` | none (required) |
 | Config file | `--config` | `CMDR_CONFIG` | n/a | `%APPDATA%\Commander\config.toml` |
-| Card data and bracket answers folder | n/a | `CMDR_CACHE_DIR` | n/a | `%LOCALAPPDATA%\Commander` |
+| Card data and Spellbook answers folder | n/a | `CMDR_CACHE_DIR` | n/a | `%LOCALAPPDATA%\Commander` |
+| Role targets for `suggest` | n/a | n/a | `[targets]` table | ramp 10, draw 10, removal 8, board_wipe 2 |
 
 ## Test
 
@@ -122,4 +158,5 @@ Tests use recorded fixture data and never touch the network.
 |---|---|---|
 | Archidekt (`archidekt.com/api`) | Reading decks | Public decks need no login. The API is undocumented, so `sync` checks every response's shape and fails with a clear message if Archidekt changes it. |
 | Scryfall (`api.scryfall.com/bulk-data`, files on `data.scryfall.io`) | Card facts, EUR prices, role tags | One API call per `sync` for the file list; the files themselves have no rate limit. Scryfall updates prices once a day and asks for bulk files rather than per-card calls for lookups like these. Tag data is community-maintained and can change. See [ADR 0001](docs/adr/0001-scryfall-bulk-card-data.md). |
-| Commander Spellbook (`backend.commanderspellbook.com/estimate-bracket`) | Bracket estimates and combos | One request per deck, at most four at a time, and none while a cached answer is under 7 days old. Spellbook asks tools to name themselves in the User-Agent, keep to a few calls per user action, stay under about 80 requests a minute, handle 429, and credit and link back to commanderspellbook.com, which `bracket` does in its output. Only card names and quantities are sent. See [ADR 0002](docs/adr/0002-bracket-estimates-from-commander-spellbook.md). |
+| Commander Spellbook (`backend.commanderspellbook.com`: `estimate-bracket`, `find-my-combos`) | Bracket estimates, combos, and combos one card short | One request per deck and command, at most four at a time, and none while a cached answer is under 7 days old. Spellbook asks tools to name themselves in the User-Agent, keep to a few calls per user action, stay under about 80 requests a minute, handle 429, and credit and link back to commanderspellbook.com, which `bracket` and `suggest` do in their output. Only card names and quantities are sent. See [ADR 0002](docs/adr/0002-bracket-estimates-from-commander-spellbook.md) and [ADR 0003](docs/adr/0003-suggestions-from-spellbook-and-scryfall.md). |
+| EDHREC (via Scryfall's `edhrec_rank`) | Popularity ranks for `suggest` | Never contacted: the rank comes inside Scryfall's bulk files. EDHREC's terms forbid automated requests to its site. |

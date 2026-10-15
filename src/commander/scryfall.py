@@ -16,6 +16,7 @@ from pathlib import Path
 
 from commander.carddb import (
     CARD_DB_FILE,
+    COLORS,
     CardDataMeta,
     ParsedCard,
     Printing,
@@ -47,7 +48,6 @@ MAX_LINE_CHARS = 1024 * 1024
 MAX_BAD_FRACTION = 0.01
 MIN_CARDS = 10_000
 MIN_TAGS = 100
-COLOR_ORDER = "WUBRG"
 # Tokens, emblems, art cards and Planechase/Archenemy pieces never sit in a Commander deck.
 _NON_CARD_LAYOUTS = frozenset(
     {"token", "double_faced_token", "emblem", "art_series", "vanguard", "scheme", "planar", "augment", "host"}
@@ -221,6 +221,7 @@ def parse_card(raw: object) -> ParsedCard | None:
         color_identity=_colors(str_list(card, "color_identity", where)),
         game_changer=card.get("game_changer") is True,
         commander_legal=req_object(card, "legalities", where).get("commander") == "legal",
+        edhrec_rank=opt_int(card, "edhrec_rank", where),
     )
 
 
@@ -345,7 +346,7 @@ def _number(obj: Mapping[str, object], key: str, where: str) -> float:
 
 
 def _colors(colors: tuple[str, ...]) -> str:
-    unknown = set(colors) - set(COLOR_ORDER)
+    unknown = set(colors) - set(COLORS)
     if unknown:
         raise ShapeError(f"unknown colours {sorted(unknown)}")
-    return "".join(color for color in COLOR_ORDER if color in colors)
+    return "".join(color for color in COLORS if color in colors)

@@ -1,0 +1,428 @@
+{
+ "count": null,
+ "next": null,
+ "previous": null,
+ "results": {
+  "identity": "R",
+  "included": [
+   {
+    "id": "643-1486-3459--67",
+    "status": "OK",
+    "bracketTag": "E",
+    "identity": "R",
+    "popularity": 7035,
+    "uses": [
+     {
+      "card": {
+       "id": 1486,
+       "name": "Magda, Brazen Outlaw",
+       "oracleId": "3d268e48-3004-4384-bf52-e63243fb5e02",
+       "typeLine": "Legendary Creature — Dwarf Berserker"
+      },
+      "quantity": 1,
+      "mustBeCommander": false
+     },
+     {
+      "card": {
+       "id": 3459,
+       "name": "Battered Golem",
+       "oracleId": "066dfefd-eef5-4c81-8e8a-310bac01674f",
+       "typeLine": "Artifact Creature — Golem"
+      },
+      "quantity": 1,
+      "mustBeCommander": false
+     },
+     {
+      "card": {
+       "id": 643,
+       "name": "Maskwood Nexus",
+       "oracleId": "9b2cdbed-c733-409b-b0e4-2c8960c25111",
+       "typeLine": "Artifact"
+      },
+      "quantity": 1,
+      "mustBeCommander": false
+     }
+    ],
+    "requires": [
+     {
+      "template": {
+       "id": 67,
+       "name": "Vehicle with Crew 4 or less"
+      },
+      "quantity": 1
+     }
+    ],
+    "produces": [
+     {
+      "feature": {
+       "id": 2408,
+       "name": "Infinite artifact ETB"
+      },
+      "quantity": 1
+     },
+     {
+      "feature": {
+       "id": 2409,
+       "name": "Infinite artifact LTB"
+      },
+      "quantity": 1
+     },
+     {
+      "feature": {
+       "id": 2419,
+       "name": "Infinite artifact sacrifice triggers"
+      },
+      "quantity": 1
+     },
+     {
+      "feature": {
+       "id": 587,
+       "name": "Infinite artifact tokens"
+      },
+      "quantity": 1
+     },
+     {
+      "feature": {
+       "id": 5,
+       "name": "Infinite colored mana"
+      },
+      "quantity": 1
+     },
+     {
+      "feature": {
+       "id": 91,
+       "name": "Infinite Treasure tokens"
+      },
+      "quantity": 1
+     },
+     {
+      "feature": {
+       "id": 1333,
+       "name": "Put all artifact cards and a subset of creature cards from your library onto the battlefield"
+      },
+      "quantity": 1
+     }
+    ],
+    "prices": {
+     "tcgplayer": "10.42",
+     "cardmarket": "5.00",
+     "cardkingdom": "12.77"
+    }
+   }
+  ],
+  "includedByChangingCommanders": [],
+  "almostIncluded": [
+   {
+    "id": "1878-3368",
+    "status": "OK",
+    "bracketTag": "P",
+    "identity": "R",
+    "popularity": 37660,
+    "uses": [
+     {
+      "card": {
+       "id": 3368,
+       "name": "Reiterate",
+       "oracleId": "38394ee3-6726-4f91-bc25-36bce0c6aab9",
+       "typeLine": "Instant"
+      },
+      "quantity": 1,
+      "mustBeCommander": false
+     },
+     {
+      "card": {
+       "id": 1878,
+       "name": "Jeska's Will",
+       "oracleId": "0fd114c4-092b-4e28-b0dc-ef529f3bc73e",
+       "typeLine": "Sorcery"
+      },
+      "quantity": 1,
+      "mustBeCommander": false
+     }
+    ],
+    "requires": [],
+    "produces": [
+     {
+      "feature": {
+       "id": 77,
+       "name": "Infinite magecraft triggers"
+      },
+      "quantity": 1
+     },
+     {
+      "feature": {
+       "id": 20,
+       "name": "Infinite red mana"
+      },
+      "quantity": 1
+     },
+     {
+      "feature": {
+       "id": 17,
+       "name": "Infinite storm count"
+      },
+      "quantity": 1
+     },
+     {
+      "feature": {
+       "id": 1268,
+       "name": "Exile your library with the ability to play the exiled cards until end of turn"
+      },
+      "quantity": 1
+     }
+    ],
+    "prices": {
+     "tcgplayer": "57.67",
+     "cardmarket": "40.24",
+     "cardkingdom": "70.98"
+    }
+   },
+   {
+    "id": "1486-3750",
+    "status": "OK",
+    "bracketTag": "S",
+    "identity": "R",
+    "popularity": 10497,
+    "uses": [
+     {
+      "card": {
+       "id": 1486,
+       "name": "Magda, Brazen Outlaw",
+       "oracleId": "3d268e48-3004-4384-bf52-e63243fb5e02",
+       "typeLine": "Legendary Creature — Dwarf Berserker"
+      },
+      "quantity": 1,
+      "mustBeCommander": false
+     },
+     {
+      "card": {
+       "id": 3750,
+       "name": "Aggravated Assault",
+       "oracleId": "20129459-a386-41eb-899d-1aede3427300",
+       "typeLine": "Enchantment"
+      },
+      "quantity": 1,
+      "mustBeCommander": false
+     }
+    ],
+    "requires": [],
+    "produces": [
+     {
+      "feature": {
+       "id": 19,
+       "name": "Infinite combat phases"
+      },
+      "quantity": 1
+     }
+    ],
+    "prices": {
+     "tcgplayer": "32.79",
+     "cardmarket": "17.87",
+     "cardkingdom": "39.98"
+    }
+   },
+   {
+    "id": "643-1486-3459--68",
+    "status": "OK",
+    "bracketTag": "E",
+    "identity": "R",
+    "popularity": 7035,
+    "uses": [
+     {
+      "card": {
+       "id": 1486,
+       "name": "Magda, Brazen Outlaw",
+       "oracleId": "3d268e48-3004-4384-bf52-e63243fb5e02",
+       "typeLine": "Legendary Creature — Dwarf Berserker"
+      },
+      "quantity": 1,
+      "mustBeCommander": false
+     },
+     {
+      "card": {
+       "id": 3459,
+       "name": "Battered Golem",
+       "oracleId": "066dfefd-eef5-4c81-8e8a-310bac01674f",
+       "typeLine": "Artifact Creature — Golem"
+      },
+      "quantity": 1,
+      "mustBeCommander": false
+     },
+     {
+      "card": {
+       "id": 643,
+       "name": "Maskwood Nexus",
+       "oracleId": "9b2cdbed-c733-409b-b0e4-2c8960c25111",
+       "typeLine": "Artifact"
+      },
+      "quantity": 1,
+      "mustBeCommander": false
+     }
+    ],
+    "requires": [
+     {
+      "template": {
+       "id": 68,
+       "name": "Creature with Saddle 4 or less"
+      },
+      "quantity": 1
+     }
+    ],
+    "produces": [
+     {
+      "feature": {
+       "id": 2408,
+       "name": "Infinite artifact ETB"
+      },
+      "quantity": 1
+     },
+     {
+      "feature": {
+       "id": 2409,
+       "name": "Infinite artifact LTB"
+      },
+      "quantity": 1
+     },
+     {
+      "feature": {
+       "id": 2419,
+       "name": "Infinite artifact sacrifice triggers"
+      },
+      "quantity": 1
+     },
+     {
+      "feature": {
+       "id": 587,
+       "name": "Infinite artifact tokens"
+      },
+      "quantity": 1
+     },
+     {
+      "feature": {
+       "id": 5,
+       "name": "Infinite colored mana"
+      },
+      "quantity": 1
+     },
+     {
+      "feature": {
+       "id": 91,
+       "name": "Infinite Treasure tokens"
+      },
+      "quantity": 1
+     },
+     {
+      "feature": {
+       "id": 1333,
+       "name": "Put all artifact cards and a subset of creature cards from your library onto the battlefield"
+      },
+      "quantity": 1
+     }
+    ],
+    "prices": {
+     "tcgplayer": "10.42",
+     "cardmarket": "5.00",
+     "cardkingdom": "12.77"
+    }
+   },
+   {
+    "id": "3459-4702",
+    "status": "OK",
+    "bracketTag": "S",
+    "identity": "R",
+    "popularity": 242,
+    "uses": [
+     {
+      "card": {
+       "id": 3459,
+       "name": "Battered Golem",
+       "oracleId": "066dfefd-eef5-4c81-8e8a-310bac01674f",
+       "typeLine": "Artifact Creature — Golem"
+      },
+      "quantity": 1,
+      "mustBeCommander": false
+     },
+     {
+      "card": {
+       "id": 4702,
+       "name": "Splinter Twin",
+       "oracleId": "2df3187b-4b91-4de9-9b26-d48a30700cec",
+       "typeLine": "Enchantment — Aura"
+      },
+      "quantity": 1,
+      "mustBeCommander": false
+     }
+    ],
+    "requires": [],
+    "produces": [
+     {
+      "feature": {
+       "id": 39,
+       "name": "Infinite creature tokens with haste"
+      },
+      "quantity": 1
+     }
+    ],
+    "prices": {
+     "tcgplayer": "7.78",
+     "cardmarket": "5.54",
+     "cardkingdom": "8.98"
+    }
+   },
+   {
+    "id": "1261-1651",
+    "status": "OK",
+    "bracketTag": "B",
+    "identity": "C",
+    "popularity": 0,
+    "uses": [
+     {
+      "card": {
+       "id": 1261,
+       "name": "Time Vault",
+       "oracleId": "99d4d99d-cf56-45aa-aa39-a250695612f2",
+       "typeLine": "Artifact"
+      },
+      "quantity": 1,
+      "mustBeCommander": false
+     },
+     {
+      "card": {
+       "id": 1651,
+       "name": "Clock of Omens",
+       "oracleId": "5d0f4665-aa10-4251-b590-129b59274fb3",
+       "typeLine": "Artifact"
+      },
+      "quantity": 1,
+      "mustBeCommander": false
+     }
+    ],
+    "requires": [],
+    "produces": [
+     {
+      "feature": {
+       "id": 42,
+       "name": "Infinite turns"
+      },
+      "quantity": 1
+     },
+     {
+      "feature": {
+       "id": 2617,
+       "name": "Lock"
+      },
+      "quantity": 1
+     }
+    ],
+    "prices": {
+     "tcgplayer": "1083.55",
+     "cardmarket": "1026.93",
+     "cardkingdom": "1903.98"
+    }
+   }
+  ],
+  "almostIncludedByAddingColors": [],
+  "almostIncludedByChangingCommanders": [],
+  "almostIncludedByAddingColorsAndChangingCommanders": []
+ }
+}

@@ -201,7 +201,7 @@ def test_maybeboard_only_edit_is_unchanged_but_saved(
 def test_sync_downloads_card_data_then_reports_it_current(tmp_path: Path, archidekt: FakeArchidekt) -> None:
     first = sync(tmp_path, archidekt, cards=True)
     assert first.code == 0
-    assert first.out.endswith("card data: updated, Scryfall data of 2026-10-15, 10,016 printings\n")
+    assert first.out.endswith("card data: updated, Scryfall data of 2026-10-15, 10,027 printings\n")
     assert (tmp_path / "localappdata" / "Commander" / "cards.sqlite").is_file()
     second = sync(tmp_path, archidekt, cards=True)
     assert second.out == "1 unchanged\ncard data: current, Scryfall data of 2026-10-15\n"
@@ -223,7 +223,7 @@ def test_sync_json_reports_card_data(tmp_path: Path, archidekt: FakeArchidekt) -
     document = json.loads(sync(tmp_path, archidekt, "--json", cards=True).out)
     assert document["cardData"] == {
         "status": "updated",
-        "detail": "Scryfall data of 2026-10-15, 10,016 printings",
+        "detail": "Scryfall data of 2026-10-15, 10,027 printings",
     }
 
 
@@ -580,7 +580,8 @@ def test_bracket_falls_back_to_an_older_answer_with_a_warning(
     result = bracket(["magda"], tmp_path, archidekt, own_cache, now=later)
     assert result.code == 0
     assert (
-        "cmdr: Honestly, though..: showing the estimate from 2026-10-15; refreshing it failed: " in result.err
+        "cmdr: Honestly, though..: showing the bracket estimate from 2026-10-15; refreshing it failed: "
+        in result.err
     )
     assert "estimate: bracket 4+ (Ruthless), Commander Spellbook 2026-10-15\n" in result.out
 
@@ -591,3 +592,238 @@ def test_bracket_needs_card_data(tmp_path: Path, archidekt: FakeArchidekt) -> No
     assert result.code == 1
     assert "run `cmdr sync`" in result.err
     assert archidekt.spellbook.bodies == []
+
+
+def suggest(args: list[str], tmp_path: Path, fake: FakeArchidekt, cache: Path, now: datetime = NOW) -> Run:
+    return run(
+        ["suggest", *args, "--workspace", str(tmp_path / "decks")], tmp_path, fake, cache=cache, now=now
+    )
+
+
+def synced(tmp_path: Path, raw_deck: Json) -> FakeArchidekt:
+    fake = FakeArchidekt()
+    fake.put(raw_deck)
+    sync(tmp_path, fake)
+    return fake
+
+
+SUGGEST_CREDIT = (
+    "combos from Commander Spellbook, https://commanderspellbook.com; "
+    "popularity ranks from EDHREC, https://edhrec.com, via Scryfall\n"
+)
+SUGGEST = (
+    """\
+prices: each card's cheapest printing in EUR, Scryfall data of 2026-10-15
+
+Honestly, though.. (10004639)
+Magda, Brazen Outlaw; bracket 5 on Archidekt; colours R
+
+cards that complete a combo (Commander Spellbook 2026-10-15)
+     €16.93  Aggravated Assault (1 combo: Spicy)
+          -  Maskwood Nexus (1 combo: Exhibition)
+             also needs: Creature with Saddle 4 or less
+      €6.68  Splinter Twin (1 combo: Spicy)
+
+roles below target (nonland cards by Scryfall tags; most played ideas first)
+  ramp 1 of 10
+      €0.30  Arcane Signet
+          -  Mind Stone
+     €33.80  Jeska's Will
+  draw 0 of 10
+             no card fits
+  removal 1 of 8
+          -  Chaos Warp
+      €1.98  Lightning Bolt
+  board wipe 1 of 2
+             no card fits
+
+cards to consider cutting: none, every nonland card has a role or is in a combo
+"""
+    + SUGGEST_CREDIT
+)
+
+
+@pytest.mark.usefixtures("decks")
+def test_suggest_one_deck(tmp_path: Path, archidekt: FakeArchidekt, own_cache: Path) -> None:
+    result = suggest(["magda"], tmp_path, archidekt, own_cache)
+    assert (result.code, result.err) == (0, "")
+    assert result.out == SUGGEST
+    assert archidekt.spellbook.combo_bodies[0]["commanders"] == [
+        {"card": "Magda, Brazen Outlaw", "quantity": 1}
+    ]
+
+
+@pytest.mark.usefixtures("decks")
+def test_suggest_details_show_each_combo(tmp_path: Path, archidekt: FakeArchidekt, own_cache: Path) -> None:
+    lines = suggest(["magda", "-d"], tmp_path, archidekt, own_cache).out.splitlines()
+    twin = lines.index("      €6.68  Splinter Twin (1 combo: Spicy)")
+    assert lines[twin + 1].strip() == "Spicy: with Battered Golem -> Infinite creature tokens with haste"
+    assert lines[twin + 2].strip() == "https://commanderspellbook.com/combo/3459-4702/"
+
+
+def test_suggest_marks_ideas_that_raise_the_bracket(tmp_path: Path, raw_deck: Json, own_cache: Path) -> None:
+    raw_deck["edhBracket"] = 2
+    out = suggest(["magda"], tmp_path, synced(tmp_path, raw_deck), own_cache).out
+    assert "     €16.93  Aggravated Assault (1 combo: Spicy)  ! bracket 3+ (Spicy combo)\n" in out
+    assert "     €33.80  Jeska's Will  ! bracket 3+ (game changer)\n" in out
+    assert "! adding it lifts the deck to at least that bracket; --within-bracket leaves these out\n" in out
+
+
+def test_suggest_within_bracket_hides_them(tmp_path: Path, raw_deck: Json, own_cache: Path) -> None:
+    raw_deck["edhBracket"] = 2
+    out = suggest(["magda", "--within-bracket"], tmp_path, synced(tmp_path, raw_deck), own_cache).out
+    assert "Aggravated Assault" not in out
+    assert "Jeska's Will" not in out
+    assert "3 left out because they would lift the deck above bracket 2\n" in out
+    assert "!" not in out
+
+
+@pytest.mark.parametrize(
+    ("price", "shown"), [("10", ["Splinter Twin"]), ("6,68", ["Splinter Twin"]), ("6.67", []), ("6.679", [])]
+)
+@pytest.mark.usefixtures("decks")
+def test_suggest_max_price(
+    tmp_path: Path, archidekt: FakeArchidekt, own_cache: Path, price: str, shown: list[str]
+) -> None:
+    [deck] = json.loads(suggest(["--json", "--max-price", price], tmp_path, archidekt, own_cache).out)
+    assert [p["name"] for p in deck["comboPieces"]] == shown
+
+
+@pytest.mark.parametrize(
+    "args", [["--max-price", "abc"], ["--max-price", "-1"], ["--max-price", "nan"], ["-n", "0"]]
+)
+@pytest.mark.usefixtures("decks")
+def test_suggest_bad_options_are_usage_errors(
+    tmp_path: Path, archidekt: FakeArchidekt, own_cache: Path, args: list[str]
+) -> None:
+    assert suggest(args, tmp_path, archidekt, own_cache).code == 2
+    assert archidekt.spellbook.combo_bodies == []
+
+
+@pytest.mark.usefixtures("decks")
+def test_suggest_count_and_more(tmp_path: Path, archidekt: FakeArchidekt, own_cache: Path) -> None:
+    out = suggest(["magda", "-n", "1"], tmp_path, archidekt, own_cache).out
+    assert "  ... 2 more; --count lists more\n" in out
+    assert "Mind Stone" not in out
+
+
+def test_suggest_lists_cut_candidates(tmp_path: Path, raw_deck: Json, own_cache: Path) -> None:
+    for card in raw_deck["cards"]:
+        if card["categories"] == ["Maybeboard"]:
+            card["categories"] = ["Creature"]
+    out = suggest(["magda"], tmp_path, synced(tmp_path, raw_deck), own_cache).out
+    assert (
+        "\ncards to consider cutting (no role, in no combo; least played first, by EDHREC rank)\n"
+        "    #11,271  Tempestra, Dame of Games\n"
+        "     #9,733  High-Speed Hoverbike\n"
+    ) in out
+
+
+def test_suggest_targets_come_from_the_config_file(
+    tmp_path: Path, archidekt: FakeArchidekt, own_cache: Path
+) -> None:
+    sync(tmp_path, archidekt)
+    config = tmp_path / "appdata" / "Commander" / "config.toml"
+    config.parent.mkdir(parents=True)
+    config.write_text("version = 1\n\n[targets]\nramp = 1\nremoval = 1\n", encoding="utf-8")
+    out = suggest(["magda"], tmp_path, archidekt, own_cache).out
+    assert "  ramp 1 of" not in out
+    assert "  at target: ramp 1/1, removal 1/1\n" in out
+
+
+def test_suggest_table(tmp_path: Path, raw_deck: Json, own_cache: Path) -> None:
+    raw_deck["edhBracket"] = 3
+    result = suggest([], tmp_path, synced(tmp_path, raw_deck), own_cache)
+    header, row, *notes = result.out.splitlines()
+    assert header.split() == ["id", "set", "combo", "ramp", "draw", "removal", "wipes", "cuts", "name"]
+    assert row.split() == ["10004639", "3", "3", "1/10", "0/10", "1/8", "1/2", "0", "Honestly,", "though.."]
+    assert notes == [
+        "combo = cards that would complete a combo; roles = nonland cards tagged / target",
+        "`cmdr suggest <deck>` lists the cards",
+        SUGGEST_CREDIT.rstrip("\n"),
+    ]
+
+
+def test_suggest_json(tmp_path: Path, raw_deck: Json, own_cache: Path) -> None:
+    raw_deck["edhBracket"] = 2
+    [deck] = json.loads(suggest(["--json"], tmp_path, synced(tmp_path, raw_deck), own_cache).out)
+    assert (deck["bracket"], deck["colorIdentity"], deck["hidden"], deck["cuts"]) == (2, "R", 0, [])
+    assert deck["combos"] == {"source": "fetched", "fetchedAt": "2026-10-15T12:00:00+00:00", "error": None}
+    assault = deck["comboPieces"][0]
+    assert (assault["name"], assault["priceCents"], assault["raises"]) == (
+        "Aggravated Assault",
+        1693,
+        {"bracket": 3, "reason": "Spicy combo"},
+    )
+    assert assault["combos"] == [
+        {
+            "id": "1486-3750",
+            "url": "https://commanderspellbook.com/combo/1486-3750/",
+            "tag": "Spicy",
+            "cards": ["Magda, Brazen Outlaw", "Aggravated Assault"],
+            "requirements": [],
+            "results": ["Infinite combat phases"],
+            "popularity": 10497,
+        }
+    ]
+    assert deck["moreComboPieces"] == 0
+    ramp = deck["roles"][0]
+    assert (ramp["role"], ramp["have"], ramp["target"], ramp["short"]) == ("ramp", 1, 10, True)
+    assert ramp["ideas"][2] == {
+        "name": "Jeska's Will",
+        "priceCents": 3380,
+        "edhrecRank": 107,
+        "raises": {"bracket": 3, "reason": "game changer"},
+    }
+
+
+def test_suggest_json_lists_cuts(tmp_path: Path, raw_deck: Json, own_cache: Path) -> None:
+    for card in raw_deck["cards"]:
+        if card["categories"] == ["Maybeboard"]:
+            card["categories"] = ["Creature"]
+    [deck] = json.loads(suggest(["--json", "-n", "1"], tmp_path, synced(tmp_path, raw_deck), own_cache).out)
+    assert deck["cuts"] == [{"name": "Tempestra, Dame of Games", "priceCents": 24, "edhrecRank": 11271}]
+
+
+@pytest.mark.usefixtures("decks")
+def test_suggest_reuses_the_combo_list_until_refresh(
+    tmp_path: Path, archidekt: FakeArchidekt, own_cache: Path
+) -> None:
+    suggest(["magda"], tmp_path, archidekt, own_cache)
+    assert suggest(["magda"], tmp_path, archidekt, own_cache).out == SUGGEST
+    assert len(archidekt.spellbook.combo_bodies) == 1
+    suggest(["magda", "--refresh"], tmp_path, archidekt, own_cache)
+    assert len(archidekt.spellbook.combo_bodies) == 2
+    assert archidekt.spellbook.bodies == []
+
+
+@pytest.mark.usefixtures("decks")
+def test_suggest_without_spellbook_still_suggests_roles_and_exits_1(
+    tmp_path: Path, archidekt: FakeArchidekt, own_cache: Path
+) -> None:
+    archidekt.spellbook.combos_status = 404
+    result = suggest(["magda"], tmp_path, archidekt, own_cache)
+    assert result.code == 1
+    assert result.err.startswith("cmdr: Honestly, though..: no combo list: ")
+    assert "cards that complete a combo: unknown, Commander Spellbook could not be reached\n" in result.out
+    assert "      €0.30  Arcane Signet\n" in result.out
+
+
+@pytest.mark.usefixtures("decks")
+def test_suggest_falls_back_to_an_older_combo_list(
+    tmp_path: Path, archidekt: FakeArchidekt, own_cache: Path
+) -> None:
+    suggest(["magda"], tmp_path, archidekt, own_cache)
+    archidekt.spellbook.combos_status = 404
+    result = suggest(["magda"], tmp_path, archidekt, own_cache, now=NOW + timedelta(days=8))
+    assert result.code == 0
+    assert "showing the combo list from 2026-10-15; refreshing it failed: " in result.err
+    assert "      €6.68  Splinter Twin (1 combo: Spicy)\n" in result.out
+
+
+@pytest.mark.usefixtures("decks")
+def test_suggest_needs_card_data_before_asking_spellbook(tmp_path: Path, archidekt: FakeArchidekt) -> None:
+    result = suggest([], tmp_path, archidekt, tmp_path / "empty-cache")
+    assert result.code == 1
+    assert "run `cmdr sync`" in result.err
+    assert archidekt.spellbook.combo_bodies == []

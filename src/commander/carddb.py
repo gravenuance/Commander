@@ -2,7 +2,7 @@
 
 import logging
 import sqlite3
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -14,15 +14,32 @@ from commander.models import DeckCard
 log = logging.getLogger(__name__)
 
 # Bump whenever the tables or the meaning of a column change; an old file is rebuilt, never migrated.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 CARD_DB_FILE = "cards.sqlite"
 _QUERY_CHUNK = 500
 _CARD_QUERIES = {
     "oracle_id": "SELECT oracle_id, name, mana_cost, cmc, type_line, color_identity, game_changer,"
-    " commander_legal, cheapest_cents FROM oracle WHERE oracle_id IN ({}) ORDER BY oracle_id",
+    " commander_legal, cheapest_cents, edhrec_rank FROM oracle WHERE oracle_id IN ({}) ORDER BY oracle_id",
     "name_key": "SELECT oracle_id, name, mana_cost, cmc, type_line, color_identity, game_changer,"
-    " commander_legal, cheapest_cents FROM oracle WHERE name_key IN ({}) ORDER BY oracle_id",
+    " commander_legal, cheapest_cents, edhrec_rank FROM oracle WHERE name_key IN ({}) ORDER BY oracle_id",
 }
+# A card fits when each colour of its identity is in :identity; a NULL :max_cents means no price limit.
+# CROSS JOIN keeps oracle as the outer loop, so cards are read in rank order through oracle_rank and a
+# caller that stops after a few rows never sorts the whole role (23 ms down to 0.1 ms for ramp).
+_CANDIDATE_QUERY = """
+SELECT oracle.oracle_id, name, mana_cost, cmc, type_line, color_identity, game_changer, commander_legal,
+    cheapest_cents, edhrec_rank
+FROM oracle CROSS JOIN role_member ON role_member.oracle_id = oracle.oracle_id
+WHERE role = :role AND commander_legal = 1 AND edhrec_rank IS NOT NULL
+    AND (instr(:identity, 'W') > 0 OR instr(color_identity, 'W') = 0)
+    AND (instr(:identity, 'U') > 0 OR instr(color_identity, 'U') = 0)
+    AND (instr(:identity, 'B') > 0 OR instr(color_identity, 'B') = 0)
+    AND (instr(:identity, 'R') > 0 OR instr(color_identity, 'R') = 0)
+    AND (instr(:identity, 'G') > 0 OR instr(color_identity, 'G') = 0)
+    AND (:max_cents IS NULL OR cheapest_cents <= :max_cents)
+ORDER BY edhrec_rank, oracle.oracle_id
+"""
+COLORS = "WUBRG"
 
 _SCHEMA = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -36,9 +53,11 @@ CREATE TABLE oracle (
     color_identity TEXT NOT NULL,
     game_changer INTEGER NOT NULL,
     commander_legal INTEGER NOT NULL,
+    edhrec_rank INTEGER,
     cheapest_cents INTEGER
 );
 CREATE INDEX oracle_name ON oracle (name_key);
+CREATE INDEX oracle_rank ON oracle (edhrec_rank, oracle_id);
 CREATE TABLE printing (
     scryfall_id TEXT PRIMARY KEY,
     oracle_id TEXT NOT NULL,
@@ -83,6 +102,8 @@ class CardInfo:
     game_changer: bool
     commander_legal: bool
     cheapest_cents: int | None
+    # How often EDHREC sees the card in decks, 1 = most; None for basics and cards too new to rank.
+    edhrec_rank: int | None
     roles: frozenset[Role]
 
     @property
@@ -124,6 +145,7 @@ class ParsedCard:
     color_identity: str
     game_changer: bool
     commander_legal: bool
+    edhrec_rank: int | None
 
 
 @dataclass(slots=True, frozen=True)
@@ -207,24 +229,36 @@ class CardDb:
             resolved.append(ResolvedCard(card, info, printing))
         return resolved
 
+    def candidates(
+        self,
+        role: Role,
+        identity: str,
+        *,
+        exclude: Collection[str],
+        max_cents: int | None = None,
+    ) -> Iterator[CardInfo]:
+        """Ranked, legal nonland cards with a role that fit a colour identity, the most played first.
+
+        Lazy, so a caller can stop once it has the ones it keeps. exclude holds oracle ids to skip, such
+        as the deck's own cards; a max_cents limit leaves out unpriced cards too.
+        """
+        params = {"role": role.value, "identity": identity, "max_cents": max_cents}
+        try:
+            for row in self._db.execute(_CANDIDATE_QUERY, params):
+                if row[0] in exclude:
+                    continue
+                info = self._infos([row])[0]
+                if not info.is_land:
+                    yield info
+        except sqlite3.Error as error:
+            raise CardDataError(f"card data is unreadable ({error}); run `cmdr sync --force`") from error
+
     def _cards_where(self, column: Literal["oracle_id", "name_key"], keys: Iterable[str]) -> list[CardInfo]:
-        rows = self._select_in(_CARD_QUERIES[column], keys)
+        return self._infos(self._select_in(_CARD_QUERIES[column], keys))
+
+    def _infos(self, rows: Sequence[Any]) -> list[CardInfo]:
         roles = self._roles({row[0] for row in rows})
-        return [
-            CardInfo(
-                oracle_id=row[0],
-                name=row[1],
-                mana_cost=row[2],
-                cmc=row[3],
-                type_line=row[4],
-                color_identity=row[5],
-                game_changer=bool(row[6]),
-                commander_legal=bool(row[7]),
-                cheapest_cents=row[8],
-                roles=roles.get(row[0], frozenset()),
-            )
-            for row in rows
-        ]
+        return [_row_info(row, roles.get(row[0], frozenset())) for row in rows]
 
     def _roles(self, oracle_ids: Iterable[str]) -> dict[str, frozenset[Role]]:
         found: dict[str, set[Role]] = {}
@@ -247,6 +281,22 @@ class CardDb:
             return self._db.execute(sql, params).fetchall()
         except sqlite3.Error as error:
             raise CardDataError(f"card data is unreadable ({error}); run `cmdr sync --force`") from error
+
+
+def _row_info(row: Sequence[Any], roles: frozenset[Role]) -> CardInfo:
+    return CardInfo(
+        oracle_id=row[0],
+        name=row[1],
+        mana_cost=row[2],
+        cmc=row[3],
+        type_line=row[4],
+        color_identity=row[5],
+        game_changer=bool(row[6]),
+        commander_legal=bool(row[7]),
+        cheapest_cents=row[8],
+        edhrec_rank=row[9],
+        roles=roles,
+    )
 
 
 def read_meta(path: Path) -> CardDataMeta | None:
@@ -305,7 +355,7 @@ def _fill(
                     if low is not None:
                         cheapest[oracle_id] = low
             db.executemany(
-                "INSERT INTO oracle VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO oracle VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 ((*row, cheapest.get(oracle_id)) for oracle_id, row in oracle.items()),
             )
             db.executemany(
@@ -344,6 +394,7 @@ def _oracle_row(card: ParsedCard) -> tuple[object, ...]:
         card.color_identity,
         int(card.game_changer),
         int(card.commander_legal),
+        card.edhrec_rank,
     )
 
 

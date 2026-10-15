@@ -4,9 +4,12 @@ import json
 import os
 import tomllib
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import cast
 
+from commander.analysis import ANALYZED_ROLES
+from commander.carddb import Role
 from commander.fsutil import write_text_atomic
 
 CONFIG_VERSION = 1
@@ -15,6 +18,9 @@ ENV_WORKSPACE = "CMDR_WORKSPACE"
 ENV_CONFIG = "CMDR_CONFIG"
 ENV_CACHE = "CMDR_CACHE_DIR"
 _USERNAME_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.")
+# TOML keys for the roles a target can be set for: "board wipe" is written board_wipe.
+TARGET_KEYS: Mapping[str, Role] = {role.value.replace(" ", "_"): role for role in ANALYZED_ROLES}
+MAX_TARGET = 99
 
 
 class ConfigError(Exception):
@@ -25,6 +31,8 @@ class ConfigError(Exception):
 class FileConfig:
     user: str | None
     workspace: Path | None
+    # How many cards of a role a deck should have, overriding suggest's defaults.
+    targets: Mapping[Role, int] = field(default_factory=dict[Role, int])
 
 
 def default_config_path(env: Mapping[str, str]) -> Path:
@@ -63,7 +71,7 @@ def read_config(path: Path) -> FileConfig:
         raise ConfigError(f"{path}: 'user' must be a string")
     if workspace is not None and not isinstance(workspace, str):
         raise ConfigError(f"{path}: 'workspace' must be a string")
-    return FileConfig(user, Path(workspace) if workspace else None)
+    return FileConfig(user, Path(workspace) if workspace else None, _targets(raw.get("targets"), path))
 
 
 def write_config(path: Path, user: str, workspace: Path) -> None:
@@ -109,6 +117,23 @@ def _migrate(raw: dict[str, object], path: Path) -> dict[str, object]:
     if version != CONFIG_VERSION:
         raise ConfigError(f"{path}: config version {version} is not supported (expected {CONFIG_VERSION})")
     return raw
+
+
+def _targets(table: object, path: Path) -> dict[Role, int]:
+    if table is None:
+        return {}
+    if not isinstance(table, dict):
+        raise ConfigError(f"{path}: 'targets' must be a table, like [targets] with ramp = 10")
+    targets: dict[Role, int] = {}
+    # tomllib gives str keys; the values are checked below.
+    for key, value in cast("dict[str, object]", table).items():
+        role = TARGET_KEYS.get(key)
+        if role is None:
+            raise ConfigError(f"{path}: unknown role {key!r} in [targets]; use {', '.join(TARGET_KEYS)}")
+        if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= MAX_TARGET:
+            raise ConfigError(f"{path}: targets.{key} must be a whole number from 0 to {MAX_TARGET}")
+        targets[role] = value
+    return targets
 
 
 def _toml_string(value: str) -> str:

@@ -14,3 +14,11 @@
 - `cmdr bracket`: Commander Spellbook's bracket estimate for each deck beside the bracket set on Archidekt,
   with its combos, plus the deck's game changers, tutors, mass land denial and extra-turn cards. Answers are
   cached for 7 days.
+- `cmdr suggest`: per deck, the cards that would complete a combo it is one card short of (Commander
+  Spellbook), the most played cards for roles below target (Scryfall tags, EDHREC ranks via Scryfall), and
+  cards to consider cutting, with EUR prices. Ideas that would lift a deck above its Archidekt bracket are
+  marked; `--within-bracket` hides them and `--max-price` caps the price. Role targets can be set in the
+  config file's `[targets]` table.
+
+### Changed
+- The card database now stores EDHREC popularity ranks, so the first `cmdr sync` after updating rebuilds it.

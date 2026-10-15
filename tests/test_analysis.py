@@ -144,6 +144,7 @@ def test_front_face_decides_types(raw_deck: Json) -> None:
         game_changer=False,
         commander_legal=True,
         cheapest_cents=None,
+        edhrec_rank=702,
         roles=frozenset(),
     )
     one = replace(deck, cards=(golem,))

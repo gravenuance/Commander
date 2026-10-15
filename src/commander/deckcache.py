@@ -1,0 +1,134 @@
+"""Answers from an online service about a deck, cached per deck and reused while the cards are unchanged."""
+
+import hashlib
+import json
+import logging
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from enum import Enum
+from pathlib import Path
+
+from commander.fsutil import write_text_atomic
+from commander.jsonshape import ShapeError, as_object, req_str
+
+log = logging.getLogger(__name__)
+
+Clock = Callable[[], datetime]
+
+
+class AnswerSource(Enum):
+    FETCHED = "fetched"
+    CACHED = "cached"
+    # The service failed, so an older answer for the same cards stands in.
+    STALE = "stale"
+    UNAVAILABLE = "unavailable"
+
+
+@dataclass(slots=True, frozen=True)
+class Answer[T]:
+    data: T | None
+    source: AnswerSource
+    fetched_at: datetime | None
+    error: str | None
+
+    def __post_init__(self) -> None:
+        if (self.data is None) != (self.source is AnswerSource.UNAVAILABLE):
+            raise ValueError("an answer is missing exactly when the source is unavailable")
+
+
+@dataclass(slots=True, frozen=True)
+class CachedAnswer[T]:
+    data: T
+    fetched_at: datetime
+
+
+class DeckCache[T]:
+    """One JSON file per deck; unreadable files, other versions and other card lists count as missing."""
+
+    def __init__(
+        self,
+        folder: Path,
+        *,
+        version: int,
+        what: str,
+        encode: Callable[[T], object],
+        decode: Callable[[object], T],
+    ) -> None:
+        self._folder = folder
+        self._version = version
+        self.what = what
+        self._encode = encode
+        self._decode = decode
+
+    def load(self, deck_id: int, key: str) -> CachedAnswer[T] | None:
+        path = self._path(deck_id)
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return None
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            log.warning("ignoring unreadable cached %s %s: %s", self.what, path, error)
+            return None
+        try:
+            obj = as_object(raw, "cache")
+            if obj.get("version") != self._version or obj.get("key") != key:
+                return None
+            fetched_at = datetime.fromisoformat(req_str(obj, "fetchedAt", "cache"))
+            data = self._decode(obj.get("answer"))
+        except (ShapeError, ValueError) as error:
+            log.warning("ignoring malformed cached %s %s: %s", self.what, path, error)
+            return None
+        if fetched_at.tzinfo is None:
+            log.warning("ignoring cached %s %s: its time has no time zone", self.what, path)
+            return None
+        return CachedAnswer(data, fetched_at)
+
+    def save(self, deck_id: int, key: str, data: T, fetched_at: datetime) -> None:
+        document = {
+            "version": self._version,
+            "key": key,
+            "fetchedAt": fetched_at.isoformat(),
+            "answer": self._encode(data),
+        }
+        write_text_atomic(self._path(deck_id), json.dumps(document, ensure_ascii=False, indent=1) + "\n")
+
+    def _path(self, deck_id: int) -> Path:
+        return self._folder / f"{deck_id}.json"
+
+
+def request_key(request: Mapping[str, object]) -> str:
+    """A fingerprint of the request, so a cached answer is only reused for the same cards."""
+    canonical = json.dumps(request, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def cached_answer[T](
+    deck_id: int,
+    request: Mapping[str, object],
+    fetch: Callable[[Mapping[str, object]], T],
+    cache: DeckCache[T],
+    *,
+    now: Clock,
+    refresh: bool,
+    fresh_for: timedelta,
+    errors: tuple[type[Exception], ...],
+) -> Answer[T]:
+    """A recent cached answer, else a fresh one; if fetching fails with one of errors, the last good one."""
+    key = request_key(request)
+    cached = cache.load(deck_id, key)
+    if cached is not None and not refresh and now() - cached.fetched_at < fresh_for:
+        return Answer(cached.data, AnswerSource.CACHED, cached.fetched_at, None)
+    try:
+        data = fetch(request)
+    except errors as error:
+        log.info("%s for deck %d failed: %s", cache.what, deck_id, error)
+        if cached is not None:
+            return Answer(cached.data, AnswerSource.STALE, cached.fetched_at, str(error))
+        return Answer(None, AnswerSource.UNAVAILABLE, None, str(error))
+    fetched_at = now()
+    try:
+        cache.save(deck_id, key, data, fetched_at)
+    except OSError as error:
+        log.warning("could not cache the %s for deck %d: %s", cache.what, deck_id, error)
+    return Answer(data, AnswerSource.FETCHED, fetched_at, None)

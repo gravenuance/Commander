@@ -108,6 +108,11 @@ def tagged(resolved: Sequence[ResolvedCard], role: Role) -> tuple[str, ...]:
     return _names(card for card, info in _known(resolved) if role in info.roles)
 
 
+def tagged_count(resolved: Sequence[ResolvedCard], role: Role) -> int:
+    """How many main-deck cards, copies included, Scryfall's tags give the role."""
+    return sum(card.quantity for card, info in _known(resolved) if role in info.roles)
+
+
 def count_pips(mana_cost: str) -> dict[str, int]:
     """Coloured and colourless pips in a cost; a hybrid symbol counts once for each colour in it."""
     pips: dict[str, int] = {}
@@ -138,7 +143,7 @@ def _role_count(
     return RoleCount(
         role=role,
         yours=sum(r.card.quantity for r in mine) if has_category else None,
-        tagged=sum(r.card.quantity for r in tagged) if can_tag else None,
+        tagged=tagged_count(resolved, role) if can_tag else None,
         only_yours=only_yours,
         only_tagged=only_tagged,
     )

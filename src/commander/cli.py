@@ -8,6 +8,7 @@ from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import Future
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from decimal import ROUND_FLOOR, Decimal, InvalidOperation
 from enum import Enum
 from pathlib import Path
 from typing import TextIO
@@ -19,14 +20,7 @@ from commander.analysis import ANALYZED_ROLES, CURVE_TOP, DeckAnalysis, analyze
 from commander.archidekt import ArchidektClient, ArchidektError
 from commander.background import in_background
 from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
-from commander.bracket import (
-    BracketReport,
-    EstimateCache,
-    EstimateResult,
-    EstimateSource,
-    bracket_cards,
-    estimate_decks,
-)
+from commander.bracket import BracketReport, EstimateResult, bracket_cards, estimate_cache, estimate_decks
 from commander.carddb import CARD_DB_FILE, CardDataError, CardDataMeta, CardDb, Role
 from commander.config import (
     ENV_CACHE,
@@ -42,12 +36,26 @@ from commander.config import (
     resolve_workspace,
     write_config,
 )
+from commander.deckcache import Answer, AnswerSource
 from commander.diff import DeckDiff
+from commander.models import Deck
 from commander.net import Fetcher, NetworkError, make_client
 from commander.pricing import DeckPrice, PriceSource, format_eur, price_deck
 from commander.scryfall import CardRefresh, RefreshStatus, ScryfallClient, ScryfallError, refresh_card_db
-from commander.spellbook import BracketTag, Combo, SpellbookClient, SpellbookError, TwoCard
+from commander.spellbook import BracketTag, Combo, SpellbookClient, SpellbookError, TwoCard, Variant
 from commander.store import StoredDeck, Workspace
+from commander.suggest import CACHE_FOLDER as COMBOS_CACHE_FOLDER
+from commander.suggest import (
+    DEFAULT_COUNT,
+    DEFAULT_TARGETS,
+    BracketRaise,
+    RoleTarget,
+    Suggestions,
+    SuggestOptions,
+    combos_cache,
+    find_combos,
+    suggest,
+)
 from commander.sync import SyncResult, SyncStatus, sync_decks
 
 EXIT_OK = 0
@@ -60,6 +68,10 @@ DEFAULT_TOP = 15
 
 ClientFactory = Callable[[], httpx.Client]
 Clock = Callable[[], datetime]
+
+_DEFAULT_TARGETS_TEXT = ", ".join(
+    f"{role.value.replace(' ', '_')} {n}" for role, n in DEFAULT_TARGETS.items()
+)
 
 _DESCRIPTION = """\
 Track your Archidekt Commander decks and research changes to them.
@@ -75,13 +87,18 @@ examples:
   cmdr price 10004639 --top 0                 every card of one deck, most valuable first
   cmdr bracket                                estimated bracket of every deck beside the one on Archidekt
   cmdr bracket magda --details                game changers, tutors and combos of one deck
+  cmdr suggest                                combo pieces and roles short of target, every deck
+  cmdr suggest magda --max-price 5            ideas and cut candidates for one deck, cards up to EUR 5
 """
 
 _EPILOG = f"""\
 settings come from flags, then environment ({ENV_USER}, {ENV_WORKSPACE}, {ENV_CONFIG}),
 then the config file (default %APPDATA%\\Commander\\config.toml).
 card data from Scryfall is kept in %LOCALAPPDATA%\\Commander (or {ENV_CACHE}); `cmdr sync` refreshes it.
-`cmdr bracket` asks Commander Spellbook about each deck and keeps each answer there for 7 days.
+`cmdr bracket` and `cmdr suggest` ask Commander Spellbook about each deck and keep each answer there
+for 7 days.
+role targets for `cmdr suggest` (default {_DEFAULT_TARGETS_TEXT}) can be changed
+in a [targets] table in the config file.
 exit codes: 0 success, 1 failure, 2 usage error, 130 interrupted.
 """
 
@@ -226,7 +243,46 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     bracket.add_argument("--json", action="store_true", help="print the reports as JSON")
     bracket.set_defaults(handler=_cmd_bracket)
+    _add_suggest_arguments(
+        commands.add_parser("suggest", help="cards to add for combos and short roles, cuts to weigh")
+    )
     return parser
+
+
+def _add_suggest_arguments(suggest_: argparse.ArgumentParser) -> None:
+    suggest_.add_argument("deck", nargs="?", help="deck id, or part of its name or commander; omit for all")
+    suggest_.add_argument("--workspace", help="folder that holds the deck folders")
+    suggest_.add_argument(
+        "-n",
+        "--count",
+        type=_positive,
+        default=DEFAULT_COUNT,
+        help=f"ideas per list (default {DEFAULT_COUNT})",
+    )
+    suggest_.add_argument(
+        "--max-price",
+        type=_euro_cents,
+        metavar="EUR",
+        help="leave out cards dearer than this, and cards with no price",
+    )
+    suggest_.add_argument(
+        "--within-bracket",
+        action="store_true",
+        help="leave out ideas that would lift a deck above its bracket on Archidekt",
+    )
+    suggest_.add_argument(
+        "-d", "--details", action="store_true", help="show each combo's cards and results, with a link to it"
+    )
+    suggest_.add_argument(
+        "-r",
+        "--refresh",
+        action="store_true",
+        help="ask Commander Spellbook again even if a recent answer is cached",
+    )
+    suggest_.add_argument(
+        "--json", action="store_true", help="print the ideas as JSON (prices in euro cents)"
+    )
+    suggest_.set_defaults(handler=_cmd_suggest)
 
 
 def _cmd_init(args: argparse.Namespace, ctx: _Context) -> int:
@@ -335,13 +391,13 @@ def _cmd_bracket(args: argparse.Namespace, ctx: _Context) -> int:
         results = estimate_decks(
             decks,
             SpellbookClient(Fetcher(http)),
-            EstimateCache(cache_dir(ctx.env) / SPELLBOOK_CACHE_FOLDER),
+            estimate_cache(cache_dir(ctx.env) / SPELLBOOK_CACHE_FOLDER),
             now=ctx.now,
             refresh=args.refresh,
         )
     reports = [BracketReport(d, c, r) for d, c, r in zip(decks, cards, results, strict=True)]
     for report in reports:
-        _warn_estimate_failure(report, ctx.err)
+        _warn_answer(report.deck, report.result, "bracket estimate", ctx.err)
     if args.json:
         json.dump([_bracket_json(r) for r in reports], ctx.out, ensure_ascii=False, indent=2)
         ctx.out.write("\n")
@@ -351,7 +407,49 @@ def _cmd_bracket(args: argparse.Namespace, ctx: _Context) -> int:
         print(SPELLBOOK_CREDIT, file=ctx.out)
     else:
         _print_bracket_table(reports, ctx.out)
-    unavailable = any(r.result.source is EstimateSource.UNAVAILABLE for r in reports)
+    unavailable = any(r.result.source is AnswerSource.UNAVAILABLE for r in reports)
+    return EXIT_FAILURE if unavailable else EXIT_OK
+
+
+def _cmd_suggest(args: argparse.Namespace, ctx: _Context) -> int:
+    file = read_config(config_path(args.config, ctx.env))
+    decks = [s.deck for s in _selected_decks(args, ctx)]
+    options = SuggestOptions(
+        targets={**DEFAULT_TARGETS, **file.targets},
+        count=args.count,
+        max_cents=args.max_price,
+        within_bracket=args.within_bracket,
+    )
+    with _open_card_db(ctx) as db:
+        with ctx.client_factory() as http:
+            combos = find_combos(
+                decks,
+                SpellbookClient(Fetcher(http)),
+                combos_cache(cache_dir(ctx.env) / COMBOS_CACHE_FOLDER),
+                now=ctx.now,
+                refresh=args.refresh,
+            )
+        results = [
+            suggest(deck, db.resolve(deck.main_cards), db, answer, options)
+            for deck, answer in zip(decks, combos, strict=True)
+        ]
+        meta = db.meta()
+    for result in results:
+        _warn_answer(result.deck, result.combos, "combo list", ctx.err)
+    if args.json:
+        json.dump([_suggestions_json(r) for r in results], ctx.out, ensure_ascii=False, indent=2)
+        ctx.out.write("\n")
+    elif args.deck:
+        print(
+            f"prices: each card's cheapest printing in EUR, Scryfall data of {_day(meta.cards_updated_at)}",
+            file=ctx.out,
+        )
+        for result in results:
+            _print_suggestions(result, ctx.out, details=args.details)
+        print(SUGGEST_CREDIT, file=ctx.out)
+    else:
+        _print_suggestions_table(results, ctx.out)
+    unavailable = any(r.combos.source is AnswerSource.UNAVAILABLE for r in results)
     return EXIT_FAILURE if unavailable else EXIT_OK
 
 
@@ -573,22 +671,21 @@ _TWO_CARD_ORDER = {TwoCard.YES: 0, TwoCard.ARGUABLY: 1, TwoCard.NO: 2}
 _TAG_ORDER = {tag: index for index, tag in enumerate(BracketTag)}
 
 
-def _warn_estimate_failure(report: BracketReport, err: TextIO) -> None:
-    result, deck = report.result, report.deck
-    if result.source is EstimateSource.UNAVAILABLE:
-        print(f"cmdr: {deck.name}: no bracket estimate: {result.error}", file=err)
-    elif result.source is EstimateSource.STALE and result.fetched_at is not None:
+def _warn_answer[T](deck: Deck, answer: Answer[T], what: str, err: TextIO) -> None:
+    if answer.source is AnswerSource.UNAVAILABLE:
+        print(f"cmdr: {deck.name}: no {what}: {answer.error}", file=err)
+    elif answer.source is AnswerSource.STALE and answer.fetched_at is not None:
         print(
-            f"cmdr: {deck.name}: showing the estimate from {result.fetched_at.date().isoformat()}; "
-            f"refreshing it failed: {result.error}",
+            f"cmdr: {deck.name}: showing the {what} from {answer.fetched_at.date().isoformat()}; "
+            f"refreshing it failed: {answer.error}",
             file=err,
         )
 
 
 def _estimate_text(result: EstimateResult) -> str:
-    if result.estimate is None or result.fetched_at is None:
+    if result.data is None or result.fetched_at is None:
         return "unavailable"
-    tag = result.estimate.tag
+    tag = result.data.tag
     day = result.fetched_at.date().isoformat()
     if tag.minimum is None:
         return f"not legal in Commander ({tag.label}), Commander Spellbook {day}"
@@ -625,8 +722,8 @@ def _print_bracket(report: BracketReport, out: TextIO, *, details: bool) -> None
     print("(tutors, mass land denial and extra turns come from Scryfall tags)", file=out)
     if cards.not_legal:
         print(f"not legal in Commander: {', '.join(cards.not_legal)}", file=out)
-    if result.estimate is not None:
-        _print_combos(result.estimate.combos, out, details=details)
+    if result.data is not None:
+        _print_combos(result.data.combos, out, details=details)
     print(file=out)
 
 
@@ -657,7 +754,7 @@ def _print_bracket_table(reports: Sequence[BracketReport], out: TextIO) -> None:
         file=out,
     )
     for r in reports:
-        estimate = r.result.estimate
+        estimate = r.result.data
         tag = f"{estimate.tag.brackets} {estimate.tag.label}" if estimate is not None else "-"
         two_card = sum(1 for c in estimate.combos if c.two_card is TwoCard.YES) if estimate else None
         combos = len(estimate.combos) if estimate else None
@@ -678,7 +775,7 @@ def _print_bracket_table(reports: Sequence[BracketReport], out: TextIO) -> None:
 
 def _bracket_json(report: BracketReport) -> dict[str, object]:
     deck, cards, result = report.deck, report.cards, report.result
-    estimate = result.estimate
+    estimate = result.data
     return {
         "id": deck.id,
         "name": deck.name,
@@ -712,6 +809,198 @@ def _bracket_json(report: BracketReport) -> dict[str, object]:
     }
 
 
+SUGGEST_CREDIT = (
+    "combos from Commander Spellbook, https://commanderspellbook.com; "
+    "popularity ranks from EDHREC, https://edhrec.com, via Scryfall"
+)
+
+
+def _print_suggestions(result: Suggestions, out: TextIO, *, details: bool) -> None:
+    deck = result.deck
+    commanders = " + ".join(deck.commanders) or "no commander"
+    bracket = f"bracket {deck.bracket} on Archidekt" if deck.bracket is not None else "no bracket set"
+    colours = "colours unknown" if result.identity is None else f"colours {result.identity or 'colourless'}"
+    print(f"\n{deck.name} ({deck.id})", file=out)
+    print(f"{commanders}; {bracket}; {colours}", file=out)
+    _print_pieces(result, out, details=details)
+    _print_roles(result, out)
+    _print_cuts(result, out)
+    raised = any(p.raises for p in result.pieces) or any(i.raises for r in result.roles for i in r.ideas)
+    if raised:
+        print(
+            "! adding it lifts the deck to at least that bracket; --within-bracket leaves these out", file=out
+        )
+    if result.hidden:
+        print(
+            f"{result.hidden} left out because they would lift the deck above bracket {deck.bracket}",
+            file=out,
+        )
+
+
+def _print_pieces(result: Suggestions, out: TextIO, *, details: bool) -> None:
+    answer = result.combos
+    if answer.data is None or answer.fetched_at is None:
+        print("\ncards that complete a combo: unknown, Commander Spellbook could not be reached", file=out)
+        return
+    source = f"Commander Spellbook {answer.fetched_at.date().isoformat()}"
+    if not result.pieces:
+        print(f"\ncards that complete a combo: none ({source})", file=out)
+        return
+    print(f"\ncards that complete a combo ({source})", file=out)
+    for piece in result.pieces:
+        tags = sorted({v.tag for v in piece.combos}, key=lambda t: _TAG_ORDER[t])
+        combos = f"{len(piece.combos)} combo{'' if len(piece.combos) == 1 else 's'}"
+        print(
+            f"  {_price_text(piece.price_cents):>9}  {piece.name} ({combos}: "
+            f"{', '.join(t.label for t in tags)}){_raise_text(piece.raises)}",
+            file=out,
+        )
+        needs = sorted({need for v in piece.combos for need in v.requirements})
+        if needs:
+            print(f"  {'':>9}  also needs: {'; '.join(needs)}", file=out)
+        if details:
+            for variant in piece.combos:
+                _print_variant(variant, piece.name, out)
+    if result.more_pieces:
+        print(f"  ... {result.more_pieces} more; --count lists more", file=out)
+
+
+def _print_variant(variant: Variant, piece: str, out: TextIO) -> None:
+    others = " + ".join(c.name for c in variant.cards if c.name != piece)
+    results = ", ".join(variant.results) or "no results listed"
+    print(f"  {'':>9}    {variant.tag.label}: with {others} -> {results}", file=out)
+    print(f"  {'':>9}    {variant.url}", file=out)
+
+
+def _print_roles(result: Suggestions, out: TextIO) -> None:
+    if result.identity is None:
+        print("\nroles: a commander is not in the card data, so its colours and ideas are unknown", file=out)
+        return
+    short = [r for r in result.roles if r.short]
+    met = ", ".join(f"{r.role.value} {r.have}/{r.target}" for r in result.roles if not r.short)
+    if not short:
+        print(f"\nroles: {f'all at target ({met})' if met else 'no targets set'}", file=out)
+        return
+    print("\nroles below target (nonland cards by Scryfall tags; most played ideas first)", file=out)
+    for target in short:
+        print(f"  {target.role.value} {target.have} of {target.target}", file=out)
+        if not target.ideas:
+            print(f"  {'':>9}  no card fits", file=out)
+        for idea in target.ideas:
+            print(
+                f"  {_price_text(idea.info.cheapest_cents):>9}  {idea.info.name}{_raise_text(idea.raises)}",
+                file=out,
+            )
+    if met:
+        print(f"  at target: {met}", file=out)
+
+
+def _print_cuts(result: Suggestions, out: TextIO) -> None:
+    if not result.cuts:
+        print("\ncards to consider cutting: none, every nonland card has a role or is in a combo", file=out)
+        return
+    print("\ncards to consider cutting (no role, in no combo; least played first, by EDHREC rank)", file=out)
+    for info in result.cuts:
+        rank = f"#{info.edhrec_rank:,}" if info.edhrec_rank is not None else "unranked"
+        print(f"  {rank:>9}  {info.name}", file=out)
+    if result.combos.data is None:
+        print("  (without Commander Spellbook, combo pieces may be among these)", file=out)
+
+
+def _print_suggestions_table(results: Sequence[Suggestions], out: TextIO) -> None:
+    roles = [role for role in ANALYZED_ROLES if any(t.role is role for r in results for t in r.roles)]
+    widths = {role: max(len(_ROLE_HEADINGS[role]), 5) for role in roles}
+    headings = "".join(f" {_ROLE_HEADINGS[role]:>{widths[role]}}" for role in roles)
+    print(f"{'id':>9} {'set':>3} {'combo':>5}{headings} {'cuts':>4}  name", file=out)
+    for r in results:
+        pieces = len(r.pieces) + r.more_pieces if r.combos.data is not None else None
+        targets = {t.role: t for t in r.roles}
+        cells = "".join(f" {_target_text(targets.get(role)):>{widths[role]}}" for role in roles)
+        bracket = r.deck.bracket if r.deck.bracket is not None else "-"
+        print(
+            f"{r.deck.id:>9} {bracket:>3} {_count(pieces):>5}{cells} {len(r.cuts):>4}  {r.deck.name}",
+            file=out,
+        )
+    print("combo = cards that would complete a combo; roles = nonland cards tagged / target", file=out)
+    print("`cmdr suggest <deck>` lists the cards", file=out)
+    print(SUGGEST_CREDIT, file=out)
+
+
+def _target_text(target: RoleTarget | None) -> str:
+    return "-" if target is None else f"{target.have}/{target.target}"
+
+
+def _suggestions_json(result: Suggestions) -> dict[str, object]:
+    deck, answer = result.deck, result.combos
+    return {
+        "id": deck.id,
+        "name": deck.name,
+        "commanders": list(deck.commanders),
+        "bracket": deck.bracket,
+        "colorIdentity": result.identity,
+        "combos": {
+            "source": answer.source.value,
+            "fetchedAt": answer.fetched_at.isoformat() if answer.fetched_at else None,
+            "error": answer.error,
+        },
+        "comboPieces": [
+            {
+                "name": p.name,
+                "priceCents": p.price_cents,
+                "raises": _raise_json(p.raises),
+                "combos": [
+                    {
+                        "id": v.id,
+                        "url": v.url,
+                        "tag": v.tag.label,
+                        "cards": [c.name for c in v.cards],
+                        "requirements": list(v.requirements),
+                        "results": list(v.results),
+                        "popularity": v.popularity,
+                    }
+                    for v in p.combos
+                ],
+            }
+            for p in result.pieces
+        ],
+        "moreComboPieces": result.more_pieces,
+        "roles": [
+            {
+                "role": t.role.value,
+                "have": t.have,
+                "target": t.target,
+                "short": t.short,
+                "ideas": [
+                    {
+                        "name": i.info.name,
+                        "priceCents": i.info.cheapest_cents,
+                        "edhrecRank": i.info.edhrec_rank,
+                        "raises": _raise_json(i.raises),
+                    }
+                    for i in t.ideas
+                ],
+            }
+            for t in result.roles
+        ],
+        "cuts": [
+            {"name": c.name, "priceCents": c.cheapest_cents, "edhrecRank": c.edhrec_rank} for c in result.cuts
+        ],
+        "hidden": result.hidden,
+    }
+
+
+def _price_text(cents: int | None) -> str:
+    return "-" if cents is None else format_eur(cents)
+
+
+def _raise_text(raises: BracketRaise | None) -> str:
+    return f"  ! bracket {raises.bracket}+ ({raises.reason})" if raises else ""
+
+
+def _raise_json(raises: BracketRaise | None) -> dict[str, object] | None:
+    return {"bracket": raises.bracket, "reason": raises.reason} if raises else None
+
+
 def _size(names: Sequence[str] | None) -> str:
     return "-" if names is None else str(len(names))
 
@@ -732,6 +1021,24 @@ def _non_negative(text: str) -> int:
     if value < 0:
         raise argparse.ArgumentTypeError("must be 0 or more")
     return value
+
+
+def _positive(text: str) -> int:
+    value = _non_negative(text)
+    if value == 0:
+        raise argparse.ArgumentTypeError("must be 1 or more")
+    return value
+
+
+def _euro_cents(text: str) -> int:
+    # A decimal comma is accepted too, as euro amounts are often written that way.
+    try:
+        amount = Decimal(text.strip().replace(",", "."))
+    except InvalidOperation:
+        raise argparse.ArgumentTypeError(f"not an amount in euros: {text!r}") from None
+    if not amount.is_finite() or amount < 0:
+        raise argparse.ArgumentTypeError(f"not an amount in euros: {text!r}")
+    return int((amount * 100).to_integral_value(rounding=ROUND_FLOOR))
 
 
 def _print_sync_report(results: list[SyncResult], out: TextIO, *, dry_run: bool) -> None:
