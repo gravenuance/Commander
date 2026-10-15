@@ -62,6 +62,19 @@ class Deck:
     def commanders(self) -> tuple[str, ...]:
         return tuple(card.name for card in self.main_cards if COMMANDER_CATEGORY in card.categories)
 
+    @property
+    def short_name(self) -> str:
+        """The deck by its commander's short name, as players say it: "Magda", "Ellivere", "Etali"."""
+        if not self.commanders:
+            return self.name
+        return " & ".join(_short_commander(name) for name in self.commanders)
+
+
+def _short_commander(name: str) -> str:
+    # "Magda, Brazen Outlaw" -> Magda; "Ellivere of the Wild Court" and "Edgar Markov" -> the first word.
+    front = name.split(" // ", maxsplit=1)[0]
+    return front.split(",")[0] if "," in front else front.split()[0]
+
 
 @dataclass(slots=True, frozen=True)
 class DeckSummary:

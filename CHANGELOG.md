@@ -12,6 +12,14 @@
 - `cmdr suggest` lists the most played cards matching a deck's themes, ranks themed ideas first within each
   role, and lists themed deck cards last among the cuts.
 
+- Deck boards: `cmdr board` keeps the cards considered or suggested for a deck in its folder (`board.json`),
+  with the research on each (why it fits, which deck cards it could replace), decisions (add with a chosen
+  cut, turn down, reopen) and an activity log (`activity.jsonl`) of every change and who made it.
+  `cmdr board log` catches up on changes; `cmdr board plan` prints the queued cards as a plan;
+  `cmdr board commit` previews them against Archidekt and `--save` makes them.
+- `cmdr suggest <deck> --to-board` puts its ideas on the board as suggested, with the deck's cut candidates as
+  cards to replace; cards turned down on the board are never suggested again.
+
 ### Changed
 - The card database (schema 4) keeps each card's rules text, keywords and power/toughness, and every Tagger
   oracle tag with its sub-tags, not only the role tags. The next `cmdr sync` rebuilds it.

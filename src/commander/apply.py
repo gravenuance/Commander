@@ -352,6 +352,40 @@ def verify(changes: Sequence[Change], before: Deck, after: Deck) -> list[str]:
     return mismatches
 
 
+class NotYourDeckError(Exception):
+    """The deck belongs to another Archidekt user; cmdr edits only the user's own decks."""
+
+
+@dataclass(slots=True, frozen=True)
+class ApplyOutcome:
+    resolution: Resolution
+    # None for a preview, or when the plan has problems or nothing to change.
+    result: SaveResult | None
+
+
+def apply_plan(
+    editor: ArchidektEditor,
+    deck_id: int,
+    plan: Plan,
+    db: CardDb,
+    *,
+    user: str,
+    save_changes: bool,
+    now: Callable[[], datetime],
+    on_progress: Callable[[str], None] = lambda _: None,
+) -> ApplyOutcome:
+    """Check a plan against the deck as it is on Archidekt now; save it when asked and nothing is wrong."""
+    live = editor.get_deck(deck_id)
+    if live.deck.owner.casefold() != user.casefold():
+        raise NotYourDeckError(
+            f"deck {deck_id} belongs to {live.deck.owner}, not {user}; cmdr edits only yours"
+        )
+    resolution = resolve_plan(live.deck, plan, db, categories=live.categories)
+    if not (save_changes and resolution.changes and not resolution.problems):
+        return ApplyOutcome(resolution, None)
+    return ApplyOutcome(resolution, save(editor, live, resolution, now=now, on_progress=on_progress))
+
+
 def _entries_named(deck: Deck, name: str) -> list[DeckCard]:
     key = name.casefold()
     return [c for c in deck.cards if c.name.casefold() == key or c.name.casefold().split(" // ")[0] == key]

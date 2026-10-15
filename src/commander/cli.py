@@ -16,14 +16,30 @@ from typing import BinaryIO, TextIO
 
 from commander import __version__
 from commander.analysis import ANALYZED_ROLES, CURVE_TOP, DeckAnalysis, analyze
-from commander.apply import Change, ChangeKind, Resolution, SaveError, SaveResult, resolve_plan, save
+from commander.apply import (
+    NotYourDeckError,
+    Resolution,
+    SaveError,
+    SaveResult,
+    apply_plan,
+)
 from commander.archidekt import ArchidektClient, ArchidektError
 from commander.archidekt_edit import ArchidektAuth, ArchidektEditor, AuthError
 from commander.background import in_background
+from commander.board import BoardError, BoardService, feed_suggestions, read_board
 from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
 from commander.bracket import BracketReport, EstimateResult, bracket_cards, estimate_cache, estimate_decks
 from commander.carddb import CardDataError, Role
+from commander.cli_board import add_board_commands
 from commander.cli_cards import add_card_commands
+from commander.cli_output import (
+    price_text,
+    print_apply_outcome,
+    print_resolution,
+    progress_printer,
+    raise_json,
+    raise_text,
+)
 from commander.cli_profile import add_profile_commands
 from commander.clibase import (
     EXIT_FAILURE,
@@ -70,7 +86,6 @@ from commander.suggest import CACHE_FOLDER as COMBOS_CACHE_FOLDER
 from commander.suggest import (
     DEFAULT_COUNT,
     DEFAULT_TARGETS,
-    BracketRaise,
     RoleIdea,
     RoleTarget,
     Suggestions,
@@ -182,7 +197,7 @@ def main(  # noqa: PLR0911 — one exit code per failure class, mapped in one pl
         return EXIT_USAGE
     try:
         return command(args, context)
-    except (ConfigError, UsageError, PlanError) as error:
+    except (ConfigError, UsageError, PlanError, NotYourDeckError, BoardError) as error:
         print(f"cmdr: {error}", file=err)
         return EXIT_USAGE
     except (
@@ -290,6 +305,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     add_card_commands(commands.add_parser)
     add_profile_commands(commands.add_parser)
+    add_board_commands(commands.add_parser)
     _add_edit_commands(commands.add_parser)
     return parser
 
@@ -354,6 +370,9 @@ def _add_suggest_arguments(suggest_: argparse.ArgumentParser) -> None:
     suggest_.add_argument(
         "--json", action="store_true", help="print the ideas as JSON (prices in euro cents)"
     )
+    suggest_.add_argument(
+        "--to-board", action="store_true", help="put the ideas on the deck's board as suggested (one deck)"
+    )
     suggest_.set_defaults(handler=_cmd_suggest)
 
 
@@ -372,7 +391,7 @@ def _cmd_sync(args: argparse.Namespace, ctx: Context) -> int:
     file = read_config(config_path(args.config, ctx.env))
     user = resolve_user(args.user, ctx.env, file)
     workspace = Workspace(resolve_workspace(args.workspace, ctx.env, file))
-    progress = _progress_printer(ctx.err)
+    progress = progress_printer(ctx.err)
     with ctx.client_factory() as http:
         fetcher = Fetcher(http)
         # The card download is independent of the decks, so it runs while they sync.
@@ -484,6 +503,8 @@ def _cmd_bracket(args: argparse.Namespace, ctx: Context) -> int:
 
 
 def _cmd_suggest(args: argparse.Namespace, ctx: Context) -> int:
+    if args.to_board and args.deck is None:
+        raise UsageError("--to-board needs one deck")
     file = read_config(config_path(args.config, ctx.env))
     stored = selected_decks(args, ctx)
     decks = [s.deck for s in stored]
@@ -498,7 +519,8 @@ def _cmd_suggest(args: argparse.Namespace, ctx: Context) -> int:
                 refresh=args.refresh,
             )
         results: list[Suggestions] = []
-        for deck, profile, answer in zip(decks, profiles, combos, strict=True):
+        folders = [s.folder for s in stored]
+        for deck, folder, profile, answer in zip(decks, folders, profiles, combos, strict=True):
             themes = resolve_themes(profile, db)
             for slug in themes.unknown_tags:
                 print(
@@ -513,8 +535,14 @@ def _cmd_suggest(args: argparse.Namespace, ctx: Context) -> int:
                 count=args.count,
                 max_cents=args.max_price,
                 within_bracket=args.within_bracket,
+                rejected=read_board(folder).rejected_names,
             )
             results.append(suggest(deck, db.resolve(deck.main_cards), db, answer, options))
+            if args.to_board:
+                added = feed_suggestions(
+                    BoardService(folder, deck, db, now=ctx.now), results[-1], read_board(folder)
+                )
+                print(f"put {len(added)} idea(s) on the {deck.short_name} board", file=ctx.err)
         meta = db.meta()
     for result in results:
         _warn_answer(result.deck, result.combos, "combo list", ctx.err)
@@ -570,15 +598,17 @@ def _cmd_apply(args: argparse.Namespace, ctx: Context) -> int:
     with open_card_db(ctx) as db, ctx.client_factory() as http:
         fetcher = Fetcher(http)
         token = _access_token(ArchidektAuth(fetcher, ctx.token_store), user, args, ctx)
-        editor = ArchidektEditor(fetcher, token)
-        live = editor.get_deck(deck_id)
-        if live.deck.owner.casefold() != user.casefold():
-            raise UsageError(
-                f"deck {deck_id} belongs to {live.deck.owner}, not {user}; cmdr edits only yours"
-            )
-        resolution = resolve_plan(live.deck, plan, db, categories=live.categories)
-        if args.save and resolution.changes and not resolution.problems:
-            result = save(editor, live, resolution, now=ctx.now, on_progress=_progress_printer(ctx.err))
+        outcome = apply_plan(
+            ArchidektEditor(fetcher, token),
+            deck_id,
+            plan,
+            db,
+            user=user,
+            save_changes=args.save,
+            now=ctx.now,
+            on_progress=progress_printer(ctx.err),
+        )
+        resolution, result = outcome.resolution, outcome.result
     folder = None
     if result is not None and workspace is not None and workspace.folder_for(deck_id) is not None:
         folder = workspace.save(result.deck)
@@ -586,8 +616,8 @@ def _cmd_apply(args: argparse.Namespace, ctx: Context) -> int:
         json.dump(_apply_json(resolution, result), ctx.out, ensure_ascii=False, indent=2)
         ctx.out.write("\n")
     else:
-        _print_resolution(resolution, ctx.out)
-        _print_apply_outcome(resolution, result, folder, ctx.out, save=args.save)
+        print_resolution(resolution, ctx.out)
+        print_apply_outcome(resolution, result, folder, ctx.out, save=args.save)
     if resolution.problems:
         return EXIT_USAGE
     return EXIT_FAILURE if result is not None and result.mismatches else EXIT_OK
@@ -976,8 +1006,8 @@ def _print_pieces(result: Suggestions, out: TextIO, *, details: bool) -> None:
         tags = sorted({v.tag for v in piece.combos}, key=lambda t: _TAG_ORDER[t])
         combos = f"{len(piece.combos)} combo{'' if len(piece.combos) == 1 else 's'}"
         print(
-            f"  {_price_text(piece.price_cents):>9}  {piece.name} ({combos}: "
-            f"{', '.join(t.label for t in tags)}){_raise_text(piece.raises)}",
+            f"  {price_text(piece.price_cents):>9}  {piece.name} ({combos}: "
+            f"{', '.join(t.label for t in tags)}){raise_text(piece.raises)}",
             file=out,
         )
         needs = sorted({need for v in piece.combos for need in v.requirements})
@@ -1030,8 +1060,8 @@ def _print_themed(result: Suggestions, out: TextIO) -> None:
 
 def _print_idea(idea: RoleIdea, out: TextIO, *, mark_theme: bool = True) -> None:
     theme = " (theme)" if mark_theme and idea.themed else ""
-    price = _price_text(idea.info.cheapest_cents)
-    print(f"  {price:>9}  {idea.info.name}{theme}{_raise_text(idea.raises)}", file=out)
+    price = price_text(idea.info.cheapest_cents)
+    print(f"  {price:>9}  {idea.info.name}{theme}{raise_text(idea.raises)}", file=out)
 
 
 def _print_cuts(result: Suggestions, out: TextIO) -> None:
@@ -1086,7 +1116,7 @@ def _suggestions_json(result: Suggestions) -> dict[str, object]:
             {
                 "name": p.name,
                 "priceCents": p.price_cents,
-                "raises": _raise_json(p.raises),
+                "raises": raise_json(p.raises),
                 "combos": [
                     {
                         "id": v.id,
@@ -1127,64 +1157,9 @@ def _idea_json(idea: RoleIdea) -> dict[str, object]:
         "name": idea.info.name,
         "priceCents": idea.info.cheapest_cents,
         "edhrecRank": idea.info.edhrec_rank,
-        "raises": _raise_json(idea.raises),
+        "raises": raise_json(idea.raises),
         "themed": idea.themed,
     }
-
-
-_CHANGE_MARKS = {ChangeKind.ADD: "+", ChangeKind.MORE: "+", ChangeKind.FEWER: "-", ChangeKind.REMOVE: "-"}
-
-
-def _print_resolution(resolution: Resolution, out: TextIO) -> None:
-    deck = resolution.deck
-    bracket = f"bracket {deck.bracket}" if deck.bracket else "no bracket set"
-    print(f"{deck.name} ({deck.id}), {bracket}: {deck.url}", file=out)
-    if resolution.changes:
-        print(f"  cards in deck: {resolution.main_before} -> {resolution.main_after}", file=out)
-    for change in resolution.changes:
-        print(f"  {_change_text(change)}", file=out)
-    for line in resolution.skipped:
-        print(f"  skipped, {line}", file=out)
-    for line in resolution.warnings:
-        print(f"  warning: {line}", file=out)
-    for line in resolution.problems:
-        print(f"  problem: {line}", file=out)
-
-
-def _change_text(change: Change) -> str:
-    mark = _CHANGE_MARKS[change.kind]
-    board = "" if change.in_deck else f" [{change.category}]"
-    if change.kind is ChangeKind.ADD:
-        price = "no price" if change.price_cents is None else format_eur(change.price_cents)
-        printing = f"{change.set_code.upper()} {change.collector_number}, {price}"
-        copies = f"{change.after} " if change.after > 1 else ""
-        return f"{mark} {copies}{change.name} ({printing}) in {change.category}{_raise_text(change.raises)}"
-    if change.kind is ChangeKind.REMOVE:
-        copies = f"{change.before} " if change.before > 1 else ""
-        return f"{mark} {copies}{change.name}{board}"
-    return f"{mark} {change.name}{board}: {change.before} -> {change.after} copies"
-
-
-def _print_apply_outcome(
-    resolution: Resolution, result: SaveResult | None, folder: Path | None, out: TextIO, *, save: bool
-) -> None:
-    if resolution.problems:
-        print("nothing was changed: fix the problems above, then run it again", file=out)
-    elif not resolution.changes:
-        print("nothing to change: the deck already matches the plan", file=out)
-    elif not save:
-        print("preview only: run it again with --save to make these changes on Archidekt", file=out)
-    elif result is not None:
-        print(
-            f"saved {len(resolution.changes)} change(s); snapshot '{result.snapshot}' is on Archidekt",
-            file=out,
-        )
-        for line in result.mismatches:
-            print(f"  not as planned: {line}", file=out)
-        if folder is not None:
-            print(f"local copy updated: {folder}", file=out)
-        else:
-            print("the deck is not in your deck folder, so no local copy was written", file=out)
 
 
 def _apply_json(resolution: Resolution, result: SaveResult | None) -> dict[str, object]:
@@ -1205,7 +1180,7 @@ def _apply_json(resolution: Resolution, result: SaveResult | None) -> dict[str, 
                 "collectorNumber": c.collector_number,
                 "scryfallId": c.scryfall_id,
                 "priceCents": c.price_cents,
-                "raises": _raise_json(c.raises),
+                "raises": raise_json(c.raises),
             }
             for c in resolution.changes
         ],
@@ -1216,18 +1191,6 @@ def _apply_json(resolution: Resolution, result: SaveResult | None) -> dict[str, 
         "snapshot": result.snapshot if result else None,
         "mismatches": list(result.mismatches) if result else [],
     }
-
-
-def _price_text(cents: int | None) -> str:
-    return "-" if cents is None else format_eur(cents)
-
-
-def _raise_text(raises: BracketRaise | None) -> str:
-    return f"  ! bracket {raises.bracket}+ ({raises.reason})" if raises else ""
-
-
-def _raise_json(raises: BracketRaise | None) -> dict[str, object] | None:
-    return {"bracket": raises.bracket, "reason": raises.reason} if raises else None
 
 
 def _size(names: Sequence[str] | None) -> str:
@@ -1308,12 +1271,6 @@ def _result_json(result: SyncResult) -> dict[str, object]:
             {"name": c.name, "from": c.old_quantity, "to": c.new_quantity} for c in result.diff.changed
         ]
     return row
-
-
-def _progress_printer(err: TextIO) -> Callable[[str], None]:
-    if not err.isatty():
-        return lambda _: None
-    return lambda message: print(message, file=err)
 
 
 def _utf8(stream: TextIO) -> TextIO:
