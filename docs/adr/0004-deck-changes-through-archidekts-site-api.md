@@ -63,8 +63,9 @@ Option 1, chosen by the user on 2026-10-15, kept small and careful:
 - **Checked before anything is sent.** `apply` reads the deck from Archidekt (not the local copy) and
   checks every line against the card database: the card exists, is legal in Commander, and fits the
   commanders' colours. Any problem stops the run with exit code 2. An added card gets its cheapest EUR
-  printing unless the plan names a set, and the category Archidekt's editor would give it (its first card
-  type, lands first) unless the plan names one. Game changers and mass land denial that lift the deck
+  printing among those sanctioned play accepts (no gold or silver borders, oversized cards or memorabilia)
+  unless the plan names a set, and the category Archidekt's editor would give it (its first card type,
+  lands first) unless the plan names one. Game changers and mass land denial that lift the deck
   above its Archidekt bracket are marked, as in `suggest`.
 - **Preview by default.** Without `--save`, nothing is written and no login is needed (a saved login is
   used only to read a private deck). `--save` looks up every new card's Archidekt id first and stops

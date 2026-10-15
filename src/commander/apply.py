@@ -194,6 +194,9 @@ class _Resolver:
             if not printings:
                 self.problems.append(f"add {info.name}: no printing in set {wanted.set_code!r}")
                 return None
+        elif any(p.regular for p in printings):
+            # A gold-bordered or oversized copy is often the cheapest; it takes naming its set.
+            printings = [p for p in printings if p.regular]
         priced = [p for p in printings if p.eur_cents is not None]
         if priced:
             return min(priced, key=lambda p: (p.eur_cents or 0, p.set_code, p.collector_number))

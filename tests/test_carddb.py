@@ -161,3 +161,15 @@ def test_printings_of_lists_every_printing_in_set_order(card_db_file: Path) -> N
         ("plst", "KHM-142"),
         ("sld", "1688"),
     ]
+
+
+def test_cheapest_price_comes_from_regular_printings(card_db_file: Path) -> None:
+    with CardDb(card_db_file) as db:
+        tomb = db.card_named("Ancient Tomb")
+        assert tomb is not None
+        printings = {p.set_code: p for p in db.printings_of(tomb.oracle_id)}
+
+    # The gold-bordered WC99 copy (EUR 41.63) is cheaper, but not a regular printing.
+    assert tomb.cheapest_cents == 10264
+    assert (printings["wc99"].eur_cents, printings["wc99"].regular) == (4163, False)
+    assert printings["uma"].regular

@@ -568,3 +568,11 @@ def test_a_new_sideboard_category_warns_that_it_will_count(deck: Deck, db: CardD
         "Arcane Signet: Archidekt creates the new category Sideboard counting in the deck; "
         "untick it on Archidekt to keep it out"
     )
+
+
+def test_add_skips_non_regular_printings_unless_the_plan_names_the_set(deck: Deck, db: CardDb) -> None:
+    default = resolve_plan(deck, plan([AddCard("Ancient Tomb")]), db)
+    named = resolve_plan(deck, plan([AddCard("Ancient Tomb", set_code="wc99")]), db)
+
+    assert (default.changes[0].set_code, default.changes[0].price_cents) == ("uma", 10264)
+    assert (named.changes[0].set_code, named.changes[0].price_cents) == ("wc99", 4163)

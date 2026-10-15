@@ -14,7 +14,7 @@ from commander.models import DeckCard
 log = logging.getLogger(__name__)
 
 # Bump whenever the tables or the meaning of a column change; an old file is rebuilt, never migrated.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 CARD_DB_FILE = "cards.sqlite"
 _QUERY_CHUNK = 500
 _CARD_QUERIES = {
@@ -68,7 +68,8 @@ CREATE TABLE printing (
     set_code TEXT NOT NULL,
     collector_number TEXT NOT NULL,
     eur_cents INTEGER,
-    eur_foil_cents INTEGER
+    eur_foil_cents INTEGER,
+    regular INTEGER NOT NULL
 );
 CREATE TABLE role_member (role TEXT NOT NULL, oracle_id TEXT NOT NULL, PRIMARY KEY (role, oracle_id))
     WITHOUT ROWID;
@@ -128,6 +129,8 @@ class Printing:
     collector_number: str
     eur_cents: int | None
     eur_foil_cents: int | None
+    # A printing sanctioned play accepts; gold or silver borders, oversized cards and memorabilia are not.
+    regular: bool = True
 
 
 @dataclass(slots=True, frozen=True)
@@ -204,11 +207,11 @@ class CardDb:
 
     def printings(self, scryfall_ids: Iterable[str]) -> dict[str, Printing]:
         rows = self._select_in(
-            "SELECT scryfall_id, oracle_id, set_code, collector_number, eur_cents, eur_foil_cents"
+            "SELECT scryfall_id, oracle_id, set_code, collector_number, eur_cents, eur_foil_cents, regular"
             " FROM printing WHERE scryfall_id IN ({})",
             scryfall_ids,
         )
-        return {row[0]: Printing(*row) for row in rows}
+        return {row[0]: _printing(row) for row in rows}
 
     def cards(self, oracle_ids: Iterable[str]) -> dict[str, CardInfo]:
         return {info.oracle_id: info for info in self._cards_where("oracle_id", oracle_ids)}
@@ -233,11 +236,11 @@ class CardDb:
     def printings_of(self, oracle_id: str) -> list[Printing]:
         """Every printing of a card, ordered by set and collector number."""
         rows = self._query(
-            "SELECT scryfall_id, oracle_id, set_code, collector_number, eur_cents, eur_foil_cents"
+            "SELECT scryfall_id, oracle_id, set_code, collector_number, eur_cents, eur_foil_cents, regular"
             " FROM printing WHERE oracle_id = ? ORDER BY set_code, collector_number",
             [oracle_id],
         )
-        return [Printing(*row) for row in rows]
+        return [_printing(row) for row in rows]
 
     def resolve(self, cards: Sequence[DeckCard]) -> list[ResolvedCard]:
         """Match deck cards by printing, falling back to the card name when the printing is unknown."""
@@ -361,24 +364,28 @@ def _fill(
         db.executescript(_SCHEMA)
         count = 0
         oracle: dict[str, tuple[object, ...]] = {}
+        # Cheapest regular printing first; a card with no priced regular printing falls back to any.
         cheapest: dict[str, int] = {}
+        cheapest_any: dict[str, int] = {}
         with db:
             for batch in _batches(cards, 5000):
                 db.executemany(
-                    "INSERT OR REPLACE INTO printing VALUES (?, ?, ?, ?, ?, ?)", _printing_rows(batch)
+                    "INSERT OR REPLACE INTO printing VALUES (?, ?, ?, ?, ?, ?, ?)", _printing_rows(batch)
                 )
                 count += len(batch)
                 for card in batch:
                     oracle_id = card.printing.oracle_id
                     oracle.setdefault(oracle_id, _oracle_row(card))
-                    low = _lowest(
-                        card.printing.eur_cents, card.printing.eur_foil_cents, cheapest.get(oracle_id)
-                    )
-                    if low is not None:
-                        cheapest[oracle_id] = low
+                    prices = (card.printing.eur_cents, card.printing.eur_foil_cents)
+                    _keep_lowest(cheapest_any, oracle_id, *prices)
+                    if card.printing.regular:
+                        _keep_lowest(cheapest, oracle_id, *prices)
             db.executemany(
                 "INSERT INTO oracle VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                ((*row, cheapest.get(oracle_id)) for oracle_id, row in oracle.items()),
+                (
+                    (*row, cheapest.get(oracle_id, cheapest_any.get(oracle_id)))
+                    for oracle_id, row in oracle.items()
+                ),
             )
             db.executemany(
                 "INSERT INTO role_member VALUES (?, ?)",
@@ -402,7 +409,15 @@ def _fill(
 def _printing_rows(batch: list[ParsedCard]) -> Iterator[tuple[object, ...]]:
     for card in batch:
         p = card.printing
-        yield (p.scryfall_id, p.oracle_id, p.set_code, p.collector_number, p.eur_cents, p.eur_foil_cents)
+        yield (
+            p.scryfall_id,
+            p.oracle_id,
+            p.set_code,
+            p.collector_number,
+            p.eur_cents,
+            p.eur_foil_cents,
+            int(p.regular),
+        )
 
 
 def _oracle_row(card: ParsedCard) -> tuple[object, ...]:
@@ -418,6 +433,16 @@ def _oracle_row(card: ParsedCard) -> tuple[object, ...]:
         int(card.commander_legal),
         card.edhrec_rank,
     )
+
+
+def _printing(row: Sequence[Any]) -> Printing:
+    return Printing(*row[:6], regular=bool(row[6]))
+
+
+def _keep_lowest(lowest: dict[str, int], key: str, *prices: int | None) -> None:
+    low = _lowest(*prices, lowest.get(key))
+    if low is not None:
+        lowest[key] = low
 
 
 def _lowest(*prices: int | None) -> int | None:

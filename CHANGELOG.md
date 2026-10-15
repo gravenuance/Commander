@@ -26,4 +26,6 @@
   Credential Manager; the password is never stored.
 
 ### Changed
-- The card database now stores EDHREC popularity ranks, so the first `cmdr sync` after updating rebuilds it.
+- The card database now stores EDHREC popularity ranks and marks non-tournament printings (gold or silver
+  borders, oversized, memorabilia), so the first `cmdr sync` after updating rebuilds it. Cheapest prices
+  and the printing `apply` picks leave those printings out.

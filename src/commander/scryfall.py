@@ -53,6 +53,9 @@ _NON_CARD_LAYOUTS = frozenset(
     {"token", "double_faced_token", "emblem", "art_series", "vanguard", "scheme", "planar", "augment", "host"}
 )
 
+# Gold-bordered World Championship decks and silver-bordered Un-cards are not tournament printings.
+_IRREGULAR_BORDERS = frozenset({"gold", "silver"})
+
 
 @dataclass(slots=True, frozen=True)
 class RoleTag:
@@ -213,6 +216,7 @@ def parse_card(raw: object) -> ParsedCard | None:
             collector_number=req_str(card, "collector_number", where),
             eur_cents=_cents(prices, "eur", where),
             eur_foil_cents=_cents(prices, "eur_foil", where),
+            regular=_regular(card, where),
         ),
         name=req_str(card, "name", where),
         mana_cost=opt_str(card, "mana_cost", where) or opt_str(front, "mana_cost", where) or "",
@@ -336,6 +340,16 @@ def _cents(prices: Mapping[str, object], key: str, where: str) -> int | None:
     if not amount.is_finite() or amount < 0:
         raise ShapeError(f"{where}.prices.{key}: not a price: {text!r}")
     return int((amount * 100).to_integral_value())
+
+
+def _regular(card: Mapping[str, object], where: str) -> bool:
+    """A printing sanctioned play accepts; a missing field counts as the usual value."""
+    border = opt_str(card, "border_color", where)
+    return (
+        border not in _IRREGULAR_BORDERS
+        and card.get("oversized") is not True
+        and opt_str(card, "set_type", where) != "memorabilia"
+    )
 
 
 def _number(obj: Mapping[str, object], key: str, where: str) -> float:

@@ -51,7 +51,9 @@ day; `sync --no-cards` skips that step. If the download fails, the previous card
 - **Prices** are Cardmarket trend prices in EUR, as Scryfall reports them. Each card is priced at the
   printing and finish (foil or not) in your deck. When that printing has no price, the card's cheapest
   printing stands in and `price` marks it with `~`. "Cheapest printings" is what the deck would cost
-  built from the cheapest printing of every card.
+  built from the cheapest printing of every card. Here "printing" means one sanctioned play accepts:
+  gold- or silver-bordered, oversized and memorabilia printings (such as the World Championship decks)
+  are left out unless a card has no other price.
 - **Roles** (ramp, draw, removal, board wipes, tutors, protection, recursion, counterspells) are counted
   two ways: from your Archidekt categories with those names, and from Scryfall's community-maintained
   [Tagger](https://tagger.scryfall.com) tags. `analyze <deck> --details` lists the cards where the two
@@ -129,9 +131,10 @@ remove = ["Wild Growth", {name = "Mountain", keep = 10}]
 
 A plan says how the deck should end up. `add` means the deck ends with at least that many copies
 (`quantity`, default 1); `remove` means it ends with none, or with `keep` copies. Lines the deck already
-meets are skipped, so running a plan twice is safe. A new card gets its cheapest EUR printing unless
-`set` names one, and goes under its card type (Land, Creature, Instant and so on) unless `category`
-names another. Cards on the maybeboard are left alone.
+meets are skipped, so running a plan twice is safe. A new card gets its cheapest EUR printing, leaving
+out gold-bordered and other non-tournament printings, unless `set` names one; it goes under its card
+type (Land, Creature, Instant and so on) unless `category` names another. Cards on the maybeboard
+are left alone.
 
 Whether an added card counts in the deck follows the category's "in deck" setting on Archidekt,
 which each deck sets for itself. A category the deck doesn't have yet is created by the save: Archidekt
