@@ -73,6 +73,23 @@ class Workspace:
                 stored.append(StoredDeck(folder, deck))
         return stored
 
+    def find(self, query: str) -> list[StoredDeck]:
+        """Decks whose id equals query, or else whose name, folder or commander contains it (any case)."""
+        stored = self.load_all()
+        text = query.strip()
+        if text.isdigit():
+            by_id = [s for s in stored if s.deck.id == int(text)]
+            if by_id:
+                return by_id
+        needle = text.casefold()
+        return [
+            s
+            for s in stored
+            if needle in s.deck.name.casefold()
+            or needle in s.folder.name.casefold()
+            or any(needle in commander.casefold() for commander in s.deck.commanders)
+        ]
+
     def save(self, deck: Deck) -> Path:
         """Write deck.json and list.md, renaming the folder to match the deck name; never touches notes.md."""
         target = self.root / folder_name(deck)

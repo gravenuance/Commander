@@ -1,4 +1,4 @@
-"""The one HTTP client: timeouts, capped retries with backoff, size limits and JSON validation."""
+"""The one HTTP client: timeouts, capped retries with backoff, size limits, JSON and file downloads."""
 
 import json
 import logging
@@ -6,6 +6,7 @@ import random
 import time
 from collections.abc import Callable, Mapping
 from email.utils import parsedate_to_datetime
+from pathlib import Path
 
 import httpx
 
@@ -36,7 +37,7 @@ def make_client() -> httpx.Client:
     )
 
 
-class JsonFetcher:
+class Fetcher:
     def __init__(
         self,
         client: httpx.Client,
@@ -58,34 +59,36 @@ class JsonFetcher:
 
     def get_json(self, url: str, params: Mapping[str, str | int] | None = None) -> object:
         """GET a JSON document, retrying only transient failures."""
+        body = self._get(url, params, lambda response: _read_capped(response, url, MAX_RESPONSE_BYTES))
+        return _decode_json(url, body)
+
+    def download(self, url: str, dest: Path, *, max_bytes: int) -> int:
+        """Stream a file into dest (replacing it), retrying only transient failures; returns its size."""
+        return self._get(url, None, lambda response: _write_capped(response, url, dest, max_bytes))
+
+    def _get[T](
+        self, url: str, params: Mapping[str, str | int] | None, read: Callable[[httpx.Response], T]
+    ) -> T:
         for attempt in range(1, self._max_attempts + 1):
             started = self._monotonic()
             try:
-                status, headers, body = self._fetch(url, params)
+                with self._client.stream("GET", url, params=params) as response:
+                    status = response.status_code
+                    retry_after = response.headers.get("Retry-After")
+                    value = read(response) if status == HTTP_OK else None
             except (httpx.TimeoutException, httpx.TransportError) as error:
                 self._give_up_or_wait(attempt, url, str(error) or type(error).__name__, None)
                 continue
             elapsed = self._monotonic() - started
             if elapsed > SLOW_CALL_SECONDS:
                 log.warning("slow request: %s took %.1fs", url, elapsed)
+            if value is not None:
+                return value
             if status in _RETRY_STATUSES:
-                self._give_up_or_wait(attempt, url, f"HTTP {status}", headers.get("Retry-After"))
+                self._give_up_or_wait(attempt, url, f"HTTP {status}", retry_after)
                 continue
-            if status != HTTP_OK:
-                raise NetworkError(f"{url} returned HTTP {status}")
-            return _decode_json(url, body)
+            raise NetworkError(f"{url} returned HTTP {status}")
         raise AssertionError("unreachable: the last attempt raises")  # pragma: no cover
-
-    def _fetch(self, url: str, params: Mapping[str, str | int] | None) -> tuple[int, httpx.Headers, bytes]:
-        with self._client.stream("GET", url, params=params) as response:
-            chunks: list[bytes] = []
-            size = 0
-            for chunk in response.iter_bytes():
-                size += len(chunk)
-                if size > MAX_RESPONSE_BYTES:
-                    raise NetworkError(f"{url} sent more than {MAX_RESPONSE_BYTES // 1024 // 1024} MB")
-                chunks.append(chunk)
-            return response.status_code, response.headers, b"".join(chunks)
 
     def _give_up_or_wait(self, attempt: int, url: str, reason: str, retry_after: str | None) -> None:
         if attempt >= self._max_attempts:
@@ -113,6 +116,32 @@ def _retry_after_seconds(value: str | None, now: float) -> float | None:
         log.info("ignoring unreadable Retry-After header: %r", value)
         return None
     return max(0.0, when.timestamp() - now)
+
+
+def _read_capped(response: httpx.Response, url: str, max_bytes: int) -> bytes:
+    chunks: list[bytes] = []
+    size = 0
+    for chunk in response.iter_bytes():
+        size += len(chunk)
+        if size > max_bytes:
+            raise NetworkError(f"{url} sent more than {_megabytes(max_bytes)} MB")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _write_capped(response: httpx.Response, url: str, dest: Path, max_bytes: int) -> int:
+    size = 0
+    with dest.open("wb") as handle:
+        for chunk in response.iter_bytes():
+            size += len(chunk)
+            if size > max_bytes:
+                raise NetworkError(f"{url} sent more than {_megabytes(max_bytes)} MB")
+            handle.write(chunk)
+    return size
+
+
+def _megabytes(size: int) -> int:
+    return size // 1024 // 1024
 
 
 def _decode_json(url: str, body: bytes) -> object:

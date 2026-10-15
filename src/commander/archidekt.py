@@ -16,7 +16,7 @@ from commander.jsonshape import (
     str_list,
 )
 from commander.models import Deck, DeckCard, DeckSummary
-from commander.net import JsonFetcher
+from commander.net import Fetcher
 
 API_BASE = "https://archidekt.com/api"
 COMMANDER_FORMAT = 3
@@ -29,7 +29,7 @@ class ArchidektError(Exception):
 
 
 class ArchidektClient:
-    def __init__(self, fetcher: JsonFetcher, base_url: str = API_BASE) -> None:
+    def __init__(self, fetcher: Fetcher, base_url: str = API_BASE) -> None:
         self._fetcher = fetcher
         self._base_url = base_url.rstrip("/")
 

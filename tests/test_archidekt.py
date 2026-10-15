@@ -6,7 +6,7 @@ import pytest
 
 from commander.archidekt import ArchidektClient, ArchidektError, parse_deck
 from commander.jsonshape import ShapeError
-from commander.net import JsonFetcher
+from commander.net import Fetcher
 from conftest import Handler, Json, card_entry, deck_page, summary_row
 
 
@@ -16,7 +16,7 @@ def no_sleep(_: float) -> None:
 
 def client_for(handler: Handler) -> ArchidektClient:
     http = httpx.Client(transport=httpx.MockTransport(handler))
-    return ArchidektClient(JsonFetcher(http, sleep=no_sleep))
+    return ArchidektClient(Fetcher(http, sleep=no_sleep))
 
 
 def test_parse_deck_reads_header_fields(raw_deck: Json) -> None:

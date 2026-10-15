@@ -1,7 +1,10 @@
+from collections.abc import Iterator
+from pathlib import Path
+
 import httpx
 import pytest
 
-from commander.net import MAX_RESPONSE_BYTES, JsonFetcher, NetworkError
+from commander.net import MAX_RESPONSE_BYTES, Fetcher, NetworkError
 
 URL = "https://archidekt.com/api/decks/1/"
 
@@ -21,8 +24,8 @@ class Script:
         return step
 
 
-def fetcher(script: Script, sleeps: list[float], *, now: float = 0.0) -> JsonFetcher:
-    return JsonFetcher(
+def fetcher(script: Script, sleeps: list[float], *, now: float = 0.0) -> Fetcher:
+    return Fetcher(
         httpx.Client(transport=httpx.MockTransport(script)),
         sleep=sleeps.append,
         wall_clock=lambda: now,
@@ -108,3 +111,37 @@ def test_rejects_oversized_response() -> None:
     script = Script(httpx.Response(200, content=b"[" + b" " * MAX_RESPONSE_BYTES + b"]"))
     with pytest.raises(NetworkError, match="more than 20 MB"):
         fetcher(script, []).get_json(URL)
+
+
+def test_download_streams_the_body_to_a_file(tmp_path: Path) -> None:
+    dest = tmp_path / "bulk.gz"
+    size = fetcher(Script(httpx.Response(200, content=b"abc")), []).download(URL, dest, max_bytes=10)
+    assert (size, dest.read_bytes()) == (3, b"abc")
+
+
+class DiesMidway(httpx.SyncByteStream):
+    def __iter__(self) -> Iterator[bytes]:
+        yield b"partial"
+        raise httpx.ReadError("connection reset")
+
+
+def test_download_retries_and_keeps_only_the_successful_body(tmp_path: Path) -> None:
+    dest = tmp_path / "bulk.gz"
+    script = Script(httpx.Response(200, stream=DiesMidway()), httpx.Response(200, content=b"whole"))
+    sleeps: list[float] = []
+    fetcher(script, sleeps).download(URL, dest, max_bytes=10)
+    assert dest.read_bytes() == b"whole"
+    assert sleeps == [1.0]
+
+
+def test_download_refuses_more_than_the_cap(tmp_path: Path) -> None:
+    script = Script(httpx.Response(200, content=b"x" * (2 * 1024 * 1024 + 1)))
+    with pytest.raises(NetworkError, match="more than 2 MB"):
+        fetcher(script, []).download(URL, tmp_path / "bulk.gz", max_bytes=2 * 1024 * 1024)
+
+
+def test_download_error_status_writes_nothing(tmp_path: Path) -> None:
+    dest = tmp_path / "bulk.gz"
+    with pytest.raises(NetworkError, match="HTTP 404"):
+        fetcher(Script(httpx.Response(404, content=b"not found")), []).download(URL, dest, max_bytes=10)
+    assert not dest.exists()

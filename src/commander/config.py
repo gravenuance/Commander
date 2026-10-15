@@ -13,6 +13,7 @@ CONFIG_VERSION = 1
 ENV_USER = "CMDR_USER"
 ENV_WORKSPACE = "CMDR_WORKSPACE"
 ENV_CONFIG = "CMDR_CONFIG"
+ENV_CACHE = "CMDR_CACHE_DIR"
 _USERNAME_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.")
 
 
@@ -30,6 +31,14 @@ def default_config_path(env: Mapping[str, str]) -> Path:
     appdata = env.get("APPDATA")
     base = Path(appdata) if appdata else Path.home() / ".config"
     return base / "Commander" / "config.toml"
+
+
+def cache_dir(env: Mapping[str, str]) -> Path:
+    if env.get(ENV_CACHE):
+        return Path(env[ENV_CACHE])
+    local = env.get("LOCALAPPDATA")
+    base = Path(local) if local else Path.home() / ".cache"
+    return base / "Commander"
 
 
 def config_path(flag: str | None, env: Mapping[str, str]) -> Path:
