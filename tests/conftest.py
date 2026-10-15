@@ -2,6 +2,7 @@ import copy
 import functools
 import gzip
 import json
+import shutil
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -187,6 +188,15 @@ def build_card_db(folder: Path) -> Path:
 def card_db_file(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """A card database built from the fixtures; read-only, so one per test session is enough."""
     return build_card_db(tmp_path_factory.mktemp("carddb"))
+
+
+@pytest.fixture
+def own_cache(tmp_path: Path, card_db_file: Path) -> Path:
+    """A cache folder of this test's own, so cached bracket estimates never leak between tests."""
+    folder = tmp_path / "cache"
+    folder.mkdir()
+    shutil.copy(card_db_file, folder / CARD_DB_FILE)
+    return folder
 
 
 class FakeScryfall:

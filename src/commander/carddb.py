@@ -221,6 +221,9 @@ class Theme:
         return not (self.types or self.keywords or self.tag_ids)
 
 
+NO_THEME = Theme()
+
+
 @dataclass(slots=True, frozen=True)
 class TagCount:
     slug: str

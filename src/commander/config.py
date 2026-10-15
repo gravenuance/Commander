@@ -72,7 +72,8 @@ def read_config(path: Path) -> FileConfig:
         raise ConfigError(f"{path}: 'user' must be a string")
     if workspace is not None and not isinstance(workspace, str):
         raise ConfigError(f"{path}: 'workspace' must be a string")
-    return FileConfig(user, Path(workspace) if workspace else None, _targets(raw.get("targets"), path))
+    targets = parse_targets(raw.get("targets"), str(path))
+    return FileConfig(user, Path(workspace) if workspace else None, targets)
 
 
 def write_config(path: Path, user: str, workspace: Path) -> None:
@@ -120,7 +121,8 @@ def _migrate(raw: dict[str, object], path: Path) -> dict[str, object]:
     return raw
 
 
-def _targets(table: object, path: Path) -> dict[Role, int]:
+def parse_targets(table: object, path: str) -> dict[Role, int]:
+    """A [targets] table of a config or profile file, checked; path names the file in messages."""
     if table is None:
         return {}
     if not isinstance(table, dict):

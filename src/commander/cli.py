@@ -24,6 +24,7 @@ from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
 from commander.bracket import BracketReport, EstimateResult, bracket_cards, estimate_cache, estimate_decks
 from commander.carddb import CardDataError, Role
 from commander.cli_cards import add_card_commands
+from commander.cli_profile import add_profile_commands
 from commander.clibase import (
     EXIT_FAILURE,
     EXIT_INTERRUPTED,
@@ -55,6 +56,7 @@ from commander.config import (
 )
 from commander.credentials import CredentialError, KeyringTokenStore, TokenStore
 from commander.deckcache import Answer, AnswerSource
+from commander.deckprofile import read_profile, resolve_themes
 from commander.diff import DeckDiff
 from commander.models import Deck
 from commander.net import Fetcher, NetworkError, make_client
@@ -69,11 +71,12 @@ from commander.suggest import (
     DEFAULT_COUNT,
     DEFAULT_TARGETS,
     BracketRaise,
+    RoleIdea,
     RoleTarget,
     Suggestions,
-    SuggestOptions,
     combos_cache,
     find_combos,
+    options_for,
     suggest,
 )
 from commander.sync import SyncResult, SyncStatus, sync_decks
@@ -286,6 +289,7 @@ def _build_parser() -> argparse.ArgumentParser:
         commands.add_parser("suggest", help="cards to add for combos and short roles, cuts to weigh")
     )
     add_card_commands(commands.add_parser)
+    add_profile_commands(commands.add_parser)
     _add_edit_commands(commands.add_parser)
     return parser
 
@@ -481,13 +485,9 @@ def _cmd_bracket(args: argparse.Namespace, ctx: Context) -> int:
 
 def _cmd_suggest(args: argparse.Namespace, ctx: Context) -> int:
     file = read_config(config_path(args.config, ctx.env))
-    decks = [s.deck for s in selected_decks(args, ctx)]
-    options = SuggestOptions(
-        targets={**DEFAULT_TARGETS, **file.targets},
-        count=args.count,
-        max_cents=args.max_price,
-        within_bracket=args.within_bracket,
-    )
+    stored = selected_decks(args, ctx)
+    decks = [s.deck for s in stored]
+    profiles = [read_profile(s.folder) for s in stored]
     with open_card_db(ctx) as db:
         with ctx.client_factory() as http:
             combos = find_combos(
@@ -497,10 +497,24 @@ def _cmd_suggest(args: argparse.Namespace, ctx: Context) -> int:
                 now=ctx.now,
                 refresh=args.refresh,
             )
-        results = [
-            suggest(deck, db.resolve(deck.main_cards), db, answer, options)
-            for deck, answer in zip(decks, combos, strict=True)
-        ]
+        results: list[Suggestions] = []
+        for deck, profile, answer in zip(decks, profiles, combos, strict=True):
+            themes = resolve_themes(profile, db)
+            for slug in themes.unknown_tags:
+                print(
+                    f"cmdr: {deck.name}: profile tag {slug!r} is not a Tagger tag; `cmdr tags` finds them",
+                    file=ctx.err,
+                )
+            options = options_for(
+                deck,
+                profile,
+                themes,
+                file.targets,
+                count=args.count,
+                max_cents=args.max_price,
+                within_bracket=args.within_bracket,
+            )
+            results.append(suggest(deck, db.resolve(deck.main_cards), db, answer, options))
         meta = db.meta()
     for result in results:
         _warn_answer(result.deck, result.combos, "combo list", ctx.err)
@@ -933,15 +947,17 @@ def _print_suggestions(result: Suggestions, out: TextIO, *, details: bool) -> No
     print(f"{commanders}; {bracket}; {colours}", file=out)
     _print_pieces(result, out, details=details)
     _print_roles(result, out)
+    _print_themed(result, out)
     _print_cuts(result, out)
-    raised = any(p.raises for p in result.pieces) or any(i.raises for r in result.roles for i in r.ideas)
+    ideas = [i for r in result.roles for i in r.ideas] + list(result.themed)
+    raised = any(p.raises for p in result.pieces) or any(i.raises for i in ideas)
     if raised:
         print(
             "! adding it lifts the deck to at least that bracket; --within-bracket leaves these out", file=out
         )
     if result.hidden:
         print(
-            f"{result.hidden} left out because they would lift the deck above bracket {deck.bracket}",
+            f"{result.hidden} left out because they would lift the deck above bracket {result.ceiling}",
             file=out,
         )
 
@@ -990,18 +1006,32 @@ def _print_roles(result: Suggestions, out: TextIO) -> None:
     if not short:
         print(f"\nroles: {f'all at target ({met})' if met else 'no targets set'}", file=out)
         return
-    print("\nroles below target (nonland cards by Scryfall tags; most played ideas first)", file=out)
+    print(
+        "\nroles below target (nonland cards by Scryfall tags or your categories; most played ideas first)",
+        file=out,
+    )
     for target in short:
         print(f"  {target.role.value} {target.have} of {target.target}", file=out)
         if not target.ideas:
             print(f"  {'':>9}  no card fits", file=out)
         for idea in target.ideas:
-            print(
-                f"  {_price_text(idea.info.cheapest_cents):>9}  {idea.info.name}{_raise_text(idea.raises)}",
-                file=out,
-            )
+            _print_idea(idea, out)
     if met:
         print(f"  at target: {met}", file=out)
+
+
+def _print_themed(result: Suggestions, out: TextIO) -> None:
+    if not result.themed:
+        return
+    print("\ncards that fit the deck's themes (most played first)", file=out)
+    for idea in result.themed:
+        _print_idea(idea, out, mark_theme=False)
+
+
+def _print_idea(idea: RoleIdea, out: TextIO, *, mark_theme: bool = True) -> None:
+    theme = " (theme)" if mark_theme and idea.themed else ""
+    price = _price_text(idea.info.cheapest_cents)
+    print(f"  {price:>9}  {idea.info.name}{theme}{_raise_text(idea.raises)}", file=out)
 
 
 def _print_cuts(result: Suggestions, out: TextIO) -> None:
@@ -1079,22 +1109,26 @@ def _suggestions_json(result: Suggestions) -> dict[str, object]:
                 "have": t.have,
                 "target": t.target,
                 "short": t.short,
-                "ideas": [
-                    {
-                        "name": i.info.name,
-                        "priceCents": i.info.cheapest_cents,
-                        "edhrecRank": i.info.edhrec_rank,
-                        "raises": _raise_json(i.raises),
-                    }
-                    for i in t.ideas
-                ],
+                "ideas": [_idea_json(i) for i in t.ideas],
             }
             for t in result.roles
         ],
+        "themed": [_idea_json(i) for i in result.themed],
         "cuts": [
             {"name": c.name, "priceCents": c.cheapest_cents, "edhrecRank": c.edhrec_rank} for c in result.cuts
         ],
         "hidden": result.hidden,
+        "ceiling": result.ceiling,
+    }
+
+
+def _idea_json(idea: RoleIdea) -> dict[str, object]:
+    return {
+        "name": idea.info.name,
+        "priceCents": idea.info.cheapest_cents,
+        "edhrecRank": idea.info.edhrec_rank,
+        "raises": _raise_json(idea.raises),
+        "themed": idea.themed,
     }
 
 

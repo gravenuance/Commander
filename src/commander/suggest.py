@@ -5,15 +5,17 @@ Combos come from Commander Spellbook; roles, prices and popularity ranks come fr
 automated requests.
 """
 
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from functools import partial
+from itertools import islice
 from pathlib import Path
 
-from commander.analysis import ANALYZED_ROLES, game_changers, tagged_count
+from commander.analysis import ANALYZED_ROLES, CATEGORY_ALIASES, game_changers
 from commander.background import run_all
-from commander.carddb import COLORS, CardDb, CardInfo, ResolvedCard, Role
+from commander.carddb import COLORS, NO_THEME, CardDb, CardInfo, ResolvedCard, Role, Theme
 from commander.deckcache import Answer, AnswerSource, Clock, DeckCache, cached_answer
+from commander.deckprofile import Profile, ResolvedThemes
 from commander.jsonshape import as_object, opt_int, opt_str, req_list, req_str, str_list
 from commander.models import COMMANDER_CATEGORY, Deck
 from commander.net import NetworkError
@@ -38,6 +40,8 @@ DEFAULT_TARGETS: Mapping[Role, int] = {Role.RAMP: 10, Role.DRAW: 10, Role.REMOVA
 # None meaning any number, and no mass land denial below bracket 4.
 GAME_CHANGER_LIMITS: Mapping[int, int | None] = {1: 0, 2: 0, 3: 3, 4: None, 5: None}
 LOWEST_BRACKET_FOR_MASS_LAND_DENIAL = 4
+# Candidates read per role before filtering, so ideas matching a theme can be ranked ahead of the rest.
+IDEA_WINDOW = 200
 
 type ComboResult = Answer[ComboMatches]
 
@@ -48,13 +52,24 @@ class SuggestOptions:
     # Ideas to list per section.
     count: int
     max_cents: int | None
-    within_bracket: bool
+    # Ideas that would lift the deck above this bracket are left out; None keeps them, marked.
+    ceiling: int | None = None
+    # Ideas matching a theme come first, and deck cards matching one come last among cuts.
+    themes: Theme = NO_THEME
+    exclude: Theme = NO_THEME
+    # Casefolded card names: never suggested, and never offered as cuts.
+    exclude_names: frozenset[str] = frozenset()
+    keep_names: frozenset[str] = frozenset()
+    # Casefolded Archidekt categories whose cards are never offered as cuts.
+    keep_categories: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         if self.count < 1:
             raise ValueError(f"count must be at least 1, got {self.count}")
         if self.max_cents is not None and self.max_cents < 0:
             raise ValueError(f"max_cents must not be negative, got {self.max_cents}")
+        if self.ceiling is not None and not 1 <= self.ceiling <= 5:  # noqa: PLR2004 — brackets run 1..5
+            raise ValueError(f"ceiling must be 1-5, got {self.ceiling}")
 
 
 @dataclass(slots=True, frozen=True)
@@ -83,6 +98,8 @@ class ComboPiece:
 class RoleIdea:
     info: CardInfo
     raises: BracketRaise | None
+    # The card matches one of the deck's themes.
+    themed: bool = False
 
 
 @dataclass(slots=True, frozen=True)
@@ -109,9 +126,12 @@ class Suggestions:
     more_pieces: int
     # Every role with a target that the card data can count, short or not.
     roles: tuple[RoleTarget, ...]
+    # The most played cards matching the deck's themes; empty without themes.
+    themed: tuple[RoleIdea, ...]
     cuts: tuple[CardInfo, ...]
-    # Ideas skipped because they would lift the deck above its bracket (only with within_bracket).
+    # Ideas skipped because they would lift the deck above the ceiling.
     hidden: int
+    ceiling: int | None = None
 
 
 def suggest(
@@ -119,14 +139,17 @@ def suggest(
 ) -> Suggestions:
     """Ideas for one deck; resolved must cover the deck's main cards."""
     main = [r for r in resolved if r.card.in_deck]
-    bracket = deck.bracket
-    changers = len(game_changers(main))
+    picker = _Picker(db, options, deck.bracket, len(game_changers(main)))
     identity = deck_identity(main)
     data = combos.data
-    pieces = combo_pieces(main, data, db, bracket=bracket, changers=changers) if data is not None else []
-    priced = [p for p in pieces if _affordable(p.price_cents, options.max_cents)]
-    kept = [p for p in priced if not (options.within_bracket and p.raises)]
-    roles, hidden = role_targets(main, db, identity, options, bracket=bracket, changers=changers)
+    pieces = combo_pieces(main, data, db, bracket=deck.bracket, changers=picker.changers) if data else []
+    kept = picker.pieces(pieces)
+    roles = role_targets(main, db, identity, options, picker)
+    themed: list[RoleIdea] = []
+    if identity is not None:
+        held = {r.info.oracle_id for r in main if r.info}
+        candidates = db.theme_candidates(options.themes, identity, exclude=held, max_cents=options.max_cents)
+        themed = picker.pick(candidates, theme_first=False)
     return Suggestions(
         deck=deck,
         identity=identity,
@@ -134,9 +157,106 @@ def suggest(
         pieces=tuple(kept[: options.count]),
         more_pieces=max(len(kept) - options.count, 0),
         roles=roles,
-        cuts=cut_candidates(main, data, count=options.count),
-        hidden=hidden + len(priced) - len(kept),
+        themed=tuple(themed),
+        cuts=cut_candidates(
+            main,
+            data,
+            count=options.count,
+            protected=protected_cards(main, options),
+            themed=db.matching(options.themes, (r.info.oracle_id for r in main if r.info)),
+        ),
+        hidden=picker.hidden,
+        ceiling=options.ceiling,
     )
+
+
+def options_for(
+    deck: Deck,
+    profile: Profile,
+    themes: ResolvedThemes,
+    config_targets: Mapping[Role, int],
+    *,
+    count: int,
+    max_cents: int | None,
+    within_bracket: bool,
+    rejected: Collection[str] = (),
+) -> SuggestOptions:
+    """One deck's options: flags first, then its profile, then the config file, then the defaults.
+
+    rejected holds card names already turned down for the deck; they are never suggested again.
+    """
+    ceiling = deck.bracket if within_bracket else profile.bracket_ceiling
+    excluded = {key for name in (*profile.exclude_cards, *rejected) for key in name_keys(name)}
+    return SuggestOptions(
+        targets={**DEFAULT_TARGETS, **config_targets, **profile.targets},
+        count=count,
+        max_cents=max_cents if max_cents is not None else profile.max_card_cents,
+        ceiling=ceiling,
+        themes=themes.themes,
+        exclude=themes.exclude,
+        exclude_names=frozenset(excluded),
+        keep_names=frozenset(key for name in profile.keep_cards for key in name_keys(name)),
+        keep_categories=frozenset(category.casefold() for category in profile.keep_categories),
+    )
+
+
+@dataclass(slots=True)
+class _Picker:
+    """Filters ideas by the options (exclusions, price, ceiling) and counts what the ceiling hides."""
+
+    db: CardDb
+    options: SuggestOptions
+    bracket: int | None
+    changers: int
+    hidden: int = 0
+
+    def pick(self, candidates: Iterator[CardInfo], *, theme_first: bool) -> list[RoleIdea]:
+        # Ranked candidates come lazily; a window this deep leaves room for themed ones to move up.
+        window = list(islice(candidates, IDEA_WINDOW))
+        ids = [info.oracle_id for info in window]
+        banned = self.db.matching(self.options.exclude, ids)
+        themed = self.db.matching(self.options.themes, ids)
+        if theme_first:
+            window.sort(key=lambda info: info.oracle_id not in themed)
+        ideas: list[RoleIdea] = []
+        for info in window:
+            if info.oracle_id in banned or name_keys(info.name) & self.options.exclude_names:
+                continue
+            raises = card_raise(info, self.bracket, self.changers)
+            if self._too_high(raises):
+                continue
+            ideas.append(RoleIdea(info, raises, themed=info.oracle_id in themed))
+            if len(ideas) == self.options.count:
+                break
+        return ideas
+
+    def pieces(self, pieces: Sequence[ComboPiece]) -> list[ComboPiece]:
+        ids = [p.info.oracle_id for p in pieces if p.info]
+        banned = self.db.matching(self.options.exclude, ids)
+        kept: list[ComboPiece] = []
+        for piece in pieces:
+            if (piece.info and piece.info.oracle_id in banned) or name_keys(
+                piece.name
+            ) & self.options.exclude_names:
+                continue
+            if not _affordable(piece.price_cents, self.options.max_cents) or self._too_high(piece.raises):
+                continue
+            kept.append(piece)
+        return kept
+
+    def _too_high(self, raises: BracketRaise | None) -> bool:
+        too_high = (
+            raises is not None and self.options.ceiling is not None and raises.bracket > self.options.ceiling
+        )
+        if too_high:
+            self.hidden += 1
+        return too_high
+
+
+def name_keys(name: str) -> frozenset[str]:
+    """The casefolded names a card answers to: its full name and, for two faces, the front face's."""
+    key = name.casefold()
+    return frozenset({key, key.split(" // ")[0]})
 
 
 def deck_identity(main: Sequence[ResolvedCard]) -> str | None:
@@ -196,51 +316,64 @@ def combo_pieces(
 
 
 def role_targets(
-    main: Sequence[ResolvedCard],
-    db: CardDb,
-    identity: str | None,
-    options: SuggestOptions,
-    *,
-    bracket: int | None,
-    changers: int,
-) -> tuple[tuple[RoleTarget, ...], int]:
+    main: Sequence[ResolvedCard], db: CardDb, identity: str | None, options: SuggestOptions, picker: _Picker
+) -> tuple[RoleTarget, ...]:
     """Each role's count against its target, with the most played cards that fit for a short one.
 
-    Also returns how many ideas were hidden. Without a colour identity nothing can be suggested.
+    A card counts for a role when Scryfall's tags give it the role or the deck files it under a category of
+    that name. Without a colour identity nothing can be suggested.
     """
     if identity is None:
-        return (), 0
+        return ()
     exclude = {r.info.oracle_id for r in main if r.info}
-    # Ideas are never lands, so lands that happen to carry a role tag do not count towards a target.
+    # Ideas are never lands, so lands that happen to carry a role do not count towards a target.
     spells = [r for r in main if r.info and not r.info.is_land]
     targets: list[RoleTarget] = []
-    hidden = 0
     for role in ANALYZED_ROLES:
         target = options.targets.get(role)
         if target is None or role not in db.available_roles:
             continue
-        have = tagged_count(spells, role)
-        ideas: list[RoleIdea] = []
+        have = sum(r.card.quantity for r in spells if fills_role(r, role))
         if have >= target:
             targets.append(RoleTarget(role, have, target, ()))
             continue
-        for info in db.candidates(role, identity, exclude=exclude, max_cents=options.max_cents):
-            raises = card_raise(info, bracket, changers)
-            if raises and options.within_bracket:
-                hidden += 1
-                continue
-            ideas.append(RoleIdea(info, raises))
-            if len(ideas) == options.count:
-                break
-        targets.append(RoleTarget(role, have, target, tuple(ideas)))
-    return tuple(targets), hidden
+        candidates = db.candidates(role, identity, exclude=exclude, max_cents=options.max_cents)
+        targets.append(RoleTarget(role, have, target, tuple(picker.pick(candidates, theme_first=True))))
+    return tuple(targets)
+
+
+def fills_role(card: ResolvedCard, role: Role) -> bool:
+    """Whether the deck card fills the role, by its tags or by the deck's own category for it."""
+    if card.info is not None and role in card.info.roles:
+        return True
+    aliases = CATEGORY_ALIASES.get(role, frozenset())
+    return any(category.casefold() in aliases for category in card.card.categories)
+
+
+def protected_cards(main: Sequence[ResolvedCard], options: SuggestOptions) -> frozenset[str]:
+    """Oracle ids of deck cards the profile keeps, by name or by category, so never offered as cuts."""
+    protected: set[str] = set()
+    for r in main:
+        if r.info is None:
+            continue
+        categories = {category.casefold() for category in r.card.categories}
+        if categories & options.keep_categories or name_keys(r.card.name) & options.keep_names:
+            protected.add(r.info.oracle_id)
+    return frozenset(protected)
 
 
 def cut_candidates(
-    main: Sequence[ResolvedCard], matches: ComboMatches | None, *, count: int
+    main: Sequence[ResolvedCard],
+    matches: ComboMatches | None,
+    *,
+    count: int,
+    protected: Collection[str] = frozenset(),
+    themed: Collection[str] = frozenset(),
 ) -> tuple[CardInfo, ...]:
     """Nonland cards that fill no role and sit in no combo, the least played first; unranked ones last.
 
+    A role counts whether it comes from the tags or the deck's own categories. protected holds oracle ids
+    never to list; themed ones come after the rest, since a typal deck matches its theme almost everywhere.
     Without matches, combo pieces cannot be told apart and may be listed.
     """
     combo_cards = [card for v in matches.included for card in v.cards] if matches is not None else []
@@ -253,14 +386,21 @@ def cut_candidates(
             info is None
             or COMMANDER_CATEGORY in r.card.categories
             or info.is_land
-            or info.roles & set(ANALYZED_ROLES)
+            or any(fills_role(r, role) for role in ANALYZED_ROLES)
+            or info.oracle_id in protected
             or info.oracle_id in combo_ids
             or r.card.name.casefold() in combo_names
         ):
             continue
         pool[info.oracle_id] = info
     ranked = sorted(
-        pool.values(), key=lambda i: (i.edhrec_rank is None, -(i.edhrec_rank or 0), i.name.casefold())
+        pool.values(),
+        key=lambda i: (
+            i.oracle_id in themed,
+            i.edhrec_rank is None,
+            -(i.edhrec_rank or 0),
+            i.name.casefold(),
+        ),
     )
     return tuple(ranked[:count])
 

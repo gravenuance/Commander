@@ -5,10 +5,18 @@
 ### Added
 - `cmdr card <name>...`: a card's rules text, type, power/toughness, price, EDHREC rank, roles and Scryfall
   Tagger tags; `cmdr tags <text>` finds Tagger tags by name with their card counts.
+- Deck profiles: a hand-kept `profile.toml` in a deck's folder tells `suggest` what the deck wants: its
+  archetype, a bracket ceiling, a price limit, role targets, themes (type-line words, keywords, Tagger tags),
+  cards and themes never to suggest, and cards or categories never to offer as cuts. `cmdr profile <deck>`
+  shows it and flags unknown tags; `--init` writes a commented template.
+- `cmdr suggest` lists the most played cards matching a deck's themes, ranks themed ideas first within each
+  role, and lists themed deck cards last among the cuts.
 
 ### Changed
 - The card database (schema 4) keeps each card's rules text, keywords and power/toughness, and every Tagger
   oracle tag with its sub-tags, not only the role tags. The next `cmdr sync` rebuilds it.
+- `cmdr suggest` counts a card towards a role when its tags give it the role or the deck files it under a
+  category of that name, so cards you filed under Ramp or Draw are no longer offered as cuts.
 
 ## 0.1.0 - 2026-10-15
 

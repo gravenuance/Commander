@@ -7,8 +7,9 @@ from pathlib import Path
 import pytest
 
 from commander.archidekt import parse_deck
-from commander.carddb import CardDb, CardInfo, Role
+from commander.carddb import CardDb, CardInfo, Role, Theme
 from commander.deckcache import Answer, AnswerSource
+from commander.deckprofile import Profile, ResolvedThemes
 from commander.models import Deck
 from commander.net import Fetcher
 from commander.spellbook import ComboMatches, SpellbookClient, parse_matches
@@ -22,12 +23,13 @@ from commander.suggest import (
     combos_cache,
     find_combos,
     find_deck_combos,
+    options_for,
     suggest,
 )
 from conftest import FakeSpellbook, Json, load_fixture
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
-OPTIONS = SuggestOptions(DEFAULT_TARGETS, count=5, max_cents=None, within_bracket=False)
+OPTIONS = SuggestOptions(DEFAULT_TARGETS, count=5, max_cents=None)
 
 
 @pytest.fixture
@@ -108,9 +110,10 @@ def test_combo_card_without_an_oracle_id_is_matched_by_name(deck: Deck, db: Card
 
 def test_roles_below_target_get_the_most_played_cards_in_the_deck_colours(deck: Deck, db: CardDb) -> None:
     gaps = {g.role: g for g in run(deck, db).roles}
-    # Magda is tagged ramp and Disruptor Flute removal and board wipe; red has no draw candidates here.
+    # Magda is tagged ramp, Battered Golem sits in the deck's Ramp category, and Disruptor Flute is tagged
+    # removal and board wipe; red has no draw candidates here.
     assert {role: (g.have, g.target) for role, g in gaps.items()} == {
-        Role.RAMP: (1, 10),
+        Role.RAMP: (2, 10),
         Role.DRAW: (0, 10),
         Role.REMOVAL: (1, 8),
         Role.BOARD_WIPE: (1, 2),
@@ -122,17 +125,20 @@ def test_roles_below_target_get_the_most_played_cards_in_the_deck_colours(deck: 
 
 def test_lands_with_a_role_tag_do_not_count_towards_its_target(deck: Deck, db: CardDb) -> None:
     golem = next(c for c in deck.cards if c.name == "Battered Golem")
-    tomb = replace(golem, name="Ancient Tomb", scryfall_id="bd3d4b4b-cf31-4f89-8140-9650edb03c7b")
+    tomb = replace(
+        golem, name="Ancient Tomb", scryfall_id="bd3d4b4b-cf31-4f89-8140-9650edb03c7b", categories=("Land",)
+    )
     with_tomb = replace(deck, cards=(*deck.cards, tomb))
     ramp = next(r for r in run(with_tomb, db).roles if r.role is Role.RAMP)
-    assert ramp.have == 1
+    # Magda by her tag and Battered Golem by its category, not the tagged Ancient Tomb.
+    assert ramp.have == 2
 
 
 def test_targets_decide_which_roles_count_as_short(deck: Deck, db: CardDb) -> None:
     met = replace(OPTIONS, targets={Role.RAMP: 1, Role.REMOVAL: 2})
     roles = run(deck, db, options=met).roles
     assert [(r.role, r.have, r.target, r.short) for r in roles] == [
-        (Role.RAMP, 1, 1, False),
+        (Role.RAMP, 2, 1, False),
         (Role.REMOVAL, 1, 2, True),
     ]
     assert roles[0].ideas == ()
@@ -177,7 +183,7 @@ def test_combo_whose_lowest_bracket_is_the_decks_own_raises_nothing(deck: Deck, 
 
 
 def test_within_bracket_hides_ideas_that_raise_it(deck: Deck, db: CardDb) -> None:
-    result = run(replace(deck, bracket=2), db, options=replace(OPTIONS, within_bracket=True))
+    result = run(replace(deck, bracket=2), db, options=replace(OPTIONS, ceiling=2))
     assert [p.name for p in result.pieces] == ["Maskwood Nexus"]
     assert [i.info.name for i in result.roles[0].ideas] == ["Arcane Signet", "Mind Stone"]
     assert result.hidden == 3
@@ -214,7 +220,11 @@ def test_without_spellbook_there_are_no_combo_pieces_and_combo_cards_may_be_cut(
     deck: Deck, db: CardDb
 ) -> None:
     down: ComboResult = Answer(None, AnswerSource.UNAVAILABLE, None, "HTTP 503")
-    result = run(with_maybeboard_in_deck(deck), db, down)
+    # Battered Golem without its Ramp category, so only its combo would keep it off the list.
+    cards = tuple(
+        replace(c, categories=("Combo Pieces",)) if c.name == "Battered Golem" else c for c in deck.cards
+    )
+    result = run(with_maybeboard_in_deck(replace(deck, cards=cards)), db, down)
     assert result.pieces == ()
     assert [c.name for c in result.cuts] == [
         "Tempestra, Dame of Games",
@@ -275,7 +285,7 @@ def test_card_raise_follows_the_official_bracket_limits(
 @pytest.mark.parametrize(("count", "max_cents"), [(0, None), (1, -1)])
 def test_options_are_checked(count: int, max_cents: int | None) -> None:
     with pytest.raises(ValueError, match="must"):
-        SuggestOptions(DEFAULT_TARGETS, count=count, max_cents=max_cents, within_bracket=False)
+        SuggestOptions(DEFAULT_TARGETS, count=count, max_cents=max_cents)
 
 
 class CombosEnv:
@@ -328,3 +338,116 @@ def test_several_decks_get_their_combos_in_deck_order(deck: Deck, tmp_path: Path
         )
     assert [r.source for r in results] == [AnswerSource.FETCHED] * 3
     assert sorted(p.stem for p in tmp_path.iterdir()) == ["2", "4", "8"]
+
+
+RAMP_TAG = "2f3e4ad7-5e60-41b4-bdbc-653f16869cf6"
+
+
+def ramp_ideas(result: Suggestions) -> list[str]:
+    return [i.info.name for i in result.roles[0].ideas]
+
+
+def test_excluded_names_are_never_suggested(deck: Deck, db: CardDb) -> None:
+    options = replace(OPTIONS, exclude_names=frozenset({"mind stone", "splinter twin"}))
+    result = run(deck, db, options=options)
+    assert ramp_ideas(result) == ["Arcane Signet", "Jeska's Will"]
+    assert [p.name for p in result.pieces] == ["Aggravated Assault", "Maskwood Nexus"]
+
+
+def test_cards_matching_an_excluded_theme_are_never_suggested(deck: Deck, db: CardDb) -> None:
+    result = run(deck, db, options=replace(OPTIONS, exclude=Theme(tag_ids=(RAMP_TAG,))))
+    assert ramp_ideas(result) == []
+    artifacts = run(deck, db, options=replace(OPTIONS, exclude=Theme(types=("Artifact",))))
+    assert ramp_ideas(artifacts) == ["Jeska's Will"]
+
+
+def test_ideas_matching_a_theme_come_first_and_are_marked(deck: Deck, db: CardDb) -> None:
+    result = run(deck, db, options=replace(OPTIONS, themes=Theme(types=("Sorcery",))))
+    ideas = result.roles[0].ideas
+    assert [(i.info.name, i.themed) for i in ideas] == [
+        ("Jeska's Will", True),
+        ("Arcane Signet", False),
+        ("Mind Stone", False),
+    ]
+
+
+def test_themed_section_lists_the_most_played_matching_cards_not_in_the_deck(deck: Deck, db: CardDb) -> None:
+    # Chaos Warp ranks 29 and Lightning Bolt 157; both are red instants.
+    result = run(deck, db, options=replace(OPTIONS, themes=Theme(types=("Instant",))))
+    assert [(i.info.name, i.themed) for i in result.themed] == [
+        ("Chaos Warp", True),
+        ("Lightning Bolt", True),
+    ]
+    assert run(deck, db).themed == ()
+    # Magda is the only Dwarf, and she is already in the deck.
+    assert run(deck, db, options=replace(OPTIONS, themes=Theme(types=("Dwarf",)))).themed == ()
+
+
+def test_themed_ideas_obey_the_ceiling_and_the_exclusions(deck: Deck, db: CardDb) -> None:
+    sorceries = Theme(types=("Sorcery",))
+    capped = run(replace(deck, bracket=2), db, options=replace(OPTIONS, themes=sorceries, ceiling=2))
+    assert "Jeska's Will" not in [i.info.name for i in capped.themed]
+    banned = run(
+        deck, db, options=replace(OPTIONS, themes=sorceries, exclude_names=frozenset({"jeska's will"}))
+    )
+    assert "Jeska's Will" not in [i.info.name for i in banned.themed]
+
+
+def test_kept_categories_and_names_are_never_cuts(deck: Deck, db: CardDb) -> None:
+    whole = with_maybeboard_in_deck(deck)
+    assert run(whole, db, options=replace(OPTIONS, keep_categories=frozenset({"maybeboard"}))).cuts == ()
+    kept = run(whole, db, options=replace(OPTIONS, keep_names=frozenset({"high-speed hoverbike"})))
+    assert [c.name for c in kept.cuts] == ["Tempestra, Dame of Games"]
+
+
+def test_cards_matching_a_theme_come_last_among_cuts(deck: Deck, db: CardDb) -> None:
+    # Without a theme Tempestra (rank 11271) comes before Hoverbike (9733); an Illusion theme turns it round.
+    result = run(
+        with_maybeboard_in_deck(deck), db, options=replace(OPTIONS, themes=Theme(types=("Illusion",)))
+    )
+    assert [c.name for c in result.cuts] == ["High-Speed Hoverbike", "Tempestra, Dame of Games"]
+
+
+def test_a_card_in_a_role_category_is_never_a_cut(deck: Deck, db: CardDb) -> None:
+    filed = tuple(
+        replace(c, categories=("Card Draw",)) if c.name.startswith("Tempestra") else c for c in deck.cards
+    )
+    result = run(with_maybeboard_in_deck(replace(deck, cards=filed)), db)
+    assert [c.name for c in result.cuts] == ["High-Speed Hoverbike"]
+
+
+def test_options_take_flags_then_profile_then_config_then_defaults(deck: Deck) -> None:
+    profile = Profile(
+        bracket_ceiling=3,
+        max_card_cents=500,
+        targets={Role.DRAW: 0},
+        exclude_cards=("Flickering Hound",),
+        keep_cards=("Sol Ring",),
+        keep_categories=("Stax",),
+    )
+    themes = ResolvedThemes(Theme(types=("Dwarf",)), Theme(keywords=("Flash",)), ())
+    config = {Role.RAMP: 7, Role.DRAW: 4}
+    options = options_for(
+        deck,
+        profile,
+        themes,
+        config,
+        count=3,
+        max_cents=None,
+        within_bracket=False,
+        rejected=["Sundering Eruption // Volcanic Fissure"],
+    )
+    assert options.targets == {Role.RAMP: 7, Role.DRAW: 0, Role.REMOVAL: 8, Role.BOARD_WIPE: 2}
+    assert (options.count, options.max_cents, options.ceiling) == (3, 500, 3)
+    assert (options.themes, options.exclude) == (themes.themes, themes.exclude)
+    assert options.exclude_names == {
+        "flickering hound",
+        "sundering eruption // volcanic fissure",
+        "sundering eruption",
+    }
+    assert (options.keep_names, options.keep_categories) == ({"sol ring"}, {"stax"})
+    flagged = options_for(deck, profile, themes, config, count=3, max_cents=100, within_bracket=True)
+    # --within-bracket caps at the deck's own bracket on Archidekt (5 for the fixture).
+    assert (flagged.max_cents, flagged.ceiling) == (100, 5)
+    plain = options_for(deck, Profile(), themes, {}, count=5, max_cents=None, within_bracket=False)
+    assert (plain.targets, plain.max_cents, plain.ceiling) == (DEFAULT_TARGETS, None, None)

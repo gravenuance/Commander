@@ -1,13 +1,11 @@
 import io
 import json
-import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from commander import __version__
-from commander.carddb import CARD_DB_FILE
 from commander.cli import main
 from conftest import CARDS_URL, FakeArchidekt, Json, card_entry
 
@@ -426,15 +424,6 @@ def test_negative_top_is_a_usage_error(tmp_path: Path, decks: Path, card_db_file
     assert research(["price", "--top", "-1"], tmp_path, decks, card_db_file.parent).code == 2
 
 
-@pytest.fixture
-def own_cache(tmp_path: Path, card_db_file: Path) -> Path:
-    """A cache folder of this test's own, so cached bracket estimates never leak between tests."""
-    folder = tmp_path / "cache"
-    folder.mkdir()
-    shutil.copy(card_db_file, folder / CARD_DB_FILE)
-    return folder
-
-
 def bracket(args: list[str], tmp_path: Path, fake: FakeArchidekt, cache: Path, now: datetime = NOW) -> Run:
     return run(
         ["bracket", *args, "--workspace", str(tmp_path / "decks")], tmp_path, fake, cache=cache, now=now
@@ -624,8 +613,8 @@ cards that complete a combo (Commander Spellbook 2026-10-15)
              also needs: Creature with Saddle 4 or less
       €6.68  Splinter Twin (1 combo: Spicy)
 
-roles below target (nonland cards by Scryfall tags; most played ideas first)
-  ramp 1 of 10
+roles below target (nonland cards by Scryfall tags or your categories; most played ideas first)
+  ramp 2 of 10
       €0.30  Arcane Signet
           -  Mind Stone
      €33.80  Jeska's Will
@@ -728,7 +717,7 @@ def test_suggest_targets_come_from_the_config_file(
     config.write_text("version = 1\n\n[targets]\nramp = 1\nremoval = 1\n", encoding="utf-8")
     out = suggest(["magda"], tmp_path, archidekt, own_cache).out
     assert "  ramp 1 of" not in out
-    assert "  at target: ramp 1/1, removal 1/1\n" in out
+    assert "  at target: ramp 2/1, removal 1/1\n" in out
 
 
 def test_suggest_table(tmp_path: Path, raw_deck: Json, own_cache: Path) -> None:
@@ -736,7 +725,7 @@ def test_suggest_table(tmp_path: Path, raw_deck: Json, own_cache: Path) -> None:
     result = suggest([], tmp_path, synced(tmp_path, raw_deck), own_cache)
     header, row, *notes = result.out.splitlines()
     assert header.split() == ["id", "set", "combo", "ramp", "draw", "removal", "wipes", "cuts", "name"]
-    assert row.split() == ["10004639", "3", "3", "1/10", "0/10", "1/8", "1/2", "0", "Honestly,", "though.."]
+    assert row.split() == ["10004639", "3", "3", "2/10", "0/10", "1/8", "1/2", "0", "Honestly,", "though.."]
     assert notes == [
         "combo = cards that would complete a combo; roles = nonland cards tagged / target",
         "`cmdr suggest <deck>` lists the cards",
@@ -768,12 +757,13 @@ def test_suggest_json(tmp_path: Path, raw_deck: Json, own_cache: Path) -> None:
     ]
     assert deck["moreComboPieces"] == 0
     ramp = deck["roles"][0]
-    assert (ramp["role"], ramp["have"], ramp["target"], ramp["short"]) == ("ramp", 1, 10, True)
+    assert (ramp["role"], ramp["have"], ramp["target"], ramp["short"]) == ("ramp", 2, 10, True)
     assert ramp["ideas"][2] == {
         "name": "Jeska's Will",
         "priceCents": 3380,
         "edhrecRank": 107,
         "raises": {"bracket": 3, "reason": "game changer"},
+        "themed": False,
     }
 
 
