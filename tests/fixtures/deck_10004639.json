@@ -1,0 +1,401 @@
+{
+  "id": 10004639,
+  "name": "Honestly, though..",
+  "owner": {
+    "id": 1,
+    "username": "MAKKIS"
+  },
+  "edhBracket": 5,
+  "updatedAt": "2026-10-11T20:56:43.155670Z",
+  "deckFormat": 3,
+  "categories": [
+    {
+      "id": 196576664,
+      "name": "Planeswalker",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 213089014,
+      "name": "Sorcery",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 104879243,
+      "name": "Combo Pieces",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 280750398,
+      "name": "Artifact Dwarf",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 280750517,
+      "name": "Vehicle",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 104879250,
+      "name": "Evasion",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 104879255,
+      "name": "Land",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 104879249,
+      "name": "CLOCK DUH",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 104879240,
+      "name": "Makes Treasure",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 104879248,
+      "name": "Other",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 104879241,
+      "name": "Removal",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 104879242,
+      "name": "Pump",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 104879244,
+      "name": "Burn",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 104879245,
+      "name": "Creature",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 104879247,
+      "name": "Artifact",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 104879251,
+      "name": "Sac Outlet",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 104879253,
+      "name": "Tokens",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 104879257,
+      "name": "Sideboard",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 104879258,
+      "name": "Maybeboard",
+      "isPremier": false,
+      "includedInDeck": false,
+      "includedInPrice": false
+    },
+    {
+      "id": 104879259,
+      "name": "Commander",
+      "isPremier": true,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 104879254,
+      "name": "Protection",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 109628981,
+      "name": "Tutor",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 109746969,
+      "name": "Dwarf",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 109747023,
+      "name": "Combo",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 109747228,
+      "name": "Tap Dwarf",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 109746999,
+      "name": "Fake Dwarf",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 109747151,
+      "name": "Make Dwarf Into Fake",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 113169885,
+      "name": "TO ADD",
+      "isPremier": false,
+      "includedInDeck": false,
+      "includedInPrice": false
+    },
+    {
+      "id": 130127926,
+      "name": "Ramp",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 130127927,
+      "name": "Anthem",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 130127928,
+      "name": "Stax",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 130127929,
+      "name": "Counters",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 130127930,
+      "name": "Untap",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 130127931,
+      "name": "Copy",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 130127932,
+      "name": "Finisher",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 130127933,
+      "name": "Draw",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    },
+    {
+      "id": 131220913,
+      "name": "Instant",
+      "isPremier": false,
+      "includedInDeck": true,
+      "includedInPrice": true
+    }
+  ],
+  "cards": [
+    {
+      "id": 2081750450,
+      "categories": [
+        "Commander"
+      ],
+      "quantity": 1,
+      "modifier": "Normal",
+      "deletedAt": null,
+      "card": {
+        "id": 143923,
+        "uid": "338380ba-8415-40a2-8b81-2b30218ea16a",
+        "collectorNumber": "KHM-142",
+        "edition": {
+          "editioncode": "plst"
+        },
+        "oracleCard": {
+          "name": "Magda, Brazen Outlaw",
+          "cmc": 2
+        }
+      }
+    },
+    {
+      "id": 2081750457,
+      "categories": [
+        "Combo Pieces",
+        "Ramp"
+      ],
+      "quantity": 1,
+      "modifier": "Normal",
+      "deletedAt": null,
+      "card": {
+        "id": 59336,
+        "uid": "f69add35-c529-4b30-8e64-f09b8308432f",
+        "collectorNumber": "106",
+        "edition": {
+          "editioncode": "5dn"
+        },
+        "oracleCard": {
+          "name": "Battered Golem",
+          "cmc": 3
+        }
+      }
+    },
+    {
+      "id": 2081750497,
+      "categories": [
+        "Land"
+      ],
+      "quantity": 6,
+      "modifier": "Normal",
+      "deletedAt": null,
+      "card": {
+        "id": 139051,
+        "uid": "a3a4da7d-a703-4f91-9ef7-ce269c0b63fb",
+        "collectorNumber": "90",
+        "edition": {
+          "editioncode": "j25"
+        },
+        "oracleCard": {
+          "name": "Mountain",
+          "cmc": 0
+        }
+      }
+    },
+    {
+      "id": 3096264032,
+      "categories": [
+        "Maybeboard"
+      ],
+      "quantity": 1,
+      "modifier": "Normal",
+      "deletedAt": null,
+      "card": {
+        "id": 101253,
+        "uid": "7c619116-1eae-439d-9b1f-639643458a23",
+        "collectorNumber": "247",
+        "edition": {
+          "editioncode": "neo"
+        },
+        "oracleCard": {
+          "name": "High-Speed Hoverbike",
+          "cmc": 2
+        }
+      }
+    },
+    {
+      "id": 3115861444,
+      "categories": [
+        "Maybeboard"
+      ],
+      "quantity": 1,
+      "modifier": "Normal",
+      "deletedAt": null,
+      "card": {
+        "id": 150231,
+        "uid": "4ccb74c9-046a-4d6b-b8c2-641e2a238d52",
+        "collectorNumber": "27",
+        "edition": {
+          "editioncode": "tmc"
+        },
+        "oracleCard": {
+          "name": "Tempestra, Dame of Games",
+          "cmc": 2
+        }
+      }
+    },
+    {
+      "id": 2531358028,
+      "categories": [
+        "Stax"
+      ],
+      "quantity": 1,
+      "modifier": "Normal",
+      "deletedAt": null,
+      "card": {
+        "id": 132576,
+        "uid": "5cad8671-4761-4014-a8a3-af45627e6e79",
+        "collectorNumber": "209",
+        "edition": {
+          "editioncode": "mh3"
+        },
+        "oracleCard": {
+          "name": "Disruptor Flute",
+          "cmc": 2
+        }
+      }
+    }
+  ]
+}
