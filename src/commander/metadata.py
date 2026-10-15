@@ -5,19 +5,22 @@ redistributing its statistics) and fetched in parallel, each at its own service'
 
 - the commander's EDHTop16 entries with decklists,
 - the most-played commanders and their best-placed EDHTop16 lists,
-- the most-viewed recent Archidekt decks for the commander, other players' only.
+- the most-viewed recent Archidekt decks for the commander, other players' only,
+- the combos inside each top commander's core cards, from Commander Spellbook (cached for a week).
 """
 
 import logging
+from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from functools import partial
 from pathlib import Path
 
 from commander.archidekt import ArchidektError, ArchidektSearch, PeerDeck
 from commander.background import in_background
 from commander.config import MetaSettings
-from commander.deckcache import Answer, Clock, DeckCache, cache_item, cached_answer
+from commander.deckcache import Answer, AnswerSource, Clock, DeckCache, cache_item, cached_answer
 from commander.edhtop16 import (
     CommanderStats,
     DecklistCard,
@@ -40,9 +43,12 @@ from commander.jsonshape import (
     req_list,
     req_object,
     req_str,
+    str_list,
 )
 from commander.models import Deck
-from commander.net import NetworkError
+from commander.net import NetworkError, Pacer
+from commander.spellbook import FRESH_FOR as SPELLBOOK_FRESH_FOR
+from commander.spellbook import ComboDetail, ComboPiece, SpellbookClient, SpellbookError
 
 log = logging.getLogger(__name__)
 
@@ -57,7 +63,9 @@ class NotFetchedError(Exception):
     """Raised in place of a request when gathering may only read the cache."""
 
 
-_ERRORS = (NetworkError, Edhtop16Error, ArchidektError, NotFetchedError)
+_ERRORS = (NetworkError, Edhtop16Error, ArchidektError, SpellbookError, NotFetchedError)
+# A card in this share of a commander's lists is part of its core, where its combos are looked for.
+COMBO_CORE_SHARE = 0.2
 
 Progress = Callable[[str], None]
 
@@ -96,12 +104,22 @@ class MetaData:
     lists: Answer[CommanderEntries]
     field: Answer[tuple[MetaCommander, ...]]
     peers: Answer[PeerLists]
+    combos: Answer[tuple["CommanderCombos", ...]]
+
+
+@dataclass(slots=True, frozen=True)
+class CommanderCombos:
+    commander: str
+    combos: tuple[ComboDetail, ...]
 
 
 @dataclass(slots=True, frozen=True)
 class MetaSources:
     edhtop16: Edhtop16Client
     archidekt: ArchidektSearch
+    spellbook: SpellbookClient
+    # Spellbook asks for a few calls per interaction; the core of each top commander is one.
+    spellbook_pacer: Pacer
     # The Archidekt user whose own decks never count as other players' lists.
     user: str
     settings: MetaSettings
@@ -189,10 +207,84 @@ def gather(
         )
 
     # Different services, so they run side by side; each client keeps its own pace.
+    def field_and_combos() -> tuple[Answer[tuple[MetaCommander, ...]], Answer[tuple[CommanderCombos, ...]]]:
+        answer = field()
+        report("Commander Spellbook: the top commanders' combos")
+        return answer, _meta_combos(answer, sources, folder, now=now, refresh=refresh, offline=offline)
+
     own = in_background(lists, name="meta-lists")
-    meta = in_background(field, name="meta-field")
+    meta = in_background(field_and_combos, name="meta-field")
     peer = in_background(peers, name="meta-peers")
-    return MetaData(name, since, own.result(), meta.result(), peer.result())
+    field_answer, combos = meta.result()
+    return MetaData(name, since, own.result(), field_answer, peer.result(), combos)
+
+
+def core_request(commander: MetaCommander) -> dict[str, object] | None:
+    """The commander and the cards at least COMBO_CORE_SHARE of its lists play, as a Spellbook request."""
+    lists = [e for e in commander.entries if e.cards]
+    if not lists:
+        return None
+    counts = Counter(name for e in lists for name in {card.name for card in e.cards})
+    names = commander.stats.name.split(" / ")
+    core = sorted(n for n, k in counts.items() if k / len(lists) >= COMBO_CORE_SHARE and n not in names)
+    return {
+        "commanders": [{"card": n, "quantity": 1} for n in names],
+        "main": [{"card": n, "quantity": 1} for n in core],
+    }
+
+
+def _meta_combos(
+    field: Answer[tuple[MetaCommander, ...]],
+    sources: MetaSources,
+    folder: Path,
+    *,
+    now: Clock,
+    refresh: bool,
+    offline: bool,
+) -> Answer[tuple[CommanderCombos, ...]]:
+    if field.data is None:
+        return Answer(None, AnswerSource.UNAVAILABLE, None, field.error or "no meta lists")
+    cache = _cache(folder, "Spellbook meta combos", _encode_combos, _decode_combos)
+    answers: list[tuple[str, Answer[tuple[ComboDetail, ...]]]] = []
+    for commander in field.data:
+        request = core_request(commander)
+        if request is None:
+            continue
+        answer = cached_answer(
+            cache_item("spellbook", commander.stats.name),
+            request,
+            _live(offline, partial(_paced_details, sources, request)),
+            cache,
+            now=now,
+            refresh=refresh,
+            fresh_for=SPELLBOOK_FRESH_FOR,
+            errors=_ERRORS,
+        )
+        answers.append((commander.stats.name, answer))
+    return _combined(answers)
+
+
+def _paced_details(sources: MetaSources, request: Mapping[str, object]) -> tuple[ComboDetail, ...]:
+    sources.spellbook_pacer.wait()
+    return sources.spellbook.combo_details(request)
+
+
+def _combined(
+    answers: Sequence[tuple[str, Answer[tuple[ComboDetail, ...]]]],
+) -> Answer[tuple[CommanderCombos, ...]]:
+    """One answer for every commander's combos: the worst source among them, and the oldest time."""
+    found = tuple(CommanderCombos(name, a.data) for name, a in answers if a.data is not None)
+    error = "; ".join(sorted({a.error for _, a in answers if a.error})) or None
+    if not found:
+        return Answer(None, AnswerSource.UNAVAILABLE, None, error or "no meta lists to look in")
+    times = [a.fetched_at for _, a in answers if a.fetched_at is not None]
+    oldest = min(times) if times else None
+    seen = {a.source for _, a in answers}
+    if seen & {AnswerSource.STALE, AnswerSource.UNAVAILABLE}:
+        return Answer(found, AnswerSource.STALE, oldest, error)
+    if seen == {AnswerSource.CACHED}:
+        return Answer(found, AnswerSource.CACHED, oldest, None)
+    return Answer(found, AnswerSource.FETCHED, oldest, None)
 
 
 def _live[T](offline: bool, fetch: Callable[[], T]) -> Callable[[Mapping[str, object]], T]:  # noqa: FBT001 — mirrors gather's flag
@@ -393,3 +485,42 @@ def _decode_peers(raw: object) -> PeerLists:
         )
         decks.append(PeerList(peer, tuple(str(card) for card in cards)))
     return PeerLists(tuple(decks), req_int(obj, "skipped", "answer"))
+
+
+def _encode_combos(combos: tuple[ComboDetail, ...]) -> object:
+    return [
+        {
+            "id": c.id,
+            "pieces": [{"name": p.name, "type": p.type_line, "zones": list(p.zones)} for p in c.pieces],
+            "requirements": list(c.requirements),
+            "results": list(c.results),
+            "description": c.description,
+        }
+        for c in combos
+    ]
+
+
+def _decode_combos(raw: object) -> tuple[ComboDetail, ...]:
+    combos: list[ComboDetail] = []
+    for index, item in enumerate(as_list(raw, "answer")):
+        where = f"answer[{index}]"
+        obj = as_object(item, where)
+        pieces: list[ComboPiece] = []
+        for number, piece in enumerate(req_list(obj, "pieces", where)):
+            at = f"{where}.pieces[{number}]"
+            fields = as_object(piece, at)
+            pieces.append(
+                ComboPiece(
+                    req_str(fields, "name", at), req_str(fields, "type", at), str_list(fields, "zones", at)
+                )
+            )
+        combos.append(
+            ComboDetail(
+                id=req_str(obj, "id", where),
+                pieces=tuple(pieces),
+                requirements=str_list(obj, "requirements", where),
+                results=str_list(obj, "results", where),
+                description=req_str(obj, "description", where),
+            )
+        )
+    return tuple(combos)

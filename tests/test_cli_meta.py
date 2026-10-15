@@ -10,7 +10,7 @@ import pytest
 
 from commander.board import Section, read_board
 from commander.carddb import CARD_DB_FILE
-from conftest import DECK_ID, FakeArchidekt, Json, deck_page
+from conftest import DECK_ID, FakeArchidekt, Json, deck_page, load_fixture
 from test_cli_apply import Run, run
 
 FOLDER = "10004639-honestly-though"
@@ -71,6 +71,7 @@ def fake(raw_deck: Json) -> FakeArchidekt:
     archidekt.put(raw_deck)
     archidekt.peer_page = deck_page([peer_row(DECK_ID, "MAKKIS", 900), peer_row(PEER_ID, "someone", 120)])
     archidekt.edhtop16.pages[MAGDA] = [magda_page()]
+    archidekt.spellbook.combos = load_fixture("spellbook_meta_kinnan.json")
     return archidekt
 
 
@@ -133,9 +134,12 @@ def test_the_report_compares_the_deck_with_performing_lists(home: Path, fake: Fa
         "  only the commander counts: name key pieces under [keep] in the deck's profile.toml",
         "  none found",
     ]
-    assert (
-        lines[-1]
-        == "data from EDHTop16 (edhtop16.com) and Archidekt (archidekt.com); neither endorses this tool"
+    assert section(result.out, "Meta combos and your answers") == [
+        "   15%  Kinnan, Bonder Prodigy + Basalt Monolith: Infinite colorless mana  (Kinnan 50%)",
+        "        stax: Disruptor Flute (stops activated abilities)",
+    ]
+    assert lines[-1].startswith(
+        "data from EDHTop16 (edhtop16.com), Archidekt (archidekt.com) and Commander Spellbook"
     )
 
 
@@ -186,7 +190,7 @@ def test_json_carries_the_report_and_card_checks(home: Path, fake: FakeArchidekt
         ("Jeska's Will", 2, 0.4),
     ]
     assert report["spicy"][0]["best"]["decklist"] == "https://edhtop16.com/tournament/t1/decklist/x"
-    assert [s["source"] for s in report["sources"]] == ["fetched", "fetched", "fetched"]
+    assert [s["source"] for s in report["sources"]] == ["fetched", "fetched", "fetched", "fetched"]
     assert data["cards"][0]["inDeck"] is True
     assert data["cards"][0]["readWith"] == 5
 
@@ -214,8 +218,8 @@ def test_every_bracket_5_deck_side_by_side(home: Path, fake: FakeArchidekt) -> N
     result = meta(home, fake)
     assert result.code == 0, result.err
     assert result.out.splitlines()[:2] == [
-        "deck        lists  top cuts  read  missing  threats",
-        "Magda           6         5     5        2        0 thin",
+        "deck        lists  top cuts  read  missing  threats  unanswered combos",
+        "Magda           6         5     5        2        0                  0 thin",
     ]
 
 

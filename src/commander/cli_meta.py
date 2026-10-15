@@ -16,15 +16,21 @@ from commander.deckcache import AnswerSource
 from commander.deckprofile import read_profile
 from commander.edhtop16 import REQUEST_INTERVAL_SECONDS, SLOW_QUERY_SECONDS, Edhtop16Client, commander_url
 from commander.meta import Basis, CardCheck, CardShare, MetaReport, analyse, board_ideas, check_card
+from commander.metacombos import AnswerRole
 from commander.metadata import MetaData, MetaSources, gather
 from commander.models import short_commander_name
 from commander.net import Fetcher
+from commander.spellbook import META_REQUEST_INTERVAL_SECONDS, SpellbookClient
 from commander.store import StoredDeck, Workspace
 
-META_CREDIT = "data from EDHTop16 (edhtop16.com) and Archidekt (archidekt.com); neither endorses this tool"
+META_CREDIT = (
+    "data from EDHTop16 (edhtop16.com), Archidekt (archidekt.com) and Commander Spellbook "
+    "(commanderspellbook.com); none of them endorses this tool"
+)
 CEDH_BRACKET = 5
 THREATS_PER_KIND = 5
 EVENT_NAME_WIDTH = 48
+COMBO_ANSWERS_SHOWN = 6
 _DESCRIPTION = """examples:
   cmdr meta                                       every bracket 5 deck side by side
   cmdr meta magda                                 the full report for one deck
@@ -78,6 +84,8 @@ def _cmd_meta(args: argparse.Namespace, ctx: Context) -> int:
                 Fetcher(http, slow_after=SLOW_QUERY_SECONDS), ctx.pacer_factory(REQUEST_INTERVAL_SECONDS)
             ),
             ArchidektSearch(Fetcher(http), ctx.pacer_factory(SEARCH_INTERVAL_SECONDS)),
+            SpellbookClient(Fetcher(http)),
+            ctx.pacer_factory(META_REQUEST_INTERVAL_SECONDS),
             user,
             file.meta,
         )
@@ -187,6 +195,7 @@ def print_report(report: MetaReport, out: TextIO) -> None:
     _print_spicy(report, out)
     _print_outliers(report, out)
     _print_threats(report, out)
+    _print_combos(report, out)
     _print_field(report, out)
     _print_peers(report, out)
 
@@ -254,6 +263,35 @@ def _print_threats(report: MetaReport, out: TextIO) -> None:
             print(row, file=out)
 
 
+def _print_combos(report: MetaReport, out: TextIO) -> None:
+    print("\nMeta combos and your answers (share of the top commanders' lists, weighted)", file=out)
+    total = sum(stats.meta_share for stats in report.field)
+    if not report.combos or total == 0:
+        print("  none found", file=out)
+        return
+    for combo in report.combos:
+        players = ", ".join(
+            f"{short_commander_name(name)} {round(share * 100)}%" for name, share in combo.played_by[:3]
+        )
+        results = "; ".join(combo.results[:2])
+        print(
+            f"  {_percent(combo.exposure / total)}  {' + '.join(combo.pieces)}: {results}  ({players})",
+            file=out,
+        )
+        if combo.requirements:
+            print(f"        also needs: {'; '.join(combo.requirements)}", file=out)
+        if not combo.answers:
+            print("        no answer in the deck", file=out)
+            continue
+        for role in AnswerRole:
+            answers = [a for a in combo.answers if a.role is role]
+            if not answers:
+                continue
+            # Stax answers name how they stop the combo; removal and counters only need the card.
+            shown = [f"{a.card} ({a.how})" if role is AnswerRole.STAX else a.card for a in answers]
+            print(f"        {role.value}: {_names(shown, COMBO_ANSWERS_SHOWN)}", file=out)
+
+
 def _names(names: Sequence[str], shown: int = 3) -> str:
     if len(names) <= shown:
         return ", ".join(names)
@@ -309,12 +347,13 @@ def _finish(placing: float | None) -> str:
 
 
 def _print_table(reports: Sequence[MetaReport], out: TextIO) -> None:
-    print("deck        lists  top cuts  read  missing  threats", file=out)
+    print("deck        lists  top cuts  read  missing  threats  unanswered combos", file=out)
     for r in reports:
         thin = " thin" if r.sample.thin else ""
+        open_combos = sum(1 for c in r.combos if not c.answers)
         print(
             f"{r.deck[:10]:<10}  {r.sample.with_lists:>5}  {r.sample.top_cuts:>8}  {r.sample.performing:>4}"
-            f"  {len(r.missing):>7}  {len(r.threats):>7}{thin}",
+            f"  {len(r.missing):>7}  {len(r.threats):>7}  {open_combos:>17}{thin}",
             file=out,
         )
 
@@ -362,6 +401,19 @@ def report_json(report: MetaReport) -> dict[str, object]:
                 "playedBy": [{"commander": n, "share": round(s, 4)} for n, s in t.played_by],
             }
             for t in report.threats
+        ],
+        "combos": [
+            {
+                "id": c.id,
+                "url": c.url,
+                "pieces": list(c.pieces),
+                "requirements": list(c.requirements),
+                "results": list(c.results),
+                "exposure": round(c.exposure, 5),
+                "playedBy": [{"commander": n, "share": round(s, 4)} for n, s in c.played_by],
+                "answers": [{"card": a.card, "how": a.how, "role": a.role.value} for a in c.answers],
+            }
+            for c in report.combos
         ],
         "field": [
             {

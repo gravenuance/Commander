@@ -14,6 +14,7 @@ from commander.jsonshape import (
     req_list,
     req_object,
     req_str,
+    str_list,
 )
 from commander.models import COMMANDER_CATEGORY, Deck
 from commander.net import Fetcher
@@ -28,6 +29,8 @@ MAX_NAME_LENGTH = 256
 FRESH_FOR = timedelta(days=7)
 # Spellbook asks for sparse requests; four at a time keeps a full run of decks to a few seconds.
 PARALLEL_REQUESTS = 4
+# Meta combo lookups run one after another, a second apart.
+META_REQUEST_INTERVAL_SECONDS = 1.0
 
 
 class SpellbookError(Exception):
@@ -116,6 +119,29 @@ class ComboMatches:
     almost_included: tuple[Variant, ...]
 
 
+@dataclass(slots=True, frozen=True)
+class ComboPiece:
+    name: str
+    type_line: str
+    # Where the combo needs the card: B battlefield, G graveyard, H hand, C command zone, E exile, L library.
+    zones: tuple[str, ...]
+
+
+@dataclass(slots=True, frozen=True)
+class ComboDetail:
+    """A combo with what each piece is and where it must be, and the steps that run it."""
+
+    id: str
+    pieces: tuple[ComboPiece, ...]
+    requirements: tuple[str, ...]
+    results: tuple[str, ...]
+    description: str
+
+    @property
+    def url(self) -> str:
+        return COMBO_URL.format(id=self.id)
+
+
 class SpellbookClient:
     def __init__(self, fetcher: Fetcher, base_url: str = API_BASE) -> None:
         self._fetcher = fetcher
@@ -134,6 +160,46 @@ class SpellbookClient:
             return parse_matches(raw)
         except ShapeError as error:
             raise SpellbookError(f"unexpected combo list from Commander Spellbook: {error}") from error
+
+    def combo_details(self, request: Mapping[str, object]) -> tuple[ComboDetail, ...]:
+        """The combos fully inside the request's cards, with pieces, zones and steps."""
+        raw = self._fetcher.post_json(f"{self._base_url}/find-my-combos", request)
+        try:
+            return parse_details(raw)
+        except ShapeError as error:
+            raise SpellbookError(f"unexpected combo list from Commander Spellbook: {error}") from error
+
+
+def parse_details(raw: object) -> tuple[ComboDetail, ...]:
+    results = req_object(as_object(raw, "combos"), "results", "combos")
+    details: list[ComboDetail] = []
+    for index, item in enumerate(req_list(results, "included", "combos.results")):
+        where = f"combos.results.included[{index}]"
+        variant = as_object(item, where)
+        pieces: list[ComboPiece] = []
+        for number, use in enumerate(req_list(variant, "uses", where)):
+            at = f"{where}.uses[{number}]"
+            entry = as_object(use, at)
+            card = req_object(entry, "card", at)
+            pieces.append(
+                ComboPiece(
+                    req_str(card, "name", f"{at}.card"),
+                    req_str(card, "typeLine", f"{at}.card"),
+                    str_list(entry, "zoneLocations", at),
+                )
+            )
+        if not pieces:
+            raise ShapeError(f"{where}.uses: a combo needs at least one card")
+        details.append(
+            ComboDetail(
+                id=req_str(variant, "id", where),
+                pieces=tuple(pieces),
+                requirements=_names(variant, "requires", "template", where),
+                results=_names(variant, "produces", "feature", where),
+                description=opt_str(variant, "description", where) or "",
+            )
+        )
+    return tuple(details)
 
 
 def deck_request(deck: Deck) -> dict[str, object]:

@@ -1,0 +1,175 @@
+{
+ "identity": null,
+ "results": {
+  "identity": "GU",
+  "included": [
+   {
+    "id": "513-5034--46",
+    "status": "OK",
+    "bracketTag": "E",
+    "popularity": 359643,
+    "identity": "U",
+    "uses": [
+     {
+      "card": {
+       "id": 513,
+       "name": "Hullbreaker Horror",
+       "oracleId": "d4a84e78-d9b9-4c67-8a4b-4329e65f0f15",
+       "typeLine": "Creature — Kraken Horror"
+      },
+      "quantity": 1,
+      "zoneLocations": [
+       "B"
+      ],
+      "mustBeCommander": false,
+      "battlefieldCardState": ""
+     },
+     {
+      "card": {
+       "id": 5034,
+       "name": "Sol Ring",
+       "oracleId": "6ad8011d-3471-4369-9d68-b264cc027487",
+       "typeLine": "Artifact"
+      },
+      "quantity": 1,
+      "zoneLocations": [
+       "B"
+      ],
+      "mustBeCommander": false,
+      "battlefieldCardState": ""
+     }
+    ],
+    "requires": [
+     {
+      "quantity": 1,
+      "template": {
+       "id": 46,
+       "name": "Permanent Castable for {C}"
+      }
+     }
+    ],
+    "produces": [
+     {
+      "feature": {
+       "id": 11,
+       "name": "Infinite colorless mana"
+      },
+      "quantity": 1
+     },
+     {
+      "feature": {
+       "id": 17,
+       "name": "Infinite storm count"
+      },
+      "quantity": 1
+     }
+    ],
+    "description": "Activate Sol Ring by tapping it, adding {C} {C}.\nCast the permanent that can be cast using {C} by paying its mana cost.\nHullbreaker Horror triggers, returning Sol Ring from the battlefield to your hand.\nCast Sol Ring by paying {1}. \nHullbreaker Horror triggers, returning the permanent cast in step 2 from the battlefield to your hand.\nRepeat.\nIf the permanent can be cast by paying {0}, this combo nets infinite colorless mana."
+   },
+   {
+    "id": "129-4131",
+    "status": "OK",
+    "bracketTag": "R",
+    "popularity": 46828,
+    "identity": "GU",
+    "uses": [
+     {
+      "card": {
+       "id": 129,
+       "name": "Kinnan, Bonder Prodigy",
+       "oracleId": "8d11aa49-d4cd-48b1-aa0f-8548fa733416",
+       "typeLine": "Legendary Creature — Human Druid"
+      },
+      "quantity": 1,
+      "zoneLocations": [
+       "B"
+      ],
+      "mustBeCommander": false,
+      "battlefieldCardState": ""
+     },
+     {
+      "card": {
+       "id": 4131,
+       "name": "Basalt Monolith",
+       "oracleId": "6b8cf2a0-b045-4d91-9d91-c602d40c6237",
+       "typeLine": "Artifact"
+      },
+      "quantity": 1,
+      "zoneLocations": [
+       "B"
+      ],
+      "mustBeCommander": false,
+      "battlefieldCardState": ""
+     }
+    ],
+    "requires": [],
+    "produces": [
+     {
+      "feature": {
+       "id": 11,
+       "name": "Infinite colorless mana"
+      },
+      "quantity": 1
+     }
+    ],
+    "description": "Activate Basalt Monolith's first ability by tapping it, adding {4}.\nActivate Basalt Monolith's last ability by paying {3}, untapping it.\nRepeat."
+   },
+   {
+    "id": "4222-5168",
+    "status": "OK",
+    "bracketTag": "S",
+    "popularity": 23310,
+    "identity": "GU",
+    "uses": [
+     {
+      "card": {
+       "id": 5168,
+       "name": "Bloom Tender",
+       "oracleId": "0c23fefe-9891-4dd8-9bb1-eebdb3274e31",
+       "typeLine": "Creature — Elf Druid"
+      },
+      "quantity": 1,
+      "zoneLocations": [
+       "B"
+      ],
+      "mustBeCommander": false,
+      "battlefieldCardState": ""
+     },
+     {
+      "card": {
+       "id": 4222,
+       "name": "Freed from the Real",
+       "oracleId": "03d32ace-dd99-48c6-bcae-9b915d041aef",
+       "typeLine": "Enchantment — Aura"
+      },
+      "quantity": 1,
+      "zoneLocations": [
+       "B"
+      ],
+      "mustBeCommander": false,
+      "battlefieldCardState": ""
+     }
+    ],
+    "requires": [],
+    "produces": [
+     {
+      "feature": {
+       "id": 67,
+       "name": "Infinite non-blue mana of colors among permanents you control"
+      },
+      "quantity": 1
+     },
+     {
+      "feature": {
+       "id": 312,
+       "name": "Infinite mana of colors among permanents you control"
+      },
+      "quantity": 1
+     }
+    ],
+    "description": "Activate Bloom Tender by tapping it, adding at least {G}{U}.\nActivate Freed from the Real's second ability by paying {U}, untapping Bloom Tender.\nRepeat."
+   }
+  ],
+  "almostIncluded": []
+ }
+}

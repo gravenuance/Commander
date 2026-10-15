@@ -10,10 +10,12 @@ from commander.net import Fetcher
 from commander.spellbook import (
     BracketTag,
     ComboCard,
+    ComboPiece,
     SpellbookClient,
     SpellbookError,
     TwoCard,
     deck_request,
+    parse_details,
     parse_estimate,
     parse_matches,
 )
@@ -184,3 +186,17 @@ def test_client_reports_a_malformed_combo_list_as_a_spellbook_error(raw_deck: Js
     fake.combos = {"results": {"included": [], "almostIncluded": [{"id": "1", "bracketTag": "X"}]}}
     with fake.client() as http, pytest.raises(SpellbookError, match="unexpected combo list"):
         SpellbookClient(Fetcher(http)).find_my_combos(deck_request(parse_deck(raw_deck)))
+
+
+def test_combo_details_carry_piece_types_zones_and_steps() -> None:
+    details = parse_details(load_fixture("spellbook_meta_kinnan.json"))
+    assert [d.id for d in details] == ["513-5034--46", "129-4131", "4222-5168"]
+    kinnan = details[1]
+    assert kinnan.pieces == (
+        ComboPiece("Kinnan, Bonder Prodigy", "Legendary Creature — Human Druid", ("B",)),
+        ComboPiece("Basalt Monolith", "Artifact", ("B",)),
+    )
+    assert kinnan.results == ("Infinite colorless mana",)
+    assert kinnan.description.startswith("Activate Basalt Monolith's first ability by tapping it")
+    assert kinnan.url == "https://commanderspellbook.com/combo/129-4131/"
+    assert details[0].requirements == ("Permanent Castable for {C}",)

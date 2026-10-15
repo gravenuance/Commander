@@ -98,6 +98,7 @@ def meta_data(
         fetched(CommanderEntries(MAGDA, known=True, entries=tuple(entries))),
         fetched(tuple(field or [])),
         fetched(PeerLists(tuple(peers or []), 0)),
+        fetched(()),
     )
 
 
@@ -225,11 +226,11 @@ def test_answer_kinds_reach_the_piece_types_they_name(db: CardDb) -> None:
     assert flute is not None
     assert magda is not None
     assert bolt is not None
-    assert AnswerKind.ARTIFACT_REMOVAL.hits(flute)
-    assert not AnswerKind.CREATURE_REMOVAL.hits(flute)
-    assert AnswerKind.SWEEPER.hits(magda)
-    assert not AnswerKind.PERMANENT_REMOVAL.hits(bolt)
-    assert AnswerKind.COUNTERSPELL.hits(bolt)
+    assert AnswerKind.ARTIFACT_REMOVAL.hits(flute.type_line)
+    assert not AnswerKind.CREATURE_REMOVAL.hits(flute.type_line)
+    assert AnswerKind.SWEEPER.hits(magda.type_line)
+    assert not AnswerKind.PERMANENT_REMOVAL.hits(bolt.type_line)
+    assert AnswerKind.COUNTERSPELL.hits(bolt.type_line)
 
 
 def test_a_card_check_compares_lists_with_and_without_the_card(deck: Deck) -> None:
@@ -253,6 +254,7 @@ def test_an_unknown_commander_reports_as_unknown(deck: Deck, db: CardDb) -> None
         SINCE,
         fetched(CommanderEntries(MAGDA, known=False, entries=())),
         fetched(()),
+        Answer(None, AnswerSource.UNAVAILABLE, None, "offline"),
         Answer(None, AnswerSource.UNAVAILABLE, None, "offline"),
     )
     report = analyse(deck, data, Profile(), db)

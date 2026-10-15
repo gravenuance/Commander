@@ -41,6 +41,7 @@ from commander.edhtop16 import REQUEST_INTERVAL_SECONDS, SLOW_QUERY_SECONDS, Edh
 from commander.meta import analyse
 from commander.metadata import MetaSources, gather
 from commander.net import Fetcher, NetworkError, Pacer
+from commander.spellbook import META_REQUEST_INTERVAL_SECONDS, SpellbookClient
 from commander.store import StoredDeck, Workspace, WorkspaceError
 from commander.suggest import deck_identity
 
@@ -252,6 +253,8 @@ class Desk:
                     self._pacer_factory(REQUEST_INTERVAL_SECONDS),
                 ),
                 ArchidektSearch(Fetcher(http), self._pacer_factory(SEARCH_INTERVAL_SECONDS)),
+                SpellbookClient(Fetcher(http)),
+                self._pacer_factory(META_REQUEST_INTERVAL_SECONDS),
                 self._settings.user or "",
                 self._settings.meta,
             )

@@ -11,7 +11,8 @@ from commander.edhtop16 import Edhtop16Client
 from commander.metadata import CACHE_FOLDER, MetaData, MetaSources, gather, window_start
 from commander.models import Deck, DeckCard
 from commander.net import HTTP_OK, Fetcher, Pacer
-from conftest import DECK_ID, FakeEdhtop16, load_fixture
+from commander.spellbook import SpellbookClient
+from conftest import DECK_ID, FakeEdhtop16, FakeSpellbook, load_fixture
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 ELLIVERE = "Ellivere of the Wild Court"
@@ -56,6 +57,8 @@ class Rig:
     def __init__(self, tmp_path: Path) -> None:
         self.edhtop16 = FakeEdhtop16()
         self.archidekt = FakeArchidektSearch()
+        self.spellbook = FakeSpellbook()
+        self.spellbook.combos = load_fixture("spellbook_meta_kinnan.json")
         self.cache = tmp_path / "cache"
         self.now = NOW
 
@@ -66,6 +69,8 @@ class Rig:
                 Fetcher(httpx.Client(transport=httpx.MockTransport(self.archidekt.handler)), max_attempts=1),
                 Pacer(0),
             ),
+            SpellbookClient(Fetcher(self.spellbook.client(), max_attempts=1)),
+            Pacer(0),
             "makkis",
             SETTINGS,
         )
@@ -185,7 +190,12 @@ def test_a_commander_edhtop16_does_not_know_is_marked_unknown(rig: Rig) -> None:
 def test_zero_peer_decks_and_meta_commanders_ask_nothing(rig: Rig) -> None:
     sources = rig.sources()
     quiet = MetaSources(
-        sources.edhtop16, sources.archidekt, sources.user, MetaSettings(peer_decks=0, meta_commanders=0)
+        sources.edhtop16,
+        sources.archidekt,
+        sources.spellbook,
+        sources.spellbook_pacer,
+        sources.user,
+        MetaSettings(peer_decks=0, meta_commanders=0),
     )
     data = gather(ellivere_deck(), quiet, rig.cache, now=lambda: NOW, refresh=False)
     assert rig.archidekt.requests == []
@@ -205,3 +215,28 @@ def test_offline_reads_only_the_cache_whatever_its_age(rig: Rig) -> None:
     assert old.lists.source is AnswerSource.STALE
     assert old.lists.data is not None
     assert len(rig.edhtop16.requests) == asked
+
+
+def test_combos_are_looked_for_in_each_top_commanders_core_cards(rig: Rig) -> None:
+    data = rig.gather()
+    combos = data.combos.data
+    assert combos is not None
+    # Kraum and Tymna have no lists in the fake, so only Kinnan's core is asked about.
+    assert [(c.commander, [d.id for d in c.combos]) for c in combos] == [
+        ("Kinnan, Bonder Prodigy", ["513-5034--46", "129-4131", "4222-5168"])
+    ]
+    [request] = rig.spellbook.combo_bodies
+    assert request["commanders"] == [{"card": "Kinnan, Bonder Prodigy", "quantity": 1}]
+    # Every card of the two lists is in at least half of them, so all are core.
+    assert {"card": "Basalt Monolith", "quantity": 1} in request["main"]
+    assert {"card": "Circle of Dreams Druid", "quantity": 1} in request["main"]
+    again = rig.gather()
+    assert again.combos.source is AnswerSource.CACHED
+    assert len(rig.spellbook.combo_bodies) == 1
+
+
+def test_combos_without_meta_lists_are_unavailable(rig: Rig) -> None:
+    rig.edhtop16.status = 403
+    data = rig.gather()
+    assert data.combos.source is AnswerSource.UNAVAILABLE
+    assert rig.spellbook.combo_bodies == []

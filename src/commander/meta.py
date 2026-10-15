@@ -8,12 +8,14 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from enum import Enum
 
+from commander.answers import AnswerKind, answer_kinds, card_key
 from commander.archidekt import PeerDeck
 from commander.board import MAX_CUT_OPTIONS, ReplaceOption
-from commander.carddb import CardDb, CardInfo, Theme
+from commander.carddb import CardDb
 from commander.deckcache import Answer, AnswerSource
 from commander.deckprofile import Profile
 from commander.edhtop16 import CommanderStats, Entry
+from commander.metacombos import MetaCombo, meta_combos
 from commander.metadata import MetaCommander, MetaData, PeerList
 from commander.models import COMMANDER_CATEGORY, Deck
 
@@ -40,36 +42,6 @@ MAX_ROWS = 15
 class Basis(Enum):
     TOP_CUT = "top-cut lists"
     ALL = "every list in the window"
-
-
-class AnswerKind(Enum):
-    """What a meta card does to a key piece, by the Tagger tags that say so and the piece types it reaches."""
-
-    # Widest reach first, so a card's first kind is the broadest thing it does.
-    COUNTERSPELL = ("counterspell", ("counterspell",), "any")
-    SWEEPER = ("sweeper", ("sweeper",), "permanent")
-    PERMANENT_REMOVAL = (
-        "permanent removal",
-        ("removal-nonland", "removal-permanent", "removal-bounce"),
-        "permanent",
-    )
-    CREATURE_REMOVAL = ("creature removal", ("removal-creature",), "Creature")
-    ARTIFACT_REMOVAL = ("artifact removal", ("removal-artifact",), "Artifact")
-    ENCHANTMENT_REMOVAL = ("enchantment removal", ("removal-enchantment",), "Enchantment")
-
-    def __init__(self, label: str, slugs: tuple[str, ...], reaches: str) -> None:
-        self.label = label
-        self.slugs = slugs
-        # A card type word, "permanent" for any nonland permanent, or "any" for every piece.
-        self.reaches = reaches
-
-    def hits(self, info: CardInfo) -> bool:
-        words = info.front_type_line.split()
-        if self.reaches == "any":
-            return True
-        if self.reaches == "permanent":
-            return not ({"Instant", "Sorcery"} & set(words)) and "Land" not in words
-        return self.reaches in words
 
 
 @dataclass(slots=True, frozen=True)
@@ -135,6 +107,7 @@ class MetaReport:
     spicy: tuple[SpicyPick, ...]
     outliers: tuple[CardShare, ...]
     threats: tuple[Threat, ...]
+    combos: tuple[MetaCombo, ...]
     field: tuple[CommanderStats, ...]
     peers: tuple[PeerDeck, ...]
     peers_skipped: int
@@ -161,11 +134,6 @@ class CardCheck:
     spice: int | None
     meta_lists: int
     meta_lists_with: int
-
-
-def card_key(name: str) -> str:
-    """The name lists are compared by: the front face, casefolded, as sites spell two-faced cards apart."""
-    return name.casefold().split(" // ")[0]
 
 
 def analyse(deck: Deck, data: MetaData, profile: Profile, db: CardDb) -> MetaReport:
@@ -196,6 +164,7 @@ def analyse(deck: Deck, data: MetaData, profile: Profile, db: CardDb) -> MetaRep
         spicy=spicy_picks(deck, performing),
         outliers=outliers(deck, performing, peer_lists, profile, db),
         threats=threats(pieces, field, db),
+        combos=meta_combos(deck, field, data.combos.data or (), data.since, db),
         field=tuple(c.stats for c in (data.field.data or ())),
         peers=tuple(p.deck for p in peer_lists),
         peers_skipped=data.peers.data.skipped if data.peers.data else 0,
@@ -205,6 +174,7 @@ def analyse(deck: Deck, data: MetaData, profile: Profile, db: CardDb) -> MetaRep
             _state("EDHTop16 lists", data.lists),
             _state("EDHTop16 meta", data.field),
             _state("Archidekt decks", data.peers),
+            _state("Spellbook combos", data.combos),
         ),
     )
 
@@ -349,14 +319,14 @@ def threats(pieces: Iterable[str], field: Sequence[MetaCommander], db: CardDb) -
                 names.setdefault(card_key(card.name), card.name)
     candidates = {key for key, rows in shares.items() if max(share for _, share, _ in rows) >= THREAT_SHARE}
     infos = {card_key(info.name): info for info in db.cards_named(names[key] for key in candidates).values()}
-    kinds = _answer_kinds(db, [info.oracle_id for info in infos.values()])
+    kinds = answer_kinds(db, [info.oracle_id for info in infos.values()])
     found: list[Threat] = []
     for key in candidates:
         info = infos.get(key)
         if info is None:
             continue
         answer = tuple(kind for kind in AnswerKind if info.oracle_id in kinds[kind])
-        hit = sorted({p.name for kind in answer for p in piece_info if kind.hits(p)})
+        hit = sorted({p.name for kind in answer for p in piece_info if kind.hits(p.type_line)})
         if not hit:
             continue
         rows = shares[key]
@@ -445,15 +415,6 @@ def _basics(db: CardDb, names: Iterable[str]) -> frozenset[str]:
         for info in db.cards_named(names).values()
         if "Basic" in info.front_type_line.split()
     )
-
-
-def _answer_kinds(db: CardDb, oracle_ids: Sequence[str]) -> dict[AnswerKind, frozenset[str]]:
-    slugs = {slug for kind in AnswerKind for slug in kind.slugs}
-    ids = db.tag_ids(slugs)
-    return {
-        kind: db.matching(Theme(tag_ids=tuple(ids[s] for s in kind.slugs if s in ids)), oracle_ids)
-        for kind in AnswerKind
-    }
 
 
 def _mean(values: Iterable[float]) -> float | None:
