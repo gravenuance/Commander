@@ -34,6 +34,7 @@ from commander.carddb import CARD_DB_FILE, CardDataError, CardDb, Role
 from commander.cli_app import add_app_command
 from commander.cli_board import add_board_commands
 from commander.cli_cards import add_card_commands
+from commander.cli_meta import add_meta_command
 from commander.cli_output import (
     price_text,
     print_apply_outcome,
@@ -51,6 +52,7 @@ from commander.clibase import (
     ClientFactory,
     Clock,
     Context,
+    PacerFactory,
     PasswordPrompt,
     UsageError,
     day,
@@ -76,8 +78,9 @@ from commander.credentials import CredentialError, KeyringTokenStore, TokenStore
 from commander.deckcache import Answer, AnswerSource
 from commander.deckprofile import read_profile, resolve_themes
 from commander.diff import DeckDiff
+from commander.edhtop16 import Edhtop16Error
 from commander.models import Deck
-from commander.net import Fetcher, NetworkError, make_client
+from commander.net import Fetcher, NetworkError, Pacer, make_client
 from commander.plan import EXAMPLE as PLAN_EXAMPLE
 from commander.plan import PlanError, read_plan
 from commander.pricing import DeckPrice, PriceSource, format_eur, price_deck
@@ -165,6 +168,7 @@ def main(  # noqa: PLR0911 — one exit code per failure class, mapped in one pl
     token_store: TokenStore | None = None,
     prompt_password: PasswordPrompt = getpass.getpass,
     stdin: BinaryIO | None = None,
+    pacer_factory: PacerFactory = Pacer,
 ) -> int:
     out = stdout or _utf8(sys.stdout)
     err = stderr or _utf8(sys.stderr)
@@ -192,6 +196,7 @@ def main(  # noqa: PLR0911 — one exit code per failure class, mapped in one pl
         token_store or KeyringTokenStore(),
         prompt_password,
         stdin or sys.stdin.buffer,
+        pacer_factory,
     )
     command: Callable[[argparse.Namespace, Context], int] | None = getattr(args, "handler", None)
     if command is None:
@@ -210,6 +215,7 @@ def main(  # noqa: PLR0911 — one exit code per failure class, mapped in one pl
         SaveError,
         ScryfallError,
         SpellbookError,
+        Edhtop16Error,
         CardDataError,
         WorkspaceError,
         OSError,
@@ -308,6 +314,7 @@ def _build_parser() -> argparse.ArgumentParser:
     add_card_commands(commands.add_parser)
     add_profile_commands(commands.add_parser)
     add_board_commands(commands.add_parser)
+    add_meta_command(commands.add_parser)
     add_app_command(commands.add_parser)
     _add_edit_commands(commands.add_parser)
     return parser

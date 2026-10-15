@@ -82,6 +82,11 @@ class Deck:
         return " & ".join(_short_commander(name) for name in self.commanders)
 
 
+def short_commander_name(name: str) -> str:
+    """A commander as players say it; partners filed as "A / B" become "A/B", each by its short name."""
+    return "/".join(_short_commander(part) for part in name.split(" / "))
+
+
 def _short_commander(name: str) -> str:
     # "Magda, Brazen Outlaw" -> Magda; "Ellivere of the Wild Court" and "Edgar Markov" -> the first word.
     front = name.split(" // ", maxsplit=1)[0]

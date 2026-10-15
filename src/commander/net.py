@@ -63,9 +63,11 @@ class Fetcher:
         monotonic: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], float] = time.time,
         jitter: Callable[[], float] = random.random,
+        slow_after: float = SLOW_CALL_SECONDS,
     ) -> None:
         if max_attempts < 1:
             raise ValueError("max_attempts must be at least 1")
+        self._slow_after = slow_after
         self._client = client
         self._max_attempts = max_attempts
         self._sleep = sleep
@@ -114,7 +116,7 @@ class Fetcher:
                 f"{method} {url} failed ({error.__class__.__name__}); it may or may not have been applied"
             ) from error
         elapsed = self._monotonic() - started
-        if elapsed > SLOW_CALL_SECONDS:
+        if elapsed > self._slow_after:
             log.warning("slow request: %s %s took %.1fs", method, url, elapsed)
         if status not in _SUCCESS:
             log.info("%s %s returned HTTP %d", method, url, status)
@@ -148,7 +150,7 @@ class Fetcher:
                 self._give_up_or_wait(attempt, url, str(error) or type(error).__name__, None)
                 continue
             elapsed = self._monotonic() - started
-            if elapsed > SLOW_CALL_SECONDS:
+            if elapsed > self._slow_after:
                 log.warning("slow request: %s took %.1fs", url, elapsed)
             if value is not None:
                 return value

@@ -388,7 +388,8 @@ class FakeArchidekt:
 
     It also signs in, looks up cards from the Scryfall fixture, saves snapshots and applies modifyCards
     edits to its decks, recording each write with its JSON body and Authorization header.
-    Requests to Scryfall and Commander Spellbook go to its fakes of those, so one client covers any command.
+    Requests to Scryfall, Commander Spellbook and EDHTop16 go to its fakes of those, so one client covers any
+    command. A deck search by commander answers with `peer_page`.
     """
 
     def __init__(self, user: str = "MAKKIS") -> None:
@@ -403,6 +404,8 @@ class FakeArchidekt:
         self.next_entry = 9_000_000_000
         self.scryfall = FakeScryfall()
         self.spellbook = FakeSpellbook()
+        self.edhtop16 = FakeEdhtop16()
+        self.peer_page: Json = deck_page([])
 
     def put(self, deck: Json) -> None:
         self.decks[deck["id"]] = copy.deepcopy(deck)
@@ -413,6 +416,8 @@ class FakeArchidekt:
             return self.scryfall.handler(request)
         if host.endswith("commanderspellbook.com"):
             return self.spellbook.handler(request)
+        if host.endswith("edhtop16.com"):
+            return self.edhtop16.handler(request)
         return self.archidekt(request)
 
     def archidekt(self, request: httpx.Request) -> httpx.Response:
@@ -422,6 +427,8 @@ class FakeArchidekt:
         path = request.url.path
         if path == "/api/cards/v2/":
             return httpx.Response(200, json=self._card_search(request.url.params))
+        if path == "/api/decks/v3/" and "commanderName" in request.url.params:
+            return httpx.Response(200, json=self.peer_page)
         if path == "/api/decks/v3/":
             if request.url.params.get("ownerUsername") != self.user:
                 return httpx.Response(200, json=deck_page([]))

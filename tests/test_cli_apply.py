@@ -11,6 +11,7 @@ import pytest
 from commander.carddb import CARD_DB_FILE
 from commander.cli import main
 from commander.credentials import SERVICE
+from commander.net import Pacer
 from conftest import DECK_ID, PASSWORD, REFRESH_TOKEN, FakeArchidekt, Json, MemoryKeyring
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
@@ -89,6 +90,7 @@ def run(
         now=lambda: NOW,
         prompt_password=prompt,
         stdin=stdin if stdin is not None else io.BytesIO(),
+        pacer_factory=lambda _: Pacer(0),
     )
     return Run(code, out.getvalue(), err.getvalue(), prompts)
 

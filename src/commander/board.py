@@ -580,6 +580,16 @@ def feed_suggestions(service: BoardService, result: Suggestions, board: Board) -
         ideas.setdefault(
             piece.name, f"completes {count} combo{'s' if count != 1 else ''} ({', '.join(tags)})"
         )
+    return feed_ideas(service, ideas, cuts, board)
+
+
+def feed_ideas(
+    service: BoardService, ideas: Mapping[str, str], cuts: Sequence[ReplaceOption], board: Board
+) -> list[BoardCard]:
+    """Put each idea (card name to reason) on the board as suggested by cmdr, with cuts as cards to replace.
+
+    Cards already on the board, in any state, are left alone, so a turned-down card is never offered again.
+    """
     added: list[BoardCard] = []
     for name, reason in ideas.items():
         if board.find(name) is not None:

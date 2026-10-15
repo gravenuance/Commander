@@ -10,6 +10,7 @@ import httpx
 from commander.carddb import CARD_DB_FILE, CardDataMeta, CardDb
 from commander.config import cache_dir, config_path, read_config, resolve_workspace
 from commander.credentials import TokenStore
+from commander.net import Pacer
 from commander.store import StoredDeck, Workspace
 
 EXIT_OK = 0
@@ -21,6 +22,8 @@ STALE_CARD_DATA = timedelta(days=3)
 
 ClientFactory = Callable[[], httpx.Client]
 PasswordPrompt = Callable[[str], str]
+# Makes the request pacer for a service, given its interval; tests swap in one that never sleeps.
+PacerFactory = Callable[[float], Pacer]
 Clock = Callable[[], datetime]
 
 
@@ -39,6 +42,7 @@ class Context:
         token_store: TokenStore,
         prompt_password: PasswordPrompt,
         stdin: BinaryIO,
+        pacer_factory: PacerFactory = Pacer,
     ) -> None:
         self.env = env
         self.client_factory = client_factory
@@ -48,6 +52,7 @@ class Context:
         self.token_store = token_store
         self.prompt_password = prompt_password
         self.stdin = stdin
+        self.pacer_factory = pacer_factory
 
 
 def workspace(args: argparse.Namespace, ctx: Context) -> Workspace:

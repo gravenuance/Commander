@@ -32,6 +32,8 @@ MAX_PAGES = 8
 # The terms forbid excessive requests; one every 1.5 seconds keeps a full run under a minute.
 REQUEST_INTERVAL_SECONDS = 1.5
 MAX_SPICE = 4
+# Its decklist queries routinely take five to seven seconds; slower than this is worth a warning.
+SLOW_QUERY_SECONDS = 20.0
 # Asking for twice as many commanders as wanted leaves room to re-rank them by the shorter window.
 _RANKING_SLACK = 2
 

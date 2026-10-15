@@ -9,6 +9,7 @@ from datetime import date, datetime
 from enum import Enum
 
 from commander.archidekt import PeerDeck
+from commander.board import MAX_CUT_OPTIONS, ReplaceOption
 from commander.carddb import CardDb, CardInfo, Theme
 from commander.deckcache import Answer, AnswerSource
 from commander.deckprofile import Profile
@@ -28,6 +29,7 @@ PEER_STAPLE_SHARE = 0.5
 MIN_PEER_LISTS = 3
 # EDHTop16's spice runs 0-4; 3 and up is a new or rarely played card.
 SPICY = 3
+MIN_SPICY_LISTS = 2
 # A deck card this few performing lists play is the deck's own pick.
 OUTLIER_SHARE = 0.1
 # A meta card is a threat when this share of one top commander's lists play it.
@@ -43,16 +45,17 @@ class Basis(Enum):
 class AnswerKind(Enum):
     """What a meta card does to a key piece, by the Tagger tags that say so and the piece types it reaches."""
 
+    # Widest reach first, so a card's first kind is the broadest thing it does.
     COUNTERSPELL = ("counterspell", ("counterspell",), "any")
-    CREATURE_REMOVAL = ("creature removal", ("removal-creature",), "Creature")
-    ARTIFACT_REMOVAL = ("artifact removal", ("removal-artifact",), "Artifact")
-    ENCHANTMENT_REMOVAL = ("enchantment removal", ("removal-enchantment",), "Enchantment")
+    SWEEPER = ("sweeper", ("sweeper",), "permanent")
     PERMANENT_REMOVAL = (
         "permanent removal",
         ("removal-nonland", "removal-permanent", "removal-bounce"),
         "permanent",
     )
-    SWEEPER = ("sweeper", ("sweeper",), "permanent")
+    CREATURE_REMOVAL = ("creature removal", ("removal-creature",), "Creature")
+    ARTIFACT_REMOVAL = ("artifact removal", ("removal-artifact",), "Artifact")
+    ENCHANTMENT_REMOVAL = ("enchantment removal", ("removal-enchantment",), "Enchantment")
 
     def __init__(self, label: str, slugs: tuple[str, ...], reaches: str) -> None:
         self.label = label
@@ -206,6 +209,28 @@ def analyse(deck: Deck, data: MetaData, profile: Profile, db: CardDb) -> MetaRep
     )
 
 
+def board_ideas(report: MetaReport) -> tuple[dict[str, str], list[ReplaceOption]]:
+    """The staples the deck is missing as board ideas with their reasons, and its outliers (bar kept ones) as
+    cards to replace."""
+    lists = f"{report.deck} lists" if report.sample.basis is Basis.ALL else f"top-cut {report.deck} lists"
+    ideas: dict[str, str] = {}
+    for card in report.missing:
+        parts: list[str] = []
+        if report.sample.performing:
+            parts.append(
+                f"in {card.lists} of {report.sample.performing} {lists} on EDHTop16 since {report.since}"
+            )
+        if report.peers:
+            parts.append(f"{card.peer_lists} of {len(report.peers)} recent Archidekt lists")
+        ideas[card.name] = "; ".join(parts)
+    cuts = [
+        ReplaceOption(card.name, f"in {card.lists} of {report.sample.performing} {lists}")
+        for card in report.outliers
+        if not card.flagged
+    ]
+    return ideas, cuts[:MAX_CUT_OPTIONS]
+
+
 def performing_lists(entries: Sequence[Entry]) -> tuple[list[Entry], Basis]:
     """The lists to learn from: top-cut ones, or every list best placing first when too few made a cut."""
     with_lists = [e for e in entries if e.cards]
@@ -276,7 +301,9 @@ def spicy_picks(deck: Deck, performing: Sequence[Entry]) -> tuple[SpicyPick, ...
                 picks[key] = SpicyPick(card.name, card.spice, 1, entry)
             else:
                 picks[key] = SpicyPick(seen.name, max(seen.spice, card.spice), seen.lists + 1, seen.best)
-    ranked = sorted(picks.values(), key=lambda p: (-p.lists, p.best.placing, p.name))
+    # One list's oddities are noise unless that list made the cut.
+    kept = [p for p in picks.values() if p.lists >= MIN_SPICY_LISTS or p.best.made_top_cut]
+    ranked = sorted(kept, key=lambda p: (-p.lists, p.best.placing, p.name))
     return tuple(ranked[:MAX_ROWS])
 
 
