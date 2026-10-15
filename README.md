@@ -34,6 +34,13 @@ uv run cmdr bracket                                 # estimated bracket of every
 uv run cmdr bracket gator --details                 # one deck: game changers, tutors, combos with links
 uv run cmdr suggest                                 # combo pieces and short roles of every deck side by side
 uv run cmdr suggest magda --max-price 5             # one deck: cards to add up to EUR 5, cards to consider cutting
+uv run cmdr card "Sylvan Safekeeper"                # a card's rules text, price, roles and Tagger tags
+uv run cmdr tags hatebear                           # find Tagger tags by name, for deck profiles
+uv run cmdr profile ellivere --init                 # start a deck profile: themes, exclusions, targets
+uv run cmdr suggest pantlaza --to-board             # put suggest's ideas on the deck's board
+uv run cmdr board show ellivere                     # cards considered and suggested for one deck
+uv run cmdr board log --since 2026-10-15T18:00      # what changed on the boards since then
+uv run cmdr app                                     # the desktop app over every deck's board
 uv run cmdr login                                   # one-time: sign in so apply can change decks
 uv run cmdr apply plan.toml                         # preview a plan of cards to add and remove
 uv run cmdr apply plan.toml --save                  # make those changes on Archidekt
@@ -96,9 +103,11 @@ shown with a warning; with none, the estimate shows as unavailable and `bracket`
   card are left out.
 - **Roles below target:** for each role whose count of nonland cards falls short of its target, the most
   played cards with that role that fit the commander's colours and are legal, by
-  [EDHREC](https://edhrec.com)'s popularity rank as Scryfall publishes it. The ideas are not specific to
-  your commander. The default targets are ramp 10, draw 10, removal 8 and board wipes 2; change them in
-  the config file:
+  [EDHREC](https://edhrec.com)'s popularity rank as Scryfall publishes it. A card counts for a role when
+  Scryfall's tags give it the role or you filed it under a category of that name on Archidekt. The ideas
+  are not specific to your commander unless its profile names themes (see Deck profiles). The default
+  targets are ramp 10, draw 10, removal 8 and board wipes 2; change them for every deck in the config
+  file, or for one deck in its profile:
 
   ```toml
   [targets]
@@ -107,8 +116,11 @@ shown with a warning; with none, the estimate shows as unavailable and `bracket`
   counterspell = 4   # any role analyze counts can have a target; 0 turns a default off
   ```
 
+- **Cards that fit the deck's themes:** with a profile that names themes, the most played cards matching
+  them that the deck lacks.
 - **Cards to consider cutting:** nonland cards that fill none of the roles and are in no combo, least
-  played first. These are only candidates: a theme card often fills no role on paper.
+  played first, with cards matching the deck's themes last. These are only candidates: a theme card often
+  fills no role on paper.
 
 An idea marked `! bracket 3+ (game changer)` would lift the deck above the bracket set on Archidekt, by
 the official rules (no game changers in brackets 1 and 2, at most three in bracket 3, no mass land denial
@@ -119,6 +131,95 @@ shows (default 5).
 EDHREC's own pages are not used: its terms of use forbid automated requests. See
 [ADR 0003](docs/adr/0003-suggestions-from-spellbook-and-scryfall.md).
 
+`cmdr card <name>` prints a card's rules text, type, power and toughness, price, EDHREC rank, roles and
+[Scryfall Tagger](https://tagger.scryfall.com) tags, from the local card data. Name several cards to see
+them together.
+
+### Deck profiles
+
+A profile tells `suggest` what one deck is for, so its ideas fit the deck rather than Commander in general.
+Start one with `cmdr profile <deck> --init`, which writes a commented `profile.toml` into the deck's folder,
+then fill it in:
+
+```toml
+version = 1
+archetype = "Dinosaur battlecruiser: big dinos and discover, no flicker"
+bracket_ceiling = 3          # leave out ideas that would lift the deck above bracket 3
+max_card_eur = 20            # leave out cards over EUR 20, and cards with no price
+
+[targets]
+protection = 6
+board_wipe = 0               # 0: the deck wants none, so wipes are never suggested
+
+[themes]                     # ideas matching any of these come first
+types = ["Dinosaur"]         # words of the type line
+keywords = ["Discover"]
+tags = ["typal-dinosaur"]    # Tagger tags; `cmdr tags dinosaur` finds them
+
+[exclude]                    # never suggested
+tags = ["flicker"]           # sub-tags count too: flicker-creature, flicker-self and so on
+cards = ["Skullclamp"]
+
+[keep]                       # never offered as cuts
+cards = []
+categories = ["Stax"]        # every card under this Archidekt category
+```
+
+Every key is optional. `cmdr profile <deck>` shows the profile as `suggest` reads it and warns about tags
+Tagger doesn't have. Flags still win over the profile: `--max-price` and `--within-bracket` override
+`max_card_eur` and `bracket_ceiling`. Tagger tags are community-maintained, so a tag can be renamed or
+removed; `cmdr profile` is the place to notice. See [ADR 0005](docs/adr/0005-deck-profiles.md).
+
+### Deck boards
+
+A deck's board holds the cards you are weighing for it, in two lists: **considered** cards are ones you,
+Claude or your Archidekt Sideboard and Maybeboard raised; **suggested** cards come from `suggest` or from
+research. Each card carries why it might fit and which deck cards it could replace. You decide each one:
+add it (choosing the card to cut), turn it down, or reopen it later.
+
+```sh
+uv run cmdr board add ellivere "Sylvan Safekeeper" --reason "protects stax pieces" --replace "Compost=not stax"
+uv run cmdr board decide ellivere "Sylvan Safekeeper" add --cut Compost
+uv run cmdr board commit ellivere          # preview the queued changes against Archidekt
+uv run cmdr board commit ellivere --save   # make them
+```
+
+Saving a board works like `apply --save`, with a snapshot first. A card you cut moves to the deck's
+Maybeboard instead of being deleted, keeping its categories behind the Maybeboard, and comes back on the
+board as considered: if the new card disappoints, add the old one back and the swap runs the other way.
+Cards you keep on a deck's Sideboard or Maybeboard on Archidekt show up on its board as considered after
+each `sync`; adding one moves that entry into the deck, printing and all, and turning one down takes it
+off the Sideboard or Maybeboard with the next save. `suggest --to-board` puts its ideas on the board, and
+a card turned down there is never suggested again.
+
+Every change lands in the deck's activity log with who made it (you, Claude, cmdr or Archidekt).
+`cmdr board log` shows every deck's log, oldest first; `--since` keeps what is newer. The log is how
+Claude catches up on what you decided in the app. `cmdr board show`, `research`, `remove` and `plan` cover
+the rest; `cmdr board --help` lists them.
+
+### Desktop app
+
+`cmdr app` opens a window over every deck's board. Pick a deck on the left; its suggested and considered
+cards show with their art, cost, price and the reasoning behind them. Propose a card with the search box,
+choose the card it replaces, then add it or turn it down. **Review changes** checks the queued changes
+against the deck on Archidekt and saves them. The window follows changes made with the CLI or by Claude
+within a couple of seconds, and the right-hand column shows each deck's activity.
+
+The app draws its page with Microsoft Edge WebView2, part of Windows 11, through
+[pywebview](https://pywebview.flowrl.com); it opens no network port. It logs to
+`%LOCALAPPDATA%\Commander\logs\commander.log` (`CMDR_LOG_LEVEL=DEBUG` for more), and `--debug` allows
+the web inspector.
+
+To build a single `Commander.exe` that needs no Python:
+
+```sh
+uv run --group build pyinstaller --noconfirm --clean --onefile --windowed --name Commander --add-data "src/commander/web;commander/web" src/commander/app_main.py
+```
+
+The exe lands in `dist/`. It is not code-signed, so Windows SmartScreen warns the first time it runs;
+choose **More info**, then **Run anyway**. It reads the same config, decks and login as `cmdr`.
+See [ADR 0006](docs/adr/0006-deck-boards-and-desktop-app.md).
+
 ### Changing decks
 
 `apply` makes the changes in a plan file to one deck on Archidekt. Write the plan as TOML:
@@ -126,15 +227,18 @@ EDHREC's own pages are not used: its terms of use forbid automated requests. See
 ```toml
 deck = "magda"   # deck id, or part of its name as in other commands
 add = ["Arcane Signet", {name = "Sol Ring", set = "c21", category = "Ramp"}]
-remove = ["Wild Growth", {name = "Mountain", keep = 10}]
+remove = ["Wild Growth", {name = "Mountain", keep = 10}, {name = "Swords to Plowshares", maybeboard = true}]
+drop = ["Path to Exile"]   # take off the Sideboard or Maybeboard
 ```
 
 A plan says how the deck should end up. `add` means the deck ends with at least that many copies
-(`quantity`, default 1); `remove` means it ends with none, or with `keep` copies. Lines the deck already
-meets are skipped, so running a plan twice is safe. A new card gets its cheapest EUR printing, leaving
-out gold-bordered and other non-tournament printings, unless `set` names one; it goes under its card
-type (Land, Creature, Instant and so on) unless `category` names another. Cards on the maybeboard
-are left alone.
+(`quantity`, default 1); `remove` means it ends with none, or with `keep` copies, and with
+`maybeboard = true` the card moves to the Maybeboard instead of being deleted. `drop` takes cards off the
+Sideboard or Maybeboard. Lines the deck already meets are skipped, so running a plan twice is safe. Adding
+a card that waits on the Sideboard or Maybeboard moves that entry into the deck. A new card gets its
+cheapest EUR printing, leaving out gold-bordered and other non-tournament printings, unless `set` names
+one; it goes under its card type (Land, Creature, Instant and so on) unless `category` names another.
+`remove` leaves Sideboard and Maybeboard copies alone.
 
 Whether an added card counts in the deck follows the category's "in deck" setting on Archidekt,
 which each deck sets for itself. A category the deck doesn't have yet is created by the save: Archidekt
@@ -173,6 +277,9 @@ that the API is open to use. `apply` relies on that and keeps requests few. See
 | `deck.json` | Normalised deck snapshot (cards, quantities, categories, Scryfall IDs) | `sync`, every time |
 | `list.md` | Readable deck list grouped by category | `sync`, every time |
 | `notes.md` | Your research notes and plans | `sync` creates it once and never overwrites it |
+| `profile.toml` | What the deck wants from `suggest` | You, starting from `cmdr profile <deck> --init` |
+| `board.json` | Cards considered and suggested, their research and your decisions | `cmdr board`, the app, `suggest --to-board`, `sync` |
+| `activity.jsonl` | Every change to the board, who made it and when, oldest first | Whatever changes the board; never rewritten |
 
 When a deck is renamed on Archidekt, `sync` renames its folder to match. When a deck disappears from
 Archidekt (deleted, or made private), `sync` reports it and keeps the local copy.
@@ -190,6 +297,7 @@ defaults.
 | Card data and Spellbook answers folder | n/a | `CMDR_CACHE_DIR` | n/a | `%LOCALAPPDATA%\Commander` |
 | Role targets for `suggest` | n/a | n/a | `[targets]` table | ramp 10, draw 10, removal 8, board_wipe 2 |
 | Archidekt login for `apply --save` | `cmdr login` | n/a | n/a | none; the token is kept in Windows Credential Manager |
+| App log detail | n/a | `CMDR_LOG_LEVEL` | n/a | `INFO` |
 
 ## Test
 
@@ -207,6 +315,6 @@ Tests use recorded fixture data and never touch the network.
 | Service | Used for | Notes |
 |---|---|---|
 | Archidekt (`archidekt.com/api`) | Reading decks; changing them with `apply --save` | Public decks need no login; changes need `cmdr login`, whose token lives in Windows Credential Manager and is refreshed on each save. The API is undocumented, so every response's shape is checked and a clear message names what changed. A save makes a handful of requests, never retried. Its written terms forbid automated requests; its co-founder has said on its forum that the API is open to use. See [ADR 0004](docs/adr/0004-deck-changes-through-archidekts-site-api.md). |
-| Scryfall (`api.scryfall.com/bulk-data`, files on `data.scryfall.io`) | Card facts, EUR prices, role tags | One API call per `sync` for the file list; the files themselves have no rate limit. Scryfall updates prices once a day and asks for bulk files rather than per-card calls for lookups like these. Tag data is community-maintained and can change. See [ADR 0001](docs/adr/0001-scryfall-bulk-card-data.md). |
+| Scryfall (`api.scryfall.com/bulk-data`, files on `data.scryfall.io`; card images from `cards.scryfall.io` in the app) | Card facts, rules text, EUR prices, Tagger tags for roles and profiles, card art | One API call per `sync` for the file list; the files themselves have no rate limit. Scryfall updates prices once a day and asks for bulk files rather than per-card calls for lookups like these. Tag data is community-maintained and can change. See [ADR 0001](docs/adr/0001-scryfall-bulk-card-data.md). |
 | Commander Spellbook (`backend.commanderspellbook.com`: `estimate-bracket`, `find-my-combos`) | Bracket estimates, combos, and combos one card short | One request per deck and command, at most four at a time, and none while a cached answer is under 7 days old. Spellbook asks tools to name themselves in the User-Agent, keep to a few calls per user action, stay under about 80 requests a minute, handle 429, and credit and link back to commanderspellbook.com, which `bracket` and `suggest` do in their output. Only card names and quantities are sent. See [ADR 0002](docs/adr/0002-bracket-estimates-from-commander-spellbook.md) and [ADR 0003](docs/adr/0003-suggestions-from-spellbook-and-scryfall.md). |
 | EDHREC (via Scryfall's `edhrec_rank`) | Popularity ranks for `suggest` | Never contacted: the rank comes inside Scryfall's bulk files. EDHREC's terms forbid automated requests to its site. |

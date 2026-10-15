@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.2.0 - 2026-10-15
+
+Deck profiles, deck boards and the desktop app.
+
 ### Added
 - `cmdr card <name>...`: a card's rules text, type, power/toughness, price, EDHREC rank, roles and Scryfall
   Tagger tags; `cmdr tags <text>` finds Tagger tags by name with their card counts.
@@ -11,7 +15,6 @@
   shows it and flags unknown tags; `--init` writes a commented template.
 - `cmdr suggest` lists the most played cards matching a deck's themes, ranks themed ideas first within each
   role, and lists themed deck cards last among the cuts.
-
 - Deck boards: `cmdr board` keeps the cards considered or suggested for a deck in its folder (`board.json`),
   with the research on each (why it fits, which deck cards it could replace), decisions (add with a chosen
   cut, turn down, reopen) and an activity log (`activity.jsonl`) of every change and who made it.
@@ -19,12 +22,10 @@
   `cmdr board commit` previews them against Archidekt and `--save` makes them.
 - `cmdr suggest <deck> --to-board` puts its ideas on the board as suggested, with the deck's cut candidates as
   cards to replace; cards turned down on the board are never suggested again.
-
 - Desktop app: `cmdr app`, or `Commander.exe` built with PyInstaller, opens a window over every deck's
   board (WebView2 through pywebview; no web server). Propose cards with name search, pick the card to cut,
   add or turn down, review the queued changes against Archidekt and save them; it follows changes made from
   the CLI or by Claude as they land. It logs to `%LOCALAPPDATA%\Commander\logs\commander.log`.
-
 - Sideboard and Maybeboard as "considering": `cmdr sync` puts the cards you keep there on Archidekt on the
   deck's board as considered. Adding one moves its own entry into the deck, printing and all. A card cut on
   the board moves to the Maybeboard instead of being deleted, keeping its categories behind it, and comes
