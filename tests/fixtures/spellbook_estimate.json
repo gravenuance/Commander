@@ -1,0 +1,365 @@
+{
+  "bracketTag": "R",
+  "cards": [
+    {
+      "card": {
+        "id": 7593,
+        "name": "Ancient Tomb",
+        "oracleId": "23467047-6dba-4498-b783-1ebc4f74b8c2",
+        "spoiler": false,
+        "typeLine": "Land"
+      },
+      "quantity": 1,
+      "banned": false,
+      "gameChanger": true,
+      "massLandDenial": false,
+      "extraTurn": false
+    },
+    {
+      "card": {
+        "id": 3459,
+        "name": "Battered Golem",
+        "oracleId": "066dfefd-eef5-4c81-8e8a-310bac01674f",
+        "spoiler": false,
+        "typeLine": "Artifact Creature — Golem"
+      },
+      "quantity": 1,
+      "banned": false,
+      "gameChanger": false,
+      "massLandDenial": false,
+      "extraTurn": false
+    },
+    {
+      "card": {
+        "id": null,
+        "name": "Disruptor Flute",
+        "oracleId": "d6c46906-1339-4440-8cd0-2bb9890d4975",
+        "spoiler": false,
+        "typeLine": "Artifact"
+      },
+      "quantity": 1,
+      "banned": false,
+      "gameChanger": false,
+      "massLandDenial": false,
+      "extraTurn": false
+    },
+    {
+      "card": {
+        "id": null,
+        "name": "Mountain",
+        "oracleId": "a3fb7228-e76b-4e96-a40e-20b5fed75685",
+        "spoiler": false,
+        "typeLine": "Basic Land — Mountain"
+      },
+      "quantity": 6,
+      "banned": false,
+      "gameChanger": false,
+      "massLandDenial": false,
+      "extraTurn": false
+    },
+    {
+      "card": {
+        "id": 1486,
+        "name": "Magda, Brazen Outlaw",
+        "oracleId": "3d268e48-3004-4384-bf52-e63243fb5e02",
+        "spoiler": false,
+        "typeLine": "Legendary Creature — Dwarf Berserker"
+      },
+      "quantity": 1,
+      "banned": false,
+      "gameChanger": false,
+      "massLandDenial": false,
+      "extraTurn": false
+    }
+  ],
+  "combos": [
+    {
+      "combo": {
+        "id": "1486-1651-7298",
+        "status": "OK",
+        "uses": [
+          {
+            "card": {
+              "id": 1486,
+              "name": "Magda, Brazen Outlaw",
+              "oracleId": "3d268e48-3004-4384-bf52-e63243fb5e02",
+              "spoiler": false,
+              "typeLine": "Legendary Creature — Dwarf Berserker"
+            },
+            "quantity": 1
+          },
+          {
+            "card": {
+              "id": 1651,
+              "name": "Clock of Omens",
+              "oracleId": "5d0f4665-aa10-4251-b590-129b59274fb3",
+              "spoiler": false,
+              "typeLine": "Artifact"
+            },
+            "quantity": 1
+          },
+          {
+            "card": {
+              "id": 7298,
+              "name": "Firdoch Core",
+              "oracleId": "126c75c0-414b-4e55-8747-2b5566ce716f",
+              "spoiler": false,
+              "typeLine": "Kindred Artifact — Shapeshifter"
+            },
+            "quantity": 1
+          }
+        ],
+        "produces": [
+          {
+            "feature": {
+              "id": 2408,
+              "name": "Infinite artifact ETB"
+            },
+            "quantity": 1
+          },
+          {
+            "feature": {
+              "id": 587,
+              "name": "Infinite artifact tokens"
+            },
+            "quantity": 1
+          },
+          {
+            "feature": {
+              "id": 75,
+              "name": "Infinite tapped Treasure tokens"
+            },
+            "quantity": 1
+          },
+          {
+            "feature": {
+              "id": 1333,
+              "name": "Put all artifact cards and a subset of creature cards from your library onto the battlefield"
+            },
+            "quantity": 1
+          }
+        ],
+        "identity": "R",
+        "bracketTag": "S",
+        "description": "Activate Clock of Omens by tapping Firdoch Core and another artifact, targeting Firdoch Core.\nMagda triggers, creating a"
+      },
+      "relevant": true,
+      "borderlineRelevant": true,
+      "arguablyTwoCard": true,
+      "definitelyTwoCard": true,
+      "speed": 5,
+      "massLandDenial": false,
+      "extraTurn": false,
+      "lock": false,
+      "skipTurns": false,
+      "controlAllOpponents": false,
+      "controlSomeOpponents": false
+    },
+    {
+      "combo": {
+        "id": "1486-3459-7223--67",
+        "status": "OK",
+        "uses": [
+          {
+            "card": {
+              "id": 1486,
+              "name": "Magda, Brazen Outlaw",
+              "oracleId": "3d268e48-3004-4384-bf52-e63243fb5e02",
+              "spoiler": false,
+              "typeLine": "Legendary Creature — Dwarf Berserker"
+            },
+            "quantity": 1
+          },
+          {
+            "card": {
+              "id": 3459,
+              "name": "Battered Golem",
+              "oracleId": "066dfefd-eef5-4c81-8e8a-310bac01674f",
+              "spoiler": false,
+              "typeLine": "Artifact Creature — Golem"
+            },
+            "quantity": 1
+          },
+          {
+            "card": {
+              "id": 7223,
+              "name": "Stalactite Dagger",
+              "oracleId": "064c3269-c012-4fc7-84c3-5f147a82a03c",
+              "spoiler": false,
+              "typeLine": "Artifact — Equipment"
+            },
+            "quantity": 1
+          }
+        ],
+        "produces": [
+          {
+            "feature": {
+              "id": 2408,
+              "name": "Infinite artifact ETB"
+            },
+            "quantity": 1
+          },
+          {
+            "feature": {
+              "id": 2409,
+              "name": "Infinite artifact LTB"
+            },
+            "quantity": 1
+          },
+          {
+            "feature": {
+              "id": 2419,
+              "name": "Infinite artifact sacrifice triggers"
+            },
+            "quantity": 1
+          },
+          {
+            "feature": {
+              "id": 587,
+              "name": "Infinite artifact tokens"
+            },
+            "quantity": 1
+          },
+          {
+            "feature": {
+              "id": 91,
+              "name": "Infinite Treasure tokens"
+            },
+            "quantity": 1
+          },
+          {
+            "feature": {
+              "id": 5,
+              "name": "Infinite colored mana"
+            },
+            "quantity": 1
+          },
+          {
+            "feature": {
+              "id": 1333,
+              "name": "Put all artifact cards and a subset of creature cards from your library onto the battlefield"
+            },
+            "quantity": 1
+          }
+        ],
+        "identity": "R",
+        "bracketTag": "E",
+        "description": "Activate the Vehicle's crew ability by tapping Battered Golem.\nMagda triggers, creating a Treasure token.\nWhen the Treas"
+      },
+      "relevant": true,
+      "borderlineRelevant": true,
+      "arguablyTwoCard": false,
+      "definitelyTwoCard": false,
+      "speed": 5,
+      "massLandDenial": false,
+      "extraTurn": false,
+      "lock": false,
+      "skipTurns": false,
+      "controlAllOpponents": false,
+      "controlSomeOpponents": false
+    },
+    {
+      "combo": {
+        "id": "4477-6556-7182",
+        "status": "OK",
+        "uses": [
+          {
+            "card": {
+              "id": 7182,
+              "name": "Ashling, the Limitless",
+              "oracleId": "77a9e7cf-76e9-4323-8504-a5b831de00be",
+              "spoiler": false,
+              "typeLine": "Legendary Creature — Elemental Sorcerer"
+            },
+            "quantity": 1
+          },
+          {
+            "card": {
+              "id": 4477,
+              "name": "Greenwarden of Murasa",
+              "oracleId": "2facb1b3-4522-4610-a0ab-29ac53ca7fcd",
+              "spoiler": false,
+              "typeLine": "Creature — Elemental"
+            },
+            "quantity": 1
+          },
+          {
+            "card": {
+              "id": 6556,
+              "name": "Temur Battlecrier",
+              "oracleId": "fadf984c-c224-432a-87b9-b34f929b8409",
+              "spoiler": false,
+              "typeLine": "Creature — Orc Ranger"
+            },
+            "quantity": 1
+          }
+        ],
+        "produces": [
+          {
+            "feature": {
+              "id": 4,
+              "name": "Infinite creature ETB"
+            },
+            "quantity": 1
+          },
+          {
+            "feature": {
+              "id": 3,
+              "name": "Infinite creature LTB"
+            },
+            "quantity": 1
+          },
+          {
+            "feature": {
+              "id": 39,
+              "name": "Infinite creature tokens with haste"
+            },
+            "quantity": 1
+          },
+          {
+            "feature": {
+              "id": 7,
+              "name": "Infinite death triggers"
+            },
+            "quantity": 1
+          },
+          {
+            "feature": {
+              "id": 6,
+              "name": "Infinite creature sacrifice triggers"
+            },
+            "quantity": 1
+          },
+          {
+            "feature": {
+              "id": 17,
+              "name": "Infinite storm count"
+            },
+            "quantity": 1
+          },
+          {
+            "feature": {
+              "id": 448,
+              "name": "Return all cards from your graveyard to your hand"
+            },
+            "quantity": 1
+          }
+        ],
+        "identity": "WUBRG",
+        "bracketTag": "E",
+        "description": "Cast Greenwarden of Murasa for its evoke cost by paying {0} due to Temur Battlecrier.\nWhen Greenwarden of Murasa enters,"
+      },
+      "relevant": true,
+      "borderlineRelevant": true,
+      "arguablyTwoCard": true,
+      "definitelyTwoCard": false,
+      "speed": 5,
+      "massLandDenial": false,
+      "extraTurn": false,
+      "lock": false,
+      "skipTurns": false,
+      "controlAllOpponents": false,
+      "controlSomeOpponents": false
+    }
+  ]
+}

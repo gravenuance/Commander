@@ -11,3 +11,6 @@
 - `cmdr price`: deck value in EUR (Cardmarket prices via Scryfall) for the printings in each deck and for
   the cheapest printings.
 - `cmdr sync` keeps a local card database from Scryfall's daily bulk files up to date; `--no-cards` skips it.
+- `cmdr bracket`: Commander Spellbook's bracket estimate for each deck beside the bracket set on Archidekt,
+  with its combos, plus the deck's game changers, tutors, mass land denial and extra-turn cards. Answers are
+  cached for 7 days.

@@ -59,20 +59,30 @@ class Fetcher:
 
     def get_json(self, url: str, params: Mapping[str, str | int] | None = None) -> object:
         """GET a JSON document, retrying only transient failures."""
-        body = self._get(url, params, lambda response: _read_capped(response, url, MAX_RESPONSE_BYTES))
+        body = self._send("GET", url, params, None, lambda r: _read_capped(r, url, MAX_RESPONSE_BYTES))
+        return _decode_json(url, body)
+
+    def post_json(self, url: str, payload: object) -> object:
+        """POST a JSON query and read the JSON answer; only for read-only queries, as it retries like GET."""
+        body = self._send("POST", url, None, payload, lambda r: _read_capped(r, url, MAX_RESPONSE_BYTES))
         return _decode_json(url, body)
 
     def download(self, url: str, dest: Path, *, max_bytes: int) -> int:
         """Stream a file into dest (replacing it), retrying only transient failures; returns its size."""
-        return self._get(url, None, lambda response: _write_capped(response, url, dest, max_bytes))
+        return self._send("GET", url, None, None, lambda r: _write_capped(r, url, dest, max_bytes))
 
-    def _get[T](
-        self, url: str, params: Mapping[str, str | int] | None, read: Callable[[httpx.Response], T]
+    def _send[T](
+        self,
+        method: str,
+        url: str,
+        params: Mapping[str, str | int] | None,
+        payload: object,
+        read: Callable[[httpx.Response], T],
     ) -> T:
         for attempt in range(1, self._max_attempts + 1):
             started = self._monotonic()
             try:
-                with self._client.stream("GET", url, params=params) as response:
+                with self._client.stream(method, url, params=params, json=payload) as response:
                     status = response.status_code
                     retry_after = response.headers.get("Retry-After")
                     value = read(response) if status == HTTP_OK else None

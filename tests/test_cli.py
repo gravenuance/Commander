@@ -1,11 +1,13 @@
 import io
 import json
-from datetime import UTC, datetime
+import shutil
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from commander import __version__
+from commander.carddb import CARD_DB_FILE
 from commander.cli import main
 from conftest import CARDS_URL, FakeArchidekt, Json, card_entry
 
@@ -422,3 +424,170 @@ def test_empty_workspace_says_to_sync(tmp_path: Path, card_db_file: Path) -> Non
 
 def test_negative_top_is_a_usage_error(tmp_path: Path, decks: Path, card_db_file: Path) -> None:
     assert research(["price", "--top", "-1"], tmp_path, decks, card_db_file.parent).code == 2
+
+
+@pytest.fixture
+def own_cache(tmp_path: Path, card_db_file: Path) -> Path:
+    """A cache folder of this test's own, so cached bracket estimates never leak between tests."""
+    folder = tmp_path / "cache"
+    folder.mkdir()
+    shutil.copy(card_db_file, folder / CARD_DB_FILE)
+    return folder
+
+
+def bracket(args: list[str], tmp_path: Path, fake: FakeArchidekt, cache: Path, now: datetime = NOW) -> Run:
+    return run(
+        ["bracket", *args, "--workspace", str(tmp_path / "decks")], tmp_path, fake, cache=cache, now=now
+    )
+
+
+BRACKET = """\
+Honestly, though.. (10004639)
+Magda, Brazen Outlaw; bracket 5 on Archidekt
+estimate: bracket 4+ (Ruthless), Commander Spellbook 2026-10-15
+game changers: none
+tutors (1): Magda, Brazen Outlaw
+mass land denial: unknown (not in the tag data)
+extra turns: none
+(tutors, mass land denial and extra turns come from Scryfall tags)
+
+combos (3)
+  Spicy      2-card    Magda, Brazen Outlaw + Clock of Omens + Firdoch Core
+  Exhibition 2-card?   Ashling, the Limitless + Greenwarden of Murasa + Temur Battlecrier
+  Exhibition 3-card    Magda, Brazen Outlaw + Battered Golem + Stalactite Dagger
+? Commander Spellbook counts it as arguably two cards
+
+bracket estimates and combos from Commander Spellbook, https://commanderspellbook.com
+"""
+
+
+@pytest.mark.usefixtures("decks")
+def test_bracket_one_deck(tmp_path: Path, archidekt: FakeArchidekt, own_cache: Path) -> None:
+    result = bracket(["magda"], tmp_path, archidekt, own_cache)
+    assert (result.code, result.err) == (0, "")
+    assert result.out == BRACKET
+    assert archidekt.spellbook.bodies[0]["commanders"] == [{"card": "Magda, Brazen Outlaw", "quantity": 1}]
+
+
+@pytest.mark.usefixtures("decks")
+def test_bracket_details_show_results_and_links(
+    tmp_path: Path, archidekt: FakeArchidekt, own_cache: Path
+) -> None:
+    result = bracket(["magda", "--details"], tmp_path, archidekt, own_cache)
+    lines = result.out.splitlines()
+    spicy = lines.index("  Spicy      2-card    Magda, Brazen Outlaw + Clock of Omens + Firdoch Core")
+    assert lines[spicy + 1].strip().startswith("-> Infinite artifact ETB, Infinite artifact tokens")
+    assert lines[spicy + 2].strip() == "https://commanderspellbook.com/combo/1486-1651-7298/"
+
+
+@pytest.mark.usefixtures("decks")
+def test_bracket_answer_is_reused_until_refresh(
+    tmp_path: Path, archidekt: FakeArchidekt, own_cache: Path
+) -> None:
+    bracket(["magda"], tmp_path, archidekt, own_cache)
+    assert bracket(["magda"], tmp_path, archidekt, own_cache).out == BRACKET
+    assert len(archidekt.spellbook.bodies) == 1
+    bracket(["magda", "--refresh"], tmp_path, archidekt, own_cache)
+    assert len(archidekt.spellbook.bodies) == 2
+
+
+def test_bracket_table_flags_a_deck_set_below_the_estimate(
+    tmp_path: Path, raw_deck: Json, own_cache: Path
+) -> None:
+    raw_deck["edhBracket"] = 3
+    fake = FakeArchidekt()
+    fake.put(raw_deck)
+    sync(tmp_path, fake)
+    result = bracket([], tmp_path, fake, own_cache)
+    header, row, *notes = result.out.splitlines()
+    assert header.split() == [
+        "id",
+        "set",
+        "estimate",
+        "gc",
+        "tutors",
+        "mld",
+        "turns",
+        "2-card",
+        "combos",
+        "name",
+    ]
+    assert row.split() == [
+        "10004639",
+        "3",
+        "4+",
+        "Ruthless",
+        "0",
+        "1",
+        "-",
+        "0",
+        "1",
+        "3",
+        "!",
+        "Honestly,",
+        "though..",
+    ]
+    assert notes == [
+        "! the bracket set on Archidekt is below the estimate",
+        "set = bracket on Archidekt; tutors, mld and turns come from Scryfall tags",
+        "bracket estimates and combos from Commander Spellbook, https://commanderspellbook.com",
+    ]
+
+
+@pytest.mark.usefixtures("decks")
+def test_bracket_json(tmp_path: Path, archidekt: FakeArchidekt, own_cache: Path) -> None:
+    [deck] = json.loads(bracket(["--json"], tmp_path, archidekt, own_cache).out)
+    assert deck["bracket"] == 5
+    assert deck["estimate"] == {
+        "source": "fetched",
+        "fetchedAt": "2026-10-15T12:00:00+00:00",
+        "error": None,
+        "tag": "Ruthless",
+        "minimumBracket": 4,
+        "brackets": "4+",
+    }
+    assert deck["setBelowEstimate"] is False
+    assert (deck["tutors"], deck["massLandDenial"], deck["extraTurns"]) == (
+        ["Magda, Brazen Outlaw"],
+        None,
+        [],
+    )
+    assert [c["twoCard"] for c in deck["combos"]] == ["yes", "arguably", "no"]
+    assert deck["combos"][0]["url"] == "https://commanderspellbook.com/combo/1486-1651-7298/"
+
+
+@pytest.mark.usefixtures("decks")
+def test_bracket_without_spellbook_still_lists_the_cards_and_exits_1(
+    tmp_path: Path, archidekt: FakeArchidekt, own_cache: Path
+) -> None:
+    archidekt.spellbook.status = 404
+    result = bracket(["magda"], tmp_path, archidekt, own_cache)
+    assert result.code == 1
+    assert result.err.startswith("cmdr: Honestly, though..: no bracket estimate: ")
+    assert "HTTP 404" in result.err
+    assert "estimate: unavailable\n" in result.out
+    assert "tutors (1): Magda, Brazen Outlaw\n" in result.out
+    assert "\ncombos (" not in result.out
+
+
+@pytest.mark.usefixtures("decks")
+def test_bracket_falls_back_to_an_older_answer_with_a_warning(
+    tmp_path: Path, archidekt: FakeArchidekt, own_cache: Path
+) -> None:
+    bracket(["magda"], tmp_path, archidekt, own_cache)
+    archidekt.spellbook.status = 404
+    later = NOW + timedelta(days=8)
+    result = bracket(["magda"], tmp_path, archidekt, own_cache, now=later)
+    assert result.code == 0
+    assert (
+        "cmdr: Honestly, though..: showing the estimate from 2026-10-15; refreshing it failed: " in result.err
+    )
+    assert "estimate: bracket 4+ (Ruthless), Commander Spellbook 2026-10-15\n" in result.out
+
+
+@pytest.mark.usefixtures("decks")
+def test_bracket_needs_card_data(tmp_path: Path, archidekt: FakeArchidekt) -> None:
+    result = bracket([], tmp_path, archidekt, tmp_path / "empty-cache")
+    assert result.code == 1
+    assert "run `cmdr sync`" in result.err
+    assert archidekt.spellbook.bodies == []

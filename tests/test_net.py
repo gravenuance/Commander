@@ -1,3 +1,4 @@
+import json
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -145,3 +146,21 @@ def test_download_error_status_writes_nothing(tmp_path: Path) -> None:
     with pytest.raises(NetworkError, match="HTTP 404"):
         fetcher(Script(httpx.Response(404, content=b"not found")), []).download(URL, dest, max_bytes=10)
     assert not dest.exists()
+
+
+def test_post_sends_the_payload_as_json_and_retries_like_get() -> None:
+    seen: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(429 if len(seen) == 1 else 200, json={"tag": "R"})
+
+    sleeps: list[float] = []
+    client = Fetcher(
+        httpx.Client(transport=httpx.MockTransport(answer)), sleep=sleeps.append, jitter=lambda: 1.0
+    )
+    assert client.post_json(URL, {"main": [{"card": "Sol Ring"}]}) == {"tag": "R"}
+    assert [r.method for r in seen] == ["POST", "POST"]
+    assert json.loads(seen[1].content) == {"main": [{"card": "Sol Ring"}]}
+    assert seen[1].headers["Content-Type"] == "application/json"
+    assert sleeps == [1.0]

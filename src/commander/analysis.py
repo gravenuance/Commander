@@ -89,10 +89,23 @@ def analyze(deck: Deck, resolved: Sequence[ResolvedCard], available_roles: froze
         types=types,
         pips=pips,
         roles=tuple(_role_count(deck, resolved, role, available_roles) for role in ANALYZED_ROLES),
-        game_changers=_names(card for card, info in known if info.game_changer),
-        not_legal=_names(card for card, info in known if not info.commander_legal),
+        game_changers=game_changers(resolved),
+        not_legal=not_legal(resolved),
         unknown=_names(r.card for r in resolved if r.card.in_deck and r.info is None),
     )
+
+
+def game_changers(resolved: Sequence[ResolvedCard]) -> tuple[str, ...]:
+    return _names(card for card, info in _known(resolved) if info.game_changer)
+
+
+def not_legal(resolved: Sequence[ResolvedCard]) -> tuple[str, ...]:
+    return _names(card for card, info in _known(resolved) if not info.commander_legal)
+
+
+def tagged(resolved: Sequence[ResolvedCard], role: Role) -> tuple[str, ...]:
+    """Main-deck cards that Scryfall's tags give the role."""
+    return _names(card for card, info in _known(resolved) if role in info.roles)
 
 
 def count_pips(mana_cost: str) -> dict[str, int]:

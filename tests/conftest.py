@@ -10,6 +10,7 @@ import httpx
 import pytest
 
 from commander.carddb import CARD_DB_FILE, CardDataMeta, write_card_db
+from commander.net import HTTP_OK
 from commander.scryfall import read_cards, read_tags, role_members
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -211,10 +212,33 @@ class FakeScryfall:
         return httpx.Client(transport=httpx.MockTransport(self.handler))
 
 
+SPELLBOOK_URL = "https://backend.commanderspellbook.com/estimate-bracket"
+
+
+class FakeSpellbook:
+    """Answers estimate-bracket with a trimmed real answer, and records each request body."""
+
+    def __init__(self) -> None:
+        self.answer: Json = load_fixture("spellbook_estimate.json")
+        self.status = 200
+        self.bodies: list[Json] = []
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        if request.method != "POST" or str(request.url) != SPELLBOOK_URL:
+            return httpx.Response(404)
+        self.bodies.append(json.loads(request.content))
+        if self.status != HTTP_OK:
+            return httpx.Response(self.status)
+        return httpx.Response(200, json=self.answer)
+
+    def client(self) -> httpx.Client:
+        return httpx.Client(transport=httpx.MockTransport(self.handler))
+
+
 class FakeArchidekt:
     """Serves deck pages and decks from dicts, like the real API, and records every request.
 
-    Requests to Scryfall hosts go to its FakeScryfall, so one client covers a whole `cmdr sync`.
+    Requests to Scryfall and Commander Spellbook go to its fakes of those, so one client covers any command.
     """
 
     def __init__(self, user: str = "MAKKIS") -> None:
@@ -223,13 +247,20 @@ class FakeArchidekt:
         self.failing: dict[int, int] = {}
         self.requests: list[str] = []
         self.scryfall = FakeScryfall()
+        self.spellbook = FakeSpellbook()
 
     def put(self, deck: Json) -> None:
         self.decks[deck["id"]] = copy.deepcopy(deck)
 
     def handler(self, request: httpx.Request) -> httpx.Response:
-        if request.url.host.endswith("scryfall.com") or request.url.host.endswith("scryfall.io"):
+        host = request.url.host
+        if host.endswith(("scryfall.com", "scryfall.io")):
             return self.scryfall.handler(request)
+        if host.endswith("commanderspellbook.com"):
+            return self.spellbook.handler(request)
+        return self.archidekt(request)
+
+    def archidekt(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request.url.path)
         path = request.url.path
         if path == "/api/decks/v3/":
