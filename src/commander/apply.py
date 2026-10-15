@@ -260,7 +260,8 @@ def save(
                 )
             card_ids[change.scryfall_id] = card_id
     edits = card_edits(resolution.changes, live.entries, card_ids)
-    snapshot = f"before cmdr apply {now().strftime('%Y-%m-%d %H:%M')} UTC"
+    # Seconds keep two saves in one minute apart; Archidekt accepts snapshots with equal names.
+    snapshot = f"before cmdr apply {now().strftime('%Y-%m-%d %H:%M:%S')} UTC"
     on_progress(f"saving snapshot '{snapshot}' on Archidekt")
     editor.create_snapshot(deck.id, snapshot, "Restore point saved by cmdr before applying a plan.")
     on_progress(f"sending {len(edits)} change(s) to deck {deck.id}")
@@ -279,7 +280,7 @@ def save(
             f"Archidekt accepted the changes, but reading the deck back failed ({error}); "
             "run `cmdr sync` to check the deck and update the local copy"
         ) from error
-    return SaveResult(after, snapshot, tuple(verify(resolution.changes, after)))
+    return SaveResult(after, snapshot, tuple(verify(resolution.changes, deck, after)))
 
 
 def card_edits(
@@ -303,12 +304,18 @@ def card_edits(
     return edits
 
 
-def verify(changes: Sequence[Change], after: Deck) -> list[str]:
+def verify(changes: Sequence[Change], before: Deck, after: Deck) -> list[str]:
     """Every change that the deck read back from Archidekt does not show."""
+    # An add shows as a new entry; a copy already elsewhere, such as on the maybeboard, must not count.
+    old_entries = {c.entry_id for c in before.cards}
     mismatches: list[str] = []
     for change in changes:
         if change.kind is ChangeKind.ADD:
-            found = sum(c.quantity for c in after.cards if c.scryfall_id == change.scryfall_id)
+            found = sum(
+                c.quantity
+                for c in after.cards
+                if c.scryfall_id == change.scryfall_id and c.entry_id not in old_entries
+            )
             if found < change.after:
                 mismatches.append(f"{change.name}: expected {change.after} added, Archidekt shows {found}")
             continue

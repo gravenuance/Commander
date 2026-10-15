@@ -345,10 +345,30 @@ def test_verify_reports_changes_archidekt_does_not_show(deck: Deck) -> None:
         ),
     ]
 
-    assert verify(changes, deck) == [
+    assert verify(changes, deck, deck) == [
         "Arcane Signet: expected 1 added, Archidekt shows 0",
         "Battered Golem: expected 0, Archidekt shows 1",
     ]
+
+
+def test_verify_does_not_count_a_copy_that_was_already_on_the_maybeboard(deck: Deck) -> None:
+    # Seen live: a maybeboard copy of the same printing made a failed add look done.
+    bike = next(c for c in deck.cards if c.name == "High-Speed Hoverbike")
+    add = Change(
+        ChangeKind.ADD,
+        bike.name,
+        0,
+        1,
+        "Artifact",
+        in_deck=True,
+        set_code="neo",
+        collector_number="247",
+        scryfall_id=bike.scryfall_id,
+    )
+    landed = replace(bike, entry_id=1, categories=("Artifact",), in_deck=True)
+
+    assert verify([add], deck, deck) == ["High-Speed Hoverbike: expected 1 added, Archidekt shows 0"]
+    assert verify([add], deck, replace(deck, cards=(*deck.cards, landed))) == []
 
 
 @pytest.fixture
@@ -382,7 +402,7 @@ def test_save_looks_up_snapshots_sends_once_and_reads_back(
         f"/api/decks/{DECK_ID}/modifyCards/v2/",
         f"/api/decks/{DECK_ID}/",
     ]
-    assert result.snapshot == "before cmdr apply 2026-10-15 12:00 UTC"
+    assert result.snapshot == "before cmdr apply 2026-10-15 12:00:00 UTC"
     assert result.mismatches == ()
     signet = next(c for c in result.deck.cards if c.name == "Arcane Signet")
     assert (signet.archidekt_card_id, signet.categories) == (
@@ -414,7 +434,7 @@ def test_a_failed_save_after_the_snapshot_names_it(
     fake.write_status["modifyCards"] = 500
 
     with pytest.raises(
-        SaveError, match=r"HTTP 500\. The snapshot 'before cmdr apply 2026-10-15 12:00 UTC' is on"
+        SaveError, match=r"HTTP 500\. The snapshot 'before cmdr apply 2026-10-15 12:00:00 UTC' is on"
     ):
         save(editor, live, resolution, now=lambda: NOW)
 

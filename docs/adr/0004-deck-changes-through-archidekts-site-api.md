@@ -96,4 +96,9 @@ Option 1, chosen by the user on 2026-10-15, kept small and careful:
   refresh answered 200, both card lookups found the chosen printing, the snapshot and `modifyCards`
   answered 201, and one request added two cards (one under a new category, which Archidekt created),
   raised a card's copies and removed another; the read-back matched, labels were kept, and running the
-  plan again sent nothing.
+  plan again sent nothing. Further runs the same day: `keep` lowered a card from 3 to 1 copies and kept
+  its custom label (`Proxy,#7d664d`) and both its categories; `remove` left a maybeboard copy alone and
+  `add` put a main-deck copy beside it; a front-face name found a double-faced card; a modify of an entry
+  not in the deck was refused with 400 `{"error":"Unable to update card not in this deck"}`, shown as is.
+  Archidekt accepts snapshots with equal names, so snapshot names carry seconds, and an add is checked
+  against new entries only, as a maybeboard copy of the same printing once made a failed add look done.

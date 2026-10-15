@@ -15,7 +15,7 @@ from conftest import DECK_ID, PASSWORD, REFRESH_TOKEN, FakeArchidekt, Json, Memo
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 DECK_URL = f"https://archidekt.com/decks/{DECK_ID}"
-SNAPSHOT = "before cmdr apply 2026-10-15 12:00 UTC"
+SNAPSHOT = "before cmdr apply 2026-10-15 12:00:00 UTC"
 PLAN = """\
 deck = "magda"
 add = ["Arcane Signet"]
