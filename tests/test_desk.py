@@ -142,6 +142,22 @@ def test_the_meta_stamp_changes_when_a_meta_answer_is_saved(desk: Desk, settings
     assert str(desk.stamps()["meta"]).startswith("1:")
 
 
+def test_a_card_saved_into_the_deck_is_to_get_until_it_arrives(desk: Desk) -> None:
+    assert desk.deck(DECK)["toGet"] == []
+    desk.propose(DECK, "Arcane Signet")
+    desk.decide(DECK, first_card_id(desk), "add", None, "")
+    assert desk.commit(DECK)["saved"] is True
+    signet = {"name": "Arcane Signet", "quantity": 1, "label": "Don't Have", "category": "Artifact"}
+    assert desk.deck(DECK)["toGet"] == [signet]
+
+    ordered = desk.mark(DECK, "Arcane Signet", "ordered")
+    assert (ordered["before"], ordered["after"]) == ("Don't Have", "Getting")
+    assert ordered["toGet"] == [{**signet, "label": "Getting"}]
+    assert desk.mark(DECK, "Arcane Signet", "arrived")["toGet"] == []
+    assert desk.mark(DECK, "Arcane Signet", "lost") == {"error": "unknown step 'lost'"}
+    assert desk.mark(DECK, "Arcane Signet", "arrived") == {"error": "Arcane Signet is already marked arrived"}
+
+
 def test_preview_and_commit_save_the_queued_cards(desk: Desk, fake: FakeArchidekt) -> None:
     desk.propose(DECK, "Arcane Signet")
     card_id = first_card_id(desk)

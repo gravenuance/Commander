@@ -44,6 +44,7 @@ from commander.cli_output import (
     raise_text,
 )
 from commander.cli_profile import add_profile_commands
+from commander.cli_toget import add_toget_commands
 from commander.clibase import (
     EXIT_FAILURE,
     EXIT_INTERRUPTED,
@@ -80,6 +81,7 @@ from commander.deckprofile import read_profile
 from commander.deckthemes import merge_themes
 from commander.diff import DeckDiff
 from commander.edhtop16 import Edhtop16Error
+from commander.labels import LabelError
 from commander.models import Deck
 from commander.net import Fetcher, NetworkError, Pacer, make_client
 from commander.plan import EXAMPLE as PLAN_EXAMPLE
@@ -219,6 +221,7 @@ def main(  # noqa: PLR0911 — one exit code per failure class, mapped in one pl
         Edhtop16Error,
         CardDataError,
         WorkspaceError,
+        LabelError,
         OSError,
     ) as error:
         print(f"cmdr: {error}", file=err)
@@ -314,6 +317,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     add_card_commands(commands.add_parser)
     add_profile_commands(commands.add_parser)
+    add_toget_commands(commands.add_parser)
     add_board_commands(commands.add_parser)
     add_meta_command(commands.add_parser)
     add_app_command(commands.add_parser)

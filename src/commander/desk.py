@@ -38,6 +38,7 @@ from commander.config import ConfigError, MetaSettings
 from commander.credentials import CredentialError, TokenStore
 from commander.deckprofile import read_profile
 from commander.edhtop16 import REQUEST_INTERVAL_SECONDS, SLOW_QUERY_SECONDS, Edhtop16Client, Edhtop16Error
+from commander.labels import LabelError, Step, mark, to_get_json
 from commander.meta import analyse
 from commander.metadata import MetaSources, cache_stamp, gather
 from commander.net import Fetcher, NetworkError, Pacer
@@ -61,6 +62,7 @@ _EXPECTED = (
     SaveError,
     NotYourDeckError,
     WorkspaceError,
+    LabelError,
     OSError,
 )
 _DECISIONS = {"add": Status.ADD, "reject": Status.REJECTED, "reopen": Status.OPEN}
@@ -165,7 +167,28 @@ class Desk:
             "pending": board.pending(stored.deck),
             "cards": cards,
             "deckCards": sorted({c.name for c in stored.deck.main_cards if "Commander" not in c.categories}),
+            "toGet": to_get_json(stored.deck),
             "activity": [activity_json(entry) for entry in reversed(activity)],
+        }
+
+    @_guarded
+    def mark(self, deck_id: int, name: str, step: str) -> Json:
+        """Mark one deck card ordered or arrived on Archidekt at once (ADR 0010)."""
+        try:
+            chosen = Step(step)
+        except ValueError:
+            return {"error": f"unknown step {step!r}"}
+        stored = self._stored(deck_id)
+        user = self._user()
+        with self._service_and_db(stored) as (service, _), self._client_factory() as http:
+            fetcher = Fetcher(http)
+            editor = ArchidektEditor(fetcher, ArchidektAuth(fetcher, self._token_store).access_token(user))
+            marked = mark(editor, self._workspace, stored, service, name=name, step=chosen, actor=Actor.YOU)
+        return {
+            "card": marked.card,
+            "before": marked.before,
+            "after": marked.after,
+            "toGet": to_get_json(marked.deck),
         }
 
     @_guarded

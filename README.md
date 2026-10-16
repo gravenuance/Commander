@@ -319,6 +319,9 @@ marked as in `suggest`. `--save` first saves a snapshot of the deck on Archidekt
 one, and rewrites the local copy if the deck is in your deck folder. To undo a save, restore that snapshot
 on Archidekt. `apply -` reads the plan from stdin, and `--json` prints the result as JSON.
 
+A card a save brings into the deck gets the Archidekt label "Don't Have", unless it comes from the
+Maybeboard with a label already (Proxy, for one); see [Cards to get](#cards-to-get).
+
 `cmdr login` keeps only Archidekt's login token in Windows Credential Manager (under
 `Commander (cmdr) Archidekt`), never your password. When the token expires, `apply --save` asks you to run
 `cmdr login` again; `cmdr logout` removes it. For scripts, `cmdr login --password-stdin` reads the password
@@ -327,6 +330,22 @@ from stdin.
 Archidekt's written terms forbid automated requests, but its co-founder has said on the Archidekt forum
 that the API is open to use. `apply` relies on that and keeps requests few. See
 [ADR 0004](docs/adr/0004-deck-changes-through-archidekts-site-api.md).
+
+### Cards to get
+
+Cards still to buy carry the Archidekt label "Don't Have"; once ordered, "Getting"; once they arrive, no
+label. `toget` lists them and marks them; each mark is written to Archidekt at once, without a snapshot,
+and logged in the deck's activity. The app's deck view lists the same cards.
+
+```sh
+uv run cmdr toget                                          # every deck's cards still to get
+uv run cmdr toget ellivere --json                          # one deck, as JSON
+uv run cmdr toget ellivere "Sylvan Safekeeper" --ordered   # label it Getting
+uv run cmdr toget ellivere "Sylvan Safekeeper" --arrived   # clear its label
+```
+
+Labels set on the Archidekt website come back with the next `sync`. See
+[ADR 0010](docs/adr/0010-buying-cards-through-archidekt-labels.md).
 
 ### Deck folders
 

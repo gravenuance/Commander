@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+- Cards to get (ADR 0010): cards a save brings into a deck get the Archidekt label "Don't Have";
+  `cmdr toget` lists each deck's Don't Have and Getting cards and marks one `--ordered` (Getting) or
+  `--arrived` (no label) on Archidekt at once. The app's bridge has the same (`toGet` in the deck view,
+  `mark`). Deck snapshots keep each card's label (version 3; the next `sync` fetches each deck once).
+
 ### Changed
 - Desktop app: the open Meta panel updates by itself when `cmdr meta` (or anything else) saves new meta
   answers to the cache, instead of only when the panel is opened or the deck changes.

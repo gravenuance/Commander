@@ -10,6 +10,7 @@ EUR prices and brackets. The README covers usage; this file covers working on it
 - cEDH meta for the bracket 5 decks: `uv run cmdr meta` (all side by side) or `uv run cmdr meta <deck>`; the first run of the day takes minutes because EDHTop16, Archidekt search and Spellbook are paced (ADR 0007), so run it in the background and read the output file
 - Catch up on what the user decided in the app before deck work: `uv run cmdr board log --since <last time>`
 - Put research on a board: `uv run cmdr board add <deck> "<card>" --by claude --reason "..." --replace "<deck card>=<why>"`, or `board research` for a card already there; the decision is the user's
+- Cards still to buy: `uv run cmdr toget [deck]`; `uv run cmdr toget <deck> "<card>" --ordered|--arrived` writes the label to Archidekt at once (ADR 0010), so only on the user's say-so
 - Change a deck: `uv run cmdr apply <plan.toml>` previews; `--save` writes to Archidekt and needs `uv run cmdr login` once (the user types the password; never ask for it or pass it on a command line)
 - Desktop app: `uv run cmdr app`; its log is `%LOCALAPPDATA%\Commander\logs\commander.log` (`CMDR_LOG_LEVEL=DEBUG` logs every bridge call). Build the exe: `uv run --group build pyinstaller --noconfirm --clean --onefile --windowed --name Commander --add-data "src/commander/web;commander/web" src/commander/app_main.py` (lands in `dist/`)
 

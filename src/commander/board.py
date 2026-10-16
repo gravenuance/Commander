@@ -408,11 +408,11 @@ class BoardService:
                 Activity(stamp, actor, "saved to Archidekt", None, f"{names}; snapshot '{snapshot}'"),
             )
 
-    def note(self, actor: Actor, action: str, detail: str) -> None:
+    def note(self, actor: Actor, action: str, detail: str, card: str | None = None) -> None:
         """Log something that happened to the deck without changing the board, such as a failed save."""
         with self._editing() as (board, save):
             save(
-                board, Activity(self._stamp(), actor, action, None, _bounded(detail, MAX_NOTE, "the detail"))
+                board, Activity(self._stamp(), actor, action, card, _bounded(detail, MAX_NOTE, "the detail"))
             )
 
     def _card(self, name: str) -> CardInfo:
