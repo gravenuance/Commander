@@ -8,7 +8,22 @@
   `--arrived` (no label) on Archidekt at once. The app's bridge has the same (`toGet` in the deck view,
   `mark`). Deck snapshots keep each card's label (version 3; the next `sync` fetches each deck once).
 
+- App redesign (ADR 0011): the deck shows as a card grid by card type, with counts and EUR totals.
+  Considered holds every idea that has a card to replace; hovering or clicking one lights its targets in
+  the grid, a click on a target queues the swap, and × turns the idea down. Targets are the ones you or
+  Claude picked, else the weakest cards in the same role by meta share and EDHREC rank. Each grid card
+  has a corner flag that sets its Archidekt label. The Meta section (bracket 5) shows key cards with the
+  meta cards that stop them and meta combos with your answers, tagged with the meta decks playing them,
+  and a refresh puts the meta's staples on the board. A turned-down card returns when its meta share
+  rises 20 points. Deck snapshots keep label colours (version 4; the next `sync` fetches each deck once).
+
+### Fixed
+- Desktop app: the "Thin data" and status badges no longer float at the bottom of the window.
+
 ### Changed
+- Desktop app: the Suggested and Decided lists are gone (suggestions join Considered; decided cards
+  leave the app), the activity column folds to a rail, and ideas from `suggest` no longer all offer the
+  same generic cuts.
 - Desktop app: the open Meta panel updates by itself when `cmdr meta` (or anything else) saves new meta
   answers to the cache, instead of only when the panel is opened or the deck changes.
 

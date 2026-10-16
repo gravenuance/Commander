@@ -259,11 +259,24 @@ the rest; `cmdr board --help` lists them.
 
 ### Desktop app
 
-`cmdr app` opens a window over every deck's board. Pick a deck on the left; its suggested and considered
-cards show with their art, cost, price and the reasoning behind them. Propose a card with the search box,
-choose the card it replaces, then add it or turn it down. **Review changes** checks the queued changes
-against the deck on Archidekt and saves them. The window follows changes made with the CLI or by Claude
-within a couple of seconds, and the right-hand column shows each deck's activity.
+`cmdr app` opens a window over every deck's board. Pick a deck on the left to see it as a card grid,
+grouped by card type with counts and EUR totals.
+
+- **Considered**, on the right, lists every idea for the deck: yours, Claude's, the meta's and the
+  tools'. Hover over an idea or click it to light the deck cards it could replace. Click one of them to
+  queue the swap, or × to turn the idea down. The targets are the cards you or Claude picked, or else the
+  weakest cards in the same role ([ADR 0011](docs/adr/0011-app-deck-grid-and-replacement-targets.md)).
+  An idea with nothing to replace stays on the board but does not show.
+- **Labels**: the flag in a grid card's top-left corner sets its Archidekt label (Don't Have, Getting, or
+  any label the deck uses). It is written to Archidekt at once.
+- **Meta** (bracket 5 decks) lists each key card with the meta cards that stop it, then the meta's combos
+  with your answers, each tagged with the meta decks that play them. **Refresh meta** fetches new data
+  and puts the meta's staples into Considered. A card you turned down comes back once its meta share
+  rises 20 points.
+- **Review changes** checks the queued swaps against the deck on Archidekt and saves them.
+
+The window follows changes made with the CLI or by Claude within a couple of seconds. The rail on the
+right opens each deck's activity.
 
 The app draws its page with Microsoft Edge WebView2, part of Windows 11, through
 [pywebview](https://pywebview.flowrl.com); it opens no network port. It logs to
@@ -335,7 +348,7 @@ that the API is open to use. `apply` relies on that and keeps requests few. See
 
 Cards still to buy carry the Archidekt label "Don't Have"; once ordered, "Getting"; once they arrive, no
 label. `toget` lists them and marks them; each mark is written to Archidekt at once, without a snapshot,
-and logged in the deck's activity. The app's deck view lists the same cards.
+and logged in the deck's activity. In the app, the flag on each grid card sets the same labels.
 
 ```sh
 uv run cmdr toget                                          # every deck's cards still to get
