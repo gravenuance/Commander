@@ -7,13 +7,15 @@ first, and only ideas with a deck card to replace. EDHREC is never asked (ADR 00
 Scryfall's data, only orders the cards an idea could replace.
 """
 
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date
 
+from commander.analysis import game_changers
 from commander.board import BoardCard, BoardService, Origin, Status, feed_ideas, read_board
-from commander.carddb import CardDb
+from commander.carddb import CardDb, CardInfo, ResolvedCard
 from commander.deckcache import Clock
-from commander.deckprofile import read_profile
+from commander.deckprofile import Profile, read_profile, resolve_themes
 from commander.meta import (
     MIN_PEER_LISTS,
     MIN_STAPLE_LISTS,
@@ -27,6 +29,7 @@ from commander.meta import (
 from commander.metadata import MetaData
 from commander.models import Deck
 from commander.store import StoredDeck
+from commander.suggest import affordable, card_raise, name_keys
 from commander.targets import kept_by_profile, role_targets
 
 MAX_PER_SOURCE = 10
@@ -74,8 +77,10 @@ def compile_ideas(
     shares = card_shares(data) or None
     board = read_board(stored.folder)
     main = db.resolve(deck.main_cards)
-    kept = kept_by_profile(main, read_profile(stored.folder))
+    profile = read_profile(stored.folder)
+    kept = kept_by_profile(main, profile)
     infos = db.cards_named(idea.name for idea in ideas)
+    allowed = _profile_filter(deck, profile, main, db, infos.values())
     service = BoardService(stored.folder, deck, db, now=now)
     added: dict[Origin, list[BoardCard]] = {}
     for origin in Origin:
@@ -85,7 +90,11 @@ def compile_ideas(
             if placed >= MAX_PER_SOURCE:
                 break
             info = infos.get(idea.name.casefold())
-            if info is None or not role_targets(info, main, protected=kept, shares=shares):
+            if (
+                info is None
+                or not allowed(info)
+                or not role_targets(info, main, protected=kept, shares=shares)
+            ):
                 continue
             existing = board.find(idea.name)
             if existing is not None and existing.status is not Status.REJECTED:
@@ -97,6 +106,27 @@ def compile_ideas(
             added[origin].extend(new)
             placed += len(new)
     return added
+
+
+def _profile_filter(
+    deck: Deck, profile: Profile, main: Sequence[ResolvedCard], db: CardDb, infos: Iterable[CardInfo]
+) -> Callable[[CardInfo], bool]:
+    """Whether the profile lets a card in, as it does for `suggest`: not excluded by name, type, keyword
+    or tag, not lifting the deck over its bracket ceiling, and within its price cap."""
+    banned = db.matching(resolve_themes(profile, db).exclude, (info.oracle_id for info in infos))
+    banned_names = {key for name in profile.exclude_cards for key in name_keys(name)}
+    changers = len(game_changers(main))
+
+    def allowed(info: CardInfo) -> bool:
+        if info.oracle_id in banned or name_keys(info.name) & banned_names:
+            return False
+        raises = card_raise(info, deck.bracket, changers)
+        ceiling = profile.bracket_ceiling
+        if raises is not None and ceiling is not None and raises.bracket > ceiling:
+            return False
+        return affordable(info.cheapest_cents, profile.max_card_cents)
+
+    return allowed
 
 
 def ideas_summary(added: dict[Origin, list[BoardCard]]) -> str:

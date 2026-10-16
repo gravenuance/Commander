@@ -1,5 +1,6 @@
 """Compiling Considered from the meta and recent Archidekt decks (ADR 0014)."""
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -77,3 +78,38 @@ def test_each_source_keeps_its_top_ideas_with_a_target_and_settles(
     turned_down = read_board(tmp_path).find(meta.name)
     assert turned_down is not None
     assert turned_down.status is Status.REJECTED
+
+
+def compiled_names(folder: Path, deck: Deck, db: CardDb, profile: str) -> dict[Origin, list[str]]:
+    """What one compile adds with this profile.toml, from lists playing Mind Stone and Jeska's Will and
+    Archidekt decks playing Arcane Signet."""
+    folder.mkdir()
+    (folder / "profile.toml").write_text(profile, encoding="utf-8")
+    lists = [entry(i, 40, 8, [("Mind Stone", 0), ("Jeska's Will", 0)]) for i in range(1, 6)]
+    peers = [peer(i, ["Arcane Signet"]) for i in range(1, 4)]
+    added = compile_ideas(StoredDeck(folder, deck), meta_data(lists, peers), db, now=lambda: NOW)
+    return {origin: sorted(card.name for card in cards) for origin, cards in added.items()}
+
+
+def test_cards_the_profile_excludes_by_name_or_tag_are_no_ideas(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    by_name = compiled_names(
+        tmp_path / "name", deck, db, 'version = 1\n[exclude]\ncards = ["Jeska\'s Will"]\n'
+    )
+    assert by_name == {Origin.META: ["Mind Stone"], Origin.DECKS: ["Arcane Signet"]}
+    by_tag = compiled_names(tmp_path / "tag", deck, db, 'version = 1\n[exclude]\ntags = ["ramp"]\n')
+    assert by_tag == {Origin.META: [], Origin.DECKS: []}
+
+
+def test_ideas_over_the_profiles_ceiling_or_price_cap_are_left_out(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    # Jeska's Will is a game changer, which lifts a bracket 2 deck to 3.
+    capped = compiled_names(
+        tmp_path / "ceiling", replace(deck, bracket=2), db, "version = 1\nbracket_ceiling = 2\n"
+    )
+    assert capped == {Origin.META: ["Mind Stone"], Origin.DECKS: ["Arcane Signet"]}
+    # Jeska's Will costs EUR 33.80 and Mind Stone has no price; Arcane Signet costs EUR 0.30.
+    cheap = compiled_names(tmp_path / "price", deck, db, "version = 1\nmax_card_eur = 1\n")
+    assert cheap == {Origin.META: [], Origin.DECKS: ["Arcane Signet"]}

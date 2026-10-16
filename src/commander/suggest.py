@@ -250,7 +250,7 @@ class _Picker:
                 piece.name
             ) & self.options.exclude_names:
                 continue
-            if not _affordable(piece.price_cents, self.options.max_cents) or self._too_high(piece.raises):
+            if not affordable(piece.price_cents, self.options.max_cents) or self._too_high(piece.raises):
                 continue
             kept.append(piece)
         return kept
@@ -476,7 +476,7 @@ def _held(card: ComboCard, held_ids: set[str], held_names: set[str]) -> bool:
     return (card.oracle_id is not None and card.oracle_id in held_ids) or card.name.casefold() in held_names
 
 
-def _affordable(price_cents: int | None, max_cents: int | None) -> bool:
+def affordable(price_cents: int | None, max_cents: int | None) -> bool:
     return max_cents is None or (price_cents is not None and price_cents <= max_cents)
 
 
