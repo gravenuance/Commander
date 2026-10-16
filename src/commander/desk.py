@@ -6,9 +6,10 @@ several threads, and a SQLite connection belongs to one.
 """
 
 import logging
+import threading
 from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import wraps
 from pathlib import Path
@@ -19,6 +20,7 @@ from commander.answers import card_key
 from commander.apply import NotYourDeckError, Resolution, SaveError
 from commander.archidekt import ArchidektError
 from commander.archidekt_edit import ArchidektAuth, ArchidektEditor, AuthError
+from commander.background import in_background
 from commander.board import (
     Actor,
     BoardCard,
@@ -39,7 +41,7 @@ from commander.bracketcheck import check_bracket, check_json
 from commander.carddb import CardDataError, CardDb, CardInfo, ResolvedCard
 from commander.cli_meta import report_json
 from commander.cli_output import change_mark, change_text
-from commander.config import ConfigError, MetaSettings
+from commander.config import ConfigError, MetaSettings, forget_account, switch_account, validate_user
 from commander.credentials import CredentialError, TokenStore
 from commander.deckexport import topdeck_text
 from commander.deckgrid import GridGroup, deck_grid, image_url
@@ -66,6 +68,8 @@ from commander.profileedit import save_settings
 from commander.spellbook import SpellbookClient
 from commander.store import StoredDeck, Workspace, WorkspaceError
 from commander.suggest import deck_identity
+from commander.sync import SyncStatus
+from commander.syncrun import CardState, SyncOutcome, SyncServices, run_sync
 from commander.targets import CutRules, Target, deck_cut_rules, targets_for, with_ideas
 
 log = logging.getLogger(__name__)
@@ -96,10 +100,18 @@ type Json = dict[str, object]
 
 def _guarded[**P](method: Callable[P, Json]) -> Callable[P, Json]:
     """Turn expected failures into {"error": message}; log the rest and say where the details are."""
+    return _guard(method, show_args=True)
 
+
+def _guarded_secret[**P](method: Callable[P, Json]) -> Callable[P, Json]:
+    """As _guarded, for a call that carries a password: its arguments never reach the log."""
+    return _guard(method, show_args=False)
+
+
+def _guard[**P](method: Callable[P, Json], *, show_args: bool) -> Callable[P, Json]:
     @wraps(method)
     def call(*args: P.args, **kwargs: P.kwargs) -> Json:
-        log.debug("bridge call %s %s", method.__name__, args[1:])
+        log.debug("bridge call %s %s", method.__name__, args[1:] if show_args else "(arguments withheld)")
         try:
             return method(*args, **kwargs)
         except _EXPECTED as error:
@@ -112,6 +124,30 @@ def _guarded[**P](method: Callable[P, Json]) -> Callable[P, Json]:
     return call
 
 
+def _sync_thread(work: Callable[[], None]) -> object:
+    return in_background(work, name="app-sync")
+
+
+@dataclass(slots=True)
+class _SyncState:
+    """The app's one sync at a time; guarded by Desk._sync_lock."""
+
+    running: bool = False
+    progress: str = ""
+    summary: str | None = None
+    failed: bool = False
+    warnings: list[str] = field(default_factory=list[str])
+
+
+def sync_summary(outcome: SyncOutcome) -> str:
+    """One line for the status bar: what changed, or what failed."""
+    counts = {status: sum(1 for r in outcome.results if r.status is status) for status in SyncStatus}
+    if counts[SyncStatus.FAILED] or outcome.cards.state is CardState.FAILED:
+        return f"Sync finished with problems: {counts[SyncStatus.FAILED]} decks failed; see the log."
+    changed = counts[SyncStatus.NEW] + counts[SyncStatus.UPDATED]
+    return f"Decks synced: {len(outcome.results)}, {changed} changed."
+
+
 @dataclass(slots=True, frozen=True)
 class DeskSettings:
     workspace: Path
@@ -119,6 +155,9 @@ class DeskSettings:
     # None until `cmdr init` sets a username; previews, saves and meta refreshes need it.
     user: str | None
     meta: MetaSettings = field(default_factory=MetaSettings)
+    # The config file that sign-in writes the account to, and where a first account's decks go.
+    config: Path | None = None
+    documents: Path | None = None
 
     @property
     def cache(self) -> Path:
@@ -135,9 +174,12 @@ class Desk:
         token_store: TokenStore,
         now: Callable[[], datetime],
         pacer_factory: Callable[[float], Pacer] = Pacer,
+        background: Callable[[Callable[[], None]], object] | None = None,
     ) -> None:
         self._settings = settings
         self._pacer_factory = pacer_factory
+        # Runs the sync off the window's thread; tests run it inline.
+        self._background: Callable[[Callable[[], None]], object] = background or _sync_thread
         self._workspace = Workspace(settings.workspace)
         self._client_factory = client_factory
         self._token_store = token_store
@@ -145,6 +187,125 @@ class Desk:
         # Per deck: the meta cache stamp the shares were read at, and the shares.
         self._pools: dict[int, tuple[str, MetaData]] = {}
         self._rules: dict[int, tuple[str, CutRules]] = {}
+        self._sync_lock = threading.Lock()
+        self._sync = _SyncState()
+
+    @_guarded
+    def account(self) -> Json:
+        """Who is signed in, and how the app's sync is going."""
+        user = self._settings.user
+        return {
+            "user": user,
+            "signedIn": bool(user) and self._token_store.get(user or "") is not None,
+            "sync": self._sync_json(),
+        }
+
+    @_guarded_secret
+    def sign_in(self, user: str, password: str) -> Json:
+        """Sign in to Archidekt, make the account the config's and switch to its decks (ADR 0023).
+
+        The password goes to Archidekt's login only; the token is kept as `cmdr login` keeps it. A first
+        sign-in, with no decks in the account's folder yet, starts a sync.
+        """
+        config = self._config()
+        user = user.strip()
+        validate_user(user)
+        if self._syncing():
+            return {"error": "Wait for the sync to finish, then sign in."}
+        with self._client_factory() as http:
+            ArchidektAuth(Fetcher(http), self._token_store).login(user, user, password)
+        folder = switch_account(config, user, documents=self._documents())
+        self._use_account(user, folder)
+        if not self._workspace.load_all():
+            self._start_sync(user)
+        return self.account()
+
+    @_guarded
+    def sign_out(self) -> Json:
+        """Remove the saved login and forget the account; its deck folder stays for the next sign-in."""
+        config = self._config()
+        if self._syncing():
+            return {"error": "Wait for the sync to finish, then sign out."}
+        user = self._settings.user
+        if user:
+            self._token_store.delete(user)
+        forget_account(config)
+        self._settings = replace(self._settings, user=None)
+        return self.account()
+
+    @_guarded
+    def sync(self) -> Json:
+        """Start syncing the account's decks in the background; sync_status follows it."""
+        self._start_sync(self._user())
+        return self._sync_json()
+
+    @_guarded
+    def sync_status(self) -> Json:
+        return self._sync_json()
+
+    def _config(self) -> Path:
+        if self._settings.config is None:
+            raise ConfigError("signing in needs the config file's location")
+        return self._settings.config
+
+    def _documents(self) -> Path:
+        return self._settings.documents or Path.home() / "Documents"
+
+    def _use_account(self, user: str, folder: Path) -> None:
+        self._settings = replace(self._settings, user=user, workspace=folder)
+        self._workspace = Workspace(folder)
+        self._pools.clear()
+        self._rules.clear()
+
+    def _syncing(self) -> bool:
+        with self._sync_lock:
+            return self._sync.running
+
+    def _start_sync(self, user: str) -> None:
+        with self._sync_lock:
+            if self._sync.running:
+                return
+            self._sync = _SyncState(running=True, progress="Starting the sync")
+        self._background(lambda: self._run_sync(user))
+
+    def _run_sync(self, user: str) -> None:
+        services = SyncServices(
+            self._client_factory, self._token_store, self._settings.cache, self._now, self._pacer_factory
+        )
+        try:
+            outcome = run_sync(
+                services, self._workspace, user, self._settings.meta, on_progress=self._sync_progress
+            )
+        except _EXPECTED as error:
+            log.warning("sync failed: %s", error)
+            self._finish_sync(f"Sync failed: {error}", failed=True)
+            return
+        except Exception:
+            log.exception("sync failed unexpectedly")
+            self._finish_sync("Sync failed; the details are in the log.", failed=True)
+            return
+        for warning in outcome.warnings:
+            log.warning("sync: %s", warning)
+        self._finish_sync(sync_summary(outcome), failed=outcome.failed, warnings=outcome.warnings)
+
+    def _sync_progress(self, message: str) -> None:
+        with self._sync_lock:
+            self._sync.progress = message
+
+    def _finish_sync(self, summary: str, *, failed: bool, warnings: Sequence[str] = ()) -> None:
+        with self._sync_lock:
+            self._sync = _SyncState(summary=summary, failed=failed, warnings=list(warnings))
+
+    def _sync_json(self) -> Json:
+        with self._sync_lock:
+            state = self._sync
+            return {
+                "running": state.running,
+                "progress": state.progress,
+                "summary": state.summary,
+                "failed": state.failed,
+                "warnings": list(state.warnings),
+            }
 
     @_guarded
     def decks(self) -> Json:

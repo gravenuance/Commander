@@ -51,14 +51,20 @@ def page_html() -> str:
 def desk_settings(
     env: Mapping[str, str], *, config: str | None, workspace: str | None, user: str | None
 ) -> DeskSettings:
-    """Where the app finds the decks and card data; a missing username only blocks previews and saves."""
-    file = read_config(config_path(config, env))
-    folder = resolve_workspace(workspace, env, file)
+    """Where the app finds the decks and card data; without an account it opens on the sign-in screen."""
+    path = config_path(config, env)
+    file = read_config(path)
+    documents = Path.home() / "Documents"
+    try:
+        folder = resolve_workspace(workspace, env, file)
+    except ConfigError:
+        # No deck folder yet: signing in gives the account its own (ADR 0023); until then there are no decks.
+        folder = documents / "Commander" / "decks"
     try:
         name: str | None = resolve_user(user, env, file)
     except ConfigError:
         name = None
-    return DeskSettings(folder, cache_dir(env) / CARD_DB_FILE, name, file.meta)
+    return DeskSettings(folder, cache_dir(env) / CARD_DB_FILE, name, file.meta, path, documents)
 
 
 def setup_logging(folder: Path, env: Mapping[str, str], settings: DeskSettings) -> Path:
