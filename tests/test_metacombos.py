@@ -4,10 +4,20 @@ from datetime import date
 
 import pytest
 
+from commander.answers import Piece, piece_facts
 from commander.archidekt import parse_deck
 from commander.carddb import CardDb
 from commander.edhtop16 import CommanderStats
-from commander.metacombos import AnswerRole, ComboAnswer, LockScope, Stop, meta_combos, stop_applies
+from commander.metacombos import (
+    AnswerRole,
+    ComboAnswer,
+    LockScope,
+    Stop,
+    as_cast,
+    card_stops,
+    meta_combos,
+    stop_applies,
+)
 from commander.metadata import CommanderCombos, MetaCommander
 from commander.models import Deck, DeckCard
 from commander.spellbook import ComboDetail, ComboPiece, parse_details
@@ -68,14 +78,87 @@ def test_casting_locks_meet_storm_and_repeated_casts() -> None:
         (Stop.GRAVEYARD, combo("Mill it.", zones=("G",))),
         (Stop.OFF_HAND_CASTING, combo("Cast Basalt Monolith from your graveyard.")),
         (Stop.CHEATED_IN, combo("Return Basalt Monolith to the battlefield.")),
-        (Stop.ENTER_TRIGGERS, combo("Basalt Monolith enters.")),
-        (Stop.ENTER_TRIGGERS, combo("Loop.", results=("Infinite ETB",))),
+        (Stop.ENTER_TRIGGERS, combo("When Basalt Monolith enters, it triggers, untapping a land.")),
+        (Stop.ENTER_TRIGGERS, combo("Basalt Monolith enters the battlefield, causing you to win the game.")),
         (Stop.TOKENS, combo("Loop.", results=("Infinite artifact tokens",))),
     ],
 )
 def test_each_stop_reads_the_steps_it_needs(stop: Stop, detail: ComboDetail) -> None:
     assert stop_applies(stop, LockScope(), detail)
     assert not stop_applies(stop, LockScope(), combo("Activate Basalt Monolith."))
+
+
+WITNESS = ComboPiece("Eternal Witness", "Creature — Human Shaman", ("B",))
+TALON_GATES = ComboPiece("Talon Gates of Madara", "Land", ("B",))
+CAGE = (
+    "Creature cards in graveyards and libraries can't enter the battlefield.\n"
+    "Players can't cast spells from graveyards or libraries."
+)
+
+
+def steps(description: str, *pieces: ComboPiece, results: tuple[str, ...] = ()) -> ComboDetail:
+    return ComboDetail("1-2", pieces, (), results, description)
+
+
+def test_enter_trigger_locks_need_a_trigger_on_a_card_of_their_type() -> None:
+    creatures = LockScope("Creature")
+    # Real Spellbook steps: Eternal Witness's trigger, Talon Gates' (a land) and Hullbreaker's plain entering.
+    witness = steps(
+        "When Eternal Witness enters, it triggers, returning Snap from your graveyard to your hand.", WITNESS
+    )
+    gates = steps(
+        "When Talon Gates of Madara enters the battlefield, it triggers, "
+        "phasing out up to one target creature.",
+        TALON_GATES,
+    )
+    plain = steps("That permanent enters the battlefield.", results=("Infinite creature ETB",))
+    assert stop_applies(Stop.ENTER_TRIGGERS, creatures, witness)
+    assert not stop_applies(Stop.ENTER_TRIGGERS, creatures, gates)
+    assert stop_applies(Stop.ENTER_TRIGGERS, LockScope(), gates)
+    assert not stop_applies(Stop.ENTER_TRIGGERS, LockScope(), plain)
+    assert not stop_applies(
+        Stop.ENTER_TRIGGERS,
+        creatures,
+        steps("When the Treasure enters the battlefield, Battered Golem triggers."),
+    )
+
+
+def test_a_lock_on_some_zones_misses_cards_put_in_from_others() -> None:
+    [(_, scope)] = [found for found in card_stops(CAGE, set()) if found[0] is Stop.CHEATED_IN]
+    assert scope == LockScope("Creature", zones=frozenset({"graveyard", "library"}))
+    from_hand = steps(
+        "Activate Talon Gates of Madara's third ability by paying {4}, "
+        "putting it from your hand onto the battlefield.",
+        TALON_GATES,
+    )
+    from_graveyard = steps("Return Eternal Witness from your graveyard to the battlefield.", WITNESS)
+    assert not stop_applies(Stop.CHEATED_IN, scope, from_hand)
+    assert stop_applies(Stop.CHEATED_IN, scope, from_graveyard)
+
+
+def test_graveyard_hate_needs_rules_text_that_exiles_from_graveyards() -> None:
+    hearse = "{T}: Exile up to two target cards from a single graveyard."
+    assert Stop.GRAVEYARD not in {stop for stop, _ in card_stops(CAGE, {Stop.GRAVEYARD})}
+    assert Stop.GRAVEYARD in {stop for stop, _ in card_stops(hearse, {Stop.GRAVEYARD})}
+
+
+def test_pieces_cast_for_nothing_are_marked_free() -> None:
+    amber = ComboPiece("Mox Amber", "Legendary Artifact", ("B",))
+    vault = ComboPiece("Mana Vault", "Artifact", ("B",))
+    facts = {"mox amber": Piece("Mox Amber", "Legendary Artifact", "", mana_value=0)}
+    loop = steps("Cast Mana Vault by paying {1}.\nCast Mox Amber by paying {0}", amber, vault)
+    assert as_cast(loop, amber, facts).cast_free
+    assert not as_cast(loop, vault, facts).cast_free
+    # A piece the card data doesn't know is free only when the steps say so.
+    assert as_cast(steps("Cast Mana Vault by paying {0}.", vault), vault, {}).cast_free
+
+
+def test_piece_facts_come_from_the_card_data(db: CardDb) -> None:
+    facts = piece_facts(db, [("magda, brazen outlaw", "Creature"), ("Nobody Knows", "Creature — Horror")])
+    assert facts["magda, brazen outlaw"] == Piece(
+        "Magda, Brazen Outlaw", "Legendary Creature — Dwarf Berserker", "R", 2, 1, mana_value=2.0
+    )
+    assert facts["nobody knows"] == Piece("Nobody Knows", "Creature — Horror")
 
 
 def kinnan_field(lists: str) -> list[MetaCommander]:

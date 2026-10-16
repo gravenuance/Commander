@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from enum import Enum
 
-from commander.answers import AnswerKind, answer_kinds, card_key
+from commander.answers import AnswerKind, card_answers, card_key, piece_facts
 from commander.archidekt import PeerDeck
 from commander.board import MAX_CUT_OPTIONS, ReplaceOption
 from commander.carddb import CardDb
@@ -305,7 +305,8 @@ def outliers(
 
 def threats(pieces: Iterable[str], field: Sequence[MetaCommander], db: CardDb) -> tuple[Threat, ...]:
     """Cards the top commanders' lists commonly play that answer at least one key piece."""
-    piece_info = list(db.cards_named(pieces).values())
+    # A key piece the card data lacks has no type line, so no answer could be matched to it.
+    piece_info = [p for p in piece_facts(db, ((name, "") for name in pieces)).values() if p.type_line]
     shares: dict[str, list[tuple[str, float, float]]] = defaultdict(list)
     names: dict[str, str] = {}
     for commander in field:
@@ -319,21 +320,23 @@ def threats(pieces: Iterable[str], field: Sequence[MetaCommander], db: CardDb) -
                 names.setdefault(card_key(card.name), card.name)
     candidates = {key for key, rows in shares.items() if max(share for _, share, _ in rows) >= THREAT_SHARE}
     infos = {card_key(info.name): info for info in db.cards_named(names[key] for key in candidates).values()}
-    kinds = answer_kinds(db, [info.oracle_id for info in infos.values()])
+    answers = card_answers(db, {info.oracle_id: info.name for info in infos.values()})
     found: list[Threat] = []
     for key in candidates:
         info = infos.get(key)
         if info is None:
             continue
-        answer = tuple(kind for kind in AnswerKind if info.oracle_id in kinds[kind])
-        hit = sorted({p.name for kind in answer for p in piece_info if kind.hits(p.type_line)})
+        answer = answers.get(info.oracle_id)
+        if answer is None:
+            continue
+        hit = sorted({p.name for p in piece_info if answer.removes(p) or answer.counters(p)})
         if not hit:
             continue
         rows = shares[key]
         found.append(
             Threat(
                 name=info.name,
-                kinds=answer,
+                kinds=answer.kinds,
                 hits=tuple(hit),
                 exposure=sum(share * meta for _, share, meta in rows),
                 played_by=tuple(

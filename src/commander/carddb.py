@@ -14,7 +14,7 @@ from commander.models import DeckCard
 log = logging.getLogger(__name__)
 
 # Bump whenever the tables or the meaning of a column change; an old file is rebuilt, never migrated.
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 CARD_DB_FILE = "cards.sqlite"
 _QUERY_CHUNK = 500
 _CARD_QUERIES = {
@@ -90,6 +90,8 @@ CREATE TABLE oracle (
     keywords TEXT NOT NULL,
     power TEXT,
     toughness TEXT,
+    -- The card's own colours (front face's for a two-faced card), unlike its colour identity.
+    colors TEXT NOT NULL,
     cheapest_cents INTEGER
 );
 CREATE INDEX oracle_name ON oracle (name_key);
@@ -197,6 +199,7 @@ class ParsedCard:
     keywords: tuple[str, ...] = ()
     power: str | None = None
     toughness: str | None = None
+    colors: str = ""
 
 
 @dataclass(slots=True, frozen=True)
@@ -216,6 +219,7 @@ class CardText:
     keywords: tuple[str, ...]
     power: str | None
     toughness: str | None
+    colors: str
     # Slugs of the tags put on the card itself, not their parents.
     tags: tuple[str, ...]
 
@@ -427,11 +431,12 @@ class CardDb:
 
     def card_text(self, oracle_id: str) -> CardText | None:
         rows = self._query(
-            "SELECT oracle_text, keywords, power, toughness FROM oracle WHERE oracle_id = ?", [oracle_id]
+            "SELECT oracle_text, keywords, power, toughness, colors FROM oracle WHERE oracle_id = ?",
+            [oracle_id],
         )
         if not rows:
             return None
-        text, keywords, power, toughness = rows[0]
+        text, keywords, power, toughness, colors = rows[0]
         tags = self._query(
             "SELECT slug FROM tag JOIN tag_member ON tag.tag_id = tag_member.tag_id"
             " WHERE oracle_id = ? ORDER BY slug",
@@ -443,6 +448,7 @@ class CardDb:
             tuple(k for k in keywords.split("|") if k),
             power,
             toughness,
+            colors,
             tuple(t[0] for t in tags),
         )
 
@@ -585,7 +591,7 @@ def _fill(
                     if card.printing.regular:
                         _keep_lowest(cheapest, oracle_id, *prices)
             db.executemany(
-                "INSERT INTO oracle VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO oracle VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     (*row, cheapest.get(oracle_id, cheapest_any.get(oracle_id)))
                     for oracle_id, row in oracle.items()
@@ -641,6 +647,7 @@ def _oracle_row(card: ParsedCard) -> tuple[object, ...]:
         "".join(f"|{keyword.casefold()}" for keyword in card.keywords) + "|" if card.keywords else "",
         card.power,
         card.toughness,
+        card.colors,
     )
 
 

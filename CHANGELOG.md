@@ -10,6 +10,10 @@
   checks one card, `--json` prints the report, `--to-board` puts the missing staples on the deck's board,
   and with no deck it shows every bracket 5 deck side by side. Sample sizes are set in the config's `[meta]`
   table; answers are cached for a day, combos for a week.
+- `cmdr meta` answers come from each card's rules text as well as its tags: bounce, damage and colour hosers
+  reach only what they can hit (types, colours, toughness, mana value), counters follow their conditions, and
+  stax pieces must match what the combo's steps do (ADR 0008). The card database stores card colours (schema 5);
+  the next `sync` rebuilds it.
 - Desktop app: a Meta panel per deck with the same report, a Meta combos table included; it opens from
   cache and fetches on Refresh meta.
 

@@ -387,3 +387,12 @@ def real_card_set(name: str) -> str:
         if card["name"] == name:
             return card["set"]
     raise AssertionError(f"{name} is not in the fixture")
+
+
+def test_colours_come_from_the_card_then_its_front_face_then_its_cost() -> None:
+    # Talismans are colourless though their mana symbols give them a colour identity.
+    talisman = real_card("Battered Golem", "5dn") | {"colors": [], "color_identity": ["U", "B"]}
+    flip = real_card("Sundering Eruption // Volcanic Fissure", "mh3")
+    flip["card_faces"][0]["colors"] = ["R"]
+    parsed = [parse_card(talisman), parse_card(flip), parse_card(real_card("Magda, Brazen Outlaw", "plst"))]
+    assert [card.colors if card else None for card in parsed] == ["", "R", "R"]

@@ -7,6 +7,7 @@ data.scryfall.io, which has no rate limit. The API itself is called once per ref
 import gzip
 import json
 import logging
+import re
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -218,6 +219,7 @@ def parse_card(raw: object) -> ParsedCard | None:
         cmc=_number(card, "cmc", where) if "cmc" in card else _number(front, "cmc", where),
         type_line=type_line,
         color_identity=_colors(str_list(card, "color_identity", where)),
+        colors=_card_colors(card, front, where),
         game_changer=card.get("game_changer") is True,
         commander_legal=req_object(card, "legalities", where).get("commander") == "legal",
         edhrec_rank=opt_int(card, "edhrec_rank", where),
@@ -368,6 +370,16 @@ def _number(obj: Mapping[str, object], key: str, where: str) -> float:
     if not isinstance(value, int | float) or isinstance(value, bool):
         raise ShapeError(f"{where}.{key}: expected a number")
     return float(value)
+
+
+def _card_colors(card: Mapping[str, object], front: Mapping[str, object], where: str) -> str:
+    """The card's colours: on the card, else on its front face, else the coloured symbols of its cost."""
+    for source in (card, front):
+        if "colors" in source:
+            return _colors(str_list(source, "colors", where))
+    cost = opt_str(card, "mana_cost", where) or opt_str(front, "mana_cost", where) or ""
+    symbols = re.findall(r"\{([^}]*)\}", cost)
+    return "".join(color for color in COLORS if any(color in symbol for symbol in symbols))
 
 
 def _colors(colors: tuple[str, ...]) -> str:

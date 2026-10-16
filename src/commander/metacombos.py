@@ -1,18 +1,18 @@
 """The combos the most-played commanders' lists run, and what a deck has to answer each of them.
 
-An answer is a deck card that removes a piece (removal whose Tagger tags reach the piece's type), counters
-one, or stops the combo working: a stax piece, found by its tags or, since Tagger misses some (Null Rod,
-Stony Silence), by a phrase in its rules text, and matched against what the combo's steps do.
+An answer is a deck card that removes or counters a piece (commander.answers reads what it reaches), or
+stops the combo working: a stax piece, found by its tags or, since Tagger misses some (Null Rod, Stony
+Silence), by a phrase in its rules text, and matched against what the combo's steps do.
 """
 
 import re
 from collections import defaultdict
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, replace
 from datetime import date
 from enum import Enum
 
-from commander.answers import AnswerKind, answer_kinds, card_key
+from commander.answers import CardAnswer, Piece, card_answers, card_key, piece_facts
 from commander.carddb import CardDb, Theme
 from commander.metadata import CommanderCombos, MetaCommander
 from commander.models import Deck
@@ -41,7 +41,7 @@ class Stop(Enum):
     CHEATED_IN = (
         "stops permanents put onto the battlefield",
         ("prevent-etb",),
-        r"enters[^.]*without being cast|weren't cast",
+        r"enters[^.]*without being cast|weren't cast|can't enter",
     )
     CASTING = (
         "limits casting",
@@ -58,13 +58,17 @@ class Stop(Enum):
         "graveyard hate",
         ("hate-graveyard", "graveyard-seal", "sweeper-graveyard"),
         r"would be put into [^.]*graveyard[^.]*exile it instead",
+        # Tagger files Grafdigger's Cage here too, though it exiles nothing: only cards that do count.
+        r"exile[^.]*graveyard|graveyard[^.]*exile",
     )
     TOKENS = ("token hate", ("hate-token",), r"tokens? (?:can't|don't) (?:be created|enter)")
 
-    def __init__(self, label: str, slugs: tuple[str, ...], phrase: str) -> None:
+    def __init__(self, label: str, slugs: tuple[str, ...], phrase: str, requires: str | None = None) -> None:
         self.label = label
         self.slugs = slugs
         self.phrase = re.compile(phrase, re.IGNORECASE)
+        # Rules text a card must have for this stop, whatever its tags say.
+        self.requires = re.compile(requires, re.IGNORECASE) if requires else None
 
 
 class AnswerRole(Enum):
@@ -97,10 +101,12 @@ class MetaCombo:
 
 @dataclass(slots=True, frozen=True)
 class LockScope:
-    """What an activation lock reaches (one card type, or any permanent) and whether mana abilities escape."""
+    """What a lock reaches (a card type or any, some zones or all) and whether mana abilities escape."""
 
     type_word: str | None = None
     spares_mana: bool = False
+    # "graveyard" and "library" for Grafdigger's Cage; empty for a lock on every zone.
+    zones: frozenset[str] = frozenset()
 
 
 ANY = LockScope()
@@ -110,7 +116,7 @@ ANY = LockScope()
 class _DeckAnswers:
     """What each deck card can do against a combo, worked out once per deck."""
 
-    removal: dict[str, tuple[AnswerKind, ...]]
+    removal: dict[str, CardAnswer]
     stops: dict[str, tuple[tuple[Stop, LockScope], ...]]
 
 
@@ -136,6 +142,7 @@ def meta_combos(
                 seen.setdefault(combo.id, combo)
                 shares[combo.id].append((commander.stats.name, share, commander.stats.meta_share))
     answers = _deck_answers(deck, db)
+    facts = piece_facts(db, {(p.name, p.type_line) for combo in seen.values() for p in combo.pieces})
     ranked = [
         MetaCombo(
             id=combo.id,
@@ -145,7 +152,7 @@ def meta_combos(
             results=combo.results,
             exposure=sum(share * meta for _, share, meta in shares[combo.id]),
             played_by=tuple(sorted(((n, s) for n, s, _ in shares[combo.id]), key=lambda r: -r[1])),
-            answers=combo_answers(combo, answers),
+            answers=combo_answers(combo, answers, facts),
         )
         for combo in seen.values()
     ]
@@ -153,7 +160,9 @@ def meta_combos(
     return tuple(ranked[:MAX_COMBOS])
 
 
-def combo_answers(combo: ComboDetail, deck: _DeckAnswers) -> tuple[ComboAnswer, ...]:
+def combo_answers(
+    combo: ComboDetail, deck: _DeckAnswers, facts: Mapping[str, Piece]
+) -> tuple[ComboAnswer, ...]:
     """Each deck card's best answer to the combo: stax first, then removal, then counters, by name within."""
     found: dict[str, ComboAnswer] = {}
     for card, stops in sorted(deck.stops.items()):
@@ -161,12 +170,13 @@ def combo_answers(combo: ComboDetail, deck: _DeckAnswers) -> tuple[ComboAnswer, 
             if stop_applies(stop, scope, combo):
                 found[card] = ComboAnswer(card, stop.label, AnswerRole.STAX)
                 break
-    for card, kinds in sorted(deck.removal.items()):
+    pieces = [(piece, as_cast(combo, piece, facts)) for piece in combo.pieces]
+    for card, answer in sorted(deck.removal.items()):
         if card in found:
             continue
-        answer = _interaction(card, combo, kinds)
-        if answer is not None:
-            found[card] = answer
+        interaction = _interaction(answer, pieces)
+        if interaction is not None:
+            found[card] = interaction
     order = list(AnswerRole)
     return tuple(sorted(found.values(), key=lambda a: (order.index(a.role), a.card)))
 
@@ -179,9 +189,9 @@ def stop_applies(stop: Stop, scope: LockScope, combo: ComboDetail) -> bool:  # n
         case Stop.ACTIVATIONS:
             return any(_activated(piece, scope, steps) for piece in combo.pieces)
         case Stop.ENTER_TRIGGERS:
-            return "etb" in results or "enters" in steps
+            return any(_enter_trigger(line, scope, combo.pieces) for line in steps.splitlines())
         case Stop.CHEATED_IN:
-            return re.search(r"(?:return|put)\w*[^.\n]*(?:onto|to) the battlefield", steps) is not None
+            return any(_put_onto_battlefield(line, scope, combo.pieces) for line in steps.splitlines())
         case Stop.CASTING:
             return "storm" in results or "cast" in results or len(re.findall(r"\bcast\b", steps)) >= 2  # noqa: PLR2004 — a loop casts at least twice
         case Stop.OFF_HAND_CASTING:
@@ -197,12 +207,62 @@ def stop_applies(stop: Stop, scope: LockScope, combo: ComboDetail) -> bool:  # n
             return "token" in results
 
 
+_WHEN_ENTERS = re.compile(r"\bwhen (.+?) enters\b")
+# Spellbook words a piece's own enter trigger as "Thassa's Oracle enters the battlefield, causing ...".
+_ENTERS_CAUSING = re.compile(r"^(.+?) enters(?: the battlefield)?, (?:causing|triggering)")
+_ONTO_BATTLEFIELD = re.compile(r"\b(?:return|put)\w*[^.\n]*(?:onto|to) the battlefield")
+_FROM_ZONE = re.compile(
+    r"\bfrom (?:your |their |a |an |the |its owner's |each )?(?:opponent's )?(graveyard|library)"
+)
+_TYPE_HINTS = {"creature": "Creature", "artifact": "Artifact", "treasure": "Artifact", "land": "Land"}
+
+
+def _enter_trigger(line: str, scope: LockScope, pieces: Sequence[ComboPiece]) -> bool:
+    """Whether the step is something triggering as a card enters, of a type the lock reaches."""
+    found = _WHEN_ENTERS.search(line) or _ENTERS_CAUSING.search(line)
+    if found is None:
+        return False
+    what = found.group(1)
+    # "When it enters" means the piece the step casts.
+    named = _named_pieces(line if what == "it" else what, pieces)
+    return _of_type(scope.type_word, what, named)
+
+
+def _put_onto_battlefield(line: str, scope: LockScope, pieces: Sequence[ComboPiece]) -> bool:
+    """Whether the step puts a card onto the battlefield from a zone, and of a type, the lock reaches."""
+    if _ONTO_BATTLEFIELD.search(line) is None:
+        return False
+    if scope.zones:
+        zone = _FROM_ZONE.search(line)
+        if zone is None or zone.group(1) not in scope.zones:
+            return False
+    return _of_type(scope.type_word, line, _named_pieces(line, pieces))
+
+
+def _named_pieces(text: str, pieces: Sequence[ComboPiece]) -> list[ComboPiece]:
+    return [p for p in pieces if _short(p.name) in text]
+
+
+def _of_type(type_word: str | None, text: str, named: Sequence[ComboPiece]) -> bool:
+    """Whether what enters is of the lock's type: by the pieces named, else by a type word, else unknown."""
+    if type_word is None:
+        return True
+    if named:
+        return any(type_word in p.type_line.split(" // ", maxsplit=1)[0].split() for p in named)
+    hinted = {kind for word, kind in _TYPE_HINTS.items() if word in text}
+    return not hinted or type_word in hinted
+
+
+def _short(name: str) -> str:
+    return name.split(" // ", maxsplit=1)[0].split(",", maxsplit=1)[0].casefold()
+
+
 def _activated(piece: ComboPiece, scope: LockScope, steps: str) -> bool:
     if piece.zones and not set(piece.zones) & _BATTLEFIELD:
         return False
     if scope.type_word and scope.type_word not in piece.type_line.split(" // ", maxsplit=1)[0].split():
         return False
-    short = piece.name.split(" // ", maxsplit=1)[0].split(",", maxsplit=1)[0].casefold()
+    short = _short(piece.name)
     for line in steps.splitlines():
         if "activate" not in line or short not in line:
             continue
@@ -213,54 +273,73 @@ def _activated(piece: ComboPiece, scope: LockScope, steps: str) -> bool:
     return False
 
 
-def _interaction(card: str, combo: ComboDetail, kinds: tuple[AnswerKind, ...]) -> ComboAnswer | None:
-    """Removal reaching a piece on the battlefield, else a counterspell, which meets any piece as cast."""
-    for piece in combo.pieces:
+def as_cast(combo: ComboDetail, piece: ComboPiece, facts: Mapping[str, Piece]) -> Piece:
+    """The piece's facts, marked cast for free when it costs nothing or the steps cast it for {0}."""
+    fact = facts.get(piece.name.casefold(), Piece(piece.name, piece.type_line))
+    free = re.search(
+        rf"\bcast {re.escape(_short(piece.name))}[^.\n]*by paying \{{0\}}", combo.description.casefold()
+    )
+    if fact.mana_value == 0 or free:
+        return replace(fact, cast_free=True)
+    return fact
+
+
+def _interaction(answer: CardAnswer, pieces: Sequence[tuple[ComboPiece, Piece]]) -> ComboAnswer | None:
+    """Removal reaching a piece on the battlefield, else a counterspell reaching a piece as it is cast."""
+    for piece, fact in pieces:
         on_field = not piece.zones or bool(set(piece.zones) & _BATTLEFIELD)
-        if on_field and any(
-            kind.hits(piece.type_line) for kind in kinds if kind is not AnswerKind.COUNTERSPELL
-        ):
-            return ComboAnswer(card, f"removes {piece.name}", AnswerRole.REMOVAL)
-    if AnswerKind.COUNTERSPELL in kinds:
-        return ComboAnswer(card, "counters a piece", AnswerRole.COUNTER)
+        if on_field and answer.removes(fact):
+            return ComboAnswer(answer.name, f"removes {piece.name}", AnswerRole.REMOVAL)
+    for piece, fact in pieces:
+        if answer.counters(fact):
+            return ComboAnswer(answer.name, f"counters {piece.name}", AnswerRole.COUNTER)
     return None
 
 
 def _deck_answers(deck: Deck, db: CardDb) -> _DeckAnswers:
     infos = db.cards_named(card.name for card in deck.main_cards)
     by_id = {info.oracle_id: info.name for info in infos.values()}
-    kinds = answer_kinds(db, list(by_id))
-    removal: dict[str, tuple[AnswerKind, ...]] = {}
-    for oracle_id, name in by_id.items():
-        found = tuple(kind for kind in AnswerKind if oracle_id in kinds[kind])
-        if found:
-            removal[name] = found
+    removal = {answer.name: answer for answer in card_answers(db, by_id).values()}
     tagged = _stop_tags(db, list(by_id))
     stops: dict[str, tuple[tuple[Stop, LockScope], ...]] = {}
     for oracle_id, name in by_id.items():
         text = db.card_text(oracle_id)
-        rules = text.text if text else ""
-        found_stops: list[tuple[Stop, LockScope]] = []
-        for stop in Stop:
-            match = stop.phrase.search(rules)
-            if match:
-                found_stops.append((stop, _scope(rules[match.start() : rules.find(".", match.end()) + 1])))
-            elif oracle_id in tagged[stop]:
-                found_stops.append((stop, ANY))
+        found_stops = card_stops(
+            text.text if text else "", {stop for stop in Stop if oracle_id in tagged[stop]}
+        )
         if found_stops:
-            stops[name] = tuple(found_stops)
+            stops[name] = found_stops
     return _DeckAnswers(removal, stops)
 
 
+def card_stops(rules: str, tagged: set[Stop]) -> tuple[tuple[Stop, LockScope], ...]:
+    """How a card stops combos, from its rules text or else its tags, with the scope its text sets."""
+    found: list[tuple[Stop, LockScope]] = []
+    for stop in Stop:
+        if stop.requires is not None and not stop.requires.search(rules):
+            continue
+        match = stop.phrase.search(rules)
+        if match:
+            # The whole sentence: what a lock covers often comes before its phrase ("Creature cards in ...").
+            start = max(rules.rfind(".", 0, match.start()), rules.rfind("\n", 0, match.start())) + 1
+            found.append((stop, _scope(rules[start : rules.find(".", match.end()) + 1])))
+        elif stop in tagged:
+            found.append((stop, ANY))
+    return tuple(found)
+
+
 def _scope(sentence: str) -> LockScope:
-    """Which permanents an activation lock covers, from the sentence that sets it up."""
+    """Which permanents a lock covers, from the sentence that sets it up."""
     words = sentence.casefold()
     spares_mana = "mana abilities" in words
+    zones = frozenset(
+        zone for zone, stem in (("graveyard", "graveyard"), ("library", "librar")) if stem in words
+    )
     if "artifact" in words:
-        return LockScope("Artifact", spares_mana)
+        return LockScope("Artifact", spares_mana, zones)
     if "creature" in words:
-        return LockScope("Creature", spares_mana)
-    return LockScope(None, spares_mana)
+        return LockScope("Creature", spares_mana, zones)
+    return LockScope(None, spares_mana, zones)
 
 
 def _stop_tags(db: CardDb, oracle_ids: Sequence[str]) -> dict[Stop, frozenset[str]]:
