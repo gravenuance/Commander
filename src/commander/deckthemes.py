@@ -125,6 +125,8 @@ class DeckThemes:
     unmatched: tuple[str, ...]
     # Theme categories whose cards share nothing distinctive.
     vague: tuple[str, ...]
+    # Deck tags that name a play style (cEDH, Tempo), not cards.
+    play_styles: tuple[str, ...] = ()
 
 
 @dataclass(slots=True, frozen=True)
@@ -186,9 +188,11 @@ def merge_themes(deck: Deck, profile: Profile, db: CardDb) -> MergedThemes:
 def derive_themes(deck: Deck, db: CardDb, rules: CoverRules = CoverRules()) -> DeckThemes:  # noqa: B008 — frozen, so one shared default is safe
     themes: list[DerivedTheme] = []
     unmatched: list[str] = []
+    play_styles: list[str] = []
     for name in deck.tags or ():
         spec = deck_tag_spec(name, db)
         if spec is None:
+            play_styles.append(name)
             continue
         if spec.empty:
             unmatched.append(name)
@@ -220,7 +224,7 @@ def derive_themes(deck: Deck, db: CardDb, rules: CoverRules = CoverRules()) -> D
             tags=tuple(value for kind, value in picks if kind is FeatureKind.TAG),
         )
         themes.append(DerivedTheme(ThemeSource.CATEGORY, name, spec, covered, len(cards)))
-    return DeckThemes(tuple(themes), tuple(unmatched), tuple(vague))
+    return DeckThemes(tuple(themes), tuple(unmatched), tuple(vague), tuple(play_styles))
 
 
 def deck_tag_spec(name: str, db: CardDb) -> ThemeSpec | None:

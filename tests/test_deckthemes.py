@@ -199,6 +199,7 @@ def test_unmatched_deck_tags_are_reported_and_a_deck_without_any_has_no_themes(
 ) -> None:
     assert derive_themes(replace(deck, tags=("Spaghetti",), cards=()), db).unmatched == ("Spaghetti",)
     assert derive_themes(replace(deck, tags=None, cards=()), db) == DeckThemes((), (), ())
+    assert derive_themes(replace(deck, cards=()), db).play_styles == ("cEDH",)
 
 
 RAMP_ID = "2f3e4ad7-5e60-41b4-bdbc-653f16869cf6"

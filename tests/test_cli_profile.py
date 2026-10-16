@@ -45,7 +45,13 @@ def test_without_a_profile_says_how_to_start_one(tmp_path: Path, raw_deck: Json,
     synced(tmp_path, raw_deck)
     code, out, _ = profile(["magda"], tmp_path, own_cache)
     assert code == 0
-    assert out.splitlines()[1] == "no profile; `cmdr profile 10004639 --init` starts one"
+    assert out.splitlines()[1:] == [
+        "no profile; `cmdr profile 10004639 --init` starts one",
+        "from Archidekt:",
+        "  Dwarves (deck tag): types Dwarf",
+        "  Vehicles (deck tag): types Vehicle",
+        "  cEDH (deck tag): a play style, no theme",
+    ]
 
 
 def test_profile_is_shown_and_unknown_tags_are_warned(
@@ -63,8 +69,26 @@ def test_profile_is_shown_and_unknown_tags_are_warned(
         "themes: types Instant; tags no-such-tag",
         "exclude: Chaos Warp",
         "keep: categories Maybeboard",
+        "from Archidekt:",
+        "  Dwarves (deck tag): types Dwarf",
+        "  Vehicles (deck tag): types Vehicle",
+        "  cEDH (deck tag): a play style, no theme",
     ]
     assert "tag 'no-such-tag' is not a Tagger tag" in err
+
+
+def test_profile_shows_the_derived_themes_it_leaves_out(
+    tmp_path: Path, raw_deck: Json, own_cache: Path
+) -> None:
+    synced(tmp_path, raw_deck)
+    ignoring = PROFILE.replace("[exclude]", 'ignore = ["Vehicles", "Spaghetti"]\n[exclude]')
+    (deck_folder(tmp_path) / PROFILE_FILE).write_text(ignoring, encoding="utf-8")
+    code, out, err = profile(["magda"], tmp_path, own_cache)
+    assert code == 0
+    lines = out.splitlines()
+    assert "themes: types Instant; tags no-such-tag; ignore Vehicles, Spaghetti" in lines
+    assert "  Vehicles (deck tag): left out by the profile" in lines
+    assert "the profile ignores 'Spaghetti', which is no deck tag or category" in err
 
 
 def test_profile_json(tmp_path: Path, raw_deck: Json, own_cache: Path) -> None:
@@ -78,6 +102,18 @@ def test_profile_json(tmp_path: Path, raw_deck: Json, own_cache: Path) -> None:
         {"draw": 0},
         ["no-such-tag"],
     )
+    assert data["derived"][1] == {
+        "source": "deck tag",
+        "name": "Vehicles",
+        "types": ["Vehicle"],
+        "keywords": [],
+        "tags": [],
+        "covered": None,
+        "size": None,
+        "used": True,
+    }
+    assert (data["playStyleTags"], data["unmatchedDeckTags"], data["vagueCategories"]) == (["cEDH"], [], [])
+    assert (data["themes"]["ignore"], data["unknownIgnores"]) == ([], [])
 
 
 def test_invalid_profile_is_a_usage_error(tmp_path: Path, raw_deck: Json, own_cache: Path) -> None:

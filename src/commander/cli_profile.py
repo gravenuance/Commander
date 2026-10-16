@@ -13,6 +13,7 @@ from commander.deckprofile import (
     resolve_themes,
     write_profile_template,
 )
+from commander.deckthemes import DerivedTheme, MergedThemes, ThemeSource, merge_themes
 from commander.pricing import format_eur
 
 
@@ -34,18 +35,23 @@ def _cmd_profile(args: argparse.Namespace, ctx: Context) -> int:
     profile = read_profile(stored.folder)
     with open_card_db(ctx) as db:
         unknown = resolve_themes(profile, db).unknown_tags
+        merged = merge_themes(stored.deck, profile, db)
     for slug in unknown:
         print(f"cmdr: tag {slug!r} is not a Tagger tag; `cmdr tags` finds them", file=ctx.err)
+    for name in merged.unknown_ignores:
+        print(f"cmdr: the profile ignores {name!r}, which is no deck tag or category", file=ctx.err)
     if args.json:
-        json.dump(profile_json(profile, unknown), ctx.out, ensure_ascii=False, indent=2)
+        document = {**profile_json(profile, unknown), **derived_json(merged)}
+        json.dump(document, ctx.out, ensure_ascii=False, indent=2)
         ctx.out.write("\n")
         return EXIT_OK
     path = profile_path(stored.folder)
     print(f"{stored.deck.name} ({stored.deck.id})", file=ctx.out)
-    if not path.exists():
-        print(f"no profile; `cmdr profile {stored.deck.id} --init` starts one", file=ctx.out)
-        return EXIT_OK
-    for line in profile_lines(profile):
+    if path.exists():
+        lines = profile_lines(profile)
+    else:
+        lines = [f"no profile; `cmdr profile {stored.deck.id} --init` starts one"]
+    for line in [*lines, *derived_lines(merged)]:
         print(line, file=ctx.out)
     return EXIT_OK
 
@@ -57,7 +63,10 @@ def profile_lines(profile: Profile) -> list[str]:
         ("bracket ceiling", str(profile.bracket_ceiling) if profile.bracket_ceiling else ""),
         ("price limit", format_eur(profile.max_card_cents) if profile.max_card_cents is not None else ""),
         ("targets", targets),
-        ("themes", _spec_text(profile.themes)),
+        (
+            "themes",
+            "; ".join(filter(None, [_spec_text(profile.themes), _names(profile.ignore_themes, "ignore")])),
+        ),
         ("exclude", "; ".join(filter(None, [_spec_text(profile.exclude), _names(profile.exclude_cards)]))),
         (
             "keep",
@@ -75,11 +84,51 @@ def profile_json(profile: Profile, unknown_tags: tuple[str, ...]) -> dict[str, o
         "bracketCeiling": profile.bracket_ceiling,
         "maxCardCents": profile.max_card_cents,
         "targets": {role.value: n for role, n in profile.targets.items()},
-        "themes": _spec_json(profile.themes),
+        "themes": {**_spec_json(profile.themes), "ignore": list(profile.ignore_themes)},
         "exclude": {**_spec_json(profile.exclude), "cards": list(profile.exclude_cards)},
         "keep": {"cards": list(profile.keep_cards), "categories": list(profile.keep_categories)},
         "unknownTags": list(unknown_tags),
     }
+
+
+def derived_lines(merged: MergedThemes) -> list[str]:
+    """What the deck's Archidekt deck tags and categories say, theme by theme, in Archidekt's order."""
+    derived = merged.derived
+    used = {(t.source, t.name) for t in merged.used}
+    lines = [_derived_line(t, (t.source, t.name) in used) for t in derived.themes]
+    lines += [f"  {name} (deck tag): matches no type, keyword or Tagger tag" for name in derived.unmatched]
+    lines += [f"  {name} (deck tag): a play style, no theme" for name in derived.play_styles]
+    lines += [f"  {name} (category): its cards share nothing distinctive" for name in derived.vague]
+    return ["from Archidekt:", *lines] if lines else ["from Archidekt: no deck tags or theme categories"]
+
+
+def derived_json(merged: MergedThemes) -> dict[str, object]:
+    used = {(t.source, t.name) for t in merged.used}
+    return {
+        "derived": [
+            {
+                "source": t.source.value,
+                "name": t.name,
+                **_spec_json(t.spec),
+                "covered": t.covered,
+                "size": t.size,
+                "used": (t.source, t.name) in used,
+            }
+            for t in merged.derived.themes
+        ],
+        "unmatchedDeckTags": list(merged.derived.unmatched),
+        "playStyleTags": list(merged.derived.play_styles),
+        "vagueCategories": list(merged.derived.vague),
+        "unknownIgnores": list(merged.unknown_ignores),
+    }
+
+
+def _derived_line(theme: DerivedTheme, used: bool) -> str:  # noqa: FBT001 — one flag, read at the call
+    source = theme.source.value
+    if theme.source is ThemeSource.CATEGORY and theme.size:
+        source += f", {theme.covered} of {theme.size} cards"
+    what = _spec_text(theme.spec) if used else "left out by the profile"
+    return f"  {theme.name} ({source}): {what}"
 
 
 def _spec_text(spec: ThemeSpec) -> str:
