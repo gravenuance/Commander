@@ -5,7 +5,7 @@ EUR prices and brackets. The README covers usage; this file covers working on it
 
 ## Commands (from the repo root)
 - Full check, the same as CI would run: `uv run ruff check && uv run ruff format --check && pyright && uv run pytest`
-- Pull decks and refresh card data: `uv run cmdr sync` (config is in `%APPDATA%\Commander\config.toml`, workspace `D:\Projects\Commander\decks`, card database `%LOCALAPPDATA%\Commander\cards.sqlite`)
+- Pull decks and refresh card data: `uv run cmdr sync` (config is in `%APPDATA%\Commander\config.toml`, workspace `D:\Projects\Commander\decks`, card database `%LOCALAPPDATA%\Commander\cards.sqlite`). It also compiles each deck's Considered ideas from the meta and recent Archidekt decks (ADR 0014), so the first sync of the day takes minutes: run it in the background, or pass `--no-ideas`. Tests that sync only as setup pass `--no-ideas` too
 - Research: `uv run cmdr analyze <deck> --details`, `uv run cmdr price <deck>`, `uv run cmdr bracket <deck> --details`, `uv run cmdr suggest <deck>`, `uv run cmdr card "<name>" ...` (rules text and Tagger tags) and `uv run cmdr tags <text>`; set `PYTHONIOENCODING=utf-8` when piping output from Git Bash, because deck names contain emoji
 - cEDH meta for the bracket 5 decks: `uv run cmdr meta` (all side by side) or `uv run cmdr meta <deck>`; the first run of the day takes minutes because EDHTop16, Archidekt search and Spellbook are paced (ADR 0007), so run it in the background and read the output file
 - Catch up on what the user decided in the app before deck work: `uv run cmdr board log --since <last time>`

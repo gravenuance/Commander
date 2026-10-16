@@ -24,7 +24,8 @@ This creates `.venv` with the exact versions pinned in `uv.lock`.
 
 ```sh
 uv run cmdr init --user MAKKIS --workspace decks   # one-time: save your username and the deck folder
-uv run cmdr sync                                    # pull every public deck and report what changed
+uv run cmdr sync                                    # pull every public deck, report what changed, compile ideas
+uv run cmdr sync --no-ideas                         # the same, without compiling ideas from other players
 uv run cmdr list                                    # show the decks saved locally
 uv run cmdr analyze                                 # curve, lands and roles of every deck side by side
 uv run cmdr analyze magda --details                 # one deck in full, by id or part of its name or commander
@@ -256,6 +257,15 @@ each `sync`; adding one moves that entry into the deck, printing and all, and tu
 off the Sideboard or Maybeboard with the next save. `suggest --to-board` puts its ideas on the board, and
 a card turned down there is never suggested again.
 
+Each `sync` also compiles ideas from other players into Considered
+([ADR 0014](docs/adr/0014-considered-compiled-on-every-sync.md)). A bracket 5 deck gets the staples it
+misses from its commander's EDHTop16 lists ("meta") and from the most-viewed recent Archidekt decks for
+its commander ("archidekt decks"); other decks get the Archidekt ones, from decks at their own bracket. Each
+source adds at most 10, most played first, and only cards with a deck card to replace. EDHREC is never
+asked. Answers are cached for a day with `meta`'s, so the first sync of the day takes a few minutes and
+the rest are quick. If every source for a deck fails, its board stays as it was and the sync still
+succeeds. `sync --no-ideas` skips this step.
+
 Every change lands in the deck's activity log with who made it (you, Claude, cmdr or Archidekt).
 `cmdr board log` shows every deck's log, oldest first; `--since` keeps what is newer. The log is how
 Claude catches up on what you decided in the app. `cmdr board show`, `research`, `remove` and `plan` cover
@@ -270,7 +280,8 @@ grouped by card type with counts and EUR totals.
   tools'. Hover over an idea or click it to light the deck cards it could replace. Click one of them to
   queue the swap, or × to turn the idea down. The targets are the cards you or Claude picked, or else the
   weakest cards in the same role ([ADR 0011](docs/adr/0011-app-deck-grid-and-replacement-targets.md)).
-  An idea with nothing to replace stays on the board but does not show.
+  An idea with nothing to replace stays on the board but does not show. Each idea's badge says who
+  added it, or for a compiled idea where it came from ("meta", "archidekt decks").
 - **Labels**: the flag in a grid card's top-left corner sets its Archidekt label. Every deck offers your
   account's labels in their colours, read on each signed-in `sync` and before each label change
   ([ADR 0012](docs/adr/0012-card-labels-from-the-archidekt-account.md)). A change is written to
@@ -416,7 +427,7 @@ Tests use recorded fixture data and never touch the network.
 | Archidekt (`archidekt.com/api`) | Reading decks; changing them with `apply --save` | Public decks need no login; changes need `cmdr login`, whose token lives in Windows Credential Manager and is refreshed on each save. The API is undocumented, so every response's shape is checked and a clear message names what changed. A save makes a handful of requests, never retried. Its written terms forbid automated requests; its co-founder has said on its forum that the API is open to use. See [ADR 0004](docs/adr/0004-deck-changes-through-archidekts-site-api.md). |
 | Scryfall (`api.scryfall.com/bulk-data`, files on `data.scryfall.io`; card images from `cards.scryfall.io` in the app) | Card facts, rules text, EUR prices, Tagger tags for roles and profiles, card art | One API call per `sync` for the file list; the files themselves have no rate limit. Scryfall updates prices once a day and asks for bulk files rather than per-card calls for lookups like these. Tag data is community-maintained and can change. See [ADR 0001](docs/adr/0001-scryfall-bulk-card-data.md). |
 | Commander Spellbook (`backend.commanderspellbook.com`: `estimate-bracket`, `find-my-combos`) | Bracket estimates, combos, and combos one card short | One request per deck and command, at most four at a time, and none while a cached answer is under 7 days old. Spellbook asks tools to name themselves in the User-Agent, keep to a few calls per user action, stay under about 80 requests a minute, handle 429, and credit and link back to commanderspellbook.com, which `bracket` and `suggest` do in their output. Only card names and quantities are sent. See [ADR 0002](docs/adr/0002-bracket-estimates-from-commander-spellbook.md) and [ADR 0003](docs/adr/0003-suggestions-from-spellbook-and-scryfall.md). |
-| EDHTop16 (`edhtop16.com/api/graphql`) | Tournament lists, spice and the most-played commanders for `meta` | Requests 1.5 s apart, none while a cached answer is under a day old. Its terms offer the API as-is and forbid excessive automated requests, implying endorsement and redistributing its statistics; reports credit it and stay local. See [ADR 0007](docs/adr/0007-meta-from-edhtop16-archidekt-and-spellbook.md). |
-| Archidekt deck search (`archidekt.com/api/decks/v3/`) | Other players' recent decks for `meta` | Searches 2 s apart and a few deck reads per commander, cached for a day; your own decks are left out. Under the same informal permission as the rest of Archidekt's API (ADR 0004). |
+| EDHTop16 (`edhtop16.com/api/graphql`) | Tournament lists, spice and the most-played commanders for `meta` and `sync`'s ideas | Requests 1.5 s apart, none while a cached answer is under a day old. Its terms offer the API as-is and forbid excessive automated requests, implying endorsement and redistributing its statistics; reports credit it and stay local. See [ADR 0007](docs/adr/0007-meta-from-edhtop16-archidekt-and-spellbook.md). |
+| Archidekt deck search (`archidekt.com/api/decks/v3/`) | Other players' recent decks for `meta` and `sync`'s ideas | Searches 2 s apart and a few deck reads per commander, cached for a day; your own decks are left out. Under the same informal permission as the rest of Archidekt's API (ADR 0004). |
 | Commander Spellbook (`find-my-combos`, for `meta`) | The combos the most-played commanders' lists run | One request per meta commander, 1 s apart, cached for 7 days. |
 | EDHREC (via Scryfall's `edhrec_rank`) | Popularity ranks for `suggest` | Never contacted: the rank comes inside Scryfall's bulk files. EDHREC's terms forbid automated requests to its site. |

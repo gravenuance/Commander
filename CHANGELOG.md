@@ -26,6 +26,11 @@
   (stax, removal, counters), tagged with the commanders playing them. Etali's Food Chain loop, Glarb's
   Thassa's Oracle lines and Magda's artifact loops now show what threatens them.
 
+- `cmdr sync` fills Considered from other players (ADR 0014): the staples each deck misses from its
+  commander's EDHTop16 lists (bracket 5) and from the most-viewed recent Archidekt decks at its bracket,
+  up to 10 per source, only cards with something to replace. EDHREC is never asked. The app's badge
+  shows where an idea came from. `sync --no-ideas` skips it; `--json` lists the new ideas per deck.
+
 ### Fixed
 - Combo answers read locks more closely (ADR 0013): Grafdigger's Cage stops casting from graveyards and
   libraries only, not from exile; Deafening Silence and Ranger-Captain of Eos no longer stop a loop that
@@ -39,6 +44,8 @@
   same generic cuts.
 - Desktop app: the open Meta panel updates by itself when `cmdr meta` (or anything else) saves new meta
   answers to the cache, instead of only when the panel is opened or the deck changes.
+- `cmdr meta --to-board` and the app's Refresh meta add the same ideas as `sync`: at most 10 per source,
+  each with a deck card to replace.
 
 ## 0.3.0 - 2026-10-16
 
