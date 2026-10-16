@@ -182,12 +182,28 @@ def check_bracket(
     if expected is not tag:
         log.warning("Spellbook's tag %s differs from its rules' %s", tag.label, expected.label)
         notes.append(
-            f"Commander Spellbook's tag ({tag.label}) differs from its published rules ({expected.label}), "
-            "so the causes may be incomplete"
+            f"Spellbook's tag ({tag.label}) differs from its rules ({expected.label}); "
+            "causes may be incomplete"
         )
     target = min(limits) if limits else None
     above = tuple(c for c in causes if target is not None and _lifts_above(c.tag, target))
     return BracketCheck(tuple(notes), above)
+
+
+def check_json(check: BracketCheck) -> dict[str, object]:
+    return {
+        "notes": list(check.notes),
+        "causes": [
+            {
+                "tag": cause.tag.label,
+                "brackets": cause.tag.brackets,
+                "reason": cause.reason.value,
+                "cards": list(cause.cards),
+                "comboUrl": cause.combo.url if cause.combo else None,
+            }
+            for cause in check.causes
+        ],
+    }
 
 
 def _lifts_above(tag: BracketTag, bracket: int) -> bool:

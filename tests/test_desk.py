@@ -154,6 +154,43 @@ def test_the_mana_tab_reports_lands_and_colour_sources(desk: Desk) -> None:
     assert mana["comparison"] is None
 
 
+def test_the_bracket_check_names_what_lifts_the_estimate_above_the_ceiling(
+    desk: Desk, settings: DeskSettings, fake: FakeArchidekt
+) -> None:
+    folder = settings.workspace / "10004639-honestly-though"
+    (folder / "profile.toml").write_text("version = 1\nbracket_ceiling = 2\n", encoding="utf-8")
+    answer = desk.bracket(DECK)
+    assert answer["estimate"] == {"tag": "Ruthless", "brackets": "4+"}
+    # The fixture deck is set to 5 on Archidekt.
+    assert answer["notes"] == [
+        "the profile's bracket ceiling (2) is below the Archidekt bracket (5)",
+        "the estimate (4+) is above the profile's bracket ceiling (2)",
+    ]
+    causes = items(answer, "causes")
+    assert [(c["tag"], c["brackets"], c["reason"]) for c in causes] == [
+        ("Ruthless", "4+", "a fast two-card combo that wins"),
+        ("Spicy", "3-4", "a fast combo of about two cards"),
+        ("Powerful", "3+", "a game changer"),
+    ]
+    assert causes[0]["comboUrl"] == "https://commanderspellbook.com/combo/1486-1651-7298/"
+    assert causes[2]["cards"] == ["Ancient Tomb"]
+    desk.bracket(DECK)
+    assert len(fake.spellbook.bodies) == 1
+
+
+def test_the_bracket_check_without_spellbook_still_compares_the_ceiling(
+    desk: Desk, settings: DeskSettings, fake: FakeArchidekt
+) -> None:
+    folder = settings.workspace / "10004639-honestly-though"
+    (folder / "profile.toml").write_text("version = 1\nbracket_ceiling = 4\n", encoding="utf-8")
+    fake.spellbook.status = 403
+    answer = desk.bracket(DECK)
+    assert answer["estimate"] is None
+    assert "HTTP 403" in str(answer["unavailable"])
+    assert answer["notes"] == ["the profile's bracket ceiling (4) is below the Archidekt bracket (5)"]
+    assert answer["causes"] == []
+
+
 def test_export_copies_the_saved_deck_for_topdeck(desk: Desk) -> None:
     exported = desk.export(DECK)
     text = cast("str", exported["text"])

@@ -213,6 +213,20 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   color: var(--muted);
 }
 .chip:empty { display: none; }
+.chip.estimate { background: none; font: inherit; font-size: var(--text-s); cursor: default; }
+.chip.estimate.warn { border-color: var(--warn); background: var(--warn-soft); color: var(--warn); cursor: pointer; }
+.chip.estimate:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.bracket-detail {
+  max-width: 80ch;
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius-s);
+  background: var(--warn-soft);
+  font-size: var(--text-s);
+}
+.bracket-note { margin: 0 0 var(--space-1); }
+.causes { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.cause-tag { display: inline-block; min-width: 3.5em; font-weight: 600; color: var(--warn); }
 .tags { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .tags:empty { display: none; }
 .tag {
@@ -415,6 +429,23 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .gcard:hover .flag, .flag:focus-visible, .flag[aria-expanded="true"] { opacity: 1; }
 .flag.saving { cursor: progress; animation: pulse 900ms ease-in-out infinite alternate; }
 @keyframes pulse { to { opacity: 0.4; } }
+
+/* Right of the label flag, in the strip a stacked card still shows. */
+.bracket-mark {
+  position: absolute;
+  z-index: 2;
+  top: 2px;
+  left: 30px;
+  padding: 0 6px;
+  border: 1px solid var(--warn);
+  border-radius: 999px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.5;
+  cursor: help;
+}
 
 .grid.choosing .gcard:not(.target) img { filter: brightness(0.6) saturate(0.7); }
 .swap {

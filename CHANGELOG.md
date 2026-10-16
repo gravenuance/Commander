@@ -57,6 +57,12 @@
   list under *Rejected*, closed until opened, with their reasons and a Reconsider button. Panels and the
   Meta sections fold and remember it.
 
+- Bracket discrepancies come with their causes (ADR 0021): when the Archidekt bracket, the profile's
+  `bracket_ceiling` and Commander Spellbook's estimate disagree, `cmdr bracket <deck>` and the app say how
+  and name the cards and combos that lift the estimate, by Spellbook's own rules. The app shows an Estimate
+  chip under the deck's name and badges the causing cards in the grid. Spellbook answers are fetched once
+  more (cache version 3).
+
 ### Fixed
 - A board wipe clears creatures (ADR 0020): sweepers that remove only artifacts, enchantments, lands or
   other noncreature permanents (Vandalblast, Bane of Progress, Armageddon) no longer count as board

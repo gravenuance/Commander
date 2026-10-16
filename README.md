@@ -76,7 +76,7 @@ day; `sync --no-cards` skips that step. If the download fails, the previous card
 ### Brackets
 
 `bracket` sends each deck's card list to Commander Spellbook's bracket estimator and shows its answer beside
-the bracket set on Archidekt, marking a deck with `!` when the Archidekt bracket is lower than the estimate.
+the bracket set on Archidekt and the profile's `bracket_ceiling`. A deck is marked `!` when they disagree.
 Spellbook answers with a tag that fits a range of brackets:
 
 | Tag | Brackets | Meaning, per Spellbook's [syntax guide](https://commanderspellbook.com/syntax-guide/) |
@@ -92,6 +92,21 @@ The combo list comes from the same answer. A combo marked `2-card` needs only tw
 which can mean three named cards when one is your commander; `2-card?` is Spellbook's "arguably two cards".
 Game changers come from Scryfall's card data, and tutors, mass land denial and extra turns from the tags,
 so those lists work offline.
+
+`bracket <deck>` says what disagrees and why ([ADR 0021](docs/adr/0021-bracket-discrepancy-causes.md)):
+
+```text
+estimate: bracket 4+ (Ruthless), Commander Spellbook 2026-10-16
+  ! the estimate (4+) is above the Archidekt bracket (3)
+  because of:
+    Ruthless   a fast two-card combo that wins: Kiki-Jiki, Mirror Breaker + Village Bell-Ringer
+```
+
+The causes follow Spellbook's own rules, so they are exactly what lifted its tag, checked against the lower of
+the Archidekt bracket and the ceiling. Tutors are never a cause, since Spellbook doesn't count them. A ceiling
+that differs from the Archidekt bracket, or a deck set above everything its cards fit (bracket 5 with a Spicy
+3-4 estimate), gets a note without cards. If Spellbook's tag ever differs from what its rules give, the note
+says the causes may be incomplete.
 
 Each answer is kept for 7 days in `%LOCALAPPDATA%\Commander\spellbook`, and asked again sooner when the deck's
 cards change or with `--refresh`. If Spellbook cannot be reached, an older answer for the same cards is
@@ -333,6 +348,10 @@ base against Frank Karsten's published numbers
   with your answers, each tagged with the meta decks that play them. **Refresh meta** fetches new data
   and puts the meta's staples into Considering. A card you turned down comes back once its meta share
   rises 20 points.
+- **Estimate**, beside the bracket under the deck's name, is Spellbook's estimate. When it, the bracket and
+  the profile's ceiling disagree, it turns amber; click it for the notes and causes, each combo linked to
+  Spellbook. The cards behind a cause carry the bracket they lift the deck to in an amber badge beside the
+  label flag, with the reasons on hover. The estimate comes from the same 7-day cache as `bracket`.
 - **Review changes** checks the queued swaps against the deck on Archidekt and saves them.
 
 The window follows changes made with the CLI or by Claude within a couple of seconds. The rail on the

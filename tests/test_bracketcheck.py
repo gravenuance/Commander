@@ -194,10 +194,7 @@ def test_a_tag_the_rules_dont_explain_says_the_causes_may_be_incomplete(
     check = check_bracket(2, None, unexplained)
     assert check.notes == (
         "the estimate (4+) is above the Archidekt bracket (2)",
-        (
-            "Commander Spellbook's tag (Ruthless) differs from its published rules (Powerful), "
-            "so the causes may be incomplete"
-        ),
+        "Spellbook's tag (Ruthless) differs from its rules (Powerful); causes may be incomplete",
     )
     assert [c.reason for c in check.causes] == [Reason.TWO_CARD]
     assert "differs from its rules" in caplog.text

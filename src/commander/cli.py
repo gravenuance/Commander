@@ -30,7 +30,7 @@ from commander.board import BoardCard, BoardError, BoardService, Origin, feed_su
 from commander.boardsave import pick_up_aside
 from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
 from commander.bracket import BracketReport, EstimateResult, bracket_cards, estimate_cache, estimate_decks
-from commander.bracketcheck import BracketCheck
+from commander.bracketcheck import check_json
 from commander.carddb import CARD_DB_FILE, CardDataError, CardDb, Role
 from commander.cli_app import add_app_command
 from commander.cli_board import add_board_commands
@@ -1096,7 +1096,7 @@ def _bracket_json(report: BracketReport) -> dict[str, object]:
         },
         "setBelowEstimate": report.set_below_estimate,
         "ceiling": report.ceiling,
-        "check": _check_json(report.check),
+        "check": check_json(report.check),
         "gameChangers": list(cards.game_changers),
         "tutors": _optional_list(cards.tutors),
         "massLandDenial": _optional_list(cards.mass_land_denial),
@@ -1112,21 +1112,6 @@ def _bracket_json(report: BracketReport) -> dict[str, object]:
                 "twoCard": c.two_card.value,
             }
             for c in (_sorted_combos(estimate.combos) if estimate else [])
-        ],
-    }
-
-
-def _check_json(check: BracketCheck) -> dict[str, object]:
-    return {
-        "notes": list(check.notes),
-        "causes": [
-            {
-                "tag": cause.tag.label,
-                "reason": cause.reason.value,
-                "cards": list(cause.cards),
-                "comboUrl": cause.combo.url if cause.combo else None,
-            }
-            for cause in check.causes
         ],
     }
 

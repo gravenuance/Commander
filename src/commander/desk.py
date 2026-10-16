@@ -33,6 +33,9 @@ from commander.board import (
     read_board,
 )
 from commander.boardsave import preview_board, save_board
+from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
+from commander.bracket import estimate_cache, estimate_deck
+from commander.bracketcheck import check_bracket, check_json
 from commander.carddb import CardDataError, CardDb, CardInfo, ResolvedCard
 from commander.cli_meta import report_json
 from commander.cli_output import change_mark, change_text
@@ -325,6 +328,28 @@ class Desk:
             counts.update(peer.multiples)
             lists.append(counts)
         return "recent decks", lists
+
+    @_guarded
+    def bracket(self, deck_id: int) -> Json:
+        """Spellbook's estimate beside the set bracket and the ceiling, and what lifts it (ADR 0021).
+
+        An answer under a week old comes from the cache; otherwise Spellbook is asked, which takes seconds.
+        """
+        stored = self._stored(deck_id)
+        ceiling = read_profile(stored.folder).bracket_ceiling
+        cache = estimate_cache(self._settings.cache / SPELLBOOK_CACHE_FOLDER)
+        with self._client_factory() as http:
+            result = estimate_deck(
+                stored.deck, SpellbookClient(Fetcher(http)), cache, now=self._now, refresh=False
+            )
+        estimate = result.data
+        return {
+            "estimate": {"tag": estimate.tag.label, "brackets": estimate.tag.brackets} if estimate else None,
+            "fetchedAt": result.fetched_at.isoformat() if result.fetched_at else None,
+            # Not "error": the page takes that key for a failed call, and the ceiling is still checked.
+            "unavailable": result.error,
+            **check_json(check_bracket(stored.deck.bracket, ceiling, estimate)),
+        }
 
     @_guarded
     def export(self, deck_id: int) -> Json:
