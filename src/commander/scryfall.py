@@ -227,6 +227,8 @@ def parse_card(raw: object) -> ParsedCard | None:
         keywords=str_list(card, "keywords", where),
         power=opt_str(card, "power", where) or opt_str(front, "power", where),
         toughness=opt_str(card, "toughness", where) or opt_str(front, "toughness", where),
+        produced="".join(c for c in "WUBRGC" if c in str_list(card, "produced_mana", where)),
+        rarity=opt_str(card, "rarity", where) or "",
     )
 
 

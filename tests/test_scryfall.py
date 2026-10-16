@@ -87,6 +87,20 @@ def test_parses_a_normal_printing() -> None:
     assert card.edhrec_rank == 1220
 
 
+def test_the_mana_a_card_makes_and_its_rarity_are_kept() -> None:
+    # Made up on a real card: the fixture lines are trimmed to what other tests read.
+    raw = {**real_card("Mountain", "clb"), "produced_mana": ["R"], "rarity": "common"}
+    card = parse_card(raw)
+    assert card is not None
+    assert (card.produced, card.rarity) == ("R", "common")
+    signet = parse_card(
+        {**real_card("Arcane Signet", "frc"), "produced_mana": ["G", "C", "W", "U", "R", "B"]}
+    )
+    assert signet is not None
+    # In WUBRG order with colourless last, whatever order Scryfall lists them in; no rarity reads as "".
+    assert (signet.produced, signet.rarity) == ("WUBRGC", "")
+
+
 def test_basic_land_has_no_rank() -> None:
     card = parse_card(real_card("Mountain", "clb"))
     assert card is not None

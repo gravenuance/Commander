@@ -14,7 +14,7 @@ from commander.models import DeckCard
 log = logging.getLogger(__name__)
 
 # Bump whenever the tables or the meaning of a column change; an old file is rebuilt, never migrated.
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 CARD_DB_FILE = "cards.sqlite"
 _QUERY_CHUNK = 500
 _CARD_QUERIES = {
@@ -103,6 +103,12 @@ ORDER BY instr(t.slug, :needle) != 1, cards DESC, t.slug
 LIMIT :limit
 """
 
+_CARD_MANA_QUERY = """
+SELECT o.oracle_id, o.name, o.mana_cost, o.cmc, o.type_line, o.oracle_text, m.produced, m.rarity
+FROM oracle o JOIN card_mana m ON m.oracle_id = o.oracle_id
+WHERE o.name_key IN ({})
+"""
+
 _SCHEMA = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE oracle (
@@ -126,6 +132,11 @@ CREATE TABLE oracle (
     cheapest_cents INTEGER
 );
 CREATE INDEX oracle_name ON oracle (name_key);
+CREATE TABLE card_mana (
+    oracle_id TEXT PRIMARY KEY,
+    produced TEXT NOT NULL,
+    rarity TEXT NOT NULL
+);
 CREATE INDEX oracle_rank ON oracle (edhrec_rank, oracle_id);
 CREATE TABLE printing (
     scryfall_id TEXT PRIMARY KEY,
@@ -231,6 +242,23 @@ class ParsedCard:
     power: str | None = None
     toughness: str | None = None
     colors: str = ""
+    # The mana it can make, as colour letters and C for colourless ("WU"), from Scryfall's produced_mana.
+    produced: str = ""
+    rarity: str = ""
+
+
+@dataclass(slots=True, frozen=True)
+class CardMana:
+    """What a card does for a mana base: the mana it makes, its rarity, its text (ADR 0019)."""
+
+    oracle_id: str
+    name: str
+    mana_cost: str
+    cmc: float
+    type_line: str
+    oracle_text: str
+    produced: str
+    rarity: str
 
 
 @dataclass(slots=True, frozen=True)
@@ -511,6 +539,11 @@ class CardDb:
         counts.sort(key=lambda t: (-t.cards, t.slug))
         return counts[:MAX_TAG_MATCHES]
 
+    def card_mana(self, names: Iterable[str]) -> dict[str, CardMana]:
+        """What each named card does for a mana base, by casefolded name; unknown names are left out."""
+        rows = self._select_in(_CARD_MANA_QUERY, [name.casefold() for name in names])
+        return {row[1].casefold(): CardMana(*row) for row in rows}
+
     def card_text(self, oracle_id: str) -> CardText | None:
         rows = self._query(
             "SELECT oracle_text, keywords, power, toughness, colors FROM oracle WHERE oracle_id = ?",
@@ -656,6 +689,7 @@ def _fill(
         db.executescript(_SCHEMA)
         count = 0
         oracle: dict[str, tuple[object, ...]] = {}
+        mana: dict[str, tuple[str, str, str]] = {}
         # Cheapest regular printing first; a card with no priced regular printing falls back to any.
         cheapest: dict[str, int] = {}
         cheapest_any: dict[str, int] = {}
@@ -668,6 +702,7 @@ def _fill(
                 for card in batch:
                     oracle_id = card.printing.oracle_id
                     oracle.setdefault(oracle_id, _oracle_row(card))
+                    mana.setdefault(oracle_id, (oracle_id, card.produced, card.rarity))
                     prices = (card.printing.eur_cents, card.printing.eur_foil_cents)
                     _keep_lowest(cheapest_any, oracle_id, *prices)
                     if card.printing.regular:
@@ -679,6 +714,7 @@ def _fill(
                     for oracle_id, row in oracle.items()
                 ),
             )
+            db.executemany("INSERT INTO card_mana VALUES (?, ?, ?)", mana.values())
             db.executemany(
                 "INSERT INTO role_member VALUES (?, ?)",
                 ((role.value, oracle_id) for role, members in role_members.items() for oracle_id in members),

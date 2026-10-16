@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from dataclasses import replace
 from pathlib import Path
@@ -15,7 +16,15 @@ from commander.carddb import (
     Theme,
     read_meta,
 )
-from conftest import ARCANE_SIGNET, CARDS_UPDATED_AT, LIGHTNING_BOLT, MAGDA_ORACLE, Json
+from conftest import (
+    ARCANE_SIGNET,
+    CARDS_UPDATED_AT,
+    LIGHTNING_BOLT,
+    MAGDA_ORACLE,
+    Json,
+    build_card_db,
+    filler_card,
+)
 
 MAGDA_PLST = "338380ba-8415-40a2-8b81-2b30218ea16a"
 
@@ -283,3 +292,15 @@ def test_theme_candidates_are_ranked_nonland_cards_in_identity(card_db_file: Pat
     # Same order and exclusions as the ramp role: no land, no banned card, no unranked card.
     assert names == ["Arcane Signet", "Mind Stone", "Jeska's Will"]
     assert dwarves == ["Magda, Brazen Outlaw"]
+
+
+def test_card_mana_reads_what_each_card_makes(tmp_path: Path) -> None:
+    land = json.loads(filler_card(30_001, "Test Dual Land", 0.0))
+    land.update(type_line="Land", mana_cost="", produced_mana=["U", "W"], rarity="rare")
+    with CardDb(build_card_db(tmp_path, extra_cards=[json.dumps(land)])) as db:
+        found = db.card_mana(["test dual land", "Mind Stone", "No Such Card"])
+    assert sorted(found) == ["mind stone", "test dual land"]
+    dual = found["test dual land"]
+    assert (dual.name, dual.type_line, dual.produced, dual.rarity) == ("Test Dual Land", "Land", "WU", "rare")
+    # The fixture lines carry no produced_mana, so Mind Stone reads as making nothing here.
+    assert found["mind stone"].produced == ""
