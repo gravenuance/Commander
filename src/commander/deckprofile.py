@@ -33,6 +33,7 @@ _TOP_KEYS = frozenset(
         "themes",
         "exclude",
         "keep",
+        "key_cards",
         "ideas",
     }
 )
@@ -41,6 +42,7 @@ _THEMES_KEYS = _THEME_KEYS | {"ignore"}
 _EXCLUDE_KEYS = _THEME_KEYS | {"cards"}
 _KEEP_KEYS = frozenset({"cards", "categories"})
 _IDEAS_KEYS = frozenset({"commanders"})
+_KEY_CARDS_KEYS = frozenset({"ignore"})
 
 
 class ProfileError(ConfigError):
@@ -77,6 +79,8 @@ class Profile:
     keep_categories: tuple[str, ...] = ()
     # Themes read from the deck's Archidekt deck tags or categories, by name, to leave out.
     ignore_themes: tuple[str, ...] = ()
+    # Cards found as key cards (ADR 0017) that are not, by name.
+    ignore_keys: tuple[str, ...] = ()
     # Other commanders, alone or with a partner, whose recent Archidekt decks also give ideas (ADR 0015).
     adjacent: tuple[tuple[str, ...], ...] = ()
 
@@ -129,6 +133,7 @@ def parse_profile(raw: Mapping[str, object], where: str) -> Profile:
     exclude = _table(raw, "exclude", _EXCLUDE_KEYS, where)
     keep = _table(raw, "keep", _KEEP_KEYS, where)
     ideas = _table(raw, "ideas", _IDEAS_KEYS, where)
+    key_cards = _table(raw, "key_cards", _KEY_CARDS_KEYS, where)
     return Profile(
         archetype=_text(raw.get("archetype"), "archetype", where) or "",
         bracket_ceiling=_whole(raw.get("bracket_ceiling"), "bracket_ceiling", where, 1, 5),
@@ -140,6 +145,7 @@ def parse_profile(raw: Mapping[str, object], where: str) -> Profile:
         keep_cards=_strings(keep, "cards", "keep", where),
         keep_categories=_strings(keep, "categories", "keep", where),
         ignore_themes=_strings(themes, "ignore", "themes", where),
+        ignore_keys=_strings(key_cards, "ignore", "key_cards", where),
         adjacent=_commander_groups(ideas.get("commanders"), where),
     )
 
@@ -202,6 +208,11 @@ cards = []
 [keep]
 cards = []
 categories = []
+
+# Key cards, which `cmdr meta` checks the meta's answers against, are found each time (`cmdr meta` says
+# why); the cards kept above are key too. ignore: cards by name that are found but are not key.
+[key_cards]
+ignore = []
 
 # Commanders that play like this one: their recent Archidekt decks at this deck's bracket give `sync`
 # ideas too. A partner pair goes in its own list:

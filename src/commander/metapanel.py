@@ -3,6 +3,7 @@ each meta combo with the deck cards that stop it, all tagged with the meta decks
 
 from collections.abc import Sequence
 
+from commander.keycards import KeyCard
 from commander.meta import OwnCombo, Threat
 from commander.metacombos import MetaCombo
 from commander.models import short_commander_name
@@ -10,15 +11,15 @@ from commander.models import short_commander_name
 type Json = dict[str, object]
 
 
-def piece_threats(pieces: Sequence[str], threats: Sequence[Threat]) -> list[Json]:
-    """Every key piece with the threats that hit it, most exposed first; pieces nothing hits come last."""
-    rows: list[tuple[float, str, list[Json]]] = []
-    for piece in pieces:
-        hitting = sorted((t for t in threats if piece in t.hits), key=lambda t: (-t.exposure, t.name))
+def piece_threats(keys: Sequence[KeyCard], threats: Sequence[Threat]) -> list[Json]:
+    """Every key card with why and the threats that hit it, most exposed first; untouched ones come last."""
+    rows: list[tuple[float, KeyCard, list[Json]]] = []
+    for key in keys:
+        hitting = sorted((t for t in threats if key.name in t.hits), key=lambda t: (-t.exposure, t.name))
         rows.append(
             (
                 sum(t.exposure for t in hitting),
-                piece,
+                key,
                 [
                     {
                         "name": t.name,
@@ -30,8 +31,8 @@ def piece_threats(pieces: Sequence[str], threats: Sequence[Threat]) -> list[Json
                 ],
             )
         )
-    rows.sort(key=lambda row: (-row[0], row[1].casefold()))
-    return [{"card": piece, "threats": found} for _, piece, found in rows]
+    rows.sort(key=lambda row: (-row[0], row[1].name.casefold()))
+    return [{"card": key.name, "reasons": list(key.reasons), "threats": found} for _, key, found in rows]
 
 
 def own_combo_rows(combos: Sequence[OwnCombo]) -> list[Json]:

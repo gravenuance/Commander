@@ -47,7 +47,7 @@ from commander.jsonshape import (
     req_str,
     str_list,
 )
-from commander.models import Deck
+from commander.models import Deck, plan_category
 from commander.net import NetworkError, Pacer
 from commander.spellbook import FRESH_FOR as SPELLBOOK_FRESH_FOR
 from commander.spellbook import ComboDetail, ComboPiece, SpellbookClient, SpellbookError, deck_request
@@ -94,6 +94,8 @@ class MetaCommander:
 class PeerList:
     deck: PeerDeck
     cards: tuple[str, ...]
+    # The cards its owner files under a category naming the plan, like "Combo Pieces" (ADR 0017).
+    planned: tuple[str, ...] = ()
 
 
 @dataclass(slots=True, frozen=True)
@@ -524,7 +526,9 @@ def _peer_lists(
             continue
         if len(group) > 1 and not wanted <= {name.casefold() for name in full.commanders}:
             continue
-        lists.append(PeerList(peer, tuple(sorted({card.name for card in full.main_cards}))))
+        names = sorted({card.name for card in full.main_cards})
+        planned = sorted({card.name for card in full.main_cards if any(map(plan_category, card.categories))})
+        lists.append(PeerList(peer, tuple(names), tuple(planned)))
     return PeerLists(tuple(lists), skipped)
 
 
@@ -644,6 +648,7 @@ def _encode_peers(peers: PeerLists) -> object:
                 "updatedAt": p.deck.updated_at.isoformat(),
                 "bracket": p.deck.bracket,
                 "cards": list(p.cards),
+                "planned": list(p.planned),
             }
             for p in peers.decks
         ],
@@ -657,7 +662,9 @@ def _decode_peers(raw: object) -> PeerLists:
         where = f"answer.decks[{index}]"
         d = as_object(item, where)
         cards = as_list(d.get("cards"), f"{where}.cards")
-        if not all(isinstance(card, str) for card in cards):
+        # Caches from before ADR 0017 have no "planned"; they read as none until their next refresh.
+        planned = as_list(d.get("planned", []), f"{where}.planned")
+        if not all(isinstance(card, str) for card in (*cards, *planned)):
             raise ShapeError(f"{where}.cards: expected names")
         peer = PeerDeck(
             id=req_int(d, "id", where),
@@ -667,7 +674,7 @@ def _decode_peers(raw: object) -> PeerLists:
             updated_at=datetime.fromisoformat(req_str(d, "updatedAt", where)),
             bracket=opt_int(d, "bracket", where),
         )
-        decks.append(PeerList(peer, tuple(str(card) for card in cards)))
+        decks.append(PeerList(peer, tuple(str(card) for card in cards), tuple(str(card) for card in planned)))
     return PeerLists(tuple(decks), req_int(obj, "skipped", "answer"))
 
 

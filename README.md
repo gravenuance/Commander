@@ -155,9 +155,12 @@ decks for that commander updated in the same window. It lists:
   with the cards the ten most-played commanders' lists commonly play against it: stax pieces first, then
   removal for a piece, then counterspells, tagged with the commanders whose lists play them. A combo nothing
   stops is flagged. See [ADR 0013](docs/adr/0013-the-decks-own-combos-against-the-meta.md).
-- **Meta answers to your key pieces:** the cards the ten most-played commanders' lists would use against
-  your commander and the cards under `[keep]` in the deck's profile, weighted by how much each commander
-  is played.
+- **Your key cards** and the meta's answers to them: the cards the ten most-played commanders' lists
+  would use against them, weighted by how much each commander is played. Key cards are found each time,
+  each with why: the commander, the deck's combos, cards you or other players of the commander file
+  under a combo or win category, and cards costing far above the deck's curve (Glarb's Protean Hulk).
+  `[keep]` in the profile adds more; `[key_cards] ignore` leaves one out. See
+  [ADR 0017](docs/adr/0017-key-cards-found-from-the-deck.md).
 - **Meta combos and your answers:** the combos those lists run most, from
   [Commander Spellbook](https://commanderspellbook.com), each with the deck's answers: stax pieces that stop
   it first, then removal for a piece, then counterspells. "no answer in the deck" flags the gaps.
@@ -211,6 +214,9 @@ cards = ["Skullclamp"]
 [keep]                       # never offered as cuts
 cards = []
 categories = ["Stax"]        # every card under this Archidekt category
+
+[key_cards]                  # found each time; `cmdr meta` says why
+ignore = ["Pyrokinesis"]     # found, but not key
 
 [ideas]                      # commanders that play like this one: `sync` learns from their decks too
 commanders = ["The Gitrog Monster", ["Tevesh Szat, Doom of Fools", "Kodama of the East Tree"]]

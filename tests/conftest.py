@@ -75,20 +75,20 @@ def fixture_lines(name: str) -> list[str]:
     return [line for line in (FIXTURES / name).read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
-def filler_card(index: int) -> str:
+def filler_card(index: int, name: str | None = None, cmc: float = 1.0) -> str:
     return json.dumps(
         {
             "object": "card",
             "id": f"ffffffff-0000-4000-8000-{index:012d}",
             "oracle_id": f"eeeeeeee-0000-4000-8000-{index:012d}",
-            "name": f"Filler Card {index}",
+            "name": name or f"Filler Card {index}",
             "lang": "en",
             "layout": "normal",
             "set": "tst",
             "collector_number": str(index),
             "digital": False,
-            "cmc": 1.0,
-            "mana_cost": "{1}",
+            "cmc": cmc,
+            "mana_cost": f"{{{cmc:g}}}",
             "type_line": "Artifact",
             "color_identity": [],
             "game_changer": False,
@@ -175,8 +175,11 @@ def write_bulk(
     return cards_gz, tags_gz
 
 
-def build_card_db(folder: Path, extra_tags: list[str] | None = None) -> Path:
-    cards_gz, tags_gz = write_bulk(folder / "bulk", tags=tag_lines() + (extra_tags or []))
+def build_card_db(
+    folder: Path, extra_tags: list[str] | None = None, extra_cards: list[str] | None = None
+) -> Path:
+    cards = card_lines() + (extra_cards or [])
+    cards_gz, tags_gz = write_bulk(folder / "bulk", cards=cards, tags=tag_lines() + (extra_tags or []))
     path = folder / CARD_DB_FILE
     meta = CardDataMeta(CARDS_UPDATED_AT, TAGS_UPDATED_AT, "2026-10-15T12:00:00+00:00")
     tags = read_tags(tags_gz)

@@ -1,5 +1,5 @@
 """`cmdr meta`: what performing EDHTop16 lists and recent Archidekt decks play with the deck's commander, and
-which of the meta's cards answer its key pieces."""
+which of the meta's cards answer its key cards."""
 
 import argparse
 import json
@@ -48,7 +48,9 @@ _DESCRIPTION = """examples:
 
 Compares a deck with its commander's EDHTop16 lists (top cuts first, else every list) and the
 most-viewed recent Archidekt decks, and lists the cards the most-played commanders answer its key
-pieces with: the commander and what the deck's profile.toml keeps. Answers are cached for a day;
+cards with: the commander, its combos, the cards filed under a combo or win category (by you or by
+other players), cards costing far above the deck's curve, and what profile.toml keeps. Answers are
+cached for a day;
 the window and sample sizes are set in the config's [meta] table.
 """
 
@@ -248,13 +250,11 @@ def _print_outliers(report: MetaReport, out: TextIO) -> None:
 
 
 def _print_threats(report: MetaReport, out: TextIO) -> None:
-    print(
-        f"\nMeta answers to your key pieces ({len(report.key_pieces)}: {_names(report.key_pieces)})", file=out
-    )
-    if not report.keys_from_profile:
-        print(
-            "  only the commander counts: name key pieces under [keep] in the deck's profile.toml", file=out
-        )
+    print(f"\nYour key cards ({len(report.key_cards)})", file=out)
+    for key in report.key_cards:
+        print(f"  {key.name}: {'; '.join(key.reasons)}", file=out)
+    print("  (add one under [keep] in the profile; leave one out under [key_cards] ignore)", file=out)
+    print("\nMeta answers to your key cards", file=out)
     total = sum(stats.meta_share for stats in report.field)
     if not report.threats or total == 0:
         print("  none found", file=out)
@@ -268,7 +268,7 @@ def _print_threats(report: MetaReport, out: TextIO) -> None:
         players = ", ".join(
             f"{short_commander_name(name)} {round(share * 100)}%" for name, share in threat.played_by[:3]
         )
-        hits = "every key piece" if len(threat.hits) == len(report.key_pieces) else _names(threat.hits)
+        hits = "every key card" if len(threat.hits) == len(report.key_cards) else _names(threat.hits)
         rows.append(f"    {_percent(threat.exposure / total)}  {threat.name}: hits {hits}  ({players})")
     for kind, rows in by_kind.items():
         print(f"  {kind}", file=out)
@@ -430,8 +430,7 @@ def report_json(report: MetaReport) -> dict[str, object]:
             for p in report.spicy
         ],
         "outliers": [_share_json(c, "kept") for c in report.outliers],
-        "keyPieces": list(report.key_pieces),
-        "keysFromProfile": report.keys_from_profile,
+        "keyCards": [{"name": k.name, "reasons": list(k.reasons)} for k in report.key_cards],
         "threats": [
             {
                 "name": t.name,

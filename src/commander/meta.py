@@ -1,5 +1,5 @@
 """Reading other players' lists against a deck: what performing lists play that the deck doesn't, their spicy
-picks, the deck's own outliers, and which cards the most-played commanders answer the deck's key pieces with.
+picks, the deck's own outliers, and which cards the most-played commanders answer the deck's key cards with.
 """
 
 from collections import Counter, defaultdict
@@ -14,6 +14,7 @@ from commander.carddb import CardDb
 from commander.deckcache import Answer, AnswerSource
 from commander.deckprofile import Profile
 from commander.edhtop16 import CommanderStats, Entry
+from commander.keycards import KeyCard, key_cards
 from commander.metacombos import AnswerRole, MetaCombo, combo_answers, meta_combos, pool_answers
 from commander.metadata import MetaCommander, MetaData, PeerList
 from commander.models import COMMANDER_CATEGORY, Deck
@@ -137,9 +138,7 @@ class MetaReport:
     field: tuple[CommanderStats, ...]
     peers: tuple[PeerDeck, ...]
     peers_skipped: int
-    key_pieces: tuple[str, ...]
-    # True when the profile names key pieces; otherwise only the commander counts as one.
-    keys_from_profile: bool
+    key_cards: tuple[KeyCard, ...]
     sources: tuple[SourceState, ...]
 
 
@@ -179,7 +178,7 @@ def analyse(deck: Deck, data: MetaData, profile: Profile, db: CardDb) -> MetaRep
     field = tuple(
         MetaCommander(c.stats, _window(c.entries, data.since)) for c in (data.field.data or ()) if c.entries
     )
-    pieces, from_profile = key_pieces(deck, profile)
+    keys = key_cards(deck, profile, data.own_combos.data or (), peer_lists, db)
     names = _display_names(performing, peer_lists, deck)
     return MetaReport(
         deck=deck.short_name,
@@ -189,14 +188,13 @@ def analyse(deck: Deck, data: MetaData, profile: Profile, db: CardDb) -> MetaRep
         missing=missing_staples(deck, performing, peer_lists, names, db),
         spicy=spicy_picks(deck, performing),
         outliers=outliers(deck, performing, peer_lists, profile, db),
-        threats=threats(pieces, field, db),
+        threats=threats((k.name for k in keys), field, db),
         combos=meta_combos(deck, field, data.combos.data or (), data.since, db),
         own_combos=own_combos(data.own_combos.data or (), field, db),
         field=tuple(c.stats for c in (data.field.data or ())),
         peers=tuple(p.deck for p in peer_lists),
         peers_skipped=data.peers.data.skipped if data.peers.data else 0,
-        key_pieces=tuple(sorted(pieces)),
-        keys_from_profile=from_profile,
+        key_cards=keys,
         sources=(
             _state("EDHTop16 lists", data.lists),
             _state("EDHTop16 meta", data.field),
@@ -214,22 +212,6 @@ def performing_lists(entries: Sequence[Entry]) -> tuple[list[Entry], Basis]:
     if len(top) >= MIN_PERFORMING:
         return sorted(top, key=lambda e: e.placing), Basis.TOP_CUT
     return sorted(with_lists, key=lambda e: e.placing), Basis.ALL
-
-
-def key_pieces(deck: Deck, profile: Profile) -> tuple[frozenset[str], bool]:
-    """The deck's commanders plus the cards its profile keeps, by name or category."""
-    keep_names = {card_key(name) for name in profile.keep_cards}
-    keep_categories = {category.casefold() for category in profile.keep_categories}
-    pieces: set[str] = set()
-    for card in deck.main_cards:
-        categories = {category.casefold() for category in card.categories}
-        if (
-            COMMANDER_CATEGORY.casefold() in categories
-            or categories & keep_categories
-            or card_key(card.name) in keep_names
-        ):
-            pieces.add(card.name)
-    return frozenset(pieces), bool(keep_names or keep_categories)
 
 
 def missing_staples(

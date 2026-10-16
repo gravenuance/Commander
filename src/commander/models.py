@@ -6,6 +6,8 @@ COMMANDER_CATEGORY = "Commander"
 MAYBEBOARD_CATEGORY = "Maybeboard"
 # Casefolded names of the categories that hold cards under consideration, outside the deck.
 ASIDE_CATEGORIES = frozenset({"sideboard", "maybeboard"})
+# Words in an Archidekt category that file its cards as part of the deck's plan: "Combo Pieces", "WinCons".
+PLAN_WORDS = ("combo", "wincon", "finisher", "payoff", "keycard", "keypiece")
 ARCHIDEKT_DECK_URL = "https://archidekt.com/decks/{id}"
 # The card labels of the buying steps (ADR 0010): a card saved into a deck is still to buy, then ordered.
 DONT_HAVE_LABEL = "Don't Have"
@@ -120,3 +122,9 @@ class DeckSummary:
     updated_at: str
     # The deck tags the list shows; Archidekt keeps updated_at when only these change. None when not sent.
     tags: tuple[str, ...] | None = None
+
+
+def plan_category(name: str) -> bool:
+    """Whether an Archidekt category files its cards as the deck's plan, like "Combo Pieces" or "Win Con"."""
+    squeezed = "".join(ch for ch in name.casefold() if ch.isalnum())
+    return any(word in squeezed for word in PLAN_WORDS)

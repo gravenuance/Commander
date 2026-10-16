@@ -33,7 +33,7 @@ class MetaSettings:
     min_event_size: int = 16
     # Most-viewed recent Archidekt decks read in full per commander.
     peer_decks: int = 10
-    # Most-played commanders whose lists are searched for answers to the deck's key pieces.
+    # Most-played commanders whose lists are searched for answers to the deck's key cards.
     meta_commanders: int = 10
     # Best-placed lists read per meta commander.
     meta_lists: int = 30

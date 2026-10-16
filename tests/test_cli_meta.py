@@ -133,10 +133,12 @@ def test_the_report_compares_the_deck_with_performing_lists(home: Path, fake: Fa
     assert section(result.out, "Most-viewed Archidekt decks") == [
         "     120 views  2026-10-01  Peer 777  https://archidekt.com/decks/777"
     ]
-    assert section(result.out, "Meta answers to your key pieces") == [
-        "  only the commander counts: name key pieces under [keep] in the deck's profile.toml",
-        "  none found",
+    assert section(result.out, "Your key cards") == [
+        "  Magda, Brazen Outlaw: your commander",
+        "  Battered Golem: you file it under Combo Pieces",
+        "  (add one under [keep] in the profile; leave one out under [key_cards] ignore)",
     ]
+    assert section(result.out, "Meta answers to your key cards") == ["  none found"]
     assert section(result.out, "Meta combos and your answers") == [
         "   15%  Kinnan, Bonder Prodigy + Basalt Monolith: Infinite colorless mana  (Kinnan 50%)",
         "        stax: Disruptor Flute (stops activated abilities)",

@@ -16,7 +16,6 @@ from commander.meta import (
     analyse,
     card_key,
     check_card,
-    key_pieces,
     own_combos,
     performing_lists,
 )
@@ -171,16 +170,13 @@ def test_outliers_are_deck_cards_few_performing_lists_play(deck: Deck, db: CardD
     assert [(c.name, c.lists, c.flagged) for c in report.outliers] == [("Disruptor Flute", 0, True)]
 
 
-def test_key_pieces_are_the_commander_and_what_the_profile_keeps(deck: Deck) -> None:
-    assert key_pieces(deck, Profile()) == (frozenset({MAGDA}), False)
-    assert key_pieces(deck, Profile(keep_categories=("stax",))) == (
-        frozenset({MAGDA, "Disruptor Flute"}),
-        True,
-    )
-    assert key_pieces(deck, Profile(keep_cards=("battered golem",))) == (
-        frozenset({MAGDA, "Battered Golem"}),
-        True,
-    )
+def test_key_cards_are_the_commander_its_plan_and_what_the_profile_keeps(deck: Deck, db: CardDb) -> None:
+    report = analyse(deck, meta_data(TOP_CUT_LISTS), Profile(keep_categories=("stax",)), db)
+    assert [(k.name, k.reasons) for k in report.key_cards] == [
+        (MAGDA, ("your commander",)),
+        ("Battered Golem", ("you file it under Combo Pieces",)),
+        ("Disruptor Flute", ("kept by your profile",)),
+    ]
 
 
 def field() -> list[MetaCommander]:
@@ -201,12 +197,17 @@ def field() -> list[MetaCommander]:
 def test_threats_are_common_meta_answers_to_key_pieces(deck: Deck, db: CardDb) -> None:
     report = analyse(deck, meta_data(TOP_CUT_LISTS, field=field()), Profile(keep_categories=("Stax",)), db)
     assert [(t.name, t.kinds, t.hits, t.played_by) for t in report.threats] == [
-        ("Lightning Bolt", (AnswerKind.CREATURE_REMOVAL,), (MAGDA,), (("Big Commander", 1.0),)),
+        (
+            "Lightning Bolt",
+            (AnswerKind.CREATURE_REMOVAL,),
+            ("Battered Golem", MAGDA),
+            (("Big Commander", 1.0),),
+        ),
         # A quarter of the small commander's lists is under the 30% line, so only the big one names it.
         (
             "Chaos Warp",
             (AnswerKind.PERMANENT_REMOVAL,),
-            ("Disruptor Flute", MAGDA),
+            ("Battered Golem", "Disruptor Flute", MAGDA),
             (("Big Commander", 0.5),),
         ),
     ]
@@ -215,10 +216,9 @@ def test_threats_are_common_meta_answers_to_key_pieces(deck: Deck, db: CardDb) -
     assert [s.name for s in report.field] == ["Big Commander", "Small Commander"]
 
 
-def test_without_kept_pieces_only_the_commander_is_threatened(deck: Deck, db: CardDb) -> None:
+def test_without_kept_cards_only_the_found_key_cards_are_threatened(deck: Deck, db: CardDb) -> None:
     report = analyse(deck, meta_data(TOP_CUT_LISTS, field=field()), Profile(), db)
-    assert not report.keys_from_profile
-    assert [t.hits for t in report.threats] == [(MAGDA,), (MAGDA,)]
+    assert [t.hits for t in report.threats] == [("Battered Golem", MAGDA), ("Battered Golem", MAGDA)]
 
 
 def test_answer_kinds_reach_the_piece_types_they_name(db: CardDb) -> None:

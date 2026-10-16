@@ -3,6 +3,7 @@
 from typing import cast
 
 from commander.answers import AnswerKind
+from commander.keycards import KeyCard
 from commander.meta import MetaAnswer, OwnCombo, Threat
 from commander.metacombos import AnswerRole, ComboAnswer, MetaCombo
 from commander.metapanel import Json, combo_rows, own_combo_rows, piece_threats
@@ -19,12 +20,17 @@ def threat(name: str, hits: tuple[str, ...], exposure: float) -> Threat:
     return Threat(name, (AnswerKind.COUNTERSPELL,), hits, exposure, ((KINNAN, 0.9), (KRAUM, 0.5)))
 
 
-def test_each_key_piece_lists_what_stops_it_most_exposed_first() -> None:
+def test_each_key_card_lists_what_stops_it_most_exposed_first() -> None:
     threats = [
         threat("Force of Will", ("Drannith Magistrate", "Stony Silence"), 0.4),
         threat("Fierce Guardianship", ("Stony Silence",), 0.6),
     ]
-    rows = piece_threats(["Drannith Magistrate", "Ellivere of the Wild Court", "Stony Silence"], threats)
+    keys = [
+        KeyCard(name, ("why",))
+        for name in ("Drannith Magistrate", "Ellivere of the Wild Court", "Stony Silence")
+    ]
+    rows = piece_threats(keys, threats)
+    assert rows[0]["reasons"] == ["why"]
     assert [(r["card"], [t["name"] for t in threats_of(r)]) for r in rows] == [
         ("Stony Silence", ["Fierce Guardianship", "Force of Will"]),
         ("Drannith Magistrate", ["Force of Will"]),

@@ -785,7 +785,7 @@ function metaPieces(pieces) {
   const hit = pieces.filter((p) => p.threats.length);
   const clear = pieces.filter((p) => !p.threats.length).map((p) => p.card);
   const rows = hit.map((piece) => el("div", { class: "meta-row" },
-    el("p", { class: "meta-card", text: piece.card }),
+    el("p", { class: "meta-card", text: piece.card, title: piece.reasons.join("; ") }),
     shortList(piece.threats, THREATS_SHOWN, (t) => el("li", { class: "threat" },
       el("span", { class: "threat-name", text: t.name }),
       el("span", { class: "muted", text: t.kinds.join(", ") }),

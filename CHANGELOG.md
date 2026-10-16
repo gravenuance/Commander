@@ -39,6 +39,10 @@
   its commander, listed by `cmdr profile` (and `--json`) and in the app's deck header.
 
 ### Fixed
+- Key cards are found each time (ADR 0017), each with why: the deck's combos, cards you or other
+  players of the commander file under a combo or win category, and cards costing far above the deck's
+  curve, beside the commander and `[keep]`. `[key_cards] ignore` in the profile leaves one out. Peer deck
+  caches keep each deck's combo and win cards; older caches count none until their next refresh.
 - Replacements go like for like (ADR 0016): a card serving one of the deck's themes or leanings is offered
   only for an idea serving the same, and such swaps come first. Pantlaza's ideas no longer all offer its
   Dinosaurs as cuts. Below bracket 5, targets rank by how many recent decks play them.

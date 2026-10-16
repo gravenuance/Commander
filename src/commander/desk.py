@@ -327,7 +327,7 @@ class Desk:
             return {"report": None, "errors": [] if offline else [s.error for s in report.sources if s.error]}
         return {
             "report": report_json(report),
-            "pieces": piece_threats(report.key_pieces, report.threats),
+            "pieces": piece_threats(report.key_cards, report.threats),
             "combos": combo_rows(report.combos),
             "ownCombos": own_combo_rows(report.own_combos),
         }
