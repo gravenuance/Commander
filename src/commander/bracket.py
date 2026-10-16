@@ -7,9 +7,10 @@ from pathlib import Path
 
 from commander.analysis import game_changers, not_legal, tagged
 from commander.background import run_all
+from commander.bracketcheck import BracketCheck, check_bracket
 from commander.carddb import ResolvedCard, Role
 from commander.deckcache import Answer, AnswerSource, Clock, DeckCache, cached_answer
-from commander.jsonshape import as_object, req_list, req_str, str_list
+from commander.jsonshape import as_object, req_int, req_list, req_str, str_list
 from commander.models import Deck
 from commander.net import NetworkError
 from commander.spellbook import (
@@ -17,7 +18,10 @@ from commander.spellbook import (
     PARALLEL_REQUESTS,
     BracketEstimate,
     BracketTag,
+    CardFlag,
     Combo,
+    ComboFlag,
+    FlaggedCard,
     SpellbookClient,
     SpellbookError,
     TwoCard,
@@ -25,8 +29,9 @@ from commander.spellbook import (
 )
 
 CACHE_FOLDER = "spellbook"
-# 2: the answer moved from the "estimate" key to "answer"; older files are fetched over.
-CACHE_VERSION = 2
+# 2: the answer moved from the "estimate" key to "answer"; 3: combos keep their speed and flags, and the
+# flagged cards are kept. Older files are fetched over.
+CACHE_VERSION = 3
 
 
 type EstimateResult = Answer[BracketEstimate]
@@ -47,6 +52,12 @@ class BracketReport:
     deck: Deck
     cards: BracketCards
     result: EstimateResult
+    # The profile's bracket_ceiling, when it sets one.
+    ceiling: int | None = None
+
+    @property
+    def check(self) -> BracketCheck:
+        return check_bracket(self.deck.bracket, self.ceiling, self.result.data)
 
     @property
     def set_below_estimate(self) -> bool:
@@ -122,8 +133,14 @@ def _estimate_to_json(estimate: BracketEstimate) -> dict[str, object]:
                 "cards": list(c.cards),
                 "results": list(c.results),
                 "twoCard": c.two_card.value,
+                "speed": c.speed,
+                "flags": sorted(flag.value for flag in c.flags),
             }
             for c in estimate.combos
+        ],
+        "cards": [
+            {"name": c.name, "quantity": c.quantity, "flags": sorted(flag.value for flag in c.flags)}
+            for c in estimate.cards
         ],
     }
 
@@ -141,6 +158,20 @@ def _estimate_from_json(raw: object) -> BracketEstimate:
                 cards=str_list(combo, "cards", where),
                 results=str_list(combo, "results", where),
                 two_card=TwoCard(req_str(combo, "twoCard", where)),
+                speed=req_int(combo, "speed", where),
+                flags=frozenset(ComboFlag(flag) for flag in str_list(combo, "flags", where)),
             )
         )
-    return BracketEstimate(BracketTag.from_code(req_str(obj, "tag", "cache.estimate")), tuple(combos))
+    cards: list[FlaggedCard] = []
+    for index, item in enumerate(req_list(obj, "cards", "cache.estimate")):
+        where = f"cache.estimate.cards[{index}]"
+        card = as_object(item, where)
+        cards.append(
+            FlaggedCard(
+                name=req_str(card, "name", where),
+                quantity=req_int(card, "quantity", where),
+                flags=frozenset(CardFlag(flag) for flag in str_list(card, "flags", where)),
+            )
+        )
+    tag = BracketTag.from_code(req_str(obj, "tag", "cache.estimate"))
+    return BracketEstimate(tag, tuple(combos), tuple(cards))

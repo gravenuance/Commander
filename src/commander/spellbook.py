@@ -11,6 +11,7 @@ from commander.jsonshape import (
     opt_int,
     opt_str,
     req_bool,
+    req_int,
     req_list,
     req_object,
     req_str,
@@ -38,20 +39,24 @@ class SpellbookError(Exception):
 
 
 class BracketTag(Enum):
-    """Spellbook's bracket tags, with the lowest bracket each one fits, per its syntax guide."""
+    """Spellbook's bracket tags, with the lowest and highest bracket each one fits, per its syntax guide."""
 
-    RUTHLESS = ("R", "Ruthless", 4, "4+")
-    SPICY = ("S", "Spicy", 3, "3-4")
-    POWERFUL = ("P", "Powerful", 3, "3+")
-    ODDBALL = ("O", "Oddball", 2, "2-3")
-    CORE = ("C", "Core", 2, "2+")
-    EXHIBITION = ("E", "Exhibition", 1, "1+")
-    BANNED = ("B", "Banned", None, "not legal")
+    RUTHLESS = ("R", "Ruthless", 4, None, "4+")
+    SPICY = ("S", "Spicy", 3, 4, "3-4")
+    POWERFUL = ("P", "Powerful", 3, None, "3+")
+    ODDBALL = ("O", "Oddball", 2, 3, "2-3")
+    CORE = ("C", "Core", 2, None, "2+")
+    EXHIBITION = ("E", "Exhibition", 1, None, "1+")
+    BANNED = ("B", "Banned", None, None, "not legal")
 
-    def __init__(self, code: str, label: str, minimum: int | None, brackets: str) -> None:
+    def __init__(
+        self, code: str, label: str, minimum: int | None, maximum: int | None, brackets: str
+    ) -> None:
         self.code = code
         self.label = label
         self.minimum = minimum
+        # None when the tag fits every bracket from its minimum up.
+        self.maximum = maximum
         self.brackets = brackets
 
     @classmethod
@@ -69,6 +74,36 @@ class TwoCard(Enum):
     NO = "no"
 
 
+class ComboFlag(Enum):
+    """What estimate-bracket says of a combo in the deck; each value is its key in the answer."""
+
+    # Its results win or end the game on their own; borderline ones do in some decks.
+    RELEVANT = "relevant"
+    BORDERLINE_RELEVANT = "borderlineRelevant"
+    MASS_LAND_DENIAL = "massLandDenial"
+    EXTRA_TURN = "extraTurn"
+    LOCK = "lock"
+    SKIP_TURNS = "skipTurns"
+    CONTROL_ALL_OPPONENTS = "controlAllOpponents"
+    CONTROL_SOME_OPPONENTS = "controlSomeOpponents"
+
+
+class CardFlag(Enum):
+    """What estimate-bracket says of a card in the deck; each value is its key in the answer."""
+
+    BANNED = "banned"
+    GAME_CHANGER = "gameChanger"
+    MASS_LAND_DENIAL = "massLandDenial"
+    EXTRA_TURN = "extraTurn"
+
+
+@dataclass(slots=True, frozen=True)
+class FlaggedCard:
+    name: str
+    quantity: int
+    flags: frozenset[CardFlag]
+
+
 @dataclass(slots=True, frozen=True)
 class Combo:
     id: str
@@ -76,6 +111,9 @@ class Combo:
     cards: tuple[str, ...]
     results: tuple[str, ...]
     two_card: TwoCard
+    # 1 (slow) to 6: from the mana it needs, plus one when that is no sure minimum.
+    speed: int
+    flags: frozenset[ComboFlag]
 
     @property
     def url(self) -> str:
@@ -86,6 +124,8 @@ class Combo:
 class BracketEstimate:
     tag: BracketTag
     combos: tuple[Combo, ...]
+    # Only the cards with a flag; the rest say nothing about the bracket.
+    cards: tuple[FlaggedCard, ...] = ()
 
 
 @dataclass(slots=True, frozen=True)
@@ -226,7 +266,22 @@ def parse_estimate(raw: object) -> BracketEstimate:
         _parse_combo(item, f"estimate.combos[{i}]")
         for i, item in enumerate(req_list(obj, "combos", "estimate"))
     )
-    return BracketEstimate(tag, combos)
+    cards = tuple(
+        card
+        for i, item in enumerate(req_list(obj, "cards", "estimate"))
+        if (card := _parse_flagged_card(item, f"estimate.cards[{i}]")).flags
+    )
+    return BracketEstimate(tag, combos, cards)
+
+
+def _parse_flagged_card(raw: object, where: str) -> FlaggedCard:
+    classified = as_object(raw, where)
+    card = req_object(classified, "card", where)
+    return FlaggedCard(
+        name=req_str(card, "name", f"{where}.card"),
+        quantity=req_int(classified, "quantity", where),
+        flags=frozenset(flag for flag in CardFlag if req_bool(classified, flag.value, where)),
+    )
 
 
 def _parse_combo(raw: object, where: str) -> Combo:
@@ -249,6 +304,8 @@ def _parse_combo(raw: object, where: str) -> Combo:
         cards=cards,
         results=results,
         two_card=two_card,
+        speed=req_int(classified, "speed", where),
+        flags=frozenset(flag for flag in ComboFlag if req_bool(classified, flag.value, where)),
     )
 
 

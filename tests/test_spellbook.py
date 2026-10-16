@@ -9,8 +9,11 @@ from commander.jsonshape import ShapeError
 from commander.net import Fetcher
 from commander.spellbook import (
     BracketTag,
+    CardFlag,
     ComboCard,
+    ComboFlag,
     ComboPiece,
+    FlaggedCard,
     SpellbookClient,
     SpellbookError,
     TwoCard,
@@ -42,6 +45,14 @@ def test_parses_the_deck_tag_and_every_combo() -> None:
     assert first.cards == ("Magda, Brazen Outlaw", "Clock of Omens", "Firdoch Core")
     assert first.results[0] == "Infinite artifact ETB"
     assert first.url == "https://commanderspellbook.com/combo/1486-1651-7298/"
+
+
+def test_combos_keep_their_speed_and_flags_and_only_flagged_cards_are_kept() -> None:
+    estimate = parse_estimate(estimate_fixture())
+    relevant = {ComboFlag.RELEVANT, ComboFlag.BORDERLINE_RELEVANT}
+    assert [(c.speed, c.flags) for c in estimate.combos] == [(5, relevant), (5, relevant), (5, relevant)]
+    # Of Ancient Tomb, Battered Golem, Disruptor Flute, Mountain and Magda, only Ancient Tomb has a flag.
+    assert estimate.cards == (FlaggedCard("Ancient Tomb", 1, frozenset({CardFlag.GAME_CHANGER})),)
 
 
 def test_tags_map_to_the_lowest_bracket_they_fit() -> None:

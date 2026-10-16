@@ -569,9 +569,36 @@ def test_bracket_table_flags_a_deck_set_below_the_estimate(
         "though..",
     ]
     assert notes == [
-        "! the bracket set on Archidekt is below the estimate",
+        (
+            "! the Archidekt bracket, the profile's ceiling and the estimate disagree; "
+            "`cmdr bracket <deck>` says why"
+        ),
         "set = bracket on Archidekt; tutors, mld and turns come from Scryfall tags",
         "bracket estimates and combos from Commander Spellbook, https://commanderspellbook.com",
+    ]
+
+
+def test_bracket_names_what_lifts_the_estimate_above_the_set_bracket(
+    tmp_path: Path, raw_deck: Json, own_cache: Path
+) -> None:
+    raw_deck["edhBracket"] = 2
+    fake = FakeArchidekt()
+    fake.put(raw_deck)
+    sync(tmp_path, fake)
+    lines = bracket(["magda"], tmp_path, fake, own_cache).out.splitlines()
+    start = lines.index("  ! the estimate (4+) is above the Archidekt bracket (2)")
+    # Set to 2, the Ruthless and Spicy combos and the Powerful game changer all lift it; ordered by tag.
+    assert lines[start + 1 : start + 5] == [
+        "  because of:",
+        (
+            "    Ruthless   a fast two-card combo that wins: "
+            "Magda, Brazen Outlaw + Clock of Omens + Firdoch Core"
+        ),
+        (
+            "    Spicy      a fast combo of about two cards: "
+            "Ashling, the Limitless + Greenwarden of Murasa + Temur Battlecrier"
+        ),
+        "    Powerful   a game changer: Ancient Tomb",
     ]
 
 
@@ -588,6 +615,8 @@ def test_bracket_json(tmp_path: Path, archidekt: FakeArchidekt, own_cache: Path)
         "brackets": "4+",
     }
     assert deck["setBelowEstimate"] is False
+    # Bracket 5 fits Ruthless, and the fixture deck has no profile.
+    assert (deck["ceiling"], deck["check"]) == (None, {"notes": [], "causes": []})
     assert (deck["tutors"], deck["massLandDenial"], deck["extraTurns"]) == (
         ["Magda, Brazen Outlaw"],
         None,

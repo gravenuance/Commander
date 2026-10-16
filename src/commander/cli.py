@@ -30,6 +30,7 @@ from commander.board import BoardCard, BoardError, BoardService, Origin, feed_su
 from commander.boardsave import pick_up_aside
 from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
 from commander.bracket import BracketReport, EstimateResult, bracket_cards, estimate_cache, estimate_decks
+from commander.bracketcheck import BracketCheck
 from commander.carddb import CARD_DB_FILE, CardDataError, CardDb, Role
 from commander.cli_app import add_app_command
 from commander.cli_board import add_board_commands
@@ -588,7 +589,9 @@ def _cmd_price(args: argparse.Namespace, ctx: Context) -> int:
 
 
 def _cmd_bracket(args: argparse.Namespace, ctx: Context) -> int:
-    decks = [s.deck for s in selected_decks(args, ctx)]
+    stored = selected_decks(args, ctx)
+    decks = [s.deck for s in stored]
+    ceilings = [read_profile(s.folder).bracket_ceiling for s in stored]
     with open_card_db(ctx) as db:
         cards = [bracket_cards(db.resolve(deck.main_cards), db.available_roles) for deck in decks]
     with ctx.client_factory() as http:
@@ -599,7 +602,10 @@ def _cmd_bracket(args: argparse.Namespace, ctx: Context) -> int:
             now=ctx.now,
             refresh=args.refresh,
         )
-    reports = [BracketReport(d, c, r) for d, c, r in zip(decks, cards, results, strict=True)]
+    reports = [
+        BracketReport(d, c, r, ceiling)
+        for d, c, r, ceiling in zip(decks, cards, results, ceilings, strict=True)
+    ]
     for report in reports:
         _warn_answer(report.deck, report.result, "bracket estimate", ctx.err)
     if args.json:
@@ -1003,8 +1009,13 @@ def _print_bracket(report: BracketReport, out: TextIO, *, details: bool) -> None
     print(f"{deck.name} ({deck.id})", file=out)
     print(f"{commanders}; {bracket}", file=out)
     print(f"estimate: {_estimate_text(result)}", file=out)
-    if report.set_below_estimate:
-        print("  ! the bracket set on Archidekt is below this estimate", file=out)
+    check = report.check
+    for note in check.notes:
+        print(f"  ! {note}", file=out)
+    if check.causes:
+        print("  because of:", file=out)
+        for cause in check.causes:
+            print(f"    {cause.tag.label:<10} {cause.reason.value}: {' + '.join(cause.cards)}", file=out)
     print(_card_list("game changers", cards.game_changers), file=out)
     print(_card_list("tutors", cards.tutors), file=out)
     print(_card_list("mass land denial", cards.mass_land_denial), file=out)
@@ -1049,7 +1060,7 @@ def _print_bracket_table(reports: Sequence[BracketReport], out: TextIO) -> None:
         two_card = sum(1 for c in estimate.combos if c.two_card is TwoCard.YES) if estimate else None
         combos = len(estimate.combos) if estimate else None
         bracket = r.deck.bracket if r.deck.bracket is not None else "-"
-        mark = "! " if r.set_below_estimate else ""
+        mark = "! " if r.check.notes else ""
         print(
             f"{r.deck.id:>9} {bracket:>3}  {tag:<16} {len(r.cards.game_changers):>3} "
             f"{_size(r.cards.tutors):>6} {_size(r.cards.mass_land_denial):>3} "
@@ -1057,8 +1068,12 @@ def _print_bracket_table(reports: Sequence[BracketReport], out: TextIO) -> None:
             f"{_count(combos):>6}  {mark}{r.deck.name}",
             file=out,
         )
-    if any(r.set_below_estimate for r in reports):
-        print("! the bracket set on Archidekt is below the estimate", file=out)
+    if any(r.check.notes for r in reports):
+        print(
+            "! the Archidekt bracket, the profile's ceiling and the estimate disagree; "
+            "`cmdr bracket <deck>` says why",
+            file=out,
+        )
     print("set = bracket on Archidekt; tutors, mld and turns come from Scryfall tags", file=out)
     print(SPELLBOOK_CREDIT, file=out)
 
@@ -1080,6 +1095,8 @@ def _bracket_json(report: BracketReport) -> dict[str, object]:
             "brackets": estimate.tag.brackets if estimate else None,
         },
         "setBelowEstimate": report.set_below_estimate,
+        "ceiling": report.ceiling,
+        "check": _check_json(report.check),
         "gameChangers": list(cards.game_changers),
         "tutors": _optional_list(cards.tutors),
         "massLandDenial": _optional_list(cards.mass_land_denial),
@@ -1095,6 +1112,21 @@ def _bracket_json(report: BracketReport) -> dict[str, object]:
                 "twoCard": c.two_card.value,
             }
             for c in (_sorted_combos(estimate.combos) if estimate else [])
+        ],
+    }
+
+
+def _check_json(check: BracketCheck) -> dict[str, object]:
+    return {
+        "notes": list(check.notes),
+        "causes": [
+            {
+                "tag": cause.tag.label,
+                "reason": cause.reason.value,
+                "cards": list(cause.cards),
+                "comboUrl": cause.combo.url if cause.combo else None,
+            }
+            for cause in check.causes
         ],
     }
 

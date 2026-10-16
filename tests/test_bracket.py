@@ -66,6 +66,15 @@ def test_recent_estimate_comes_from_the_cache(env: Env) -> None:
     assert [c.two_card for c in result.data.combos] == [TwoCard.YES, TwoCard.NO, TwoCard.ARGUABLY]
 
 
+def test_a_cached_estimate_reads_back_as_fetched(env: Env) -> None:
+    fetched = env.estimate().data
+    cached = env.estimate().data
+    assert len(env.fake.bodies) == 1
+    assert fetched is not None
+    assert fetched.cards
+    assert cached == fetched
+
+
 def test_week_old_estimate_is_fetched_again(env: Env) -> None:
     env.estimate()
     env.now = NOW + timedelta(days=7)
@@ -117,7 +126,7 @@ def test_older_estimate_for_other_cards_is_not_a_fallback(env: Env) -> None:
     [
         "not json",
         '{"version": 99}',
-        '{"version": 2, "key": "?", "fetchedAt": "2026-10-15T12:00:00+00:00", "answer": {}}',
+        '{"version": 3, "key": "?", "fetchedAt": "2026-10-15T12:00:00+00:00", "answer": {}}',
         "[]",
     ],
 )
@@ -126,7 +135,7 @@ def test_unusable_cache_file_is_fetched_over(env: Env, content: str) -> None:
     (env.folder / "10004639.json").write_text(content, encoding="utf-8")
     assert env.estimate().source is AnswerSource.FETCHED
     saved = json.loads((env.folder / "10004639.json").read_text(encoding="utf-8"))
-    assert saved["version"] == 2
+    assert saved["version"] == 3
 
 
 def test_cached_estimate_with_a_bad_combo_is_ignored_with_a_warning(
