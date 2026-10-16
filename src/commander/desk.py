@@ -28,6 +28,7 @@ from commander.board import (
     activity_json,
     board_stamp,
     card_json,
+    feed_ideas,
     read_activity,
     read_board,
 )
@@ -41,8 +42,9 @@ from commander.deckgrid import GridGroup, deck_grid, image_url
 from commander.deckprofile import read_profile
 from commander.edhtop16 import REQUEST_INTERVAL_SECONDS, SLOW_QUERY_SECONDS, Edhtop16Client, Edhtop16Error
 from commander.labels import LabelError, Step, label_options, mark, set_label, to_get_json
-from commander.meta import analyse, card_shares
+from commander.meta import analyse, board_ideas, card_shares
 from commander.metadata import MetaData, MetaSources, cache_stamp, gather
+from commander.metapanel import combo_rows, piece_threats
 from commander.models import Deck
 from commander.net import Fetcher, NetworkError, Pacer
 from commander.spellbook import META_REQUEST_INTERVAL_SECONDS, SpellbookClient
@@ -316,9 +318,18 @@ class Desk:
         data = self._gather(stored.deck, offline=offline)
         with self._db() as db:
             report = analyse(stored.deck, data, read_profile(stored.folder), db)
+            if not offline and stored.deck.bracket == CEDH_BRACKET:
+                # A refresh puts the meta's staples on the board, as `cmdr meta --to-board` does.
+                ideas, cuts = board_ideas(report)
+                service = BoardService(stored.folder, stored.deck, db, now=self._now)
+                feed_ideas(service, ideas, cuts, read_board(stored.folder), card_shares(data) or None)
         if data.lists.data is None and data.field.data is None and data.peers.data is None:
             return {"report": None, "errors": [] if offline else [s.error for s in report.sources if s.error]}
-        return {"report": report_json(report)}
+        return {
+            "report": report_json(report),
+            "pieces": piece_threats(report.key_pieces, report.threats),
+            "combos": combo_rows(report.combos),
+        }
 
     def _meta_shares(self, deck: Deck) -> dict[str, float] | None:
         """Each card's share of the meta's lists, for bracket 5 decks with cached meta answers; else None."""

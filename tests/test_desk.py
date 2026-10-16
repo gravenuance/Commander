@@ -242,6 +242,15 @@ def test_meta_opens_from_cache_and_refreshes_on_demand(desk: Desk, fake: FakeArc
     cached = cast("Json", desk.meta(DECK)["report"])
     assert cached["missing"] == report["missing"]
     assert len(fake.edhtop16.requests) == asked
+    assert {"pieces", "combos"} <= set(fresh)
+    # The refresh, and only the refresh, put the meta's staples on the board as cmdr's suggestions.
+    board = items(desk.deck(DECK), "cards")
+    assert sorted((c["name"], c["source"]) for c in board) == [
+        ("Jeska's Will", "cmdr"),
+        ("Mind Stone", "cmdr"),
+    ]
+    desk.meta(DECK)
+    assert len(items(desk.deck(DECK), "cards")) == len(board)
 
 
 def test_a_failed_refresh_with_nothing_cached_says_why(desk: Desk, fake: FakeArchidekt) -> None:
