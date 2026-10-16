@@ -178,6 +178,7 @@ def parse_deck_page(raw: object) -> tuple[list[DeckSummary], str | None]:
                 id=req_int(deck, "id", where),
                 name=req_str(deck, "name", where),
                 updated_at=req_str(deck, "updatedAt", where),
+                tags=_tag_names(deck, "tags", where) if "tags" in deck else None,
             )
         )
     return decks, next_url
@@ -204,12 +205,15 @@ def parse_deck(raw: object) -> Deck:
 
 
 def _deck_tags(deck: Mapping[str, object]) -> tuple[str, ...]:
-    """The deck tag names in Archidekt's order, each once; a deck with none may leave the field out."""
-    if "deckTags" not in deck:
-        return ()
+    """The deck tag names; a deck with none may leave the field out."""
+    return _tag_names(deck, "deckTags", "deck") if "deckTags" in deck else ()
+
+
+def _tag_names(obj: Mapping[str, object], key: str, where: str) -> tuple[str, ...]:
+    """Tag names in Archidekt's order, each once."""
     names = (
-        req_str(as_object(item, f"deck.deckTags[{i}]"), "name", f"deck.deckTags[{i}]")
-        for i, item in enumerate(req_list(deck, "deckTags", "deck"))
+        req_str(as_object(item, f"{where}.{key}[{i}]"), "name", f"{where}.{key}[{i}]")
+        for i, item in enumerate(req_list(obj, key, where))
     )
     return tuple(dict.fromkeys(names))
 

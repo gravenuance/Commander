@@ -99,6 +99,20 @@ def test_a_deck_saved_before_deck_tags_is_refetched_once(tmp_path: Path, archide
     assert archidekt.requests == ["/api/decks/v3/"]
 
 
+def test_a_deck_whose_tags_alone_changed_is_refetched(
+    tmp_path: Path, archidekt: FakeArchidekt, raw_deck: Json
+) -> None:
+    # Archidekt keeps a deck's edit time when only its tags change; the deck list shows the new tags.
+    sync(tmp_path, archidekt)
+    raw_deck["deckTags"] = [{"id": 9, "tag": 69, "deck": 10004639, "name": "Stax", "position": "M-1"}]
+    archidekt.put(raw_deck)
+    archidekt.requests.clear()
+    sync(tmp_path, archidekt)
+    assert archidekt.requests == ["/api/decks/v3/", "/api/decks/10004639/"]
+    snapshot = tmp_path / "decks" / "10004639-honestly-though" / "deck.json"
+    assert json.loads(snapshot.read_text(encoding="utf-8"))["tags"] == ["Stax"]
+
+
 def test_force_refetches(tmp_path: Path, archidekt: FakeArchidekt) -> None:
     sync(tmp_path, archidekt)
     archidekt.requests.clear()

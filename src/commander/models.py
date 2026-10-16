@@ -100,3 +100,5 @@ class DeckSummary:
     id: int
     name: str
     updated_at: str
+    # The deck tags the list shows; Archidekt keeps updated_at when only these change. None when not sent.
+    tags: tuple[str, ...] | None = None

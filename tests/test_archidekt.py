@@ -154,6 +154,16 @@ def test_list_follows_pagination_and_keeps_only_commander_decks() -> None:
     assert seen[1] == second
 
 
+def test_list_rows_carry_the_deck_tags_when_archidekt_sends_them() -> None:
+    tagged = {**summary_row(1, "First", "t1"), "tags": [{"name": "Stax"}, {"name": "cEDH"}]}
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=deck_page([tagged, summary_row(2, "Second", "t2")]))
+
+    first, second = client_for(handler).list_commander_decks("MAKKIS")
+    assert (first.tags, second.tags) == (("Stax", "cEDH"), None)
+
+
 def test_list_rejects_next_link_to_another_host() -> None:
     def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=deck_page([], next_url="https://evil.example/api/decks/v3/"))

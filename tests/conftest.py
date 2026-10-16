@@ -432,7 +432,10 @@ class FakeArchidekt:
         if path == "/api/decks/v3/":
             if request.url.params.get("ownerUsername") != self.user:
                 return httpx.Response(200, json=deck_page([]))
-            rows = [summary_row(d["id"], d["name"], d["updatedAt"]) for d in self.decks.values()]
+            rows = [
+                {**summary_row(d["id"], d["name"], d["updatedAt"]), "tags": d.get("deckTags", [])}
+                for d in self.decks.values()
+            ]
             return httpx.Response(200, json=deck_page(rows))
         return self._get_deck(request)
 
