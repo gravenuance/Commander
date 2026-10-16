@@ -10,6 +10,7 @@ redistributing its statistics) and fetched in parallel, each at its own service'
 """
 
 import logging
+import os
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -123,6 +124,20 @@ class MetaSources:
     # The Archidekt user whose own decks never count as other players' lists.
     user: str
     settings: MetaSettings
+
+
+def cache_stamp(cache_root: Path) -> str:
+    """Changes whenever a meta answer is saved, rewritten or removed; cheap enough to poll."""
+    count = newest = 0
+    try:
+        with os.scandir(cache_root / CACHE_FOLDER) as entries:
+            for entry in entries:
+                if entry.is_file():
+                    count += 1
+                    newest = max(newest, entry.stat().st_mtime_ns)
+    except FileNotFoundError:
+        return "-"
+    return f"{count}:{newest}"
 
 
 def window_start(now: datetime, settings: MetaSettings) -> date:

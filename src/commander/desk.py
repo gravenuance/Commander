@@ -39,7 +39,7 @@ from commander.credentials import CredentialError, TokenStore
 from commander.deckprofile import read_profile
 from commander.edhtop16 import REQUEST_INTERVAL_SECONDS, SLOW_QUERY_SECONDS, Edhtop16Client, Edhtop16Error
 from commander.meta import analyse
-from commander.metadata import MetaSources, gather
+from commander.metadata import MetaSources, cache_stamp, gather
 from commander.net import Fetcher, NetworkError, Pacer
 from commander.spellbook import META_REQUEST_INTERVAL_SECONDS, SpellbookClient
 from commander.store import StoredDeck, Workspace, WorkspaceError
@@ -137,7 +137,10 @@ class Desk:
     @_guarded
     def stamps(self) -> Json:
         # Polled every few seconds, so it only looks at file times, never reads a deck.
-        return {"stamps": {str(i): board_stamp(folder) for i, folder in self._workspace.deck_folders()}}
+        return {
+            "stamps": {str(i): board_stamp(folder) for i, folder in self._workspace.deck_folders()},
+            "meta": cache_stamp(self._settings.cache),
+        }
 
     @_guarded
     def deck(self, deck_id: int) -> Json:

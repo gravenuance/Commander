@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+- Desktop app: the open Meta panel updates by itself when `cmdr meta` (or anything else) saves new meta
+  answers to the cache, instead of only when the panel is opened or the deck changes.
+
 ## 0.3.0 - 2026-10-16
 
 The cEDH meta, answers read from rules text, and deck themes from Archidekt.

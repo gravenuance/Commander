@@ -12,6 +12,7 @@ from commander import desk as desk_module
 from commander.app import desk_settings, page_html
 from commander.carddb import CARD_DB_FILE
 from commander.desk import Desk, DeskSettings
+from commander.metadata import CACHE_FOLDER
 from commander.net import Pacer
 from conftest import REFRESH_TOKEN, FakeArchidekt, Json, MemoryTokenStore
 from test_cli_apply import run
@@ -131,6 +132,14 @@ def test_stamps_change_when_the_board_does(desk: Desk) -> None:
     before = desk.stamps()["stamps"]
     desk.propose(DECK, "Lightning Bolt")
     assert desk.stamps()["stamps"] != before
+
+
+def test_the_meta_stamp_changes_when_a_meta_answer_is_saved(desk: Desk, settings: DeskSettings) -> None:
+    # `cmdr meta` writes the same cache the panel reads; the app rereads the panel when this changes.
+    assert desk.stamps()["meta"] == "-"
+    (settings.cache / CACHE_FOLDER).mkdir()
+    (settings.cache / CACHE_FOLDER / "edhtop16-magda.json").write_text("{}", encoding="utf-8")
+    assert str(desk.stamps()["meta"]).startswith("1:")
 
 
 def test_preview_and_commit_save_the_queued_cards(desk: Desk, fake: FakeArchidekt) -> None:

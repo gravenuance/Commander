@@ -1,3 +1,4 @@
+import os
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
@@ -8,7 +9,7 @@ from commander.archidekt import ArchidektSearch
 from commander.config import MetaSettings
 from commander.deckcache import AnswerSource
 from commander.edhtop16 import Edhtop16Client
-from commander.metadata import CACHE_FOLDER, MetaData, MetaSources, gather, window_start
+from commander.metadata import CACHE_FOLDER, MetaData, MetaSources, cache_stamp, gather, window_start
 from commander.models import Deck, DeckCard
 from commander.net import HTTP_OK, Fetcher, Pacer
 from commander.spellbook import SpellbookClient
@@ -240,3 +241,23 @@ def test_combos_without_meta_lists_are_unavailable(rig: Rig) -> None:
     data = rig.gather()
     assert data.combos.source is AnswerSource.UNAVAILABLE
     assert rig.spellbook.combo_bodies == []
+
+
+def test_the_cache_stamp_without_a_cache_folder(tmp_path: Path) -> None:
+    assert cache_stamp(tmp_path) == "-"
+
+
+def test_the_cache_stamp_changes_when_an_answer_is_saved_rewritten_or_removed(tmp_path: Path) -> None:
+    folder = tmp_path / CACHE_FOLDER
+    folder.mkdir()
+    first, second = folder / "a.json", folder / "b.json"
+    first.write_text("{}", encoding="utf-8")
+    os.utime(first, ns=(1_000, 1_000))
+    assert cache_stamp(tmp_path) == "1:1000"
+    second.write_text("{}", encoding="utf-8")
+    os.utime(second, ns=(2_000, 2_000))
+    assert cache_stamp(tmp_path) == "2:2000"
+    os.utime(first, ns=(3_000, 3_000))
+    assert cache_stamp(tmp_path) == "2:3000"
+    first.unlink()
+    assert cache_stamp(tmp_path) == "1:2000"

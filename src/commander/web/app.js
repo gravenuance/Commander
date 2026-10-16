@@ -11,6 +11,7 @@ const state = {
   current: null,
   view: null,
   stamps: {},
+  metaStamp: null,
   choices: new Map(),
   tiles: new Map(),
   results: [],
@@ -562,6 +563,10 @@ async function poll() {
       state.stamps = deferred ? { ...stamps, [key]: state.stamps[key] } : stamps;
       if (changed) await loadDecks();
       if (currentChanged && !deferred) await loadDeck();
+      // `cmdr meta` fills the same cache; reread the open panel from it. A refresh here renders itself.
+      const metaChanged = answer.meta !== state.metaStamp;
+      state.metaStamp = answer.meta;
+      if (metaChanged) await loadMeta();
     }
   } catch { /* a missed poll is retried on the next tick */ }
   setTimeout(poll, POLL_MS);
@@ -574,7 +579,10 @@ window.addEventListener("pywebviewready", async () => {
   try {
     await loadDecks();
     const answer = await window.pywebview.api.stamps();
-    if (!answer.error) state.stamps = answer.stamps;
+    if (!answer.error) {
+      state.stamps = answer.stamps;
+      state.metaStamp = answer.meta;
+    }
   } catch {
     $("loading").hidden = true;
   }
