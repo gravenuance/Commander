@@ -72,6 +72,11 @@
   interaction first; Control puts interaction first. Off-plan staples are no longer compiled as ideas, and
   the app's Meta panel shows a Turbo deck's unanswered combos as "Racing".
 
+- Accounts and sync in the app (ADR 0023): the app signs in to any Archidekt account, gives each account
+  its own deck folder (the config's `[workspaces]`; yours stays where it is), syncs a new account's decks at
+  once, and has Sync decks and Sign out at the foot of the deck list. Without a config it opens on the
+  sign-in screen instead of stopping. `cmdr sync` and the app share one sync (`syncrun.run_sync`).
+
 ### Fixed
 - A board wipe clears creatures (ADR 0020): sweepers that remove only artifacts, enchantments, lands or
   other noncreature permanents (Vandalblast, Bane of Progress, Armageddon) no longer count as board

@@ -323,6 +323,15 @@ the rest; `cmdr board --help` lists them.
 
 ### Desktop app
 
+The app works for any Archidekt account ([ADR 0023](docs/adr/0023-accounts-and-sync-in-the-app.md)).
+Without one it opens on **Sign in to Archidekt**: the username and password go to Archidekt's login only,
+and the login token is kept in Windows Credential Manager, as `cmdr login` keeps it. Each account has its
+own deck folder, remembered in the config's `[workspaces]` table. Your own keeps the folder `cmdr init` set,
+and a new account gets a sibling folder named `decks-<username>`. Signing in as a new account syncs its
+decks at once. The foot of the deck list shows who is signed in, with **Sync decks** (the same as
+`cmdr sync`, card data and ideas included, its progress shown beneath) and **Sign out**, which removes the
+saved login. Signing in again finds the same folder.
+
 `cmdr app` opens a window over every deck's board. Pick a deck on the left to see it as a card grid,
 grouped by card type with counts and EUR totals. S, M and L above the grid set the card size. Click a
 card to see it large (× or Esc closes it). Export, next to the commander's name, copies the saved deck

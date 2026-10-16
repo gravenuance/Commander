@@ -12,6 +12,15 @@
   <nav class="decks" aria-label="Decks">
     <p class="brand" aria-hidden="true">Commander</p>
     <ul id="deck-list" class="deck-list"></ul>
+    <div class="account">
+      <p id="account-name" class="account-name"></p>
+      <p id="sync-status" class="muted small sync-status" role="status" aria-live="polite"></p>
+      <div class="account-actions">
+        <button id="sync-decks" class="button small" type="button" hidden>Sync decks</button>
+        <button id="sign-out" class="button quiet small" type="button" hidden>Sign out</button>
+        <button id="sign-in" class="button primary small" type="button" hidden>Sign in</button>
+      </div>
+    </div>
   </nav>
 
   <main id="main" class="main" tabindex="-1">
@@ -21,7 +30,8 @@
     </div>
     <div id="no-decks" class="state" hidden>
       <span class="state-icon" aria-hidden="true">🂠</span>
-      <span>No decks yet. Run <code>cmdr sync</code>.</span>
+      <span>No decks yet.</span>
+      <button id="no-decks-sync" class="button primary" type="button" hidden>Sync decks</button>
     </div>
 
     <section id="deck" class="deck" hidden aria-labelledby="deck-short">
@@ -122,6 +132,23 @@
 <dialog id="zoom" class="zoom" aria-label="Card">
   <button id="zoom-close" class="zoom-close" type="button" aria-label="Close">×</button>
   <img id="zoom-image" alt="">
+</dialog>
+
+<dialog id="signin-dialog" class="dialog signin" aria-labelledby="signin-title">
+  <form id="signin-form" class="signin-form">
+    <h2 id="signin-title">Sign in to Archidekt</h2>
+    <label class="field">Username
+      <input id="signin-user" name="user" autocomplete="username" required spellcheck="false">
+    </label>
+    <label class="field">Password
+      <input id="signin-password" name="password" type="password" autocomplete="current-password" required>
+    </label>
+    <p id="signin-error" class="field-error" role="alert" hidden></p>
+    <div class="dialog-actions">
+      <button id="signin-cancel" class="button" type="button">Not now</button>
+      <button id="signin-submit" class="button primary" type="submit">Sign in</button>
+    </div>
+  </form>
 </dialog>
 
 <dialog id="settings-dialog" class="dialog settings" aria-labelledby="settings-title">

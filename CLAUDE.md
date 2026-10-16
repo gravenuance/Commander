@@ -15,6 +15,7 @@ EUR prices and brackets. The README covers usage; this file covers working on it
 - Desktop app: `uv run cmdr app`; its log is `%LOCALAPPDATA%\Commander\logs\commander.log` (`CMDR_LOG_LEVEL=DEBUG` logs every bridge call). Build the exe: `uv run --group build pyinstaller --noconfirm --clean --onefile --windowed --name Commander --add-data "src/commander/web;commander/web" src/commander/app_main.py` (lands in `dist/`)
 
 ## Conventions
+- Signing in to the app as another account switches the config's `user` and `workspace` to that account's folder (ADR 0023), and the CLI follows; before deck work, check that `uv run cmdr list` shows the user's decks from `decks/`.
 - Decks are named by their commander's short name ("Ellivere", "Pantlaza"), as the user does; `Deck.short_name` gives it.
 - Each `decks/<id>-<slug>/` holds `deck.json` and `list.md`, which `sync` regenerates; `notes.md` and `profile.toml`, which belong to the user; and `board.json` and `activity.jsonl`, which only `cmdr board`, the app, `suggest --to-board` and `sync` write. Research findings go in `notes.md` or on the board; never hand-edit the generated or board files.
 - Commit deck syncs and board changes separately from code changes, with a subject like `Sync decks: <what changed>`, so the deck history stays readable.

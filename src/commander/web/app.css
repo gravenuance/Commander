@@ -110,11 +110,40 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 
 /* Deck list */
 .decks {
+  display: flex;
+  flex-direction: column;
   border-right: 1px solid var(--border);
   background: var(--surface);
   overflow-y: auto;
   padding: var(--space-4) var(--space-2);
 }
+/* At the foot of the deck list: who is signed in, the sync and its progress. */
+.account {
+  margin-top: auto;
+  padding: var(--space-3) var(--space-2) 0;
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: var(--space-1);
+}
+.account-name, .sync-status { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-name { font-weight: 600; }
+.account-name:empty, .sync-status:empty { display: none; }
+.account-actions { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.signin-form { display: grid; gap: var(--space-3); min-width: 320px; }
+.signin-form h2 { margin: 0; }
+.field { display: grid; gap: var(--space-1); font-size: var(--text-s); font-weight: 600; }
+.field input {
+  min-height: 36px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  font-weight: 400;
+}
+.field input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.field-error { margin: 0; color: var(--danger); font-size: var(--text-s); }
 .brand {
   margin: 0 var(--space-2) var(--space-3);
   font-size: var(--text-s);
