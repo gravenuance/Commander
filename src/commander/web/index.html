@@ -26,7 +26,10 @@
 
     <section id="deck" class="deck" hidden aria-labelledby="deck-short">
       <header class="deck-head">
-        <h1 id="deck-short" class="deck-short"></h1>
+        <div class="deck-name">
+          <h1 id="deck-short" class="deck-short"></h1>
+          <button id="export" class="button small" type="button" title="Copy the saved decklist for TopDeck.gg">Export</button>
+        </div>
         <p class="deck-sub">
           <a id="deck-link" class="deck-title" href="#" target="_blank" rel="noopener" title="Open on Archidekt"></a>
           <span id="deck-bracket" class="chip"></span>
@@ -46,6 +49,12 @@
 
       <div class="workspace">
         <section class="grid-pane" aria-label="Deck cards">
+          <div class="grid-tools" role="group" aria-label="Card size">
+            <span class="muted small">Card size</span>
+            <button class="button quiet small size" type="button" data-size="s" aria-pressed="false">S</button>
+            <button class="button quiet small size" type="button" data-size="m" aria-pressed="false">M</button>
+            <button class="button quiet small size" type="button" data-size="l" aria-pressed="false">L</button>
+          </div>
           <div id="grid" class="grid"></div>
         </section>
 
@@ -100,6 +109,11 @@
 </div>
 
 <div id="label-menu" class="menu" role="menu" hidden></div>
+
+<dialog id="zoom" class="zoom" aria-label="Card">
+  <button id="zoom-close" class="zoom-close" type="button" aria-label="Close">×</button>
+  <img id="zoom-image" alt="">
+</dialog>
 
 <dialog id="review-dialog" class="dialog" aria-labelledby="review-title">
   <h2 id="review-title">Changes to <span id="review-deck"></span></h2>

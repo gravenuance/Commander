@@ -38,6 +38,7 @@ from commander.cli_meta import report_json
 from commander.cli_output import change_mark, change_text
 from commander.config import ConfigError, MetaSettings
 from commander.credentials import CredentialError, TokenStore
+from commander.deckexport import topdeck_text
 from commander.deckgrid import GridGroup, deck_grid, image_url
 from commander.deckprofile import Profile, read_profile
 from commander.edhtop16 import REQUEST_INTERVAL_SECONDS, SLOW_QUERY_SECONDS, Edhtop16Client, Edhtop16Error
@@ -231,6 +232,12 @@ class Desk:
             "after": marked.after,
             "toGet": to_get_json(marked.deck),
         }
+
+    @_guarded
+    def export(self, deck_id: int) -> Json:
+        """The saved deck as TopDeck.gg decklist text, for the clipboard."""
+        deck = self._stored(deck_id).deck
+        return {"text": topdeck_text(deck), "cards": sum(card.quantity for card in deck.main_cards)}
 
     @_guarded
     def search(self, deck_id: int, text: str) -> Json:

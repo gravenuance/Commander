@@ -43,6 +43,9 @@
   for the combos and key cards it stops. Key cards show as chips that say why on hover. Shorter headers:
   Key cards, What stops you, Meta combos.
 
+- App: larger grid cards by default, with S/M/L sizes; clicking a card shows it large (× or Esc
+  closes it); a clicked idea in Considering can replace any deck card, not only the suggested ones;
+  Export copies the saved deck in TopDeck.gg's decklist format.
 - The app's Considered panel is now Considering. Turning a card down asks why (optional); turned-down cards
   list under *Rejected*, closed until opened, with their reasons and a Reconsider button. Panels and the
   Meta sections fold and remember it.

@@ -42,7 +42,7 @@
   --shadow: 0 1px 2px rgb(0 0 0 / 8%), 0 2px 8px rgb(0 0 0 / 6%);
   --fast: 120ms;
   --art-width: 72px;
-  --card-w: 124px;
+  --card-w: 160px;
   --card-h: calc(var(--card-w) * 680 / 488);
   --peek: calc(var(--card-h) * 0.24);
   --side-w: 380px;
@@ -338,6 +338,8 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .group-toggle .count, .group-price { color: var(--muted); font-weight: 500; }
 .group-price::before { content: "· "; }
 
+.grid-tools { display: flex; align-items: center; gap: var(--space-1); justify-content: flex-end; margin-bottom: var(--space-2); }
+.grid-tools .size[aria-pressed="true"] { background: var(--surface-2); font-weight: 700; }
 /* Cards overlap row on row like Archidekt's stacks, so each shows its title; hover lifts a card whole. */
 .stack {
   list-style: none;
@@ -425,6 +427,9 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   cursor: pointer;
 }
 .swap:hover { background: transparent; }
+.swap.any { border-color: transparent; background: transparent; }
+.swap.any:hover, .swap.any:focus-visible { border-color: var(--target); border-style: dashed; }
+.gcard { cursor: zoom-in; }
 .gcard.out img { filter: grayscale(1) brightness(0.7); }
 .out-note {
   position: absolute;
@@ -739,3 +744,25 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   font: inherit;
   font-size: var(--text-s);
 }
+
+/* A card shown large: everything else faded, a clear close button at the top right */
+.zoom { padding: 0; border: none; background: transparent; overflow: visible; max-width: none; max-height: none; }
+.zoom::backdrop { background: rgb(0 0 0 / 72%); }
+.zoom img { display: block; width: min(488px, 86vw); max-height: 88vh; object-fit: contain; border-radius: 4.75% / 3.5%; box-shadow: 0 8px 40px rgb(0 0 0 / 60%); }
+.zoom-close {
+  position: fixed;
+  top: var(--space-4);
+  right: var(--space-4);
+  width: 44px;
+  height: 44px;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 60%);
+  color: #ffffff;
+  font-size: 28px;
+  line-height: 1;
+  cursor: pointer;
+}
+.zoom-close:hover, .zoom-close:focus-visible { background: #ffffff; color: #000000; }
+
+.deck-name { display: flex; align-items: center; gap: var(--space-3); }

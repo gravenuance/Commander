@@ -130,6 +130,14 @@ def test_a_card_turned_down_keeps_its_reason_for_the_rejected_list(desk: Desk) -
     assert items(desk.deck(DECK), "cards")[0]["status"] == "open"
 
 
+def test_export_copies_the_saved_deck_for_topdeck(desk: Desk) -> None:
+    exported = desk.export(DECK)
+    text = cast("str", exported["text"])
+    lines = text.splitlines()
+    assert lines[:4] == ["~~Commanders~~", "1 Magda, Brazen Outlaw", "", "~~Mainboard~~"]
+    assert exported["cards"] == sum(int(line.split(" ", 1)[0]) for line in lines if line[:1].isdigit())
+
+
 def test_refusals_come_back_as_errors(desk: Desk) -> None:
     assert desk.propose(DECK, "Rhystic Study") == {"error": "Rhystic Study is outside the deck's colours (R)"}
     assert str(desk.deck(999)["error"]).startswith("deck 999 is not in ")

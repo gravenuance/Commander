@@ -11,6 +11,9 @@ const STOPS_SHOWN = 4;
 const ANSWERS_SHOWN = 6;
 const ACTIVITY_KEY = "commander.activityOpen";
 const PANEL_KEY = "commander.panelOpen";
+const SIZE_KEY = "commander.cardSize";
+// Grid card widths; Scryfall's normal image is 488 px wide, sharp up to L even on a 2x screen.
+const CARD_SIZES = { s: 124, m: 160, l: 200 };
 const COLOUR = /^#[0-9a-f]{3,8}$/i;
 
 const state = {
@@ -231,6 +234,8 @@ function renderGrid(groups) {
       const node = buildGroup(group);
       if (known) known.node.replaceWith(node);
       known = { key, node, names: group.cards.map((c) => c.name) };
+      // The commander is never offered as a cut.
+      if (group.name === "Commander") for (const card of node.querySelectorAll(".gcard")) card.dataset.commander = "1";
       state.groups.set(group.name, known);
     }
     place(grid, known.node, index);
@@ -272,13 +277,36 @@ function buildGridCard(card) {
   flag.addEventListener("click", () => openLabelMenu(flag, card.name, label));
   const swap = el("button", { class: "swap", type: "button", hidden: true });
   swap.addEventListener("click", () => swapIn(swap.dataset.card, card.name));
-  return el("li", { class: "gcard", "data-name": card.name, title: card.name },
+  const node = el("li", { class: "gcard", "data-name": card.name, title: card.name },
     cardImage(card.image, card.name, "face"),
     card.quantity > 1 ? el("span", { class: "qty", text: `×${card.quantity}`, "aria-label": `${card.quantity} copies` }) : null,
     el("span", { class: "sr-only", text: card.name }),
     flag,
     el("span", { class: "out-note", hidden: true }),
     swap);
+  node.addEventListener("click", (event) => {
+    if (!event.target.closest("button")) zoom(card);
+  });
+  return node;
+}
+
+// The card large in the middle of the screen, everything else faded; × or Esc closes it.
+function zoom(card) {
+  if (!card.image) return;
+  const image = $("zoom-image");
+  image.src = card.image.replace("/normal/", "/large/");
+  image.alt = card.name;
+  $("zoom").showModal();
+  $("zoom-close").focus();
+}
+
+function setupZoom() {
+  const dialog = $("zoom");
+  $("zoom-close").addEventListener("click", () => dialog.close());
+  // A click on the faded backdrop lands on the dialog itself, outside the image.
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog) dialog.close();
+  });
 }
 
 /* Considering: every board card with somewhere to go, plus those already queued */
@@ -426,12 +454,15 @@ function paint() {
     const note = node.querySelector(".out-note");
     note.hidden = !out;
     note.textContent = out ? `→ ${out.name}` : "";
+    // A clicked idea can replace any deck card not already going out; the suggested ones stand out.
     const swap = node.querySelector(".swap");
-    swap.hidden = !target;
-    if (target) {
+    const chosen = active && state.selected === active.id && !out && !node.dataset.commander;
+    swap.hidden = !target && !chosen;
+    swap.classList.toggle("any", !target);
+    if (!swap.hidden) {
       swap.dataset.card = active.id;
       swap.setAttribute("aria-label", `Replace ${name} with ${active.name}`);
-      swap.title = target.reason;
+      swap.title = target ? target.reason : `Replace ${name} (your pick, not suggested)`;
     }
   }
   for (const { node, card } of state.tiles.values()) {
@@ -592,6 +623,52 @@ function renderActivity(entries) {
 }
 
 /* Collapsible panels */
+
+// Copies the saved deck as TopDeck.gg decklist text.
+async function exportDeck() {
+  try {
+    const answer = await api("export", state.current);
+    await copyText(answer.text);
+    showStatus(`Copied ${answer.cards} cards for TopDeck.gg (the saved deck; queued changes are not in it)`);
+  } catch { /* shown in the status line */ }
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // The app's page may not be allowed the clipboard API; a selected text area copies everywhere.
+    const area = el("textarea", { class: "sr-only", readonly: true });
+    area.value = text;
+    document.body.append(area);
+    area.select();
+    const copied = document.execCommand("copy");
+    area.remove();
+    if (!copied) {
+      showStatus("Could not copy the decklist", true);
+      throw new Error("copy failed");
+    }
+  }
+}
+
+// The grid's card size, remembered per viewer.
+function setupCardSize() {
+  const apply = (size) => {
+    document.documentElement.style.setProperty("--card-w", `${CARD_SIZES[size]}px`);
+    for (const button of document.querySelectorAll(".grid-tools .size")) {
+      button.setAttribute("aria-pressed", String(button.dataset.size === size));
+    }
+  };
+  let size = "m";
+  try { size = localStorage.getItem(SIZE_KEY) || "m"; } catch { /* storage is a convenience */ }
+  apply(CARD_SIZES[size] ? size : "m");
+  for (const button of document.querySelectorAll(".grid-tools .size")) {
+    button.addEventListener("click", () => {
+      apply(button.dataset.size);
+      try { localStorage.setItem(SIZE_KEY, button.dataset.size); } catch { /* as above */ }
+    });
+  }
+}
 
 // Each panel remembers whether it was folded, per viewer.
 function setupPanels() {
@@ -946,6 +1023,9 @@ window.addEventListener("pywebviewready", async () => {
   setupReview();
   setupMeta();
   setupPanels();
+  setupCardSize();
+  setupZoom();
+  $("export").addEventListener("click", exportDeck);
   setupLabelMenu();
   setupActivity();
   try {

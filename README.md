@@ -297,11 +297,13 @@ the rest; `cmdr board --help` lists them.
 ### Desktop app
 
 `cmdr app` opens a window over every deck's board. Pick a deck on the left to see it as a card grid,
-grouped by card type with counts and EUR totals.
+grouped by card type with counts and EUR totals. S, M and L above the grid set the card size. Click a
+card to see it large (× or Esc closes it). Export, next to the commander's name, copies the saved deck
+in TopDeck.gg's decklist format (`~~Commanders~~`, then `~~Mainboard~~`, one `1 Name` a line).
 
 - **Considering**, on the right, lists every idea for the deck: yours, Claude's, the meta's and the
   tools'. Hover over an idea or click it to light the deck cards it could replace. Click one of them to
-  queue the swap, or × to turn the idea down, with a reason if you like: turned-down cards wait under
+  queue the swap. Once you click an idea, any other deck card can be clicked to replace it too, or × to turn the idea down, with a reason if you like: turned-down cards wait under
   *Rejected* (closed until opened) with their reasons, and Reconsider brings one back. Considering, Meta
   and each Meta section fold, and stay as you left them. The targets are the cards you or Claude picked, or else the
   weakest cards in the same role ([ADR 0011](docs/adr/0011-app-deck-grid-and-replacement-targets.md)),
