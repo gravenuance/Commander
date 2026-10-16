@@ -303,6 +303,15 @@ def outliers(
     return tuple(rows)
 
 
+def card_shares(data: MetaData) -> dict[str, float]:
+    """Each card's share of the performing lists in the window, by `card_key`; empty without lists."""
+    lists = _window(data.lists.data.entries if data.lists.data else (), data.since)
+    performing, _ = performing_lists(lists)
+    if not performing:
+        return {}
+    return {key: count / len(performing) for key, count in _list_counts(performing).items()}
+
+
 def threats(pieces: Iterable[str], field: Sequence[MetaCommander], db: CardDb) -> tuple[Threat, ...]:
     """Cards the top commanders' lists commonly play that answer at least one key piece."""
     # A key piece the card data lacks has no type line, so no answer could be matched to it.

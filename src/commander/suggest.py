@@ -166,7 +166,7 @@ def suggest(
             main,
             data,
             count=options.count,
-            protected=protected_cards(main, options),
+            protected=protected_cards(main, options.keep_names, options.keep_categories),
             themed=db.matching(options.themes, (r.info.oracle_id for r in main if r.info)),
         ),
         hidden=picker.hidden,
@@ -361,14 +361,16 @@ def fills_role(card: ResolvedCard, role: Role) -> bool:
     return any(category.casefold() in aliases for category in card.card.categories)
 
 
-def protected_cards(main: Sequence[ResolvedCard], options: SuggestOptions) -> frozenset[str]:
-    """Oracle ids of deck cards the profile keeps, by name or by category, so never offered as cuts."""
+def protected_cards(
+    main: Sequence[ResolvedCard], keep_names: Collection[str], keep_categories: Collection[str]
+) -> frozenset[str]:
+    """Oracle ids of deck cards kept by name key or casefolded category, so never offered as cuts."""
     protected: set[str] = set()
     for r in main:
         if r.info is None:
             continue
         categories = {category.casefold() for category in r.card.categories}
-        if categories & options.keep_categories or name_keys(r.card.name) & options.keep_names:
+        if categories & set(keep_categories) or name_keys(r.card.name) & set(keep_names):
             protected.add(r.info.oracle_id)
     return frozenset(protected)
 

@@ -142,6 +142,16 @@ def test_the_meta_stamp_changes_when_a_meta_answer_is_saved(desk: Desk, settings
     assert str(desk.stamps()["meta"]).startswith("1:")
 
 
+def test_each_board_card_comes_with_the_deck_cards_it_could_replace(desk: Desk) -> None:
+    desk.propose(DECK, "Lightning Bolt")
+    [bolt] = items(desk.deck(DECK), "cards")
+    targets = cast("list[Json]", bolt["targets"])
+    assert targets
+    assert {t["source"] for t in targets} == {"role"}
+    assert all(str(t["reason"]).startswith(("same role", "fills no role")) for t in targets)
+    assert "Magda, Brazen Outlaw" not in {t["name"] for t in targets}
+
+
 def test_a_card_saved_into_the_deck_is_to_get_until_it_arrives(desk: Desk) -> None:
     assert desk.deck(DECK)["toGet"] == []
     desk.propose(DECK, "Arcane Signet")

@@ -32,19 +32,21 @@ from commander.board import (
 )
 from commander.boardsave import preview_board, save_board
 from commander.carddb import CardDataError, CardDb, CardInfo
-from commander.cli_meta import report_json
+from commander.cli_meta import CEDH_BRACKET, report_json
 from commander.cli_output import change_mark, change_text
 from commander.config import ConfigError, MetaSettings
 from commander.credentials import CredentialError, TokenStore
 from commander.deckprofile import read_profile
 from commander.edhtop16 import REQUEST_INTERVAL_SECONDS, SLOW_QUERY_SECONDS, Edhtop16Client, Edhtop16Error
 from commander.labels import LabelError, Step, mark, to_get_json
-from commander.meta import analyse
-from commander.metadata import MetaSources, cache_stamp, gather
+from commander.meta import analyse, card_shares
+from commander.metadata import MetaData, MetaSources, cache_stamp, gather
+from commander.models import Deck
 from commander.net import Fetcher, NetworkError, Pacer
 from commander.spellbook import META_REQUEST_INTERVAL_SECONDS, SpellbookClient
 from commander.store import StoredDeck, Workspace, WorkspaceError
 from commander.suggest import deck_identity
+from commander.targets import Target, kept_by_profile, targets_for
 
 log = logging.getLogger(__name__)
 
@@ -118,6 +120,8 @@ class Desk:
         self._client_factory = client_factory
         self._token_store = token_store
         self._now = now
+        # Per deck: the meta cache stamp the shares were read at, and the shares.
+        self._shares: dict[int, tuple[str, dict[str, float] | None]] = {}
 
     @_guarded
     def decks(self) -> Json:
@@ -150,9 +154,25 @@ class Desk:
         board = read_board(stored.folder)
         profile = read_profile(stored.folder)
         drop = set(board.to_drop(stored.deck))
+        shares = self._meta_shares(stored.deck)
         with self._db() as db:
-            identity = deck_identity(db.resolve(stored.deck.main_cards))
-            cards = [{**self._card_view(db, card), "dropping": card.name in drop} for card in board.cards]
+            main = db.resolve(stored.deck.main_cards)
+            identity = deck_identity(main)
+            kept = kept_by_profile(main, profile)
+            infos = db.cards(card.oracle_id for card in board.cards)
+            cards = [
+                {
+                    **self._card_view(db, card),
+                    "dropping": card.name in drop,
+                    "targets": [
+                        _target_json(t)
+                        for t in targets_for(
+                            card, infos.get(card.oracle_id), main, protected=kept, shares=shares
+                        )
+                    ],
+                }
+                for card in board.cards
+            ]
         activity = read_activity(stored.folder)[-ACTIVITY_SHOWN:]
         return {
             "id": stored.deck.id,
@@ -272,7 +292,27 @@ class Desk:
 
     def _meta(self, deck_id: int, *, offline: bool) -> Json:
         stored = self._stored(deck_id)
-        with self._db() as db, self._client_factory() as http:
+        data = self._gather(stored.deck, offline=offline)
+        with self._db() as db:
+            report = analyse(stored.deck, data, read_profile(stored.folder), db)
+        if data.lists.data is None and data.field.data is None and data.peers.data is None:
+            return {"report": None, "errors": [] if offline else [s.error for s in report.sources if s.error]}
+        return {"report": report_json(report)}
+
+    def _meta_shares(self, deck: Deck) -> dict[str, float] | None:
+        """Each card's share of the meta's lists, for bracket 5 decks with cached meta answers; else None."""
+        if deck.bracket != CEDH_BRACKET:
+            return None
+        stamp = cache_stamp(self._settings.cache)
+        known = self._shares.get(deck.id)
+        if known is not None and known[0] == stamp:
+            return known[1]
+        shares = card_shares(self._gather(deck, offline=True)) or None
+        self._shares[deck.id] = (stamp, shares)
+        return shares
+
+    def _gather(self, deck: Deck, *, offline: bool) -> MetaData:
+        with self._client_factory() as http:
             sources = MetaSources(
                 Edhtop16Client(
                     Fetcher(http, slow_after=SLOW_QUERY_SECONDS),
@@ -284,18 +324,9 @@ class Desk:
                 self._settings.user or "",
                 self._settings.meta,
             )
-            data = gather(
-                stored.deck,
-                sources,
-                self._settings.cache,
-                now=self._now,
-                refresh=not offline,
-                offline=offline,
+            return gather(
+                deck, sources, self._settings.cache, now=self._now, refresh=not offline, offline=offline
             )
-            report = analyse(stored.deck, data, read_profile(stored.folder), db)
-        if data.lists.data is None and data.field.data is None and data.peers.data is None:
-            return {"report": None, "errors": [] if offline else [s.error for s in report.sources if s.error]}
-        return {"report": report_json(report)}
 
     def _stored(self, deck_id: int) -> StoredDeck:
         folder = self._workspace.folder_for(int(deck_id))
@@ -347,6 +378,10 @@ def _image_url(db: CardDb, info: CardInfo) -> str | None:
         return None
     scryfall_id = regular[-1].scryfall_id
     return IMAGE_URL.format(a=scryfall_id[0], b=scryfall_id[1], id=scryfall_id)
+
+
+def _target_json(target: Target) -> Json:
+    return {"name": target.name, "reason": target.reason, "source": target.source.value}
 
 
 def _resolution_json(resolution: Resolution) -> Json:
