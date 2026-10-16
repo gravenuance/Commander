@@ -8,13 +8,13 @@ Sac Outlet) becomes the Tagger tags and subtypes most of its cards share but few
 import math
 import re
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, replace
 from enum import Enum
 
 from commander.analysis import CARD_TYPES, CATEGORY_ALIASES
 from commander.carddb import CardDb, ResolvedCard, Theme
-from commander.deckprofile import ThemeSpec
+from commander.deckprofile import Profile, ResolvedThemes, ThemeSpec, resolve_themes
 from commander.models import Deck
 
 # Deck tags that say how a deck plays or how strong it is, not which cards it wants.
@@ -136,6 +136,42 @@ class CoverRules:
     min_covered: float = 0.5
 
 
+@dataclass(slots=True, frozen=True)
+class MergedThemes:
+    """The themes suggest uses: the profile's own, then the derived ones less what the profile drops."""
+
+    resolved: ResolvedThemes
+    derived: DeckThemes
+    # The derived themes in use, after the profile's ignore list and [exclude].
+    used: tuple[DerivedTheme, ...]
+    # Names in the profile's ignore list that are no deck tag or category the deck has.
+    unknown_ignores: tuple[str, ...]
+
+
+def merge_themes(deck: Deck, profile: Profile, db: CardDb) -> MergedThemes:
+    derived = derive_themes(deck, db)
+    ignored = {name.strip().casefold() for name in profile.ignore_themes}
+    used = [
+        replace(theme, spec=_without(theme.spec, profile.exclude))
+        for theme in derived.themes
+        if theme.name.strip().casefold() not in ignored
+    ]
+    used = [theme for theme in used if not theme.spec.empty]
+    specs = [profile.themes, *(theme.spec for theme in used)]
+    merged = ThemeSpec(
+        types=_once(t for spec in specs for t in spec.types),
+        keywords=_once(k for spec in specs for k in spec.keywords),
+        tags=_once(t for spec in specs for t in spec.tags),
+    )
+    known = {name.strip().casefold() for name in (*(deck.tags or ()), *_categories(deck))}
+    return MergedThemes(
+        resolve_themes(replace(profile, themes=merged), db),
+        derived,
+        tuple(used),
+        tuple(name for name in profile.ignore_themes if name.strip().casefold() not in known),
+    )
+
+
 def derive_themes(deck: Deck, db: CardDb, rules: CoverRules = CoverRules()) -> DeckThemes:  # noqa: B008 — frozen, so one shared default is safe
     themes: list[DerivedTheme] = []
     unmatched: list[str] = []
@@ -227,6 +263,30 @@ def cover(
     if len(covered) < rules.min_covered * cards:
         return (), len(covered)
     return tuple(picks), len(covered)
+
+
+def _without(spec: ThemeSpec, exclude: ThemeSpec) -> ThemeSpec:
+    """The spec less every type, keyword and tag the profile excludes."""
+
+    def kept(values: tuple[str, ...], dropped: tuple[str, ...]) -> tuple[str, ...]:
+        gone = {value.casefold() for value in dropped}
+        return tuple(value for value in values if value.casefold() not in gone)
+
+    return ThemeSpec(
+        kept(spec.types, exclude.types), kept(spec.keywords, exclude.keywords), kept(spec.tags, exclude.tags)
+    )
+
+
+def _once(values: Iterable[str]) -> tuple[str, ...]:
+    """Each value once, first spelling kept, compared without case."""
+    seen: dict[str, str] = {}
+    for value in values:
+        seen.setdefault(value.casefold(), value)
+    return tuple(seen.values())
+
+
+def _categories(deck: Deck) -> set[str]:
+    return {category for card in deck.main_cards for category in card.categories}
 
 
 def _needed(cards: int, rules: CoverRules) -> int:

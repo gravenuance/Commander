@@ -99,9 +99,22 @@ def test_suggest_follows_the_profile(tmp_path: Path, raw_deck: Json, own_cache: 
     # Chaos Warp is an Instant but excluded by name.
     assert (roles["draw"]["have"], roles["draw"]["target"], roles["draw"]["short"]) == (0, 0, False)
     assert [i["name"] for i in roles["ramp"]["ideas"]] == ["Arcane Signet"]
-    assert [i["name"] for i in deck["themed"]] == ["Lightning Bolt"]
+    # Lightning Bolt is an Instant, the profile's theme; High-Speed Hoverbike is from the Vehicles deck tag.
+    assert [i["name"] for i in deck["themed"]] == ["Lightning Bolt", "High-Speed Hoverbike"]
     assert deck["ceiling"] == 4
     assert "profile tag 'no-such-tag' is not a Tagger tag" in result.err
+
+
+def test_suggest_leaves_out_the_derived_themes_the_profile_ignores(
+    tmp_path: Path, raw_deck: Json, own_cache: Path
+) -> None:
+    fake = synced(tmp_path, raw_deck)
+    ignoring = PROFILE.replace("[exclude]", 'ignore = ["vehicles", "Spaghetti"]\n[exclude]')
+    (deck_folder(tmp_path) / PROFILE_FILE).write_text(ignoring, encoding="utf-8")
+    result = suggest(["magda", "--json"], tmp_path, fake, own_cache)
+    [deck] = json.loads(result.out)
+    assert [i["name"] for i in deck["themed"]] == ["Lightning Bolt"]
+    assert "the profile ignores 'Spaghetti', which is no deck tag or category" in result.err
 
 
 def test_suggest_prints_the_themed_section(tmp_path: Path, raw_deck: Json, own_cache: Path) -> None:

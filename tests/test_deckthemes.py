@@ -6,7 +6,7 @@ import pytest
 
 from commander.archidekt import parse_deck
 from commander.carddb import CardDb, Theme
-from commander.deckprofile import ThemeSpec
+from commander.deckprofile import Profile, ThemeSpec
 from commander.deckthemes import (
     OVERRIDES,
     CoverRules,
@@ -18,6 +18,7 @@ from commander.deckthemes import (
     cover,
     deck_tag_spec,
     derive_themes,
+    merge_themes,
 )
 from commander.models import Deck, DeckCard
 from conftest import MAGDA_ORACLE, Json, build_card_db
@@ -198,6 +199,41 @@ def test_unmatched_deck_tags_are_reported_and_a_deck_without_any_has_no_themes(
 ) -> None:
     assert derive_themes(replace(deck, tags=("Spaghetti",), cards=()), db).unmatched == ("Spaghetti",)
     assert derive_themes(replace(deck, tags=None, cards=()), db) == DeckThemes((), (), ())
+
+
+RAMP_ID = "2f3e4ad7-5e60-41b4-bdbc-653f16869cf6"
+TYPAL_DWARF_ID = "eeeeeeee-0000-4000-8000-000000000001"
+
+
+def test_the_profiles_themes_come_first_then_the_derived_ones(db: CardDb, deck: Deck) -> None:
+    merged = merge_themes(deck, Profile(themes=ThemeSpec(types=("Dwarf",), tags=("ramp",))), db)
+    # Dwarf is named once, though both the profile and the Dwarves deck tag name it.
+    assert merged.resolved.themes == Theme(types=("Dwarf", "Vehicle"), tag_ids=(RAMP_ID, TYPAL_DWARF_ID))
+    assert [t.name for t in merged.used] == ["Dwarves", "Vehicles"]
+
+
+def test_the_profile_ignores_derived_themes_by_name(db: CardDb, deck: Deck) -> None:
+    merged = merge_themes(deck, Profile(ignore_themes=("VEHICLES", "Spaghetti", "cEDH")), db)
+    assert [t.name for t in merged.used] == ["Dwarves"]
+    assert merged.resolved.themes == Theme(types=("Dwarf",), tag_ids=(TYPAL_DWARF_ID,))
+    # Spaghetti names nothing the deck has; cEDH is a deck tag, if one that makes no theme.
+    assert merged.unknown_ignores == ("Spaghetti",)
+
+
+def test_what_the_profile_excludes_leaves_the_derived_themes(db: CardDb, deck: Deck) -> None:
+    merged = merge_themes(deck, Profile(exclude=ThemeSpec(types=("vehicle",), tags=("typal-dwarf",))), db)
+    # The Vehicles theme had nothing else, so it goes; Dwarves keeps its type.
+    assert [(t.name, t.spec) for t in merged.used] == [("Dwarves", ThemeSpec(types=("Dwarf",)))]
+    assert merged.resolved.themes == Theme(types=("Dwarf",))
+
+
+def test_a_deck_with_no_derived_themes_keeps_the_profiles_own(db: CardDb, deck: Deck) -> None:
+    merged = merge_themes(
+        replace(deck, tags=None), Profile(themes=ThemeSpec(tags=("ramp", "no-such-tag"))), db
+    )
+    assert merged.used == ()
+    assert merged.resolved.themes == Theme(tag_ids=(RAMP_ID,))
+    assert merged.resolved.unknown_tags == ("no-such-tag",)
 
 
 def test_a_cards_tags_include_every_tag_above_them(db: CardDb) -> None:

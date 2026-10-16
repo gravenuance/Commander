@@ -76,7 +76,8 @@ from commander.config import (
 )
 from commander.credentials import CredentialError, KeyringTokenStore, TokenStore
 from commander.deckcache import Answer, AnswerSource
-from commander.deckprofile import read_profile, resolve_themes
+from commander.deckprofile import read_profile
+from commander.deckthemes import merge_themes
 from commander.diff import DeckDiff
 from commander.edhtop16 import Edhtop16Error
 from commander.models import Deck
@@ -557,10 +558,18 @@ def _cmd_suggest(args: argparse.Namespace, ctx: Context) -> int:
         results: list[Suggestions] = []
         folders = [s.folder for s in stored]
         for deck, folder, profile, answer in zip(decks, folders, profiles, combos, strict=True):
-            themes = resolve_themes(profile, db)
+            merged = merge_themes(deck, profile, db)
+            themes = merged.resolved
+            own = {*profile.themes.tags, *profile.exclude.tags}
             for slug in themes.unknown_tags:
+                where = "profile tag" if slug in own else "deck theme tag"
                 print(
-                    f"cmdr: {deck.name}: profile tag {slug!r} is not a Tagger tag; `cmdr tags` finds them",
+                    f"cmdr: {deck.name}: {where} {slug!r} is not a Tagger tag; `cmdr tags` finds them",
+                    file=ctx.err,
+                )
+            for name in merged.unknown_ignores:
+                print(
+                    f"cmdr: {deck.name}: the profile ignores {name!r}, which is no deck tag or category",
                     file=ctx.err,
                 )
             options = options_for(

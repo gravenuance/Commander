@@ -21,6 +21,7 @@ _TOP_KEYS = frozenset(
     {"version", "archetype", "bracket_ceiling", "max_card_eur", "targets", "themes", "exclude", "keep"}
 )
 _THEME_KEYS = frozenset({"types", "keywords", "tags"})
+_THEMES_KEYS = _THEME_KEYS | {"ignore"}
 _EXCLUDE_KEYS = _THEME_KEYS | {"cards"}
 _KEEP_KEYS = frozenset({"cards", "categories"})
 
@@ -57,6 +58,8 @@ class Profile:
     keep_cards: tuple[str, ...] = ()
     # Cards filed under one of these Archidekt categories are never offered as cuts.
     keep_categories: tuple[str, ...] = ()
+    # Themes read from the deck's Archidekt deck tags or categories, by name, to leave out.
+    ignore_themes: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.bracket_ceiling is not None and not 1 <= self.bracket_ceiling <= 5:  # noqa: PLR2004 — brackets 1..5
@@ -101,6 +104,7 @@ def parse_profile(raw: Mapping[str, object], where: str) -> Profile:
     unknown = sorted(set(raw) - _TOP_KEYS)
     if unknown:
         raise ProfileError(f"{where}: unknown key {unknown[0]!r}; use {', '.join(sorted(_TOP_KEYS))}")
+    themes = _table(raw, "themes", _THEMES_KEYS, where)
     exclude = _table(raw, "exclude", _EXCLUDE_KEYS, where)
     keep = _table(raw, "keep", _KEEP_KEYS, where)
     return Profile(
@@ -108,11 +112,12 @@ def parse_profile(raw: Mapping[str, object], where: str) -> Profile:
         bracket_ceiling=_whole(raw.get("bracket_ceiling"), "bracket_ceiling", where, 1, 5),
         max_card_cents=_euro_cents(raw.get("max_card_eur"), where),
         targets=_targets(raw.get("targets"), where),
-        themes=_theme(_table(raw, "themes", _THEME_KEYS, where), "themes", where),
+        themes=_theme(themes, "themes", where),
         exclude=_theme(exclude, "exclude", where),
         exclude_cards=_strings(exclude, "cards", "exclude", where),
         keep_cards=_strings(keep, "cards", "keep", where),
         keep_categories=_strings(keep, "categories", "keep", where),
+        ignore_themes=_strings(themes, "ignore", "themes", where),
     )
 
 
@@ -153,10 +158,13 @@ archetype = ""
 
 # Ideas matching a theme come first, and the deck's matching cards come last among cuts.
 # types: type-line words like "Dinosaur"; keywords like "Discover"; tags: `cmdr tags <text>` finds them.
+# Themes are read from the deck's Archidekt deck tags and categories too (`cmdr profile` lists them);
+# ignore: the deck tags or categories, by name, whose themes to leave out.
 [themes]
 types = []
 keywords = []
 tags = []
+ignore = []
 
 # Never suggest cards matching these, or named here.
 [exclude]

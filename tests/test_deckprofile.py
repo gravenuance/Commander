@@ -34,6 +34,7 @@ board_wipe = 1
 types = ["Dinosaur"]
 keywords = ["Discover"]
 tags = ["HATEBEAR"]
+ignore = ["Vehicles"]
 
 [exclude]
 tags = ["flicker"]
@@ -69,6 +70,7 @@ def test_full_profile_is_read(tmp_path: Path) -> None:
         exclude_cards=("Flickering Hound",),
         keep_cards=("Sol Ring",),
         keep_categories=("Stax",),
+        ignore_themes=("Vehicles",),
     )
 
 
@@ -97,6 +99,8 @@ def test_byte_order_mark_is_accepted(tmp_path: Path) -> None:
         ("[themes]\ntypes = ['']", "themes.types[0] is empty"),
         ("[exclude]\ncards = [1]", "exclude.cards[0] must be text"),
         ("[keep]\ntags = []", "unknown key 'tags' in [keep]"),
+        ("[exclude]\nignore = []", "unknown key 'ignore' in [exclude]"),
+        ("[themes]\nignore = 'Vehicles'", "themes.ignore must be a list"),
         ("[targets]\nlands = 36", "unknown role 'lands'"),
         ("not toml", "cannot read"),
     ],

@@ -647,6 +647,9 @@ roles below target (nonland cards by Scryfall tags or your categories; most play
   board wipe 1 of 2
              no card fits
 
+cards that fit the deck's themes (most played first)
+      €0.14  High-Speed Hoverbike
+
 cards to consider cutting: none, every nonland card has a role or is in a combo
 """
     + SUGGEST_CREDIT
