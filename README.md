@@ -303,9 +303,10 @@ in TopDeck.gg's decklist format (`~~Commanders~~`, then `~~Mainboard~~`, one `1 
 
 - **Considering**, on the right, lists every idea for the deck: yours, Claude's, the meta's and the
   tools'. Hover over an idea or click it to light the deck cards it could replace. Click one of them to
-  queue the swap. Once you click an idea, any other deck card can be clicked to replace it too, or × to turn the idea down, with a reason if you like: turned-down cards wait under
-  *Rejected* (closed until opened) with their reasons, and Reconsider brings one back. Considering, Meta
-  and each Meta section fold, and stay as you left them. The targets are the cards you or Claude picked, or else the
+  queue the swap; once an idea is clicked, any other deck card but the commander can be clicked too.
+  × turns the idea down, with a reason if you like: turned-down cards wait under *Rejected* (closed until
+  opened) with their reasons, and Reconsider brings one back. Considering, Meta and each Meta section
+  fold, and stay as you left them. The suggested targets are the cards you or Claude picked, or else the
   weakest cards in the same role ([ADR 0011](docs/adr/0011-app-deck-grid-and-replacement-targets.md)),
   like for like: a card serving one of the deck's themes or leanings is offered only for an idea serving
   the same ([ADR 0016](docs/adr/0016-replacements-like-for-like.md)).
