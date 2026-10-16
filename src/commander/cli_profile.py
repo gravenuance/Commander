@@ -74,7 +74,7 @@ def profile_lines(profile: Profile) -> list[str]:
                 filter(None, [_names(profile.keep_cards), _names(profile.keep_categories, "categories")])
             ),
         ),
-        ("ideas also from", ", ".join(" + ".join(group) for group in profile.adjacent)),
+        ("ideas also from", "; ".join(" + ".join(group) for group in profile.adjacent)),
     ]
     return [f"{label}: {value or '-'}" for label, value in rows]
 
