@@ -107,9 +107,10 @@ def short_commander_name(name: str) -> str:
 
 
 def _short_commander(name: str) -> str:
-    # "Magda, Brazen Outlaw" -> Magda; "Ellivere of the Wild Court" and "Edgar Markov" -> the first word.
-    front = name.split(" // ", maxsplit=1)[0]
-    return front.split(",")[0] if "," in front else front.split()[0]
+    # The first word: "Magda, Brazen Outlaw", "Tevesh Szat, Doom of Fools", "Ellivere of the Wild Court";
+    # after a leading "The": "The Gitrog Monster" -> Gitrog.
+    front = name.split(" // ", maxsplit=1)[0].removeprefix("The ")
+    return front.split(",")[0].split()[0]
 
 
 @dataclass(slots=True, frozen=True)

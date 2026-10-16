@@ -57,6 +57,8 @@ log = logging.getLogger(__name__)
 FRESH_FOR = timedelta(hours=24)
 CACHE_VERSION = 1
 CACHE_FOLDER = "meta"
+# Search hits read per wanted deck when looking for a partner pair, most of which pair another partner.
+PARTNER_READS = 3
 # Enough for the busiest commanders' two months; the client stops at its page cap before this anyway.
 MAX_OWN_ENTRIES = 400
 
@@ -269,6 +271,54 @@ def gather_peers(
     return MetaData(commander_name(deck.commanders), since, lists, field, peers, combos, own)
 
 
+@dataclass(slots=True, frozen=True)
+class AdjacentDecks:
+    """The recent Archidekt decks of the commanders a profile names as playing alike, pooled (ADR 0015)."""
+
+    decks: tuple[PeerList, ...]
+    # Each commander group that could not be read, by name, with why.
+    errors: tuple[tuple[str, str], ...]
+
+
+def gather_adjacent(
+    deck: Deck,
+    groups: Sequence[tuple[str, ...]],
+    sources: MetaSources,
+    cache_root: Path,
+    *,
+    now: Clock,
+    refresh: bool,
+    offline: bool = False,
+    on_progress: Progress | None = None,
+) -> AdjacentDecks:
+    """Each group's recent Archidekt decks at the deck's bracket, cached as a deck's own peers are."""
+    since = window_start(now(), sources.settings)
+    folder = cache_root / CACHE_FOLDER
+    decks: dict[int, PeerList] = {}
+    errors: list[tuple[str, str]] = []
+    for group in groups:
+        name = commander_name(group)
+        if on_progress is not None:
+            on_progress(f"Archidekt: recent {name} decks")
+        answer = _group_peers(
+            group,
+            deck.bracket,
+            sources,
+            folder,
+            since,
+            own_id=None,
+            now=now,
+            refresh=refresh,
+            offline=offline,
+        )
+        if answer.data is None:
+            errors.append((name, answer.error or "unavailable"))
+            continue
+        for peer in answer.data.decks:
+            decks.setdefault(peer.deck.id, peer)
+    return AdjacentDecks(tuple(decks.values()), tuple(errors))
+
+
 def _peers(
     deck: Deck,
     sources: MetaSources,
@@ -279,17 +329,40 @@ def _peers(
     refresh: bool,
     offline: bool,
 ) -> Answer[PeerLists]:
+    group = tuple(deck.commanders)
+    return _group_peers(
+        group, deck.bracket, sources, folder, since, own_id=deck.id, now=now, refresh=refresh, offline=offline
+    )
+
+
+def _group_peers(
+    group: tuple[str, ...],
+    bracket: int | None,
+    sources: MetaSources,
+    folder: Path,
+    since: date,
+    *,
+    own_id: int | None,
+    now: Clock,
+    refresh: bool,
+    offline: bool,
+) -> Answer[PeerLists]:
+    """Recent Archidekt decks led by the commander, or by both partners, at the bracket."""
     settings = sources.settings
+    name = commander_name(group)
     request: Mapping[str, object] = {
-        "commander": deck.commanders[0],
-        "bracket": deck.bracket,
+        "commander": name,
+        "bracket": bracket,
         "decks": settings.peer_decks,
         "user": sources.user.casefold(),
     }
     return cached_answer(
-        cache_item("archidekt", deck.commanders[0], str(deck.bracket)),
+        cache_item("archidekt", name, str(bracket)),
         request,
-        _live(offline, lambda: _peer_lists(sources, deck, since, settings)),
+        _live(
+            offline,
+            lambda: _peer_lists(sources, group, bracket, own_id=own_id, since=since, settings=settings),
+        ),
         _cache(folder, "Archidekt decks", _encode_peers, _decode_peers),
         now=now,
         refresh=refresh,
@@ -401,23 +474,38 @@ def _meta_field(client: Edhtop16Client, since: date, settings: MetaSettings) -> 
     return tuple(field)
 
 
-def _peer_lists(sources: MetaSources, deck: Deck, since: date, settings: MetaSettings) -> PeerLists:
+def _peer_lists(
+    sources: MetaSources,
+    group: tuple[str, ...],
+    bracket: int | None,
+    *,
+    own_id: int | None,
+    since: date,
+    settings: MetaSettings,
+) -> PeerLists:
     if settings.peer_decks == 0:
         return PeerLists((), 0)
     start = datetime(since.year, since.month, since.day, tzinfo=UTC)
     user = sources.user.casefold()
-    found = sources.archidekt.recent_decks(deck.commanders[0], bracket=deck.bracket, since=start)
-    others = [d for d in found if d.owner.casefold() != user and d.id != deck.id]
+    found = sources.archidekt.recent_decks(group[0], bracket=bracket, since=start)
+    others = [d for d in found if d.owner.casefold() != user and d.id != own_id]
     others.sort(key=lambda d: (-d.views, d.id))
+    wanted = {name.casefold() for name in group}
+    # The search finds one commander; with a partner, decks pairing it with another are read and dropped.
+    reads = settings.peer_decks * (PARTNER_READS if len(group) > 1 else 1)
     lists: list[PeerList] = []
     skipped = 0
-    for peer in others[: settings.peer_decks]:
+    for peer in others[:reads]:
+        if len(lists) == settings.peer_decks:
+            break
         try:
             full = sources.archidekt.deck(peer.id)
         except ArchidektError as error:
             # One unreadable deck shouldn't cost the others; the count is shown with the results.
             log.warning("skipping Archidekt deck %d: %s", peer.id, error)
             skipped += 1
+            continue
+        if len(group) > 1 and not wanted <= {name.casefold() for name in full.commanders}:
             continue
         lists.append(PeerList(peer, tuple(sorted({card.name for card in full.main_cards}))))
     return PeerLists(tuple(lists), skipped)

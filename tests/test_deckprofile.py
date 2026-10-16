@@ -43,6 +43,9 @@ cards = ["Flickering Hound"]
 [keep]
 cards = ["Sol Ring"]
 categories = ["Stax"]
+
+[ideas]
+commanders = ["The Gitrog Monster", ["Tevesh Szat, Doom of Fools", "Kodama of the East Tree"]]
 """
 
 
@@ -71,6 +74,7 @@ def test_full_profile_is_read(tmp_path: Path) -> None:
         keep_cards=("Sol Ring",),
         keep_categories=("Stax",),
         ignore_themes=("Vehicles",),
+        adjacent=(("The Gitrog Monster",), ("Tevesh Szat, Doom of Fools", "Kodama of the East Tree")),
     )
 
 
@@ -103,6 +107,16 @@ def test_byte_order_mark_is_accepted(tmp_path: Path) -> None:
         ("[themes]\nignore = 'Vehicles'", "themes.ignore must be a list"),
         ("[targets]\nlands = 36", "unknown role 'lands'"),
         ("not toml", "cannot read"),
+        ("[ideas]\ncommanders = 'Ygra'", "ideas.commanders must be a list"),
+        ("[ideas]\ncommanders = ['']", "ideas.commanders[0] must be a commander or a list of two partners"),
+        (
+            "[ideas]\ncommanders = [['A', 'B', 'C']]",
+            "ideas.commanders[0] must be a commander or a list of two",
+        ),
+        ("[ideas]\ncommanders = [[]]", "ideas.commanders[0] must be a commander or a list of two"),
+        ("[ideas]\ncommanders = [3]", "ideas.commanders[0] must be text"),
+        ("[ideas]\ncommanders = [['A', 3]]", "ideas.commanders[0].pair[1] must be text"),
+        ("[ideas]\ntags = []", "unknown key 'tags' in [ideas]"),
     ],
 )
 def test_invalid_profiles_name_the_problem(tmp_path: Path, text: str, message: str) -> None:
@@ -115,6 +129,11 @@ def test_invalid_profiles_name_the_problem(tmp_path: Path, text: str, message: s
 def test_too_many_entries_are_refused() -> None:
     with pytest.raises(ProfileError, match="over 100 entries"):
         parse_profile({"themes": {"types": ["Elf"] * 101}}, "p")
+
+
+def test_more_adjacent_commanders_than_a_day_of_searches_allows_are_refused() -> None:
+    with pytest.raises(ProfileError, match="over 8 commanders"):
+        parse_profile({"ideas": {"commanders": [f"Commander {i}" for i in range(9)]}}, "p")
 
 
 def test_oversized_file_is_refused(tmp_path: Path) -> None:

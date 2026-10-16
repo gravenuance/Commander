@@ -78,13 +78,13 @@ from commander.config import (
 )
 from commander.credentials import CredentialError, KeyringTokenStore, TokenStore
 from commander.deckcache import Answer, AnswerSource
-from commander.deckprofile import read_profile
+from commander.deckprofile import ProfileError, read_profile
 from commander.deckthemes import merge_themes
 from commander.diff import DeckDiff
 from commander.edhtop16 import Edhtop16Error
 from commander.ideas import compile_ideas, ideas_summary
 from commander.labels import LabelError
-from commander.metadata import Progress, gather, gather_peers
+from commander.metadata import Progress, gather, gather_adjacent, gather_peers
 from commander.models import Deck
 from commander.net import Fetcher, NetworkError, Pacer, make_client
 from commander.plan import EXAMPLE as PLAN_EXAMPLE
@@ -495,8 +495,22 @@ def _compile_ideas(
                 data = read(
                     deck, sources, cache_dir(ctx.env), now=ctx.now, refresh=False, on_progress=progress
                 )
-                found[deck.short_name] = compile_ideas(stored, data, db, now=ctx.now)
-            except BoardError as error:
+                groups = read_profile(stored.folder).adjacent
+                adjacent = gather_adjacent(
+                    deck,
+                    groups,
+                    sources,
+                    cache_dir(ctx.env),
+                    now=ctx.now,
+                    refresh=False,
+                    on_progress=progress,
+                )
+                for name, why in adjacent.errors:
+                    print(
+                        f"cmdr: {deck.short_name}: no recent {name} decks to learn from ({why})", file=ctx.err
+                    )
+                found[deck.short_name] = compile_ideas(stored, data, db, now=ctx.now, adjacent=adjacent.decks)
+            except (BoardError, ProfileError) as error:
                 print(f"cmdr: {deck.short_name} ideas not compiled: {error}", file=ctx.err)
                 continue
             if data.lists.data is None and data.peers.data is None:

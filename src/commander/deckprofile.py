@@ -19,13 +19,28 @@ MAX_PROFILE_BYTES = 64 * 1024
 MAX_LIST = 100
 MAX_TEXT = 200
 MAX_CARD_EUR = 100_000
+# Each adjacent commander costs an Archidekt search and a few deck reads per day (ADR 0015).
+MAX_ADJACENT = 8
+# A commander and its partner.
+MAX_GROUP = 2
 _TOP_KEYS = frozenset(
-    {"version", "archetype", "bracket_ceiling", "max_card_eur", "targets", "themes", "exclude", "keep"}
+    {
+        "version",
+        "archetype",
+        "bracket_ceiling",
+        "max_card_eur",
+        "targets",
+        "themes",
+        "exclude",
+        "keep",
+        "ideas",
+    }
 )
 _THEME_KEYS = frozenset({"types", "keywords", "tags"})
 _THEMES_KEYS = _THEME_KEYS | {"ignore"}
 _EXCLUDE_KEYS = _THEME_KEYS | {"cards"}
 _KEEP_KEYS = frozenset({"cards", "categories"})
+_IDEAS_KEYS = frozenset({"commanders"})
 
 
 class ProfileError(ConfigError):
@@ -62,6 +77,8 @@ class Profile:
     keep_categories: tuple[str, ...] = ()
     # Themes read from the deck's Archidekt deck tags or categories, by name, to leave out.
     ignore_themes: tuple[str, ...] = ()
+    # Other commanders, alone or with a partner, whose recent Archidekt decks also give ideas (ADR 0015).
+    adjacent: tuple[tuple[str, ...], ...] = ()
 
     def __post_init__(self) -> None:
         if self.bracket_ceiling is not None and not 1 <= self.bracket_ceiling <= 5:  # noqa: PLR2004 — brackets 1..5
@@ -111,6 +128,7 @@ def parse_profile(raw: Mapping[str, object], where: str) -> Profile:
     themes = _table(raw, "themes", _THEMES_KEYS, where)
     exclude = _table(raw, "exclude", _EXCLUDE_KEYS, where)
     keep = _table(raw, "keep", _KEEP_KEYS, where)
+    ideas = _table(raw, "ideas", _IDEAS_KEYS, where)
     return Profile(
         archetype=_text(raw.get("archetype"), "archetype", where) or "",
         bracket_ceiling=_whole(raw.get("bracket_ceiling"), "bracket_ceiling", where, 1, 5),
@@ -122,6 +140,7 @@ def parse_profile(raw: Mapping[str, object], where: str) -> Profile:
         keep_cards=_strings(keep, "cards", "keep", where),
         keep_categories=_strings(keep, "categories", "keep", where),
         ignore_themes=_strings(themes, "ignore", "themes", where),
+        adjacent=_commander_groups(ideas.get("commanders"), where),
     )
 
 
@@ -183,6 +202,12 @@ cards = []
 [keep]
 cards = []
 categories = []
+
+# Commanders that play like this one: their recent Archidekt decks at this deck's bracket give `sync`
+# ideas too. A partner pair goes in its own list:
+# commanders = ["The Gitrog Monster", ["Tevesh Szat, Doom of Fools", "Kodama of the East Tree"]]
+[ideas]
+commanders = []
 """
 
 
@@ -243,6 +268,29 @@ def _strings(table: Mapping[str, object], key: str, section: str, where: str) ->
             raise ProfileError(f"{where}: {section}.{key}[{index}] is empty")
         found.append(text)
     return tuple(found)
+
+
+def _commander_groups(value: object, where: str) -> tuple[tuple[str, ...], ...]:
+    key = "ideas.commanders"
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ProfileError(f'{where}: {key} must be a list, like commanders = ["..."]')
+    items = cast("Sequence[object]", value)
+    if len(items) > MAX_ADJACENT:
+        raise ProfileError(f"{where}: {key} holds over {MAX_ADJACENT} commanders")
+    groups: list[tuple[str, ...]] = []
+    for index, item in enumerate(items):
+        if isinstance(item, list):
+            pair = cast("list[object]", item)
+            group = _strings({"pair": pair}, "pair", f"{key}[{index}]", where)
+        else:
+            text = _text(item, f"{key}[{index}]", where)
+            group = (text,) if text else ()
+        if not 1 <= len(group) <= MAX_GROUP:
+            raise ProfileError(f"{where}: {key}[{index}] must be a commander or a list of two partners")
+        groups.append(group)
+    return tuple(groups)
 
 
 def _text(value: object, key: str, where: str) -> str | None:

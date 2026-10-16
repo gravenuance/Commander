@@ -9,14 +9,25 @@ from commander.archidekt import ArchidektSearch
 from commander.config import MetaSettings
 from commander.deckcache import AnswerSource
 from commander.edhtop16 import Edhtop16Client
-from commander.metadata import CACHE_FOLDER, MetaData, MetaSources, cache_stamp, gather, window_start
+from commander.metadata import (
+    CACHE_FOLDER,
+    AdjacentDecks,
+    MetaData,
+    MetaSources,
+    cache_stamp,
+    gather,
+    gather_adjacent,
+    window_start,
+)
 from commander.models import Deck, DeckCard
 from commander.net import HTTP_OK, Fetcher, Pacer
 from commander.spellbook import SpellbookClient
-from conftest import DECK_ID, FakeEdhtop16, FakeSpellbook, load_fixture
+from conftest import DECK_ID, FakeEdhtop16, FakeSpellbook, card_entry, load_fixture
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 ELLIVERE = "Ellivere of the Wild Court"
+MAGDA = "Magda, Brazen Outlaw"
+KODAMA = "Kodama of the East Tree"
 SETTINGS = MetaSettings(window_days=60, min_event_size=16, peer_decks=3, meta_commanders=2, meta_lists=30)
 
 
@@ -25,6 +36,8 @@ class FakeArchidektSearch:
 
     def __init__(self) -> None:
         self.broken: set[int] = set()
+        # Decks served with Kodama of the East Tree as Magda's partner.
+        self.partnered: set[int] = set()
         self.status = 200
         self.requests: list[str] = []
 
@@ -37,7 +50,10 @@ class FakeArchidektSearch:
         deck_id = int(request.url.path.strip("/").split("/")[-1])
         if deck_id in self.broken:
             return httpx.Response(200, json={"id": deck_id})
-        return httpx.Response(200, json=load_fixture(f"deck_{DECK_ID}.json"))
+        deck = load_fixture(f"deck_{DECK_ID}.json")
+        if deck_id in self.partnered:
+            deck["cards"].append(card_entry(9_200, KODAMA, ["Commander"]))
+        return httpx.Response(200, json=deck)
 
 
 def ellivere_deck() -> Deck:
@@ -267,3 +283,32 @@ def test_the_cache_stamp_changes_when_an_answer_is_saved_rewritten_or_removed(tm
     assert cache_stamp(tmp_path) == "2:3000"
     first.unlink()
     assert cache_stamp(tmp_path) == "1:2000"
+
+
+def adjacent(rig: Rig, *groups: tuple[str, ...]) -> AdjacentDecks:
+    return gather_adjacent(
+        ellivere_deck(), groups, rig.sources(), rig.cache, now=lambda: rig.now, refresh=False
+    )
+
+
+def test_a_partner_pair_keeps_only_decks_led_by_both(rig: Rig) -> None:
+    # The 3rd, 5th and 11th most viewed pair Magda with Kodama; nine hits are read for three decks.
+    rig.archidekt.partnered = {7432856, 23074747, 26605393}
+    found = adjacent(rig, (MAGDA, KODAMA))
+    assert [p.deck.id for p in found.decks] == [7432856, 23074747]
+    assert found.errors == ()
+
+
+def test_adjacent_groups_pool_their_decks_once_each(rig: Rig) -> None:
+    # The fake search answers every commander with the same decks, so the second group adds none.
+    found = adjacent(rig, (MAGDA,), (ELLIVERE,))
+    assert [p.deck.id for p in found.decks] == [5553433, 13668856, 7432856]
+
+
+def test_an_adjacent_group_that_cannot_be_read_is_named(rig: Rig) -> None:
+    rig.archidekt.status = 500
+    found = adjacent(rig, (MAGDA,))
+    assert found.decks == ()
+    [(name, why)] = found.errors
+    assert name == MAGDA
+    assert "HTTP 500" in why

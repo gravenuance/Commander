@@ -276,6 +276,11 @@ class Staples:
     peers: int
 
 
+def pool_staples(deck: Deck, pool: Sequence[PeerList], db: CardDb) -> tuple[CardShare, ...]:
+    """The cards at least half of a pool of Archidekt decks play that the deck misses, uncapped."""
+    return missing_staples(deck, (), pool, _display_names((), pool, deck), db, limit=None)
+
+
 def all_staples(deck: Deck, data: MetaData, db: CardDb) -> Staples:
     """The staples the deck misses, uncapped: what the commander's lists or recent Archidekt decks play."""
     lists = _window(data.lists.data.entries if data.lists.data else (), data.since)

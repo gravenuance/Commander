@@ -97,9 +97,9 @@ def test_cards_the_profile_excludes_by_name_or_tag_are_no_ideas(
     by_name = compiled_names(
         tmp_path / "name", deck, db, 'version = 1\n[exclude]\ncards = ["Jeska\'s Will"]\n'
     )
-    assert by_name == {Origin.META: ["Mind Stone"], Origin.DECKS: ["Arcane Signet"]}
+    assert by_name == {Origin.META: ["Mind Stone"], Origin.DECKS: ["Arcane Signet"], Origin.ADJACENT: []}
     by_tag = compiled_names(tmp_path / "tag", deck, db, 'version = 1\n[exclude]\ntags = ["ramp"]\n')
-    assert by_tag == {Origin.META: [], Origin.DECKS: []}
+    assert by_tag == {Origin.META: [], Origin.DECKS: [], Origin.ADJACENT: []}
 
 
 def test_ideas_over_the_profiles_ceiling_or_price_cap_are_left_out(
@@ -109,7 +109,47 @@ def test_ideas_over_the_profiles_ceiling_or_price_cap_are_left_out(
     capped = compiled_names(
         tmp_path / "ceiling", replace(deck, bracket=2), db, "version = 1\nbracket_ceiling = 2\n"
     )
-    assert capped == {Origin.META: ["Mind Stone"], Origin.DECKS: ["Arcane Signet"]}
+    assert capped == {Origin.META: ["Mind Stone"], Origin.DECKS: ["Arcane Signet"], Origin.ADJACENT: []}
     # Jeska's Will costs EUR 33.80 and Mind Stone has no price; Arcane Signet costs EUR 0.30.
     cheap = compiled_names(tmp_path / "price", deck, db, "version = 1\nmax_card_eur = 1\n")
-    assert cheap == {Origin.META: [], Origin.DECKS: ["Arcane Signet"]}
+    assert cheap == {Origin.META: [], Origin.DECKS: ["Arcane Signet"], Origin.ADJACENT: []}
+
+
+ALIKE = (
+    "version = 1\n[ideas]\n"
+    'commanders = ["The Gitrog Monster", ["Tevesh Szat, Doom of Fools", "Kodama of the East Tree"]]\n'
+)
+
+
+def test_the_adjacent_commanders_pooled_decks_give_ideas_named_after_them(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    (tmp_path / "profile.toml").write_text(ALIKE, encoding="utf-8")
+    # Arcane Signet is in half the pool, the least a staple needs; Lightning Bolt in a quarter.
+    pool = [
+        peer(1, ["Arcane Signet"]),
+        peer(2, ["Arcane Signet", "Lightning Bolt"]),
+        peer(3, []),
+        peer(4, []),
+    ]
+    added = compile_ideas(StoredDeck(tmp_path, deck), meta_data([], []), db, now=lambda: NOW, adjacent=pool)
+    [signet] = added[Origin.ADJACENT]
+    assert (signet.name, signet.origin) == ("Arcane Signet", Origin.ADJACENT)
+    assert signet.reason == "in 2 of 4 recent Gitrog and Tevesh + Kodama decks"
+    assert ideas_summary(added) == "+1 from adjacent decks"
+
+
+def test_a_pool_under_three_decks_or_a_profile_naming_none_gives_no_adjacent_ideas(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    small = tmp_path / "small"
+    small.mkdir()
+    (small / "profile.toml").write_text(ALIKE, encoding="utf-8")
+    pool = [peer(1, ["Arcane Signet"]), peer(2, ["Arcane Signet"])]
+    added = compile_ideas(StoredDeck(small, deck), meta_data([], []), db, now=lambda: NOW, adjacent=pool)
+    assert added[Origin.ADJACENT] == []
+    unnamed = tmp_path / "unnamed"
+    unnamed.mkdir()
+    pool.append(peer(3, ["Arcane Signet"]))
+    added = compile_ideas(StoredDeck(unnamed, deck), meta_data([], []), db, now=lambda: NOW, adjacent=pool)
+    assert added[Origin.ADJACENT] == []

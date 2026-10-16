@@ -84,6 +84,8 @@ class Origin(Enum):
     META = "meta"
     # Staples of the most-viewed recent Archidekt decks for the commander at the deck's bracket.
     DECKS = "archidekt decks"
+    # Staples of recent Archidekt decks led by the commanders the deck's profile names as alike (ADR 0015).
+    ADJACENT = "adjacent decks"
 
 
 @dataclass(slots=True, frozen=True)

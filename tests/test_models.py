@@ -45,6 +45,9 @@ def test_a_deck_without_a_commander_goes_by_its_name(deck: Deck) -> None:
         ("Kraum, Ludevic's Opus / Tymna the Weaver", "Kraum/Tymna"),
         ("Esika, God of the Tree // The Prismatic Bridge", "Esika"),
         ("Glarb", "Glarb"),
+        ("The Gitrog Monster", "Gitrog"),
+        ("Tevesh Szat, Doom of Fools", "Tevesh"),
+        ("The Ur-Dragon", "Ur-Dragon"),
     ],
 )
 def test_commanders_go_by_the_name_players_use(name: str, short: str) -> None:

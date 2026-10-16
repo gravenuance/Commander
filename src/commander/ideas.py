@@ -3,7 +3,9 @@
 Bracket 5 decks get the staples of their commander's EDHTop16 lists ("meta") and of the most-viewed recent
 Archidekt decks for the commander ("archidekt decks"); decks below bracket 5 get the Archidekt ones only,
 from decks at their own bracket. Each source puts at most MAX_PER_SOURCE ideas on the board, most played
-first, and only ideas with a deck card to replace. EDHREC is never asked (ADR 0003): its rank, from
+first, and only ideas with a deck card to replace. A deck whose profile names commanders that play alike
+also gets the staples of their pooled recent Archidekt decks ("adjacent decks", ADR 0015). Ideas pass the
+profile's exclusions, bracket ceiling and price cap. EDHREC is never asked (ADR 0003): its rank, from
 Scryfall's data, only orders the cards an idea could replace.
 """
 
@@ -25,9 +27,10 @@ from commander.meta import (
     Staples,
     all_staples,
     card_shares,
+    pool_staples,
 )
-from commander.metadata import MetaData
-from commander.models import Deck
+from commander.metadata import MetaData, PeerList
+from commander.models import Deck, short_commander_name
 from commander.store import StoredDeck
 from commander.suggest import affordable, card_raise, name_keys
 from commander.targets import kept_by_profile, role_targets
@@ -63,21 +66,44 @@ def staple_ideas(deck: Deck, staples: Staples, since: date) -> list[Idea]:
     return ideas
 
 
+def adjacent_ideas(
+    deck: Deck, pool: Sequence[PeerList], groups: Sequence[tuple[str, ...]], db: CardDb
+) -> list[Idea]:
+    """The staples of the adjacent commanders' pooled decks the deck misses, most played first."""
+    if not groups or len(pool) < MIN_PEER_LISTS:
+        return []
+    names = [" + ".join(short_commander_name(name) for name in group) for group in groups]
+    who = names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+    ideas = [
+        Idea(
+            row.name,
+            Origin.ADJACENT,
+            f"in {row.peer_lists} of {len(pool)} recent {who} decks",
+            row.peer_share,
+        )
+        for row in pool_staples(deck, pool, db)
+    ]
+    ideas.sort(key=lambda idea: (-idea.share, idea.name))
+    return ideas
+
+
 def compile_ideas(
-    stored: StoredDeck, data: MetaData, db: CardDb, *, now: Clock
+    stored: StoredDeck, data: MetaData, db: CardDb, *, now: Clock, adjacent: Sequence[PeerList] = ()
 ) -> dict[Origin, list[BoardCard]]:
     """Put each source's most-played ideas with a card to replace on the deck's board; what each added.
 
+    adjacent holds the pooled decks of the commanders the deck's profile names as alike (ADR 0015).
     Ideas already on the board count towards a source's MAX_PER_SOURCE, so repeated syncs settle on the
     current top ideas rather than piling up. A turned-down idea takes no place unless the meta brings it
     back (`feed_ideas`).
     """
     deck = stored.deck
+    profile = read_profile(stored.folder)
     ideas = staple_ideas(deck, all_staples(deck, data, db), data.since)
+    ideas += adjacent_ideas(deck, adjacent, profile.adjacent, db)
     shares = card_shares(data) or None
     board = read_board(stored.folder)
     main = db.resolve(deck.main_cards)
-    profile = read_profile(stored.folder)
     kept = kept_by_profile(main, profile)
     infos = db.cards_named(idea.name for idea in ideas)
     allowed = _profile_filter(deck, profile, main, db, infos.values())

@@ -327,3 +327,36 @@ def test_sync_with_every_source_down_keeps_the_board_and_succeeds(home: Path, fa
     assert "cmdr: Magda: no meta or Archidekt decks to learn from (" in result.err
     assert "ideas:" not in result.out
     assert read_board(home / "decks" / FOLDER).find("Mind Stone") is None
+
+
+YGRA = "Ygra, Eater of All"
+
+
+def test_sync_learns_from_the_commanders_the_profile_names_as_alike(home: Path, fake: FakeArchidekt) -> None:
+    profile = 'version = 1\n[ideas]\ncommanders = ["Ygra, Eater of All"]\n'
+    (home / "decks" / FOLDER / "profile.toml").write_text(profile, encoding="utf-8")
+    # Three Ygra decks, the fewest that make staples; two of them play Arcane Signet.
+    ygra = (PEER_ID + 10, PEER_ID + 11, PEER_ID + 12)
+    for deck_id in ygra:
+        fake.put({**fake.decks[PEER_ID], "id": deck_id})
+    for deck_id in ygra[:2]:
+        fake.decks[deck_id]["cards"].append(card_entry(9_100, "Arcane Signet", ["Ramp"]))
+    fake.peer_pages[YGRA] = deck_page([peer_row(d, "someone", 50) for d in ygra])
+    result = sync(home, fake)
+    assert result.code == 0, result.err
+    assert "Magda ideas: +2 from meta, +1 from adjacent decks\n" in result.out
+    card = read_board(home / "decks" / FOLDER).find("Arcane Signet")
+    assert card is not None
+    assert (card.origin, card.reason) == (Origin.ADJACENT, "in 2 of 3 recent Ygra decks")
+
+
+def test_sync_names_an_alike_commander_it_cannot_search_and_carries_on(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    profile = 'version = 1\n[ideas]\ncommanders = ["Ygra, Eater of All"]\n'
+    (home / "decks" / FOLDER / "profile.toml").write_text(profile, encoding="utf-8")
+    fake.peer_pages[YGRA] = {"unexpected": True}
+    result = sync(home, fake)
+    assert result.code == 0, result.err
+    assert "cmdr: Magda: no recent Ygra, Eater of All decks to learn from (" in result.err
+    assert "Magda ideas: +2 from meta\n" in result.out

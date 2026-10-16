@@ -74,6 +74,7 @@ def profile_lines(profile: Profile) -> list[str]:
                 filter(None, [_names(profile.keep_cards), _names(profile.keep_categories, "categories")])
             ),
         ),
+        ("ideas also from", ", ".join(" + ".join(group) for group in profile.adjacent)),
     ]
     return [f"{label}: {value or '-'}" for label, value in rows]
 
@@ -87,6 +88,7 @@ def profile_json(profile: Profile, unknown_tags: tuple[str, ...]) -> dict[str, o
         "themes": {**_spec_json(profile.themes), "ignore": list(profile.ignore_themes)},
         "exclude": {**_spec_json(profile.exclude), "cards": list(profile.exclude_cards)},
         "keep": {"cards": list(profile.keep_cards), "categories": list(profile.keep_categories)},
+        "ideas": {"commanders": [list(group) for group in profile.adjacent]},
         "unknownTags": list(unknown_tags),
     }
 

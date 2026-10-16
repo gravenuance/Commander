@@ -18,6 +18,8 @@ tags = ["no-such-tag"]
 cards = ["Chaos Warp"]
 [keep]
 categories = ["Maybeboard"]
+[ideas]
+commanders = ["The Gitrog Monster", ["Tevesh Szat, Doom of Fools", "Kodama of the East Tree"]]
 """
 
 
@@ -69,6 +71,7 @@ def test_profile_is_shown_and_unknown_tags_are_warned(
         "themes: types Instant; tags no-such-tag",
         "exclude: Chaos Warp",
         "keep: categories Maybeboard",
+        "ideas also from: The Gitrog Monster, Tevesh Szat, Doom of Fools + Kodama of the East Tree",
         "from Archidekt:",
         "  Dwarves (deck tag): types Dwarf",
         "  Vehicles (deck tag): types Vehicle",
