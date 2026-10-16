@@ -397,6 +397,13 @@ def test_ideas_say_which_named_themes_they_fit(deck: Deck, db: CardDb) -> None:
     assert (ramp["Jeska's Will"], ramp["Arcane Signet"]) == (("Spells",), ())
 
 
+def test_a_theme_name_shows_once_though_a_deck_tag_and_a_category_share_it(deck: Deck, db: CardDb) -> None:
+    # Ellivere has a Stax deck tag and a Stax category, each its own theme.
+    labels = (("Stax", Theme(types=("Instant",))), ("Stax", Theme(types=("Instant", "Sorcery"))))
+    result = run(deck, db, options=replace(OPTIONS, themes=Theme(types=("Instant",)), theme_labels=labels))
+    assert {i.fits for i in result.themed} == {("Stax",)}
+
+
 def test_themed_ideas_obey_the_ceiling_and_the_exclusions(deck: Deck, db: CardDb) -> None:
     sorceries = Theme(types=("Sorcery",))
     capped = run(replace(deck, bracket=2), db, options=replace(OPTIONS, themes=sorceries, ceiling=2))

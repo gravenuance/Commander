@@ -231,7 +231,7 @@ class _Picker:
             raises = card_raise(info, self.bracket, self.changers)
             if self._too_high(raises):
                 continue
-            fits = tuple(label for label, held in labelled if info.oracle_id in held)
+            fits = tuple(dict.fromkeys(label for label, held in labelled if info.oracle_id in held))
             ideas.append(RoleIdea(info, raises, themed=info.oracle_id in themed, fits=fits))
             if len(ideas) == self.options.count:
                 break
