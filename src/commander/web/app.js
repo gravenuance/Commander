@@ -189,6 +189,7 @@ function renderDeck() {
   renderConsidered(view.cards);
   paint();
   renderActivity(view.activity);
+  loadMana();
 }
 
 function renderTags(tags) {
@@ -596,18 +597,102 @@ async function chooseLabel(name, current, label) {
 
 /* Activity rail */
 
+// The right-hand rail: Activity or Mana open, or both folded to their labels. Remembered per viewer.
+const RAIL_TABS = ["activity", "mana"];
+let railTab = null;
+
 function setupActivity() {
-  const toggle = $("activity-toggle");
-  let open = false;
-  try { open = localStorage.getItem(ACTIVITY_KEY) === "1"; } catch { /* storage is a convenience */ }
-  const show = (value) => {
-    toggle.setAttribute("aria-expanded", String(value));
-    $("activity").hidden = !value;
-    $("app").classList.toggle("activity-open", value);
-    try { localStorage.setItem(ACTIVITY_KEY, value ? "1" : "0"); } catch { /* as above */ }
-  };
-  toggle.addEventListener("click", () => show(toggle.getAttribute("aria-expanded") !== "true"));
-  show(open);
+  let open = null;
+  try {
+    const stored = localStorage.getItem(ACTIVITY_KEY);
+    open = stored === "1" ? "activity" : RAIL_TABS.includes(stored) ? stored : null;
+  } catch { /* storage is a convenience */ }
+  for (const tab of RAIL_TABS) {
+    $(`${tab}-toggle`).addEventListener("click", () => showRail(railTab === tab ? null : tab));
+  }
+  showRail(open);
+}
+
+function showRail(tab) {
+  railTab = tab;
+  for (const name of RAIL_TABS) {
+    $(`${name}-toggle`).setAttribute("aria-expanded", String(name === tab));
+    $(name).hidden = name !== tab;
+  }
+  $("activity-pane").classList.toggle("open", tab !== null);
+  $("app").classList.toggle("activity-open", tab !== null);
+  try { localStorage.setItem(ACTIVITY_KEY, tab || "0"); } catch { /* as above */ }
+  if (tab === "mana") loadMana();
+}
+
+/* Mana: the deck's mana base against Frank Karsten's published numbers (ADR 0019) */
+
+const manaState = { deck: null, key: null };
+const COLOUR_NAMES = { W: "White", U: "Blue", B: "Black", R: "Red", G: "Green", C: "Colourless" };
+const KARSTEN_LANDS = "https://www.tcgplayer.com/content/article/How-Many-Lands-Do-You-Need-in-Your-Deck-An-Updated-Analysis/cd1c1a24-d439-4a8e-b369-b936edb0b38a/";
+const KARSTEN_SOURCES = "https://www.tcgplayer.com/content/article/How-Many-Sources-Do-You-Need-to-Consistently-Cast-Your-Spells-A-2022-Update/dc23a7d2-0a16-4c0b-ad36-586fcca03ad8/";
+
+async function loadMana() {
+  if (railTab !== "mana" || state.current === null) return;
+  const deck = state.current;
+  try {
+    const answer = await api("mana", deck);
+    if (deck === state.current) renderMana(deck, answer);
+  } catch { /* shown in the status line */ }
+}
+
+function renderMana(deck, m) {
+  const key = JSON.stringify(m);
+  if (manaState.deck === deck && manaState.key === key) return;
+  Object.assign(manaState, { deck, key });
+  const l = m.lands;
+  const c = m.comparison;
+  const cedh = state.view && state.view.bracket === META_BRACKET;
+  const fmt = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+  const lands = el("section", { class: "mana-section" },
+    el("h3", { text: "Lands" }),
+    el("p", { class: "mana-big" }, el("strong", { text: fmt(l.lands) }), document.createTextNode(" lands"),
+      l.landSpells ? el("span", { class: "muted small", text: ` (${l.landSpells} land/spell card${l.landSpells === 1 ? "" : "s"} as part of a land)` }) : null),
+    c ? el("p", { class: "mana-line" },
+      el("span", { text: `${c.lists} ${c.label}: median ${fmt(c.lands)} (${fmt(c.low)}–${fmt(c.high)})` }),
+      el("span", { class: "muted small", text: `Mana rocks, dorks and rituals: yours ${c.deckManaCards}, theirs ${fmt(c.manaCards)}` }))
+      : el("p", { class: "muted small", text: m.compareWith ? `No ${m.compareWith} to compare with yet; they come with the next refresh.` : "Nothing to compare with." }),
+    el("p", { class: `mana-line ${cedh ? "muted" : ""}` },
+      el("span", { text: `Karsten's formula: ${fmt(l.suggested)}` }),
+      el("span", { class: "muted small", text: `average mana value ${fmt(l.averageManaValue)}, ${l.cheapDraw} cheap draw, ${l.cheapRamp} cheap ramp` }),
+      cedh ? el("span", { class: "muted small", text: "Made for casual games; the tournament lists are the better guide here." }) : null));
+  const colours = el("section", { class: "mana-section" }, el("h3", { text: "Colour sources" }),
+    ...m.colours.map((colour) => {
+      const short = colour.needs.filter((n) => n.short);
+      const hardest = colour.needs[0];
+      return el("div", { class: "mana-colour" },
+        el("p", { class: "mana-colour-head" },
+          el("span", { class: `pip ${colour.colour}`, text: colour.colour, title: COLOUR_NAMES[colour.colour] }),
+          el("span", { text: `${fmt(colour.lands)} from lands` }),
+          el("span", { class: short.length ? "badge status rejected" : "muted small",
+            text: short.length ? `${short.length} short` : hardest ? `all ${colour.needs.length} cards fine` : "no cards need it" })),
+        short.length ? el("ul", { class: "mana-needs" }, ...short.map(needRow)) : null);
+    }));
+  const tapped = el("section", { class: "mana-section" }, el("h3", { text: "Turn one" }),
+    m.turnOne.length
+      ? el("ul", { class: "mana-needs" }, ...m.turnOne.map(needRow))
+      : el("p", { class: "muted small", text: "Every one-drop has enough untapped sources." }),
+    el("p", { class: "muted small", text: `Lands that enter tapped: ${fmt(m.tappedLands)}` }));
+  const skipped = m.skipped.length
+    ? el("details", { class: "fold" }, el("summary", { text: `Not counted (${m.skipped.length})` }),
+      el("p", { text: `Usually cast for an alternative cost: ${m.skipped.join(", ")}` }))
+    : null;
+  const source = el("p", { class: "muted small mana-source" }, document.createTextNode("From Frank Karsten's "),
+    el("a", { href: KARSTEN_LANDS, target: "_blank", rel: "noopener", text: "land count" }), document.createTextNode(" and "),
+    el("a", { href: KARSTEN_SOURCES, target: "_blank", rel: "noopener", text: "colour source" }), document.createTextNode(" articles."));
+  $("mana").replaceChildren(lands, colours, tapped, skipped || "", source);
+}
+
+function needRow(n) {
+  return el("li", { class: "mana-need", title: `${n.pattern}: needs ${n.needed} sources, has ${n.have}` },
+    el("span", { class: "card-name", text: n.card }),
+    el("span", { class: "muted small", text: n.pattern }),
+    el("span", { class: "mana-gap", text: `${n.have} / ${n.needed}` }));
 }
 
 function renderActivity(entries) {

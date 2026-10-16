@@ -46,7 +46,8 @@ from commander.edhtop16 import REQUEST_INTERVAL_SECONDS, SLOW_QUERY_SECONDS, Edh
 from commander.ideas import compile_ideas
 from commander.labels import LabelError, Step, label_options, mark, set_label, to_get_json
 from commander.leanings import leaning_json
-from commander.meta import analyse, card_shares
+from commander.manabase import ALTERNATIVE_COST_TAGS, analyse_mana, mana_json
+from commander.meta import analyse, card_shares, performing_entries
 from commander.metadata import CEDH_BRACKET, MetaData, MetaSources, cache_stamp, gather, gather_for
 from commander.metapanel import combo_rows, key_card_rows, stopper_rows, untouched
 from commander.models import Deck
@@ -283,6 +284,47 @@ class Desk:
                         return {"error": f"{name!r} is not a commander the card data knows"}
         save_settings(stored.folder, stored.deck, adjacent=adjacent, ignore=ignore)
         return self.settings(deck_id)
+
+    @_guarded
+    def mana(self, deck_id: int) -> Json:
+        """The deck's mana base against Karsten's numbers and what other lists of its commander run."""
+        deck = self._stored(deck_id).deck
+        label, lists = self._mana_lists(deck)
+        with self._db() as db:
+            names = {card.name for card in deck.main_cards} | {name for listed in lists for name in listed}
+            cards = db.card_mana(names)
+            ids = [info.oracle_id for card in deck.main_cards if (info := cards.get(card.name.casefold()))]
+            lineage = db.tag_lineage(ids)
+        alternative = [
+            info.name
+            for info in cards.values()
+            if lineage.get(info.oracle_id, frozenset()) & ALTERNATIVE_COST_TAGS
+        ]
+        report = analyse_mana(
+            deck, cards, alternative_cost=alternative, comparison=(label, lists) if lists else None
+        )
+        view = mana_json(report)
+        view["compareWith"] = label
+        return view
+
+    def _mana_lists(self, deck: Deck) -> tuple[str, list[dict[str, int]]]:
+        """Bracket 5: the commander's top-cut tournament lists; else its recent Archidekt decks (ADR 0019)."""
+        data = self._pool(deck)
+        if data is None:
+            return "", []
+        if deck.bracket == CEDH_BRACKET:
+            return "top-cut lists", [
+                {c.name: c.count for c in entry.cards} for entry in performing_entries(data)
+            ]
+        lists: list[dict[str, int]] = []
+        for peer in data.peers.data.decks if data.peers.data else ():
+            # Peer caches from before ADR 0019 don't say how many of each basic land a deck runs.
+            if peer.multiples is None:
+                continue
+            counts = dict.fromkeys(peer.cards, 1)
+            counts.update(peer.multiples)
+            lists.append(counts)
+        return "recent decks", lists
 
     @_guarded
     def export(self, deck_id: int) -> Json:

@@ -43,6 +43,10 @@
   for the combos and key cards it stops. Key cards show as chips that say why on hover. Shorter headers:
   Key cards, What stops you, Meta combos.
 
+- App: a Mana tab beside Activity (ADR 0019) checks each deck's mana base against Frank Karsten's land
+  count formula and colour source table, and compares the land count with the commander's top-cut lists
+  (bracket 5) or recent Archidekt decks. Card data schema 6 keeps the mana each card makes; peer caches
+  keep how many of each basic land a deck runs.
 - App: Settings for each deck edits the profile's commanders that play alike and themes to ignore, with
   autocomplete for commanders, the deck's own themes and leanings, and Tagger tags. The file keeps its
   comments (new dependency: tomlkit 0.15.1).

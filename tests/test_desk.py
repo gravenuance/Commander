@@ -143,6 +143,17 @@ def test_settings_offer_commanders_and_tags_and_save_to_the_profile(desk: Desk) 
     assert desk.settings(DECK)["adjacent"] == [["Tempestra, Dame of Games"]]
 
 
+def test_the_mana_tab_reports_lands_and_colour_sources(desk: Desk) -> None:
+    mana = desk.mana(DECK)
+    lands = cast("Json", mana["lands"])
+    # The fixture deck: six Mountains and four spells besides Magda.
+    assert lands["lands"] == 6
+    colours = cast("list[Json]", mana["colours"])
+    assert [colour["colour"] for colour in colours] == ["R"]
+    # Without cached meta answers there is nothing to compare with.
+    assert mana["comparison"] is None
+
+
 def test_export_copies_the_saved_deck_for_topdeck(desk: Desk) -> None:
     exported = desk.export(DECK)
     text = cast("str", exported["text"])

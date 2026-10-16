@@ -305,6 +305,15 @@ that play alike (`[ideas] commanders`; "+ partner" on one makes a pair) and the 
 (`[themes] ignore`: the deck's tags, categories and leanings are one click away, and any Tagger tag
 can be typed). Your comments and everything else in the file stay as they are.
 
+The right-hand rail has two tabs. **Activity** lists what changed on the board. **Mana** checks the mana
+base against Frank Karsten's published numbers
+([ADR 0019](docs/adr/0019-mana-base-from-karstens-numbers.md)):
+- **Lands:** the land count, beside his land count formula and the median of other lists of the commander
+  (top-cut tournament lists at bracket 5, recent Archidekt decks below).
+- **Colour sources:** each colour's sources, with every card short of what his table asks to cast it on
+  curve.
+- **Turn one:** one-drops without enough untapped lands.
+
 - **Considering**, on the right, lists every idea for the deck: yours, Claude's, the meta's and the
   tools'. Hover over an idea or click it to light the deck cards it could replace. Click one of them to
   queue the swap; once an idea is clicked, any other deck card but the commander can be clicked too.

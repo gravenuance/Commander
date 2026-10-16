@@ -1,0 +1,472 @@
+"""A deck's mana base against Frank Karsten's published maths (ADR 0019).
+
+Land count: his 99-card regression, 31.42 + 3.13 x average mana value - 0.28 x cheap draw and ramp
+("How Many Lands Do You Need in Your Deck? An Updated Analysis", TCGplayer, 2022). Colour sources: his
+99-card table of sources needed to cast a spell on curve ("How Many Sources Do You Need to Consistently
+Cast Your Spells? A 2022 Update", TCGplayer, 2022), with his rules for gold cards, partial sources and
+other land counts. Both assume casual Commander; cEDH decks are compared with tournament lists instead.
+"""
+
+import re
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from statistics import median
+
+from commander.carddb import FACE_SEPARATOR, CardMana
+from commander.models import Deck
+
+COLOURS = "WUBRG"
+# Karsten's 99-card table: sources needed for a spell of mana value M with N pips of one colour, keyed
+# (M, N). It assumes 41 lands; other land counts scale it.
+SOURCES_NEEDED: Mapping[tuple[int, int], int] = {
+    (1, 1): 19, (2, 1): 19, (3, 1): 18, (4, 1): 16, (5, 1): 15, (6, 1): 14,
+    (2, 2): 30, (3, 2): 28, (4, 2): 26, (5, 2): 23, (6, 2): 22, (7, 2): 20,
+    (3, 3): 36, (4, 3): 33, (5, 3): 30, (6, 3): 28, (7, 3): 26,
+    (4, 4): 39, (5, 4): 36,
+}  # fmt: skip
+TABLE_LANDS = 41
+# The land count formula's coefficients for 99-card decks.
+LAND_BASE = 31.42
+LAND_PER_MANA_VALUE = 3.13
+LAND_PER_CHEAP_SPELL = 0.28
+CHEAP = 2
+# A land/spell card (Shatterskull Smashing) counts as part of a land, more when mythic (it enters untapped).
+MDFC_LAND = 0.38
+MYTHIC_MDFC_LAND = 0.74
+MDFC_SOURCE = 0.8
+MYTHIC_MDFC_SOURCE = 1.0
+# Partial sources: each counts only for spells at or above its mana value.
+DORK = 0.5
+ROCK = 0.75
+CHEAP_LAND_RAMP = 0.75
+LAND_RAMP = 0.5
+LATE_RAMP_FROM = 5
+# A card that is no source at all.
+NEVER = 99
+OPPONENT_DEPENDENT = 0.75
+# A Fabled Passage or Pathway in a deck of three or more colours, where it has to choose.
+CHOOSING_SOURCE = 2 / 3
+# A land that enters tapped only sometimes is about a quarter of a tap-land.
+CONDITIONAL_TAPPED = 0.25
+GOLD_EXTRA = 1
+
+_PIP = re.compile(r"\{([^}]+)\}")
+_BASIC_TYPES = {"plains": "W", "island": "U", "swamp": "B", "mountain": "R", "forest": "G"}
+_CHEAP_DRAW = (
+    "draw a card",
+    "draw two cards",
+    "draw three cards",
+    "draws cards",
+    "draws two cards",
+    "draws three cards",
+)
+_ONE_MANA_CYCLING = re.compile(r"cycling \{[^}]+\}(?!\{)")
+
+
+@dataclass(slots=True, frozen=True)
+class LandCount:
+    lands: float
+    # Land/spell cards among them, counted as part of a land.
+    land_spells: int
+    average_mana_value: float
+    cheap_draw: int
+    cheap_ramp: int
+    # Karsten's formula for this deck.
+    suggested: float
+
+
+@dataclass(slots=True, frozen=True)
+class Comparison:
+    """What other lists of the commander run: recent Archidekt decks or tournament top cuts."""
+
+    label: str
+    lists: int
+    lands: float
+    lands_low: float
+    lands_high: float
+    # Nonland cards that make mana: rocks, dorks, rituals, fast mana.
+    mana_cards: float
+    deck_mana_cards: int
+
+
+@dataclass(slots=True, frozen=True)
+class Need:
+    card: str
+    pattern: str
+    needed: float
+    have: float
+
+    @property
+    def short(self) -> bool:
+        return self.have < self.needed
+
+
+@dataclass(slots=True, frozen=True)
+class ColourSources:
+    colour: str
+    # Lands and land/spell cards that make it, as Karsten counts them.
+    lands: float
+    # Every spell needing it, most demanding first; the shortfalls are the cards to look at.
+    needs: tuple[Need, ...]
+
+    @property
+    def shortfalls(self) -> tuple[Need, ...]:
+        return tuple(need for need in self.needs if need.short)
+
+
+@dataclass(slots=True, frozen=True)
+class ManaBase:
+    lands: LandCount
+    comparison: Comparison | None
+    colours: tuple[ColourSources, ...]
+    # One-drops needing a colour on turn one against the untapped lands that make it.
+    turn_one: tuple[Need, ...]
+    tapped_lands: float
+    # Cards the colour check leaves out: cast for an alternative cost, or with no fixed coloured pips.
+    skipped: tuple[str, ...]
+
+
+def analyse_mana(
+    deck: Deck,
+    cards: Mapping[str, CardMana],
+    *,
+    alternative_cost: Iterable[str] = (),
+    comparison: tuple[str, Sequence[Mapping[str, int]]] | None = None,
+) -> ManaBase:
+    """The deck's land count and colour sources against Karsten's numbers.
+
+    cards holds every card in the deck (and in the compared lists) by casefolded name. alternative_cost
+    names the cards Tagger tags as cast for an alternative cost, which Karsten leaves out of colour needs.
+    comparison is a label and the lists to compare the land count with, each by name and count.
+    """
+    commander_names = {name.casefold() for name in deck.commanders}
+    entries = [
+        (card.quantity, info, card.name.casefold() in commander_names)
+        for card in deck.main_cards
+        if (info := cards.get(card.name.casefold())) is not None
+    ]
+    the_99 = [(quantity, info) for quantity, info, commander in entries if not commander]
+    lands = land_count(the_99)
+    identity = {c for _, info, _ in entries for c in _pips_colours(info.mana_cost)} | _identity(deck, cards)
+    colours = sorted(identity, key=COLOURS.index)
+    scale = lands.lands / TABLE_LANDS
+    skip = {name.casefold() for name in alternative_cost}
+    sources = [_Source.of(info, quantity, len(colours)) for quantity, info in the_99]
+    checked = [info for _, info, _ in entries if not info_is_land(info) and info.name.casefold() not in skip]
+    found = tuple(
+        ColourSources(colour, _land_sources(sources, colour), _needs(checked, colour, sources, scale))
+        for colour in colours
+    )
+    one_drops = [info for info in checked if info.cmc == 1]
+    turn_one = tuple(
+        need
+        for colour in colours
+        for need in _needs(one_drops, colour, sources, scale, untapped_only=True)
+        if need.short
+    )
+    skipped = tuple(
+        sorted(info.name for _, info, _ in entries if info.name.casefold() in skip and not info_is_land(info))
+    )
+    tapped = sum(source.tapped * source.quantity for source in sources if source.land)
+    return ManaBase(
+        lands,
+        _compare(comparison, cards, the_99),
+        found,
+        turn_one,
+        round(tapped, 2),
+        skipped,
+    )
+
+
+def land_count(cards: Sequence[tuple[int, CardMana]]) -> LandCount:
+    """Karsten's land count for the 99: land/spell cards as part land, nonland cards' mana value."""
+    lands = 0.0
+    land_spells = 0
+    spells: list[float] = []
+    draw = ramp = 0
+    for quantity, info in cards:
+        if info_is_land(info):
+            lands += quantity
+            continue
+        if _back_is_land(info):
+            land_spells += quantity
+            lands += quantity * (MYTHIC_MDFC_LAND if info.rarity == "mythic" else MDFC_LAND)
+        spells += [info.cmc] * quantity
+        if cheap_draw(info):
+            draw += quantity
+        elif cheap_ramp(info):
+            ramp += quantity
+    average = sum(spells) / len(spells) if spells else 0.0
+    suggested = LAND_BASE + LAND_PER_MANA_VALUE * average - LAND_PER_CHEAP_SPELL * (draw + ramp)
+    return LandCount(round(lands, 2), land_spells, round(average, 2), draw, ramp, round(suggested, 1))
+
+
+def cheap_draw(info: CardMana) -> bool:
+    """Karsten's "cheap card draw spell", from the card's rules text as he defined it."""
+    text = info.oracle_text.casefold()
+    if info_is_land(info):
+        return False
+    # Any spell that cycles for one mana counts, whatever it costs to cast.
+    if _ONE_MANA_CYCLING.search(text):
+        return True
+    if info.cmc > CHEAP:
+        return False
+    draws = any(phrase in text for phrase in _CHEAP_DRAW) and not any(
+        word in text for word in ("{4}", "blood token", "investigate")
+    )
+    if draws and "Creature" in _front(info.type_line):
+        draws = "when" in text and "enters" in text
+    looks = (
+        "Creature" not in _front(info.type_line)
+        and all(word in text for word in ("look", "library", "put", "your hand"))
+        and not any(word in text for word in ("pay ", "pays"))
+    )
+    return draws or looks
+
+
+def cheap_ramp(info: CardMana) -> bool:
+    """Karsten's "cheap mana ramp spell": a cheap card that adds mana or puts a land into play."""
+    text = info.oracle_text.casefold()
+    if info.cmc > CHEAP or info_is_land(info) or cheap_draw(info):
+        return False
+    adds = "add " in text and not any(word in text for word in ("add its ability", "add a lore counter"))
+    if adds and "Creature" in _front(info.type_line) and "dies" in text:
+        adds = False
+    fetches = "search" in text and "your library" in text and ("land" in text or "basic" in text)
+    fetches = fetches and "sacrifice" not in text
+    aura = "enchanted land is tapped" in text and "adds an additional" in text
+    cheats = "put a creature card with" in text and "from your hand onto the battlefield" in text
+    return adds or fetches or aura or cheats
+
+
+def needed_sources(mana_value: int, pips: int) -> int:
+    """Karsten's 99-card number for a spell; beyond his table, the nearest entry for that many pips."""
+    pips = min(pips, 4)
+    mana_value = max(mana_value, pips)
+    known = [m for m, n in SOURCES_NEEDED if n == pips]
+    return SOURCES_NEEDED[(min(max(mana_value, min(known)), max(known)), pips)]
+
+
+def info_is_land(info: CardMana) -> bool:
+    return "Land" in _front(info.type_line).split()
+
+
+@dataclass(slots=True, frozen=True)
+class _Source:
+    """One card's worth to each colour, and the least mana value a spell needs before it counts."""
+
+    name: str
+    quantity: int
+    land: bool
+    colours: Mapping[str, float]
+    # Spells below this mana value can't use it (a dork helps from two mana up).
+    from_mana_value: int
+    tapped: float = 0.0
+
+    @staticmethod
+    def of(info: CardMana, quantity: int, deck_colours: int) -> "_Source":
+        text = info.oracle_text.casefold()
+        made = set(info.produced)
+        if info_is_land(info):
+            colours = _land_colours(info, text, made, deck_colours)
+            return _Source(
+                info.name, quantity, land=True, colours=colours, from_mana_value=1, tapped=_tapped(text)
+            )
+        if _back_is_land(info):
+            worth = MYTHIC_MDFC_SOURCE if info.rarity == "mythic" else MDFC_SOURCE
+            back = info.oracle_text.split(FACE_SEPARATOR)[-1].casefold()
+            colours = dict.fromkeys(made or _searched(back), worth)
+            return _Source(
+                info.name, quantity, land=True, colours=colours, from_mana_value=1, tapped=_tapped(back)
+            )
+        mana_value = int(info.cmc)
+        permanent = any(word in _front(info.type_line) for word in ("Artifact", "Creature", "Enchantment"))
+        if made and permanent and "{t}" in text and "sacrifice" not in text:
+            worth = DORK if "Creature" in _front(info.type_line) else ROCK
+            if "opponent" in text:
+                worth = min(worth, OPPONENT_DEPENDENT)
+            colours = dict.fromkeys(made, worth)
+            return _Source(info.name, quantity, land=False, colours=colours, from_mana_value=mana_value + 1)
+        searched: set[str] = _searched(text) if "search your library" in text and "land" in text else set()
+        if searched and not permanent:
+            worth = CHEAP_LAND_RAMP if mana_value <= CHEAP else LAND_RAMP
+            # Karsten: two-mana ramp counts from three-mana spells, three-mana ramp from five.
+            start = mana_value + 1 if mana_value <= CHEAP else max(mana_value + 2, LATE_RAMP_FROM)
+            colours = dict.fromkeys(searched, worth)
+            return _Source(info.name, quantity, land=False, colours=colours, from_mana_value=start)
+        return _Source(info.name, quantity, land=False, colours={}, from_mana_value=NEVER)
+
+
+def _land_colours(info: CardMana, text: str, made: set[str], deck_colours: int) -> dict[str, float]:
+    if "opponent" in text and "could produce" in text:
+        return dict.fromkeys("WUBRG", OPPONENT_DEPENDENT)
+    if made:
+        # A Pathway makes one of its two colours, chosen as it is played.
+        choosing = " // " in info.type_line and deck_colours >= 3  # noqa: PLR2004 — three colours or more
+        return dict.fromkeys(made, CHOOSING_SOURCE if choosing else 1.0)
+    searched = _searched(text)
+    if "basic land card" in text and not any(t in text for t in _BASIC_TYPES):
+        worth = CHOOSING_SOURCE if deck_colours >= 3 else 1.0  # noqa: PLR2004 — as above
+        return dict.fromkeys("WUBRG", worth)
+    return dict.fromkeys(searched, 1.0)
+
+
+def _searched(text: str) -> set[str]:
+    """The colours a land search can find, by the basic land types it names; any basic finds every colour."""
+    found = {colour for land_type, colour in _BASIC_TYPES.items() if land_type in text}
+    if not found and "basic land" in text:
+        return set(COLOURS)
+    return found
+
+
+def _tapped(text: str) -> float:
+    if "enters tapped" not in text and "enters the battlefield tapped" not in text:
+        return 0.0
+    return CONDITIONAL_TAPPED if "unless" in text or "if you control" in text else 1.0
+
+
+def _needs(
+    spells: Sequence[CardMana],
+    colour: str,
+    sources: Sequence[_Source],
+    scale: float,
+    *,
+    untapped_only: bool = False,
+) -> tuple[Need, ...]:
+    found: list[Need] = []
+    for info in spells:
+        pips = _pips(info.mana_cost)
+        if colour not in pips:
+            continue
+        mana_value = max(int(info.cmc), 1)
+        gold = sum(1 for c in pips if c in COLOURS) > 1
+        needed = needed_sources(mana_value, pips[colour]) * scale + (GOLD_EXTRA if gold else 0)
+        have = sum(
+            s.colours.get(colour, 0.0) * s.quantity * (1 - s.tapped if untapped_only else 1)
+            for s in sources
+            if (s.land or not untapped_only) and mana_value >= s.from_mana_value
+        )
+        found.append(Need(info.name, _pattern(mana_value, pips[colour]), round(needed, 1), round(have, 1)))
+    found.sort(key=lambda n: (n.have - n.needed, n.card))
+    return tuple(found)
+
+
+def _land_sources(sources: Sequence[_Source], colour: str) -> float:
+    return round(sum(s.colours.get(colour, 0.0) * s.quantity for s in sources if s.land), 1)
+
+
+def _compare(
+    comparison: tuple[str, Sequence[Mapping[str, int]]] | None,
+    cards: Mapping[str, CardMana],
+    the_99: Sequence[tuple[int, CardMana]],
+) -> Comparison | None:
+    if comparison is None or not comparison[1]:
+        return None
+    label, lists = comparison
+    counts: list[float] = []
+    mana: list[float] = []
+    for listed in lists:
+        known = [
+            (quantity, info) for name, quantity in listed.items() if (info := cards.get(name.casefold()))
+        ]
+        counts.append(land_count(known).lands)
+        mana.append(sum(q for q, info in known if _mana_card(info)))
+    return Comparison(
+        label,
+        len(lists),
+        round(median(counts), 1),
+        min(counts),
+        max(counts),
+        round(median(mana), 1),
+        sum(q for q, info in the_99 if _mana_card(info)),
+    )
+
+
+def _mana_card(info: CardMana) -> bool:
+    return bool(info.produced) and not info_is_land(info) and not _back_is_land(info)
+
+
+def _pips(mana_cost: str) -> dict[str, int]:
+    """Fixed coloured and colourless pips of the front face; hybrid, Phyrexian and X pips are left out."""
+    front = mana_cost.split(" // ", maxsplit=1)[0]
+    pips: dict[str, int] = {}
+    for symbol in _PIP.findall(front):
+        if symbol in COLOURS or symbol == "C":
+            pips[symbol] = pips.get(symbol, 0) + 1
+    return pips
+
+
+def _pips_colours(mana_cost: str) -> set[str]:
+    return {c for c in _pips(mana_cost) if c in COLOURS}
+
+
+def _identity(deck: Deck, cards: Mapping[str, CardMana]) -> set[str]:
+    commanders = [cards.get(name.casefold()) for name in deck.commanders]
+    return {c for info in commanders if info for c in _pips_colours(info.mana_cost)}
+
+
+def _pattern(mana_value: int, pips: int) -> str:
+    generic = mana_value - pips
+    return (str(generic) if generic else "") + "C" * pips
+
+
+def _front(type_line: str) -> str:
+    return type_line.split(" // ", maxsplit=1)[0]
+
+
+def _back_is_land(info: CardMana) -> bool:
+    faces = info.type_line.split(" // ")
+    return len(faces) > 1 and "Land" in faces[-1].split() and not info_is_land(info)
+
+
+# Tagger tags for cards usually cast for an alternative cost, which Karsten leaves out of colour needs.
+ALTERNATIVE_COST_TAGS = frozenset({"alternative-cost", "manaless-value"})
+
+
+def mana_json(report: ManaBase) -> dict[str, object]:
+    """The report for the app's Mana tab."""
+    lands = report.lands
+    compared = report.comparison
+    return {
+        "lands": {
+            "lands": lands.lands,
+            "landSpells": lands.land_spells,
+            "averageManaValue": lands.average_mana_value,
+            "cheapDraw": lands.cheap_draw,
+            "cheapRamp": lands.cheap_ramp,
+            "suggested": lands.suggested,
+        },
+        "comparison": None
+        if compared is None
+        else {
+            "label": compared.label,
+            "lists": compared.lists,
+            "lands": compared.lands,
+            "low": compared.lands_low,
+            "high": compared.lands_high,
+            "manaCards": compared.mana_cards,
+            "deckManaCards": compared.deck_mana_cards,
+        },
+        "colours": [
+            {
+                "colour": colour.colour,
+                "lands": colour.lands,
+                "needs": [_need_json(need) for need in colour.needs],
+                "short": len(colour.shortfalls),
+            }
+            for colour in report.colours
+        ],
+        "turnOne": [_need_json(need) for need in report.turn_one],
+        "tappedLands": report.tapped_lands,
+        "skipped": list(report.skipped),
+    }
+
+
+def _need_json(need: Need) -> dict[str, object]:
+    return {
+        "card": need.card,
+        "pattern": need.pattern,
+        "needed": need.needed,
+        "have": need.have,
+        "short": need.short,
+    }

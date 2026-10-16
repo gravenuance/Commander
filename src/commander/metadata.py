@@ -96,6 +96,9 @@ class PeerList:
     cards: tuple[str, ...]
     # The cards its owner files under a category naming the plan, like "Combo Pieces" (ADR 0017).
     planned: tuple[str, ...] = ()
+    # Cards played more than once (basic lands mostly), with their count; None in caches from before
+    # ADR 0019, which can't say how many lands a deck runs.
+    multiples: tuple[tuple[str, int], ...] | None = ()
 
 
 @dataclass(slots=True, frozen=True)
@@ -528,7 +531,11 @@ def _peer_lists(
             continue
         names = sorted({card.name for card in full.main_cards})
         planned = sorted({card.name for card in full.main_cards if any(map(plan_category, card.categories))})
-        lists.append(PeerList(peer, tuple(names), tuple(planned)))
+        counts: dict[str, int] = {}
+        for card in full.main_cards:
+            counts[card.name] = counts.get(card.name, 0) + card.quantity
+        multiples = tuple(sorted((name, count) for name, count in counts.items() if count > 1))
+        lists.append(PeerList(peer, tuple(names), tuple(planned), multiples))
     return PeerLists(tuple(lists), skipped)
 
 
@@ -649,6 +656,7 @@ def _encode_peers(peers: PeerLists) -> object:
                 "bracket": p.deck.bracket,
                 "cards": list(p.cards),
                 "planned": list(p.planned),
+                "multiples": None if p.multiples is None else [[name, count] for name, count in p.multiples],
             }
             for p in peers.decks
         ],
@@ -674,8 +682,28 @@ def _decode_peers(raw: object) -> PeerLists:
             updated_at=datetime.fromisoformat(req_str(d, "updatedAt", where)),
             bracket=opt_int(d, "bracket", where),
         )
-        decks.append(PeerList(peer, tuple(str(card) for card in cards), tuple(str(card) for card in planned)))
+        decks.append(
+            PeerList(
+                peer,
+                tuple(str(card) for card in cards),
+                tuple(str(card) for card in planned),
+                _multiples(d, where),
+            )
+        )
     return PeerLists(tuple(decks), req_int(obj, "skipped", "answer"))
+
+
+def _multiples(d: Mapping[str, object], where: str) -> tuple[tuple[str, int], ...] | None:
+    raw = d.get("multiples")
+    if raw is None:
+        return None
+    found: list[tuple[str, int]] = []
+    for index, item in enumerate(as_list(raw, f"{where}.multiples")):
+        pair = as_list(item, f"{where}.multiples[{index}]")
+        if len(pair) != 2 or not isinstance(pair[0], str) or not isinstance(pair[1], int):  # noqa: PLR2004 — a pair
+            raise ShapeError(f"{where}.multiples[{index}]: expected [name, count]")
+        found.append((pair[0], pair[1]))
+    return tuple(found)
 
 
 def _encode_combos(combos: tuple[ComboDetail, ...]) -> object:

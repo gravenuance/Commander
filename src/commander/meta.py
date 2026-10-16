@@ -319,10 +319,15 @@ def outliers(
     return tuple(rows)
 
 
+def performing_entries(data: MetaData) -> list[Entry]:
+    """The commander's lists to learn from in the window: top cuts, or every list when too few made one."""
+    lists = _window(data.lists.data.entries if data.lists.data else (), data.since)
+    return performing_lists(lists)[0]
+
+
 def card_shares(data: MetaData) -> dict[str, float]:
     """Each card's share of the performing lists in the window, by `card_key`; empty without lists."""
-    lists = _window(data.lists.data.entries if data.lists.data else (), data.since)
-    performing, _ = performing_lists(lists)
+    performing = performing_entries(data)
     if not performing:
         return {}
     return {key: count / len(performing) for key, count in _list_counts(performing).items()}
