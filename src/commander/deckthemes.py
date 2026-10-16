@@ -36,6 +36,8 @@ PLAY_STYLES = frozenset(
         "commander matters",
         "competitive",
         "control",
+        "glass cannon",
+        "good stuff",
         "goodstuff",
         "group hug",
         "midrange",
@@ -56,16 +58,23 @@ OVERRIDES: Mapping[str, ThemeSpec] = {
     "blink": ThemeSpec(tags=("flicker",)),
     "burn": ThemeSpec(tags=("burn-player",)),
     "enchantments": ThemeSpec(tags=("synergy-enchantment",)),
+    "extra combats": ThemeSpec(tags=("extra-combat-phase",)),
     "go-wide": ThemeSpec(tags=("repeatable-creature-tokens", "anthem")),
+    "graveyard": ThemeSpec(tags=("cards-in-graveyard-matter", "castable-from-graveyard")),
+    "lifedrain": ThemeSpec(tags=("drain-life",)),
+    "ltb effects": ThemeSpec(tags=("leaves-battlefield-trigger",)),
     "mill": ThemeSpec(tags=("mill-opponent",)),
+    "reanimator": ThemeSpec(tags=("reanimate",)),
     "sacrifice": ThemeSpec(tags=("sacrifice-outlet",)),
     "self-mill": ThemeSpec(tags=("mill-self",)),
     "stax": ThemeSpec(
         tags=("rule-of-law", "prevent-cast", "hate-activation", "prevent-activation", "hatebear")
     ),
+    "stompy": ThemeSpec(tags=("power-matters",)),
     "theft": ThemeSpec(tags=("theft-creature", "theft-permanent")),
     "tokens": ThemeSpec(tags=("repeatable-creature-tokens", "synergy-token-creature")),
     "treasure": ThemeSpec(tags=("repeatable-treasures", "synergy-treasure")),
+    "weenies": ThemeSpec(tags=("synergy-low-power",)),
 }
 # Tagger tags that describe a card, or gather a whole family (typal), rather than name a plan.
 TRIVIA_TAGS = frozenset(
@@ -83,10 +92,13 @@ TRIVIA_TAGS = frozenset(
     }
 )
 TRIVIA_PREFIXES = ("cycle-", "namesake-", "virtual-")
-# Categories that hold roles, card types or deck parts, which suggest already covers or which carry no theme.
-NOT_THEMES = frozenset(
+ROLES_AND_TYPES = frozenset(
     {alias for aliases in CATEGORY_ALIASES.values() for alias in aliases}
     | {card_type.casefold() for card_type in CARD_TYPES}
+)
+# Categories that hold roles, card types or deck parts, which suggest already covers or which carry no theme.
+NOT_THEMES = frozenset(
+    ROLES_AND_TYPES
     | {"land", "lands", "commander", "combo", "combos", "combo pieces", "maybeboard", "sideboard", "maybe"}
     | {"uncategorized"}
 )
@@ -125,8 +137,8 @@ class DeckThemes:
     unmatched: tuple[str, ...]
     # Theme categories whose cards share nothing distinctive.
     vague: tuple[str, ...]
-    # Deck tags that name a play style (cEDH, Tempo), not cards.
-    play_styles: tuple[str, ...] = ()
+    # Deck tags too broad to pick cards by: play styles (cEDH, Tempo), roles (Draw), card types (Creatures).
+    broad: tuple[str, ...] = ()
 
 
 @dataclass(slots=True, frozen=True)
@@ -188,11 +200,11 @@ def merge_themes(deck: Deck, profile: Profile, db: CardDb) -> MergedThemes:
 def derive_themes(deck: Deck, db: CardDb, rules: CoverRules = CoverRules()) -> DeckThemes:  # noqa: B008 — frozen, so one shared default is safe
     themes: list[DerivedTheme] = []
     unmatched: list[str] = []
-    play_styles: list[str] = []
+    broad: list[str] = []
     for name in deck.tags or ():
         spec = deck_tag_spec(name, db)
         if spec is None:
-            play_styles.append(name)
+            broad.append(name)
             continue
         if spec.empty:
             unmatched.append(name)
@@ -224,17 +236,20 @@ def derive_themes(deck: Deck, db: CardDb, rules: CoverRules = CoverRules()) -> D
             tags=tuple(value for kind, value in picks if kind is FeatureKind.TAG),
         )
         themes.append(DerivedTheme(ThemeSource.CATEGORY, name, spec, covered, len(cards)))
-    return DeckThemes(tuple(themes), tuple(unmatched), tuple(vague), tuple(play_styles))
+    return DeckThemes(tuple(themes), tuple(unmatched), tuple(vague), tuple(broad))
 
 
 def deck_tag_spec(name: str, db: CardDb) -> ThemeSpec | None:
-    """The cards a deck tag asks for; None for a play style, an empty spec for a name nothing matches."""
+    """The cards a deck tag asks for; None when too broad, an empty spec for a name nothing matches."""
     key = name.strip().casefold()
     if key in PLAY_STYLES:
         return None
     if key in OVERRIDES:
         return OVERRIDES[key]
     forms = _singulars(key)
+    # Roles have their own targets in suggest, and a card type ("Creatures") would take in half of all cards.
+    if set(forms) & ROLES_AND_TYPES:
+        return None
     words = [form for form in forms if " " not in form]
     type_word = next((w for w in words if db.theme_size(Theme(types=(w,)))), None)
     keyword = next((w for w in words if db.theme_size(Theme(keywords=(w,)))), None)

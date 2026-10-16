@@ -97,7 +97,7 @@ def derived_lines(merged: MergedThemes) -> list[str]:
     used = {(t.source, t.name) for t in merged.used}
     lines = [_derived_line(t, (t.source, t.name) in used) for t in derived.themes]
     lines += [f"  {name} (deck tag): matches no type, keyword or Tagger tag" for name in derived.unmatched]
-    lines += [f"  {name} (deck tag): a play style, no theme" for name in derived.play_styles]
+    lines += [f"  {name} (deck tag): a play style, role or card type, no theme" for name in derived.broad]
     lines += [f"  {name} (category): its cards share nothing distinctive" for name in derived.vague]
     return ["from Archidekt:", *lines] if lines else ["from Archidekt: no deck tags or theme categories"]
 
@@ -117,7 +117,7 @@ def derived_json(merged: MergedThemes) -> dict[str, object]:
             for t in merged.derived.themes
         ],
         "unmatchedDeckTags": list(merged.derived.unmatched),
-        "playStyleTags": list(merged.derived.play_styles),
+        "broadTags": list(merged.derived.broad),
         "vagueCategories": list(merged.derived.vague),
         "unknownIgnores": list(merged.unknown_ignores),
     }

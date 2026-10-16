@@ -120,13 +120,18 @@ def test_ties_go_to_a_type_then_by_name() -> None:
     [
         ("Dwarves", ThemeSpec(types=("Dwarf",), tags=("typal-dwarf",))),
         ("Vehicles", ThemeSpec(types=("Vehicle",))),
-        ("Ramp", ThemeSpec(tags=("ramp",))),
+        ("Combat Ramp", ThemeSpec(tags=("combat-ramp",))),
+        ("Ramp", None),
         ("Flash", ThemeSpec(keywords=("flash",))),
         ("Stax", OVERRIDES["stax"]),
         ("Go-wide", ThemeSpec(tags=("repeatable-creature-tokens", "anthem"))),
         ("Spaghetti", ThemeSpec()),
         ("cEDH", None),
         ("Casual", None),
+        # A role suggest already has targets for, and a card type: too broad to pick cards by.
+        ("Draw", None),
+        ("Creatures", None),
+        ("Reanimator", ThemeSpec(tags=("reanimate",))),
     ],
 )
 def test_deck_tags_match_types_keywords_and_tags_by_name(
@@ -166,9 +171,14 @@ def test_a_category_says_what_the_deck_tags_do_not(db: CardDb, deck: Deck) -> No
     assert by_name["Brutes"].spec == ThemeSpec(tags=("combat-ramp",))
 
 
-def test_a_category_the_deck_tags_explain_is_neither_a_theme_nor_vague(db: CardDb, deck: Deck) -> None:
+def test_a_category_the_deck_tags_explain_is_neither_a_theme_nor_vague(
+    db: CardDb, deck: Deck, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Magda's last feature is her tutor tag, which only an override can name: Tutors is a role.
+    monkeypatch.setitem(OVERRIDES, "dwarf tutors", ThemeSpec(tags=("tutor",)))
     tagged = replace(
-        filed(deck, "Magda, Brazen Outlaw", "Brutes"), tags=("Dwarves", "Berserkers", "Combat Ramp", "Tutors")
+        filed(deck, "Magda, Brazen Outlaw", "Brutes"),
+        tags=("Dwarves", "Berserkers", "Combat Ramp", "Dwarf Tutors"),
     )
     # Ramp is left out too: it is the tag above combat-ramp, which says no more about these cards.
     found = derive_themes(tagged, db, SMALL)
@@ -199,7 +209,7 @@ def test_unmatched_deck_tags_are_reported_and_a_deck_without_any_has_no_themes(
 ) -> None:
     assert derive_themes(replace(deck, tags=("Spaghetti",), cards=()), db).unmatched == ("Spaghetti",)
     assert derive_themes(replace(deck, tags=None, cards=()), db) == DeckThemes((), (), ())
-    assert derive_themes(replace(deck, cards=()), db).play_styles == ("cEDH",)
+    assert derive_themes(replace(deck, cards=()), db).broad == ("cEDH",)
 
 
 RAMP_ID = "2f3e4ad7-5e60-41b4-bdbc-653f16869cf6"
