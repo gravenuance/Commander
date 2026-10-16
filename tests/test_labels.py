@@ -27,7 +27,10 @@ def desk(tmp_path: Path, card_db_file: Path, fake: FakeArchidekt) -> Desk:
     cache = tmp_path / "cache"
     cache.mkdir()
     shutil.copy(card_db_file, cache / CARD_DB_FILE)
-    assert run(["sync", "--no-cards", "--workspace", str(tmp_path / "decks")], tmp_path, fake).code == 0
+    assert (
+        run(["sync", "--no-cards", "--no-ideas", "--workspace", str(tmp_path / "decks")], tmp_path, fake).code
+        == 0
+    )
     return make_desk(DeskSettings(tmp_path / "decks", cache / CARD_DB_FILE, "MAKKIS"), fake)
 
 

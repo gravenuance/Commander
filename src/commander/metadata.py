@@ -250,11 +250,14 @@ def gather_peers(
     now: Clock,
     refresh: bool,
     offline: bool = False,
+    on_progress: Progress | None = None,
 ) -> MetaData:
     """Only the recent Archidekt decks for the commander at the deck's bracket, for decks below bracket 5:
     EDHTop16 covers cEDH alone, so its parts are left unavailable."""
     if not deck.commanders:
         raise ValueError(f"{deck.name} has no commander")
+    if on_progress is not None:
+        on_progress(f"Archidekt: recent {commander_name(deck.commanders)} decks")
     since = window_start(now(), sources.settings)
     folder = cache_root / CACHE_FOLDER
     peers = _peers(deck, sources, folder, since, now=now, refresh=refresh, offline=offline)

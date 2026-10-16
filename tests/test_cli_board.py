@@ -26,7 +26,10 @@ def home(tmp_path: Path, card_db_file: Path, fake: FakeArchidekt) -> Path:
     cache = tmp_path / "cache"
     cache.mkdir()
     shutil.copy(card_db_file, cache / CARD_DB_FILE)
-    assert run(["sync", "--no-cards", "--workspace", str(tmp_path / "decks")], tmp_path, fake).code == 0
+    assert (
+        run(["sync", "--no-cards", "--no-ideas", "--workspace", str(tmp_path / "decks")], tmp_path, fake).code
+        == 0
+    )
     fake.requests.clear()
     # Start from an empty board: the sync put the fixture's two Maybeboard cards on it.
     for name in ("board.json", "activity.jsonl"):

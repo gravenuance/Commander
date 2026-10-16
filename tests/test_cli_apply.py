@@ -103,7 +103,7 @@ def signed_in(keyring_: MemoryKeyring) -> None:
 @pytest.fixture
 def decks(home: Path, archidekt: FakeArchidekt) -> Path:
     folder = home / "decks"
-    assert run(["sync", "--no-cards", "--workspace", str(folder)], home, archidekt).code == 0
+    assert run(["sync", "--no-cards", "--no-ideas", "--workspace", str(folder)], home, archidekt).code == 0
     archidekt.requests.clear()
     return folder
 
@@ -344,7 +344,7 @@ def test_sync_keeps_the_account_labels_for_the_app_when_signed_in(
         {"id": 2, "color": "", "name": "x"},
     ]
     signed_in(memory_keyring)
-    result = run(["sync", "--no-cards", "--workspace", str(home / "decks")], home, archidekt)
+    result = run(["sync", "--no-cards", "--no-ideas", "--workspace", str(home / "decks")], home, archidekt)
     assert result.code == 0
     assert "card labels: Don't Have (from your Archidekt account)\n" in result.out
     assert Workspace(home / "decks").account_labels() == [("Don't Have", "#fa0d11")]

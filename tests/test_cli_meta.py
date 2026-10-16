@@ -10,7 +10,7 @@ import pytest
 
 from commander.board import Origin, Section, read_board
 from commander.carddb import CARD_DB_FILE
-from conftest import DECK_ID, FakeArchidekt, Json, deck_page, load_fixture
+from conftest import DECK_ID, FakeArchidekt, Json, card_entry, deck_page, load_fixture
 from test_cli_apply import Run, run
 
 FOLDER = "10004639-honestly-though"
@@ -80,8 +80,11 @@ def home(tmp_path: Path, card_db_file: Path, fake: FakeArchidekt, raw_deck: Json
     cache = tmp_path / "cache"
     cache.mkdir()
     shutil.copy(card_db_file, cache / CARD_DB_FILE)
-    assert run(["sync", "--no-cards", "--workspace", str(tmp_path / "decks")], tmp_path, fake).code == 0
-    # Another player's deck, served only after the sync so it isn't taken for one of the user's.
+    assert (
+        run(["sync", "--no-cards", "--no-ideas", "--workspace", str(tmp_path / "decks")], tmp_path, fake).code
+        == 0
+    )
+    # Another player's deck, which the user's deck list leaves out.
     peer = copy.deepcopy(raw_deck)
     peer["id"] = PEER_ID
     peer["owner"] = {"id": 5, "username": "someone"}
@@ -260,3 +263,67 @@ def test_an_outage_with_nothing_cached_fails(home: Path, fake: FakeArchidekt) ->
     assert result.code == 1
     assert "cmdr: Magda: EDHTop16 lists unavailable:" in result.err
     assert "  6 entries" not in result.out
+
+
+def sync(home: Path, fake: FakeArchidekt, *args: str) -> Run:
+    return run(["sync", "--no-cards", *args, "--workspace", str(home / "decks")], home, fake)
+
+
+def test_sync_compiles_the_meta_staples_into_considered_once(home: Path, fake: FakeArchidekt) -> None:
+    first = sync(home, fake)
+    assert first.code == 0, first.err
+    assert "Magda ideas: +2 from meta\n" in first.out
+    card = read_board(home / "decks" / FOLDER).find("Jeska's Will")
+    assert card is not None
+    assert (card.section, card.origin) == (Section.SUGGESTED, Origin.META)
+    again = sync(home, fake)
+    assert again.code == 0, again.err
+    assert "ideas:" not in again.out
+
+
+def test_sync_json_lists_each_decks_new_ideas_by_source(home: Path, fake: FakeArchidekt) -> None:
+    result = sync(home, fake, "--json")
+    assert result.code == 0, result.err
+    ideas = json.loads(result.out)["ideas"]
+    assert ideas.keys() == {"Magda"}
+    assert sorted(ideas["Magda"]["meta"]) == ["Jeska's Will", "Mind Stone"]
+    assert ideas["Magda"]["archidekt decks"] == []
+
+
+def test_sync_no_ideas_leaves_the_board_and_the_meta_alone(home: Path, fake: FakeArchidekt) -> None:
+    result = sync(home, fake, "--no-ideas")
+    assert result.code == 0, result.err
+    assert "ideas" not in result.out
+    assert fake.edhtop16.requests == []
+    assert read_board(home / "decks" / FOLDER).find("Mind Stone") is None
+
+
+def test_sync_below_bracket_5_learns_from_recent_archidekt_decks_alone(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    fake.decks[DECK_ID]["edhBracket"] = 3
+    fake.decks[DECK_ID]["updatedAt"] = "2026-10-14T10:00:00.000000Z"
+    # Three peers, the fewest that make staples; two of them play Arcane Signet.
+    peers = (PEER_ID, PEER_ID + 1, PEER_ID + 2)
+    for peer_id in peers[1:]:
+        fake.put({**fake.decks[PEER_ID], "id": peer_id})
+    for peer_id in peers[:2]:
+        fake.decks[peer_id]["cards"].append(card_entry(9_100, "Arcane Signet", ["Ramp"]))
+    fake.peer_page = deck_page([{**peer_row(p, "someone", 120), "edhBracket": 3} for p in peers])
+    result = sync(home, fake)
+    assert result.code == 0, result.err
+    assert "Magda ideas: +1 from archidekt decks\n" in result.out, result.err
+    assert fake.edhtop16.requests == []
+    card = read_board(home / "decks" / FOLDER).find("Arcane Signet")
+    assert card is not None
+    assert card.origin is Origin.DECKS
+
+
+def test_sync_with_every_source_down_keeps_the_board_and_succeeds(home: Path, fake: FakeArchidekt) -> None:
+    fake.edhtop16.status = 403
+    fake.peer_page = {"unexpected": True}
+    result = sync(home, fake)
+    assert result.code == 0, result.err
+    assert "cmdr: Magda: no meta or Archidekt decks to learn from (" in result.err
+    assert "ideas:" not in result.out
+    assert read_board(home / "decks" / FOLDER).find("Mind Stone") is None

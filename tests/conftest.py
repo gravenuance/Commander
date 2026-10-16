@@ -440,6 +440,7 @@ class FakeArchidekt:
             rows = [
                 {**summary_row(d["id"], d["name"], d["updatedAt"]), "tags": d.get("deckTags", [])}
                 for d in self.decks.values()
+                if d.get("owner", {}).get("username", self.user) == self.user
             ]
             return httpx.Response(200, json=deck_page(rows))
         return self._get_deck(request)

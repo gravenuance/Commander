@@ -299,7 +299,11 @@ function buildTile(card) {
   const meta = el("div", { class: "card-meta" },
     el("span", { class: "type", text: card.typeLine, title: card.typeLine }),
     card.priceCents !== null ? el("span", { text: euro(card.priceCents) }) : null,
-    el("span", { class: `badge ${card.source}`, text: card.source, title: `added by ${card.source}` }),
+    el("span", {
+      class: `badge ${card.source}`,
+      text: card.origin ?? card.source,
+      title: card.origin ? `compiled by ${card.source} from the ${card.origin}` : `added by ${card.source}`,
+    }),
     card.gameChanger ? el("span", { class: "badge status gc", text: "Game changer" }) : null);
 
   const targets = el("div", { class: "targets", hidden: true, role: "group", "aria-label": `Replace with ${card.name}` },

@@ -6,11 +6,13 @@ import json
 from collections.abc import Callable, Sequence
 from typing import TextIO
 
+import httpx
+
 from commander.archidekt import SEARCH_INTERVAL_SECONDS, ArchidektSearch
 from commander.carddb import CardDb
 from commander.cli_output import progress_printer
 from commander.clibase import EXIT_FAILURE, EXIT_OK, Context, UsageError, one_deck, open_card_db, workspace
-from commander.config import cache_dir, config_path, read_config, resolve_user
+from commander.config import MetaSettings, cache_dir, config_path, read_config, resolve_user
 from commander.deckcache import AnswerSource
 from commander.deckprofile import read_profile
 from commander.edhtop16 import REQUEST_INTERVAL_SECONDS, SLOW_QUERY_SECONDS, Edhtop16Client, commander_url
@@ -87,16 +89,7 @@ def _cmd_meta(args: argparse.Namespace, ctx: Context) -> int:
     progress = progress_printer(ctx.err)
     results: list[tuple[StoredDeck, MetaData, MetaReport]] = []
     with open_card_db(ctx) as db, ctx.client_factory() as http:
-        sources = MetaSources(
-            Edhtop16Client(
-                Fetcher(http, slow_after=SLOW_QUERY_SECONDS), ctx.pacer_factory(REQUEST_INTERVAL_SECONDS)
-            ),
-            ArchidektSearch(Fetcher(http), ctx.pacer_factory(SEARCH_INTERVAL_SECONDS)),
-            SpellbookClient(Fetcher(http)),
-            ctx.pacer_factory(META_REQUEST_INTERVAL_SECONDS),
-            user,
-            file.meta,
-        )
+        sources = meta_sources(http, ctx, user, file.meta)
         for deck in stored:
             if deck.deck.bracket != CEDH_BRACKET:
                 print(
@@ -119,6 +112,20 @@ def _cmd_meta(args: argparse.Namespace, ctx: Context) -> int:
     _print_results(args, results, ctx.out)
     unavailable = any(s.source is AnswerSource.UNAVAILABLE for _, _, r in results for s in r.sources)
     return EXIT_FAILURE if unavailable else EXIT_OK
+
+
+def meta_sources(http: httpx.Client, ctx: Context, user: str, settings: MetaSettings) -> MetaSources:
+    """EDHTop16, Archidekt search and Spellbook clients over one HTTP client, each at its own pace."""
+    return MetaSources(
+        Edhtop16Client(
+            Fetcher(http, slow_after=SLOW_QUERY_SECONDS), ctx.pacer_factory(REQUEST_INTERVAL_SECONDS)
+        ),
+        ArchidektSearch(Fetcher(http), ctx.pacer_factory(SEARCH_INTERVAL_SECONDS)),
+        SpellbookClient(Fetcher(http)),
+        ctx.pacer_factory(META_REQUEST_INTERVAL_SECONDS),
+        user,
+        settings,
+    )
 
 
 def _print_results(

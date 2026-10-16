@@ -34,7 +34,10 @@ def settings(tmp_path: Path, card_db_file: Path, fake: FakeArchidekt) -> DeskSet
     cache = tmp_path / "cache"
     cache.mkdir()
     shutil.copy(card_db_file, cache / CARD_DB_FILE)
-    assert run(["sync", "--no-cards", "--workspace", str(tmp_path / "decks")], tmp_path, fake).code == 0
+    assert (
+        run(["sync", "--no-cards", "--no-ideas", "--workspace", str(tmp_path / "decks")], tmp_path, fake).code
+        == 0
+    )
     fake.requests.clear()
     # Start from an empty board: the sync put the fixture's two Maybeboard cards on it.
     for name in ("board.json", "activity.jsonl"):
@@ -160,6 +163,7 @@ def test_the_deck_view_carries_the_card_grid(desk: Desk) -> None:
 def test_each_board_card_comes_with_the_deck_cards_it_could_replace(desk: Desk) -> None:
     desk.propose(DECK, "Lightning Bolt")
     [bolt] = items(desk.deck(DECK), "cards")
+    assert bolt["origin"] is None
     targets = cast("list[Json]", bolt["targets"])
     assert targets
     assert {t["source"] for t in targets} == {"role"}
@@ -247,9 +251,9 @@ def test_meta_opens_from_cache_and_refreshes_on_demand(desk: Desk, fake: FakeArc
     assert {"pieces", "combos"} <= set(fresh)
     # The refresh, and only the refresh, put the meta's staples on the board as cmdr's suggestions.
     board = items(desk.deck(DECK), "cards")
-    assert sorted((c["name"], c["source"]) for c in board) == [
-        ("Jeska's Will", "cmdr"),
-        ("Mind Stone", "cmdr"),
+    assert sorted((c["name"], c["source"], c["origin"]) for c in board) == [
+        ("Jeska's Will", "cmdr", "meta"),
+        ("Mind Stone", "cmdr", "meta"),
     ]
     desk.meta(DECK)
     assert len(items(desk.deck(DECK), "cards")) == len(board)

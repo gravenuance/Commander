@@ -26,7 +26,7 @@ from commander.apply import (
 from commander.archidekt import ArchidektClient, ArchidektError
 from commander.archidekt_edit import ArchidektAuth, ArchidektEditor, AuthError
 from commander.background import in_background
-from commander.board import BoardError, BoardService, feed_suggestions, read_board
+from commander.board import BoardCard, BoardError, BoardService, Origin, feed_suggestions, read_board
 from commander.boardsave import pick_up_aside
 from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
 from commander.bracket import BracketReport, EstimateResult, bracket_cards, estimate_cache, estimate_decks
@@ -34,7 +34,7 @@ from commander.carddb import CARD_DB_FILE, CardDataError, CardDb, Role
 from commander.cli_app import add_app_command
 from commander.cli_board import add_board_commands
 from commander.cli_cards import add_card_commands
-from commander.cli_meta import add_meta_command
+from commander.cli_meta import CEDH_BRACKET, add_meta_command, meta_sources
 from commander.cli_output import (
     price_text,
     print_apply_outcome,
@@ -67,6 +67,7 @@ from commander.config import (
     ENV_USER,
     ENV_WORKSPACE,
     ConfigError,
+    MetaSettings,
     cache_dir,
     config_path,
     environment,
@@ -81,7 +82,9 @@ from commander.deckprofile import read_profile
 from commander.deckthemes import merge_themes
 from commander.diff import DeckDiff
 from commander.edhtop16 import Edhtop16Error
+from commander.ideas import compile_ideas, ideas_summary
 from commander.labels import LabelError
+from commander.metadata import Progress, gather, gather_peers
 from commander.models import Deck
 from commander.net import Fetcher, NetworkError, Pacer, make_client
 from commander.plan import EXAMPLE as PLAN_EXAMPLE
@@ -272,6 +275,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sync.add_argument("-n", "--dry-run", action="store_true", help="report changes without writing files")
     sync.add_argument("--no-cards", action="store_true", help="skip the Scryfall card data refresh")
+    sync.add_argument(
+        "--no-ideas",
+        action="store_true",
+        help="skip compiling each deck's ideas from the meta and recent Archidekt decks",
+    )
     sync.add_argument("--json", action="store_true", help="print results as JSON")
     sync.set_defaults(handler=_cmd_sync)
 
@@ -430,11 +438,16 @@ def _cmd_sync(args: argparse.Namespace, ctx: Context) -> int:
         labels = None if args.dry_run else _sync_labels(fetcher, workspace, user, ctx)
         cards = _card_status(cards_job, dry_run=args.dry_run)
     picked = {} if args.dry_run else _pick_up_aside(workspace, ctx)
+    ideas = {} if args.dry_run or args.no_ideas else _compile_ideas(workspace, user, file.meta, ctx, progress)
     if args.json:
         document = {
             "decks": [_result_json(r) for r in results],
             "cardData": {"status": cards.state.value, "detail": cards.detail},
             "labels": None if labels is None else [{"name": n, "colour": c} for n, c in labels],
+            "ideas": {
+                short: {origin.value: [card.name for card in cards] for origin, cards in added.items()}
+                for short, added in ideas.items()
+            },
         }
         json.dump(document, ctx.out, ensure_ascii=False, indent=2)
         ctx.out.write("\n")
@@ -451,8 +464,47 @@ def _cmd_sync(args: argparse.Namespace, ctx: Context) -> int:
                 f"{short} board: considering {', '.join(names)} (from the Sideboard or Maybeboard)",
                 file=ctx.out,
             )
+        for short, added in ideas.items():
+            if any(added.values()):
+                print(f"{short} ideas: {ideas_summary(added)}", file=ctx.out)
     failed = any(r.status is SyncStatus.FAILED for r in results) or cards.state is _CardState.FAILED
     return EXIT_FAILURE if failed else EXIT_OK
+
+
+def _compile_ideas(
+    workspace: Workspace, user: str, settings: MetaSettings, ctx: Context, progress: Progress
+) -> dict[str, dict[Origin, list[BoardCard]]]:
+    """Each deck's new ideas from the meta and recent Archidekt decks (ADR 0014), by short name.
+
+    Answers under a day old come from the cache. A deck whose sources fail keeps its board as it was.
+    """
+    try:
+        db = CardDb(cache_dir(ctx.env) / CARD_DB_FILE)
+    except CardDataError as error:
+        print(f"cmdr: ideas not compiled: {error}", file=ctx.err)
+        return {}
+    found: dict[str, dict[Origin, list[BoardCard]]] = {}
+    with db, ctx.client_factory() as http:
+        sources = meta_sources(http, ctx, user, settings)
+        for stored in workspace.load_all():
+            deck = stored.deck
+            if not deck.commanders:
+                continue
+            read = gather if deck.bracket == CEDH_BRACKET else gather_peers
+            try:
+                data = read(
+                    deck, sources, cache_dir(ctx.env), now=ctx.now, refresh=False, on_progress=progress
+                )
+                found[deck.short_name] = compile_ideas(stored, data, db, now=ctx.now)
+            except BoardError as error:
+                print(f"cmdr: {deck.short_name} ideas not compiled: {error}", file=ctx.err)
+                continue
+            if data.lists.data is None and data.peers.data is None:
+                why = data.peers.error or data.lists.error
+                print(
+                    f"cmdr: {deck.short_name}: no meta or Archidekt decks to learn from ({why})", file=ctx.err
+                )
+    return found
 
 
 def _pick_up_aside(workspace: Workspace, ctx: Context) -> dict[str, list[str]]:
