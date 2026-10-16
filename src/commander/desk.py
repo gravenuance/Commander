@@ -456,6 +456,7 @@ class Desk:
             "stoppers": stopper_rows(report.own_combos, report.threats),
             "untouched": untouched(report.key_cards, report.own_combos, report.threats),
             "combos": combo_rows(report.combos),
+            "racing": report.style.races,
         }
 
     def _meta_shares(self, deck: Deck) -> dict[str, float] | None:

@@ -4,7 +4,7 @@ picks, the deck's own outliers, and which cards the most-played commanders answe
 
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from enum import Enum
 
@@ -18,6 +18,7 @@ from commander.keycards import KeyCard, key_cards
 from commander.metacombos import AnswerRole, MetaCombo, combo_answers, meta_combos, pool_answers
 from commander.metadata import MetaCommander, MetaData, PeerList
 from commander.models import COMMANDER_CATEGORY, Deck
+from commander.playstyle import NEUTRAL, Fit, PlayStyle, deck_play_style, fit_order, staple_fits
 from commander.spellbook import ComboDetail
 
 # Fewer top-cut lists than this, and every list in the window stands in, marked thin.
@@ -72,6 +73,8 @@ class CardShare:
     spice: int | None
     # On the deck's Sideboard or Maybeboard (for missing cards) or kept by the profile (for the deck's own).
     flagged: bool
+    # For a missing card: how it sits with the deck's play style (ADR 0022).
+    fit: Fit = Fit.NEUTRAL
 
 
 @dataclass(slots=True, frozen=True)
@@ -140,6 +143,7 @@ class MetaReport:
     peers_skipped: int
     key_cards: tuple[KeyCard, ...]
     sources: tuple[SourceState, ...]
+    style: PlayStyle = NEUTRAL
 
 
 @dataclass(slots=True, frozen=True)
@@ -180,12 +184,13 @@ def analyse(deck: Deck, data: MetaData, profile: Profile, db: CardDb) -> MetaRep
     )
     keys = key_cards(deck, profile, data.own_combos.data or (), peer_lists, db)
     names = _display_names(performing, peer_lists, deck)
+    style = deck_play_style(deck)
     return MetaReport(
         deck=deck.short_name,
         commander=data.commander,
         since=data.since,
         sample=sample,
-        missing=missing_staples(deck, performing, peer_lists, names, db),
+        missing=missing_staples(deck, performing, peer_lists, names, db, style=style),
         spicy=spicy_picks(deck, performing),
         outliers=outliers(deck, performing, peer_lists, profile, db),
         threats=threats((k.name for k in keys), field, db),
@@ -202,6 +207,7 @@ def analyse(deck: Deck, data: MetaData, profile: Profile, db: CardDb) -> MetaRep
             _state("Spellbook combos", data.combos),
             _state("Spellbook deck combos", data.own_combos),
         ),
+        style=style,
     )
 
 
@@ -222,7 +228,9 @@ def missing_staples(
     db: CardDb,
     *,
     limit: int | None = MAX_ROWS,
+    style: PlayStyle = NEUTRAL,
 ) -> tuple[CardShare, ...]:
+    """The staples the deck misses: what the play style favours first, what it doesn't need last."""
     in_deck = {card_key(card.name) for card in deck.main_cards}
     aside = {card_key(card.name) for card in deck.aside_cards}
     counts = _list_counts(performing)
@@ -243,7 +251,9 @@ def missing_staples(
                     names[key], counts[key], share, peer_counts[key], peer_share, spice.get(key), key in aside
                 )
             )
-    rows.sort(key=lambda r: (-r.share, -r.peer_share, r.name))
+    fits = staple_fits((r.name for r in rows), style, db)
+    rows = [replace(r, fit=fits.get(r.name.casefold(), Fit.NEUTRAL)) for r in rows]
+    rows.sort(key=lambda r: (fit_order(r.fit), -r.share, -r.peer_share, r.name))
     return tuple(rows if limit is None else rows[:limit])
 
 
@@ -260,7 +270,8 @@ class Staples:
 
 def pool_staples(deck: Deck, pool: Sequence[PeerList], db: CardDb) -> tuple[CardShare, ...]:
     """The cards at least half of a pool of Archidekt decks play that the deck misses, uncapped."""
-    return missing_staples(deck, (), pool, _display_names((), pool, deck), db, limit=None)
+    names = _display_names((), pool, deck)
+    return missing_staples(deck, (), pool, names, db, limit=None, style=deck_play_style(deck))
 
 
 def all_staples(deck: Deck, data: MetaData, db: CardDb) -> Staples:
@@ -269,7 +280,7 @@ def all_staples(deck: Deck, data: MetaData, db: CardDb) -> Staples:
     performing, basis = performing_lists(lists)
     peers = data.peers.data.decks if data.peers.data else ()
     names = _display_names(performing, peers, deck)
-    rows = missing_staples(deck, performing, peers, names, db, limit=None)
+    rows = missing_staples(deck, performing, peers, names, db, limit=None, style=deck_play_style(deck))
     return Staples(rows, len(performing), basis, len(peers))
 
 

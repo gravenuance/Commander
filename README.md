@@ -182,6 +182,16 @@ decks for that commander updated in the same window. It lists:
   [Commander Spellbook](https://commanderspellbook.com), each with the deck's answers: stax pieces that stop
   it first, then removal for a piece, then counterspells. "no answer in the deck" flags the gaps.
 
+A deck's play-style deck tags weigh the report ([ADR 0022](docs/adr/0022-play-style-weighs-the-meta.md)):
+
+| Deck tag | Staples first (marked "fits") | Also |
+|---|---|---|
+| Turbo | ramp, tutors, draw | Interaction is "off-plan": listed last, never put on the board as an idea. A meta combo without an answer is no gap ("racing, not answering"), and the table shows "racing". |
+| Stax | stax pieces (found as the Meta panel finds them, or Tagger's hatebear tag) and cheap interaction (mana value 2 or less, or free to cast) | |
+| Control | interaction | Unanswered combos stay gaps, even beside Turbo. |
+
+Other play styles weigh nothing. The shares stay as they are; only the order and the marks change.
+
 With fewer than five top-cut lists every list in the window is read, and with fewer than ten lists the
 report says the data is thin: read its shares as hints. Answers are read from Scryfall Tagger tags and
 rules text, so check them before acting on one. `--card <name>` shows how lists use one card,

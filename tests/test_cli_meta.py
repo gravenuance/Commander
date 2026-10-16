@@ -239,6 +239,26 @@ def test_every_bracket_5_deck_side_by_side(home: Path, fake: FakeArchidekt) -> N
     ]
 
 
+def test_a_turbo_deck_races_the_meta_combos_instead_of_answering_them(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    snapshot = next((home / "decks").glob("10004639-*")) / "deck.json"
+    saved = json.loads(snapshot.read_text(encoding="utf-8"))
+    saved["tags"] = [*saved["tags"], "Turbo"]
+    # Without Disruptor Flute, its stax lock, the deck answers none of the meta's combos.
+    saved["cards"] = [card for card in saved["cards"] if card["name"] != "Disruptor Flute"]
+    snapshot.write_text(json.dumps(saved), encoding="utf-8")
+    table = meta(home, fake).out.splitlines()
+    assert table[1].split()[-2:] == ["racing", "thin"]
+    lines = meta(home, fake, "magda").out.splitlines()
+    assert any(
+        line.startswith("Staples you don't play (") and line.endswith("; turbo plan first)") for line in lines
+    )
+    unanswered = [line.strip() for line in lines if line.strip().startswith("no answer in the deck")]
+    assert unanswered
+    assert set(unanswered) == {"no answer in the deck (turbo: racing, not answering)"}
+
+
 def test_card_and_to_board_need_one_deck(home: Path, fake: FakeArchidekt) -> None:
     result = meta(home, fake, "--card", "Mind Stone")
     assert (result.code, result.err) == (2, "cmdr: --to-board and --card need one deck\n")

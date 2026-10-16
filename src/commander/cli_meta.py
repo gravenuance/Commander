@@ -30,6 +30,7 @@ from commander.metacombos import AnswerRole, ComboAnswer
 from commander.metadata import CEDH_BRACKET, MetaData, MetaSources, gather
 from commander.models import short_commander_name
 from commander.net import Fetcher
+from commander.playstyle import Fit
 from commander.spellbook import META_REQUEST_INTERVAL_SECONDS, SpellbookClient
 from commander.store import StoredDeck, Workspace
 
@@ -216,11 +217,17 @@ def print_report(report: MetaReport, out: TextIO) -> None:
 
 
 def _print_missing(report: MetaReport, out: TextIO) -> None:
-    print("\nStaples you don't play (share of lists read · recent Archidekt lists)", file=out)
+    style = report.style.label
+    weighed = f"; {style} plan first" if style else ""
+    print(f"\nStaples you don't play (share of lists read · recent Archidekt lists{weighed})", file=out)
     if not report.missing:
         print("  none", file=out)
     for card in report.missing:
         note = "  [on your Sideboard or Maybeboard]" if card.flagged else ""
+        if card.fit is Fit.FAVOURED:
+            note += f"  [fits {style}]"
+        elif card.fit is Fit.OFF_PLAN:
+            note += f"  [off-plan for {style}]"
         print(
             f"  {_percent(card.share)} · {card.peer_lists}/{len(report.peers)}  {card.name}{note}", file=out
         )
@@ -315,7 +322,8 @@ def _print_combos(report: MetaReport, out: TextIO) -> None:
         if combo.requirements:
             print(f"        also needs: {'; '.join(combo.requirements)}", file=out)
         if not combo.answers:
-            print("        no answer in the deck", file=out)
+            racing = f" ({report.style.label}: racing, not answering)" if report.style.races else ""
+            print(f"        no answer in the deck{racing}", file=out)
             continue
         for role in AnswerRole:
             answers = [a for a in combo.answers if a.role is role]
@@ -390,7 +398,8 @@ def _print_table(reports: Sequence[MetaReport], out: TextIO) -> None:
     print("deck        lists  top cuts  read  missing  threats  unanswered combos", file=out)
     for r in reports:
         thin = " thin" if r.sample.thin else ""
-        open_combos = sum(1 for c in r.combos if not c.answers)
+        # A deck that races counts no unanswered combo as a gap (ADR 0022).
+        open_combos = "racing" if r.style.races else str(sum(1 for c in r.combos if not c.answers))
         print(
             f"{r.deck[:10]:<10}  {r.sample.with_lists:>5}  {r.sample.top_cuts:>8}  {r.sample.performing:>4}"
             f"  {len(r.missing):>7}  {len(r.threats):>7}  {open_combos:>17}{thin}",
@@ -413,7 +422,9 @@ def report_json(report: MetaReport) -> dict[str, object]:
             "basis": sample.basis.name.lower(),
             "thin": sample.thin,
         },
-        "missing": [_share_json(c, "onSideboard") for c in report.missing],
+        "playStyle": [style.value for style in report.style.styles],
+        "racing": report.style.races,
+        "missing": [{**_share_json(c, "onSideboard"), "fit": c.fit.value or None} for c in report.missing],
         "spicy": [
             {
                 "name": p.name,

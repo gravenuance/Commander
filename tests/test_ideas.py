@@ -139,6 +139,15 @@ def test_the_adjacent_commanders_pooled_decks_give_ideas_named_after_them(
     assert ideas_summary(added) == "+1 from adjacent decks"
 
 
+def test_a_turbo_deck_gets_no_off_plan_adjacent_ideas(deck: Deck, db: CardDb, tmp_path: Path) -> None:
+    (tmp_path / "profile.toml").write_text(ALIKE, encoding="utf-8")
+    # Both in every pooled deck; Lightning Bolt is removal, off a Turbo deck's plan.
+    pool = [peer(i, ["Arcane Signet", "Lightning Bolt"]) for i in range(1, 5)]
+    turbo = replace(deck, tags=("Turbo",))
+    added = compile_ideas(StoredDeck(tmp_path, turbo), meta_data([], []), db, now=lambda: NOW, adjacent=pool)
+    assert [card.name for card in added[Origin.ADJACENT]] == ["Arcane Signet"]
+
+
 def test_a_pool_under_three_decks_or_a_profile_naming_none_gives_no_adjacent_ideas(
     deck: Deck, db: CardDb, tmp_path: Path
 ) -> None:

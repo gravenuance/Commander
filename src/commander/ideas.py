@@ -31,6 +31,7 @@ from commander.meta import (
 )
 from commander.metadata import MetaData, PeerList
 from commander.models import Deck, short_commander_name
+from commander.playstyle import Fit
 from commander.store import StoredDeck
 from commander.suggest import affordable, card_raise, name_keys
 from commander.targets import deck_cut_rules, role_targets, with_ideas
@@ -51,7 +52,8 @@ def staple_ideas(deck: Deck, staples: Staples, since: date) -> list[Idea]:
     """The missing staples as ideas: "meta" when the EDHTop16 lists make it one, else "archidekt decks"."""
     lists = f"{deck.short_name} lists" if staples.basis is Basis.ALL else f"top-cut {deck.short_name} lists"
     ideas: list[Idea] = []
-    for row in staples.rows:
+    # What the deck's play style doesn't need (a Turbo deck's interaction) is no idea for it (ADR 0022).
+    for row in (r for r in staples.rows if r.fit is not Fit.OFF_PLAN):
         parts: list[str] = []
         if staples.lists:
             parts.append(f"in {row.lists} of {staples.lists} {lists} on EDHTop16 since {since}")
@@ -82,6 +84,7 @@ def adjacent_ideas(
             row.peer_share,
         )
         for row in pool_staples(deck, pool, db)
+        if row.fit is not Fit.OFF_PLAN
     ]
     ideas.sort(key=lambda idea: (-idea.share, idea.name))
     return ideas

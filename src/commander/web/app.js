@@ -1222,7 +1222,7 @@ function renderMeta(deck, answer) {
     s.known ? `${s.withLists} lists since ${report.since}` : "No EDHTop16 lists",
     fetched ? new Date(fetched).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "",
   ].filter(Boolean).join(" · ");
-  $("meta-body").replaceChildren(metaKeys(answer.keys), metaStoppers(answer.stoppers, answer.untouched), metaCombos(answer.combos));
+  $("meta-body").replaceChildren(metaKeys(answer.keys), metaStoppers(answer.stoppers, answer.untouched), metaCombos(answer.combos, answer.racing));
 }
 
 function deckChips(decks) {
@@ -1301,18 +1301,20 @@ function shortCombo(pieces) {
   return pieces.split(" + ").map((name) => name.split(",")[0]).join(" + ");
 }
 
-function metaCombos(combos) {
+function metaCombos(combos, racing) {
   const rows = combos.map((c) => el("div", { class: "meta-row" },
     el("p", { class: "meta-card" },
       el("a", { href: c.url, target: "_blank", rel: "noopener", text: c.pieces.join(" + "), title: "Open on Commander Spellbook" })),
     c.results.length ? el("p", { class: "muted small", text: c.results.slice(0, 2).join("; ") }) : null,
     deckChips(c.decks),
-    comboAnswers(c.answers)));
+    comboAnswers(c.answers, racing)));
   return metaSection("Meta combos",
     rows.length ? el("div", { class: "meta-rows" }, ...rows) : el("p", { class: "empty", text: "No combos in the meta." }));
 }
 
-function comboAnswers(answers) {
+function comboAnswers(answers, racing) {
+  // A Turbo deck races the meta's combos rather than answering them (ADR 0022).
+  if (!answers.length && racing) return el("p", { class: "answers" }, el("span", { class: "badge status racing", text: "Racing", title: "Turbo: racing, not answering" }));
   if (!answers.length) return el("p", { class: "answers" }, el("span", { class: "badge status rejected", text: "No answer" }));
   // Stax answers say how they stop the combo; removal and counters only need the card and any catch.
   const shown = (a) => (a.role === "stax" ? `${a.card} (${a.how})` : a.catch ? `${a.card} (${a.catch})` : a.card);

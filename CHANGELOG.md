@@ -67,6 +67,11 @@
   deck tag, and deck tags meaning the same share a label ("Power Matters/Stompy"). `cmdr profile` lists the
   profile themes the deck tags already name.
 
+- Play-style deck tags weigh `cmdr meta` (ADR 0022): Turbo puts speed staples first, marks interaction
+  off-plan and stops counting unanswered meta combos as gaps ("racing"); Stax puts stax pieces and cheap
+  interaction first; Control puts interaction first. Off-plan staples are no longer compiled as ideas, and
+  the app's Meta panel shows a Turbo deck's unanswered combos as "Racing".
+
 ### Fixed
 - A board wipe clears creatures (ADR 0020): sweepers that remove only artifacts, enchantments, lands or
   other noncreature permanents (Vandalblast, Bane of Progress, Armageddon) no longer count as board
