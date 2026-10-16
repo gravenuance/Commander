@@ -186,6 +186,7 @@ class Desk:
             "bracket": stored.deck.bracket,
             "commanders": list(stored.deck.commanders),
             "archetype": profile.archetype,
+            "tags": list(stored.deck.tags or ()),
             "identity": identity,
             "stamp": board_stamp(stored.folder),
             "pending": board.pending(stored.deck),

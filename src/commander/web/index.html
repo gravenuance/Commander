@@ -8,7 +8,7 @@
 <style>/*APP_CSS*/</style>
 </head>
 <body>
-<div class="app">
+<div class="app" id="app">
   <nav class="decks" aria-label="Decks">
     <p class="brand" aria-hidden="true">Commander</p>
     <ul id="deck-list" class="deck-list"></ul>
@@ -26,14 +26,13 @@
 
     <section id="deck" class="deck" hidden aria-labelledby="deck-short">
       <header class="deck-head">
-        <div class="deck-names">
-          <h1 id="deck-short" class="deck-short"></h1>
-          <p class="deck-sub">
-            <a id="deck-link" class="deck-title" href="#" target="_blank" rel="noopener" title="Open on Archidekt"></a>
-            <span id="deck-bracket" class="chip"></span>
-          </p>
-          <p id="deck-archetype" class="archetype"></p>
-        </div>
+        <h1 id="deck-short" class="deck-short"></h1>
+        <p class="deck-sub">
+          <a id="deck-link" class="deck-title" href="#" target="_blank" rel="noopener" title="Open on Archidekt"></a>
+          <span id="deck-bracket" class="chip"></span>
+        </p>
+        <ul id="deck-tags" class="tags" aria-label="Deck tags"></ul>
+        <p id="deck-archetype" class="archetype"></p>
         <div class="head-actions">
           <div class="propose" role="combobox" aria-haspopup="listbox" aria-owns="propose-results" aria-expanded="false" id="propose-box">
             <input id="propose-input" type="search" placeholder="Propose a card" aria-label="Propose a card"
@@ -44,46 +43,58 @@
         </div>
       </header>
 
-      <div class="columns">
-        <section class="column" aria-labelledby="h-suggested">
-          <h2 id="h-suggested" class="column-title">Suggested <span class="count" id="count-suggested"></span></h2>
-          <div id="list-suggested" class="cards"></div>
-          <p id="empty-suggested" class="empty" hidden>Nothing suggested. <code>cmdr suggest --to-board</code> adds ideas.</p>
+      <div class="workspace">
+        <section class="grid-pane" aria-label="Deck cards">
+          <div id="grid" class="grid"></div>
         </section>
-        <section class="column" aria-labelledby="h-considered">
-          <h2 id="h-considered" class="column-title">Considered <span class="count" id="count-considered"></span></h2>
-          <div id="list-considered" class="cards"></div>
-          <p id="empty-considered" class="empty" hidden>Nothing considered. Propose a card above.</p>
-        </section>
+
+        <div class="side">
+          <section class="panel" aria-labelledby="h-considered">
+            <h2 class="panel-title">
+              <button id="h-considered" class="panel-toggle" type="button" aria-expanded="true" aria-controls="considered-body">
+                <span class="chevron" aria-hidden="true"></span>Considered <span class="count" id="count-considered"></span>
+              </button>
+            </h2>
+            <div id="considered-body" class="panel-body">
+              <div id="list-considered" class="cards" role="list"></div>
+              <p id="empty-considered" class="empty" hidden><span aria-hidden="true">🃏</span> Nothing considered. Propose a card above.</p>
+            </div>
+          </section>
+
+          <section id="meta" class="panel" aria-labelledby="h-meta" hidden>
+            <h2 class="panel-title">
+              <button id="h-meta" class="panel-toggle" type="button" aria-expanded="true" aria-controls="meta-panel">
+                <span class="chevron" aria-hidden="true"></span>Meta
+              </button>
+            </h2>
+            <div id="meta-panel" class="panel-body">
+              <div class="meta-head">
+                <p id="meta-sample" class="muted"></p>
+                <span id="meta-thin" class="badge status thin" title="Few top cuts or lists: shares are hints" hidden>Thin data</span>
+                <span class="spacer"></span>
+                <button id="meta-refresh" class="button small" type="button">Refresh meta</button>
+              </div>
+              <div id="meta-busy" class="state inline" role="status" hidden>
+                <span class="spinner" aria-hidden="true"></span><span>Fetching tournament and Archidekt data…</span>
+              </div>
+              <p id="meta-empty" class="empty" hidden><span aria-hidden="true">📊</span> No meta data yet. Refresh to fetch it.</p>
+              <div id="meta-body" class="meta-body"></div>
+            </div>
+          </section>
+        </div>
       </div>
-
-      <details id="decided" class="decided">
-        <summary>Decided <span class="count" id="count-decided"></span></summary>
-        <div id="list-decided" class="cards compact"></div>
-      </details>
-
-      <details id="meta" class="decided meta">
-        <summary>Meta <span class="count" id="meta-count"></span></summary>
-        <div class="meta-head">
-          <p id="meta-sample" class="muted"></p>
-          <span id="meta-thin" class="badge status thin" title="Few top cuts or lists: shares are hints" hidden>Thin data</span>
-          <span class="spacer"></span>
-          <button id="meta-refresh" class="button small" type="button">Refresh meta</button>
-        </div>
-        <div id="meta-busy" class="state inline" role="status" hidden>
-          <span class="spinner" aria-hidden="true"></span><span>Fetching tournament and Archidekt data…</span>
-        </div>
-        <p id="meta-empty" class="empty" hidden><span aria-hidden="true">📊</span> No meta data yet. Refresh to fetch it.</p>
-        <div id="meta-body" class="meta-body"></div>
-      </details>
     </section>
   </main>
 
-  <aside class="activity" aria-labelledby="h-activity">
-    <h2 id="h-activity" class="column-title">Activity</h2>
-    <ol id="activity" class="activity-list"></ol>
+  <aside id="activity-pane" class="activity" aria-labelledby="activity-toggle">
+    <button id="activity-toggle" class="rail-toggle" type="button" aria-expanded="false" aria-controls="activity">
+      <span class="rail-label">Activity</span><span class="chevron" aria-hidden="true"></span>
+    </button>
+    <ol id="activity" class="activity-list" hidden></ol>
   </aside>
 </div>
+
+<div id="label-menu" class="menu" role="menu" hidden></div>
 
 <dialog id="review-dialog" class="dialog" aria-labelledby="review-title">
   <h2 id="review-title">Changes to <span id="review-deck"></span></h2>
@@ -100,7 +111,7 @@
   </div>
 </dialog>
 
-<div id="status" class="status" role="status" aria-live="polite" hidden></div>
+<div id="status" class="toast" role="status" aria-live="polite" hidden></div>
 <script>/*APP_JS*/</script>
 </body>
 </html>

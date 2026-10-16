@@ -143,7 +143,9 @@ def test_the_meta_stamp_changes_when_a_meta_answer_is_saved(desk: Desk, settings
 
 
 def test_the_deck_view_carries_the_card_grid(desk: Desk) -> None:
-    grid = items(desk.deck(DECK), "grid")
+    view = desk.deck(DECK)
+    assert view["tags"] == ["Dwarves", "Vehicles", "cEDH"]
+    grid = items(view, "grid")
     assert [(g["name"], g["count"]) for g in grid] == [
         ("Commander", 1),
         ("Creature", 1),

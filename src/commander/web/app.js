@@ -4,7 +4,12 @@
 const POLL_MS = 2000;
 const SEARCH_DELAY_MS = 150;
 const STATUS_MS = 6000;
-const STATUS_TEXT = { open: "", add: "Queued", rejected: "Turned down", applied: "In deck" };
+const META_BRACKET = 5;
+const DECK_TAGS_SHOWN = 4;
+const THREATS_SHOWN = 4;
+const ANSWERS_SHOWN = 6;
+const ACTIVITY_KEY = "commander.activityOpen";
+const COLOUR = /^#[0-9a-f]{3,8}$/i;
 
 const state = {
   decks: [],
@@ -12,8 +17,13 @@ const state = {
   view: null,
   stamps: {},
   metaStamp: null,
-  choices: new Map(),
   tiles: new Map(),
+  groups: new Map(),
+  gridCards: new Map(),
+  collapsed: new Set(),
+  tagsKey: null,
+  selected: null,
+  hovered: null,
   results: [],
   active: -1,
   busy: false,
@@ -59,6 +69,7 @@ function showStatus(text, error = false) {
 }
 
 const euro = (cents) => (cents === null || cents === undefined ? "" : `€${(cents / 100).toFixed(2)}`);
+const pct = (share) => `${Math.round(share * 100)}%`;
 
 function manaCost(cost) {
   const box = el("span", { class: "cost", "aria-label": cost ? `cost ${cost}` : undefined });
@@ -66,6 +77,17 @@ function manaCost(cost) {
     const text = symbol[1];
     const colour = /^[WUBRG]$/.test(text) ? text : "";
     box.append(el("span", { class: `pip ${colour}`, text, "aria-hidden": "true" }));
+  }
+  return box;
+}
+
+function cardImage(src, name, className) {
+  const box = el("span", { class: `${className} ${src ? "" : "missing"}` },
+    el("span", { class: "art-name", text: name, "aria-hidden": "true" }));
+  if (src) {
+    const img = el("img", { alt: "", loading: "lazy", src });
+    img.addEventListener("error", () => { box.classList.add("missing"); img.remove(); });
+    box.prepend(img);
   }
   return box;
 }
@@ -109,15 +131,23 @@ async function loadDecks() {
 async function openDeck(id) {
   if (state.current !== id) {
     state.current = id;
-    state.choices.clear();
+    state.view = null;
+    state.selected = null;
+    state.hovered = null;
     state.tiles.clear();
-    for (const name of ["suggested", "considered", "decided"]) $(`list-${name}`).replaceChildren();
+    state.groups.clear();
+    state.gridCards.clear();
+    state.collapsed.clear();
+    state.tagsKey = null;
+    $("list-considered").replaceChildren();
+    $("grid").replaceChildren();
+    closeLabelMenu(false);
     renderDecks();
     renderMeta(id, null);
     $("meta-empty").hidden = true;
-    loadMeta();
   }
   await loadDeck();
+  loadMeta();
 }
 
 async function loadDeck() {
@@ -140,32 +170,110 @@ function renderDeck() {
   link.href = view.url;
   $("deck-bracket").textContent = view.bracket ? `Bracket ${view.bracket}` : "";
   $("deck-archetype").textContent = view.archetype || "";
+  renderTags(view.tags);
   const pending = view.pending;
   const review = $("review");
   review.disabled = pending === 0;
   review.textContent = pending ? `Review ${pending} change${pending === 1 ? "" : "s"}` : "Review changes";
+  $("meta").hidden = view.bracket !== META_BRACKET;
 
-  const groups = { suggested: [], considered: [], decided: [] };
-  for (const card of view.cards) {
-    const settled = card.status === "rejected" || card.status === "applied";
-    groups[settled ? "decided" : card.section].push(card);
+  renderGrid(view.grid);
+  renderConsidered(view.cards);
+  paint();
+  renderActivity(view.activity);
+}
+
+function renderTags(tags) {
+  const key = JSON.stringify(tags);
+  if (key === state.tagsKey) return;
+  state.tagsKey = key;
+  $("deck-tags").replaceChildren(...tags.map((tag) => el("li", { class: "tag", text: tag })));
+}
+
+/* The deck as a card grid, one stack per card type */
+
+function renderGrid(groups) {
+  const grid = $("grid");
+  const seen = new Set();
+  groups.forEach((group, index) => {
+    seen.add(group.name);
+    const key = JSON.stringify(group);
+    let known = state.groups.get(group.name);
+    if (!known || known.key !== key) {
+      const node = buildGroup(group);
+      if (known) known.node.replaceWith(node);
+      known = { key, node, names: group.cards.map((c) => c.name) };
+      state.groups.set(group.name, known);
+    }
+    place(grid, known.node, index);
+  });
+  for (const [name, known] of [...state.groups]) {
+    if (!seen.has(name)) { known.node.remove(); state.groups.delete(name); }
   }
-  const live = new Set(view.cards.map((c) => c.id));
+  state.gridCards.clear();
+  for (const node of grid.querySelectorAll(".gcard")) state.gridCards.set(node.dataset.name, node);
+}
+
+function buildGroup(group) {
+  const open = !state.collapsed.has(group.name);
+  const stackId = `stack-${group.name.toLowerCase().replace(/[^a-z]+/g, "-")}`;
+  const toggle = el("button", { class: "group-toggle", type: "button", "aria-expanded": String(open), "aria-controls": stackId },
+    el("span", { class: "chevron", "aria-hidden": "true" }),
+    el("span", { class: "group-name", text: group.name }),
+    el("span", { class: "count", text: `(${group.count})` }),
+    group.cents ? el("span", { class: "group-price", text: euro(group.cents) }) : null);
+  const stack = el("ul", { class: "stack", id: stackId, "aria-label": group.name, hidden: !open },
+    ...group.cards.map(buildGridCard));
+  toggle.addEventListener("click", () => {
+    const opening = stack.hidden;
+    stack.hidden = !opening;
+    toggle.setAttribute("aria-expanded", String(opening));
+    if (opening) state.collapsed.delete(group.name);
+    else state.collapsed.add(group.name);
+  });
+  return el("section", { class: "group" }, el("h3", { class: "group-title" }, toggle), stack);
+}
+
+function buildGridCard(card) {
+  const label = card.label || "";
+  const flag = el("button", {
+    class: `flag ${label ? "set" : ""}`, type: "button", "aria-haspopup": "menu",
+    "aria-label": `Label for ${card.name}: ${label || "none"}`, title: label || "Set label",
+  });
+  if (label && COLOUR.test(card.labelColour)) flag.style.setProperty("--label", card.labelColour);
+  flag.addEventListener("click", () => openLabelMenu(flag, card.name, label));
+  const swap = el("button", { class: "swap", type: "button", hidden: true });
+  swap.addEventListener("click", () => swapIn(swap.dataset.card, card.name));
+  return el("li", { class: "gcard", "data-name": card.name, title: card.name },
+    cardImage(card.image, card.name, "face"),
+    card.quantity > 1 ? el("span", { class: "qty", text: `×${card.quantity}`, "aria-label": `${card.quantity} copies` }) : null,
+    el("span", { class: "sr-only", text: card.name }),
+    flag,
+    el("span", { class: "out-note", hidden: true }),
+    swap);
+}
+
+/* Considered: every board card with somewhere to go, plus those already queued */
+
+function considered(cards) {
+  return cards.filter((c) => c.status === "add" || (c.status === "open" && c.targets.length));
+}
+
+function renderConsidered(cards) {
+  const shown = considered(cards);
+  const live = new Set(shown.map((c) => c.id));
   for (const id of [...state.tiles.keys()]) {
     if (!live.has(id)) {
       state.tiles.get(id).node.remove();
       state.tiles.delete(id);
-      state.choices.delete(id);
     }
   }
-  for (const [name, cards] of Object.entries(groups)) {
-    const list = $(`list-${name}`);
-    cards.forEach((card, index) => place(list, tileFor(card), index));
-    $(`count-${name}`).textContent = cards.length ? `(${cards.length})` : "";
-    const empty = $(`empty-${name}`);
-    if (empty) empty.hidden = cards.length > 0;
-  }
-  renderActivity(view.activity);
+  if (!live.has(state.selected)) state.selected = null;
+  if (!live.has(state.hovered)) state.hovered = null;
+  const list = $("list-considered");
+  shown.forEach((card, index) => place(list, tileFor(card), index));
+  $("count-considered").textContent = shown.length ? `(${shown.length})` : "";
+  $("empty-considered").hidden = shown.length > 0;
 }
 
 function tileFor(card) {
@@ -174,94 +282,224 @@ function tileFor(card) {
   if (known && known.key === key) return known.node;
   const node = buildTile(card);
   if (known) known.node.replaceWith(node);
-  state.tiles.set(card.id, { key, node });
+  state.tiles.set(card.id, { key, node, card });
   return node;
 }
 
 function buildTile(card) {
-  const decided = card.status !== "open";
-  const art = el("img", { class: "art", alt: "", loading: "lazy", src: card.image || undefined });
-  if (!card.image) art.classList.add("missing");
-  art.addEventListener("error", () => art.classList.add("missing"));
+  const queued = card.status === "add";
+  const pick = el("button", {
+    class: "pick", type: "button", "aria-pressed": "false", title: card.name,
+    "aria-label": `${card.name}: show what it could replace`,
+    onclick: () => select(card.id),
+  }, el("span", { class: "card-name", text: card.name }));
+  pick.addEventListener("focus", () => hover(card.id));
+  pick.addEventListener("blur", () => hover(null));
 
   const meta = el("div", { class: "card-meta" },
     el("span", { class: "type", text: card.typeLine, title: card.typeLine }),
     card.priceCents !== null ? el("span", { text: euro(card.priceCents) }) : null,
     el("span", { class: `badge ${card.source}`, text: card.source, title: `added by ${card.source}` }),
-    card.gameChanger ? el("span", { class: "badge status gc", text: "Game changer" }) : null,
-    STATUS_TEXT[card.status] ? el("span", { class: `badge status ${card.status}`, text: STATUS_TEXT[card.status] }) : null,
-  );
+    card.gameChanger ? el("span", { class: "badge status gc", text: "Game changer" }) : null);
 
+  const targets = el("div", { class: "targets", hidden: true, role: "group", "aria-label": `Replace with ${card.name}` },
+    ...card.targets.map((t) => el("button", {
+      class: `target ${t.source}`, type: "button", text: t.name, title: t.reason,
+      "aria-label": `Replace ${t.name}: ${t.reason}`, onclick: () => swapIn(card.id, t.name),
+    })));
+
+  const reasoning = [card.reason, card.note].filter(Boolean).join("\n");
   const body = el("div", { class: "card-body" },
-    el("div", { class: "card-title" }, el("h3", { class: "card-name", text: card.name, title: card.name }), manaCost(card.manaCost)),
+    el("div", { class: "card-title" }, pick, manaCost(card.manaCost)),
     meta,
-    el("p", { class: "reason", text: card.reason }),
-    card.text ? el("details", { class: "rules" }, el("summary", { text: "Rules text" }), el("p", { text: card.text })) : null,
-  );
+    queued ? el("p", { class: "replacing" },
+      el("span", { text: `Replacing ${card.choice}` }),
+      el("button", { class: "button quiet small", type: "button", text: "Undo", "aria-label": `Undo ${card.name} replacing ${card.choice}`,
+        onclick: () => decide(card, "reopen") })) : null,
+    targets,
+    card.text ? el("details", { class: "fold" }, el("summary", { text: "Rules text" }), el("p", { text: card.text })) : null,
+    reasoning ? el("details", { class: "fold" }, el("summary", { text: "Reasoning" }), el("p", { text: reasoning })) : null,
+    card.dropping ? el("p", { class: "note", text: "Leaves the Maybeboard when you save" }) : null);
 
-  if (card.status === "open" && card.replace.length) body.append(cutPicker(card));
-  if (card.status === "add" && card.choice) body.append(el("p", { class: "note", text: `Cuts ${card.choice}` }));
-  if (card.dropping) body.append(el("p", { class: "note", text: "Leaves the Maybeboard when you save" }));
-  if (card.note) body.append(el("p", { class: "note", text: card.note }));
-  body.append(actionsFor(card, decided));
-
-  const tile = el("article", { class: `card ${card.status === "add" ? "queued" : card.status}`, "data-id": card.id, "aria-label": card.name }, art, body);
+  const reject = el("button", {
+    class: "button quiet icon reject", type: "button", text: "×", title: "Turn down",
+    "aria-label": `Turn down ${card.name}`, onclick: () => decide(card, "reject"),
+  });
+  const tile = el("article", { class: `card ${queued ? "queued" : ""}`, role: "listitem", "data-id": card.id, "aria-label": card.name },
+    cardImage(card.image, card.name, "art"), body, reject);
+  tile.addEventListener("mouseenter", () => hover(card.id));
+  tile.addEventListener("mouseleave", () => hover(null));
+  tile.addEventListener("click", (event) => {
+    if (!event.target.closest("button, a, summary, details")) select(card.id);
+  });
   return tile;
 }
 
-function cutPicker(card) {
-  const name = `cut-${card.id}`;
-  const box = el("fieldset", { class: "cuts" }, el("legend", { text: "Cut" }));
-  const chosen = state.choices.get(card.id) ?? card.replace[0].name;
-  state.choices.set(card.id, chosen);
-  for (const option of card.replace) {
-    const input = el("input", { type: "radio", name, value: option.name, checked: option.name === chosen });
-    input.addEventListener("change", () => {
-      state.choices.set(card.id, option.name);
-      const add = box.parentElement.querySelector("button[data-action=add]");
-      if (add) add.textContent = `Add, cut ${option.name}`;
-    });
-    box.append(el("label", { class: "cut" }, input,
-      el("span", {}, document.createTextNode(option.name), option.reason ? el("span", { class: "why", text: option.reason }) : null)));
-  }
-  return box;
+function hover(id) {
+  if (state.hovered === id) return;
+  state.hovered = id;
+  paint();
 }
 
-function actionsFor(card, decided) {
-  const row = el("div", { class: "card-actions" });
-  if (card.status === "applied") return row;
-  if (!decided) {
-    const cut = card.replace.length ? state.choices.get(card.id) ?? card.replace[0].name : null;
-    row.append(
-      el("button", { class: "button primary small", type: "button", "data-action": "add", text: cut ? `Add, cut ${cut}` : "Add card",
-        onclick: () => decide(card, "add") }),
-      el("button", { class: "button small", type: "button", text: "Turn down", onclick: () => decide(card, "reject") }),
-    );
-  } else {
-    row.append(el("button", { class: "button small", type: "button", text: "Reopen", onclick: () => decide(card, "reopen") }));
-  }
-  row.append(el("span", { class: "spacer" }),
-    el("button", { class: "button quiet icon", type: "button", text: "×", title: "Remove from board",
-      "aria-label": `Remove ${card.name} from the board`, onclick: () => removeCard(card) }));
-  return row;
+function select(id) {
+  state.selected = state.selected === id ? null : id;
+  paint();
+  if (state.selected === null) return;
+  // Bring the first target into view, opening its group if it was folded away.
+  const card = state.tiles.get(id).card;
+  const first = card.targets.map((t) => state.gridCards.get(t.name)).find(Boolean);
+  if (!first) return;
+  const stack = first.parentElement;
+  if (stack.hidden) stack.previousElementSibling.querySelector("button").click();
+  first.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
 
-async function decide(card, decision) {
-  const choice = decision === "add" && card.replace.length ? state.choices.get(card.id) ?? card.replace[0].name : null;
+// Lights the grid for the considered card in focus: targets tinted, cards already queued out marked.
+function paint() {
+  const cards = [...state.tiles.values()].map((t) => t.card);
+  const taken = new Map(cards.filter((c) => c.status === "add" && c.choice).map((c) => [c.choice, c]));
+  const activeId = state.selected ?? state.hovered;
+  const active = cards.find((c) => c.id === activeId) || null;
+  const lit = new Map(active ? active.targets.filter((t) => !taken.has(t.name) || taken.get(t.name) === active).map((t) => [t.name, t]) : []);
+
+  for (const [name, node] of state.gridCards) {
+    const target = lit.get(name);
+    const out = taken.get(name);
+    node.classList.toggle("target", Boolean(target));
+    node.classList.toggle("out", Boolean(out));
+    const note = node.querySelector(".out-note");
+    note.hidden = !out;
+    note.textContent = out ? `→ ${out.name}` : "";
+    const swap = node.querySelector(".swap");
+    swap.hidden = !target;
+    if (target) {
+      swap.dataset.card = active.id;
+      swap.setAttribute("aria-label", `Replace ${name} with ${active.name}`);
+      swap.title = target.reason;
+    }
+  }
+  for (const { node, card } of state.tiles.values()) {
+    const on = card.id === state.selected;
+    node.classList.toggle("selected", on);
+    node.classList.toggle("lit", card.id === activeId);
+    node.querySelector(".pick").setAttribute("aria-pressed", String(on));
+    node.querySelector(".targets").hidden = !on;
+  }
+  $("grid").classList.toggle("choosing", Boolean(active));
+}
+
+async function swapIn(cardId, target) {
+  const known = state.tiles.get(cardId);
+  if (!known) return;
   try {
-    await api("decide", state.current, card.id, decision, choice, "");
+    await api("decide", state.current, cardId, "add", target, "");
+    state.selected = null;
+    showStatus(`${known.card.name} replaces ${target}`);
     await refresh();
-    const tile = document.querySelector(`.card[data-id="${card.id}"] button`);
-    (tile || $("main")).focus();
   } catch { /* the status line already says what went wrong */ }
 }
 
-async function removeCard(card) {
+async function decide(card, decision) {
   try {
-    await api("remove", state.current, card.id);
+    await api("decide", state.current, card.id, decision, null, "");
+    if (decision === "reject") showStatus(`Turned down ${card.name}`);
     await refresh();
     $("main").focus();
   } catch { /* shown in the status line */ }
+}
+
+/* Label menu: the corner flag on each grid card */
+
+const menuState = { flag: null, name: null };
+
+function openLabelMenu(flag, name, current) {
+  if (menuState.flag === flag) { closeLabelMenu(true); return; }
+  const menu = $("label-menu");
+  menuState.flag = flag;
+  menuState.name = name;
+  menu.setAttribute("aria-label", `Label for ${name}`);
+  menu.replaceChildren(...state.view.labels.map((label) => {
+    const item = el("button", {
+      class: "menu-item", type: "button", role: "menuitemradio", tabindex: "-1",
+      "aria-checked": String(label.name === current),
+      onclick: () => chooseLabel(name, current, label.name),
+    }, el("span", { class: "swatch", "aria-hidden": "true" }), el("span", { text: label.name || "No label" }));
+    if (COLOUR.test(label.colour)) item.style.setProperty("--label", label.colour);
+    return item;
+  }));
+  flag.setAttribute("aria-expanded", "true");
+  menu.hidden = false;
+  const box = flag.getBoundingClientRect();
+  const height = menu.offsetHeight;
+  const top = box.bottom + 4 + height > window.innerHeight ? Math.max(4, box.top - 4 - height) : box.bottom + 4;
+  menu.style.top = `${top}px`;
+  menu.style.left = `${Math.min(box.left, window.innerWidth - menu.offsetWidth - 4)}px`;
+  (menu.querySelector('[aria-checked="true"]') || menu.firstChild).focus();
+}
+
+function closeLabelMenu(refocus) {
+  const flag = menuState.flag;
+  if (!flag) return;
+  $("label-menu").hidden = true;
+  flag.setAttribute("aria-expanded", "false");
+  menuState.flag = null;
+  menuState.name = null;
+  if (refocus && flag.isConnected) flag.focus();
+}
+
+function setupLabelMenu() {
+  const menu = $("label-menu");
+  menu.addEventListener("keydown", (event) => {
+    const items = [...menu.children];
+    const at = items.indexOf(document.activeElement);
+    const go = (index) => { event.preventDefault(); items[(index + items.length) % items.length].focus(); };
+    if (event.key === "ArrowDown") go(at + 1);
+    else if (event.key === "ArrowUp") go(at - 1);
+    else if (event.key === "Home") go(0);
+    else if (event.key === "End") go(items.length - 1);
+    else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeLabelMenu(true); }
+    else if (event.key === "Tab") closeLabelMenu(false);
+  });
+  document.addEventListener("mousedown", (event) => {
+    if (menuState.flag && !menu.contains(event.target) && event.target !== menuState.flag) closeLabelMenu(false);
+  });
+  window.addEventListener("resize", () => closeLabelMenu(false));
+  $("grid").addEventListener("scroll", () => closeLabelMenu(false), true);
+}
+
+async function chooseLabel(name, current, label) {
+  const flag = menuState.flag;
+  closeLabelMenu(true);
+  if (label === current) return;
+  flag.classList.add("saving");
+  flag.setAttribute("aria-busy", "true");
+  try {
+    await api("set_label", state.current, name, label);
+    showStatus(label ? `${name}: ${label}` : `${name}: no label`);
+    await loadDeck();
+    // The grid was rebuilt around the new label; keep the keyboard on this card's flag.
+    const again = state.gridCards.get(name)?.querySelector(".flag");
+    const lost = !document.activeElement || document.activeElement === document.body;
+    if (again && lost) again.focus();
+  } catch { /* shown in the status line */ }
+  flag.classList.remove("saving");
+  flag.removeAttribute("aria-busy");
+}
+
+/* Activity rail */
+
+function setupActivity() {
+  const toggle = $("activity-toggle");
+  let open = false;
+  try { open = localStorage.getItem(ACTIVITY_KEY) === "1"; } catch { /* storage is a convenience */ }
+  const show = (value) => {
+    toggle.setAttribute("aria-expanded", String(value));
+    $("activity").hidden = !value;
+    $("app").classList.toggle("activity-open", value);
+    try { localStorage.setItem(ACTIVITY_KEY, value ? "1" : "0"); } catch { /* as above */ }
+  };
+  toggle.addEventListener("click", () => show(toggle.getAttribute("aria-expanded") !== "true"));
+  show(open);
 }
 
 function renderActivity(entries) {
@@ -274,6 +512,25 @@ function renderActivity(entries) {
       el("span", {}, el("span", { class: `who ${entry.actor}`, text: entry.actor }), document.createTextNode(` ${what}`)),
       entry.detail ? el("span", { class: "detail", text: entry.detail }) : null);
   }));
+}
+
+/* Collapsible panels */
+
+function setupPanels() {
+  for (const toggle of document.querySelectorAll(".panel-toggle")) {
+    toggle.addEventListener("click", () => {
+      const open = toggle.getAttribute("aria-expanded") !== "true";
+      toggle.setAttribute("aria-expanded", String(open));
+      $(toggle.getAttribute("aria-controls")).hidden = !open;
+      if (open && toggle.id === "h-meta") loadMeta();
+    });
+  }
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && state.selected !== null && !document.querySelector("dialog[open]")) {
+      state.selected = null;
+      paint();
+    }
+  });
 }
 
 /* Proposing a card */
@@ -336,8 +593,9 @@ async function propose(name) {
   try {
     const answer = await api("propose", state.current, name);
     $("propose-input").value = "";
-    showStatus(`${answer.card.name} is on the board`);
     await refresh();
+    const shown = state.view && considered(state.view.cards).some((c) => c.id === answer.card.id);
+    showStatus(shown ? `${answer.card.name} is considered` : `${answer.card.name} has nothing to replace`, !shown);
   } catch { /* shown in the status line */ }
 }
 
@@ -411,22 +669,25 @@ async function saveChanges() {
   }
 }
 
-/* Meta: tournament and Archidekt lists for the deck's commander */
+/* Meta (bracket 5): what in the meta stops the deck's key cards, and what stops the meta's combos */
 
 const metaState = { key: null, deck: null, busy: false };
-const pct = (share) => `${Math.round(share * 100)}%`;
+
+function metaWanted() {
+  return state.view && state.view.id === state.current && state.view.bracket === META_BRACKET
+    && $("h-meta").getAttribute("aria-expanded") === "true";
+}
 
 function setupMeta() {
-  $("meta").addEventListener("toggle", () => { if ($("meta").open) loadMeta(); });
   $("meta-refresh").addEventListener("click", refreshMeta);
 }
 
 async function loadMeta() {
-  if (state.current === null || !$("meta").open || metaState.busy) return;
+  if (!metaWanted() || metaState.busy) return;
   const deck = state.current;
   try {
     const answer = await api("meta", deck);
-    if (deck === state.current) renderMeta(deck, answer.report);
+    if (deck === state.current) renderMeta(deck, answer);
   } catch { /* shown in the status line */ }
 }
 
@@ -437,22 +698,23 @@ async function refreshMeta() {
   $("meta-refresh").disabled = true;
   try {
     const answer = await api("refresh_meta", deck);
-    if (deck === state.current) renderMeta(deck, answer.report);
+    if (deck === state.current) renderMeta(deck, answer);
     if (!answer.report && answer.errors.length) showStatus(answer.errors[0], true);
+    await loadDeck();
   } catch { /* shown in the status line */ }
   metaState.busy = false;
   $("meta-busy").hidden = true;
   $("meta-refresh").disabled = false;
 }
 
-function renderMeta(deck, report) {
-  const key = JSON.stringify(report);
+function renderMeta(deck, answer) {
+  const report = answer ? answer.report : null;
+  const key = JSON.stringify(report ? answer : null);
   if (metaState.deck === deck && metaState.key === key) return;
   metaState.deck = deck;
   metaState.key = key;
   $("meta-empty").hidden = Boolean(report);
   $("meta-thin").hidden = !report || !report.sample.thin;
-  $("meta-count").textContent = report ? `(${report.missing.length})` : "";
   if (!report) {
     $("meta-sample").textContent = "";
     $("meta-body").replaceChildren();
@@ -461,87 +723,72 @@ function renderMeta(deck, report) {
   const s = report.sample;
   const fetched = report.sources.map((src) => src.fetchedAt).filter(Boolean).sort()[0];
   $("meta-sample").textContent = [
-    s.known ? `${s.withLists} lists, ${s.topCuts} top cuts since ${report.since}` : "No EDHTop16 lists",
-    fetched ? `data from ${new Date(fetched).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}` : "",
+    s.known ? `${s.withLists} lists since ${report.since}` : "No EDHTop16 lists",
+    fetched ? new Date(fetched).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "",
   ].filter(Boolean).join(" · ");
-  const peers = report.peers.length;
-  $("meta-body").replaceChildren(
-    metaTable("Staples you don't play", ["Lists", "Archidekt", "Card", ""], report.missing.map((c) => [
-      pct(c.share), `${c.peerLists}/${peers}`,
-      el("span", {}, document.createTextNode(c.name), c.onSideboard ? el("span", { class: "badge status", text: "Maybeboard" }) : null),
-      el("button", { class: "button small", type: "button", text: "Consider", "aria-label": `Consider ${c.name}`, onclick: () => propose(c.name) }),
-    ])),
-    metaTable("Spicy picks", ["Spice", "Lists", "Card", "Best finish"], report.spicy.map((p) => [
-      String(p.spice), String(p.lists), p.name, `${p.best.standing} of ${p.best.size}, ${p.best.date}`,
-    ])),
-    metaTable("Your own picks", ["Lists", "Archidekt", "Card"], report.outliers.map((c) => [
-      pct(c.share), `${c.peerLists}/${peers}`,
-      el("span", {}, document.createTextNode(c.name), c.kept ? el("span", { class: "badge status", text: "Kept" }) : null),
-    ])),
-    metaThreats(report),
-    metaCombos(report),
-    metaTable("Top commanders", ["Entries", "Top cuts", "Conversion", "Commander"], report.field.map((f) => [
-      String(f.entries), String(f.topCuts), pct(f.conversion), f.commander,
-    ])),
-    metaTable("Archidekt decks", ["Views", "Updated", "Deck"], report.peers.map((p) => [
-      String(p.views), p.updatedAt.slice(0, 10),
-      el("a", { href: p.url, target: "_blank", rel: "noopener", text: p.name, title: "Open on Archidekt" }),
-    ])),
-  );
+  $("meta-body").replaceChildren(metaPieces(answer.pieces), metaCombos(answer.combos));
 }
 
-function metaThreats(report) {
-  const total = report.field.reduce((sum, f) => sum + f.metaShare, 0);
-  const rows = report.threats.slice(0, 15).map((t) => [
-    total ? pct(t.exposure / total) : "",
-    t.name,
-    t.kinds.join(", "),
-    t.hits.length === report.keyPieces.length ? "every key piece" : t.hits.join(", "),
-  ]);
-  return metaTable("Meta answers to your key pieces", ["Share", "Card", "Kind", "Hits"], rows);
+function deckChips(decks) {
+  const chips = decks.slice(0, DECK_TAGS_SHOWN).map((d) =>
+    el("li", { class: "deck-chip", text: `${d.short} ${pct(d.share)}`, title: `${d.name}: ${pct(d.share)} of lists` }));
+  const rest = decks.slice(DECK_TAGS_SHOWN);
+  if (rest.length) {
+    chips.push(el("li", { class: "deck-chip more", text: `+${rest.length}`, title: rest.map((d) => `${d.short} ${pct(d.share)}`).join(", ") }));
+  }
+  return el("ul", { class: "deck-chips", "aria-label": "Played by" }, ...chips);
+}
+
+function metaSection(title, ...children) {
+  const id = `meta-${title.toLowerCase().replace(/[^a-z]+/g, "-")}`;
+  return el("section", { class: "meta-section", "aria-labelledby": id }, el("h3", { id, text: title }), ...children);
+}
+
+function shortList(items, shown, build) {
+  const list = el("ul", { class: "meta-list" }, ...items.slice(0, shown).map(build));
+  if (items.length <= shown) return list;
+  return el("div", {}, list, el("details", { class: "fold" },
+    el("summary", { text: `${items.length - shown} more` }), el("ul", { class: "meta-list" }, ...items.slice(shown).map(build))));
+}
+
+function metaPieces(pieces) {
+  const hit = pieces.filter((p) => p.threats.length);
+  const clear = pieces.filter((p) => !p.threats.length).map((p) => p.card);
+  const rows = hit.map((piece) => el("div", { class: "meta-row" },
+    el("p", { class: "meta-card", text: piece.card }),
+    shortList(piece.threats, THREATS_SHOWN, (t) => el("li", { class: "threat" },
+      el("span", { class: "threat-name", text: t.name }),
+      el("span", { class: "muted", text: t.kinds.join(", ") }),
+      deckChips(t.decks)))));
+  return metaSection("Against your key cards",
+    rows.length ? el("div", { class: "meta-rows" }, ...rows) : el("p", { class: "empty", text: "Nothing in the meta stops them." }),
+    clear.length ? el("p", { class: "muted small", text: `Untouched: ${clear.join(", ")}` }) : null);
 }
 
 const ANSWER_ROLES = [["stax", "Stax"], ["removal", "Removal"], ["counter", "Counter"]];
-const ANSWERS_SHOWN = 6;
 
-function metaCombos(report) {
-  const total = report.field.reduce((sum, f) => sum + f.metaShare, 0);
-  const rows = report.combos.map((c) => [
-    total ? pct(c.exposure / total) : "",
-    el("div", {},
-      el("a", { href: c.url, target: "_blank", rel: "noopener", text: c.pieces.join(" + "), title: "Open on Commander Spellbook" }),
-      el("div", { class: "muted", text: c.results.slice(0, 2).join("; ") }),
-      c.requirements.length ? el("div", { class: "muted", text: `Also needs: ${c.requirements.join("; ")}` }) : null),
-    c.playedBy.slice(0, 3).map((p) => `${p.short} ${pct(p.share)}`).join(", "),
-    comboAnswers(c.answers),
-  ]);
-  return metaTable("Meta combos", ["Share", "Combo", "Played by", "Your answers"], rows);
+function metaCombos(combos) {
+  const rows = combos.map((c) => el("div", { class: "meta-row" },
+    el("p", { class: "meta-card" },
+      el("a", { href: c.url, target: "_blank", rel: "noopener", text: c.pieces.join(" + "), title: "Open on Commander Spellbook" })),
+    c.results.length ? el("p", { class: "muted small", text: c.results.slice(0, 2).join("; ") }) : null,
+    deckChips(c.decks),
+    comboAnswers(c.answers)));
+  return metaSection("Meta combos",
+    rows.length ? el("div", { class: "meta-rows" }, ...rows) : el("p", { class: "empty", text: "No combos in the meta." }));
 }
 
 function comboAnswers(answers) {
-  if (!answers.length) return el("span", { class: "badge status rejected", text: "No answer" });
+  if (!answers.length) return el("p", { class: "answers" }, el("span", { class: "badge status rejected", text: "No answer" }));
   // Stax answers say how they stop the combo; removal and counters only need the card and any catch.
   const shown = (a) => (a.role === "stax" ? `${a.card} (${a.how})` : a.catch ? `${a.card} (${a.catch})` : a.card);
   const lines = ANSWER_ROLES.map(([role, label]) => {
     const names = answers.filter((a) => a.role === role).map(shown);
     if (!names.length) return null;
-    const shown = names.length > ANSWERS_SHOWN ? `${names.slice(0, ANSWERS_SHOWN).join(", ")} and ${names.length - ANSWERS_SHOWN} more` : names.join(", ");
-    return el("div", { title: names.join(", ") }, el("strong", { text: `${label}: ` }), document.createTextNode(shown));
+    const text = names.length > ANSWERS_SHOWN ? `${names.slice(0, ANSWERS_SHOWN).join(", ")} and ${names.length - ANSWERS_SHOWN} more` : names.join(", ");
+    return el("p", { class: "answers", title: names.join(", ") }, el("strong", { text: `${label}: ` }), document.createTextNode(text));
   });
   return el("div", {}, ...lines);
-}
-
-function metaTable(title, headings, rows) {
-  const id = `meta-${title.toLowerCase().replace(/[^a-z]+/g, "-")}`;
-  const section = el("section", { class: "meta-section", "aria-labelledby": id }, el("h3", { id, text: title }));
-  if (!rows.length) {
-    section.append(el("p", { class: "empty", text: "None" }));
-    return section;
-  }
-  const head = el("tr", {}, ...headings.map((h) => el("th", { scope: "col", text: h })));
-  const body = rows.map((cells) => el("tr", {}, ...cells.map((cell) => el("td", {}, typeof cell === "string" ? document.createTextNode(cell) : cell))));
-  section.append(el("table", { class: "meta-table" }, el("thead", {}, head), el("tbody", {}, ...body)));
-  return section;
 }
 
 /* Keeping up with changes from the CLI and Claude */
@@ -576,6 +823,9 @@ window.addEventListener("pywebviewready", async () => {
   setupPropose();
   setupReview();
   setupMeta();
+  setupPanels();
+  setupLabelMenu();
+  setupActivity();
   try {
     await loadDecks();
     const answer = await window.pywebview.api.stamps();
