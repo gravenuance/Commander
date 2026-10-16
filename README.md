@@ -219,7 +219,8 @@ A deck's themes also come from what you wrote on Archidekt, so a deck needs no p
 
 - **Deck tags** (Dwarves, Landfall, Stax...) become type words, keywords and Tagger tags of the same name;
   a few names that match nothing go through a table (Aristocrats, Blink, +1/+1 Counters). Play styles,
-  roles and card types (cEDH, Draw, Creatures) make no theme.
+  roles and card types (cEDH, Commander Matters, Draw, Creatures) make no theme: they say how the deck
+  plays, which matters when weighing a replacement rather than for picking cards in general.
 - **Your own categories** of five cards or more (Leyline, Sac Outlet) become the Tagger tags and
   subtypes most of their cards share but few other cards have. Categories for roles, card types, the
   commander and the Maybeboard are skipped, as is whatever the deck tags already say.

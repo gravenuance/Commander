@@ -137,7 +137,8 @@ class DeckThemes:
     unmatched: tuple[str, ...]
     # Theme categories whose cards share nothing distinctive.
     vague: tuple[str, ...]
-    # Deck tags too broad to pick cards by: play styles (cEDH, Tempo), roles (Draw), card types (Creatures).
+    # Deck tags that say how the deck plays (cEDH, Tempo, Draw, Creatures): too broad to pick cards by,
+    # but what to weigh when researching a replacement.
     broad: tuple[str, ...] = ()
 
 

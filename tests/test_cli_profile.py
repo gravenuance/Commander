@@ -50,7 +50,7 @@ def test_without_a_profile_says_how_to_start_one(tmp_path: Path, raw_deck: Json,
         "from Archidekt:",
         "  Dwarves (deck tag): types Dwarf",
         "  Vehicles (deck tag): types Vehicle",
-        "  cEDH (deck tag): a play style, role or card type, no theme",
+        "  cEDH (deck tag): how the deck plays, not a theme",
     ]
 
 
@@ -72,7 +72,7 @@ def test_profile_is_shown_and_unknown_tags_are_warned(
         "from Archidekt:",
         "  Dwarves (deck tag): types Dwarf",
         "  Vehicles (deck tag): types Vehicle",
-        "  cEDH (deck tag): a play style, role or card type, no theme",
+        "  cEDH (deck tag): how the deck plays, not a theme",
     ]
     assert "tag 'no-such-tag' is not a Tagger tag" in err
 
