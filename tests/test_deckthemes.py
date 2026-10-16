@@ -128,6 +128,8 @@ def test_ties_go_to_a_type_then_by_name() -> None:
         ("Spaghetti", ThemeSpec()),
         ("cEDH", None),
         ("Casual", None),
+        # The owner tags decks that depend on enter triggers this way: how they play, not cards to pick.
+        ("ETB Effects", None),
         # A role suggest already has targets for, and a card type: too broad to pick cards by.
         ("Draw", None),
         ("Creatures", None),

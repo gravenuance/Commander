@@ -36,6 +36,7 @@ PLAY_STYLES = frozenset(
         "commander matters",
         "competitive",
         "control",
+        "etb effects",
         "glass cannon",
         "good stuff",
         "goodstuff",
