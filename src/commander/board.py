@@ -10,7 +10,7 @@ import os
 import secrets
 import threading
 import time
-from collections.abc import Callable, Generator, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -155,8 +155,13 @@ class Board:
 
 def board_stamp(folder: Path) -> str:
     """Changes whenever the board, its activity or the deck snapshot changes; cheap enough to poll."""
+    return files_stamp(folder, (BOARD_FILE, ACTIVITY_FILE, "deck.json", "profile.toml"))
+
+
+def files_stamp(folder: Path, names: Iterable[str]) -> str:
+    """Changes whenever one of the folder's files does: their times and sizes, "-" for a missing one."""
     parts: list[str] = []
-    for name in (BOARD_FILE, ACTIVITY_FILE, "deck.json", "profile.toml"):
+    for name in names:
         try:
             stat = (folder / name).stat()
         except FileNotFoundError:

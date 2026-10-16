@@ -58,6 +58,10 @@ _TAG_COUNT_QUERY = (
     _SUBTREE_CTE.format("?")  # noqa: S608 — built from constant fragments and placeholders; every value is bound
     + " SELECT count(DISTINCT oracle_id) FROM tag_member JOIN subtree ON tag_member.tag_id = subtree.tag_id"
 )
+_SUBTREE_SLUGS_QUERY = (
+    _SUBTREE_CTE.format("SELECT tag_id FROM tag WHERE slug = ?")  # noqa: S608 — built from constant fragments and placeholders; every value is bound
+    + " SELECT slug FROM tag WHERE tag_id IN (SELECT tag_id FROM subtree)"
+)
 # Each card's tags grown by every tag above them; UNION drops repeats, so a cycle in the tag tree still ends.
 _LINEAGE_QUERY = """WITH RECURSIVE lineage(oracle_id, tag_id) AS (
     SELECT oracle_id, tag_id FROM tag_member WHERE oracle_id IN ({})
@@ -451,13 +455,25 @@ class CardDb:
         rows = self._select_in("SELECT slug, tag_id FROM tag WHERE slug IN ({})", slugs)
         return dict(rows)
 
+    def tag_subtree(self, slug: str) -> frozenset[str]:
+        """The tag and every tag below it, by slug; empty when Scryfall does not have it."""
+        return frozenset(row[0] for row in self._query(_SUBTREE_SLUGS_QUERY, [slug]))
+
+    def tag_sizes(self, slugs: Iterable[str]) -> dict[str, int]:
+        """How many cards each tag holds, sub-tags included; slugs Scryfall does not have are left out."""
+        return {
+            slug: int(self._query(_TAG_COUNT_QUERY, [tag_id])[0][0])
+            for slug, tag_id in self.tag_ids(slugs).items()
+        }
+
     def find_tags(self, text: str) -> list[TagCount]:
         """Tags whose slug contains text, most cards first, at most MAX_TAG_MATCHES."""
         needle = text.strip().casefold()
         if not needle:
             return []
         rows = self._query("SELECT tag_id, slug FROM tag WHERE instr(slug, ?) > 0", [needle])
-        counts = [TagCount(slug, self._query(_TAG_COUNT_QUERY, [tag_id])[0][0]) for tag_id, slug in rows]
+        sizes = self.tag_sizes(slug for _, slug in rows)
+        counts = [TagCount(slug, cards) for slug, cards in sizes.items()]
         counts.sort(key=lambda t: (-t.cards, t.slug))
         return counts[:MAX_TAG_MATCHES]
 

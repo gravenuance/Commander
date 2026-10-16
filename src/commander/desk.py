@@ -6,7 +6,7 @@ several threads, and a SQLite connection belongs to one.
 """
 
 import logging
-from collections.abc import Callable, Generator, Mapping
+from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -28,29 +28,31 @@ from commander.board import (
     activity_json,
     board_stamp,
     card_json,
+    files_stamp,
     read_activity,
     read_board,
 )
 from commander.boardsave import preview_board, save_board
-from commander.carddb import CardDataError, CardDb, CardInfo
-from commander.cli_meta import CEDH_BRACKET, report_json
+from commander.carddb import CardDataError, CardDb, CardInfo, ResolvedCard
+from commander.cli_meta import report_json
 from commander.cli_output import change_mark, change_text
 from commander.config import ConfigError, MetaSettings
 from commander.credentials import CredentialError, TokenStore
 from commander.deckgrid import GridGroup, deck_grid, image_url
-from commander.deckprofile import read_profile
+from commander.deckprofile import Profile, read_profile
 from commander.edhtop16 import REQUEST_INTERVAL_SECONDS, SLOW_QUERY_SECONDS, Edhtop16Client, Edhtop16Error
 from commander.ideas import compile_ideas
 from commander.labels import LabelError, Step, label_options, mark, set_label, to_get_json
+from commander.leanings import leaning_json
 from commander.meta import analyse, card_shares
-from commander.metadata import MetaData, MetaSources, cache_stamp, gather
+from commander.metadata import CEDH_BRACKET, MetaData, MetaSources, cache_stamp, gather, gather_for
 from commander.metapanel import combo_rows, own_combo_rows, piece_threats
 from commander.models import Deck
 from commander.net import Fetcher, NetworkError, Pacer
 from commander.spellbook import META_REQUEST_INTERVAL_SECONDS, SpellbookClient
 from commander.store import StoredDeck, Workspace, WorkspaceError
 from commander.suggest import deck_identity
-from commander.targets import Target, kept_by_profile, targets_for
+from commander.targets import CutRules, Target, deck_cut_rules, targets_for, with_ideas
 
 log = logging.getLogger(__name__)
 
@@ -124,7 +126,8 @@ class Desk:
         self._token_store = token_store
         self._now = now
         # Per deck: the meta cache stamp the shares were read at, and the shares.
-        self._shares: dict[int, tuple[str, dict[str, float] | None]] = {}
+        self._pools: dict[int, tuple[str, MetaData]] = {}
+        self._rules: dict[int, tuple[str, CutRules]] = {}
 
     @_guarded
     def decks(self) -> Json:
@@ -157,22 +160,18 @@ class Desk:
         board = read_board(stored.folder)
         profile = read_profile(stored.folder)
         drop = set(board.to_drop(stored.deck))
-        shares = self._meta_shares(stored.deck)
         with self._db() as db:
             main = db.resolve(stored.deck.main_cards)
             identity = deck_identity(main)
-            kept = kept_by_profile(main, profile)
             grid = deck_grid(main)
             infos = db.cards(card.oracle_id for card in board.cards)
+            rules = with_ideas(self._deck_rules(stored, main, profile, db), infos.values(), db)
             cards = [
                 {
                     **self._card_view(db, card),
                     "dropping": card.name in drop,
                     "targets": [
-                        _target_json(t)
-                        for t in targets_for(
-                            card, infos.get(card.oracle_id), main, protected=kept, shares=shares
-                        )
+                        _target_json(t) for t in targets_for(card, infos.get(card.oracle_id), main, rules)
                     ],
                 }
                 for card in board.cards
@@ -187,6 +186,7 @@ class Desk:
             "bracket": stored.deck.bracket,
             "commanders": list(stored.deck.commanders),
             "archetype": profile.archetype,
+            "leanings": [leaning_json(leaning) for leaning in rules.leanings],
             "tags": list(stored.deck.tags or ()),
             "identity": identity,
             "stamp": board_stamp(stored.folder),
@@ -334,17 +334,36 @@ class Desk:
 
     def _meta_shares(self, deck: Deck) -> dict[str, float] | None:
         """Each card's share of the meta's lists, for bracket 5 decks with cached meta answers; else None."""
-        if deck.bracket != CEDH_BRACKET:
-            return None
-        stamp = cache_stamp(self._settings.cache)
-        known = self._shares.get(deck.id)
+        data = self._pool(deck) if deck.bracket == CEDH_BRACKET else None
+        return (card_shares(data) or None) if data is not None else None
+
+    def _deck_rules(
+        self, stored: StoredDeck, main: Sequence[ResolvedCard], profile: Profile, db: CardDb
+    ) -> CutRules:
+        """The deck's cut rules, kept until its snapshot, its profile or the cached meta answers change."""
+        stamp = (
+            f"{files_stamp(stored.folder, ('deck.json', 'profile.toml'))}|{cache_stamp(self._settings.cache)}"
+        )
+        known = self._rules.get(stored.deck.id)
         if known is not None and known[0] == stamp:
             return known[1]
-        shares = card_shares(self._gather(deck, offline=True)) or None
-        self._shares[deck.id] = (stamp, shares)
-        return shares
+        rules = deck_cut_rules(stored.deck, main, profile, db, self._pool(stored.deck))
+        self._rules[stored.deck.id] = (stamp, rules)
+        return rules
 
-    def _gather(self, deck: Deck, *, offline: bool) -> MetaData:
+    def _pool(self, deck: Deck) -> MetaData | None:
+        """What other players do with the deck's commander, from cache only; None for a deck without one."""
+        if not deck.commanders:
+            return None
+        stamp = cache_stamp(self._settings.cache)
+        known = self._pools.get(deck.id)
+        if known is not None and known[0] == stamp:
+            return known[1]
+        data = self._gather(deck, offline=True, read=gather_for)
+        self._pools[deck.id] = (stamp, data)
+        return data
+
+    def _gather(self, deck: Deck, *, offline: bool, read: Callable[..., MetaData] = gather) -> MetaData:
         with self._client_factory() as http:
             sources = MetaSources(
                 Edhtop16Client(
@@ -357,7 +376,7 @@ class Desk:
                 self._settings.user or "",
                 self._settings.meta,
             )
-            return gather(
+            return read(
                 deck, sources, self._settings.cache, now=self._now, refresh=not offline, offline=offline
             )
 

@@ -346,6 +346,14 @@ def card_shares(data: MetaData) -> dict[str, float]:
     return {key: count / len(performing) for key, count in _list_counts(performing).items()}
 
 
+def peer_shares(peers: Sequence[PeerList]) -> dict[str, float]:
+    """Each card's share of the recent Archidekt decks, by `card_key`; empty below MIN_PEER_LISTS decks."""
+    if len(peers) < MIN_PEER_LISTS:
+        return {}
+    counts = Counter(key for p in peers for key in {card_key(name) for name in p.cards})
+    return {key: count / len(peers) for key, count in counts.items()}
+
+
 # Per top commander playing a card: (commander, share of its lists, the commander's meta share).
 type _Plays = list[tuple[str, float, float]]
 

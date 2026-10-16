@@ -2,9 +2,11 @@
 
 import argparse
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
+from commander.cli_meta import meta_sources
 from commander.clibase import EXIT_OK, Context, one_deck, open_card_db, workspace
+from commander.config import cache_dir, config_path, read_config
 from commander.deckprofile import (
     Profile,
     ThemeSpec,
@@ -14,7 +16,10 @@ from commander.deckprofile import (
     write_profile_template,
 )
 from commander.deckthemes import DerivedTheme, MergedThemes, ThemeSource, merge_themes
+from commander.leanings import Leaning, leaning_json, leaning_text
+from commander.metadata import gather_for
 from commander.pricing import format_eur
+from commander.targets import deck_cut_rules
 
 
 def add_profile_commands(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
@@ -33,15 +38,33 @@ def _cmd_profile(args: argparse.Namespace, ctx: Context) -> int:
         print(f"wrote {path}; fill it in, then `cmdr profile {stored.deck.id}` checks it", file=ctx.out)
         return EXIT_OK
     profile = read_profile(stored.folder)
-    with open_card_db(ctx) as db:
+    file = read_config(config_path(args.config, ctx.env))
+    with open_card_db(ctx) as db, ctx.client_factory() as http:
         unknown = resolve_themes(profile, db).unknown_tags
         merged = merge_themes(stored.deck, profile, db)
+        # Leaning tags can be ignored too, so only names that are no Tagger tag either are unknown.
+        tags = db.tag_ids(name.strip().casefold() for name in merged.unknown_ignores)
+        unknown_ignores = [name for name in merged.unknown_ignores if name.strip().casefold() not in tags]
+        data = None
+        if stored.deck.commanders:
+            sources = meta_sources(http, ctx, file.user or "", file.meta)
+            data = gather_for(
+                stored.deck, sources, cache_dir(ctx.env), now=ctx.now, refresh=False, offline=True
+            )
+        leanings = deck_cut_rules(stored.deck, db.resolve(stored.deck.main_cards), profile, db, data).leanings
     for slug in unknown:
         print(f"cmdr: tag {slug!r} is not a Tagger tag; `cmdr tags` finds them", file=ctx.err)
-    for name in merged.unknown_ignores:
-        print(f"cmdr: the profile ignores {name!r}, which is no deck tag or category", file=ctx.err)
+    for name in unknown_ignores:
+        print(
+            f"cmdr: the profile ignores {name!r}, which is no deck tag, category or Tagger tag", file=ctx.err
+        )
     if args.json:
-        document = {**profile_json(profile, unknown), **derived_json(merged)}
+        document = {
+            **profile_json(profile, unknown),
+            **derived_json(merged),
+            "unknownIgnores": unknown_ignores,
+            "leanings": [leaning_json(leaning) for leaning in leanings],
+        }
         json.dump(document, ctx.out, ensure_ascii=False, indent=2)
         ctx.out.write("\n")
         return EXIT_OK
@@ -51,9 +74,19 @@ def _cmd_profile(args: argparse.Namespace, ctx: Context) -> int:
         lines = profile_lines(profile)
     else:
         lines = [f"no profile; `cmdr profile {stored.deck.id} --init` starts one"]
-    for line in [*lines, *derived_lines(merged)]:
+    for line in [*lines, *derived_lines(merged), *leaning_lines(leanings)]:
         print(line, file=ctx.out)
     return EXIT_OK
+
+
+def leaning_lines(leanings: Sequence[Leaning]) -> list[str]:
+    """What the deck plays far more of than recent decks with its commander (ADR 0016)."""
+    if not leanings:
+        return []
+    peers = leanings[0].peers
+    lines = [f"leans into, against {peers} recent decks with its commander (cuts only like for like):"]
+    lines += [f"  {leaning_text(leaning)}" for leaning in leanings]
+    return lines
 
 
 def profile_lines(profile: Profile) -> list[str]:

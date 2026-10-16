@@ -239,6 +239,11 @@ match nothing and categories whose cards share nothing distinctive. The profile'
 `[exclude]` and `[themes] ignore` take out what doesn't fit. `sync` picks up changed deck tags even though
 Archidekt keeps the deck's edit time. See [ADR 0009](docs/adr/0009-themes-from-archidekt-deck-tags-and-categories.md).
 
+It also lists what the deck **leans into**: Scryfall Tagger tags its cards hold far more of than the recent
+Archidekt decks with its commander that `sync` reads, such as Arabella's untappers next to a field of token
+decks. The app shows them in the deck's header. Replacements keep them like for like, and `[themes] ignore`
+drops one by its tag slug ([ADR 0016](docs/adr/0016-replacements-like-for-like.md)).
+
 ### Deck boards
 
 A deck's board holds the cards you are weighing for it, in two lists: **considered** cards are ones you,
@@ -288,7 +293,9 @@ grouped by card type with counts and EUR totals.
 - **Considered**, on the right, lists every idea for the deck: yours, Claude's, the meta's and the
   tools'. Hover over an idea or click it to light the deck cards it could replace. Click one of them to
   queue the swap, or × to turn the idea down. The targets are the cards you or Claude picked, or else the
-  weakest cards in the same role ([ADR 0011](docs/adr/0011-app-deck-grid-and-replacement-targets.md)).
+  weakest cards in the same role ([ADR 0011](docs/adr/0011-app-deck-grid-and-replacement-targets.md)),
+  like for like: a card serving one of the deck's themes or leanings is offered only for an idea serving
+  the same ([ADR 0016](docs/adr/0016-replacements-like-for-like.md)).
   An idea with nothing to replace stays on the board but does not show. Each idea's badge says who
   added it, or for a compiled idea where it came from ("meta", "archidekt decks", "adjacent decks").
 - **Labels**: the flag in a grid card's top-left corner sets its Archidekt label. Every deck offers your

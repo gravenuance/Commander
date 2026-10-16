@@ -148,6 +148,8 @@ def test_the_meta_stamp_changes_when_a_meta_answer_is_saved(desk: Desk, settings
 def test_the_deck_view_carries_the_card_grid(desk: Desk) -> None:
     view = desk.deck(DECK)
     assert view["tags"] == ["Dwarves", "Vehicles", "cEDH"]
+    # No recent decks with Magda are cached, so there is nothing to lean against.
+    assert view["leanings"] == []
     grid = items(view, "grid")
     assert [(g["name"], g["count"]) for g in grid] == [
         ("Commander", 1),

@@ -22,6 +22,7 @@ const state = {
   gridCards: new Map(),
   collapsed: new Set(),
   tagsKey: null,
+  leaningsKey: null,
   selected: null,
   hovered: null,
   results: [],
@@ -139,6 +140,7 @@ async function openDeck(id) {
     state.gridCards.clear();
     state.collapsed.clear();
     state.tagsKey = null;
+    state.leaningsKey = null;
     $("list-considered").replaceChildren();
     $("grid").replaceChildren();
     closeLabelMenu(false);
@@ -171,6 +173,7 @@ function renderDeck() {
   $("deck-bracket").textContent = view.bracket ? `Bracket ${view.bracket}` : "";
   $("deck-archetype").textContent = view.archetype || "";
   renderTags(view.tags);
+  renderLeanings(view.leanings);
   const pending = view.pending;
   const review = $("review");
   review.disabled = pending === 0;
@@ -188,6 +191,29 @@ function renderTags(tags) {
   if (key === state.tagsKey) return;
   state.tagsKey = key;
   $("deck-tags").replaceChildren(...tags.map((tag) => el("li", { class: "tag", text: tag })));
+}
+
+// What the list plays far more of than recent decks with its commander: cut only like for like.
+function renderLeanings(leanings) {
+  const key = JSON.stringify(leanings);
+  if (key === state.leaningsKey) return;
+  state.leaningsKey = key;
+  const items = leanings.map((leaning) =>
+    el("li", {
+      class: "leaning",
+      text: `${leaning.tag} ${leaning.cards.length}`,
+      title: `${leaning.cards.length} cards, recent decks ${leaning.peerMean} on average: ${leaning.cards.join(", ")}`,
+    }),
+  );
+  const box = $("deck-leanings");
+  if (!items.length) {
+    box.replaceChildren();
+    return;
+  }
+  box.replaceChildren(
+    el("span", { class: "leanings-label", text: "Leans into", title: "Cut only for ideas that serve the same" }),
+    el("ul", { class: "tags", "aria-label": "What the list leans into" }, ...items),
+  );
 }
 
 /* The deck as a card grid, one stack per card type */

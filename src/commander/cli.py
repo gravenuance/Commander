@@ -34,7 +34,7 @@ from commander.carddb import CARD_DB_FILE, CardDataError, CardDb, Role
 from commander.cli_app import add_app_command
 from commander.cli_board import add_board_commands
 from commander.cli_cards import add_card_commands
-from commander.cli_meta import CEDH_BRACKET, add_meta_command, meta_sources
+from commander.cli_meta import add_meta_command, meta_sources
 from commander.cli_output import (
     price_text,
     print_apply_outcome,
@@ -84,7 +84,7 @@ from commander.diff import DeckDiff
 from commander.edhtop16 import Edhtop16Error
 from commander.ideas import compile_ideas, ideas_summary
 from commander.labels import LabelError
-from commander.metadata import Progress, gather, gather_adjacent, gather_peers
+from commander.metadata import Progress, gather_adjacent, gather_for
 from commander.models import Deck
 from commander.net import Fetcher, NetworkError, Pacer, make_client
 from commander.plan import EXAMPLE as PLAN_EXAMPLE
@@ -490,9 +490,8 @@ def _compile_ideas(
             deck = stored.deck
             if not deck.commanders:
                 continue
-            read = gather if deck.bracket == CEDH_BRACKET else gather_peers
             try:
-                data = read(
+                data = gather_for(
                     deck, sources, cache_dir(ctx.env), now=ctx.now, refresh=False, on_progress=progress
                 )
                 groups = read_profile(stored.folder).adjacent

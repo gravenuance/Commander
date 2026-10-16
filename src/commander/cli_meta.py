@@ -27,7 +27,7 @@ from commander.meta import (
     check_card,
 )
 from commander.metacombos import AnswerRole, ComboAnswer
-from commander.metadata import MetaData, MetaSources, gather
+from commander.metadata import CEDH_BRACKET, MetaData, MetaSources, gather
 from commander.models import short_commander_name
 from commander.net import Fetcher
 from commander.spellbook import META_REQUEST_INTERVAL_SECONDS, SpellbookClient
@@ -37,7 +37,6 @@ META_CREDIT = (
     "data from EDHTop16 (edhtop16.com), Archidekt (archidekt.com) and Commander Spellbook "
     "(commanderspellbook.com); none of them endorses this tool"
 )
-CEDH_BRACKET = 5
 THREATS_PER_KIND = 5
 EVENT_NAME_WIDTH = 48
 COMBO_ANSWERS_SHOWN = 6

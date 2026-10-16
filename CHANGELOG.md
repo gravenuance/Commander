@@ -35,7 +35,13 @@
   commanders, or partner pairs, whose recent Archidekt decks at the deck's bracket `sync` pools; cards
   half the pool plays become up to 10 "adjacent decks" ideas. `cmdr profile` lists them.
 
+- What a deck leans into (ADR 0016): the Tagger tags its cards hold far more of than recent decks with
+  its commander, listed by `cmdr profile` (and `--json`) and in the app's deck header.
+
 ### Fixed
+- Replacements go like for like (ADR 0016): a card serving one of the deck's themes or leanings is offered
+  only for an idea serving the same, and such swaps come first. Pantlaza's ideas no longer all offer its
+  Dinosaurs as cuts. Below bracket 5, targets rank by how many recent decks play them.
 - Combo answers read locks more closely (ADR 0013): Grafdigger's Cage stops casting from graveyards and
   libraries only, not from exile; Deafening Silence and Ranger-Captain of Eos no longer stop a loop that
   casts only creatures; and a lock that holds only during its owner's turn (Grand Abolisher) answers no

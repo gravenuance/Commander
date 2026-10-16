@@ -84,14 +84,16 @@ def test_profile_shows_the_derived_themes_it_leaves_out(
     tmp_path: Path, raw_deck: Json, own_cache: Path
 ) -> None:
     synced(tmp_path, raw_deck)
-    ignoring = PROFILE.replace("[exclude]", 'ignore = ["Vehicles", "Spaghetti"]\n[exclude]')
+    ignoring = PROFILE.replace("[exclude]", 'ignore = ["Vehicles", "Spaghetti", "ramp"]\n[exclude]')
     (deck_folder(tmp_path) / PROFILE_FILE).write_text(ignoring, encoding="utf-8")
     code, out, err = profile(["magda"], tmp_path, own_cache)
     assert code == 0
     lines = out.splitlines()
-    assert "themes: types Instant; tags no-such-tag; ignore Vehicles, Spaghetti" in lines
+    assert "themes: types Instant; tags no-such-tag; ignore Vehicles, Spaghetti, ramp" in lines
     assert "  Vehicles (deck tag): left out by the profile" in lines
-    assert "the profile ignores 'Spaghetti', which is no deck tag or category" in err
+    assert "the profile ignores 'Spaghetti', which is no deck tag, category or Tagger tag" in err
+    # A Tagger tag can be ignored as a leaning (ADR 0016), so it is no unknown name.
+    assert "'ramp'" not in err
 
 
 def test_profile_json(tmp_path: Path, raw_deck: Json, own_cache: Path) -> None:

@@ -201,6 +201,10 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .deck-title:hover { text-decoration: underline; }
 .archetype { margin: 0; max-width: 70ch; color: var(--muted); font-size: var(--text-s); }
 .archetype:empty { display: none; }
+.leanings { margin: 0; display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; font-size: var(--text-s); }
+.leanings:empty { display: none; }
+.leanings-label { color: var(--muted); }
+.leaning { padding: 0 var(--space-2); border: 1px dashed var(--border-strong); border-radius: var(--radius-s); color: var(--muted); cursor: help; }
 .chip {
   padding: 1px var(--space-2);
   border: 1px solid var(--border-strong);

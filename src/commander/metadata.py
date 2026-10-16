@@ -57,6 +57,8 @@ log = logging.getLogger(__name__)
 FRESH_FOR = timedelta(hours=24)
 CACHE_VERSION = 1
 CACHE_FOLDER = "meta"
+# The cEDH bracket: the only one EDHTop16 tournaments cover.
+CEDH_BRACKET = 5
 # Search hits read per wanted deck when looking for a partner pair, most of which pair another partner.
 PARTNER_READS = 3
 # Enough for the busiest commanders' two months; the client stops at its page cap before this anyway.
@@ -269,6 +271,21 @@ def gather_peers(
     combos: Answer[tuple[CommanderCombos, ...]] = Answer(None, AnswerSource.UNAVAILABLE, None, why)
     own: Answer[tuple[ComboDetail, ...]] = Answer(None, AnswerSource.UNAVAILABLE, None, why)
     return MetaData(commander_name(deck.commanders), since, lists, field, peers, combos, own)
+
+
+def gather_for(
+    deck: Deck,
+    sources: MetaSources,
+    cache_root: Path,
+    *,
+    now: Clock,
+    refresh: bool,
+    offline: bool = False,
+    on_progress: Progress | None = None,
+) -> MetaData:
+    """What other players do with the deck's commander: `gather` at bracket 5, else `gather_peers`."""
+    read = gather if deck.bracket == CEDH_BRACKET else gather_peers
+    return read(deck, sources, cache_root, now=now, refresh=refresh, offline=offline, on_progress=on_progress)
 
 
 @dataclass(slots=True, frozen=True)

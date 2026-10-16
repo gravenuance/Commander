@@ -33,7 +33,7 @@ from commander.metadata import MetaData, PeerList
 from commander.models import Deck, short_commander_name
 from commander.store import StoredDeck
 from commander.suggest import affordable, card_raise, name_keys
-from commander.targets import kept_by_profile, role_targets
+from commander.targets import deck_cut_rules, role_targets, with_ideas
 
 MAX_PER_SOURCE = 10
 
@@ -104,8 +104,8 @@ def compile_ideas(
     shares = card_shares(data) or None
     board = read_board(stored.folder)
     main = db.resolve(deck.main_cards)
-    kept = kept_by_profile(main, profile)
     infos = db.cards_named(idea.name for idea in ideas)
+    rules = with_ideas(deck_cut_rules(deck, main, profile, db, data), infos.values(), db)
     allowed = _profile_filter(deck, profile, main, db, infos.values())
     service = BoardService(stored.folder, deck, db, now=now)
     added: dict[Origin, list[BoardCard]] = {}
@@ -116,11 +116,7 @@ def compile_ideas(
             if placed >= MAX_PER_SOURCE:
                 break
             info = infos.get(idea.name.casefold())
-            if (
-                info is None
-                or not allowed(info)
-                or not role_targets(info, main, protected=kept, shares=shares)
-            ):
+            if info is None or not allowed(info) or not role_targets(info, main, rules):
                 continue
             existing = board.find(idea.name)
             if existing is not None and existing.status is not Status.REJECTED:
