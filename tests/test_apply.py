@@ -399,6 +399,7 @@ def test_save_looks_up_snapshots_sends_once_and_reads_back(
 
     assert fake.requests == [
         "/api/cards/v2/",
+        "/api/decks/colorTags/",
         f"/api/decks/{DECK_ID}/snapshots/",
         f"/api/decks/{DECK_ID}/modifyCards/v2/",
         f"/api/decks/{DECK_ID}/",

@@ -267,8 +267,10 @@ grouped by card type with counts and EUR totals.
   queue the swap, or × to turn the idea down. The targets are the cards you or Claude picked, or else the
   weakest cards in the same role ([ADR 0011](docs/adr/0011-app-deck-grid-and-replacement-targets.md)).
   An idea with nothing to replace stays on the board but does not show.
-- **Labels**: the flag in a grid card's top-left corner sets its Archidekt label (Don't Have, Getting, or
-  any label the deck uses). It is written to Archidekt at once.
+- **Labels**: the flag in a grid card's top-left corner sets its Archidekt label. Every deck offers your
+  account's labels in their colours, read on each signed-in `sync` and before each label change
+  ([ADR 0012](docs/adr/0012-card-labels-from-the-archidekt-account.md)). A change is written to
+  Archidekt at once.
 - **Meta** (bracket 5 decks) lists each key card with the meta cards that stop it, then the meta's combos
   with your answers, each tagged with the meta decks that play them. **Refresh meta** fetches new data
   and puts the meta's staples into Considered. A card you turned down comes back once its meta share

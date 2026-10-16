@@ -2,9 +2,11 @@
 
 A card saved into a deck carries "Don't Have"; ordered, it carries "Getting"; arrived, no label. Each mark
 is written to Archidekt at once and needs no snapshot: a label never changes which cards are in the deck.
+The labels on offer are the account's own, shared by all its decks, in its colours (ADR 0012).
 """
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from enum import Enum
 
@@ -56,11 +58,18 @@ def to_get_json(deck: Deck) -> list[dict[str, object]]:
     ]
 
 
-def label_options(deck: Deck) -> list[tuple[str, str]]:
-    """The labels a card in the deck can be given, as (name, colour): none, the buying steps, then every
-    other label the deck already uses, by name; "" names no label."""
-    options = [("", NO_LABEL_COLOUR), *LABEL_COLOURS.items()]
+def label_options(deck: Deck, account: Sequence[tuple[str, str]] | None = None) -> list[tuple[str, str]]:
+    """The labels a card in the deck can be given, as (name, colour); "" names no label.
+
+    No label first, then the account's labels in its order, the buying steps if the account lacks them,
+    and last any other label the deck already uses, by name.
+    """
+    options = [("", NO_LABEL_COLOUR), *(account or ())]
     taken = {name for name, _ in options}
+    for name, colour in LABEL_COLOURS.items():
+        if name not in taken:
+            options.append((name, colour))
+            taken.add(name)
     for card in sorted(deck.cards, key=lambda c: (c.label or "").casefold()):
         if card.label and card.label not in taken and card.label_colour:
             options.append((card.label, card.label_colour))
@@ -79,7 +88,7 @@ def set_label(
     actor: Actor,
 ) -> Marked:
     """Give one deck card any of the deck's label options ("" for none), as the app's label panel does."""
-    colours = dict(label_options(stored.deck))
+    colours = dict(label_options(stored.deck, _account_labels(editor, workspace)))
     if label not in colours:
         raise LabelError(f"{stored.deck.short_name} has no label {label!r}")
     value = f"{label},{colours[label]}" if label else DEFAULT_LABEL
@@ -98,6 +107,7 @@ def mark(
     actor: Actor,
 ) -> Marked:
     """Set the label of every deck entry of one card for this step, then update the local copy and log it."""
+    account = dict(_account_labels(editor, workspace))
     return _relabel(
         editor,
         workspace,
@@ -105,10 +115,17 @@ def mark(
         service,
         name,
         step.label,
-        label_value(step.label),
+        label_value(step.label, account),
         actor,
         f"marked {step.value}",
     )
+
+
+def _account_labels(editor: ArchidektEditor, workspace: Workspace) -> list[tuple[str, str]]:
+    # Read fresh before each write, so a label added on the website is on offer at once; kept for the app.
+    labels = editor.account_labels()
+    workspace.save_account_labels(labels)
+    return labels
 
 
 def _relabel(  # noqa: PLR0917 — the shared body of set_label and mark

@@ -406,6 +406,8 @@ class FakeArchidekt:
         self.spellbook = FakeSpellbook()
         self.edhtop16 = FakeEdhtop16()
         self.peer_page: Json = deck_page([])
+        # The account's card labels, as /api/decks/colorTags/ lists them; none unless a test sets some.
+        self.labels: list[Json] = []
 
     def put(self, deck: Json) -> None:
         self.decks[deck["id"]] = copy.deepcopy(deck)
@@ -418,6 +420,9 @@ class FakeArchidekt:
             return self.spellbook.handler(request)
         if host.endswith("edhtop16.com"):
             return self.edhtop16.handler(request)
+        if request.url.path == "/api/decks/colorTags/":
+            self.requests.append(request.url.path)
+            return httpx.Response(200, json=self.labels) if self._signed_in(request) else httpx.Response(401)
         return self.archidekt(request)
 
     def archidekt(self, request: httpx.Request) -> httpx.Response:

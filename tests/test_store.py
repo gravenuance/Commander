@@ -181,3 +181,12 @@ def test_deck_folders_come_from_folder_names(tmp_path: Path) -> None:
         (22344867, tmp_path / "22344867"),
     ]
     assert Workspace(tmp_path / "missing").deck_folders() == []
+
+
+def test_account_labels_round_trip_and_an_unreadable_file_reads_as_never_read(tmp_path: Path) -> None:
+    workspace = Workspace(tmp_path / "decks")
+    assert workspace.account_labels() is None
+    workspace.save_account_labels([("Don't Have", "#fa0d11"), ("Proxy", "#f445f4")])
+    assert workspace.account_labels() == [("Don't Have", "#fa0d11"), ("Proxy", "#f445f4")]
+    (tmp_path / "decks" / "labels.json").write_text('{"version": 9, "labels": []}', encoding="utf-8")
+    assert workspace.account_labels() is None

@@ -68,3 +68,39 @@ def test_a_label_the_deck_does_not_offer_or_one_already_set_writes_nothing(
         "error": "Disruptor Flute is already labelled Proxy"
     }
     assert not fake.card_writes()
+
+
+# The account's labels as Archidekt lists them (ADR 0012): shared by every deck, in the account's colours.
+ACCOUNT: list[Json] = [
+    {"id": 1, "color": "#0DE9FA", "name": "Considering change"},
+    {"id": 2, "color": "#fa0d11", "name": "Don't Have"},
+    {"id": 3, "color": "#0d9ffa", "name": "Getting"},
+    {"id": 4, "color": "#ab12cd", "name": "Proxy"},
+]
+
+
+def grid_card(desk: Desk, name: str) -> Json:
+    groups = cast("list[Json]", desk.deck(DECK)["grid"])
+    return next(c for g in groups for c in cast("list[Json]", g["cards"]) if c["name"] == name)
+
+
+def test_every_deck_offers_the_account_labels_in_the_account_colours(desk: Desk, fake: FakeArchidekt) -> None:
+    fake.labels = ACCOUNT
+    # A label made on the website is on offer at once: each write reads the account's labels first.
+    assert desk.set_label(DECK, "Battered Golem", "Considering change")["after"] == "Considering change"
+    assert fake.card_writes()[-1]["modifications"]["label"] == "Considering change,#0de9fa"
+    assert cast("list[Json]", desk.deck(DECK)["labels"]) == [
+        {"name": "", "colour": "#656565"},
+        {"name": "Considering change", "colour": "#0de9fa"},
+        {"name": "Don't Have", "colour": "#fa0d11"},
+        {"name": "Getting", "colour": "#0d9ffa"},
+        {"name": "Proxy", "colour": "#ab12cd"},
+    ]
+    # The deck's Proxy card was labelled in another colour; it shows in the account's.
+    assert grid_card(desk, "Disruptor Flute")["labelColour"] == "#ab12cd"
+
+
+def test_marks_write_the_buying_steps_in_the_account_colours(desk: Desk, fake: FakeArchidekt) -> None:
+    fake.labels = ACCOUNT
+    assert desk.mark(DECK, "Battered Golem", "ordered")["after"] == "Getting"
+    assert fake.card_writes()[-1]["modifications"]["label"] == "Getting,#0d9ffa"

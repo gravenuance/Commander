@@ -17,6 +17,10 @@
   and a refresh puts the meta's staples on the board. A turned-down card returns when its meta share
   rises 20 points. Deck snapshots keep label colours (version 4; the next `sync` fetches each deck once).
 
+- Card labels come from your Archidekt account (ADR 0012): every deck offers the account's labels in
+  their colours, and Don't Have and Getting are written in the account's colours. A signed-in `sync`
+  keeps the list in `labels.json` beside the deck folders; each label change and save reads it first.
+
 ### Fixed
 - Desktop app: the "Thin data" and status badges no longer float at the bottom of the window.
 

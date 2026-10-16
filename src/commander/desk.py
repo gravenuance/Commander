@@ -6,7 +6,7 @@ several threads, and a SQLite connection belongs to one.
 """
 
 import logging
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -178,6 +178,7 @@ class Desk:
                 for card in board.cards
             ]
         activity = read_activity(stored.folder)[-ACTIVITY_SHOWN:]
+        account = self._workspace.account_labels()
         return {
             "id": stored.deck.id,
             "short": stored.deck.short_name,
@@ -193,8 +194,8 @@ class Desk:
             "cards": cards,
             "deckCards": sorted({c.name for c in stored.deck.main_cards if "Commander" not in c.categories}),
             "toGet": to_get_json(stored.deck),
-            "labels": [{"name": name, "colour": colour} for name, colour in label_options(stored.deck)],
-            "grid": [_group_json(group) for group in grid],
+            "labels": [{"name": n, "colour": c} for n, c in label_options(stored.deck, account)],
+            "grid": [_group_json(group, dict(account or ())) for group in grid],
             "activity": [activity_json(entry) for entry in reversed(activity)],
         }
 
@@ -412,7 +413,8 @@ def _image_url(db: CardDb, info: CardInfo) -> str | None:
     return image_url(regular[-1].scryfall_id)
 
 
-def _group_json(group: GridGroup) -> Json:
+def _group_json(group: GridGroup, colours: Mapping[str, str]) -> Json:
+    """One grid group; a label the account keeps shows in the account's colour (ADR 0012)."""
     return {
         "name": group.name,
         "count": group.count,
@@ -424,7 +426,7 @@ def _group_json(group: GridGroup) -> Json:
                 "image": c.image,
                 "category": c.category,
                 "label": c.label,
-                "labelColour": c.label_colour,
+                "labelColour": colours.get(c.label, c.label_colour) if c.label else c.label_colour,
                 "cents": c.cents,
             }
             for c in group.cards

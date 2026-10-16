@@ -12,6 +12,7 @@ from commander.carddb import CARD_DB_FILE
 from commander.cli import main
 from commander.credentials import SERVICE
 from commander.net import Pacer
+from commander.store import Workspace
 from conftest import DECK_ID, PASSWORD, REFRESH_TOKEN, FakeArchidekt, Json, MemoryKeyring
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
@@ -333,3 +334,33 @@ def test_a_password_on_stdin_that_is_not_utf8_is_a_usage_error(
     assert result.err == "cmdr: the password on stdin must be UTF-8 text\n"
     assert archidekt.writes == []
     assert memory_keyring.secrets == {}
+
+
+def test_sync_keeps_the_account_labels_for_the_app_when_signed_in(
+    home: Path, archidekt: FakeArchidekt, memory_keyring: MemoryKeyring
+) -> None:
+    archidekt.labels = [
+        {"id": 1, "color": "#FA0D11", "name": "Don't Have"},
+        {"id": 2, "color": "", "name": "x"},
+    ]
+    signed_in(memory_keyring)
+    result = run(["sync", "--no-cards", "--workspace", str(home / "decks")], home, archidekt)
+    assert result.code == 0
+    assert "card labels: Don't Have (from your Archidekt account)\n" in result.out
+    assert Workspace(home / "decks").account_labels() == [("Don't Have", "#fa0d11")]
+
+
+def test_sync_without_a_login_reads_no_labels(decks: Path, archidekt: FakeArchidekt) -> None:
+    assert Workspace(decks).account_labels() is None
+    assert "/api/decks/colorTags/" not in archidekt.requests
+
+
+def test_a_save_labels_incoming_cards_dont_have_in_the_account_colour(
+    home: Path, archidekt: FakeArchidekt, decks: Path, memory_keyring: MemoryKeyring
+) -> None:
+    archidekt.labels = [{"id": 2, "color": "#fa0d11", "name": "Don't Have"}]
+    signed_in(memory_keyring)
+    assert apply(home, archidekt, decks, "--save").code == 0
+    added = [w for w in archidekt.card_writes() if "deckRelationId" not in w]
+    assert added
+    assert {w["modifications"]["label"] for w in added} == {"Don't Have,#fa0d11"}

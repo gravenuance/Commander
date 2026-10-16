@@ -366,7 +366,9 @@ def save(
                     " Nothing was changed"
                 )
             card_ids[change.scryfall_id] = card_id
-    edits = card_edits(resolution.changes, live.entries, card_ids)
+    # Don't Have goes on in the colour the account gives it (ADR 0012).
+    dont_have = label_value(DONT_HAVE_LABEL, dict(editor.account_labels()))
+    edits = card_edits(resolution.changes, live.entries, card_ids, dont_have)
     # Seconds keep two saves in one minute apart; Archidekt accepts snapshots with equal names.
     snapshot = f"before cmdr apply {now().strftime('%Y-%m-%d %H:%M:%S')} UTC"
     on_progress(f"saving snapshot '{snapshot}' on Archidekt")
@@ -391,13 +393,20 @@ def save(
 
 
 def card_edits(
-    changes: Sequence[Change], entries: Mapping[int, EntryState], card_ids: Mapping[str, int]
+    changes: Sequence[Change],
+    entries: Mapping[int, EntryState],
+    card_ids: Mapping[str, int],
+    dont_have: str = label_value(DONT_HAVE_LABEL),
 ) -> list[CardEdit]:
+    """The modifyCards edits for the changes; a card coming into the deck is labelled dont_have, still to buy
+    (ADR 0010), unless it already carries a label (Proxy)."""
     edits: list[CardEdit] = []
     for change in changes:
         if change.kind is ChangeKind.ADD:
             card_id = card_ids[change.scryfall_id]
-            edits.append(CardEdit(EditKind.ADD, card_id, change.after, new_entry_state(change.category)))
+            edits.append(
+                CardEdit(EditKind.ADD, card_id, change.after, new_entry_state(change.category, dont_have))
+            )
             continue
         if change.entry_id is None or change.card_id is None:
             raise ArchidektError(f"{change.name}: the deck entry is unknown")
@@ -412,7 +421,7 @@ def card_edits(
             state = replace(state, categories=change.categories)
         if change.kind is ChangeKind.MOVE_IN and state.label == DEFAULT_LABEL:
             # Into the deck from the Maybeboard: still to buy, unless it already carries a label (Proxy).
-            state = replace(state, label=label_value(DONT_HAVE_LABEL))
+            state = replace(state, label=dont_have)
         edits.append(CardEdit(EditKind.MODIFY, change.card_id, change.after, state, change.entry_id))
     return edits
 

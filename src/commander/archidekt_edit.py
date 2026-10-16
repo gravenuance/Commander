@@ -5,6 +5,7 @@ shape-checked and every write is sent once, never retried.
 """
 
 import logging
+import re
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -32,8 +33,9 @@ log = logging.getLogger(__name__)
 # Archidekt's colour label for a card with none, as its own pages send it.
 NO_LABEL_COLOUR = "#656565"
 DEFAULT_LABEL = f",{NO_LABEL_COLOUR}"
-# The colours of the labels cmdr writes, from the palette Archidekt offers.
+# The colours of the labels cmdr writes when the account has no label of that name: Archidekt's defaults.
 LABEL_COLOURS = {DONT_HAVE_LABEL: "#f47373", GETTING_LABEL: "#2ccce4"}
+_COLOUR = re.compile(r"#[0-9a-fA-F]{6}")
 MAX_NAME_LENGTH = 200
 # A refused login answers 400; elsewhere 400 means the request itself was rejected, with a reason.
 _LOGIN_REFUSED = frozenset({400, 401, 403})
@@ -88,11 +90,11 @@ class CardEdit:
             raise ValueError("modify and remove need the entry id; add must not have one")
 
 
-def new_entry_state(category: str) -> EntryState:
-    # A card saved into a deck is one still to buy (ADR 0010).
+def new_entry_state(category: str, label: str | None = None) -> EntryState:
+    # A card saved into a deck is one still to buy (ADR 0010): Don't Have unless the label is given.
     return EntryState(
         (category,),
-        label_value(DONT_HAVE_LABEL),
+        label or label_value(DONT_HAVE_LABEL),
         "Normal",
         companion=False,
         flipped_default=False,
@@ -100,11 +102,27 @@ def new_entry_state(category: str) -> EntryState:
     )
 
 
-def label_value(name: str) -> str:
-    """Archidekt's "name,#colour" for one of the labels cmdr writes; "" clears the label."""
+def label_value(name: str, account: Mapping[str, str] | None = None) -> str:
+    """Archidekt's "name,#colour" for a label, in the account's colour for it (ADR 0012), else Archidekt's
+    default; "" clears the label."""
     if not name:
         return DEFAULT_LABEL
-    return f"{name},{LABEL_COLOURS[name]}"
+    colour = (account or {}).get(name) or LABEL_COLOURS.get(name)
+    if colour is None:
+        raise ValueError(f"no colour known for the label {name!r}")
+    return f"{name},{colour}"
+
+
+def parse_account_labels(raw: object) -> list[tuple[str, str]]:
+    """The account's card labels as (name, colour) in Archidekt's order; unnamed or odd ones are skipped."""
+    labels: list[tuple[str, str]] = []
+    for index, item in enumerate(as_list(raw, "colorTags")):
+        entry = as_object(item, f"colorTags[{index}]")
+        name = (opt_str(entry, "name", f"colorTags[{index}]") or "").strip()
+        colour = (opt_str(entry, "color", f"colorTags[{index}]") or "").strip().lower()
+        if name and _COLOUR.fullmatch(colour) and name not in {n for n, _ in labels}:
+            labels.append((name, colour))
+    return labels
 
 
 class ArchidektAuth:
@@ -200,6 +218,21 @@ class ArchidektEditor:
         except ShapeError as error:
             raise ArchidektError(f"unexpected card search answer from Archidekt: {error}") from error
         return None
+
+    def account_labels(self) -> list[tuple[str, str]]:
+        """The card labels the signed-in account keeps for all its decks, as (name, colour)."""
+        if self._headers is None:
+            raise AuthError("reading your labels needs an Archidekt login; run `cmdr login`")
+        try:
+            raw = self._fetcher.get_json(f"{self._base_url}/decks/colorTags/", headers=self._headers)
+        except HttpStatusError as error:
+            if error.status in _UNAUTHORIZED:
+                raise AuthError("Archidekt refused the login; run `cmdr login` again") from None
+            raise
+        try:
+            return parse_account_labels(raw)
+        except ShapeError as error:
+            raise ArchidektError(f"unexpected labels from Archidekt: {error}") from error
 
     def create_snapshot(self, deck_id: int, name: str, description: str) -> None:
         self._write("POST", f"/decks/{deck_id}/snapshots/", {"name": name, "description": description})

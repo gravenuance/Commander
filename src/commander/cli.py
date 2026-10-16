@@ -427,18 +427,25 @@ def _cmd_sync(args: argparse.Namespace, ctx: Context) -> int:
             dry_run=args.dry_run,
             on_progress=progress,
         )
+        labels = None if args.dry_run else _sync_labels(fetcher, workspace, user, ctx)
         cards = _card_status(cards_job, dry_run=args.dry_run)
     picked = {} if args.dry_run else _pick_up_aside(workspace, ctx)
     if args.json:
         document = {
             "decks": [_result_json(r) for r in results],
             "cardData": {"status": cards.state.value, "detail": cards.detail},
+            "labels": None if labels is None else [{"name": n, "colour": c} for n, c in labels],
         }
         json.dump(document, ctx.out, ensure_ascii=False, indent=2)
         ctx.out.write("\n")
     else:
         _print_sync_report(results, ctx.out, dry_run=args.dry_run)
         print(f"card data: {cards.state.value}, {cards.detail}", file=ctx.out)
+        if labels is not None:
+            print(
+                f"card labels: {', '.join(n for n, _ in labels) or 'none'} (from your Archidekt account)",
+                file=ctx.out,
+            )
         for short, names in picked.items():
             print(
                 f"{short} board: considering {', '.join(names)} (from the Sideboard or Maybeboard)",
@@ -682,6 +689,22 @@ def _plan_deck(query: str, args: argparse.Namespace, ctx: Context) -> tuple[int,
         return int(query), Workspace(resolve_workspace(args.workspace, ctx.env, file))
     except ConfigError:
         return int(query), None
+
+
+def _sync_labels(
+    fetcher: Fetcher, workspace: Workspace, user: str, ctx: Context
+) -> list[tuple[str, str]] | None:
+    """Keep the account's card labels for the app (ADR 0012); None when not signed in or the read fails."""
+    auth = ArchidektAuth(fetcher, ctx.token_store)
+    if not auth.has_login(user):
+        return None
+    try:
+        labels = ArchidektEditor(fetcher, auth.access_token(user)).account_labels()
+    except (AuthError, CredentialError, NetworkError, ArchidektError) as error:
+        print(f"cmdr: card labels not refreshed: {error}", file=ctx.err)
+        return None
+    workspace.save_account_labels(labels)
+    return labels
 
 
 def _access_token(auth: ArchidektAuth, user: str, args: argparse.Namespace, ctx: Context) -> str | None:

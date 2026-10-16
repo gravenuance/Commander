@@ -29,6 +29,9 @@ SNAPSHOT_VERSION = 4
 SNAPSHOT_FILE = "deck.json"
 LIST_FILE = "list.md"
 NOTES_FILE = "notes.md"
+# The account's card labels (ADR 0012), shared by every deck; beside the deck folders.
+LABELS_FILE = "labels.json"
+LABELS_VERSION = 1
 _MAX_SLUG = 60
 
 
@@ -98,6 +101,26 @@ class Workspace:
             or any(needle in commander.casefold() for commander in s.deck.commanders)
         ]
 
+    def account_labels(self) -> list[tuple[str, str]] | None:
+        """The account's card labels as (name, colour), as last read from Archidekt; None if never read."""
+        path = self.root / LABELS_FILE
+        try:
+            return parse_labels(json.loads(path.read_text(encoding="utf-8")))
+        except FileNotFoundError:
+            return None
+        except (OSError, json.JSONDecodeError, ShapeError) as error:
+            # A copy of Archidekt data: the next sync or label change reads it again.
+            log.warning("ignoring unreadable %s: %s", path, error)
+            return None
+
+    def save_account_labels(self, labels: list[tuple[str, str]]) -> None:
+        self.root.mkdir(parents=True, exist_ok=True)
+        document = {
+            "version": LABELS_VERSION,
+            "labels": [{"name": name, "colour": colour} for name, colour in labels],
+        }
+        write_text_atomic(self.root / LABELS_FILE, json.dumps(document, ensure_ascii=False, indent=2) + "\n")
+
     def save(self, deck: Deck) -> Path:
         """Write deck.json and list.md, renaming the folder to match the deck name; never touches notes.md."""
         target = self.root / folder_name(deck)
@@ -113,6 +136,18 @@ class Workspace:
         if not notes.exists():
             write_text_atomic(notes, notes_template(deck))
         return target
+
+
+def parse_labels(raw: object) -> list[tuple[str, str]]:
+    document = as_object(raw, "labels")
+    if req_int(document, "version", "labels") != LABELS_VERSION:
+        raise ShapeError(f"labels version is not {LABELS_VERSION}")
+    labels: list[tuple[str, str]] = []
+    for index, item in enumerate(req_list(document, "labels", "labels")):
+        where = f"labels[{index}]"
+        entry = as_object(item, where)
+        labels.append((req_str(entry, "name", where), req_str(entry, "colour", where)))
+    return labels
 
 
 def folder_name(deck: Deck) -> str:

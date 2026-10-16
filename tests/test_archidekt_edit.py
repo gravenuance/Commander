@@ -15,7 +15,9 @@ from commander.archidekt_edit import (
     EditKind,
     EntryState,
     edit_json,
+    label_value,
     new_entry_state,
+    parse_account_labels,
     parse_entry_states,
 )
 from commander.credentials import SERVICE, CredentialError, KeyringTokenStore
@@ -374,3 +376,30 @@ def test_keyring_token_store_refuses_tokens_windows_cannot_hold() -> None:
 
     with pytest.raises(CredentialError, match="unexpected length"):
         KeyringTokenStore().put("MAKKIS", "x" * 1281)
+
+
+def test_account_labels_keep_archidekt_order_and_skip_unusable_entries() -> None:
+    raw = [
+        {"id": 1, "color": "#0DE9FA", "name": "Considering change"},
+        {"id": 2, "color": "#fa0d11", "name": "Don't Have"},
+        {"id": 3, "color": "#fa0d11", "name": "Don't Have"},
+        {"id": 4, "color": "red", "name": "Odd"},
+        {"id": 5, "color": "#123456", "name": " "},
+    ]
+    assert parse_account_labels(raw) == [("Considering change", "#0de9fa"), ("Don't Have", "#fa0d11")]
+
+
+def test_a_label_takes_the_account_colour_else_archidekt_default() -> None:
+    assert label_value("Getting", {"Getting": "#0d9ffa"}) == "Getting,#0d9ffa"
+    assert label_value("Getting") == "Getting,#2ccce4"
+    assert label_value("") == ",#656565"
+    with pytest.raises(ValueError, match="no colour known"):
+        label_value("Wishlist")
+
+
+def test_reading_the_account_labels_needs_a_login() -> None:
+    with (
+        httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(500))) as client,
+        pytest.raises(AuthError, match="cmdr login"),
+    ):
+        ArchidektEditor(Fetcher(client), None).account_labels()
