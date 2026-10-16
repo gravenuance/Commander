@@ -58,6 +58,16 @@ _TAG_COUNT_QUERY = (
     _SUBTREE_CTE.format("?")  # noqa: S608 — built from constant fragments and placeholders; every value is bound
     + " SELECT count(DISTINCT oracle_id) FROM tag_member JOIN subtree ON tag_member.tag_id = subtree.tag_id"
 )
+# Each card's tags grown by every tag above them; UNION drops repeats, so a cycle in the tag tree still ends.
+_LINEAGE_QUERY = """WITH RECURSIVE lineage(oracle_id, tag_id) AS (
+    SELECT oracle_id, tag_id FROM tag_member WHERE oracle_id IN ({})
+    UNION SELECT lineage.oracle_id, tag_child.parent_id FROM tag_child
+        JOIN lineage ON tag_child.child_id = lineage.tag_id
+) SELECT lineage.oracle_id, slug FROM lineage JOIN tag ON tag.tag_id = lineage.tag_id"""
+_ANCESTORS_QUERY = """WITH RECURSIVE above(tag_id) AS (
+    SELECT parent_id FROM tag_child JOIN tag ON tag.tag_id = tag_child.child_id WHERE slug IN ({})
+    UNION SELECT tag_child.parent_id FROM tag_child JOIN above ON tag_child.child_id = above.tag_id
+) SELECT slug FROM above JOIN tag ON tag.tag_id = above.tag_id"""
 MAX_TAG_MATCHES = 50
 MAX_NAME_MATCHES = 20
 _NAME_SEARCH_QUERY = f"""
@@ -413,6 +423,28 @@ class CardDb:
             sql = f"{cte} SELECT oracle_id FROM oracle WHERE {where}"  # noqa: S608 — built from constant fragments and placeholders; every value is bound
             found.update(row[0] for row in self._query_named(sql, {**params, **chunk}))
         return frozenset(found)
+
+    def theme_size(self, theme: Theme) -> int:
+        """How many Commander-legal cards match the theme; 0 for an empty one."""
+        if theme.empty:
+            return 0
+        cte, condition, params = _theme_sql(theme)
+        sql = f"{cte} SELECT count(*) FROM oracle WHERE commander_legal = 1 AND ({condition})"  # noqa: S608 — built from constant fragments and placeholders; every value is bound
+        return int(self._query_named(sql, params)[0][0])
+
+    def legal_cards(self) -> int:
+        return int(self._query("SELECT count(*) FROM oracle WHERE commander_legal = 1")[0][0])
+
+    def tag_lineage(self, oracle_ids: Iterable[str]) -> dict[str, frozenset[str]]:
+        """Each card's tag slugs with every tag above them, as a card in combat-ramp is in ramp too."""
+        found: dict[str, set[str]] = {}
+        for oracle_id, slug in self._select_in(_LINEAGE_QUERY, oracle_ids):
+            found.setdefault(oracle_id, set()).add(slug)
+        return {key: frozenset(slugs) for key, slugs in found.items()}
+
+    def tag_ancestors(self, slugs: Iterable[str]) -> frozenset[str]:
+        """Every tag above these (ramp above combat-ramp); slugs Scryfall does not have add nothing."""
+        return frozenset(row[0] for row in self._select_in(_ANCESTORS_QUERY, slugs))
 
     def tag_ids(self, slugs: Iterable[str]) -> dict[str, str]:
         """Tag ids by slug; slugs Scryfall does not have are left out."""
