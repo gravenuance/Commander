@@ -24,13 +24,15 @@ from commander.jsonshape import (
     req_str,
     str_list,
 )
-from commander.models import Deck
+from commander.models import DONT_HAVE_LABEL, GETTING_LABEL, Deck
 from commander.net import Fetcher, HttpStatusError
 
 log = logging.getLogger(__name__)
 
 # Archidekt's colour label for a card with none, as its own pages send it.
 DEFAULT_LABEL = ",#656565"
+# The colours of the labels cmdr writes, from the palette Archidekt offers.
+_LABEL_COLOURS = {DONT_HAVE_LABEL: "#f47373", GETTING_LABEL: "#2ccce4"}
 MAX_NAME_LENGTH = 200
 # A refused login answers 400; elsewhere 400 means the request itself was rejected, with a reason.
 _LOGIN_REFUSED = frozenset({400, 401, 403})
@@ -86,9 +88,22 @@ class CardEdit:
 
 
 def new_entry_state(category: str) -> EntryState:
+    # A card saved into a deck is one still to buy (ADR 0010).
     return EntryState(
-        (category,), DEFAULT_LABEL, "Normal", companion=False, flipped_default=False, custom_cmc=None
+        (category,),
+        label_value(DONT_HAVE_LABEL),
+        "Normal",
+        companion=False,
+        flipped_default=False,
+        custom_cmc=None,
     )
+
+
+def label_value(name: str) -> str:
+    """Archidekt's "name,#colour" for one of the labels cmdr writes; "" clears the label."""
+    if not name:
+        return DEFAULT_LABEL
+    return f"{name},{_LABEL_COLOURS[name]}"
 
 
 class ArchidektAuth:

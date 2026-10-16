@@ -9,16 +9,18 @@ from enum import Enum
 from commander.analysis import game_changers
 from commander.archidekt import ArchidektError
 from commander.archidekt_edit import (
+    DEFAULT_LABEL,
     ArchidektEditor,
     AuthError,
     CardEdit,
     EditKind,
     EntryState,
     LiveDeck,
+    label_value,
     new_entry_state,
 )
 from commander.carddb import CardDb, CardInfo, Printing
-from commander.models import ASIDE_CATEGORIES, MAYBEBOARD_CATEGORY, Deck, DeckCard
+from commander.models import ASIDE_CATEGORIES, DONT_HAVE_LABEL, MAYBEBOARD_CATEGORY, Deck, DeckCard
 from commander.net import NetworkError
 from commander.plan import AddCard, Plan, RemoveCard
 from commander.suggest import BracketRaise, card_raise, deck_identity
@@ -408,6 +410,9 @@ def card_edits(
         if change.kind in _MOVES:
             # A move is a modify that sends the entry's new categories.
             state = replace(state, categories=change.categories)
+        if change.kind is ChangeKind.MOVE_IN and state.label == DEFAULT_LABEL:
+            # Into the deck from the Maybeboard: still to buy, unless it already carries a label (Proxy).
+            state = replace(state, label=label_value(DONT_HAVE_LABEL))
         edits.append(CardEdit(EditKind.MODIFY, change.card_id, change.after, state, change.entry_id))
     return edits
 

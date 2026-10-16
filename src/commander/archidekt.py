@@ -246,4 +246,12 @@ def _parse_card(entry: Mapping[str, object], where: str, excluded: frozenset[str
         set_code=req_str(edition, "editioncode", f"{where}.card.edition"),
         collector_number=req_str(card, "collectorNumber", f"{where}.card"),
         finish=opt_str(entry, "modifier", where) or "Normal",
+        label=label_name(opt_str(entry, "label", where)),
     )
+
+
+def label_name(raw: str | None) -> str:
+    """The name in Archidekt's "name,#colour" label; "" for a card without one (",#656565")."""
+    if not raw:
+        return ""
+    return raw.rsplit(",", 1)[0].strip()

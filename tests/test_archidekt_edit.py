@@ -259,7 +259,7 @@ def test_edit_json_sends_back_the_entry_as_it_was() -> None:
     }
 
 
-def test_edit_json_for_a_new_card_has_no_entry_id_and_the_default_label() -> None:
+def test_edit_json_for_a_new_card_has_no_entry_id_and_the_dont_have_label() -> None:
     entry = edit_json(CardEdit(EditKind.ADD, 77, 1, new_entry_state("Ramp")))
 
     assert "deckRelationId" not in entry
@@ -270,7 +270,7 @@ def test_edit_json_for_a_new_card_has_no_entry_id_and_the_default_label() -> Non
         "customCmc": None,
         "companion": False,
         "flippedDefault": False,
-        "label": DEFAULT_LABEL,
+        "label": "Don't Have,#f47373",
     }
 
 

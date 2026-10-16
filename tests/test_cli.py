@@ -99,6 +99,23 @@ def test_a_deck_saved_before_deck_tags_is_refetched_once(tmp_path: Path, archide
     assert archidekt.requests == ["/api/decks/v3/"]
 
 
+def test_a_deck_saved_before_card_labels_is_refetched_once(tmp_path: Path, archidekt: FakeArchidekt) -> None:
+    sync(tmp_path, archidekt)
+    snapshot = tmp_path / "decks" / "10004639-honestly-though" / "deck.json"
+    document = json.loads(snapshot.read_text(encoding="utf-8"))
+    document["version"] = 2
+    for card in document["cards"]:
+        del card["label"]
+    snapshot.write_text(json.dumps(document), encoding="utf-8")
+    archidekt.requests.clear()
+    sync(tmp_path, archidekt)
+    assert archidekt.requests == ["/api/decks/v3/", "/api/decks/10004639/"]
+    assert {c["label"] for c in json.loads(snapshot.read_text(encoding="utf-8"))["cards"]} == {""}
+    archidekt.requests.clear()
+    assert sync(tmp_path, archidekt).out == "1 unchanged\n" + NO_CARDS
+    assert archidekt.requests == ["/api/decks/v3/"]
+
+
 def test_a_deck_whose_tags_alone_changed_is_refetched(
     tmp_path: Path, archidekt: FakeArchidekt, raw_deck: Json
 ) -> None:

@@ -517,6 +517,7 @@ class FakeArchidekt:
                 cards = map(json.loads, fixture_lines("scryfall_cards.jsonl"))
                 card = next(c for c in cards if archidekt_card_id(c["id"]) == edit["cardid"])
                 entry = card_entry(self.next_entry, card["name"], edit["categories"], quantity)
+                entry["label"] = edit["modifications"]["label"]
                 entry["card"].update(
                     id=edit["cardid"],
                     uid=card["id"],
@@ -533,5 +534,6 @@ class FakeArchidekt:
             else:
                 entry["quantity"] = quantity
                 entry["categories"] = edit["categories"]
+                entry["label"] = edit["modifications"]["label"]
         deck["updatedAt"] = "2026-10-15T12:00:00.000000Z"
         return {"add": added, "createdCategories": []}

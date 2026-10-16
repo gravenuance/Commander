@@ -7,6 +7,10 @@ MAYBEBOARD_CATEGORY = "Maybeboard"
 # Casefolded names of the categories that hold cards under consideration, outside the deck.
 ASIDE_CATEGORIES = frozenset({"sideboard", "maybeboard"})
 ARCHIDEKT_DECK_URL = "https://archidekt.com/decks/{id}"
+# The card labels of the buying steps (ADR 0010): a card saved into a deck is still to buy, then ordered.
+DONT_HAVE_LABEL = "Don't Have"
+GETTING_LABEL = "Getting"
+TO_GET_LABELS = (DONT_HAVE_LABEL, GETTING_LABEL)
 
 
 @dataclass(slots=True, frozen=True)
@@ -22,6 +26,8 @@ class DeckCard:
     set_code: str
     collector_number: str
     finish: str
+    # The card's Archidekt label name ("Proxy", "Getting"), "" for none; None when not kept (old snapshot).
+    label: str | None = ""
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -67,6 +73,15 @@ class Deck:
     @property
     def aside_cards(self) -> tuple[DeckCard, ...]:
         return tuple(card for card in self.cards if card.aside)
+
+    @property
+    def labels_known(self) -> bool:
+        return all(card.label is not None for card in self.cards)
+
+    @property
+    def to_get(self) -> tuple[DeckCard, ...]:
+        """Deck cards still to be bought or on their way, by their label."""
+        return tuple(card for card in self.main_cards if card.label in TO_GET_LABELS)
 
     @property
     def main_count(self) -> int:

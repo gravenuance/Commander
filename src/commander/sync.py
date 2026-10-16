@@ -94,6 +94,7 @@ def _is_current(workspace: Workspace, previous: Deck, summary: DeckSummary) -> b
     return (
         previous.updated_at == summary.updated_at
         and previous.tags is not None
+        and previous.labels_known
         # Archidekt keeps the edit time when only the deck tags change, so the list's tags are compared too.
         and (summary.tags is None or summary.tags == previous.tags)
         and folder is not None

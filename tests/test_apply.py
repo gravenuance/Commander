@@ -297,6 +297,7 @@ def test_card_edits_send_back_each_entry_and_use_the_looked_up_ids(raw_deck: Jso
         (EditKind.REMOVE, 5, 1, FLUTE_ENTRY),
     ]
     assert edits[0].state.categories == ("Ramp",)
+    assert edits[0].state.label == "Don't Have,#f47373"
     assert edits[2].state == entries[FLUTE_ENTRY]
 
 
@@ -644,6 +645,18 @@ def test_moves_are_sent_as_modifies_with_the_new_categories(raw_deck: Json, deck
         (EditKind.MODIFY, HOVERBIKE_ENTRY, ("Artifact",)),
         (EditKind.REMOVE, TEMPESTRA_ENTRY, ("Maybeboard",)),
     ]
+
+
+def test_a_card_moved_into_the_deck_is_still_to_buy_unless_it_has_a_label(
+    raw_deck: Json, deck: Deck, db: CardDb
+) -> None:
+    swap = plan([AddCard("High-Speed Hoverbike")], [RemoveCard("Battered Golem", maybeboard=True)])
+    changes = resolve_plan(deck, swap, db).changes
+    entries = parse_entry_states(raw_deck)
+    # The cut keeps its label; the card coming in from the Maybeboard is one to buy.
+    assert [e.state.label for e in card_edits(changes, entries, {})] == [",#656565", "Don't Have,#f47373"]
+    proxied = {**entries, HOVERBIKE_ENTRY: replace(entries[HOVERBIKE_ENTRY], label="Proxy,#f445f4")}
+    assert card_edits(changes, proxied, {})[1].state.label == "Proxy,#f445f4"
 
 
 def test_verify_reports_a_move_archidekt_did_not_make(deck: Deck, db: CardDb) -> None:

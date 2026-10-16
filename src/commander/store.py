@@ -13,6 +13,7 @@ from commander.jsonshape import (
     ShapeError,
     as_object,
     opt_int,
+    opt_str,
     req_bool,
     req_int,
     req_list,
@@ -24,7 +25,7 @@ from commander.render import deck_list_markdown, notes_template
 
 log = logging.getLogger(__name__)
 
-SNAPSHOT_VERSION = 2
+SNAPSHOT_VERSION = 3
 SNAPSHOT_FILE = "deck.json"
 LIST_FILE = "list.md"
 NOTES_FILE = "notes.md"
@@ -146,6 +147,7 @@ def snapshot_json(deck: Deck) -> str:
                 "set": card.set_code,
                 "collectorNumber": card.collector_number,
                 "finish": card.finish,
+                "label": card.label,
             }
             for card in deck.cards
         ],
@@ -171,6 +173,7 @@ def parse_snapshot(raw: object) -> Deck:
                 set_code=req_str(card, "set", where),
                 collector_number=req_str(card, "collectorNumber", where),
                 finish=req_str(card, "finish", where),
+                label=opt_str(card, "label", where),
             )
         )
     return Deck(
@@ -197,6 +200,14 @@ def _migrate(document: Mapping[str, object]) -> Mapping[str, object]:
         # Version 1 kept no deck tags; None says they are unknown, so the next sync fetches the deck again.
         document = {**document, "version": 2, "tags": None}
         version = 2
+    if version == 2:  # noqa: PLR2004 — a snapshot version
+        # Version 2 kept no card labels; None says they are unknown, so the next sync fetches the deck again.
+        cards = [
+            {**as_object(c, "snapshot.cards[]"), "label": None}
+            for c in req_list(document, "cards", "snapshot")
+        ]
+        document = {**document, "version": 3, "cards": cards}
+        version = 3
     if version != SNAPSHOT_VERSION:
         raise ShapeError(f"snapshot version {version} is not supported (expected {SNAPSHOT_VERSION})")
     return document
