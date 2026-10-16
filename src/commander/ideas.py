@@ -1,4 +1,4 @@
-"""Ideas for Considered, compiled on every sync (ADR 0014).
+"""Ideas for Considering, compiled on every sync (ADR 0014).
 
 Bracket 5 decks get the staples of their commander's EDHTop16 lists ("meta") and of the most-viewed recent
 Archidekt decks for the commander ("archidekt decks"); decks below bracket 5 get the Archidekt ones only,

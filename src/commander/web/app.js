@@ -10,6 +10,7 @@ const THREATS_SHOWN = 4;
 const STOPS_SHOWN = 4;
 const ANSWERS_SHOWN = 6;
 const ACTIVITY_KEY = "commander.activityOpen";
+const PANEL_KEY = "commander.panelOpen";
 const COLOUR = /^#[0-9a-f]{3,8}$/i;
 
 const state = {
@@ -280,7 +281,7 @@ function buildGridCard(card) {
     swap);
 }
 
-/* Considered: every board card with somewhere to go, plus those already queued */
+/* Considering: every board card with somewhere to go, plus those already queued */
 
 function considered(cards) {
   return cards.filter((c) => c.status === "add" || (c.status === "open" && c.targets.length));
@@ -301,6 +302,25 @@ function renderConsidered(cards) {
   shown.forEach((card, index) => place(list, tileFor(card), index));
   $("count-considered").textContent = shown.length ? `(${shown.length})` : "";
   $("empty-considered").hidden = shown.length > 0;
+  renderRejected(cards);
+}
+
+// The cards turned down, latest first, with why; closed until opened.
+function renderRejected(cards) {
+  const rejected = cards.filter((c) => c.status === "rejected")
+    .sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || "") || a.name.localeCompare(b.name));
+  const key = JSON.stringify(rejected.map((c) => [c.id, c.note, c.updatedAt]));
+  if (state.rejectedKey === key) return;
+  state.rejectedKey = key;
+  $("rejected").hidden = !rejected.length;
+  $("count-rejected").textContent = rejected.length ? `(${rejected.length})` : "";
+  $("list-rejected").replaceChildren(...rejected.map((card) => el("li", { class: "rejected-card" },
+    el("p", { class: "rejected-head" },
+      el("span", { class: "card-name", text: card.name }),
+      card.updatedAt ? el("span", { class: "muted small", text: new Date(card.updatedAt).toLocaleDateString(undefined, { dateStyle: "medium" }) }) : null,
+      el("button", { class: "button quiet small", type: "button", text: "Reconsider", "aria-label": `Reconsider ${card.name}`,
+        onclick: () => decide(card, "reopen") })),
+    card.note ? el("p", { class: "muted small rejected-note", text: card.note }) : null)));
 }
 
 function tileFor(card) {
@@ -352,16 +372,21 @@ function buildTile(card) {
     reasoning ? el("details", { class: "fold" }, el("summary", { text: "Reasoning" }), el("p", { text: reasoning })) : null,
     card.dropping ? el("p", { class: "note", text: "Leaves the Maybeboard when you save" }) : null);
 
+  const why = rejectForm(card);
+  body.append(why);
   const reject = el("button", {
     class: "button quiet icon reject", type: "button", text: "×", title: "Turn down",
-    "aria-label": `Turn down ${card.name}`, onclick: () => decide(card, "reject"),
+    "aria-label": `Turn down ${card.name}`, onclick: () => {
+      why.hidden = false;
+      why.querySelector("input").focus();
+    },
   });
   const tile = el("article", { class: `card ${queued ? "queued" : ""}`, role: "listitem", "data-id": card.id, "aria-label": card.name },
     cardImage(card.image, card.name, "art"), body, reject);
   tile.addEventListener("mouseenter", () => hover(card.id));
   tile.addEventListener("mouseleave", () => hover(null));
   tile.addEventListener("click", (event) => {
-    if (!event.target.closest("button, a, summary, details")) select(card.id);
+    if (!event.target.closest("button, a, summary, details, form")) select(card.id);
   });
   return tile;
 }
@@ -430,9 +455,30 @@ async function swapIn(cardId, target) {
   } catch { /* the status line already says what went wrong */ }
 }
 
-async function decide(card, decision) {
+// Asks why a card is turned down; the reason is kept on the board and shows under Rejected.
+function rejectForm(card) {
+  const input = el("input", { type: "text", class: "input small", placeholder: "Why? (optional)", maxlength: "200",
+    "aria-label": `Why turn down ${card.name}` });
+  const form = el("form", { class: "reject-form", hidden: true },
+    input,
+    el("button", { class: "button small", type: "submit", text: "Turn down" }),
+    el("button", { class: "button quiet small", type: "button", text: "Cancel", onclick: () => { form.hidden = true; } }));
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    decide(card, "reject", input.value.trim());
+  });
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      form.hidden = true;
+    }
+  });
+  return form;
+}
+
+async function decide(card, decision, note = "") {
   try {
-    await api("decide", state.current, card.id, decision, null, "");
+    await api("decide", state.current, card.id, decision, null, note);
     if (decision === "reject") showStatus(`Turned down ${card.name}`);
     await refresh();
     $("main").focus();
@@ -547,12 +593,19 @@ function renderActivity(entries) {
 
 /* Collapsible panels */
 
+// Each panel remembers whether it was folded, per viewer.
 function setupPanels() {
   for (const toggle of document.querySelectorAll(".panel-toggle")) {
-    toggle.addEventListener("click", () => {
-      const open = toggle.getAttribute("aria-expanded") !== "true";
+    const key = `${PANEL_KEY}.${toggle.id}`;
+    const show = (open) => {
       toggle.setAttribute("aria-expanded", String(open));
       $(toggle.getAttribute("aria-controls")).hidden = !open;
+    };
+    try { if (localStorage.getItem(key) === "0") show(false); } catch { /* storage is a convenience */ }
+    toggle.addEventListener("click", () => {
+      const open = toggle.getAttribute("aria-expanded") !== "true";
+      show(open);
+      try { localStorage.setItem(key, open ? "1" : "0"); } catch { /* as above */ }
       if (open && toggle.id === "h-meta") loadMeta();
     });
   }
@@ -626,7 +679,7 @@ async function propose(name) {
     $("propose-input").value = "";
     await refresh();
     const shown = state.view && considered(state.view.cards).some((c) => c.id === answer.card.id);
-    showStatus(shown ? `${answer.card.name} is considered` : `${answer.card.name} has nothing to replace`, !shown);
+    showStatus(shown ? `${answer.card.name} is under consideration` : `${answer.card.name} has nothing to replace`, !shown);
   } catch { /* shown in the status line */ }
 }
 
@@ -770,9 +823,18 @@ function deckChips(decks) {
   return el("ul", { class: "deck-chips", "aria-label": "Played by" }, ...chips);
 }
 
+// A Meta section folds on its own, and stays folded across decks and refreshes.
 function metaSection(title, ...children) {
   const id = `meta-${title.toLowerCase().replace(/[^a-z]+/g, "-")}`;
-  return el("section", { class: "meta-section", "aria-labelledby": id }, el("h3", { id, text: title }), ...children);
+  const key = `${PANEL_KEY}.${id}`;
+  let open = true;
+  try { open = localStorage.getItem(key) !== "0"; } catch { /* storage is a convenience */ }
+  const section = el("details", { class: "meta-section", open },
+    el("summary", {}, el("h3", { id, text: title })), ...children);
+  section.addEventListener("toggle", () => {
+    try { localStorage.setItem(key, section.open ? "1" : "0"); } catch { /* as above */ }
+  });
+  return section;
 }
 
 function shortList(items, shown, build) {

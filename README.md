@@ -275,7 +275,7 @@ each `sync`; adding one moves that entry into the deck, printing and all, and tu
 off the Sideboard or Maybeboard with the next save. `suggest --to-board` puts its ideas on the board, and
 a card turned down there is never suggested again.
 
-Each `sync` also compiles ideas from other players into Considered
+Each `sync` also compiles ideas from other players into Considering
 ([ADR 0014](docs/adr/0014-considered-compiled-on-every-sync.md)). A bracket 5 deck gets the staples it
 misses from its commander's EDHTop16 lists ("meta") and from the most-viewed recent Archidekt decks for
 its commander ("archidekt decks"); other decks get the Archidekt ones, from decks at their own bracket. Each
@@ -299,9 +299,11 @@ the rest; `cmdr board --help` lists them.
 `cmdr app` opens a window over every deck's board. Pick a deck on the left to see it as a card grid,
 grouped by card type with counts and EUR totals.
 
-- **Considered**, on the right, lists every idea for the deck: yours, Claude's, the meta's and the
+- **Considering**, on the right, lists every idea for the deck: yours, Claude's, the meta's and the
   tools'. Hover over an idea or click it to light the deck cards it could replace. Click one of them to
-  queue the swap, or × to turn the idea down. The targets are the cards you or Claude picked, or else the
+  queue the swap, or × to turn the idea down, with a reason if you like: turned-down cards wait under
+  *Rejected* (closed until opened) with their reasons, and Reconsider brings one back. Considering, Meta
+  and each Meta section fold, and stay as you left them. The targets are the cards you or Claude picked, or else the
   weakest cards in the same role ([ADR 0011](docs/adr/0011-app-deck-grid-and-replacement-targets.md)),
   like for like: a card serving one of the deck's themes or leanings is offered only for an idea serving
   the same ([ADR 0016](docs/adr/0016-replacements-like-for-like.md)).
@@ -313,7 +315,7 @@ grouped by card type with counts and EUR totals.
   Archidekt at once.
 - **Meta** (bracket 5 decks) lists each key card with the meta cards that stop it, then the meta's combos
   with your answers, each tagged with the meta decks that play them. **Refresh meta** fetches new data
-  and puts the meta's staples into Considered. A card you turned down comes back once its meta share
+  and puts the meta's staples into Considering. A card you turned down comes back once its meta share
   rises 20 points.
 - **Review changes** checks the queued swaps against the deck on Archidekt and saves them.
 

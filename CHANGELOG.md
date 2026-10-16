@@ -43,6 +43,10 @@
   for the combos and key cards it stops. Key cards show as chips that say why on hover. Shorter headers:
   Key cards, What stops you, Meta combos.
 
+- The app's Considered panel is now Considering. Turning a card down asks why (optional); turned-down cards
+  list under *Rejected*, closed until opened, with their reasons and a Reconsider button. Panels and the
+  Meta sections fold and remember it.
+
 ### Fixed
 - Key cards are found each time (ADR 0017), each with why: the deck's combos, cards you or other
   players of the commander file under a combo or win category, and cards costing far above the deck's

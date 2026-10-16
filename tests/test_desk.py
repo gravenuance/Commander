@@ -120,6 +120,16 @@ def test_decisions_and_removal_round_trip(desk: Desk) -> None:
     assert desk.deck(DECK)["cards"] == []
 
 
+def test_a_card_turned_down_keeps_its_reason_for_the_rejected_list(desk: Desk) -> None:
+    desk.propose(DECK, "Arcane Signet")
+    card_id = first_card_id(desk)
+    desk.decide(DECK, card_id, "reject", None, "rejected in design: no rocks")
+    card = items(desk.deck(DECK), "cards")[0]
+    assert (card["status"], card["note"]) == ("rejected", "rejected in design: no rocks")
+    desk.decide(DECK, card_id, "reopen", None, "")
+    assert items(desk.deck(DECK), "cards")[0]["status"] == "open"
+
+
 def test_refusals_come_back_as_errors(desk: Desk) -> None:
     assert desk.propose(DECK, "Rhystic Study") == {"error": "Rhystic Study is outside the deck's colours (R)"}
     assert str(desk.deck(999)["error"]).startswith("deck 999 is not in ")

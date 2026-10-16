@@ -53,12 +53,16 @@
           <section class="panel" aria-labelledby="h-considered">
             <h2 class="panel-title">
               <button id="h-considered" class="panel-toggle" type="button" aria-expanded="true" aria-controls="considered-body">
-                <span class="chevron" aria-hidden="true"></span>Considered <span class="count" id="count-considered"></span>
+                <span class="chevron" aria-hidden="true"></span>Considering <span class="count" id="count-considered"></span>
               </button>
             </h2>
             <div id="considered-body" class="panel-body">
               <div id="list-considered" class="cards" role="list"></div>
-              <p id="empty-considered" class="empty" hidden><span aria-hidden="true">🃏</span> Nothing considered. Propose a card above.</p>
+              <p id="empty-considered" class="empty" hidden><span aria-hidden="true">🃏</span> Nothing to consider. Propose a card above.</p>
+              <details id="rejected" class="rejected" hidden>
+                <summary>Rejected <span class="count" id="count-rejected"></span></summary>
+                <ul id="list-rejected" class="rejected-list"></ul>
+              </details>
             </div>
           </section>
 
