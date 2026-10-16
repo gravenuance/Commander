@@ -19,10 +19,13 @@ from commander.meta import (
     card_key,
     check_card,
     key_pieces,
+    own_combos,
     performing_lists,
 )
+from commander.metacombos import AnswerRole
 from commander.metadata import CommanderEntries, MetaCommander, MetaData, PeerList, PeerLists
 from commander.models import Deck
+from commander.spellbook import ComboDetail, ComboPiece
 from conftest import CHAOS_WARP, LIGHTNING_BOLT, Json, build_card_db
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
@@ -311,3 +314,25 @@ def test_a_spicy_card_in_one_list_off_the_cut_is_left_out(deck: Deck, db: CardDb
     ]
     report = analyse(deck, meta_data(lists), Profile(), db)
     assert [(p.name, p.lists) for p in report.spicy] == [("Jeska's Will", 2)]
+
+
+def test_the_decks_own_combos_list_what_the_meta_commonly_plays_against_them(db: CardDb) -> None:
+    combo = ComboDetail(
+        "1-2",
+        (
+            ComboPiece(MAGDA, "Legendary Creature — Dwarf Berserker", ("C",)),
+            ComboPiece("Battered Golem", "Artifact Creature — Golem", ("B",)),
+        ),
+        (),
+        ("Infinite artifact ETB",),
+        "Activate Battered Golem.\nRepeat.",
+    )
+    [found] = own_combos([combo], field(), db)
+    assert found.pieces == (MAGDA, "Battered Golem")
+    # Most played first; Mind Stone stops nothing; Chaos Warp's small-commander quarter is under the line.
+    assert [(a.card, a.role, a.played_by) for a in found.answers] == [
+        ("Lightning Bolt", AnswerRole.REMOVAL, (("Big Commander", 1.0),)),
+        ("Chaos Warp", AnswerRole.REMOVAL, (("Big Commander", 0.5),)),
+    ]
+    assert found.answers[1].exposure == pytest.approx(0.5 * 0.04 + 0.25 * 0.02)
+    assert own_combos([], field(), db) == ()
