@@ -35,8 +35,9 @@ Option 3.
 - `sync` refreshes it when a login is saved. Without one it reads nothing, and a failed read is reported
   without failing the sync. Each label change from the app or `toget` reads the list first, so a label
   just made on the website is on offer, and refreshes the copy.
-- The label menu offers no label, then the account's labels in the account's order, then Don't Have and
-  Getting if the account lacks them, and last any other label a deck already uses.
+- The label menu offers no label, then the account's labels by name, as Archidekt's label settings list
+  them (the API returns creation order). Don't Have and Getting follow if the account lacks them, and
+  last any other label a deck already uses.
 - Writes use the account's colour for a label's name. A save labels incoming cards Don't Have in that
   colour, with one more signed-in read per save. Archidekt's default colours remain the fallback.
 - The grid shows a card's label in the account's colour when the account has a label of that name.

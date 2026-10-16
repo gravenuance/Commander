@@ -72,10 +72,10 @@ def test_a_label_the_deck_does_not_offer_or_one_already_set_writes_nothing(
 
 # The account's labels as Archidekt lists them (ADR 0012): shared by every deck, in the account's colours.
 ACCOUNT: list[Json] = [
-    {"id": 1, "color": "#0DE9FA", "name": "Considering change"},
-    {"id": 2, "color": "#fa0d11", "name": "Don't Have"},
-    {"id": 3, "color": "#0d9ffa", "name": "Getting"},
     {"id": 4, "color": "#ab12cd", "name": "Proxy"},
+    {"id": 1, "color": "#0DE9FA", "name": "Considering change"},
+    {"id": 3, "color": "#0d9ffa", "name": "Getting"},
+    {"id": 2, "color": "#fa0d11", "name": "Don't Have"},
 ]
 
 

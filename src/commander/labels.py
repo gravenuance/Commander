@@ -61,10 +61,10 @@ def to_get_json(deck: Deck) -> list[dict[str, object]]:
 def label_options(deck: Deck, account: Sequence[tuple[str, str]] | None = None) -> list[tuple[str, str]]:
     """The labels a card in the deck can be given, as (name, colour); "" names no label.
 
-    No label first, then the account's labels in its order, the buying steps if the account lacks them,
-    and last any other label the deck already uses, by name.
+    No label first, then the account's labels by name, as Archidekt's label settings list them, the
+    buying steps if the account lacks them, and last any other label the deck already uses, by name.
     """
-    options = [("", NO_LABEL_COLOUR), *(account or ())]
+    options = [("", NO_LABEL_COLOUR), *sorted(account or (), key=lambda label: label[0].casefold())]
     taken = {name for name, _ in options}
     for name, colour in LABEL_COLOURS.items():
         if name not in taken:
