@@ -86,6 +86,23 @@ ORDER BY instr(name_key, :needle) != 1, edhrec_rank IS NULL, edhrec_rank, name_k
 LIMIT :limit
 """  # noqa: S608 — built from constant fragments; every value is bound
 
+# Cards that can lead a deck: legendary creatures (front face) and cards that say they can be a commander.
+_COMMANDER_SEARCH_QUERY = f"""
+SELECT {_INFO_COLUMNS} FROM oracle
+WHERE commander_legal = 1 AND instr(name_key, :needle) > 0
+    AND (type_line LIKE 'Legendary%Creature%' OR oracle_text LIKE '%can be your commander%')
+ORDER BY instr(name_key, :needle) != 1, edhrec_rank IS NULL, edhrec_rank, name_key
+LIMIT :limit
+"""  # noqa: S608 — built from constant fragments; every value is bound
+
+_TAG_SUGGEST_QUERY = """
+SELECT t.slug, count(m.oracle_id) AS cards FROM tag t LEFT JOIN tag_member m ON m.tag_id = t.tag_id
+WHERE instr(t.slug, :needle) > 0
+GROUP BY t.tag_id
+ORDER BY instr(t.slug, :needle) != 1, cards DESC, t.slug
+LIMIT :limit
+"""
+
 _SCHEMA = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE oracle (
@@ -392,6 +409,14 @@ class CardDb:
         params = {"needle": needle, "identity": identity, "limit": max(1, min(limit, MAX_NAME_MATCHES))}
         return self._infos(self._query_named(_NAME_SEARCH_QUERY, params))
 
+    def search_commanders(self, text: str, *, limit: int = MAX_NAME_MATCHES) -> list[CardInfo]:
+        """Legal commanders whose name holds text: names starting with it first, then by play."""
+        needle = text.strip().casefold()
+        if not needle:
+            return []
+        params = {"needle": needle, "limit": max(1, min(limit, MAX_NAME_MATCHES))}
+        return self._infos(self._query_named(_COMMANDER_SEARCH_QUERY, params))
+
     def theme_candidates(
         self, theme: Theme, identity: str, *, exclude: Collection[str], max_cents: int | None = None
     ) -> Iterator[CardInfo]:
@@ -465,6 +490,15 @@ class CardDb:
             slug: int(self._query(_TAG_COUNT_QUERY, [tag_id])[0][0])
             for slug, tag_id in self.tag_ids(slugs).items()
         }
+
+    def suggest_tags(self, text: str, *, limit: int = MAX_TAG_MATCHES) -> list[TagCount]:
+        """Tags whose slug holds text, quick enough to run on each keystroke: slugs starting with it
+        first, then by the cards tagged directly (sub-tags not counted, unlike find_tags)."""
+        needle = text.strip().casefold()
+        if not needle:
+            return []
+        rows = self._query_named(_TAG_SUGGEST_QUERY, {"needle": needle, "limit": max(1, limit)})
+        return [TagCount(slug, int(cards)) for slug, cards in rows]
 
     def find_tags(self, text: str) -> list[TagCount]:
         """Tags whose slug contains text, most cards first, at most MAX_TAG_MATCHES."""

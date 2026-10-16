@@ -766,3 +766,20 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .zoom-close:hover, .zoom-close:focus-visible { background: #ffffff; color: #000000; }
 
 .deck-name { display: flex; align-items: center; gap: var(--space-3); }
+
+/* Settings */
+.settings { width: min(560px, 92vw); }
+.setting { margin-top: var(--space-4); }
+.setting h3 { margin: 0 0 var(--space-1); font-size: var(--text-m); }
+.setting p { margin: 0 0 var(--space-2); }
+.setting-chips { list-style: none; margin: 0 0 var(--space-2); padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.setting-chip { display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--text-s); padding: 2px 4px 2px 8px; }
+.chip-remove, .chip-pair { border: none; background: transparent; color: var(--muted); cursor: pointer; font: inherit; padding: 0 4px; border-radius: 3px; }
+.chip-remove { font-size: 1rem; line-height: 1; }
+.chip-remove:hover, .chip-pair:hover, .chip-pair[aria-pressed="true"] { background: var(--accent-soft); color: inherit; }
+.setting-input input { width: 100%; }
+.setting-offers { margin-top: var(--space-3); }
+.setting-offers ul { list-style: none; margin: 0; padding: 0; }
+.deck-chip.offer { cursor: pointer; font: inherit; font-size: var(--text-s); color: inherit; }
+.deck-chip.offer:hover { background: var(--accent-soft); }
+

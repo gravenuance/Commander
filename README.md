@@ -300,6 +300,10 @@ the rest; `cmdr board --help` lists them.
 grouped by card type with counts and EUR totals. S, M and L above the grid set the card size. Click a
 card to see it large (× or Esc closes it). Export, next to the commander's name, copies the saved deck
 in TopDeck.gg's decklist format (`~~Commanders~~`, then `~~Mainboard~~`, one `1 Name` a line).
+Settings, beside it, edits two lists in the deck's `profile.toml` with autocomplete: the commanders
+that play alike (`[ideas] commanders`; "+ partner" on one makes a pair) and the themes to ignore
+(`[themes] ignore`: the deck's tags, categories and leanings are one click away, and any Tagger tag
+can be typed). Your comments and everything else in the file stay as they are.
 
 - **Considering**, on the right, lists every idea for the deck: yours, Claude's, the meta's and the
   tools'. Hover over an idea or click it to light the deck cards it could replace. Click one of them to

@@ -265,6 +265,15 @@ def test_find_tags_counts_cards_with_sub_tags_most_first(card_db_file: Path) -> 
     assert found == [TagCount("ramp", 7), TagCount("combat-ramp", 1)]
 
 
+def test_suggested_tags_put_slugs_starting_with_the_text_first(card_db_file: Path) -> None:
+    with CardDb(card_db_file) as db:
+        found = db.suggest_tags(" Ramp ")
+        assert db.suggest_tags("") == []
+        assert db.suggest_tags("ramp", limit=1) == found[:1]
+    assert [t.slug for t in found] == ["ramp", "combat-ramp"]
+    assert found[1] == TagCount("combat-ramp", 1)
+
+
 def test_theme_candidates_are_ranked_nonland_cards_in_identity(card_db_file: Path) -> None:
     with CardDb(card_db_file) as db:
         names = [c.name for c in db.theme_candidates(Theme(tag_ids=(RAMP_TAG,)), "R", exclude={MAGDA_ORACLE})]

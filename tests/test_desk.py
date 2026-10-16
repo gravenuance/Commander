@@ -130,6 +130,19 @@ def test_a_card_turned_down_keeps_its_reason_for_the_rejected_list(desk: Desk) -
     assert items(desk.deck(DECK), "cards")[0]["status"] == "open"
 
 
+def test_settings_offer_commanders_and_tags_and_save_to_the_profile(desk: Desk) -> None:
+    assert cast("list[str]", desk.find_commanders("tempes")["names"]) == ["Tempestra, Dame of Games"]
+    # Arcane Signet is no commander.
+    assert desk.find_commanders("arcane")["names"] == []
+    assert desk.find_tags("r")["tags"] == []
+    saved = desk.save_settings(DECK, [["Tempestra, Dame of Games"]], ["Stax"])
+    assert (saved["adjacent"], saved["ignore"]) == ([["Tempestra, Dame of Games"]], ["Stax"])
+    assert desk.settings(DECK)["adjacent"] == [["Tempestra, Dame of Games"]]
+    refused = desk.save_settings(DECK, [["Arcane Signet"]], [])
+    assert refused == {"error": "'Arcane Signet' is not a commander the card data knows"}
+    assert desk.settings(DECK)["adjacent"] == [["Tempestra, Dame of Games"]]
+
+
 def test_export_copies_the_saved_deck_for_topdeck(desk: Desk) -> None:
     exported = desk.export(DECK)
     text = cast("str", exported["text"])

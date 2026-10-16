@@ -40,7 +40,8 @@ from commander.config import ConfigError, MetaSettings
 from commander.credentials import CredentialError, TokenStore
 from commander.deckexport import topdeck_text
 from commander.deckgrid import GridGroup, deck_grid, image_url
-from commander.deckprofile import Profile, read_profile
+from commander.deckprofile import MAX_ADJACENT, Profile, read_profile
+from commander.deckthemes import merge_themes
 from commander.edhtop16 import REQUEST_INTERVAL_SECONDS, SLOW_QUERY_SECONDS, Edhtop16Client, Edhtop16Error
 from commander.ideas import compile_ideas
 from commander.labels import LabelError, Step, label_options, mark, set_label, to_get_json
@@ -50,6 +51,7 @@ from commander.metadata import CEDH_BRACKET, MetaData, MetaSources, cache_stamp,
 from commander.metapanel import combo_rows, key_card_rows, stopper_rows, untouched
 from commander.models import Deck
 from commander.net import Fetcher, NetworkError, Pacer
+from commander.profileedit import save_settings
 from commander.spellbook import META_REQUEST_INTERVAL_SECONDS, SpellbookClient
 from commander.store import StoredDeck, Workspace, WorkspaceError
 from commander.suggest import deck_identity
@@ -74,6 +76,9 @@ _EXPECTED = (
     OSError,
 )
 _DECISIONS = {"add": Status.ADD, "reject": Status.REJECTED, "reopen": Status.OPEN}
+# The settings pane's autocomplete: names offered at once, and the letters before tags are searched.
+MAX_SUGGESTIONS = 12
+MIN_TAG_SEARCH = 2
 
 type Json = dict[str, object]
 
@@ -232,6 +237,52 @@ class Desk:
             "after": marked.after,
             "toGet": to_get_json(marked.deck),
         }
+
+    @_guarded
+    def settings(self, deck_id: int) -> Json:
+        """The profile's adjacent commanders and ignored themes, with the deck's own themes to pick from."""
+        stored = self._stored(deck_id)
+        profile = read_profile(stored.folder)
+        with self._db() as db:
+            derived = merge_themes(stored.deck, Profile(), db).derived
+            main = db.resolve(stored.deck.main_cards)
+            leanings = self._deck_rules(stored, main, profile, db).leanings
+        return {
+            "adjacent": [list(group) for group in profile.adjacent],
+            "ignore": list(profile.ignore_themes),
+            "themes": [{"name": t.name, "kind": t.source.value} for t in derived.themes],
+            "leanings": [leaning.tag for leaning in leanings],
+            "maxAdjacent": MAX_ADJACENT,
+        }
+
+    @_guarded
+    def find_commanders(self, text: str) -> Json:
+        """Commanders whose name holds text, for the adjacent commanders' autocomplete."""
+        with self._db() as db:
+            found = db.search_commanders(text, limit=MAX_SUGGESTIONS)
+        return {"names": [info.name for info in found]}
+
+    @_guarded
+    def find_tags(self, text: str) -> Json:
+        """Tagger tags whose slug holds text, most cards first, for the ignored themes' autocomplete."""
+        if len(text.strip()) < MIN_TAG_SEARCH:
+            return {"tags": []}
+        with self._db() as db:
+            found = db.suggest_tags(text, limit=MAX_SUGGESTIONS)
+        return {"tags": [{"name": tag.slug, "cards": tag.cards} for tag in found]}
+
+    @_guarded
+    def save_settings(self, deck_id: int, adjacent: list[list[str]], ignore: list[str]) -> Json:
+        """Write the adjacent commanders and ignored themes into profile.toml, keeping its comments."""
+        stored = self._stored(deck_id)
+        with self._db() as db:
+            for group in adjacent:
+                for name in group:
+                    found = {info.name.casefold() for info in db.search_commanders(name)}
+                    if name.strip().casefold() not in found:
+                        return {"error": f"{name!r} is not a commander the card data knows"}
+        save_settings(stored.folder, stored.deck, adjacent=adjacent, ignore=ignore)
+        return self.settings(deck_id)
 
     @_guarded
     def export(self, deck_id: int) -> Json:

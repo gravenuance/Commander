@@ -43,6 +43,9 @@
   for the combos and key cards it stops. Key cards show as chips that say why on hover. Shorter headers:
   Key cards, What stops you, Meta combos.
 
+- App: Settings for each deck edits the profile's commanders that play alike and themes to ignore, with
+  autocomplete for commanders, the deck's own themes and leanings, and Tagger tags. The file keeps its
+  comments (new dependency: tomlkit 0.15.1).
 - App: larger grid cards by default, with S/M/L sizes; clicking a card shows it large (× or Esc
   closes it); a clicked idea in Considering can replace any deck card, not only the suggested ones;
   Export copies the saved deck in TopDeck.gg's decklist format.

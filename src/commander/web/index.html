@@ -29,6 +29,7 @@
         <div class="deck-name">
           <h1 id="deck-short" class="deck-short"></h1>
           <button id="export" class="button small" type="button" title="Copy the saved decklist for TopDeck.gg">Export</button>
+          <button id="settings" class="button small" type="button" title="Commanders that play alike, themes to ignore">Settings</button>
         </div>
         <p class="deck-sub">
           <a id="deck-link" class="deck-title" href="#" target="_blank" rel="noopener" title="Open on Archidekt"></a>
@@ -113,6 +114,37 @@
 <dialog id="zoom" class="zoom" aria-label="Card">
   <button id="zoom-close" class="zoom-close" type="button" aria-label="Close">×</button>
   <img id="zoom-image" alt="">
+</dialog>
+
+<dialog id="settings-dialog" class="dialog settings" aria-labelledby="settings-title">
+  <h2 id="settings-title">Settings for <span id="settings-deck"></span></h2>
+  <section class="setting" aria-labelledby="settings-adjacent-title">
+    <h3 id="settings-adjacent-title">Commanders that play alike</h3>
+    <p class="muted small">Their recent Archidekt decks give ideas on each sync. For a partner pair, add one
+      and click its “+ partner”.</p>
+    <ul id="settings-adjacent" class="setting-chips" aria-label="Commanders that play alike"></ul>
+    <div class="propose setting-input" role="combobox" aria-haspopup="listbox" aria-owns="settings-adjacent-results" aria-expanded="false">
+      <input id="settings-adjacent-input" type="search" placeholder="Add a commander" aria-label="Add a commander"
+             aria-autocomplete="list" aria-controls="settings-adjacent-results" autocomplete="off" spellcheck="false">
+      <ul id="settings-adjacent-results" class="results" role="listbox" aria-label="Matching commanders" hidden></ul>
+    </div>
+  </section>
+  <section class="setting" aria-labelledby="settings-ignore-title">
+    <h3 id="settings-ignore-title">Themes to ignore</h3>
+    <p class="muted small">Deck tags, categories, leanings or any Scryfall Tagger tag that should not steer
+      ideas or cuts.</p>
+    <ul id="settings-ignore" class="setting-chips" aria-label="Themes to ignore"></ul>
+    <div class="propose setting-input" role="combobox" aria-haspopup="listbox" aria-owns="settings-ignore-results" aria-expanded="false">
+      <input id="settings-ignore-input" type="search" placeholder="Add a theme or tag" aria-label="Add a theme or tag"
+             aria-autocomplete="list" aria-controls="settings-ignore-results" autocomplete="off" spellcheck="false">
+      <ul id="settings-ignore-results" class="results" role="listbox" aria-label="Matching themes and tags" hidden></ul>
+    </div>
+    <div id="settings-offers" class="setting-offers"></div>
+  </section>
+  <div class="dialog-actions">
+    <button id="settings-cancel" class="button" type="button">Cancel</button>
+    <button id="settings-save" class="button primary" type="button">Save</button>
+  </div>
 </dialog>
 
 <dialog id="review-dialog" class="dialog" aria-labelledby="review-title">
