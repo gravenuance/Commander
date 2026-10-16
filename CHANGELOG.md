@@ -31,14 +31,21 @@
   up to 10 per source, only cards with something to replace. EDHREC is never asked. The app's badge
   shows where an idea came from. `sync --no-ideas` skips it; `--json` lists the new ideas per deck.
 
+- Ideas from commanders that play alike (ADR 0015): a profile's `[ideas] commanders` names other
+  commanders, or partner pairs, whose recent Archidekt decks at the deck's bracket `sync` pools; cards
+  half the pool plays become up to 10 "adjacent decks" ideas. `cmdr profile` lists them.
+
 ### Fixed
 - Combo answers read locks more closely (ADR 0013): Grafdigger's Cage stops casting from graveyards and
   libraries only, not from exile; Deafening Silence and Ranger-Captain of Eos no longer stop a loop that
   casts only creatures; and a lock that holds only during its owner's turn (Grand Abolisher) answers no
   combo. These apply to the meta combos' answers from your deck too.
 - Desktop app: the "Thin data" and status badges no longer float at the bottom of the window.
+- Ideas compiled by `sync`, `meta --to-board` and Refresh meta follow the deck's profile: its exclusions,
+  bracket ceiling and price cap (Pantlaza got Ephemerate though its profile excludes flicker).
 
 ### Changed
+- Commander short names skip a leading "The" and keep the first word: "Gitrog", "Tevesh".
 - Desktop app: the Suggested and Decided lists are gone (suggestions join Considered; decided cards
   leave the app), the activity column folds to a rail, and ideas from `suggest` no longer all offer the
   same generic cuts.

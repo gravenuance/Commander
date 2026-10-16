@@ -211,10 +211,14 @@ cards = ["Skullclamp"]
 [keep]                       # never offered as cuts
 cards = []
 categories = ["Stax"]        # every card under this Archidekt category
+
+[ideas]                      # commanders that play like this one: `sync` learns from their decks too
+commanders = ["The Gitrog Monster", ["Tevesh Szat, Doom of Fools", "Kodama of the East Tree"]]
 ```
 
-Every key is optional. `cmdr profile <deck>` shows the profile as `suggest` reads it and warns about tags
-Tagger doesn't have. Flags still win over the profile: `--max-price` and `--within-bracket` override
+Every key is optional. `[exclude]`, `bracket_ceiling` and `max_card_eur` apply to the ideas `sync`
+compiles as well as to `suggest`. `cmdr profile <deck>` shows the profile as `suggest` reads it and warns
+about tags Tagger doesn't have. Flags still win over the profile: `--max-price` and `--within-bracket` override
 `max_card_eur` and `bracket_ceiling`. Tagger tags are community-maintained, so a tag can be renamed or
 removed; `cmdr profile` is the place to notice. See [ADR 0005](docs/adr/0005-deck-profiles.md).
 
@@ -266,6 +270,11 @@ asked. Answers are cached for a day with `meta`'s, so the first sync of the day 
 the rest are quick. If every source for a deck fails, its board stays as it was and the sync still
 succeeds. `sync --no-ideas` skips this step.
 
+A deck that plays unlike most decks of its commander can learn from commanders that play like it: list
+them under `[ideas] commanders` in its profile, with a partner pair as its own list. Their recent
+Archidekt decks at the deck's bracket form one pool, and cards at least half the pool plays become up to
+10 "adjacent decks" ideas ([ADR 0015](docs/adr/0015-ideas-from-commanders-that-play-alike.md)).
+
 Every change lands in the deck's activity log with who made it (you, Claude, cmdr or Archidekt).
 `cmdr board log` shows every deck's log, oldest first; `--since` keeps what is newer. The log is how
 Claude catches up on what you decided in the app. `cmdr board show`, `research`, `remove` and `plan` cover
@@ -281,7 +290,7 @@ grouped by card type with counts and EUR totals.
   queue the swap, or × to turn the idea down. The targets are the cards you or Claude picked, or else the
   weakest cards in the same role ([ADR 0011](docs/adr/0011-app-deck-grid-and-replacement-targets.md)).
   An idea with nothing to replace stays on the board but does not show. Each idea's badge says who
-  added it, or for a compiled idea where it came from ("meta", "archidekt decks").
+  added it, or for a compiled idea where it came from ("meta", "archidekt decks", "adjacent decks").
 - **Labels**: the flag in a grid card's top-left corner sets its Archidekt label. Every deck offers your
   account's labels in their colours, read on each signed-in `sync` and before each label change
   ([ADR 0012](docs/adr/0012-card-labels-from-the-archidekt-account.md)). A change is written to
