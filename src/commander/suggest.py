@@ -224,6 +224,10 @@ class _Picker:
         labelled = [(label, self.db.matching(theme, ids)) for label, theme in self.options.theme_labels]
         if theme_first:
             window.sort(key=lambda info: info.oracle_id not in themed)
+        else:
+            # By popularity alone, staples of a broad theme (Tokens) crowd out the deck's own (Dinosaurs);
+            # a card that fits more of the deck's themes comes first, the most played first among equals.
+            window.sort(key=lambda info: -len({label for label, held in labelled if info.oracle_id in held}))
         ideas: list[RoleIdea] = []
         for info in window:
             if info.oracle_id in banned or name_keys(info.name) & self.options.exclude_names:

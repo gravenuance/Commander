@@ -404,6 +404,16 @@ def test_a_theme_name_shows_once_though_a_deck_tag_and_a_category_share_it(deck:
     assert {i.fits for i in result.themed} == {("Stax",)}
 
 
+def test_themed_ideas_that_fit_more_themes_come_first(deck: Deck, db: CardDb) -> None:
+    # Sorceries fit both themes, instants one; within each, the most played first (Chaos Warp, then Bolt).
+    labels = (("Spells", Theme(types=("Instant", "Sorcery"))), ("Sorceries", Theme(types=("Sorcery",))))
+    options = replace(OPTIONS, themes=Theme(types=("Instant", "Sorcery")), theme_labels=labels)
+    names = [(i.info.name, len(i.fits)) for i in run(deck, db, options=options).themed]
+    assert [n for _, n in names] == sorted((n for _, n in names), reverse=True)
+    assert names[0][1] == 2
+    assert [name for name, n in names if n == 1][:2] == ["Chaos Warp", "Lightning Bolt"]
+
+
 def test_themed_ideas_obey_the_ceiling_and_the_exclusions(deck: Deck, db: CardDb) -> None:
     sorceries = Theme(types=("Sorcery",))
     capped = run(replace(deck, bracket=2), db, options=replace(OPTIONS, themes=sorceries, ceiling=2))
