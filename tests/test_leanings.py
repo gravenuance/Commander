@@ -148,3 +148,13 @@ def test_the_profiles_themes_are_named_by_their_words(db: CardDb) -> None:
     rules = with_ideas(rules, [idea], db)
     assert rules.themes[idea.oracle_id] == frozenset({"reanimate"})
     assert rules.shares is None
+
+
+def test_a_profile_word_a_deck_tag_names_too_is_one_theme_under_the_deck_tag(db: CardDb) -> None:
+    cards = deck_cards(1, 50)
+    deck = Deck(1, "test", "me", 3, "2026-10-16", tuple(cards), tags=("Reanimate",))
+    # extra-combat is the profile's own, so its words still become themes, but reanimate is the deck tag's.
+    profile = Profile(themes=ThemeSpec(tags=("reanimate", "extra-combat")))
+    rules = deck_cut_rules(deck, resolved(db, cards), profile, db, None)
+    idea = db.cards_named(["Filler Card 21"])["filler card 21"]
+    assert with_ideas(rules, [idea], db).themes[idea.oracle_id] == frozenset({"Reanimate"})

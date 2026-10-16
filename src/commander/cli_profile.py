@@ -134,6 +134,9 @@ def derived_lines(merged: MergedThemes) -> list[str]:
     lines += [f"  {name} (deck tag): matches no type, keyword or Tagger tag" for name in derived.unmatched]
     lines += [f"  {name} (deck tag): how the deck plays, not a theme" for name in derived.broad]
     lines += [f"  {name} (category): its cards share nothing distinctive" for name in derived.vague]
+    if not merged.profile_covered.empty:
+        # Ideas are labelled by the deck tag, not "profile" as well.
+        lines.append(f"  profile themes these already name: {_spec_text(merged.profile_covered)}")
     return ["from Archidekt:", *lines] if lines else ["from Archidekt: no deck tags or theme categories"]
 
 
@@ -152,6 +155,7 @@ def derived_json(merged: MergedThemes) -> dict[str, object]:
             for t in merged.derived.themes
         ],
         "unmatchedDeckTags": list(merged.derived.unmatched),
+        "profileCovered": _spec_json(merged.profile_covered),
         "broadTags": list(merged.derived.broad),
         "vagueCategories": list(merged.derived.vague),
         "unknownIgnores": list(merged.unknown_ignores),

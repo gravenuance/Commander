@@ -137,7 +137,9 @@ shown with a warning; with none, the estimate shows as unavailable and `bracket`
 
 - **Cards that fit the deck's themes:** cards the deck lacks that match its themes, those fitting the
   most themes first, then the most played. Each says which themes it fits: `Grand Abolisher (fits
-  profile, Hatebears, Stax)`, where profile means the profile's own themes.
+  profile, Hatebears, Stax)`, where profile means the profile's own themes. A theme counts once: profile
+  words a deck tag already names go under the deck tag, and deck tags meaning the same share a label
+  (`Power Matters/Stompy`).
 - **Cards to consider cutting:** nonland cards that fill none of the roles and are in no combo, least
   played first, with cards matching the deck's themes last. These are only candidates: a theme card often
   fills no role on paper.

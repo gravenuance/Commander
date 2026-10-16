@@ -96,6 +96,17 @@ def test_profile_shows_the_derived_themes_it_leaves_out(
     assert "'ramp'" not in err
 
 
+def test_profile_names_its_themes_a_deck_tag_already_names(
+    tmp_path: Path, raw_deck: Json, own_cache: Path
+) -> None:
+    synced(tmp_path, raw_deck)
+    dwarves = PROFILE.replace('types = ["Instant"]', 'types = ["Instant", "Dwarf"]')
+    (deck_folder(tmp_path) / PROFILE_FILE).write_text(dwarves, encoding="utf-8")
+    lines = profile(["magda"], tmp_path, own_cache)[1].splitlines()
+    # The fixture deck's Dwarves deck tag names Dwarf; Instant is the profile's own.
+    assert "  profile themes these already name: types Dwarf" in lines
+
+
 def test_profile_json(tmp_path: Path, raw_deck: Json, own_cache: Path) -> None:
     synced(tmp_path, raw_deck)
     (deck_folder(tmp_path) / PROFILE_FILE).write_text(PROFILE, encoding="utf-8")

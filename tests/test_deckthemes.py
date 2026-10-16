@@ -223,11 +223,30 @@ def test_the_profiles_themes_come_first_then_the_derived_ones(db: CardDb, deck: 
     # Dwarf is named once, though both the profile and the Dwarves deck tag name it.
     assert merged.resolved.themes == Theme(types=("Dwarf", "Vehicle"), tag_ids=(RAMP_ID, TYPAL_DWARF_ID))
     assert [t.name for t in merged.used] == ["Dwarves", "Vehicles"]
+    # In the labels, the profile keeps only what no deck tag names: Dwarves already says Dwarf.
     assert merged.resolved.labelled == (
-        ("profile", Theme(types=("Dwarf",), tag_ids=(RAMP_ID,))),
+        ("profile", Theme(tag_ids=(RAMP_ID,))),
         ("Dwarves", Theme(types=("Dwarf",), tag_ids=(TYPAL_DWARF_ID,))),
         ("Vehicles", Theme(types=("Vehicle",))),
     )
+    assert (merged.profile_own, merged.profile_covered) == (
+        ThemeSpec(tags=("ramp",)),
+        ThemeSpec(types=("Dwarf",)),
+    )
+
+
+def test_a_profile_wholly_named_by_deck_tags_has_no_label(db: CardDb, deck: Deck) -> None:
+    merged = merge_themes(deck, Profile(themes=ThemeSpec(types=("dwarf", "Vehicle"))), db)
+    assert [name for name, _ in merged.resolved.labelled] == ["Dwarves", "Vehicles"]
+    # The ranking still counts the profile's words: they are in the merged theme either way.
+    assert merged.resolved.themes.types == ("dwarf", "Vehicle")
+
+
+def test_deck_tags_meaning_the_same_share_one_label(db: CardDb, deck: Deck) -> None:
+    merged = merge_themes(replace(deck, tags=("Dwarves", "Vehicles", "Dwarf")), Profile(), db)
+    assert [name for name, _ in merged.resolved.labelled] == ["Dwarves/Dwarf", "Vehicles"]
+    # Each still shows on its own where the deck's themes are listed.
+    assert [t.name for t in merged.used] == ["Dwarves", "Vehicles", "Dwarf"]
 
 
 def test_the_profile_ignores_derived_themes_by_name(db: CardDb, deck: Deck) -> None:

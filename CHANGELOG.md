@@ -63,6 +63,10 @@
   chip under the deck's name and badges the causing cards in the grid. Spellbook answers are fetched once
   more (cache version 3).
 
+- A theme counts once in idea labels and ranking: profile themes a deck tag already names go under the
+  deck tag, and deck tags meaning the same share a label ("Power Matters/Stompy"). `cmdr profile` lists the
+  profile themes the deck tags already name.
+
 ### Fixed
 - A board wipe clears creatures (ADR 0020): sweepers that remove only artifacts, enchantments, lands or
   other noncreature permanents (Vandalblast, Bane of Progress, Armageddon) no longer count as board

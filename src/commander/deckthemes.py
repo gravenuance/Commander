@@ -169,6 +169,9 @@ class MergedThemes:
     used: tuple[DerivedTheme, ...]
     # Names in the profile's ignore list that are no deck tag or category the deck has.
     unknown_ignores: tuple[str, ...]
+    # The profile's themes split by whether a derived theme in use names them too; labels show only its own.
+    profile_own: ThemeSpec
+    profile_covered: ThemeSpec
 
 
 def merge_themes(deck: Deck, profile: Profile, db: CardDb) -> MergedThemes:
@@ -189,14 +192,33 @@ def merge_themes(deck: Deck, profile: Profile, db: CardDb) -> MergedThemes:
     known = {name.strip().casefold() for name in (*(deck.tags or ()), *_categories(deck))}
     resolved = resolve_themes(replace(profile, themes=merged), db)
     ids = db.tag_ids(merged.tags)
-    named = [(PROFILE_THEME, profile.themes), *((theme.name, theme.spec) for theme in used)]
+    named_by_used = ThemeSpec(
+        types=_once(t for spec in specs[1:] for t in spec.types),
+        keywords=_once(k for spec in specs[1:] for k in spec.keywords),
+        tags=_once(t for spec in specs[1:] for t in spec.tags),
+    )
+    own = _without(profile.themes, named_by_used)
+    covered = _without(profile.themes, own)
+    named = [(PROFILE_THEME, own), *_same_meaning_once(used)]
     labelled = tuple((name, resolve_spec(spec, ids)) for name, spec in named)
     return MergedThemes(
         replace(resolved, labelled=tuple((name, theme) for name, theme in labelled if not theme.empty)),
         derived,
         tuple(used),
         tuple(name for name in profile.ignore_themes if name.strip().casefold() not in known),
+        own,
+        covered,
     )
+
+
+def _same_meaning_once(themes: Sequence[DerivedTheme]) -> list[tuple[str, ThemeSpec]]:
+    """One label per meaning: deck tags Power Matters and Stompy, both power-matters, become one."""
+    groups: dict[tuple[frozenset[str], ...], tuple[list[str], ThemeSpec]] = {}
+    for theme in themes:
+        spec = theme.spec
+        key = tuple(frozenset(v.casefold() for v in part) for part in (spec.types, spec.keywords, spec.tags))
+        groups.setdefault(key, ([], theme.spec))[0].append(theme.name)
+    return [("/".join(names), spec) for names, spec in groups.values()]
 
 
 def derive_themes(deck: Deck, db: CardDb, rules: CoverRules = CoverRules()) -> DeckThemes:  # noqa: B008 — frozen, so one shared default is safe

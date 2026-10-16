@@ -8,7 +8,7 @@ from commander.analysis import ANALYZED_ROLES
 from commander.answers import card_key
 from commander.board import Actor, BoardCard
 from commander.carddb import CardDb, CardInfo, ResolvedCard, Role, Theme
-from commander.deckprofile import PROFILE_THEME, Profile
+from commander.deckprofile import PROFILE_THEME, Profile, ThemeSpec
 from commander.deckthemes import merge_themes
 from commander.leanings import Leaning, find_leanings
 from commander.meta import card_shares, peer_shares
@@ -75,12 +75,13 @@ def deck_cut_rules(
     ignored = {name.strip().casefold() for name in profile.ignore_themes}
     leanings = find_leanings(main, peers, db, ignore=ignored)
     tag_ids = db.tag_ids([*profile.themes.tags, *(leaning.tag for leaning in leanings)])
+    merged = merge_themes(deck, profile, db)
     matchers = (
         *(
             Matcher(theme_name, theme)
-            for name, labelled in merge_themes(deck, profile, db).resolved.labelled
+            for name, labelled in merged.resolved.labelled
             for theme_name, theme in (
-                _by_word(profile, tag_ids) if name == PROFILE_THEME else [(name, labelled)]
+                _by_word(merged.profile_own, tag_ids) if name == PROFILE_THEME else [(name, labelled)]
             )
         ),
         *(
@@ -146,9 +147,8 @@ def role_targets(info: CardInfo, main: Sequence[ResolvedCard], rules: CutRules) 
     )
 
 
-def _by_word(profile: Profile, tag_ids: Mapping[str, str]) -> list[tuple[str, Theme]]:
-    """The profile's themes one word at a time, each named by itself."""
-    spec = profile.themes
+def _by_word(spec: ThemeSpec, tag_ids: Mapping[str, str]) -> list[tuple[str, Theme]]:
+    """The profile's own themes one word at a time, each named by itself."""
     return [
         *((word, Theme(types=(word,))) for word in spec.types),
         *((keyword, Theme(keywords=(keyword,))) for keyword in spec.keywords),
