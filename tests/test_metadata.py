@@ -1,3 +1,4 @@
+import json
 import os
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -137,6 +138,10 @@ def test_gathers_the_commander_lists_the_meta_and_archidekt_decks(rig: Rig) -> N
         (7432856, 1782),
     ]
     assert "Magda, Brazen Outlaw" in peers.decks[0].cards
+    # Counts above one are kept, so a deck's basic lands can be counted (ADR 0019).
+    multiples = peers.decks[0].multiples
+    assert multiples
+    assert all(count > 1 for _, count in multiples)
     assert peers.skipped == 0
     assert {data.lists.source, data.field.source, data.peers.source} == {AnswerSource.FETCHED}
 
@@ -156,6 +161,19 @@ def test_a_second_run_the_same_day_reads_the_cache(rig: Rig) -> None:
     assert min(p.name for p in (rig.cache / CACHE_FOLDER).iterdir()).startswith(
         "archidekt-ellivere-of-the-wild-court-5-"
     )
+
+
+def test_peer_caches_from_before_counts_and_categories_still_read(rig: Rig) -> None:
+    rig.gather()
+    path = min((rig.cache / CACHE_FOLDER).glob("archidekt-*"))
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    for deck in raw["answer"]["decks"]:
+        del deck["multiples"], deck["planned"]
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    peers = rig.gather().peers.data
+    assert peers is not None
+    # Without counts the land count can't be read, which differs from a deck with no basic land twice.
+    assert {(p.multiples, p.planned) for p in peers.decks} == {(None, ())}
 
 
 def test_refresh_fetches_again(rig: Rig) -> None:
