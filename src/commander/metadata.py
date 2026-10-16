@@ -19,11 +19,15 @@ from datetime import UTC, date, datetime, timedelta
 from functools import partial
 from pathlib import Path
 
-from commander.archidekt import ArchidektError, ArchidektSearch, PeerDeck
+import httpx
+
+from commander.archidekt import SEARCH_INTERVAL_SECONDS, ArchidektError, ArchidektSearch, PeerDeck
 from commander.background import in_background
 from commander.config import MetaSettings
 from commander.deckcache import Answer, AnswerSource, Clock, DeckCache, cache_item, cached_answer
 from commander.edhtop16 import (
+    REQUEST_INTERVAL_SECONDS,
+    SLOW_QUERY_SECONDS,
     CommanderStats,
     DecklistCard,
     Edhtop16Client,
@@ -48,9 +52,16 @@ from commander.jsonshape import (
     str_list,
 )
 from commander.models import Deck, plan_category
-from commander.net import NetworkError, Pacer
+from commander.net import Fetcher, NetworkError, Pacer
 from commander.spellbook import FRESH_FOR as SPELLBOOK_FRESH_FOR
-from commander.spellbook import ComboDetail, ComboPiece, SpellbookClient, SpellbookError, deck_request
+from commander.spellbook import (
+    META_REQUEST_INTERVAL_SECONDS,
+    ComboDetail,
+    ComboPiece,
+    SpellbookClient,
+    SpellbookError,
+    deck_request,
+)
 
 log = logging.getLogger(__name__)
 
@@ -136,6 +147,20 @@ class MetaSources:
     # The Archidekt user whose own decks never count as other players' lists.
     user: str
     settings: MetaSettings
+
+
+def meta_sources(
+    http: httpx.Client, pacer_factory: Callable[[float], Pacer], user: str, settings: MetaSettings
+) -> MetaSources:
+    """EDHTop16, Archidekt search and Spellbook clients over one HTTP client, each at its own pace."""
+    return MetaSources(
+        Edhtop16Client(Fetcher(http, slow_after=SLOW_QUERY_SECONDS), pacer_factory(REQUEST_INTERVAL_SECONDS)),
+        ArchidektSearch(Fetcher(http), pacer_factory(SEARCH_INTERVAL_SECONDS)),
+        SpellbookClient(Fetcher(http)),
+        pacer_factory(META_REQUEST_INTERVAL_SECONDS),
+        user,
+        settings,
+    )
 
 
 def cache_stamp(cache_root: Path) -> str:

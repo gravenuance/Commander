@@ -8,14 +8,13 @@ from typing import TextIO
 
 import httpx
 
-from commander.archidekt import SEARCH_INTERVAL_SECONDS, ArchidektSearch
 from commander.carddb import CardDb
 from commander.cli_output import progress_printer
 from commander.clibase import EXIT_FAILURE, EXIT_OK, Context, UsageError, one_deck, open_card_db, workspace
 from commander.config import MetaSettings, cache_dir, config_path, read_config, resolve_user
 from commander.deckcache import AnswerSource
 from commander.deckprofile import read_profile
-from commander.edhtop16 import REQUEST_INTERVAL_SECONDS, SLOW_QUERY_SECONDS, Edhtop16Client, commander_url
+from commander.edhtop16 import commander_url
 from commander.ideas import compile_ideas, ideas_summary
 from commander.meta import (
     Basis,
@@ -28,10 +27,9 @@ from commander.meta import (
 )
 from commander.metacombos import AnswerRole, ComboAnswer
 from commander.metadata import CEDH_BRACKET, MetaData, MetaSources, gather
+from commander.metadata import meta_sources as shared_meta_sources
 from commander.models import short_commander_name
-from commander.net import Fetcher
 from commander.playstyle import Fit
-from commander.spellbook import META_REQUEST_INTERVAL_SECONDS, SpellbookClient
 from commander.store import StoredDeck, Workspace
 
 META_CREDIT = (
@@ -118,16 +116,7 @@ def _cmd_meta(args: argparse.Namespace, ctx: Context) -> int:
 
 def meta_sources(http: httpx.Client, ctx: Context, user: str, settings: MetaSettings) -> MetaSources:
     """EDHTop16, Archidekt search and Spellbook clients over one HTTP client, each at its own pace."""
-    return MetaSources(
-        Edhtop16Client(
-            Fetcher(http, slow_after=SLOW_QUERY_SECONDS), ctx.pacer_factory(REQUEST_INTERVAL_SECONDS)
-        ),
-        ArchidektSearch(Fetcher(http), ctx.pacer_factory(SEARCH_INTERVAL_SECONDS)),
-        SpellbookClient(Fetcher(http)),
-        ctx.pacer_factory(META_REQUEST_INTERVAL_SECONDS),
-        user,
-        settings,
-    )
+    return shared_meta_sources(http, ctx.pacer_factory, user, settings)
 
 
 def _print_results(

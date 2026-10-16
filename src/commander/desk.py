@@ -17,7 +17,7 @@ import httpx
 
 from commander.answers import card_key
 from commander.apply import NotYourDeckError, Resolution, SaveError
-from commander.archidekt import SEARCH_INTERVAL_SECONDS, ArchidektError, ArchidektSearch
+from commander.archidekt import ArchidektError
 from commander.archidekt_edit import ArchidektAuth, ArchidektEditor, AuthError
 from commander.board import (
     Actor,
@@ -45,18 +45,25 @@ from commander.deckexport import topdeck_text
 from commander.deckgrid import GridGroup, deck_grid, image_url
 from commander.deckprofile import MAX_ADJACENT, Profile, read_profile
 from commander.deckthemes import merge_themes
-from commander.edhtop16 import REQUEST_INTERVAL_SECONDS, SLOW_QUERY_SECONDS, Edhtop16Client, Edhtop16Error
+from commander.edhtop16 import Edhtop16Error
 from commander.ideas import compile_ideas
 from commander.labels import LabelError, Step, label_options, mark, set_label, to_get_json
 from commander.leanings import leaning_json
 from commander.manabase import ALTERNATIVE_COST_TAGS, analyse_mana, mana_json
 from commander.meta import analyse, card_shares, performing_entries
-from commander.metadata import CEDH_BRACKET, MetaData, MetaSources, cache_stamp, gather, gather_for
+from commander.metadata import (
+    CEDH_BRACKET,
+    MetaData,
+    cache_stamp,
+    gather,
+    gather_for,
+    meta_sources,
+)
 from commander.metapanel import combo_rows, key_card_rows, stopper_rows, untouched
 from commander.models import Deck
 from commander.net import Fetcher, NetworkError, Pacer
 from commander.profileedit import save_settings
-from commander.spellbook import META_REQUEST_INTERVAL_SECONDS, SpellbookClient
+from commander.spellbook import SpellbookClient
 from commander.store import StoredDeck, Workspace, WorkspaceError
 from commander.suggest import deck_identity
 from commander.targets import CutRules, Target, deck_cut_rules, targets_for, with_ideas
@@ -492,17 +499,7 @@ class Desk:
 
     def _gather(self, deck: Deck, *, offline: bool, read: Callable[..., MetaData] = gather) -> MetaData:
         with self._client_factory() as http:
-            sources = MetaSources(
-                Edhtop16Client(
-                    Fetcher(http, slow_after=SLOW_QUERY_SECONDS),
-                    self._pacer_factory(REQUEST_INTERVAL_SECONDS),
-                ),
-                ArchidektSearch(Fetcher(http), self._pacer_factory(SEARCH_INTERVAL_SECONDS)),
-                SpellbookClient(Fetcher(http)),
-                self._pacer_factory(META_REQUEST_INTERVAL_SECONDS),
-                self._settings.user or "",
-                self._settings.meta,
-            )
+            sources = meta_sources(http, self._pacer_factory, self._settings.user or "", self._settings.meta)
             return read(
                 deck, sources, self._settings.cache, now=self._now, refresh=not offline, offline=offline
             )

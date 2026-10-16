@@ -6,11 +6,8 @@ import json
 import logging
 import sys
 from collections.abc import Callable, Mapping, Sequence
-from concurrent.futures import Future
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import ROUND_FLOOR, Decimal, InvalidOperation
-from enum import Enum
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
@@ -23,19 +20,17 @@ from commander.apply import (
     SaveResult,
     apply_plan,
 )
-from commander.archidekt import ArchidektClient, ArchidektError
+from commander.archidekt import ArchidektError
 from commander.archidekt_edit import ArchidektAuth, ArchidektEditor, AuthError
-from commander.background import in_background
-from commander.board import BoardCard, BoardError, BoardService, Origin, feed_suggestions, read_board
-from commander.boardsave import pick_up_aside
+from commander.board import BoardError, BoardService, feed_suggestions, read_board
 from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
 from commander.bracket import BracketReport, EstimateResult, bracket_cards, estimate_cache, estimate_decks
 from commander.bracketcheck import check_json
-from commander.carddb import CARD_DB_FILE, CardDataError, CardDb, Role
+from commander.carddb import CardDataError, Role
 from commander.cli_app import add_app_command
 from commander.cli_board import add_board_commands
 from commander.cli_cards import add_card_commands
-from commander.cli_meta import add_meta_command, meta_sources
+from commander.cli_meta import add_meta_command
 from commander.cli_output import (
     price_text,
     print_apply_outcome,
@@ -68,7 +63,6 @@ from commander.config import (
     ENV_USER,
     ENV_WORKSPACE,
     ConfigError,
-    MetaSettings,
     cache_dir,
     config_path,
     environment,
@@ -79,19 +73,18 @@ from commander.config import (
 )
 from commander.credentials import CredentialError, KeyringTokenStore, TokenStore
 from commander.deckcache import Answer, AnswerSource
-from commander.deckprofile import ProfileError, read_profile
+from commander.deckprofile import read_profile
 from commander.deckthemes import merge_themes
 from commander.diff import DeckDiff
 from commander.edhtop16 import Edhtop16Error
-from commander.ideas import compile_ideas, ideas_summary
+from commander.ideas import ideas_summary
 from commander.labels import LabelError
-from commander.metadata import Progress, gather_adjacent, gather_for
 from commander.models import Deck
 from commander.net import Fetcher, NetworkError, Pacer, make_client
 from commander.plan import EXAMPLE as PLAN_EXAMPLE
 from commander.plan import PlanError, read_plan
 from commander.pricing import DeckPrice, PriceSource, format_eur, price_deck
-from commander.scryfall import CardRefresh, RefreshStatus, ScryfallClient, ScryfallError, refresh_card_db
+from commander.scryfall import ScryfallError
 from commander.spellbook import BracketTag, Combo, SpellbookClient, SpellbookError, TwoCard, Variant
 from commander.store import Workspace, WorkspaceError
 from commander.suggest import CACHE_FOLDER as COMBOS_CACHE_FOLDER
@@ -106,7 +99,8 @@ from commander.suggest import (
     options_for,
     suggest,
 )
-from commander.sync import SyncResult, SyncStatus, sync_decks
+from commander.sync import SyncResult, SyncStatus
+from commander.syncrun import SyncOptions, SyncServices, run_sync
 
 DEFAULT_TOP = 15
 MAX_PASSWORD_BYTES = 1024
@@ -233,19 +227,6 @@ def main(  # noqa: PLR0911 — one exit code per failure class, mapped in one pl
     except KeyboardInterrupt:
         print("cmdr: interrupted", file=err)
         return EXIT_INTERRUPTED
-
-
-class _CardState(Enum):
-    SKIPPED = "skipped"
-    CURRENT = "current"
-    UPDATED = "updated"
-    FAILED = "failed"
-
-
-@dataclass(slots=True, frozen=True)
-class _CardStatus:
-    state: _CardState
-    detail: str
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -415,144 +396,44 @@ def _cmd_sync(args: argparse.Namespace, ctx: Context) -> int:
     file = read_config(config_path(args.config, ctx.env))
     user = resolve_user(args.user, ctx.env, file)
     workspace = Workspace(resolve_workspace(args.workspace, ctx.env, file))
-    progress = progress_printer(ctx.err)
-    with ctx.client_factory() as http:
-        fetcher = Fetcher(http)
-        # The card download is independent of the decks, so it runs while they sync.
-        cards_job: Future[CardRefresh] | None = None
-        if not args.dry_run and not args.no_cards:
-            scryfall, folder = ScryfallClient(fetcher), cache_dir(ctx.env)
-            cards_job = in_background(
-                lambda: refresh_card_db(
-                    scryfall, folder, now=ctx.now, force=args.force, on_progress=progress
-                ),
-                name="card-data",
-            )
-        results = sync_decks(
-            ArchidektClient(fetcher),
-            workspace,
-            user,
-            force=args.force,
-            dry_run=args.dry_run,
-            on_progress=progress,
-        )
-        labels = None if args.dry_run else _sync_labels(fetcher, workspace, user, ctx)
-        cards = _card_status(cards_job, dry_run=args.dry_run)
-    picked = {} if args.dry_run else _pick_up_aside(workspace, ctx)
-    ideas = {} if args.dry_run or args.no_ideas else _compile_ideas(workspace, user, file.meta, ctx, progress)
+    services = SyncServices(
+        ctx.client_factory, ctx.token_store, cache_dir(ctx.env), ctx.now, ctx.pacer_factory
+    )
+    options = SyncOptions(
+        force=args.force, dry_run=args.dry_run, cards=not args.no_cards, ideas=not args.no_ideas
+    )
+    outcome = run_sync(services, workspace, user, file.meta, options, on_progress=progress_printer(ctx.err))
+    for warning in outcome.warnings:
+        print(f"cmdr: {warning}", file=ctx.err)
     if args.json:
         document = {
-            "decks": [_result_json(r) for r in results],
-            "cardData": {"status": cards.state.value, "detail": cards.detail},
-            "labels": None if labels is None else [{"name": n, "colour": c} for n, c in labels],
+            "decks": [_result_json(r) for r in outcome.results],
+            "cardData": {"status": outcome.cards.state.value, "detail": outcome.cards.detail},
+            "labels": None
+            if outcome.labels is None
+            else [{"name": n, "colour": c} for n, c in outcome.labels],
             "ideas": {
                 short: {origin.value: [card.name for card in cards] for origin, cards in added.items()}
-                for short, added in ideas.items()
+                for short, added in outcome.ideas.items()
             },
         }
         json.dump(document, ctx.out, ensure_ascii=False, indent=2)
         ctx.out.write("\n")
     else:
-        _print_sync_report(results, ctx.out, dry_run=args.dry_run)
-        print(f"card data: {cards.state.value}, {cards.detail}", file=ctx.out)
-        if labels is not None:
-            print(
-                f"card labels: {', '.join(n for n, _ in labels) or 'none'} (from your Archidekt account)",
-                file=ctx.out,
-            )
-        for short, names in picked.items():
+        _print_sync_report(outcome.results, ctx.out, dry_run=args.dry_run)
+        print(f"card data: {outcome.cards.state.value}, {outcome.cards.detail}", file=ctx.out)
+        if outcome.labels is not None:
+            names = ", ".join(n for n, _ in outcome.labels) or "none"
+            print(f"card labels: {names} (from your Archidekt account)", file=ctx.out)
+        for short, names in outcome.picked.items():
             print(
                 f"{short} board: considering {', '.join(names)} (from the Sideboard or Maybeboard)",
                 file=ctx.out,
             )
-        for short, added in ideas.items():
+        for short, added in outcome.ideas.items():
             if any(added.values()):
                 print(f"{short} ideas: {ideas_summary(added)}", file=ctx.out)
-    failed = any(r.status is SyncStatus.FAILED for r in results) or cards.state is _CardState.FAILED
-    return EXIT_FAILURE if failed else EXIT_OK
-
-
-def _compile_ideas(
-    workspace: Workspace, user: str, settings: MetaSettings, ctx: Context, progress: Progress
-) -> dict[str, dict[Origin, list[BoardCard]]]:
-    """Each deck's new ideas from the meta and recent Archidekt decks (ADR 0014), by short name.
-
-    Answers under a day old come from the cache. A deck whose sources fail keeps its board as it was.
-    """
-    try:
-        db = CardDb(cache_dir(ctx.env) / CARD_DB_FILE)
-    except CardDataError as error:
-        print(f"cmdr: ideas not compiled: {error}", file=ctx.err)
-        return {}
-    found: dict[str, dict[Origin, list[BoardCard]]] = {}
-    with db, ctx.client_factory() as http:
-        sources = meta_sources(http, ctx, user, settings)
-        for stored in workspace.load_all():
-            deck = stored.deck
-            if not deck.commanders:
-                continue
-            try:
-                data = gather_for(
-                    deck, sources, cache_dir(ctx.env), now=ctx.now, refresh=False, on_progress=progress
-                )
-                groups = read_profile(stored.folder).adjacent
-                adjacent = gather_adjacent(
-                    deck,
-                    groups,
-                    sources,
-                    cache_dir(ctx.env),
-                    now=ctx.now,
-                    refresh=False,
-                    on_progress=progress,
-                )
-                for name, why in adjacent.errors:
-                    print(
-                        f"cmdr: {deck.short_name}: no recent {name} decks to learn from ({why})", file=ctx.err
-                    )
-                found[deck.short_name] = compile_ideas(stored, data, db, now=ctx.now, adjacent=adjacent.decks)
-            except (BoardError, ProfileError) as error:
-                print(f"cmdr: {deck.short_name} ideas not compiled: {error}", file=ctx.err)
-                continue
-            if data.lists.data is None and data.peers.data is None:
-                why = data.peers.error or data.lists.error
-                print(
-                    f"cmdr: {deck.short_name}: no meta or Archidekt decks to learn from ({why})", file=ctx.err
-                )
-    return found
-
-
-def _pick_up_aside(workspace: Workspace, ctx: Context) -> dict[str, list[str]]:
-    """Each deck's Sideboard and Maybeboard cards new to its board, put there as considered."""
-    try:
-        db = CardDb(cache_dir(ctx.env) / CARD_DB_FILE)
-    except CardDataError as error:
-        print(f"cmdr: boards not updated from the Sideboards and Maybeboards: {error}", file=ctx.err)
-        return {}
-    picked: dict[str, list[str]] = {}
-    with db:
-        for stored in workspace.load_all():
-            try:
-                added = pick_up_aside(stored, db, now=ctx.now)
-            except BoardError as error:
-                print(f"cmdr: {stored.deck.short_name} board not updated: {error}", file=ctx.err)
-                continue
-            if added:
-                picked[stored.deck.short_name] = [card.name for card in added]
-    return picked
-
-
-def _card_status(job: Future[CardRefresh] | None, *, dry_run: bool) -> _CardStatus:
-    if job is None:
-        return _CardStatus(_CardState.SKIPPED, "dry run" if dry_run else "--no-cards")
-    try:
-        refresh = job.result()
-    except (NetworkError, ScryfallError, CardDataError, OSError) as error:
-        logging.getLogger(__name__).info("card data refresh failed: %s", error)
-        return _CardStatus(_CardState.FAILED, f"{error}; the previous card data is kept")
-    source = f"Scryfall data of {day(refresh.meta.cards_updated_at)}"
-    if refresh.status is RefreshStatus.CURRENT:
-        return _CardStatus(_CardState.CURRENT, source)
-    return _CardStatus(_CardState.UPDATED, f"{source}, {refresh.printings or 0:,} printings")
+    return EXIT_FAILURE if outcome.failed else EXIT_OK
 
 
 def _cmd_analyze(args: argparse.Namespace, ctx: Context) -> int:
@@ -760,22 +641,6 @@ def _plan_deck(query: str, args: argparse.Namespace, ctx: Context) -> tuple[int,
         return int(query), Workspace(resolve_workspace(args.workspace, ctx.env, file))
     except ConfigError:
         return int(query), None
-
-
-def _sync_labels(
-    fetcher: Fetcher, workspace: Workspace, user: str, ctx: Context
-) -> list[tuple[str, str]] | None:
-    """Keep the account's card labels for the app (ADR 0012); None when not signed in or the read fails."""
-    auth = ArchidektAuth(fetcher, ctx.token_store)
-    if not auth.has_login(user):
-        return None
-    try:
-        labels = ArchidektEditor(fetcher, auth.access_token(user)).account_labels()
-    except (AuthError, CredentialError, NetworkError, ArchidektError) as error:
-        print(f"cmdr: card labels not refreshed: {error}", file=ctx.err)
-        return None
-    workspace.save_account_labels(labels)
-    return labels
 
 
 def _access_token(auth: ArchidektAuth, user: str, args: argparse.Namespace, ctx: Context) -> str | None:
