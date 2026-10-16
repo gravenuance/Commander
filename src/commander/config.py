@@ -8,6 +8,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
+import tomlkit
+from tomlkit.exceptions import ParseError
+from tomlkit.items import Table
+
 from commander.analysis import ANALYZED_ROLES
 from commander.carddb import Role
 from commander.fsutil import write_text_atomic
@@ -60,6 +64,8 @@ class FileConfig:
     # How many cards of a role a deck should have, overriding suggest's defaults.
     targets: Mapping[Role, int] = field(default_factory=dict[Role, int])
     meta: MetaSettings = field(default_factory=MetaSettings)
+    # Each account's deck folder, by casefolded username, so switching accounts switches folders.
+    workspaces: Mapping[str, Path] = field(default_factory=dict[str, Path])
 
 
 def default_config_path(env: Mapping[str, str]) -> Path:
@@ -92,7 +98,10 @@ def read_config(path: Path) -> FileConfig:
         return FileConfig(None, None)
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
         raise ConfigError(f"cannot read config {path}: {error}") from error
-    raw = _migrate(raw, path)
+    return _parse(_migrate(raw, path), path)
+
+
+def _parse(raw: Mapping[str, object], path: Path) -> FileConfig:
     user = raw.get("user")
     workspace = raw.get("workspace")
     if user is not None and not isinstance(user, str):
@@ -101,7 +110,100 @@ def read_config(path: Path) -> FileConfig:
         raise ConfigError(f"{path}: 'workspace' must be a string")
     targets = parse_targets(raw.get("targets"), str(path))
     meta = parse_meta(raw.get("meta"), str(path))
-    return FileConfig(user, Path(workspace) if workspace else None, targets, meta)
+    workspaces = _parse_workspaces(raw.get("workspaces"), path)
+    return FileConfig(user, Path(workspace) if workspace else None, targets, meta, workspaces)
+
+
+def _parse_workspaces(table: object, path: Path) -> dict[str, Path]:
+    if table is None:
+        return {}
+    if not isinstance(table, dict):
+        raise ConfigError(f"{path}: 'workspaces' must be a table of usernames and deck folders")
+    folders: dict[str, Path] = {}
+    for user, folder in cast("dict[str, object]", table).items():
+        validate_user(user)
+        if not isinstance(folder, str) or not folder:
+            raise ConfigError(f"{path}: workspaces.{user} must be a deck folder")
+        folders[user.casefold()] = Path(folder)
+    return folders
+
+
+def switch_account(path: Path, user: str, *, documents: Path) -> Path:
+    """Make user the config's account and return its deck folder, keeping the rest of the file as it is.
+
+    The account signed in so far keeps its folder under [workspaces]. An account seen before gets its
+    folder back; a new one gets a sibling of the current folder named decks-<user>, or one under
+    documents/Commander when there is none.
+    """
+    validate_user(user)
+    doc = _edit(path)
+    folders = _workspaces_table(doc)
+    current = _remember_current(doc, folders)
+    known = _text(cast("dict[str, object]", folders.unwrap()), user.casefold())
+    if known:
+        folder = Path(known)
+    elif current:
+        folder = Path(current).parent / f"decks-{user}"
+    else:
+        folder = documents / "Commander" / f"decks-{user}"
+    doc["user"] = user
+    doc["workspace"] = str(folder)
+    folders[user.casefold()] = str(folder)
+    _save(path, doc)
+    return folder
+
+
+def forget_account(path: Path) -> None:
+    """Sign the config out: no account until the next sign-in, every account's folder still remembered."""
+    doc = _edit(path)
+    _remember_current(doc, _workspaces_table(doc))
+    if "user" in doc:
+        del doc["user"]
+    _save(path, doc)
+
+
+def _remember_current(doc: tomlkit.TOMLDocument, folders: Table) -> str | None:
+    """Keep the signed-in account's deck folder under [workspaces]; returns that folder."""
+    plain = cast("dict[str, object]", doc.unwrap())
+    user, current = _text(plain, "user"), _text(plain, "workspace")
+    if user and current:
+        folders[user.casefold()] = current
+    return current
+
+
+def _text(table: Mapping[str, object], key: str) -> str | None:
+    value = table.get(key)
+    return value if isinstance(value, str) and value else None
+
+
+def _edit(path: Path) -> tomlkit.TOMLDocument:
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except FileNotFoundError:
+        text = f"version = {CONFIG_VERSION}\n"
+    except OSError as error:
+        raise ConfigError(f"cannot read config {path}: {error}") from error
+    try:
+        return tomlkit.parse(text)
+    except ParseError as error:
+        raise ConfigError(f"cannot read config {path}: {error}") from error
+
+
+def _workspaces_table(doc: tomlkit.TOMLDocument) -> Table:
+    if "workspaces" not in doc:
+        doc.add(tomlkit.nl())
+        doc.add("workspaces", tomlkit.table())
+    table = doc["workspaces"]
+    if not isinstance(table, Table):
+        raise ConfigError("the config's 'workspaces' must be a table of usernames and deck folders")
+    return table
+
+
+def _save(path: Path, doc: tomlkit.TOMLDocument) -> None:
+    # Checked as read_config would read it, so a bad value never reaches the file.
+    _parse(_migrate(cast("dict[str, object]", doc.unwrap()), path), path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_text_atomic(path, tomlkit.dumps(doc))
 
 
 def write_config(path: Path, user: str, workspace: Path) -> None:

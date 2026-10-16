@@ -8,9 +8,11 @@ from commander.config import (
     FileConfig,
     MetaSettings,
     config_path,
+    forget_account,
     read_config,
     resolve_user,
     resolve_workspace,
+    switch_account,
     write_config,
 )
 
@@ -144,4 +146,69 @@ def test_bad_meta_settings_are_refused(tmp_path: Path, body: str, message: str) 
     path = tmp_path / "config.toml"
     path.write_text(f"version = 1\n{body}\n", encoding="utf-8")
     with pytest.raises(ConfigError, match=message):
+        read_config(path)
+
+
+OWNER = """\
+version = 1
+user = "MAKKIS"
+workspace = "D:/Projects/Commander/decks"
+
+# Wider window for the meta
+[meta]
+window_days = 90
+"""
+
+
+def test_a_new_account_gets_a_sibling_folder_and_the_rest_of_the_file_stays(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(OWNER, encoding="utf-8")
+    folder = switch_account(path, "Friend", documents=tmp_path / "docs")
+    assert folder == Path("D:/Projects/Commander/decks-Friend")
+    config = read_config(path)
+    assert (config.user, config.workspace) == ("Friend", folder)
+    assert config.workspaces == {"makkis": Path("D:/Projects/Commander/decks"), "friend": folder}
+    text = path.read_text(encoding="utf-8")
+    assert "# Wider window for the meta" in text
+    assert config.meta.window_days == 90
+
+
+def test_switching_back_gives_an_account_its_own_folder_again(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(OWNER, encoding="utf-8")
+    switch_account(path, "Friend", documents=tmp_path / "docs")
+    # Usernames compare without case, as Archidekt's do.
+    assert switch_account(path, "makkis", documents=tmp_path / "docs") == Path("D:/Projects/Commander/decks")
+    assert read_config(path).user == "makkis"
+
+
+def test_the_first_account_without_a_config_gets_a_folder_in_documents(tmp_path: Path) -> None:
+    path = tmp_path / "Commander" / "config.toml"
+    folder = switch_account(path, "Friend", documents=tmp_path / "docs")
+    assert folder == tmp_path / "docs" / "Commander" / "decks-Friend"
+    assert read_config(path).workspace == folder
+
+
+def test_signing_out_forgets_the_account_but_not_its_folder(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(OWNER, encoding="utf-8")
+    forget_account(path)
+    config = read_config(path)
+    assert config.user is None
+    assert config.workspaces == {"makkis": Path("D:/Projects/Commander/decks")}
+    assert switch_account(path, "MAKKIS", documents=tmp_path) == Path("D:/Projects/Commander/decks")
+
+
+def test_an_invalid_username_leaves_the_config_alone(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(OWNER, encoding="utf-8")
+    with pytest.raises(ConfigError, match="invalid Archidekt username"):
+        switch_account(path, "no spaces", documents=tmp_path)
+    assert path.read_text(encoding="utf-8") == OWNER
+
+
+def test_a_bad_workspaces_table_is_refused(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(OWNER + "[workspaces]\nfriend = 3\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match=r"workspaces.friend must be a deck folder"):
         read_config(path)
