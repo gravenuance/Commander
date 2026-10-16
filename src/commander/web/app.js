@@ -478,6 +478,7 @@ function renderMeta(deck, report) {
       el("span", {}, document.createTextNode(c.name), c.kept ? el("span", { class: "badge status", text: "Kept" }) : null),
     ])),
     metaThreats(report),
+    metaCombos(report),
     metaTable("Top commanders", ["Entries", "Top cuts", "Conversion", "Commander"], report.field.map((f) => [
       String(f.entries), String(f.topCuts), pct(f.conversion), f.commander,
     ])),
@@ -497,6 +498,35 @@ function metaThreats(report) {
     t.hits.length === report.keyPieces.length ? "every key piece" : t.hits.join(", "),
   ]);
   return metaTable("Meta answers to your key pieces", ["Share", "Card", "Kind", "Hits"], rows);
+}
+
+const ANSWER_ROLES = [["stax", "Stax"], ["removal", "Removal"], ["counter", "Counter"]];
+const ANSWERS_SHOWN = 6;
+
+function metaCombos(report) {
+  const total = report.field.reduce((sum, f) => sum + f.metaShare, 0);
+  const rows = report.combos.map((c) => [
+    total ? pct(c.exposure / total) : "",
+    el("div", {},
+      el("a", { href: c.url, target: "_blank", rel: "noopener", text: c.pieces.join(" + "), title: "Open on Commander Spellbook" }),
+      el("div", { class: "muted", text: c.results.slice(0, 2).join("; ") }),
+      c.requirements.length ? el("div", { class: "muted", text: `Also needs: ${c.requirements.join("; ")}` }) : null),
+    c.playedBy.slice(0, 3).map((p) => `${p.short} ${pct(p.share)}`).join(", "),
+    comboAnswers(c.answers),
+  ]);
+  return metaTable("Meta combos", ["Share", "Combo", "Played by", "Your answers"], rows);
+}
+
+function comboAnswers(answers) {
+  if (!answers.length) return el("span", { class: "badge status rejected", text: "No answer" });
+  // Stax answers say how they stop the combo; removal and counters only need the card.
+  const lines = ANSWER_ROLES.map(([role, label]) => {
+    const names = answers.filter((a) => a.role === role).map((a) => (role === "stax" ? `${a.card} (${a.how})` : a.card));
+    if (!names.length) return null;
+    const shown = names.length > ANSWERS_SHOWN ? `${names.slice(0, ANSWERS_SHOWN).join(", ")} and ${names.length - ANSWERS_SHOWN} more` : names.join(", ");
+    return el("div", { title: names.join(", ") }, el("strong", { text: `${label}: ` }), document.createTextNode(shown));
+  });
+  return el("div", {}, ...lines);
 }
 
 function metaTable(title, headings, rows) {

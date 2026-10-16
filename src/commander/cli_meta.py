@@ -410,7 +410,10 @@ def report_json(report: MetaReport) -> dict[str, object]:
                 "requirements": list(c.requirements),
                 "results": list(c.results),
                 "exposure": round(c.exposure, 5),
-                "playedBy": [{"commander": n, "share": round(s, 4)} for n, s in c.played_by],
+                "playedBy": [
+                    {"commander": n, "short": short_commander_name(n), "share": round(s, 4)}
+                    for n, s in c.played_by
+                ],
                 "answers": [{"card": a.card, "how": a.how, "role": a.role.value} for a in c.answers],
             }
             for c in report.combos

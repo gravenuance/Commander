@@ -195,6 +195,18 @@ def test_json_carries_the_report_and_card_checks(home: Path, fake: FakeArchidekt
     assert data["cards"][0]["readWith"] == 5
 
 
+def test_json_combos_carry_short_commander_names_and_answer_roles(home: Path, fake: FakeArchidekt) -> None:
+    result = meta(home, fake, "magda", "--json")
+    assert result.code == 0, result.err
+    [combo] = json.loads(result.out)["reports"][0]["combos"]
+    assert combo["pieces"] == ["Kinnan, Bonder Prodigy", "Basalt Monolith"]
+    assert combo["results"] == ["Infinite colorless mana"]
+    assert combo["playedBy"] == [{"commander": "Kinnan, Bonder Prodigy", "short": "Kinnan", "share": 0.5}]
+    assert combo["answers"] == [
+        {"card": "Disruptor Flute", "how": "stops activated abilities", "role": "stax"}
+    ]
+
+
 def test_to_board_suggests_the_missing_staples_once(home: Path, fake: FakeArchidekt) -> None:
     first = meta(home, fake, "magda", "--to-board")
     assert first.code == 0, first.err

@@ -3,7 +3,7 @@ from dataclasses import replace
 import pytest
 
 from commander.archidekt import parse_deck
-from commander.models import Deck
+from commander.models import Deck, short_commander_name
 from conftest import Json
 
 
@@ -35,3 +35,17 @@ def test_short_name_is_the_commanders_first_name(deck: Deck, commanders: tuple[s
 def test_a_deck_without_a_commander_goes_by_its_name(deck: Deck) -> None:
     no_commander = replace(deck, cards=tuple(c for c in deck.cards if "Commander" not in c.categories))
     assert no_commander.short_name == deck.name
+
+
+@pytest.mark.parametrize(
+    ("name", "short"),
+    [
+        ("Magda, Brazen Outlaw", "Magda"),
+        ("Ellivere of the Wild Court", "Ellivere"),
+        ("Kraum, Ludevic's Opus / Tymna the Weaver", "Kraum/Tymna"),
+        ("Esika, God of the Tree // The Prismatic Bridge", "Esika"),
+        ("Glarb", "Glarb"),
+    ],
+)
+def test_commanders_go_by_the_name_players_use(name: str, short: str) -> None:
+    assert short_commander_name(name) == short
