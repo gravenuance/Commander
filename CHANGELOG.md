@@ -58,6 +58,14 @@
   Meta sections fold and remember it.
 
 ### Fixed
+- A board wipe clears creatures (ADR 0020): sweepers that remove only artifacts, enchantments, lands or
+  other noncreature permanents (Vandalblast, Bane of Progress, Armageddon) no longer count as board
+  wipes, unless their text deals with "each creature" (Wildfire). The card database is rebuilt on the next
+  `sync` (schema 7).
+
+- Ignoring a leaning tag no longer brings up the wider tag it had absorbed, such as gives-evasion when
+  gives-flying is ignored.
+
 - Key cards are found each time (ADR 0017), each with why: the deck's combos, cards you or other
   players of the commander file under a combo or win category, and cards costing far above the deck's
   curve, beside the commander and `[keep]`. `[key_cards] ignore` in the profile leaves one out. Peer deck

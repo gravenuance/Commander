@@ -10,20 +10,27 @@ from commander.carddb import (
     FACE_SEPARATOR,
     SCHEMA_VERSION,
     CardDataError,
+    CardDataMeta,
     CardDb,
     Role,
     TagCount,
+    TextGate,
     Theme,
     read_meta,
+    write_card_db,
 )
+from commander.scryfall import read_cards
 from conftest import (
     ARCANE_SIGNET,
     CARDS_UPDATED_AT,
+    CHAOS_WARP,
     LIGHTNING_BOLT,
     MAGDA_ORACLE,
     Json,
     build_card_db,
+    card_lines,
     filler_card,
+    write_bulk,
 )
 
 MAGDA_PLST = "338380ba-8415-40a2-8b81-2b30218ea16a"
@@ -94,6 +101,19 @@ def test_roles_missing_from_the_tag_file_are_unavailable(card_db_file: Path) -> 
     with CardDb(card_db_file) as db:
         assert Role.MASS_LAND_DENIAL not in db.available_roles
         assert Role.TUTOR in db.available_roles
+
+
+def test_a_gated_card_joins_its_role_only_when_its_text_holds_the_phrase(tmp_path: Path) -> None:
+    cards_gz, _ = write_bulk(tmp_path / "bulk", cards=card_lines())
+    path = tmp_path / "cards.sqlite"
+    meta = CardDataMeta(CARDS_UPDATED_AT, "2026-10-15T00:00:00+00:00", "2026-10-15T12:00:00+00:00")
+    # Lightning Bolt deals 3 damage to any target; Chaos Warp says nothing of the kind. Case doesn't matter.
+    gate = TextGate(Role.BOARD_WIPE, frozenset({LIGHTNING_BOLT, CHAOS_WARP}), "Any Target")
+    write_card_db(path, read_cards(cards_gz), {Role.BOARD_WIPE: frozenset()}, meta, gates=(gate,))
+    with CardDb(path) as db:
+        cards = db.cards_named(["Lightning Bolt", "Chaos Warp"])
+    assert cards["lightning bolt"].roles == {Role.BOARD_WIPE}
+    assert cards["chaos warp"].roles == frozenset()
 
 
 def test_modal_land_back_does_not_make_a_land(card_db_file: Path) -> None:

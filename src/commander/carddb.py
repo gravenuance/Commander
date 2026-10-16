@@ -14,7 +14,7 @@ from commander.models import DeckCard
 log = logging.getLogger(__name__)
 
 # Bump whenever the tables or the meaning of a column change; an old file is rebuilt, never migrated.
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 CARD_DB_FILE = "cards.sqlite"
 _QUERY_CHUNK = 500
 _CARD_QUERIES = {
@@ -269,6 +269,15 @@ class Tag:
     slug: str
     child_ids: tuple[str, ...]
     oracle_ids: frozenset[str]
+
+
+@dataclass(slots=True, frozen=True)
+class TextGate:
+    """Cards that hold a role only when their rules text contains phrase (casefolded)."""
+
+    role: Role
+    oracle_ids: frozenset[str]
+    phrase: str
 
 
 @dataclass(slots=True, frozen=True)
@@ -659,13 +668,15 @@ def write_card_db(
     cards: Iterable[ParsedCard],
     role_members: Mapping[Role, frozenset[str]],
     meta: CardDataMeta,
+    *,
     tags: Mapping[str, Tag] | None = None,
+    gates: Sequence[TextGate] = (),
 ) -> int:
     """Build a fresh database next to dest and swap it in; returns the number of printings written."""
     temp = dest.with_name(f".{dest.name}.building")
     temp.unlink(missing_ok=True)
     try:
-        count = _fill(temp, cards, role_members, meta, tags or {})
+        count = _fill(temp, cards, role_members, meta, tags=tags or {}, gates=gates)
         temp.replace(dest)
     except sqlite3.Error as error:
         temp.unlink(missing_ok=True)
@@ -681,7 +692,9 @@ def _fill(
     cards: Iterable[ParsedCard],
     role_members: Mapping[Role, frozenset[str]],
     meta: CardDataMeta,
+    *,
     tags: Mapping[str, Tag],
+    gates: Sequence[TextGate],
 ) -> int:
     # Built whole and swapped in by rename, never edited in place, so the default rollback journal is enough.
     db = sqlite3.connect(path)
@@ -693,6 +706,8 @@ def _fill(
         # Cheapest regular printing first; a card with no priced regular printing falls back to any.
         cheapest: dict[str, int] = {}
         cheapest_any: dict[str, int] = {}
+        gated = {oracle_id for gate in gates for oracle_id in gate.oracle_ids}
+        gated_text: dict[str, str] = {}
         with db:
             for batch in _batches(cards, 5000):
                 db.executemany(
@@ -702,6 +717,8 @@ def _fill(
                 for card in batch:
                     oracle_id = card.printing.oracle_id
                     oracle.setdefault(oracle_id, _oracle_row(card))
+                    if oracle_id in gated:
+                        gated_text.setdefault(oracle_id, card.oracle_text.casefold())
                     mana.setdefault(oracle_id, (oracle_id, card.produced, card.rarity))
                     prices = (card.printing.eur_cents, card.printing.eur_foil_cents)
                     _keep_lowest(cheapest_any, oracle_id, *prices)
@@ -717,7 +734,11 @@ def _fill(
             db.executemany("INSERT INTO card_mana VALUES (?, ?, ?)", mana.values())
             db.executemany(
                 "INSERT INTO role_member VALUES (?, ?)",
-                ((role.value, oracle_id) for role, members in role_members.items() for oracle_id in members),
+                (
+                    (role.value, oracle_id)
+                    for role, members in _ungate(role_members, gates, gated_text).items()
+                    for oracle_id in members
+                ),
             )
             db.executemany("INSERT INTO role_available VALUES (?)", ((role.value,) for role in role_members))
             _insert_tags(db, tags)
@@ -747,6 +768,18 @@ def _printing_rows(batch: list[ParsedCard]) -> Iterator[tuple[object, ...]]:
             p.eur_foil_cents,
             int(p.regular),
         )
+
+
+def _ungate(
+    role_members: Mapping[Role, frozenset[str]], gates: Sequence[TextGate], texts: Mapping[str, str]
+) -> dict[Role, frozenset[str]]:
+    """Each role's members plus its gated cards whose text holds the gate's phrase."""
+    members = dict(role_members)
+    for gate in gates:
+        if gate.role in members:
+            passed = {o for o in gate.oracle_ids if gate.phrase.casefold() in texts.get(o, "")}
+            members[gate.role] = members[gate.role] | passed
+    return members
 
 
 def _oracle_row(card: ParsedCard) -> tuple[object, ...]:

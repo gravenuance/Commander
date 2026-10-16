@@ -15,7 +15,7 @@ import pytest
 
 from commander.carddb import CARD_DB_FILE, CardDataMeta, write_card_db
 from commander.net import HTTP_OK
-from commander.scryfall import read_cards, read_tags, role_members
+from commander.scryfall import read_cards, read_tags, role_gates, role_members
 
 FIXTURES = Path(__file__).parent / "fixtures"
 DECK_ID = 10004639
@@ -183,7 +183,7 @@ def build_card_db(
     path = folder / CARD_DB_FILE
     meta = CardDataMeta(CARDS_UPDATED_AT, TAGS_UPDATED_AT, "2026-10-15T12:00:00+00:00")
     tags = read_tags(tags_gz)
-    write_card_db(path, read_cards(cards_gz), role_members(tags), meta, tags)
+    write_card_db(path, read_cards(cards_gz), role_members(tags), meta, tags=tags, gates=role_gates(tags))
     return path
 
 

@@ -6,7 +6,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from commander.carddb import CARD_DB_FILE, FACE_SEPARATOR, CardDb, Role
+from commander.carddb import CARD_DB_FILE, FACE_SEPARATOR, CardDb, Role, TextGate
 from commander.jsonshape import ShapeError
 from commander.net import Fetcher, NetworkError
 from commander.scryfall import (
@@ -19,6 +19,7 @@ from commander.scryfall import (
     read_cards,
     read_tags,
     refresh_card_db,
+    role_gates,
     role_members,
 )
 from conftest import (
@@ -227,6 +228,47 @@ def test_roles_include_sub_tags_and_leave_out_land_tutors(tmp_path: Path) -> Non
     assert members[Role.BOARD_WIPE] == {FLUTE_ORACLE}
     assert members[Role.DRAW] == frozenset()
     assert members[Role.EXTRA_TURN] == frozenset()
+
+
+def removal_tag(tag_id: str, slug: str, members: list[str], children: tuple[str, ...] = ()) -> str:
+    return json.dumps(
+        {
+            "object": "tag",
+            "id": tag_id,
+            "slug": slug,
+            "type": "oracle",
+            "child_ids": list(children),
+            "taggings": [{"oracle_id": member, "weight": "median"} for member in members],
+        }
+    )
+
+
+# Real Tagger ids; removal-nonland sits under both removal-artifact and removal-creature, as on Tagger.
+REMOVAL_ARTIFACT = "ea1ae714-3500-481b-9bdd-f33c57db8678"
+REMOVAL_CREATURE = "d91e421d-ff87-4aad-a4bf-5aefc51252b6"
+REMOVAL_NONLAND = "89d7c9d3-f820-4b16-8507-75977dba8d39"
+
+
+def test_a_sweeper_removing_only_noncreatures_is_a_board_wipe_only_by_its_text(
+    tmp_path: Path,
+) -> None:
+    # Disruptor Flute is the fixture's one sweeper.
+    artifact_only = removal_tag(REMOVAL_ARTIFACT, "removal-artifact", [FLUTE_ORACLE], (REMOVAL_NONLAND,))
+    _, tags_gz = write_bulk(tmp_path, tags=[*tag_lines(), artifact_only])
+    tags = read_tags(tags_gz)
+    assert role_members(tags)[Role.BOARD_WIPE] == frozenset()
+    assert role_gates(tags) == (TextGate(Role.BOARD_WIPE, frozenset({FLUTE_ORACLE}), "each creature"),)
+
+
+def test_a_sweeper_also_tagged_with_a_tag_reaching_creatures_stays_a_board_wipe(tmp_path: Path) -> None:
+    artifact = removal_tag(REMOVAL_ARTIFACT, "removal-artifact", [FLUTE_ORACLE], (REMOVAL_NONLAND,))
+    creature = removal_tag(REMOVAL_CREATURE, "removal-creature", [], (REMOVAL_NONLAND,))
+    # Nonland is under removal-artifact too, but it reaches creatures, like Culling Ritual.
+    nonland = removal_tag(REMOVAL_NONLAND, "removal-nonland", [FLUTE_ORACLE])
+    _, tags_gz = write_bulk(tmp_path, tags=[*tag_lines(), artifact, creature, nonland])
+    tags = read_tags(tags_gz)
+    assert role_members(tags)[Role.BOARD_WIPE] == {FLUTE_ORACLE}
+    assert role_gates(tags) == (TextGate(Role.BOARD_WIPE, frozenset(), "each creature"),)
 
 
 def test_role_whose_tag_is_gone_is_left_out(tmp_path: Path) -> None:

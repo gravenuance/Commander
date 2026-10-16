@@ -24,6 +24,7 @@ from commander.carddb import (
     Printing,
     Role,
     Tag,
+    TextGate,
     read_meta,
     write_card_db,
 )
@@ -84,6 +85,30 @@ ROLE_TAGS: Mapping[Role, RoleTag] = {
     Role.EXTRA_TURN: RoleTag("extra-turn", "03b17ebf-f5d3-4063-bfd4-1ae156a16a8f"),
     Role.MASS_LAND_DENIAL: RoleTag("mass-land-denial", "cd12a44c-1aee-4ece-b8ea-3eb118ef0230"),
 }
+
+# A board wipe clears creatures. A sweeper whose removal tags name only other permanents (Vandalblast, Back to
+# Nature, Armageddon) is one only if its text says so, like Wildfire's "4 damage to each creature".
+BOARD_WIPE_PHRASE = "each creature"
+# Removal-creature (its sub-tags include nonland and permanent), removal-fight and removal-token.
+_CREATURE_REMOVAL = (
+    "d91e421d-ff87-4aad-a4bf-5aefc51252b6",
+    "c90eca7a-ad86-43d5-902e-05db32614b6c",
+    "026b939b-37d2-466c-8b36-103c0e0869eb",
+)
+# Removal of artifacts, auras, battles, enchantments, equipment, lands, noncreatures, planeswalkers,
+# spacecraft and vehicles. Their sub-tags include nonland, which reaches creatures and so keeps a card in.
+_NONCREATURE_REMOVAL = (
+    "ea1ae714-3500-481b-9bdd-f33c57db8678",
+    "e8aefad7-dea9-4c48-80a2-8a4ef5996dea",
+    "43a67a5e-2053-4c00-8d73-f56751ad6a01",
+    "ecee5d4b-f573-4ec8-b918-ad134873005e",
+    "70a43edc-86e9-4ad9-abf8-7feefee35d5d",
+    "d2a563f5-66f7-442c-91cd-3e8b6c0fc0c5",
+    "3c0ab2a1-034f-4f4d-9bf2-893c52ae32f9",
+    "591fb358-e9d7-490e-8c15-24aecbbe697e",
+    "f79b019e-fdf5-48e0-a3af-bc0e4c8d8c95",
+    "9d6ce7cd-6fb8-4273-b663-d44ec6b16483",
+)
 
 
 class ScryfallError(Exception):
@@ -162,7 +187,9 @@ def refresh_card_db(
         on_progress("building the card database")
         tags = read_tags(tags_gz)
         meta = CardDataMeta(cards_file.updated_at, tags_file.updated_at, now().isoformat())
-        count = write_card_db(db_path, read_cards(cards_gz), role_members(tags), meta, tags)
+        count = write_card_db(
+            db_path, read_cards(cards_gz), role_members(tags), meta, tags=tags, gates=role_gates(tags)
+        )
     finally:
         cards_gz.unlink(missing_ok=True)
         tags_gz.unlink(missing_ok=True)
@@ -268,7 +295,10 @@ def parse_tag(raw: object) -> Tag | None:
 
 
 def role_members(tags: Mapping[str, Tag]) -> dict[Role, frozenset[str]]:
-    """Oracle ids per role, walking each role tag's sub-tags; a role whose tag is gone is left out."""
+    """Oracle ids per role, walking each role tag's sub-tags; a role whose tag is gone is left out.
+
+    Sweepers that remove no creatures are left out of board wipes; `role_gates` lets their text decide.
+    """
     members: dict[Role, frozenset[str]] = {}
     for role, spec in ROLE_TAGS.items():
         if spec.tag_id not in tags:
@@ -276,8 +306,30 @@ def role_members(tags: Mapping[str, Tag]) -> dict[Role, frozenset[str]]:
             continue
         excluded = _subtree(tags, spec.exclude)
         included = _subtree(tags, (spec.tag_id,)) - excluded
-        members[role] = frozenset(oracle_id for tag_id in included for oracle_id in tags[tag_id].oracle_ids)
+        members[role] = _members(tags, included)
+    if Role.BOARD_WIPE in members:
+        members[Role.BOARD_WIPE] -= _noncreature_sweepers(tags, members[Role.BOARD_WIPE])
     return members
+
+
+def role_gates(tags: Mapping[str, Tag]) -> tuple[TextGate, ...]:
+    """The cards role_members leaves out of a role only for their tags, to be judged by their rules text."""
+    board_wipe = ROLE_TAGS[Role.BOARD_WIPE]
+    if board_wipe.tag_id not in tags:
+        return ()
+    sweepers = _members(tags, _subtree(tags, (board_wipe.tag_id,)))
+    return (TextGate(Role.BOARD_WIPE, _noncreature_sweepers(tags, sweepers), BOARD_WIPE_PHRASE),)
+
+
+def _noncreature_sweepers(tags: Mapping[str, Tag], sweepers: frozenset[str]) -> frozenset[str]:
+    """Sweepers tagged as removing only noncreature permanents; untagged ones, like Blasphemous Act, stay."""
+    hits_creatures = _members(tags, _subtree(tags, _CREATURE_REMOVAL))
+    hits_others = _members(tags, _subtree(tags, _NONCREATURE_REMOVAL))
+    return (sweepers & hits_others) - hits_creatures
+
+
+def _members(tags: Mapping[str, Tag], tag_ids: set[str]) -> frozenset[str]:
+    return frozenset(oracle_id for tag_id in tag_ids for oracle_id in tags[tag_id].oracle_ids)
 
 
 def _subtree(tags: Mapping[str, Tag], roots: tuple[str, ...]) -> set[str]:
