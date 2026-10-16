@@ -38,7 +38,7 @@ from commander.config import ConfigError, MetaSettings
 from commander.credentials import CredentialError, TokenStore
 from commander.deckprofile import read_profile
 from commander.edhtop16 import REQUEST_INTERVAL_SECONDS, SLOW_QUERY_SECONDS, Edhtop16Client, Edhtop16Error
-from commander.labels import LabelError, Step, mark, to_get_json
+from commander.labels import LabelError, Step, label_options, mark, set_label, to_get_json
 from commander.meta import analyse, card_shares
 from commander.metadata import MetaData, MetaSources, cache_stamp, gather
 from commander.models import Deck
@@ -188,8 +188,22 @@ class Desk:
             "cards": cards,
             "deckCards": sorted({c.name for c in stored.deck.main_cards if "Commander" not in c.categories}),
             "toGet": to_get_json(stored.deck),
+            "labels": [{"name": name, "colour": colour} for name, colour in label_options(stored.deck)],
             "activity": [activity_json(entry) for entry in reversed(activity)],
         }
+
+    @_guarded
+    def set_label(self, deck_id: int, name: str, label: str) -> Json:
+        """Give one deck card one of the deck's labels ("" for none) on Archidekt at once (ADR 0010)."""
+        stored = self._stored(deck_id)
+        user = self._user()
+        with self._service_and_db(stored) as (service, _), self._client_factory() as http:
+            fetcher = Fetcher(http)
+            editor = ArchidektEditor(fetcher, ArchidektAuth(fetcher, self._token_store).access_token(user))
+            marked = set_label(
+                editor, self._workspace, stored, service, name=name, label=label, actor=Actor.YOU
+            )
+        return {"card": marked.card, "before": marked.before, "after": marked.after}
 
     @_guarded
     def mark(self, deck_id: int, name: str, step: str) -> Json:

@@ -28,6 +28,8 @@ class DeckCard:
     finish: str
     # The card's Archidekt label name ("Proxy", "Getting"), "" for none; None when not kept (old snapshot).
     label: str | None = ""
+    # The label's colour as Archidekt keeps it ("#f445f4"); "" for no label or an unknown colour.
+    label_colour: str = ""
 
     def __post_init__(self) -> None:
         if not self.name:

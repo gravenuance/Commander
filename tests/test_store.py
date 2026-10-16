@@ -96,7 +96,7 @@ def test_snapshot_from_a_newer_version_is_skipped(tmp_path: Path, deck: Deck) ->
 def test_snapshot_keeps_the_deck_tags(tmp_path: Path, deck: Deck) -> None:
     folder = Workspace(tmp_path).save(deck)
     document = json.loads((folder / "deck.json").read_text(encoding="utf-8"))
-    assert document["version"] == 3
+    assert document["version"] == 4
     assert document["tags"] == ["Dwarves", "Vehicles", "cEDH"]
 
 
@@ -114,13 +114,26 @@ def test_a_snapshot_from_before_deck_tags_loads_with_them_unknown(tmp_path: Path
 
 
 def test_snapshot_keeps_the_card_labels(tmp_path: Path, deck: Deck) -> None:
-    labelled = (replace(deck.cards[0], label="Don't Have"), *deck.cards[1:])
+    labelled = (replace(deck.cards[0], label="Proxy", label_colour="#f445f4"), *deck.cards[1:])
     workspace = Workspace(tmp_path)
     workspace.save(replace(deck, cards=labelled))
     loaded = workspace.load(deck.id)
     assert loaded is not None
-    assert [c.label for c in loaded.cards[:2]] == ["Don't Have", ""]
+    assert [(c.label, c.label_colour) for c in loaded.cards[:2]] == [("Proxy", "#f445f4"), ("", "")]
     assert loaded.labels_known
+
+
+def test_a_snapshot_from_before_label_colours_loads_with_labels_unknown(tmp_path: Path, deck: Deck) -> None:
+    workspace = Workspace(tmp_path)
+    folder = workspace.save(deck)
+    document = json.loads((folder / "deck.json").read_text(encoding="utf-8"))
+    document["version"] = 3
+    for card in document["cards"]:
+        del card["labelColour"]
+    (folder / "deck.json").write_text(json.dumps(document), encoding="utf-8")
+    loaded = workspace.load(deck.id)
+    assert loaded is not None
+    assert not loaded.labels_known
 
 
 def test_a_snapshot_from_before_card_labels_loads_with_them_unknown(tmp_path: Path, deck: Deck) -> None:

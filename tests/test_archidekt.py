@@ -63,8 +63,10 @@ def test_parse_deck_keeps_card_identity_fields(raw_deck: Json) -> None:
 def test_parse_deck_reads_each_card_label_by_name(raw_deck: Json) -> None:
     for index, label in enumerate(("Getting,#2ccce4", ",#656565", None)):
         raw_deck["cards"].append({**card_entry(90 + index, f"Card {index}", ["Ramp"]), "label": label})
-    labels = {c.name: c.label for c in parse_deck(raw_deck).cards if c.name.startswith("Card ")}
-    assert labels == {"Card 0": "Getting", "Card 1": "", "Card 2": ""}
+    labels = {
+        c.name: (c.label, c.label_colour) for c in parse_deck(raw_deck).cards if c.name.startswith("Card ")
+    }
+    assert labels == {"Card 0": ("Getting", "#2ccce4"), "Card 1": ("", ""), "Card 2": ("", "")}
     assert parse_deck(raw_deck).labels_known
 
 

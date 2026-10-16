@@ -235,6 +235,7 @@ def _parse_card(entry: Mapping[str, object], where: str, excluded: frozenset[str
     oracle = req_object(card, "oracleCard", f"{where}.card")
     edition = req_object(card, "edition", f"{where}.card")
     categories = str_list(entry, "categories", where)
+    raw_label = opt_str(entry, "label", where)
     return DeckCard(
         name=req_str(oracle, "name", f"{where}.card.oracleCard"),
         quantity=req_int(entry, "quantity", where),
@@ -246,7 +247,8 @@ def _parse_card(entry: Mapping[str, object], where: str, excluded: frozenset[str
         set_code=req_str(edition, "editioncode", f"{where}.card.edition"),
         collector_number=req_str(card, "collectorNumber", f"{where}.card"),
         finish=opt_str(entry, "modifier", where) or "Normal",
-        label=label_name(opt_str(entry, "label", where)),
+        label=label_name(raw_label),
+        label_colour=label_colour(raw_label),
     )
 
 
@@ -255,3 +257,10 @@ def label_name(raw: str | None) -> str:
     if not raw:
         return ""
     return raw.rsplit(",", 1)[0].strip()
+
+
+def label_colour(raw: str | None) -> str:
+    """The colour in Archidekt's "name,#colour" label; "" for a card without a label."""
+    if not raw or not label_name(raw) or "," not in raw:
+        return ""
+    return raw.rsplit(",", 1)[1].strip()

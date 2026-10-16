@@ -30,9 +30,10 @@ from commander.net import Fetcher, HttpStatusError
 log = logging.getLogger(__name__)
 
 # Archidekt's colour label for a card with none, as its own pages send it.
-DEFAULT_LABEL = ",#656565"
+NO_LABEL_COLOUR = "#656565"
+DEFAULT_LABEL = f",{NO_LABEL_COLOUR}"
 # The colours of the labels cmdr writes, from the palette Archidekt offers.
-_LABEL_COLOURS = {DONT_HAVE_LABEL: "#f47373", GETTING_LABEL: "#2ccce4"}
+LABEL_COLOURS = {DONT_HAVE_LABEL: "#f47373", GETTING_LABEL: "#2ccce4"}
 MAX_NAME_LENGTH = 200
 # A refused login answers 400; elsewhere 400 means the request itself was rejected, with a reason.
 _LOGIN_REFUSED = frozenset({400, 401, 403})
@@ -103,7 +104,7 @@ def label_value(name: str) -> str:
     """Archidekt's "name,#colour" for one of the labels cmdr writes; "" clears the label."""
     if not name:
         return DEFAULT_LABEL
-    return f"{name},{_LABEL_COLOURS[name]}"
+    return f"{name},{LABEL_COLOURS[name]}"
 
 
 class ArchidektAuth:
