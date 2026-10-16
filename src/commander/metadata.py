@@ -6,7 +6,8 @@ redistributing its statistics) and fetched in parallel, each at its own service'
 - the commander's EDHTop16 entries with decklists,
 - the most-played commanders and their best-placed EDHTop16 lists,
 - the most-viewed recent Archidekt decks for the commander, other players' only,
-- the combos inside each top commander's core cards, from Commander Spellbook (cached for a week).
+- the combos inside each top commander's core cards, from Commander Spellbook (cached for a week);
+- the deck's own combos, from Commander Spellbook (cached for a week, until the list changes).
 """
 
 import logging
@@ -49,7 +50,7 @@ from commander.jsonshape import (
 from commander.models import Deck
 from commander.net import NetworkError, Pacer
 from commander.spellbook import FRESH_FOR as SPELLBOOK_FRESH_FOR
-from commander.spellbook import ComboDetail, ComboPiece, SpellbookClient, SpellbookError
+from commander.spellbook import ComboDetail, ComboPiece, SpellbookClient, SpellbookError, deck_request
 
 log = logging.getLogger(__name__)
 
@@ -106,6 +107,8 @@ class MetaData:
     field: Answer[tuple[MetaCommander, ...]]
     peers: Answer[PeerLists]
     combos: Answer[tuple["CommanderCombos", ...]]
+    # The combos inside the deck itself, which the meta's answers are checked against.
+    own_combos: Answer[tuple[ComboDetail, ...]]
 
 
 @dataclass(slots=True, frozen=True)
@@ -222,16 +225,36 @@ def gather(
         )
 
     # Different services, so they run side by side; each client keeps its own pace.
-    def field_and_combos() -> tuple[Answer[tuple[MetaCommander, ...]], Answer[tuple[CommanderCombos, ...]]]:
+    def own_combos() -> Answer[tuple[ComboDetail, ...]]:
+        report(f"Commander Spellbook: {deck.short_name}'s own combos")
+        request = deck_request(deck)
+        return cached_answer(
+            cache_item("spellbook-deck", str(deck.id)),
+            request,
+            _live(offline, partial(_paced_details, sources, request)),
+            _cache(folder, "Spellbook deck combos", _encode_combos, _decode_combos),
+            now=now,
+            refresh=refresh,
+            fresh_for=SPELLBOOK_FRESH_FOR,
+            errors=_ERRORS,
+        )
+
+    def field_and_combos() -> tuple[
+        Answer[tuple[MetaCommander, ...]],
+        Answer[tuple[CommanderCombos, ...]],
+        Answer[tuple[ComboDetail, ...]],
+    ]:
         answer = field()
         report("Commander Spellbook: the top commanders' combos")
-        return answer, _meta_combos(answer, sources, folder, now=now, refresh=refresh, offline=offline)
+        combos = _meta_combos(answer, sources, folder, now=now, refresh=refresh, offline=offline)
+        # After the meta's: both go through the one Spellbook pacer.
+        return answer, combos, own_combos()
 
     own = in_background(lists, name="meta-lists")
     meta = in_background(field_and_combos, name="meta-field")
     peer = in_background(peers, name="meta-peers")
-    field_answer, combos = meta.result()
-    return MetaData(name, since, own.result(), field_answer, peer.result(), combos)
+    field_answer, combos, deck_combos = meta.result()
+    return MetaData(name, since, own.result(), field_answer, peer.result(), combos, deck_combos)
 
 
 def core_request(commander: MetaCommander) -> dict[str, object] | None:

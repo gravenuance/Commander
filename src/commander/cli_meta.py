@@ -19,6 +19,7 @@ from commander.meta import (
     Basis,
     CardCheck,
     CardShare,
+    MetaAnswer,
     MetaReport,
     analyse,
     board_ideas,
@@ -206,6 +207,7 @@ def print_report(report: MetaReport, out: TextIO) -> None:
     _print_spicy(report, out)
     _print_outliers(report, out)
     _print_threats(report, out)
+    _print_own_combos(report, out)
     _print_combos(report, out)
     _print_field(report, out)
     _print_peers(report, out)
@@ -274,6 +276,27 @@ def _print_threats(report: MetaReport, out: TextIO) -> None:
             print(row, file=out)
 
 
+def _print_own_combos(report: MetaReport, out: TextIO) -> None:
+    print("\nYour combos and what the meta stops them with (commonly played cards)", file=out)
+    if not report.own_combos:
+        print("  none found", file=out)
+        return
+    for combo in report.own_combos:
+        print(f"  {' + '.join(combo.pieces)}: {'; '.join(combo.results[:2])}", file=out)
+        if not combo.answers:
+            print("        nothing the meta commonly plays stops it", file=out)
+            continue
+        for role in AnswerRole:
+            answers = [a for a in combo.answers if a.role is role]
+            if answers:
+                shown = [f"{_answer_shown(a)} [{_players(a.played_by)}]" for a in answers]
+                print(f"        {role.value}: {_names(shown, COMBO_ANSWERS_SHOWN)}", file=out)
+
+
+def _players(played_by: Sequence[tuple[str, float]]) -> str:
+    return ", ".join(f"{short_commander_name(name)} {round(share * 100)}%" for name, share in played_by[:3])
+
+
 def _print_combos(report: MetaReport, out: TextIO) -> None:
     print("\nMeta combos and your answers (share of the top commanders' lists, weighted)", file=out)
     total = sum(stats.meta_share for stats in report.field)
@@ -302,7 +325,7 @@ def _print_combos(report: MetaReport, out: TextIO) -> None:
             print(f"        {role.value}: {_names(shown, COMBO_ANSWERS_SHOWN)}", file=out)
 
 
-def _answer_shown(answer: ComboAnswer) -> str:
+def _answer_shown(answer: ComboAnswer | MetaAnswer) -> str:
     """Stax answers name how they stop the combo; removal and counters need only the card and any catch."""
     if answer.role is AnswerRole.STAX:
         return f"{answer.card} ({answer.how})"
@@ -436,6 +459,29 @@ def report_json(report: MetaReport) -> dict[str, object]:
                 ],
             }
             for c in report.combos
+        ],
+        "ownCombos": [
+            {
+                "id": c.id,
+                "url": c.url,
+                "pieces": list(c.pieces),
+                "results": list(c.results),
+                "answers": [
+                    {
+                        "card": a.card,
+                        "how": a.how,
+                        "role": a.role.value,
+                        "catch": a.catch,
+                        "exposure": round(a.exposure, 5),
+                        "playedBy": [
+                            {"commander": n, "short": short_commander_name(n), "share": round(s, 4)}
+                            for n, s in a.played_by
+                        ],
+                    }
+                    for a in c.answers
+                ],
+            }
+            for c in report.own_combos
         ],
         "field": [
             {

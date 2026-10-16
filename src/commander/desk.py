@@ -44,7 +44,7 @@ from commander.edhtop16 import REQUEST_INTERVAL_SECONDS, SLOW_QUERY_SECONDS, Edh
 from commander.labels import LabelError, Step, label_options, mark, set_label, to_get_json
 from commander.meta import analyse, board_ideas, card_shares
 from commander.metadata import MetaData, MetaSources, cache_stamp, gather
-from commander.metapanel import combo_rows, piece_threats
+from commander.metapanel import combo_rows, own_combo_rows, piece_threats
 from commander.models import Deck
 from commander.net import Fetcher, NetworkError, Pacer
 from commander.spellbook import META_REQUEST_INTERVAL_SECONDS, SpellbookClient
@@ -331,6 +331,7 @@ class Desk:
             "report": report_json(report),
             "pieces": piece_threats(report.key_pieces, report.threats),
             "combos": combo_rows(report.combos),
+            "ownCombos": own_combo_rows(report.own_combos),
         }
 
     def _meta_shares(self, deck: Deck) -> dict[str, float] | None:

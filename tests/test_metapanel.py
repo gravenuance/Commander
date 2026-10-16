@@ -3,9 +3,9 @@
 from typing import cast
 
 from commander.answers import AnswerKind
-from commander.meta import Threat
+from commander.meta import MetaAnswer, OwnCombo, Threat
 from commander.metacombos import AnswerRole, ComboAnswer, MetaCombo
-from commander.metapanel import Json, combo_rows, piece_threats
+from commander.metapanel import Json, combo_rows, own_combo_rows, piece_threats
 
 KINNAN = "Kinnan, Bonder Prodigy"
 KRAUM = "Kraum, Ludevic's Opus / Tymna the Weaver"
@@ -62,6 +62,33 @@ def test_combos_keep_their_order_with_the_decks_that_play_them_and_the_answers()
             "decks": [{"short": "Kinnan", "name": KINNAN, "share": 0.25}],
             "answers": [
                 {"card": "Grafdigger's Cage", "how": "locks the graveyard", "role": "stax", "catch": ""}
+            ],
+        }
+    ]
+
+
+def test_own_combos_list_the_meta_answers_with_the_decks_playing_them() -> None:
+    combo = OwnCombo(
+        "3-4",
+        "https://commanderspellbook.com/combo/3-4/",
+        ("Squee, the Immortal", "Food Chain"),
+        ("Infinite creature ETB",),
+        (MetaAnswer("Silence", "limits casting", AnswerRole.STAX, "", 0.12345, ((KINNAN, 0.9),)),),
+    )
+    assert own_combo_rows([combo]) == [
+        {
+            "pieces": ["Squee, the Immortal", "Food Chain"],
+            "results": ["Infinite creature ETB"],
+            "url": "https://commanderspellbook.com/combo/3-4/",
+            "answers": [
+                {
+                    "card": "Silence",
+                    "how": "limits casting",
+                    "role": "stax",
+                    "catch": "",
+                    "exposure": 0.1235,
+                    "decks": [{"short": "Kinnan", "name": KINNAN, "share": 0.9}],
+                }
             ],
         }
     ]

@@ -1,9 +1,9 @@
-"""The app's Meta section: each key deck card with the meta cards that stop it, and each meta combo with the
-deck cards that stop it, both tagged with the meta decks that play them."""
+"""The app's Meta section: the deck's own combos and its key cards with the meta cards that stop them, and
+each meta combo with the deck cards that stop it, all tagged with the meta decks that play them."""
 
 from collections.abc import Sequence
 
-from commander.meta import Threat
+from commander.meta import OwnCombo, Threat
 from commander.metacombos import MetaCombo
 from commander.models import short_commander_name
 
@@ -32,6 +32,29 @@ def piece_threats(pieces: Sequence[str], threats: Sequence[Threat]) -> list[Json
         )
     rows.sort(key=lambda row: (-row[0], row[1].casefold()))
     return [{"card": piece, "threats": found} for _, piece, found in rows]
+
+
+def own_combo_rows(combos: Sequence[OwnCombo]) -> list[Json]:
+    """The deck's combos with the meta cards that stop each: stax, then removal, then counters."""
+    return [
+        {
+            "pieces": list(combo.pieces),
+            "results": list(combo.results),
+            "url": combo.url,
+            "answers": [
+                {
+                    "card": a.card,
+                    "how": a.how,
+                    "role": a.role.value,
+                    "catch": a.catch,
+                    "exposure": round(a.exposure, 4),
+                    "decks": _decks(a.played_by),
+                }
+                for a in combo.answers
+            ],
+        }
+        for combo in combos
+    ]
 
 
 def combo_rows(combos: Sequence[MetaCombo]) -> list[Json]:

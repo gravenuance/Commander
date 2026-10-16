@@ -275,3 +275,46 @@ def test_a_list_holds_its_commander_even_when_the_decklist_leaves_it_out(deck: D
     lists = (entry(1, 40, 8, [("Basalt Monolith", 0)]),)
     field = [MetaCommander(CommanderStats(KINNAN, 1000, 300, 0.3, 0.04), lists)]
     assert [c.id for c in meta_combos(deck, field, found(), SINCE, db)] == ["129-4131"]
+
+
+def test_an_off_hand_casting_lock_reaches_only_the_zones_it_names() -> None:
+    # Squee + Food Chain casts Squee from exile: Grafdigger's Cage seals graveyards and libraries only.
+    from_exile = combo(
+        "Exile Squee, the Immortal with Food Chain.\nCast Squee, the Immortal from exile.\nRepeat."
+    )
+    from_graveyard = combo("Cast Basalt Monolith from your graveyard.")
+    cage = card_stops(CAGE, set())
+    assert (Stop.OFF_HAND_CASTING, LockScope(None, zones=frozenset({"graveyard", "library"}))) in cage
+    assert not stop_applies(
+        Stop.OFF_HAND_CASTING, LockScope(None, zones=frozenset({"graveyard", "library"})), from_exile
+    )
+    assert stop_applies(
+        Stop.OFF_HAND_CASTING, LockScope(None, zones=frozenset({"graveyard", "library"})), from_graveyard
+    )
+    # Drannith Magistrate names no zone: anywhere but the hand.
+    assert stop_applies(Stop.OFF_HAND_CASTING, LockScope(), from_exile)
+
+
+def test_a_lock_only_during_its_owners_turn_stops_no_combo() -> None:
+    # Grand Abolisher keeps opponents quiet on its owner's turn; their combos happen on theirs.
+    abolisher = (
+        "During your turn, your opponents can't cast spells or activate abilities of artifacts, creatures, "
+        "enchantments, or planeswalkers."
+    )
+    assert card_stops(abolisher, {Stop.ACTIVATIONS}) == ()
+
+
+def test_a_lock_on_noncreature_spells_misses_a_loop_that_casts_creatures() -> None:
+    squee = ComboPiece("Squee, the Immortal", "Legendary Creature — Goblin", ("E",))
+    food_chain = ComboPiece("Food Chain", "Enchantment", ("B",))
+    loop = steps(
+        "Exile Squee with Food Chain, adding mana.\nCast Squee from exile.\nRepeat.\nCast Squee again.",
+        squee,
+        food_chain,
+    )
+    [(stop, scope)] = card_stops("Each player can't cast more than one noncreature spell each turn.", set())
+    assert stop is Stop.CASTING
+    assert not stop_applies(stop, scope, loop)
+    # Silence stops every spell.
+    [(stop, scope)] = card_stops("Your opponents can't cast spells this turn.", set())
+    assert stop_applies(stop, scope, loop)

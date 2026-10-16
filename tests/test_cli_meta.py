@@ -190,7 +190,7 @@ def test_json_carries_the_report_and_card_checks(home: Path, fake: FakeArchidekt
         ("Jeska's Will", 2, 0.4),
     ]
     assert report["spicy"][0]["best"]["decklist"] == "https://edhtop16.com/tournament/t1/decklist/x"
-    assert [s["source"] for s in report["sources"]] == ["fetched", "fetched", "fetched", "fetched"]
+    assert [s["source"] for s in report["sources"]] == ["fetched", "fetched", "fetched", "fetched", "fetched"]
     assert data["cards"][0]["inDeck"] is True
     assert data["cards"][0]["readWith"] == 5
 

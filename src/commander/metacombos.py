@@ -7,7 +7,7 @@ Silence), by a phrase in its rules text, and matched against what the combo's st
 
 import re
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import date
 from enum import Enum
@@ -52,7 +52,10 @@ class Stop(Enum):
     OFF_HAND_CASTING = (
         "stops casting from outside the hand",
         ("hate-nonhand-cast", "hate-graveyard-cast", "hate-library-cast"),
-        r"from anywhere other than (?:their|your|a player's) hand",
+        (
+            r"from anywhere other than (?:their|your|a player's) hand"
+            r"|can't cast spells from (?:graveyards|libraries|exile)"
+        ),
     )
     GRAVEYARD = (
         "graveyard hate",
@@ -115,6 +118,8 @@ class LockScope:
     spares_mana: bool = False
     # "graveyard" and "library" for Grafdigger's Cage; empty for a lock on every zone.
     zones: frozenset[str] = frozenset()
+    # A casting lock on noncreature spells only (Deafening Silence, Ranger-Captain of Eos).
+    noncreature: bool = False
 
 
 ANY = LockScope()
@@ -122,7 +127,7 @@ ANY = LockScope()
 
 @dataclass(slots=True, frozen=True)
 class DeckAnswers:
-    """What each deck card can do against a combo, worked out once per deck."""
+    """What each card of a pool can do against a combo, worked out once per pool."""
 
     removal: dict[str, CardAnswer]
     stops: dict[str, tuple[tuple[Stop, LockScope], ...]]
@@ -201,18 +206,30 @@ def stop_applies(stop: Stop, scope: LockScope, combo: ComboDetail) -> bool:  # n
         case Stop.CHEATED_IN:
             return any(_put_onto_battlefield(line, scope, combo.pieces) for line in steps.splitlines())
         case Stop.CASTING:
-            return "storm" in results or "cast" in results or len(re.findall(r"\bcast\b", steps)) >= 2  # noqa: PLR2004 — a loop casts at least twice
+            casts = "storm" in results or "cast" in results or len(re.findall(r"\bcast\b", steps)) >= 2  # noqa: PLR2004 — a loop casts at least twice
+            # Deafening Silence lets Food Chain recast Squee: a creature loop escapes a noncreature lock.
+            return casts and not (scope.noncreature and _casts_only_creatures(combo, steps))
         case Stop.OFF_HAND_CASTING:
-            cast_off = re.search(
-                r"\bcast\b[^.\n]*\bfrom (?:your |their |a |the )?(?:graveyard|exile|library)", steps
-            )
-            return cast_off is not None or (
-                any(set(p.zones) & _OFF_ZONES for p in combo.pieces) and "cast" in steps
-            )
+            zones = _cast_zones(combo, steps)
+            # A lock naming zones (Grafdigger's Cage) reaches only those; one naming none, all but the hand.
+            return bool(zones) and (not scope.zones or bool(zones & scope.zones))
         case Stop.GRAVEYARD:
             return any("G" in p.zones for p in combo.pieces) or "graveyard" in steps
         case Stop.TOKENS:
             return "token" in results
+
+
+_OWN_TURN_ONLY = re.compile(r"^during your turn, your opponents can't", re.IGNORECASE | re.MULTILINE)
+_CAST_FROM = re.compile(r"\bcast\b[^.\n]*\bfrom (?:your |their |a |the )?(graveyard|exile|library)")
+_ZONE_NAMES = {"G": "graveyard", "E": "exile", "L": "library"}
+
+
+def _cast_zones(combo: ComboDetail, steps: str) -> set[str]:
+    """The zones other than the hand the combo casts from, as its steps say, else as its pieces start."""
+    named = set(_CAST_FROM.findall(steps))
+    if named or "cast" not in steps:
+        return named
+    return {_ZONE_NAMES[zone] for p in combo.pieces for zone in p.zones if zone in _OFF_ZONES}
 
 
 _WHEN_ENTERS = re.compile(r"\bwhen (.+?) enters\b")
@@ -259,6 +276,12 @@ def _of_type(type_word: str | None, text: str, named: Sequence[ComboPiece]) -> b
         return any(type_word in p.type_line.split(" // ", maxsplit=1)[0].split() for p in named)
     hinted = {kind for word, kind in _TYPE_HINTS.items() if word in text}
     return not hinted or type_word in hinted
+
+
+def _casts_only_creatures(combo: ComboDetail, steps: str) -> bool:
+    """Whether every piece the steps cast is a creature; False when they name none."""
+    cast = [p for p in combo.pieces if re.search(rf"\bcast {re.escape(_short(p.name))}", steps)]
+    return bool(cast) and all("Creature" in p.type_line.split(" // ", maxsplit=1)[0] for p in cast)
 
 
 def _short(name: str) -> str:
@@ -312,7 +335,12 @@ def _combo_answer(card: str, verb: str, hits: Sequence[tuple[str, str]], role: A
 
 
 def _deck_answers(deck: Deck, db: CardDb) -> DeckAnswers:
-    infos = db.cards_named(card.name for card in deck.main_cards)
+    return pool_answers((card.name for card in deck.main_cards), db)
+
+
+def pool_answers(names: Iterable[str], db: CardDb) -> DeckAnswers:
+    """What each named card can do against a combo: a deck's cards, or the cards the meta plays."""
+    infos = db.cards_named(names)
     by_id = {info.oracle_id: info.name for info in infos.values()}
     one_shots = {
         info.oracle_id
@@ -342,6 +370,9 @@ def card_stops(
     An instant or sorcery (`one_shot`) locks only by its text, as Silence does: Tagger files one-shot answers
     such as Mindbreak Trap under storm hate too.
     """
+    if _OWN_TURN_ONLY.search(rules):
+        # Grand Abolisher: it guards its owner's turn, and combos are played on their owner's turn.
+        return ()
     found: list[tuple[Stop, LockScope]] = []
     for stop in Stop:
         if stop.requires is not None and not stop.requires.search(rules):
@@ -361,8 +392,12 @@ def _scope(sentence: str) -> LockScope:
     words = sentence.casefold()
     spares_mana = "mana abilities" in words
     zones = frozenset(
-        zone for zone, stem in (("graveyard", "graveyard"), ("library", "librar")) if stem in words
+        zone
+        for zone, stem in (("graveyard", "graveyard"), ("library", "librar"), ("exile", "exile"))
+        if stem in words
     )
+    if "noncreature" in words:
+        return LockScope(None, spares_mana, zones, noncreature=True)
     if "artifact" in words:
         return LockScope("Artifact", spares_mana, zones)
     if "creature" in words:

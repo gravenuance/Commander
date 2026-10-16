@@ -21,7 +21,16 @@
   their colours, and Don't Have and Getting are written in the account's colours. A signed-in `sync`
   keeps the list in `labels.json` beside the deck folders; each label change and save reads it first.
 
+- `cmdr meta` and the app's Meta section check every bracket 5 deck's own combos against the meta (ADR 0013):
+  each combo from Commander Spellbook with the cards the top commanders' lists commonly play that stop it
+  (stax, removal, counters), tagged with the commanders playing them. Etali's Food Chain loop, Glarb's
+  Thassa's Oracle lines and Magda's artifact loops now show what threatens them.
+
 ### Fixed
+- Combo answers read locks more closely (ADR 0013): Grafdigger's Cage stops casting from graveyards and
+  libraries only, not from exile; Deafening Silence and Ranger-Captain of Eos no longer stop a loop that
+  casts only creatures; and a lock that holds only during its owner's turn (Grand Abolisher) answers no
+  combo. These apply to the meta combos' answers from your deck too.
 - Desktop app: the "Thin data" and status badges no longer float at the bottom of the window.
 
 ### Changed

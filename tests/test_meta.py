@@ -99,6 +99,7 @@ def meta_data(
         fetched(tuple(field or [])),
         fetched(PeerLists(tuple(peers or []), 0)),
         fetched(()),
+        fetched(()),
     )
 
 
@@ -254,6 +255,7 @@ def test_an_unknown_commander_reports_as_unknown(deck: Deck, db: CardDb) -> None
         SINCE,
         fetched(CommanderEntries(MAGDA, known=False, entries=())),
         fetched(()),
+        Answer(None, AnswerSource.UNAVAILABLE, None, "offline"),
         Answer(None, AnswerSource.UNAVAILABLE, None, "offline"),
         Answer(None, AnswerSource.UNAVAILABLE, None, "offline"),
     )

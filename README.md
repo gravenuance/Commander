@@ -150,6 +150,10 @@ decks for that commander updated in the same window. It lists:
 - **Spicy picks:** cards EDHTop16 rates 3 or 4 for spice (new or rarely played) in at least two lists,
   with their best finish.
 - **Your own picks:** deck cards under 10% of the lists play; cards the profile keeps are marked.
+- **Your combos and what the meta stops them with:** the deck's own combos, from Commander Spellbook, each
+  with the cards the ten most-played commanders' lists commonly play against it: stax pieces first, then
+  removal for a piece, then counterspells, tagged with the commanders whose lists play them. A combo nothing
+  stops is flagged. See [ADR 0013](docs/adr/0013-the-decks-own-combos-against-the-meta.md).
 - **Meta answers to your key pieces:** the cards the ten most-played commanders' lists would use against
   your commander and the cards under `[keep]` in the deck's profile, weighted by how much each commander
   is played.
@@ -162,7 +166,7 @@ report says the data is thin: read its shares as hints. Answers are read from Sc
 rules text, so check them before acting on one. `--card <name>` shows how lists use one card,
 `--to-board` puts the missing staples on the deck's board, and the app's Meta panel shows the same report.
 
-Answers are cached for a day (Spellbook combos for a week); `--refresh` fetches again. A first run takes
+Answers are cached for a day (Spellbook combos for a week, the deck's own until its list changes); `--refresh` fetches again. A first run takes
 a few minutes, because requests are spaced out. The sample sizes are set in the config file:
 
 ```toml

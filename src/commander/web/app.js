@@ -726,7 +726,7 @@ function renderMeta(deck, answer) {
     s.known ? `${s.withLists} lists since ${report.since}` : "No EDHTop16 lists",
     fetched ? new Date(fetched).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "",
   ].filter(Boolean).join(" · ");
-  $("meta-body").replaceChildren(metaPieces(answer.pieces), metaCombos(answer.combos));
+  $("meta-body").replaceChildren(metaOwnCombos(answer.ownCombos || []), metaPieces(answer.pieces), metaCombos(answer.combos));
 }
 
 function deckChips(decks) {
@@ -766,6 +766,27 @@ function metaPieces(pieces) {
 }
 
 const ANSWER_ROLES = [["stax", "Stax"], ["removal", "Removal"], ["counter", "Counter"]];
+
+// The deck's own combos, each with what the meta commonly plays against it, grouped by how it stops them.
+function metaOwnCombos(combos) {
+  const rows = combos.map((c) => el("div", { class: "meta-row" },
+    el("p", { class: "meta-card" },
+      el("a", { href: c.url, target: "_blank", rel: "noopener", text: c.pieces.join(" + "), title: "Open on Commander Spellbook" })),
+    c.results.length ? el("p", { class: "muted small", text: c.results.slice(0, 2).join("; ") }) : null,
+    c.answers.length
+      ? el("div", { class: "role-groups" }, ...ANSWER_ROLES.map(([role, label]) => {
+        const found = c.answers.filter((a) => a.role === role);
+        if (!found.length) return null;
+        return el("div", { class: "role-group" }, el("p", { class: "role-name", text: label }),
+          shortList(found, THREATS_SHOWN, (a) => el("li", { class: "threat" },
+            el("span", { class: "threat-name", text: a.card }),
+            el("span", { class: "muted", text: a.role === "stax" ? a.how : a.catch }),
+            deckChips(a.decks))));
+      }))
+      : el("p", { class: "answers" }, el("span", { class: "badge status", text: "Nothing in the meta stops it" }))));
+  return metaSection("Your combos",
+    rows.length ? el("div", { class: "meta-rows" }, ...rows) : el("p", { class: "empty", text: "No combos found in the deck." }));
+}
 
 function metaCombos(combos) {
   const rows = combos.map((c) => el("div", { class: "meta-row" },

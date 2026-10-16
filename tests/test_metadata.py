@@ -226,21 +226,27 @@ def test_combos_are_looked_for_in_each_top_commanders_core_cards(rig: Rig) -> No
     assert [(c.commander, [d.id for d in c.combos]) for c in combos] == [
         ("Kinnan, Bonder Prodigy", ["513-5034--46", "129-4131", "4222-5168"])
     ]
-    [request] = rig.spellbook.combo_bodies
+    # The meta's cores first, then the deck's own list, whose combos the meta's answers are checked against.
+    request, own = rig.spellbook.combo_bodies
     assert request["commanders"] == [{"card": "Kinnan, Bonder Prodigy", "quantity": 1}]
+    assert own["commanders"] == [{"card": "Ellivere of the Wild Court", "quantity": 1}]
+    assert data.own_combos.source is AnswerSource.FETCHED
     # Every card of the two lists is in at least half of them, so all are core.
     assert {"card": "Basalt Monolith", "quantity": 1} in request["main"]
     assert {"card": "Circle of Dreams Druid", "quantity": 1} in request["main"]
     again = rig.gather()
     assert again.combos.source is AnswerSource.CACHED
-    assert len(rig.spellbook.combo_bodies) == 1
+    assert again.own_combos.source is AnswerSource.CACHED
+    assert len(rig.spellbook.combo_bodies) == 2
 
 
 def test_combos_without_meta_lists_are_unavailable(rig: Rig) -> None:
     rig.edhtop16.status = 403
     data = rig.gather()
     assert data.combos.source is AnswerSource.UNAVAILABLE
-    assert rig.spellbook.combo_bodies == []
+    # The deck's own combos need no meta lists.
+    [own] = rig.spellbook.combo_bodies
+    assert own["commanders"] == [{"card": "Ellivere of the Wild Court", "quantity": 1}]
 
 
 def test_the_cache_stamp_without_a_cache_folder(tmp_path: Path) -> None:

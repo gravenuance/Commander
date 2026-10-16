@@ -15,9 +15,10 @@ from commander.carddb import CardDb
 from commander.deckcache import Answer, AnswerSource
 from commander.deckprofile import Profile
 from commander.edhtop16 import CommanderStats, Entry
-from commander.metacombos import MetaCombo, meta_combos
+from commander.metacombos import AnswerRole, MetaCombo, combo_answers, meta_combos, pool_answers
 from commander.metadata import MetaCommander, MetaData, PeerList
 from commander.models import COMMANDER_CATEGORY, Deck
+from commander.spellbook import ComboDetail
 
 # Fewer top-cut lists than this, and every list in the window stands in, marked thin.
 MIN_PERFORMING = 5
@@ -36,6 +37,8 @@ MIN_SPICY_LISTS = 2
 OUTLIER_SHARE = 0.1
 # A meta card is a threat when this share of one top commander's lists play it.
 THREAT_SHARE = 0.3
+# The deck's own combos shown, fewest pieces first: the short ones are the lines it plays for.
+MAX_OWN_COMBOS = 15
 MAX_ROWS = 15
 
 
@@ -90,6 +93,29 @@ class Threat:
 
 
 @dataclass(slots=True, frozen=True)
+class MetaAnswer:
+    """A card the meta plays that stops one of the deck's combos, and how often it shows up."""
+
+    card: str
+    how: str
+    role: AnswerRole
+    catch: str
+    exposure: float
+    played_by: tuple[tuple[str, float], ...]
+
+
+@dataclass(slots=True, frozen=True)
+class OwnCombo:
+    """One of the deck's own combos with the meta cards that stop it: stax, then removal, then counters."""
+
+    id: str
+    url: str
+    pieces: tuple[str, ...]
+    results: tuple[str, ...]
+    answers: tuple[MetaAnswer, ...]
+
+
+@dataclass(slots=True, frozen=True)
 class SourceState:
     name: str
     source: AnswerSource
@@ -108,6 +134,7 @@ class MetaReport:
     outliers: tuple[CardShare, ...]
     threats: tuple[Threat, ...]
     combos: tuple[MetaCombo, ...]
+    own_combos: tuple[OwnCombo, ...]
     field: tuple[CommanderStats, ...]
     peers: tuple[PeerDeck, ...]
     peers_skipped: int
@@ -165,6 +192,7 @@ def analyse(deck: Deck, data: MetaData, profile: Profile, db: CardDb) -> MetaRep
         outliers=outliers(deck, performing, peer_lists, profile, db),
         threats=threats(pieces, field, db),
         combos=meta_combos(deck, field, data.combos.data or (), data.since, db),
+        own_combos=own_combos(data.own_combos.data or (), field, db),
         field=tuple(c.stats for c in (data.field.data or ())),
         peers=tuple(p.deck for p in peer_lists),
         peers_skipped=data.peers.data.skipped if data.peers.data else 0,
@@ -175,6 +203,7 @@ def analyse(deck: Deck, data: MetaData, profile: Profile, db: CardDb) -> MetaRep
             _state("EDHTop16 meta", data.field),
             _state("Archidekt decks", data.peers),
             _state("Spellbook combos", data.combos),
+            _state("Spellbook deck combos", data.own_combos),
         ),
     )
 
@@ -312,11 +341,13 @@ def card_shares(data: MetaData) -> dict[str, float]:
     return {key: count / len(performing) for key, count in _list_counts(performing).items()}
 
 
-def threats(pieces: Iterable[str], field: Sequence[MetaCommander], db: CardDb) -> tuple[Threat, ...]:
-    """Cards the top commanders' lists commonly play that answer at least one key piece."""
-    # A key piece the card data lacks has no type line, so no answer could be matched to it.
-    piece_info = [p for p in piece_facts(db, ((name, "") for name in pieces)).values() if p.type_line]
-    shares: dict[str, list[tuple[str, float, float]]] = defaultdict(list)
+# Per top commander playing a card: (commander, share of its lists, the commander's meta share).
+type _Plays = list[tuple[str, float, float]]
+
+
+def _meta_pool(field: Sequence[MetaCommander]) -> dict[str, tuple[str, _Plays]]:
+    """The cards at least THREAT_SHARE of some top commander's lists play, by `card_key`: name and plays."""
+    shares: dict[str, _Plays] = defaultdict(list)
     names: dict[str, str] = {}
     for commander in field:
         lists = [e for e in commander.entries if e.cards]
@@ -327,11 +358,62 @@ def threats(pieces: Iterable[str], field: Sequence[MetaCommander], db: CardDb) -
         for entry in lists:
             for card in entry.cards:
                 names.setdefault(card_key(card.name), card.name)
-    candidates = {key for key, rows in shares.items() if max(share for _, share, _ in rows) >= THREAT_SHARE}
-    infos = {card_key(info.name): info for info in db.cards_named(names[key] for key in candidates).values()}
+    return {
+        key: (names[key], rows)
+        for key, rows in shares.items()
+        if max(share for _, share, _ in rows) >= THREAT_SHARE
+    }
+
+
+def _exposure(rows: _Plays) -> float:
+    """Sum over the top commanders of meta share x the share of their lists playing the card."""
+    return sum(share * meta for _, share, meta in rows)
+
+
+def _played_by(rows: _Plays) -> tuple[tuple[str, float], ...]:
+    return tuple(sorted(((n, s) for n, s, _ in rows if s >= THREAT_SHARE), key=lambda r: -r[1]))
+
+
+def own_combos(
+    combos: Sequence[ComboDetail], field: Sequence[MetaCommander], db: CardDb
+) -> tuple[OwnCombo, ...]:
+    """The deck's combos, fewest pieces first, each with the cards the meta commonly plays that stop it."""
+    pool = _meta_pool(field)
+    if not combos:
+        return ()
+    answers = pool_answers((name for name, _ in pool.values()), db)
+    facts = piece_facts(db, {(p.name, p.type_line) for combo in combos for p in combo.pieces})
+    order = list(AnswerRole)
+    found: list[OwnCombo] = []
+    for combo in combos:
+        stopping: list[MetaAnswer] = []
+        for answer in combo_answers(combo, answers, facts):
+            plays = pool.get(card_key(answer.card))
+            if plays is None:
+                continue
+            rows = plays[1]
+            stopping.append(
+                MetaAnswer(
+                    answer.card, answer.how, answer.role, answer.catch, _exposure(rows), _played_by(rows)
+                )
+            )
+        stopping.sort(key=lambda a: (order.index(a.role), -a.exposure, a.card))
+        found.append(
+            OwnCombo(combo.id, combo.url, tuple(p.name for p in combo.pieces), combo.results, tuple(stopping))
+        )
+    found.sort(key=lambda c: (len(c.pieces), c.id))
+    return tuple(found[:MAX_OWN_COMBOS])
+
+
+def threats(pieces: Iterable[str], field: Sequence[MetaCommander], db: CardDb) -> tuple[Threat, ...]:
+    """Cards the top commanders' lists commonly play that answer at least one key piece."""
+    # A key piece the card data lacks has no type line, so no answer could be matched to it.
+    piece_info = [p for p in piece_facts(db, ((name, "") for name in pieces)).values() if p.type_line]
+    pool = _meta_pool(field)
+    infos = {card_key(info.name): info for info in db.cards_named(name for name, _ in pool.values()).values()}
     answers = card_answers(db, {info.oracle_id: info.name for info in infos.values()})
     found: list[Threat] = []
-    for key in candidates:
+    for key in pool:
         info = infos.get(key)
         if info is None:
             continue
@@ -341,16 +423,14 @@ def threats(pieces: Iterable[str], field: Sequence[MetaCommander], db: CardDb) -
         hit = sorted({p.name for p in piece_info if answer.removes(p) or answer.counters(p)})
         if not hit:
             continue
-        rows = shares[key]
+        rows = pool[key][1]
         found.append(
             Threat(
                 name=info.name,
                 kinds=answer.kinds,
                 hits=tuple(hit),
-                exposure=sum(share * meta for _, share, meta in rows),
-                played_by=tuple(
-                    sorted(((n, s) for n, s, _ in rows if s >= THREAT_SHARE), key=lambda r: -r[1])
-                ),
+                exposure=_exposure(rows),
+                played_by=_played_by(rows),
             )
         )
     found.sort(key=lambda t: (-t.exposure, t.name))
