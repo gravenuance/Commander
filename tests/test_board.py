@@ -149,6 +149,21 @@ def test_queued_cards_make_a_plan_with_their_chosen_cuts(
     assert read_activity(tmp_path)[-2].detail == "cut Battered Golem; better early"
 
 
+def test_cutting_a_card_with_several_copies_takes_out_one_per_cut(
+    deck: Deck, tmp_path: Path, service: BoardService
+) -> None:
+    # The fixture deck runs six Mountains; moving a cut to the Maybeboard would take all six.
+    bolt = service.propose("Lightning Bolt", Actor.YOU)
+    signet = service.propose("Arcane Signet", Actor.YOU)
+    service.decide(bolt.id, Status.ADD, Actor.YOU, choice="Mountain")
+    service.decide(signet.id, Status.ADD, Actor.YOU, choice="mountain")
+    assert board_plan(deck, read_board(tmp_path)) == Plan(
+        "10004639",
+        (AddCard("Lightning Bolt"), AddCard("Arcane Signet")),
+        (RemoveCard("Mountain", keep=4),),
+    )
+
+
 def test_nothing_queued_makes_no_plan(deck: Deck, tmp_path: Path, service: BoardService) -> None:
     service.propose("Lightning Bolt", Actor.YOU)
     assert board_plan(deck, read_board(tmp_path)) is None

@@ -297,6 +297,7 @@ uv run cmdr board commit ellivere --save   # make them
 Saving a board works like `apply --save`, with a snapshot first. A card you cut moves to the deck's
 Maybeboard instead of being deleted, keeping its categories behind the Maybeboard, and comes back on the
 board as considered: if the new card disappoints, add the old one back and the swap runs the other way.
+A cut the deck runs several copies of, such as a basic land, loses one copy instead.
 Cards you keep on a deck's Sideboard or Maybeboard on Archidekt show up on its board as considered after
 each `sync`; adding one moves that entry into the deck, printing and all, and turning one down takes it
 off the Sideboard or Maybeboard with the next save. `suggest --to-board` puts its ideas on the board, and

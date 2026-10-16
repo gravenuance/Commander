@@ -78,6 +78,7 @@
   sign-in screen instead of stopping. `cmdr sync` and the app share one sync (`syncrun.run_sync`).
 
 ### Fixed
+- Saving a board that cuts a basic land takes out one copy; it used to move every copy to the Maybeboard.
 - A board wipe clears creatures (ADR 0020): sweepers that remove only artifacts, enchantments, lands or
   other noncreature permanents (Vandalblast, Bane of Progress, Armageddon) no longer count as board
   wipes, unless their text deals with "each creature" (Wildfire). The card database is rebuilt on the next

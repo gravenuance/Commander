@@ -10,6 +10,7 @@ import os
 import secrets
 import threading
 import time
+from collections import Counter
 from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -279,18 +280,29 @@ def board_plan(deck: Deck, board: Board) -> Plan | None:
     """The plan for the next save; None when it would change nothing.
 
     It adds every queued card and moves its chosen cut to the Maybeboard, so the swap can be weighed the
-    other way round later, and takes turned-down cards off the Sideboard or Maybeboard.
+    other way round later, and takes turned-down cards off the Sideboard or Maybeboard. A cut the deck holds
+    more copies of, such as a basic land, loses one copy per card that names it instead.
     """
     queued = board.queued
     drop = board.to_drop(deck)
     if not queued and not drop:
         return None
-    return Plan(
-        str(deck.id),
-        tuple(AddCard(card.name) for card in queued),
-        tuple(RemoveCard(card.choice, maybeboard=True) for card in queued if card.choice),
-        drop,
-    )
+    return Plan(str(deck.id), tuple(AddCard(card.name) for card in queued), _cuts(deck, queued), drop)
+
+
+def _cuts(deck: Deck, queued: Sequence[BoardCard]) -> tuple[RemoveCard, ...]:
+    held = Counter[str]()
+    for card in deck.main_cards:
+        held[card_key(card.name)] += card.quantity
+    named = Counter(card_key(card.choice) for card in queued if card.choice)
+    cuts: dict[str, RemoveCard] = {}
+    for card in queued:
+        if card.choice and (key := card_key(card.choice)) not in cuts:
+            left = held[key] - named[key]
+            cuts[key] = (
+                RemoveCard(card.choice, keep=left) if left > 0 else RemoveCard(card.choice, maybeboard=True)
+            )
+    return tuple(cuts.values())
 
 
 class BoardService:
