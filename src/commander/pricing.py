@@ -60,12 +60,13 @@ class DeckPrice:
 
 def price_deck(deck: Deck, resolved: Sequence[ResolvedCard]) -> DeckPrice:
     """Prices for the main deck; resolved must cover the deck's main cards."""
-    cards = [_price(r) for r in resolved if r.card.in_deck]
+    cards = [card_price(r) for r in resolved if r.card.in_deck]
     cards.sort(key=lambda c: (-c.total_cents, c.name.casefold()))
     return DeckPrice(deck, tuple(cards))
 
 
-def _price(resolved: ResolvedCard) -> CardPrice:
+def card_price(resolved: ResolvedCard) -> CardPrice:
+    """One deck card's price: its printing's for its finish, else the card's cheapest printing's."""
     card, printing = resolved.card, resolved.printing
     cheapest = resolved.info.cheapest_cents if resolved.info is not None else None
     unit: int | None = None

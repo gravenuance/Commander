@@ -142,6 +142,19 @@ def test_the_meta_stamp_changes_when_a_meta_answer_is_saved(desk: Desk, settings
     assert str(desk.stamps()["meta"]).startswith("1:")
 
 
+def test_the_deck_view_carries_the_card_grid(desk: Desk) -> None:
+    grid = items(desk.deck(DECK), "grid")
+    assert [(g["name"], g["count"]) for g in grid] == [
+        ("Commander", 1),
+        ("Creature", 1),
+        ("Artifact", 1),
+        ("Land", 6),
+    ]
+    golem = cast("list[Json]", grid[1]["cards"])[0]
+    assert (golem["name"], golem["label"], golem["category"]) == ("Battered Golem", "", "Combo Pieces")
+    assert str(golem["image"]).startswith("https://cards.scryfall.io/normal/front/")
+
+
 def test_each_board_card_comes_with_the_deck_cards_it_could_replace(desk: Desk) -> None:
     desk.propose(DECK, "Lightning Bolt")
     [bolt] = items(desk.deck(DECK), "cards")

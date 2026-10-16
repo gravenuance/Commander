@@ -37,6 +37,7 @@ from commander.cli_meta import CEDH_BRACKET, report_json
 from commander.cli_output import change_mark, change_text
 from commander.config import ConfigError, MetaSettings
 from commander.credentials import CredentialError, TokenStore
+from commander.deckgrid import GridGroup, deck_grid, image_url
 from commander.deckprofile import read_profile
 from commander.edhtop16 import REQUEST_INTERVAL_SECONDS, SLOW_QUERY_SECONDS, Edhtop16Client, Edhtop16Error
 from commander.labels import LabelError, Step, label_options, mark, set_label, to_get_json
@@ -52,7 +53,6 @@ from commander.targets import Target, kept_by_profile, targets_for
 log = logging.getLogger(__name__)
 
 ACTIVITY_SHOWN = 60
-IMAGE_URL = "https://cards.scryfall.io/normal/front/{a}/{b}/{id}.jpg"
 _EXPECTED = (
     BoardError,
     CardDataError,
@@ -160,6 +160,7 @@ class Desk:
             main = db.resolve(stored.deck.main_cards)
             identity = deck_identity(main)
             kept = kept_by_profile(main, profile)
+            grid = deck_grid(main)
             infos = db.cards(card.oracle_id for card in board.cards)
             cards = [
                 {
@@ -190,6 +191,7 @@ class Desk:
             "deckCards": sorted({c.name for c in stored.deck.main_cards if "Commander" not in c.categories}),
             "toGet": to_get_json(stored.deck),
             "labels": [{"name": name, "colour": colour} for name, colour in label_options(stored.deck)],
+            "grid": [_group_json(group) for group in grid],
             "activity": [activity_json(entry) for entry in reversed(activity)],
         }
 
@@ -395,8 +397,27 @@ def _image_url(db: CardDb, info: CardInfo) -> str | None:
     regular = [p for p in printings if p.regular] or printings
     if not regular:
         return None
-    scryfall_id = regular[-1].scryfall_id
-    return IMAGE_URL.format(a=scryfall_id[0], b=scryfall_id[1], id=scryfall_id)
+    return image_url(regular[-1].scryfall_id)
+
+
+def _group_json(group: GridGroup) -> Json:
+    return {
+        "name": group.name,
+        "count": group.count,
+        "cents": group.cents,
+        "cards": [
+            {
+                "name": c.name,
+                "quantity": c.quantity,
+                "image": c.image,
+                "category": c.category,
+                "label": c.label,
+                "labelColour": c.label_colour,
+                "cents": c.cents,
+            }
+            for c in group.cards
+        ],
+    }
 
 
 def _target_json(target: Target) -> Json:
