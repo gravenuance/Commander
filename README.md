@@ -108,7 +108,7 @@ shown with a warning; with none, the estimate shows as unavailable and `bracket`
   played cards with that role that fit the commander's colours and are legal, by
   [EDHREC](https://edhrec.com)'s popularity rank as Scryfall publishes it. A card counts for a role when
   Scryfall's tags give it the role or you filed it under a category of that name on Archidekt. The ideas
-  are not specific to your commander unless its profile names themes (see Deck profiles). The default
+  are not specific to your commander unless the deck has themes (see Deck themes). The default
   targets are ramp 10, draw 10, removal 8 and board wipes 2; change them for every deck in the config
   file, or for one deck in its profile:
 
@@ -119,8 +119,9 @@ shown with a warning; with none, the estimate shows as unavailable and `bracket`
   counterspell = 4   # any role analyze counts can have a target; 0 turns a default off
   ```
 
-- **Cards that fit the deck's themes:** with a profile that names themes, the most played cards matching
-  them that the deck lacks.
+- **Cards that fit the deck's themes:** cards the deck lacks that match its themes, those fitting the
+  most themes first, then the most played. Each says which themes it fits: `Grand Abolisher (fits
+  profile, Hatebears, Stax)`, where profile means the profile's own themes.
 - **Cards to consider cutting:** nonland cards that fill none of the roles and are in no combo, least
   played first, with cards matching the deck's themes last. These are only candidates: a theme card often
   fills no role on paper.
@@ -196,6 +197,7 @@ board_wipe = 0               # 0: the deck wants none, so wipes are never sugges
 types = ["Dinosaur"]         # words of the type line
 keywords = ["Discover"]
 tags = ["typal-dinosaur"]    # Tagger tags; `cmdr tags dinosaur` finds them
+ignore = ["Tokens"]          # leave out the themes read from these deck tags or categories
 
 [exclude]                    # never suggested
 tags = ["flicker"]           # sub-tags count too: flicker-creature, flicker-self and so on
@@ -210,6 +212,22 @@ Every key is optional. `cmdr profile <deck>` shows the profile as `suggest` read
 Tagger doesn't have. Flags still win over the profile: `--max-price` and `--within-bracket` override
 `max_card_eur` and `bracket_ceiling`. Tagger tags are community-maintained, so a tag can be renamed or
 removed; `cmdr profile` is the place to notice. See [ADR 0005](docs/adr/0005-deck-profiles.md).
+
+### Deck themes
+
+A deck's themes also come from what you wrote on Archidekt, so a deck needs no profile to have them:
+
+- **Deck tags** (Dwarves, Landfall, Stax...) become type words, keywords and Tagger tags of the same name;
+  a few names that match nothing go through a table (Aristocrats, Blink, +1/+1 Counters). Play styles,
+  roles and card types (cEDH, Draw, Creatures) make no theme.
+- **Your own categories** of five cards or more (Leyline, Sac Outlet) become the Tagger tags and
+  subtypes most of their cards share but few other cards have. Categories for roles, card types, the
+  commander and the Maybeboard are skipped, as is whatever the deck tags already say.
+
+`cmdr profile <deck>` lists each theme, where it came from and what it became, along with deck tags that
+match nothing and categories whose cards share nothing distinctive. The profile's own themes come first;
+`[exclude]` and `[themes] ignore` take out what doesn't fit. `sync` picks up changed deck tags even though
+Archidekt keeps the deck's edit time. See [ADR 0009](docs/adr/0009-themes-from-archidekt-deck-tags-and-categories.md).
 
 ### Deck boards
 
