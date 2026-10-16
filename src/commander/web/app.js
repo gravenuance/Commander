@@ -7,6 +7,7 @@ const STATUS_MS = 6000;
 const META_BRACKET = 5;
 const DECK_TAGS_SHOWN = 4;
 const THREATS_SHOWN = 4;
+const STOPS_SHOWN = 4;
 const ANSWERS_SHOWN = 6;
 const ACTIVITY_KEY = "commander.activityOpen";
 const COLOUR = /^#[0-9a-f]{3,8}$/i;
@@ -756,7 +757,7 @@ function renderMeta(deck, answer) {
     s.known ? `${s.withLists} lists since ${report.since}` : "No EDHTop16 lists",
     fetched ? new Date(fetched).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "",
   ].filter(Boolean).join(" · ");
-  $("meta-body").replaceChildren(metaOwnCombos(answer.ownCombos || []), metaPieces(answer.pieces), metaCombos(answer.combos));
+  $("meta-body").replaceChildren(metaKeys(answer.keys), metaStoppers(answer.stoppers, answer.untouched), metaCombos(answer.combos));
 }
 
 function deckChips(decks) {
@@ -781,41 +782,49 @@ function shortList(items, shown, build) {
     el("summary", { text: `${items.length - shown} more` }), el("ul", { class: "meta-list" }, ...items.slice(shown).map(build))));
 }
 
-function metaPieces(pieces) {
-  const hit = pieces.filter((p) => p.threats.length);
-  const clear = pieces.filter((p) => !p.threats.length).map((p) => p.card);
-  const rows = hit.map((piece) => el("div", { class: "meta-row" },
-    el("p", { class: "meta-card", text: piece.card, title: piece.reasons.join("; ") }),
-    shortList(piece.threats, THREATS_SHOWN, (t) => el("li", { class: "threat" },
-      el("span", { class: "threat-name", text: t.name }),
-      el("span", { class: "muted", text: t.kinds.join(", ") }),
-      deckChips(t.decks)))));
-  return metaSection("Against your key cards",
-    rows.length ? el("div", { class: "meta-rows" }, ...rows) : el("p", { class: "empty", text: "Nothing in the meta stops them." }),
-    clear.length ? el("p", { class: "muted small", text: `Untouched: ${clear.join(", ")}` }) : null);
+// The deck's key cards; hovering one says why it is key.
+function metaKeys(keys) {
+  return metaSection("Key cards",
+    el("ul", { class: "deck-chips key-chips" }, ...keys.map((k) => el("li", { class: "deck-chip", text: k.name, title: k.reasons.join("\n") }))));
 }
 
-const ANSWER_ROLES = [["stax", "Stax"], ["removal", "Removal"], ["counter", "Counter"]];
+const ANSWER_ROLES = [["stax", "Stax"], ["removal", "Removal"], ["counter", "Counters"]];
 
-// The deck's own combos, each with what the meta commonly plays against it, grouped by how it stops them.
-function metaOwnCombos(combos) {
-  const rows = combos.map((c) => el("div", { class: "meta-row" },
-    el("p", { class: "meta-card" },
-      el("a", { href: c.url, target: "_blank", rel: "noopener", text: c.pieces.join(" + "), title: "Open on Commander Spellbook" })),
-    c.results.length ? el("p", { class: "muted small", text: c.results.slice(0, 2).join("; ") }) : null,
-    c.answers.length
-      ? el("div", { class: "role-groups" }, ...ANSWER_ROLES.map(([role, label]) => {
-        const found = c.answers.filter((a) => a.role === role);
-        if (!found.length) return null;
-        return el("div", { class: "role-group" }, el("p", { class: "role-name", text: label }),
-          shortList(found, THREATS_SHOWN, (a) => el("li", { class: "threat" },
-            el("span", { class: "threat-name", text: a.card }),
-            el("span", { class: "muted", text: a.role === "stax" ? a.how : a.catch }),
-            deckChips(a.decks))));
-      }))
-      : el("p", { class: "answers" }, el("span", { class: "badge status", text: "Nothing in the meta stops it" }))));
-  return metaSection("Your combos",
-    rows.length ? el("div", { class: "meta-rows" }, ...rows) : el("p", { class: "empty", text: "No combos found in the deck." }));
+// Each meta card that stops a combo of the deck's or hits a key card, once, grouped by how it stops them.
+function metaStoppers(stoppers, untouched) {
+  const groups = ANSWER_ROLES.map(([role, label]) => {
+    const found = stoppers.filter((s) => s.role === role);
+    if (!found.length) return null;
+    return el("div", { class: "role-group" }, el("p", { class: "role-name", text: `${label} (${found.length})` }),
+      shortList(found, THREATS_SHOWN, stopperRow));
+  });
+  const clear = [
+    ...untouched.combos.map((c) => el("li", { class: "deck-chip stops combo" },
+      el("a", { href: c.url, target: "_blank", rel: "noopener", text: c.pieces, title: "Open on Commander Spellbook" }))),
+    ...untouched.keys.map((name) => el("li", { class: "deck-chip stops", text: name })),
+  ];
+  return metaSection("What stops you",
+    stoppers.length ? el("div", { class: "role-groups" }, ...groups) : el("p", { class: "empty", text: "Nothing in the meta stops your combos or key cards." }),
+    clear.length ? el("div", { class: "untouched" }, el("p", { class: "role-name", text: "Untouched" }), el("ul", { class: "deck-chips" }, ...clear)) : null);
+}
+
+function stopperRow(s) {
+  const how = s.role === "stax" ? s.combos.map((c) => c.how).find(Boolean) : s.kinds.join(", ") || s.combos.map((c) => c.how).find(Boolean);
+  const all = [...s.combos.map((c) => ({ combo: c, text: shortCombo(c.pieces) })), ...s.keys.map((name) => ({ text: name }))];
+  const stops = all.slice(0, STOPS_SHOWN).map((item) => item.combo
+    ? el("li", { class: "deck-chip stops combo", title: [item.combo.pieces, item.combo.how].filter(Boolean).join(": ") },
+      el("a", { href: item.combo.url, target: "_blank", rel: "noopener", text: item.text }))
+    : el("li", { class: "deck-chip stops", text: item.text }));
+  const rest = all.slice(STOPS_SHOWN);
+  if (rest.length) stops.push(el("li", { class: "deck-chip more", text: `+${rest.length}`, title: rest.map((item) => item.text).join("\n") }));
+  return el("li", { class: "stopper" },
+    el("p", { class: "threat" }, el("span", { class: "threat-name", text: s.card }), how ? el("span", { class: "muted", text: how }) : null, deckChips(s.decks)),
+    el("ul", { class: "deck-chips", "aria-label": "Stops" }, ...stops));
+}
+
+// "Magda, Brazen Outlaw + Clock of Omens" reads as "Magda + Clock of Omens"; the full names show on hover.
+function shortCombo(pieces) {
+  return pieces.split(" + ").map((name) => name.split(",")[0]).join(" + ");
 }
 
 function metaCombos(combos) {

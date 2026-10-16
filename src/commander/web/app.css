@@ -708,3 +708,9 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .answers { overflow-wrap: anywhere; }
 .role-groups { display: grid; gap: var(--space-2); }
 .role-name { margin: 0 0 var(--space-1); font-weight: 600; color: var(--muted); }
+.stopper { display: grid; gap: var(--space-1); }
+.stopper p { margin: 0; }
+.deck-chip.stops { background: var(--surface); border-style: dashed; }
+.deck-chip.stops a { color: var(--accent); }
+.key-chips .deck-chip { cursor: help; font-size: var(--text-s); }
+.untouched { margin-top: var(--space-2); }

@@ -250,7 +250,8 @@ def test_meta_opens_from_cache_and_refreshes_on_demand(desk: Desk, fake: FakeArc
     cached = cast("Json", desk.meta(DECK)["report"])
     assert cached["missing"] == report["missing"]
     assert len(fake.edhtop16.requests) == asked
-    assert {"pieces", "combos"} <= set(fresh)
+    assert {"keys", "stoppers", "untouched", "combos"} <= set(fresh)
+    assert [k["name"] for k in cast("list[Json]", fresh["keys"])][:1] == ["Magda, Brazen Outlaw"]
     # The refresh, and only the refresh, put the meta's staples on the board as cmdr's suggestions.
     board = items(desk.deck(DECK), "cards")
     assert sorted((c["name"], c["source"], c["origin"]) for c in board) == [

@@ -46,7 +46,7 @@ from commander.labels import LabelError, Step, label_options, mark, set_label, t
 from commander.leanings import leaning_json
 from commander.meta import analyse, card_shares
 from commander.metadata import CEDH_BRACKET, MetaData, MetaSources, cache_stamp, gather, gather_for
-from commander.metapanel import combo_rows, own_combo_rows, piece_threats
+from commander.metapanel import combo_rows, key_card_rows, stopper_rows, untouched
 from commander.models import Deck
 from commander.net import Fetcher, NetworkError, Pacer
 from commander.spellbook import META_REQUEST_INTERVAL_SECONDS, SpellbookClient
@@ -327,9 +327,10 @@ class Desk:
             return {"report": None, "errors": [] if offline else [s.error for s in report.sources if s.error]}
         return {
             "report": report_json(report),
-            "pieces": piece_threats(report.key_cards, report.threats),
+            "keys": key_card_rows(report.key_cards),
+            "stoppers": stopper_rows(report.own_combos, report.threats),
+            "untouched": untouched(report.key_cards, report.own_combos, report.threats),
             "combos": combo_rows(report.combos),
-            "ownCombos": own_combo_rows(report.own_combos),
         }
 
     def _meta_shares(self, deck: Deck) -> dict[str, float] | None:

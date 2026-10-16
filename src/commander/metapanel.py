@@ -1,61 +1,84 @@
-"""The app's Meta section: the deck's own combos and its key cards with the meta cards that stop them, and
-each meta combo with the deck cards that stop it, all tagged with the meta decks that play them."""
+"""The app's Meta section: the deck's key cards; each meta card that stops one of the deck's combos or
+hits a key card, once, with what it stops; and each meta combo with the deck cards that stop it, all
+tagged with the meta decks that play them."""
 
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 
+from commander.answers import AnswerKind
 from commander.keycards import KeyCard
 from commander.meta import OwnCombo, Threat
-from commander.metacombos import MetaCombo
+from commander.metacombos import AnswerRole, MetaCombo
 from commander.models import short_commander_name
 
 type Json = dict[str, object]
 
 
-def piece_threats(keys: Sequence[KeyCard], threats: Sequence[Threat]) -> list[Json]:
-    """Every key card with why and the threats that hit it, most exposed first; untouched ones come last."""
-    rows: list[tuple[float, KeyCard, list[Json]]] = []
-    for key in keys:
-        hitting = sorted((t for t in threats if key.name in t.hits), key=lambda t: (-t.exposure, t.name))
-        rows.append(
-            (
-                sum(t.exposure for t in hitting),
-                key,
-                [
-                    {
-                        "name": t.name,
-                        "kinds": [kind.label for kind in t.kinds],
-                        "exposure": round(t.exposure, 4),
-                        "decks": _decks(t.played_by),
-                    }
-                    for t in hitting
-                ],
-            )
-        )
-    rows.sort(key=lambda row: (-row[0], row[1].name.casefold()))
-    return [{"card": key.name, "reasons": list(key.reasons), "threats": found} for _, key, found in rows]
+def key_card_rows(keys: Sequence[KeyCard]) -> list[Json]:
+    return [{"name": key.name, "reasons": list(key.reasons)} for key in keys]
 
 
-def own_combo_rows(combos: Sequence[OwnCombo]) -> list[Json]:
-    """The deck's combos with the meta cards that stop each: stax, then removal, then counters."""
+def stopper_rows(combos: Sequence[OwnCombo], threats: Sequence[Threat]) -> list[Json]:
+    """Each meta card that stops one of the deck's combos or hits a key card, once, with everything it stops.
+
+    A card is filed under the first way it stops anything: stax, then removal, then counters. Within each,
+    the cards that show up most come first.
+    """
+    rows: dict[str, _Stopper] = {}
+    for combo in combos:
+        label = " + ".join(combo.pieces)
+        for answer in combo.answers:
+            row = rows.setdefault(answer.card, _Stopper(answer.exposure, answer.played_by))
+            row.roles.add(answer.role)
+            how = answer.how if answer.role is AnswerRole.STAX else answer.catch
+            row.combos.append({"pieces": label, "url": combo.url, "how": how})
+            row.in_combos.update(combo.pieces)
+    for threat in threats:
+        row = rows.setdefault(threat.name, _Stopper(threat.exposure, threat.played_by))
+        counters = AnswerKind.COUNTERSPELL in threat.kinds
+        row.roles.add(AnswerRole.COUNTER if counters else AnswerRole.REMOVAL)
+        row.keys.extend(name for name in threat.hits if name not in row.keys)
+        row.kinds.extend(kind.label for kind in threat.kinds if kind.label not in row.kinds)
+    order = list(AnswerRole)
+    ranked = sorted(rows.items(), key=lambda item: (order.index(item[1].role), -item[1].exposure, item[0]))
     return [
         {
-            "pieces": list(combo.pieces),
-            "results": list(combo.results),
-            "url": combo.url,
-            "answers": [
-                {
-                    "card": a.card,
-                    "how": a.how,
-                    "role": a.role.value,
-                    "catch": a.catch,
-                    "exposure": round(a.exposure, 4),
-                    "decks": _decks(a.played_by),
-                }
-                for a in combo.answers
-            ],
+            "card": card,
+            "role": row.role.value,
+            "exposure": round(row.exposure, 4),
+            "decks": _decks(row.played_by),
+            "combos": row.combos,
+            # A key card in a combo the row already stops would say the same twice.
+            "keys": [name for name in row.keys if name not in row.in_combos],
+            "kinds": row.kinds,
         }
-        for combo in combos
+        for card, row in ranked
     ]
+
+
+def untouched(keys: Sequence[KeyCard], combos: Sequence[OwnCombo], threats: Sequence[Threat]) -> Json:
+    """The key cards nothing in the meta hits and the deck's combos nothing stops."""
+    hit = {name for threat in threats for name in threat.hits}
+    return {
+        "keys": [key.name for key in keys if key.name not in hit],
+        "combos": [{"pieces": " + ".join(c.pieces), "url": c.url} for c in combos if not c.answers],
+    }
+
+
+@dataclass(slots=True)
+class _Stopper:
+    exposure: float
+    played_by: tuple[tuple[str, float], ...]
+    roles: set[AnswerRole] = field(default_factory=set[AnswerRole])
+    combos: list[Json] = field(default_factory=list[Json])
+    keys: list[str] = field(default_factory=list[str])
+    kinds: list[str] = field(default_factory=list[str])
+    in_combos: set[str] = field(default_factory=set[str])
+
+    @property
+    def role(self) -> AnswerRole:
+        """The first way it stops anything, in the order a stax deck reaches for them."""
+        return min(self.roles, key=list(AnswerRole).index)
 
 
 def combo_rows(combos: Sequence[MetaCombo]) -> list[Json]:

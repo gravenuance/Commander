@@ -168,7 +168,10 @@ decks for that commander updated in the same window. It lists:
 With fewer than five top-cut lists every list in the window is read, and with fewer than ten lists the
 report says the data is thin: read its shares as hints. Answers are read from Scryfall Tagger tags and
 rules text, so check them before acting on one. `--card <name>` shows how lists use one card,
-`--to-board` puts the missing staples on the deck's board, and the app's Meta panel shows the same report.
+`--to-board` puts the missing staples on the deck's board, and the app's Meta panel shows the same report
+by meta card: under *What stops you*, each card the meta plays against your combos or key cards appears
+once, grouped as stax, removal or counters, with chips for what of yours it stops and the decks that play
+it ([ADR 0018](docs/adr/0018-meta-panel-by-meta-card.md)).
 
 Answers are cached for a day (Spellbook combos for a week, the deck's own until its list changes); `--refresh` fetches again. A first run takes
 a few minutes, because requests are spaced out. The sample sizes are set in the config file:

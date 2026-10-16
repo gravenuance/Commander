@@ -38,6 +38,11 @@
 - What a deck leans into (ADR 0016): the Tagger tags its cards hold far more of than recent decks with
   its commander, listed by `cmdr profile` (and `--json`) and in the app's deck header.
 
+- The app's Meta panel lists each meta card once (ADR 0018): *What stops you* merges "Your combos" and
+  "Against your key cards" into one row per meta card, grouped as stax, removal or counters, with chips
+  for the combos and key cards it stops. Key cards show as chips that say why on hover. Shorter headers:
+  Key cards, What stops you, Meta combos.
+
 ### Fixed
 - Key cards are found each time (ADR 0017), each with why: the deck's combos, cards you or other
   players of the commander file under a combo or win category, and cards costing far above the deck's
