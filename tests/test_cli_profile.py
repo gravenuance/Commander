@@ -100,7 +100,10 @@ def test_suggest_follows_the_profile(tmp_path: Path, raw_deck: Json, own_cache: 
     assert (roles["draw"]["have"], roles["draw"]["target"], roles["draw"]["short"]) == (0, 0, False)
     assert [i["name"] for i in roles["ramp"]["ideas"]] == ["Arcane Signet"]
     # Lightning Bolt is an Instant, the profile's theme; High-Speed Hoverbike is from the Vehicles deck tag.
-    assert [i["name"] for i in deck["themed"]] == ["Lightning Bolt", "High-Speed Hoverbike"]
+    assert [(i["name"], i["fits"]) for i in deck["themed"]] == [
+        ("Lightning Bolt", ["profile"]),
+        ("High-Speed Hoverbike", ["Vehicles"]),
+    ]
     assert deck["ceiling"] == 4
     assert "profile tag 'no-such-tag' is not a Tagger tag" in result.err
 
@@ -122,4 +125,4 @@ def test_suggest_prints_the_themed_section(tmp_path: Path, raw_deck: Json, own_c
     (deck_folder(tmp_path) / PROFILE_FILE).write_text(PROFILE, encoding="utf-8")
     out = suggest(["magda"], tmp_path, fake, own_cache).out
     section = out.split("\ncards that fit the deck's themes (most played first)\n")[1]
-    assert section.splitlines()[0].endswith("  Lightning Bolt")
+    assert section.splitlines()[0].endswith("  Lightning Bolt (fits profile)")

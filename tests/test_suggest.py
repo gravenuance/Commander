@@ -383,6 +383,20 @@ def test_themed_section_lists_the_most_played_matching_cards_not_in_the_deck(dec
     assert run(deck, db, options=replace(OPTIONS, themes=Theme(types=("Dwarf",)))).themed == ()
 
 
+def test_ideas_say_which_named_themes_they_fit(deck: Deck, db: CardDb) -> None:
+    labels = (("Spells", Theme(types=("Sorcery",))), ("Bolts", Theme(types=("Instant",))))
+    both = Theme(types=("Sorcery", "Instant"))
+    result = run(deck, db, options=replace(OPTIONS, themes=both, theme_labels=labels))
+    fits = {i.info.name: i.fits for i in result.themed}
+    assert (fits["Chaos Warp"], fits["Lightning Bolt"], fits["Jeska's Will"]) == (
+        ("Bolts",),
+        ("Bolts",),
+        ("Spells",),
+    )
+    ramp = {i.info.name: i.fits for i in result.roles[0].ideas}
+    assert (ramp["Jeska's Will"], ramp["Arcane Signet"]) == (("Spells",), ())
+
+
 def test_themed_ideas_obey_the_ceiling_and_the_exclusions(deck: Deck, db: CardDb) -> None:
     sorceries = Theme(types=("Sorcery",))
     capped = run(replace(deck, bracket=2), db, options=replace(OPTIONS, themes=sorceries, ceiling=2))
@@ -425,7 +439,9 @@ def test_options_take_flags_then_profile_then_config_then_defaults(deck: Deck) -
         keep_cards=("Sol Ring",),
         keep_categories=("Stax",),
     )
-    themes = ResolvedThemes(Theme(types=("Dwarf",)), Theme(keywords=("Flash",)), ())
+    themes = ResolvedThemes(
+        Theme(types=("Dwarf",)), Theme(keywords=("Flash",)), (), (("profile", Theme(types=("Dwarf",))),)
+    )
     config = {Role.RAMP: 7, Role.DRAW: 4}
     options = options_for(
         deck,
@@ -440,6 +456,7 @@ def test_options_take_flags_then_profile_then_config_then_defaults(deck: Deck) -
     assert options.targets == {Role.RAMP: 7, Role.DRAW: 0, Role.REMOVAL: 8, Role.BOARD_WIPE: 2}
     assert (options.count, options.max_cents, options.ceiling) == (3, 500, 3)
     assert (options.themes, options.exclude) == (themes.themes, themes.exclude)
+    assert options.theme_labels == themes.labelled
     assert options.exclude_names == {
         "flickering hound",
         "sundering eruption // volcanic fissure",

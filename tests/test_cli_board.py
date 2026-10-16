@@ -194,6 +194,9 @@ def test_suggest_puts_its_ideas_on_the_board_once(home: Path, fake: FakeArchidek
     signet = read_board(folder(home)).find("Arcane Signet")
     assert signet is not None
     assert signet.reason == "ramp is short: 2 of 10"
+    hoverbike = read_board(folder(home)).find("High-Speed Hoverbike")
+    assert hoverbike is not None
+    assert hoverbike.reason == "fits the deck's themes: Vehicles"
     assert "put " in first.err
     assert "idea(s) on the Magda board" in first.err
 

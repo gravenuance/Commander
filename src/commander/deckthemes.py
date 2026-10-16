@@ -14,7 +14,14 @@ from enum import Enum
 
 from commander.analysis import CARD_TYPES, CATEGORY_ALIASES
 from commander.carddb import CardDb, ResolvedCard, Theme
-from commander.deckprofile import Profile, ResolvedThemes, ThemeSpec, resolve_themes
+from commander.deckprofile import (
+    PROFILE_THEME,
+    Profile,
+    ResolvedThemes,
+    ThemeSpec,
+    resolve_spec,
+    resolve_themes,
+)
 from commander.models import Deck
 
 # Deck tags that say how a deck plays or how strong it is, not which cards it wants.
@@ -164,8 +171,12 @@ def merge_themes(deck: Deck, profile: Profile, db: CardDb) -> MergedThemes:
         tags=_once(t for spec in specs for t in spec.tags),
     )
     known = {name.strip().casefold() for name in (*(deck.tags or ()), *_categories(deck))}
+    resolved = resolve_themes(replace(profile, themes=merged), db)
+    ids = db.tag_ids(merged.tags)
+    named = [(PROFILE_THEME, profile.themes), *((theme.name, theme.spec) for theme in used)]
+    labelled = tuple((name, resolve_spec(spec, ids)) for name, spec in named)
     return MergedThemes(
-        resolve_themes(replace(profile, themes=merged), db),
+        replace(resolved, labelled=tuple((name, theme) for name, theme in labelled if not theme.empty)),
         derived,
         tuple(used),
         tuple(name for name in profile.ignore_themes if name.strip().casefold() not in known),

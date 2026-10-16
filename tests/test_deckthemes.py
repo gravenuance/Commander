@@ -210,6 +210,11 @@ def test_the_profiles_themes_come_first_then_the_derived_ones(db: CardDb, deck: 
     # Dwarf is named once, though both the profile and the Dwarves deck tag name it.
     assert merged.resolved.themes == Theme(types=("Dwarf", "Vehicle"), tag_ids=(RAMP_ID, TYPAL_DWARF_ID))
     assert [t.name for t in merged.used] == ["Dwarves", "Vehicles"]
+    assert merged.resolved.labelled == (
+        ("profile", Theme(types=("Dwarf",), tag_ids=(RAMP_ID,))),
+        ("Dwarves", Theme(types=("Dwarf",), tag_ids=(TYPAL_DWARF_ID,))),
+        ("Vehicles", Theme(types=("Vehicle",))),
+    )
 
 
 def test_the_profile_ignores_derived_themes_by_name(db: CardDb, deck: Deck) -> None:

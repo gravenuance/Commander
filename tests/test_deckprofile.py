@@ -147,3 +147,7 @@ def test_tags_resolve_to_ids_and_unknown_ones_are_reported(card_db_file: Path) -
     assert resolved.themes == Theme(types=("Dwarf",), tag_ids=("51403157-c373-4f34-934a-fcc70a47fe57",))
     assert resolved.exclude == Theme(keywords=("Flash",), tag_ids=("2f3e4ad7-5e60-41b4-bdbc-653f16869cf6",))
     assert resolved.unknown_tags == ("stax",)
+    # The profile's own themes go by the name profile; a profile without themes names none.
+    assert resolved.labelled == (("profile", resolved.themes),)
+    with CardDb(card_db_file) as db:
+        assert resolve_themes(Profile(), db).labelled == ()

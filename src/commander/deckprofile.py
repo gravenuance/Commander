@@ -12,6 +12,8 @@ from commander.fsutil import write_text_atomic
 from commander.models import Deck
 
 PROFILE_FILE = "profile.toml"
+# The name ideas give the themes a profile.toml names itself.
+PROFILE_THEME = "profile"
 PROFILE_VERSION = 1
 MAX_PROFILE_BYTES = 64 * 1024
 MAX_LIST = 100
@@ -75,6 +77,8 @@ class ResolvedThemes:
     themes: Theme
     exclude: Theme
     unknown_tags: tuple[str, ...]
+    # Each theme by the name ideas show it under: "profile" for the profile's own, a deck tag or category.
+    labelled: tuple[tuple[str, Theme], ...] = ()
 
 
 def profile_path(folder: Path) -> Path:
@@ -125,7 +129,9 @@ def resolve_themes(profile: Profile, db: CardDb) -> ResolvedThemes:
     slugs = {*profile.themes.tags, *profile.exclude.tags}
     ids = db.tag_ids(slugs)
     unknown = tuple(sorted(slug for slug in slugs if slug not in ids))
-    return ResolvedThemes(_resolve(profile.themes, ids), _resolve(profile.exclude, ids), unknown)
+    themes = resolve_spec(profile.themes, ids)
+    labelled = () if themes.empty else ((PROFILE_THEME, themes),)
+    return ResolvedThemes(themes, resolve_spec(profile.exclude, ids), unknown, labelled)
 
 
 def write_profile_template(folder: Path, deck: Deck) -> Path:
@@ -187,7 +193,8 @@ def _targets(table: object, where: str) -> dict[Role, int]:
         raise ProfileError(str(error)) from None
 
 
-def _resolve(spec: ThemeSpec, ids: Mapping[str, str]) -> Theme:
+def resolve_spec(spec: ThemeSpec, ids: Mapping[str, str]) -> Theme:
+    """The spec against the card data: tag slugs become ids, and slugs it lacks are left out."""
     return Theme(spec.types, spec.keywords, tuple(ids[slug] for slug in spec.tags if slug in ids))
 
 

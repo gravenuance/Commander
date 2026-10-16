@@ -568,7 +568,8 @@ def feed_suggestions(service: BoardService, result: Suggestions, board: Board) -
     ]
     ideas: dict[str, str] = {}
     for idea in result.themed:
-        ideas.setdefault(idea.info.name, "fits the deck's themes")
+        fits = f": {', '.join(idea.fits)}" if idea.fits else ""
+        ideas.setdefault(idea.info.name, f"fits the deck's themes{fits}")
     for target in result.roles:
         for idea in target.ideas:
             ideas.setdefault(

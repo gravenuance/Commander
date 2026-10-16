@@ -648,7 +648,7 @@ roles below target (nonland cards by Scryfall tags or your categories; most play
              no card fits
 
 cards that fit the deck's themes (most played first)
-      €0.14  High-Speed Hoverbike
+      €0.14  High-Speed Hoverbike (fits Vehicles)
 
 cards to consider cutting: none, every nonland card has a role or is in a combo
 """
@@ -788,6 +788,7 @@ def test_suggest_json(tmp_path: Path, raw_deck: Json, own_cache: Path) -> None:
         "edhrecRank": 107,
         "raises": {"bracket": 3, "reason": "game changer"},
         "themed": False,
+        "fits": [],
     }
 
 

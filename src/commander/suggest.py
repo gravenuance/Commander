@@ -56,6 +56,8 @@ class SuggestOptions:
     ceiling: int | None = None
     # Ideas matching a theme come first, and deck cards matching one come last among cuts.
     themes: Theme = NO_THEME
+    # The same themes one by one, by the name an idea says it fits.
+    theme_labels: tuple[tuple[str, Theme], ...] = ()
     exclude: Theme = NO_THEME
     # Casefolded card names: never suggested, and never offered as cuts.
     exclude_names: frozenset[str] = frozenset()
@@ -98,8 +100,10 @@ class ComboPiece:
 class RoleIdea:
     info: CardInfo
     raises: BracketRaise | None
-    # The card matches one of the deck's themes.
+    # The card matches one of the deck's themes...
     themed: bool = False
+    # ...and these are the ones, by name ("profile", a deck tag or a category).
+    fits: tuple[str, ...] = ()
 
 
 @dataclass(slots=True, frozen=True)
@@ -193,6 +197,7 @@ def options_for(
         max_cents=max_cents if max_cents is not None else profile.max_card_cents,
         ceiling=ceiling,
         themes=themes.themes,
+        theme_labels=themes.labelled,
         exclude=themes.exclude,
         exclude_names=frozenset(excluded),
         keep_names=frozenset(key for name in profile.keep_cards for key in name_keys(name)),
@@ -216,6 +221,7 @@ class _Picker:
         ids = [info.oracle_id for info in window]
         banned = self.db.matching(self.options.exclude, ids)
         themed = self.db.matching(self.options.themes, ids)
+        labelled = [(label, self.db.matching(theme, ids)) for label, theme in self.options.theme_labels]
         if theme_first:
             window.sort(key=lambda info: info.oracle_id not in themed)
         ideas: list[RoleIdea] = []
@@ -225,7 +231,8 @@ class _Picker:
             raises = card_raise(info, self.bracket, self.changers)
             if self._too_high(raises):
                 continue
-            ideas.append(RoleIdea(info, raises, themed=info.oracle_id in themed))
+            fits = tuple(label for label, held in labelled if info.oracle_id in held)
+            ideas.append(RoleIdea(info, raises, themed=info.oracle_id in themed, fits=fits))
             if len(ideas) == self.options.count:
                 break
         return ideas

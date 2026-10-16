@@ -1104,7 +1104,9 @@ def _print_themed(result: Suggestions, out: TextIO) -> None:
 
 
 def _print_idea(idea: RoleIdea, out: TextIO, *, mark_theme: bool = True) -> None:
-    theme = " (theme)" if mark_theme and idea.themed else ""
+    theme = (
+        f" (fits {', '.join(idea.fits)})" if idea.fits else " (theme)" if mark_theme and idea.themed else ""
+    )
     price = price_text(idea.info.cheapest_cents)
     print(f"  {price:>9}  {idea.info.name}{theme}{raise_text(idea.raises)}", file=out)
 
@@ -1204,6 +1206,7 @@ def _idea_json(idea: RoleIdea) -> dict[str, object]:
         "edhrecRank": idea.info.edhrec_rank,
         "raises": raise_json(idea.raises),
         "themed": idea.themed,
+        "fits": list(idea.fits),
     }
 
 
