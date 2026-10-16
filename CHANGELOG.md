@@ -2,12 +2,18 @@
 
 ## Unreleased
 
+## 0.3.0 - 2026-10-16
+
+The cEDH meta, answers read from rules text, and deck themes from Archidekt.
+
 ### Added
 - Deck themes from Archidekt: `suggest` reads each deck's deck tags and its own categories as themes, beside
   the profile's (ADR 0009). Ideas name the themes they fit, themed ideas that fit more of them come first,
   and `cmdr profile` lists every theme with its source. `[themes] ignore` in a profile drops one. Deck
   snapshots keep the deck tags (version 2; the next `sync` fetches each deck once), and `sync` notices
-  changed deck tags, which Archidekt makes without changing a deck's edit time.
+  changed deck tags, which Archidekt makes without changing a deck's edit time. Deck tags that say how a
+  deck plays (cEDH, Tempo, Commander Matters, ETB Effects, Draw) make no theme; `cmdr profile` lists them
+  as such.
 - `cmdr meta` for bracket 5 decks: compares a deck with its commander's performing EDHTop16 lists from the
   last two months and the most-viewed recent Archidekt decks, and lists the staples it misses, spicy picks,
   its own picks, the most-played commanders' answers to its key pieces, and the meta's most-played combos
