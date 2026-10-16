@@ -4,17 +4,19 @@ from datetime import date
 
 import pytest
 
-from commander.answers import Piece, piece_facts
+from commander.answers import AnswerKind, CardAnswer, Piece, piece_facts, read_modes
 from commander.archidekt import parse_deck
 from commander.carddb import CardDb
 from commander.edhtop16 import CommanderStats
 from commander.metacombos import (
     AnswerRole,
     ComboAnswer,
+    DeckAnswers,
     LockScope,
     Stop,
     as_cast,
     card_stops,
+    combo_answers,
     meta_combos,
     stop_applies,
 )
@@ -136,10 +138,33 @@ def test_a_lock_on_some_zones_misses_cards_put_in_from_others() -> None:
     assert stop_applies(Stop.CHEATED_IN, scope, from_graveyard)
 
 
-def test_graveyard_hate_needs_rules_text_that_exiles_from_graveyards() -> None:
-    hearse = "{T}: Exile up to two target cards from a single graveyard."
-    assert Stop.GRAVEYARD not in {stop for stop, _ in card_stops(CAGE, {Stop.GRAVEYARD})}
-    assert Stop.GRAVEYARD in {stop for stop, _ in card_stops(hearse, {Stop.GRAVEYARD})}
+GRAVEYARD_HATE = {
+    "Unlicensed Hearse": "{T}: Exile up to two target cards from a single graveyard.",
+    "Deathrite Shaman": "{B}, {T}: Exile target instant or sorcery card from a graveyard. "
+    "Each opponent loses 2 life.",
+    "Bojuka Bog": "This land enters tapped.\nWhen this land enters, exile target player's graveyard.",
+    "Relic of Progenitus": "{T}: Target player exiles a card from their graveyard.\n"
+    "{1}, Exile this artifact: Exile all graveyards. Draw a card.",
+    "Tormod's Crypt": "{T}, Sacrifice this artifact: Exile target player's graveyard.",
+    "Dauthi Voidwalker": "If a card would be put into an opponent's graveyard from anywhere, "
+    "instead exile it with a void counter on it.",
+    "Rest in Peace": "When this enchantment enters, exile all graveyards.\n"
+    "If a card or token would be put into a graveyard from anywhere, exile it instead.",
+}
+DAWNBRINGER_CLERIC = (
+    "When this creature enters, choose one —\n• Cure Wounds — You gain 2 life.\n"
+    "• Dispel Magic — Destroy target enchantment.\n• Gentle Repose — Exile target card from a graveyard."
+)
+
+
+@pytest.mark.parametrize("name", GRAVEYARD_HATE)
+def test_graveyard_hate_seals_empties_or_keeps_exiling_graveyards(name: str) -> None:
+    assert Stop.GRAVEYARD in {stop for stop, _ in card_stops(GRAVEYARD_HATE[name], {Stop.GRAVEYARD})}
+
+
+def test_exiling_one_card_once_or_nothing_is_no_graveyard_hate() -> None:
+    for text in (CAGE, DAWNBRINGER_CLERIC):
+        assert Stop.GRAVEYARD not in {stop for stop, _ in card_stops(text, {Stop.GRAVEYARD})}
 
 
 def test_a_tag_alone_makes_no_instant_a_lock() -> None:
@@ -166,6 +191,38 @@ def test_pieces_cast_for_nothing_are_marked_free() -> None:
     ).cast_free
     # A piece the card data doesn't know is free only when the steps say so.
     assert as_cast(steps("Cast Mana Vault by paying {0}.", vault), vault, {}).cast_free
+
+
+def test_an_answer_names_every_piece_it_reaches_and_its_catch() -> None:
+    breach = ComboPiece("Underworld Breach", "Enchantment", ("B",))
+    led = ComboPiece("Lion's Eye Diamond", "Artifact", ("B",))
+    freeze = ComboPiece("Brain Freeze", "Instant", ("H",))
+    facts = {"brain freeze": Piece("Brain Freeze", "Instant", "U", mana_value=2, storm=True)}
+    chaos_warp = "The owner of target permanent shuffles it into their library."
+    cards = {
+        "Chaos Warp": (chaos_warp, AnswerKind.PERMANENT_REMOVAL),
+        "Mindbreak Trap": ("Exile any number of target spells.", AnswerKind.COUNTERSPELL),
+        "Spell Pierce": (
+            "Counter target noncreature spell unless its controller pays {2}.",
+            AnswerKind.COUNTERSPELL,
+        ),
+    }
+    deck = DeckAnswers({n: CardAnswer(n, (kind,), read_modes(text)) for n, (text, kind) in cards.items()}, {})
+    loop = steps("Cast Brain Freeze.", breach, led, freeze)
+    assert combo_answers(loop, deck, facts) == (
+        ComboAnswer("Chaos Warp", "removes Underworld Breach or Lion's Eye Diamond", AnswerRole.REMOVAL),
+        ComboAnswer(
+            "Mindbreak Trap",
+            "counters Underworld Breach, Lion's Eye Diamond or Brain Freeze",
+            AnswerRole.COUNTER,
+        ),
+        ComboAnswer(
+            "Spell Pierce",
+            "counters Underworld Breach or Lion's Eye Diamond",
+            AnswerRole.COUNTER,
+            "unless they pay {2}",
+        ),
+    )
 
 
 def test_piece_facts_come_from_the_card_data(db: CardDb) -> None:

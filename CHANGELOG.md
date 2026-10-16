@@ -17,6 +17,11 @@
 - A counter answers a storm spell such as Brain Freeze only when it meets every copy (Flusterstorm,
   Mindbreak Trap); an {X} piece such as Walking Ballista no longer counts as cast free; and a tag alone no
   longer makes an instant or sorcery a stax piece (Mindbreak Trap is a counter, Silence still a lock).
+- Meta combo answers name every piece a card reaches ("removes Underworld Breach or Lion's Eye Diamond") and
+  show their catch in the CLI, the JSON (`catch`) and the app: soft counters ("unless they pay {2}"),
+  Counterbalance's reveal, and edicts, which are now read from their text ("they choose what to sacrifice").
+  Kataki's upkeep tax no longer counts as removal, and graveyard hate must seal graveyards, exile whole ones
+  or keep exiling from an activated ability; Dawnbringer Cleric's one-card exile no longer counts.
 - Desktop app: a Meta panel per deck with the same report, a Meta combos table included; it opens from
   cache and fetches on Refresh meta.
 

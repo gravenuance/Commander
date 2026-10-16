@@ -58,8 +58,14 @@ class Stop(Enum):
         "graveyard hate",
         ("hate-graveyard", "graveyard-seal", "sweeper-graveyard"),
         r"would be put into [^.]*graveyard[^.]*exile it instead",
-        # Tagger files Grafdigger's Cage here too, though it exiles nothing: only cards that do count.
-        r"exile[^.]*graveyard|graveyard[^.]*exile",
+        # Tagger files Grafdigger's Cage and one-shot exile (Dawnbringer Cleric's one card) here too. Only
+        # cards that seal graveyards, exile whole ones, or keep exiling from an activated ability count.
+        (
+            r"would be put into [^.]*graveyard[^.]*exile"
+            r"|exile (?:all graveyards|all cards from all graveyards)"
+            r"|exile (?:target|each) (?:player|opponent)'s graveyard"
+            r"|\}[^:\n]*:[^\n]*\bexile\b[^.\n]*\bgraveyard"
+        ),
     )
     TOKENS = ("token hate", ("hate-token",), r"tokens? (?:can't|don't) (?:be created|enter)")
 
@@ -84,6 +90,8 @@ class ComboAnswer:
     card: str
     how: str
     role: AnswerRole
+    # What keeps a removal or counter from being sure ("unless they pay {2}"); empty when nothing does.
+    catch: str = ""
 
 
 @dataclass(slots=True, frozen=True)
@@ -113,7 +121,7 @@ ANY = LockScope()
 
 
 @dataclass(slots=True, frozen=True)
-class _DeckAnswers:
+class DeckAnswers:
     """What each deck card can do against a combo, worked out once per deck."""
 
     removal: dict[str, CardAnswer]
@@ -161,7 +169,7 @@ def meta_combos(
 
 
 def combo_answers(
-    combo: ComboDetail, deck: _DeckAnswers, facts: Mapping[str, Piece]
+    combo: ComboDetail, deck: DeckAnswers, facts: Mapping[str, Piece]
 ) -> tuple[ComboAnswer, ...]:
     """Each deck card's best answer to the combo: stax first, then removal, then counters, by name within."""
     found: dict[str, ComboAnswer] = {}
@@ -285,18 +293,25 @@ def as_cast(combo: ComboDetail, piece: ComboPiece, facts: Mapping[str, Piece]) -
 
 
 def _interaction(answer: CardAnswer, pieces: Sequence[tuple[ComboPiece, Piece]]) -> ComboAnswer | None:
-    """Removal reaching a piece on the battlefield, else a counterspell reaching a piece as it is cast."""
-    for piece, fact in pieces:
-        on_field = not piece.zones or bool(set(piece.zones) & _BATTLEFIELD)
-        if on_field and answer.removes(fact):
-            return ComboAnswer(answer.name, f"removes {piece.name}", AnswerRole.REMOVAL)
-    for piece, fact in pieces:
-        if answer.counters(fact):
-            return ComboAnswer(answer.name, f"counters {piece.name}", AnswerRole.COUNTER)
+    """Removal reaching pieces on the battlefield, else a counterspell reaching pieces as they are cast."""
+    on_field = [(p, fact) for p, fact in pieces if not p.zones or set(p.zones) & _BATTLEFIELD]
+    removed = [(p.name, catch) for p, fact in on_field if (catch := answer.removal(fact)) is not None]
+    if removed:
+        return _combo_answer(answer.name, "removes", removed, AnswerRole.REMOVAL)
+    countered = [(p.name, catch) for p, fact in pieces if (catch := answer.counter(fact)) is not None]
+    if countered:
+        return _combo_answer(answer.name, "counters", countered, AnswerRole.COUNTER)
     return None
 
 
-def _deck_answers(deck: Deck, db: CardDb) -> _DeckAnswers:
+def _combo_answer(card: str, verb: str, hits: Sequence[tuple[str, str]], role: AnswerRole) -> ComboAnswer:
+    """Every piece the card reaches, "A, B or C", with the smallest catch among them."""
+    names = [name for name, _ in hits]
+    listed = names[0] if len(names) == 1 else f"{', '.join(names[:-1])} or {names[-1]}"
+    return ComboAnswer(card, f"{verb} {listed}", role, min((catch for _, catch in hits), key=len))
+
+
+def _deck_answers(deck: Deck, db: CardDb) -> DeckAnswers:
     infos = db.cards_named(card.name for card in deck.main_cards)
     by_id = {info.oracle_id: info.name for info in infos.values()}
     one_shots = {
@@ -316,7 +331,7 @@ def _deck_answers(deck: Deck, db: CardDb) -> _DeckAnswers:
         )
         if found_stops:
             stops[name] = found_stops
-    return _DeckAnswers(removal, stops)
+    return DeckAnswers(removal, stops)
 
 
 def card_stops(

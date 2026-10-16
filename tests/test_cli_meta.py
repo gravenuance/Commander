@@ -203,7 +203,7 @@ def test_json_combos_carry_short_commander_names_and_answer_roles(home: Path, fa
     assert combo["results"] == ["Infinite colorless mana"]
     assert combo["playedBy"] == [{"commander": "Kinnan, Bonder Prodigy", "short": "Kinnan", "share": 0.5}]
     assert combo["answers"] == [
-        {"card": "Disruptor Flute", "how": "stops activated abilities", "role": "stax"}
+        {"card": "Disruptor Flute", "how": "stops activated abilities", "role": "stax", "catch": ""}
     ]
 
 

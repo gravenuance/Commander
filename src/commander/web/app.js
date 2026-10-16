@@ -519,9 +519,10 @@ function metaCombos(report) {
 
 function comboAnswers(answers) {
   if (!answers.length) return el("span", { class: "badge status rejected", text: "No answer" });
-  // Stax answers say how they stop the combo; removal and counters only need the card.
+  // Stax answers say how they stop the combo; removal and counters only need the card and any catch.
+  const shown = (a) => (a.role === "stax" ? `${a.card} (${a.how})` : a.catch ? `${a.card} (${a.catch})` : a.card);
   const lines = ANSWER_ROLES.map(([role, label]) => {
-    const names = answers.filter((a) => a.role === role).map((a) => (role === "stax" ? `${a.card} (${a.how})` : a.card));
+    const names = answers.filter((a) => a.role === role).map(shown);
     if (!names.length) return null;
     const shown = names.length > ANSWERS_SHOWN ? `${names.slice(0, ANSWERS_SHOWN).join(", ")} and ${names.length - ANSWERS_SHOWN} more` : names.join(", ");
     return el("div", { title: names.join(", ") }, el("strong", { text: `${label}: ` }), document.createTextNode(shown));

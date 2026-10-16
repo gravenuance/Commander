@@ -16,7 +16,7 @@ from commander.deckcache import AnswerSource
 from commander.deckprofile import read_profile
 from commander.edhtop16 import REQUEST_INTERVAL_SECONDS, SLOW_QUERY_SECONDS, Edhtop16Client, commander_url
 from commander.meta import Basis, CardCheck, CardShare, MetaReport, analyse, board_ideas, check_card
-from commander.metacombos import AnswerRole
+from commander.metacombos import AnswerRole, ComboAnswer
 from commander.metadata import MetaData, MetaSources, gather
 from commander.models import short_commander_name
 from commander.net import Fetcher
@@ -287,9 +287,15 @@ def _print_combos(report: MetaReport, out: TextIO) -> None:
             answers = [a for a in combo.answers if a.role is role]
             if not answers:
                 continue
-            # Stax answers name how they stop the combo; removal and counters only need the card.
-            shown = [f"{a.card} ({a.how})" if role is AnswerRole.STAX else a.card for a in answers]
+            shown = [_answer_shown(a) for a in answers]
             print(f"        {role.value}: {_names(shown, COMBO_ANSWERS_SHOWN)}", file=out)
+
+
+def _answer_shown(answer: ComboAnswer) -> str:
+    """Stax answers name how they stop the combo; removal and counters need only the card and any catch."""
+    if answer.role is AnswerRole.STAX:
+        return f"{answer.card} ({answer.how})"
+    return f"{answer.card} ({answer.catch})" if answer.catch else answer.card
 
 
 def _names(names: Sequence[str], shown: int = 3) -> str:
@@ -414,7 +420,9 @@ def report_json(report: MetaReport) -> dict[str, object]:
                     {"commander": n, "short": short_commander_name(n), "share": round(s, 4)}
                     for n, s in c.played_by
                 ],
-                "answers": [{"card": a.card, "how": a.how, "role": a.role.value} for a in c.answers],
+                "answers": [
+                    {"card": a.card, "how": a.how, "role": a.role.value, "catch": a.catch} for a in c.answers
+                ],
             }
             for c in report.combos
         ],

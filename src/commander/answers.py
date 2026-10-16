@@ -120,6 +120,8 @@ class Mode:
     free_only: bool = False
     # Meets every copy of a storm spell: the card has storm itself, or takes any number of targets.
     every_copy: bool = False
+    # What keeps it from being a sure answer ("unless they pay {2}"); empty when nothing does.
+    catch: str = ""
 
     def reaches(self, piece: Piece) -> bool:
         if not self._colors_fit(piece) or not self._mana_value_fits(piece):
@@ -179,15 +181,31 @@ class CardAnswer:
     # None when the reader found nothing it follows (an edict, say); the tags' reach stands in.
     modes: tuple[Mode, ...] | None
 
-    def removes(self, piece: Piece) -> bool:
+    def removal(self, piece: Piece) -> str | None:
+        """How the card removes the piece: "" outright, its catch when it has one, None when it can't."""
         if self.modes is None:
-            return any(k.hits(piece.type_line) for k in self.kinds if k is not AnswerKind.COUNTERSPELL)
-        return any(m.effect is not Effect.COUNTER and m.reaches(piece) for m in self.modes)
+            reached = any(k.hits(piece.type_line) for k in self.kinds if k is not AnswerKind.COUNTERSPELL)
+            return "" if reached else None
+        return _surest(m.catch for m in self.modes if m.effect is not Effect.COUNTER and m.reaches(piece))
+
+    def counter(self, piece: Piece) -> str | None:
+        """How the card counters the piece, as `removal` says."""
+        if self.modes is None:
+            reached = AnswerKind.COUNTERSPELL in self.kinds and "Land" not in piece.types and not piece.storm
+            return "" if reached else None
+        return _surest(m.catch for m in self.modes if m.effect is Effect.COUNTER and m.reaches(piece))
+
+    def removes(self, piece: Piece) -> bool:
+        return self.removal(piece) is not None
 
     def counters(self, piece: Piece) -> bool:
-        if self.modes is None:
-            return AnswerKind.COUNTERSPELL in self.kinds and "Land" not in piece.types and not piece.storm
-        return any(m.effect is Effect.COUNTER and m.reaches(piece) for m in self.modes)
+        return self.counter(piece) is not None
+
+
+def _surest(catches: Iterable[str]) -> str | None:
+    """The smallest catch among the modes that reach a piece ("" for none), or None when none reaches it."""
+    found = list(catches)
+    return min(found, key=len) if found else None
 
 
 def card_answers(db: CardDb, cards: Mapping[str, str]) -> dict[str, CardAnswer]:
@@ -260,6 +278,13 @@ _COMBAT = re.compile(r"\b(?:blocking|blocked|attacking)\b")
 _IF_COLOR = re.compile(r"\bif it's (white|blue|black|red|green)\b")
 _MANA_VALUE = re.compile(r"\bmana value (\d+)( or less| or greater)?")
 _POWER_OR_TOUGHNESS = re.compile(r"\bpower or toughness (\d+) or less\b")
+_SOFT = re.compile(r"\bunless its controller pays (\{[^}]+\}|x)")
+# Kataki's "sacrifice this artifact unless you pay {1}": paid in its controller's upkeep, before they combo.
+_TAX = re.compile(r"\bsacrifice\b[^.]*\bunless\b[^.]*\bpays?\b")
+_EDICT = re.compile(
+    r"\b(?:player|opponent)s? sacrifices? (?:a|an|one|two|three|four|x|\d+|that many)\b\s*([^.]*)"
+)
+EDICT_CATCH = "they choose what to sacrifice"
 
 
 def read_modes(text: str) -> tuple[Mode, ...] | None:
@@ -283,6 +308,12 @@ def _read_sentence(sentence: str) -> tuple[Mode, ...] | None:  # noqa: PLR0911 â
     if counter and "spell" in sentence:
         target = _target(sentence[counter.start() :], counter_text=True)
         return None if target is None else (_mode(Effect.COUNTER, sentence, target),)
+    if _TAX.search(sentence):
+        return ()
+    edict = _EDICT.search(sentence)
+    if edict:
+        target = _target_phrase(edict.group(1))
+        return (_mode(Effect.REMOVE, sentence, target, catch=EDICT_CATCH),) if target.nouns else None
     damage = _DAMAGE.search(sentence)
     shrink = _SHRINK.search(sentence)
     remove = _REMOVE.search(sentence)
@@ -322,13 +353,18 @@ def _target(text: str, *, counter_text: bool = False) -> _Target | None:
     if not found:
         return None
     keyword, phrase = found.group(1), found.group(2)
-    end = _PHRASE_END.search(phrase)
-    target = _read_words(re.findall(r"[a-z]+", phrase[: end.start()] if end else phrase))
+    target = _target_phrase(phrase)
     if keyword in _EVERY:
         target = replace(target, every=True)
     if keyword == "any target":
         target = replace(target, nouns=target.nouns | {"any target"}, types=target.types | _DAMAGEABLE)
     return target if target.nouns else None
+
+
+def _target_phrase(phrase: str) -> _Target:
+    """What a phrase naming a target says, up to where it moves on to something else."""
+    end = _PHRASE_END.search(phrase)
+    return _read_words(re.findall(r"[a-z]+", phrase[: end.start()] if end else phrase))
 
 
 def _read_words(words: Sequence[str]) -> _Target:
@@ -351,8 +387,15 @@ def _read_words(words: Sequence[str]) -> _Target:
     return _Target(frozenset(nouns), frozenset(types), frozenset(excluded), colors, excluded_colors)
 
 
-def _mode(effect: Effect, sentence: str, target: _Target, amount: int | None = None) -> Mode:
+def _mode(
+    effect: Effect, sentence: str, target: _Target, amount: int | None = None, *, catch: str = ""
+) -> Mode:
     if_color = _IF_COLOR.search(sentence)
+    soft = _SOFT.search(sentence)
+    if soft:
+        catch = f"unless they pay {soft.group(1).upper()}"
+    elif "revealed card" in sentence:
+        catch = "if the revealed card's mana value matches"
     mana_value = _MANA_VALUE.search(sentence)
     small = _POWER_OR_TOUGHNESS.search(sentence)
     return Mode(
@@ -374,6 +417,7 @@ def _mode(effect: Effect, sentence: str, target: _Target, amount: int | None = N
         max_power_or_toughness=int(small.group(1)) if small else None,
         free_only="no mana was spent" in sentence,
         every_copy=target.every,
+        catch=catch,
     )
 
 

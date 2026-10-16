@@ -74,6 +74,18 @@ FLUSTERSTORM = (
 )
 UNLICENSED_HEARSE = "{T}: Exile up to two target cards from a single graveyard."
 EDICT = "Target player sacrifices a creature of their choice."
+PORTAL_TO_PHYREXIA = (
+    "When this artifact enters, each opponent sacrifices three creatures of their choice.\n"
+    "At the beginning of your upkeep, put target creature card from a graveyard onto the battlefield "
+    "under your control. It's a Phyrexian in addition to its other types."
+)
+KATAKI = 'All artifacts have "At the beginning of your upkeep, sacrifice this artifact unless you pay {1}."'
+SPELL_PIERCE = "Counter target noncreature spell unless its controller pays {2}."
+COUNTERBALANCE = (
+    "Whenever an opponent casts a spell, you may reveal the top card of your library. "
+    "If you do, counter that spell if it has the same mana value as the revealed card."
+)
+CONTROL_MAGIC = "Enchant creature\nYou control enchanted creature."
 
 REMOVAL = (AnswerKind.PERMANENT_REMOVAL,)
 COUNTER = (AnswerKind.COUNTERSPELL,)
@@ -158,17 +170,38 @@ def test_only_counters_that_meet_every_copy_answer_a_storm_spell() -> None:
     assert not CardAnswer("tagged", COUNTER, None).counters(BRAIN_FREEZE)
 
 
+def test_soft_and_chance_counters_answer_with_their_catch() -> None:
+    assert answer(SPELL_PIERCE, COUNTER).counter(INTUITION) == "unless they pay {2}"
+    assert answer(SPELL_PIERCE, COUNTER).counter(ORACLE) is None
+    assert answer(FLUSTERSTORM, COUNTER).counter(BRAIN_FREEZE) == "unless they pay {1}"
+    assert answer(COUNTERBALANCE, COUNTER).counter(INTUITION) == "if the revealed card's mana value matches"
+    assert answer(FORCE_OF_WILL, COUNTER).counter(INTUITION) == ""
+
+
+def test_edicts_reach_their_type_but_the_opponent_chooses() -> None:
+    for text in (EDICT, PORTAL_TO_PHYREXIA):
+        edict = answer(text)
+        assert edict.removal(HULLBREAKER) == "they choose what to sacrifice"
+        assert edict.removal(BREACH) is None
+    assert answer(LIGHTNING_BOLT).removal(KINNAN) == ""
+
+
+def test_an_upkeep_tax_answers_nothing() -> None:
+    # Kataki's tax falls in its controller's upkeep, before they combo, and costs them only {1}.
+    assert read_modes(KATAKI) == ()
+
+
 def test_what_the_card_data_does_not_know_is_not_ruled_out() -> None:
     assert removed(LIGHTNING_BOLT, UNKNOWN) == [True]
     assert removed(PYROBLAST, UNKNOWN) == [True]
 
 
 def test_text_the_reader_cannot_follow_falls_back_to_the_tags() -> None:
-    assert read_modes(EDICT) is None
-    edict = CardAnswer("edict", (AnswerKind.CREATURE_REMOVAL,), None)
-    assert edict.removes(ELVES)
-    assert not edict.removes(BREACH)
-    assert not edict.counters(BRAIN_FREEZE)
+    assert read_modes(CONTROL_MAGIC) is None
+    steal = CardAnswer("steal", (AnswerKind.CREATURE_REMOVAL,), None)
+    assert steal.removal(ELVES) == ""
+    assert not steal.removes(BREACH)
+    assert not steal.counters(BRAIN_FREEZE)
 
 
 @pytest.mark.parametrize("text", [TINDER_WALL, UNLICENSED_HEARSE, ELDRAZI_CONFLUENCE])
