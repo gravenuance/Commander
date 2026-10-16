@@ -34,6 +34,9 @@ uv run cmdr bracket                                 # estimated bracket of every
 uv run cmdr bracket gator --details                 # one deck: game changers, tutors, combos with links
 uv run cmdr suggest                                 # combo pieces and short roles of every deck side by side
 uv run cmdr suggest magda --max-price 5             # one deck: cards to add up to EUR 5, cards to consider cutting
+uv run cmdr meta                                    # every bracket 5 deck against the cEDH meta, side by side
+uv run cmdr meta magda                              # one deck: staples it misses, meta threats, meta combos
+uv run cmdr meta ellivere --card "Sylvan Safekeeper" # how performing lists use one card
 uv run cmdr card "Sylvan Safekeeper"                # a card's rules text, price, roles and Tagger tags
 uv run cmdr tags hatebear                           # find Tagger tags by name, for deck profiles
 uv run cmdr profile ellivere --init                 # start a deck profile: themes, exclusions, targets
@@ -134,6 +137,44 @@ EDHREC's own pages are not used: its terms of use forbid automated requests. See
 `cmdr card <name>` prints a card's rules text, type, power and toughness, price, EDHREC rank, roles and
 [Scryfall Tagger](https://tagger.scryfall.com) tags, from the local card data. Name several cards to see
 them together.
+
+### cEDH meta
+
+`meta` compares a bracket 5 deck with what performs in cEDH: its commander's tournament lists on
+[EDHTop16](https://edhtop16.com) from the last two months (top cuts first), and the most-viewed Archidekt
+decks for that commander updated in the same window. It lists:
+
+- **Staples you don't play:** cards in at least 40% of the lists read, or in half the Archidekt decks, that
+  the deck lacks. Cards on your Sideboard or Maybeboard are marked.
+- **Spicy picks:** cards EDHTop16 rates 3 or 4 for spice (new or rarely played) in at least two lists,
+  with their best finish.
+- **Your own picks:** deck cards under 10% of the lists play; cards the profile keeps are marked.
+- **Meta answers to your key pieces:** the cards the ten most-played commanders' lists would use against
+  your commander and the cards under `[keep]` in the deck's profile, weighted by how much each commander
+  is played.
+- **Meta combos and your answers:** the combos those lists run most, from
+  [Commander Spellbook](https://commanderspellbook.com), each with the deck's answers: stax pieces that stop
+  it first, then removal for a piece, then counterspells. "no answer in the deck" flags the gaps.
+
+With fewer than five top-cut lists every list in the window is read, and with fewer than ten lists the
+report says the data is thin: read its shares as hints. Answers are read from Scryfall Tagger tags and
+rules text, so check them before acting on one. `--card <name>` shows how lists use one card,
+`--to-board` puts the missing staples on the deck's board, and the app's Meta panel shows the same report.
+
+Answers are cached for a day (Spellbook combos for a week); `--refresh` fetches again. A first run takes
+a few minutes, because requests are spaced out. The sample sizes are set in the config file:
+
+```toml
+[meta]
+window_days = 60       # 7 to 90
+min_event_size = 16    # smallest tournament counted
+peer_decks = 10        # Archidekt decks read per commander
+meta_commanders = 10   # most-played commanders searched for answers and combos
+meta_lists = 30        # best-placed lists read per meta commander
+```
+
+EDHTop16's terms forbid redistributing its statistics, so meta reports stay on your machine. See
+[ADR 0007](docs/adr/0007-meta-from-edhtop16-archidekt-and-spellbook.md).
 
 ### Deck profiles
 
@@ -296,6 +337,7 @@ defaults.
 | Config file | `--config` | `CMDR_CONFIG` | n/a | `%APPDATA%\Commander\config.toml` |
 | Card data and Spellbook answers folder | n/a | `CMDR_CACHE_DIR` | n/a | `%LOCALAPPDATA%\Commander` |
 | Role targets for `suggest` | n/a | n/a | `[targets]` table | ramp 10, draw 10, removal 8, board_wipe 2 |
+| Sample sizes for `meta` | n/a | n/a | `[meta]` table | 60 days, events of 16+, 10 Archidekt decks, 10 commanders, 30 lists each |
 | Archidekt login for `apply --save` | `cmdr login` | n/a | n/a | none; the token is kept in Windows Credential Manager |
 | App log detail | n/a | `CMDR_LOG_LEVEL` | n/a | `INFO` |
 
@@ -317,4 +359,7 @@ Tests use recorded fixture data and never touch the network.
 | Archidekt (`archidekt.com/api`) | Reading decks; changing them with `apply --save` | Public decks need no login; changes need `cmdr login`, whose token lives in Windows Credential Manager and is refreshed on each save. The API is undocumented, so every response's shape is checked and a clear message names what changed. A save makes a handful of requests, never retried. Its written terms forbid automated requests; its co-founder has said on its forum that the API is open to use. See [ADR 0004](docs/adr/0004-deck-changes-through-archidekts-site-api.md). |
 | Scryfall (`api.scryfall.com/bulk-data`, files on `data.scryfall.io`; card images from `cards.scryfall.io` in the app) | Card facts, rules text, EUR prices, Tagger tags for roles and profiles, card art | One API call per `sync` for the file list; the files themselves have no rate limit. Scryfall updates prices once a day and asks for bulk files rather than per-card calls for lookups like these. Tag data is community-maintained and can change. See [ADR 0001](docs/adr/0001-scryfall-bulk-card-data.md). |
 | Commander Spellbook (`backend.commanderspellbook.com`: `estimate-bracket`, `find-my-combos`) | Bracket estimates, combos, and combos one card short | One request per deck and command, at most four at a time, and none while a cached answer is under 7 days old. Spellbook asks tools to name themselves in the User-Agent, keep to a few calls per user action, stay under about 80 requests a minute, handle 429, and credit and link back to commanderspellbook.com, which `bracket` and `suggest` do in their output. Only card names and quantities are sent. See [ADR 0002](docs/adr/0002-bracket-estimates-from-commander-spellbook.md) and [ADR 0003](docs/adr/0003-suggestions-from-spellbook-and-scryfall.md). |
+| EDHTop16 (`edhtop16.com/api/graphql`) | Tournament lists, spice and the most-played commanders for `meta` | Requests 1.5 s apart, none while a cached answer is under a day old. Its terms offer the API as-is and forbid excessive automated requests, implying endorsement and redistributing its statistics; reports credit it and stay local. See [ADR 0007](docs/adr/0007-meta-from-edhtop16-archidekt-and-spellbook.md). |
+| Archidekt deck search (`archidekt.com/api/decks/v3/`) | Other players' recent decks for `meta` | Searches 2 s apart and a few deck reads per commander, cached for a day; your own decks are left out. Under the same informal permission as the rest of Archidekt's API (ADR 0004). |
+| Commander Spellbook (`find-my-combos`, for `meta`) | The combos the most-played commanders' lists run | One request per meta commander, 1 s apart, cached for 7 days. |
 | EDHREC (via Scryfall's `edhrec_rank`) | Popularity ranks for `suggest` | Never contacted: the rank comes inside Scryfall's bulk files. EDHREC's terms forbid automated requests to its site. |

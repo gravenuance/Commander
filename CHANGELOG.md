@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+- `cmdr meta` for bracket 5 decks: compares a deck with its commander's performing EDHTop16 lists from the
+  last two months and the most-viewed recent Archidekt decks, and lists the staples it misses, spicy picks,
+  its own picks, the most-played commanders' answers to its key pieces, and the meta's most-played combos
+  (from Commander Spellbook) with the deck's answers: stax pieces, removal and counterspells. `--card`
+  checks one card, `--json` prints the report, `--to-board` puts the missing staples on the deck's board,
+  and with no deck it shows every bracket 5 deck side by side. Sample sizes are set in the config's `[meta]`
+  table; answers are cached for a day, combos for a week.
+- Desktop app: a Meta panel per deck with the same report, a Meta combos table included; it opens from
+  cache and fetches on Refresh meta.
+
 ## 0.2.0 - 2026-10-15
 
 Deck profiles, deck boards and the desktop app.
