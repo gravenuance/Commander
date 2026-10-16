@@ -80,6 +80,10 @@ class Piece:
     mana_value: float | None = None
     # Cast without spending mana in the combo, which is all some counters (Vexing Bauble) can meet.
     cast_free: bool = False
+    # Copies itself when cast, so a counter has to meet every copy (Flusterstorm, Mindbreak Trap).
+    storm: bool = False
+    # An {X} cost: its mana value is 0, but casting it still takes mana.
+    x_cost: bool = False
 
     @property
     def types(self) -> frozenset[str]:
@@ -114,6 +118,8 @@ class Mode:
     mana_value: tuple[str, int] | None = None
     max_power_or_toughness: int | None = None
     free_only: bool = False
+    # Meets every copy of a storm spell: the card has storm itself, or takes any number of targets.
+    every_copy: bool = False
 
     def reaches(self, piece: Piece) -> bool:
         if not self._colors_fit(piece) or not self._mana_value_fits(piece):
@@ -141,6 +147,8 @@ class Mode:
         if "Land" in piece.types or not self._types_fit(piece):
             return False
         if self.free_only and not piece.cast_free:
+            return False
+        if piece.storm and not self.every_copy:
             return False
         limit = self.max_power_or_toughness
         stats = [s for s in (piece.power, piece.toughness) if s is not None]
@@ -178,7 +186,7 @@ class CardAnswer:
 
     def counters(self, piece: Piece) -> bool:
         if self.modes is None:
-            return AnswerKind.COUNTERSPELL in self.kinds and "Land" not in piece.types
+            return AnswerKind.COUNTERSPELL in self.kinds and "Land" not in piece.types and not piece.storm
         return any(m.effect is Effect.COUNTER and m.reaches(piece) for m in self.modes)
 
 
@@ -214,6 +222,8 @@ def piece_facts(db: CardDb, pieces: Iterable[tuple[str, str]]) -> dict[str, Piec
             _stat(text.toughness),
             "flying" in text.keywords,
             info.cmc,
+            storm="storm" in text.keywords,
+            x_cost="{X}" in info.mana_cost,
         )
     return facts
 
@@ -257,11 +267,13 @@ def read_modes(text: str) -> tuple[Mode, ...] | None:
     modes: list[Mode] = []
     understood = False
     for face in text.split(FACE_SEPARATOR):
-        for sentence in _SENTENCE_BREAK.split(_REMINDER.sub("", face).casefold()):
+        sentences = _SENTENCE_BREAK.split(_REMINDER.sub("", face).casefold())
+        storm = any(sentence.strip() == "storm" for sentence in sentences)
+        for sentence in sentences:
             found = _read_sentence(sentence)
             if found is not None:
                 understood = True
-                modes.extend(found)
+                modes.extend(replace(m, every_copy=True) if storm else m for m in found)
     return tuple(modes) if understood else None
 
 
@@ -297,9 +309,11 @@ class _Target:
     excluded_types: frozenset[str]
     colors: str
     excluded_colors: str
+    every: bool = False
 
 
-_COUNTER_TARGET = re.compile(r"\b(?:target|that|all|each|any number of target)\b\s*([^.]*)")
+_COUNTER_TARGET = re.compile(r"\b(any number of target|target|that|all|each)\b\s*([^.]*)")
+_EVERY = frozenset({"any number of target", "all", "each"})
 
 
 def _target(text: str, *, counter_text: bool = False) -> _Target | None:
@@ -307,9 +321,11 @@ def _target(text: str, *, counter_text: bool = False) -> _Target | None:
     found = (_COUNTER_TARGET if counter_text else _TARGET).search(text)
     if not found:
         return None
-    keyword, phrase = ("", found.group(1)) if counter_text else (found.group(1), found.group(2))
+    keyword, phrase = found.group(1), found.group(2)
     end = _PHRASE_END.search(phrase)
     target = _read_words(re.findall(r"[a-z]+", phrase[: end.start()] if end else phrase))
+    if keyword in _EVERY:
+        target = replace(target, every=True)
     if keyword == "any target":
         target = replace(target, nouns=target.nouns | {"any target"}, types=target.types | _DAMAGEABLE)
     return target if target.nouns else None
@@ -357,6 +373,7 @@ def _mode(effect: Effect, sentence: str, target: _Target, amount: int | None = N
         ),
         max_power_or_toughness=int(small.group(1)) if small else None,
         free_only="no mana was spent" in sentence,
+        every_copy=target.every,
     )
 
 

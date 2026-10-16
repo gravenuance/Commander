@@ -274,12 +274,12 @@ def _activated(piece: ComboPiece, scope: LockScope, steps: str) -> bool:
 
 
 def as_cast(combo: ComboDetail, piece: ComboPiece, facts: Mapping[str, Piece]) -> Piece:
-    """The piece's facts, marked cast for free when it costs nothing or the steps cast it for {0}."""
+    """The piece's facts, marked cast for free when it costs nothing (no X) or the steps cast it for {0}."""
     fact = facts.get(piece.name.casefold(), Piece(piece.name, piece.type_line))
     free = re.search(
         rf"\bcast {re.escape(_short(piece.name))}[^.\n]*by paying \{{0\}}", combo.description.casefold()
     )
-    if fact.mana_value == 0 or free:
+    if (fact.mana_value == 0 and not fact.x_cost) or free:
         return replace(fact, cast_free=True)
     return fact
 
@@ -299,21 +299,34 @@ def _interaction(answer: CardAnswer, pieces: Sequence[tuple[ComboPiece, Piece]])
 def _deck_answers(deck: Deck, db: CardDb) -> _DeckAnswers:
     infos = db.cards_named(card.name for card in deck.main_cards)
     by_id = {info.oracle_id: info.name for info in infos.values()}
+    one_shots = {
+        info.oracle_id
+        for info in infos.values()
+        if {"Instant", "Sorcery"} & set(info.type_line.split(" // ", maxsplit=1)[0].split())
+    }
     removal = {answer.name: answer for answer in card_answers(db, by_id).values()}
     tagged = _stop_tags(db, list(by_id))
     stops: dict[str, tuple[tuple[Stop, LockScope], ...]] = {}
     for oracle_id, name in by_id.items():
         text = db.card_text(oracle_id)
         found_stops = card_stops(
-            text.text if text else "", {stop for stop in Stop if oracle_id in tagged[stop]}
+            text.text if text else "",
+            {stop for stop in Stop if oracle_id in tagged[stop]},
+            one_shot=oracle_id in one_shots,
         )
         if found_stops:
             stops[name] = found_stops
     return _DeckAnswers(removal, stops)
 
 
-def card_stops(rules: str, tagged: set[Stop]) -> tuple[tuple[Stop, LockScope], ...]:
-    """How a card stops combos, from its rules text or else its tags, with the scope its text sets."""
+def card_stops(
+    rules: str, tagged: set[Stop], *, one_shot: bool = False
+) -> tuple[tuple[Stop, LockScope], ...]:
+    """How a card stops combos, from its rules text or else its tags, with the scope its text sets.
+
+    An instant or sorcery (`one_shot`) locks only by its text, as Silence does: Tagger files one-shot answers
+    such as Mindbreak Trap under storm hate too.
+    """
     found: list[tuple[Stop, LockScope]] = []
     for stop in Stop:
         if stop.requires is not None and not stop.requires.search(rules):
@@ -323,7 +336,7 @@ def card_stops(rules: str, tagged: set[Stop]) -> tuple[tuple[Stop, LockScope], .
             # The whole sentence: what a lock covers often comes before its phrase ("Creature cards in ...").
             start = max(rules.rfind(".", 0, match.start()), rules.rfind("\n", 0, match.start())) + 1
             found.append((stop, _scope(rules[start : rules.find(".", match.end()) + 1])))
-        elif stop in tagged:
+        elif stop in tagged and not one_shot:
             found.append((stop, ANY))
     return tuple(found)
 

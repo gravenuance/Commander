@@ -14,6 +14,9 @@
   reach only what they can hit (types, colours, toughness, mana value), counters follow their conditions, and
   stax pieces must match what the combo's steps do (ADR 0008). The card database stores card colours (schema 5);
   the next `sync` rebuilds it.
+- A counter answers a storm spell such as Brain Freeze only when it meets every copy (Flusterstorm,
+  Mindbreak Trap); an {X} piece such as Walking Ballista no longer counts as cast free; and a tag alone no
+  longer makes an instant or sorcery a stax piece (Mindbreak Trap is a counter, Silence still a lock).
 - Desktop app: a Meta panel per deck with the same report, a Meta combos table included; it opens from
   cache and fetches on Refresh meta.
 

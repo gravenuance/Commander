@@ -142,6 +142,15 @@ def test_graveyard_hate_needs_rules_text_that_exiles_from_graveyards() -> None:
     assert Stop.GRAVEYARD in {stop for stop, _ in card_stops(hearse, {Stop.GRAVEYARD})}
 
 
+def test_a_tag_alone_makes_no_instant_a_lock() -> None:
+    # Tagger files Mindbreak Trap as storm hate, but it is a counterspell; Silence's text is a lock.
+    mindbreak = "Exile any number of target spells."
+    assert card_stops(mindbreak, {Stop.CASTING}, one_shot=True) == ()
+    assert card_stops(mindbreak, {Stop.CASTING}) == ((Stop.CASTING, LockScope()),)
+    silence = "Your opponents can't cast spells this turn."
+    assert [stop for stop, _ in card_stops(silence, set(), one_shot=True)] == [Stop.CASTING]
+
+
 def test_pieces_cast_for_nothing_are_marked_free() -> None:
     amber = ComboPiece("Mox Amber", "Legendary Artifact", ("B",))
     vault = ComboPiece("Mana Vault", "Artifact", ("B",))
@@ -149,6 +158,12 @@ def test_pieces_cast_for_nothing_are_marked_free() -> None:
     loop = steps("Cast Mana Vault by paying {1}.\nCast Mox Amber by paying {0}", amber, vault)
     assert as_cast(loop, amber, facts).cast_free
     assert not as_cast(loop, vault, facts).cast_free
+    # An X spell's mana value is 0, but the combo pays for X.
+    ballista = ComboPiece("Walking Ballista", "Artifact Creature — Construct", ("H",))
+    ballista_fact = Piece("Walking Ballista", ballista.type_line, "", 0, 0, mana_value=0, x_cost=True)
+    assert not as_cast(
+        steps("Cast Walking Ballista.", ballista), ballista, {"walking ballista": ballista_fact}
+    ).cast_free
     # A piece the card data doesn't know is free only when the steps say so.
     assert as_cast(steps("Cast Mana Vault by paying {0}.", vault), vault, {}).cast_free
 

@@ -8,7 +8,9 @@ HULLBREAKER = Piece("Hullbreaker Horror", "Creature — Kraken Horror", "U", pow
 BREACH = Piece("Underworld Breach", "Enchantment", "R", mana_value=2)
 LED = Piece("Lion's Eye Diamond", "Artifact", "", mana_value=0)
 ORACLE = Piece("Thassa's Oracle", "Creature — Merfolk Wizard", "U", power=1, toughness=3, mana_value=2)
-BRAIN_FREEZE = Piece("Brain Freeze", "Instant", "U", mana_value=2)
+BRAIN_FREEZE = Piece("Brain Freeze", "Instant", "U", mana_value=2, storm=True)
+INTUITION = Piece("Intuition", "Instant", "U", mana_value=3)
+BALLISTA = Piece("Walking Ballista", "Artifact Creature — Construct", "", 0, 0, mana_value=0, x_cost=True)
 TALISMAN = Piece("Talisman of Dominance", "Artifact", "", mana_value=2)
 KINNAN = Piece(
     "Kinnan, Bonder Prodigy", "Legendary Creature — Human Druid", "GU", power=2, toughness=2, mana_value=2
@@ -65,6 +67,11 @@ FORCE_OF_WILL = (
     "You may pay 1 life and exile a blue card from your hand rather than pay this spell's mana cost.\n"
     "Counter target spell."
 )
+FLUSTERSTORM = (
+    "Counter target instant or sorcery spell unless its controller pays {1}.\n"
+    "Storm (When you cast this spell, copy it for each spell cast before it this turn. "
+    "You may choose new targets for the copies.)"
+)
 UNLICENSED_HEARSE = "{T}: Exile up to two target cards from a single graveyard."
 EDICT = "Target player sacrifices a creature of their choice."
 
@@ -92,7 +99,7 @@ def test_bounce_reaches_only_the_types_it_names() -> None:
 def test_colour_hosers_reach_only_their_colour() -> None:
     for text in (PYROBLAST, RED_BLAST):
         assert removed(text, BREACH, LED, TALISMAN, HULLBREAKER) == [False, False, False, True]
-        assert countered(text, BRAIN_FREEZE, LED, ORACLE) == [True, False, True]
+        assert countered(text, INTUITION, LED, ORACLE) == [True, False, True]
 
 
 def test_damage_kills_only_what_it_out_toughs() -> None:
@@ -134,12 +141,21 @@ def test_removal_follows_its_mana_value_limit() -> None:
 
 def test_counters_follow_their_conditions() -> None:
     free_led = Piece("Lion's Eye Diamond", "Artifact", "", mana_value=0, cast_free=True)
-    assert countered(VEXING_BAUBLE, free_led, BRAIN_FREEZE) == [True, False]
-    assert countered(MENTAL_MISSTEP, ELVES, BRAIN_FREEZE) == [True, False]
-    assert countered(FIERCE_GUARDIANSHIP, BRAIN_FREEZE, ORACLE) == [True, False]
-    assert countered(STERN_SCOLDING, KINNAN, HULLBREAKER, BRAIN_FREEZE) == [True, False, False]
-    assert countered(MINDBREAK_TRAP, ORACLE, BRAIN_FREEZE) == [True, True]
+    assert countered(VEXING_BAUBLE, free_led, INTUITION) == [True, False]
+    assert countered(MENTAL_MISSTEP, ELVES, INTUITION) == [True, False]
+    assert countered(FIERCE_GUARDIANSHIP, INTUITION, ORACLE) == [True, False]
+    assert countered(STERN_SCOLDING, KINNAN, HULLBREAKER, INTUITION) == [True, False, False]
+    assert countered(MINDBREAK_TRAP, ORACLE, INTUITION) == [True, True]
     assert countered(FORCE_OF_WILL, ORACLE, CRADLE) == [True, False]
+
+
+def test_only_counters_that_meet_every_copy_answer_a_storm_spell() -> None:
+    # Countering Brain Freeze leaves its copies; Flusterstorm's own copies, or Mindbreak Trap, meet them all.
+    assert countered(FLUSTERSTORM, BRAIN_FREEZE, INTUITION, ORACLE) == [True, True, False]
+    assert countered(MINDBREAK_TRAP, BRAIN_FREEZE) == [True]
+    for text in (FORCE_OF_WILL, PYROBLAST, FIERCE_GUARDIANSHIP):
+        assert countered(text, BRAIN_FREEZE) == [False]
+    assert not CardAnswer("tagged", COUNTER, None).counters(BRAIN_FREEZE)
 
 
 def test_what_the_card_data_does_not_know_is_not_ruled_out() -> None:
