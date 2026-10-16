@@ -77,6 +77,15 @@ class ReplaceOption:
     reason: str = ""
 
 
+class Origin(Enum):
+    """Where an idea compiled for Considered came from (ADR 0014); None for anything else."""
+
+    # Staples of the commander's EDHTop16 lists (bracket 5 only).
+    META = "meta"
+    # Staples of the most-viewed recent Archidekt decks for the commander at the deck's bracket.
+    DECKS = "archidekt decks"
+
+
 @dataclass(slots=True, frozen=True)
 class BoardCard:
     id: str
@@ -94,6 +103,7 @@ class BoardCard:
     updated_at: str
     # For a turned-down card: its share of the meta's lists when it was turned down; None when unknown.
     rejected_share: float | None = None
+    origin: Origin | None = None
 
     def __post_init__(self) -> None:
         if self.choice is not None and self.status not in {Status.ADD, Status.APPLIED}:
@@ -215,9 +225,14 @@ def parse_board(raw: Mapping[str, object]) -> Board:
                 added_at=req_str(card, "addedAt", where),
                 updated_at=req_str(card, "updatedAt", where),
                 rejected_share=opt_float(card, "rejectedShare", where),
+                origin=_origin(opt_str(card, "origin", where)),
             )
         )
     return Board(tuple(cards))
+
+
+def _origin(value: str | None) -> Origin | None:
+    return Origin(value) if value else None
 
 
 def board_json(board: Board) -> dict[str, object]:
@@ -239,6 +254,7 @@ def card_json(card: BoardCard) -> dict[str, object]:
         "addedAt": card.added_at,
         "updatedAt": card.updated_at,
         "rejectedShare": card.rejected_share,
+        "origin": card.origin.value if card.origin else None,
     }
 
 
@@ -287,6 +303,7 @@ class BoardService:
         section: Section = Section.CONSIDERED,
         reason: str = "",
         replace_options: Sequence[ReplaceOption] = (),
+        origin: Origin | None = None,
     ) -> BoardCard:
         """Put a card on the board; a card turned down or applied before is reopened, not listed twice."""
         info = self._card(name)
@@ -308,6 +325,7 @@ class BoardService:
                     note="",
                     updated_at=stamp,
                     rejected_share=None,
+                    origin=origin or existing.origin,
                 )
                 save(_swap(board, card), Activity(stamp, actor, "reopened", card.name, reason))
                 return card
@@ -326,6 +344,7 @@ class BoardService:
                 note="",
                 added_at=stamp,
                 updated_at=stamp,
+                origin=origin,
             )
             save(
                 Board((*board.cards, card)),
@@ -630,9 +649,12 @@ def feed_ideas(
     ideas: Mapping[str, str],
     cuts: Sequence[ReplaceOption],
     board: Board,
+    *,
     shares: Mapping[str, float] | None = None,
+    origin: Origin | None = None,
 ) -> list[BoardCard]:
-    """Put each idea (card name to reason) on the board as suggested by cmdr, with cuts as cards to replace.
+    """Put each idea (card name to reason) on the board as suggested by cmdr, with cuts as cards to replace
+    and where the ideas came from.
 
     Cards already on the board are left alone, but with the meta's shares (by `card_key`) a turned-down one
     comes back once its share has risen by RETURN_RISE since; one turned down without a known share gets
@@ -649,7 +671,12 @@ def feed_ideas(
             reason = f"{back}; {idea}" if idea else back
         try:
             card = service.propose(
-                name, Actor.CMDR, section=Section.SUGGESTED, reason=reason, replace_options=cuts
+                name,
+                Actor.CMDR,
+                section=Section.SUGGESTED,
+                reason=reason,
+                replace_options=cuts,
+                origin=origin,
             )
         except BoardError as error:
             log.info("not putting %s on the board: %s", name, error)

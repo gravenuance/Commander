@@ -10,7 +10,6 @@ from enum import Enum
 
 from commander.answers import AnswerKind, card_answers, card_key, piece_facts
 from commander.archidekt import PeerDeck
-from commander.board import MAX_CUT_OPTIONS, ReplaceOption
 from commander.carddb import CardDb
 from commander.deckcache import Answer, AnswerSource
 from commander.deckprofile import Profile
@@ -208,28 +207,6 @@ def analyse(deck: Deck, data: MetaData, profile: Profile, db: CardDb) -> MetaRep
     )
 
 
-def board_ideas(report: MetaReport) -> tuple[dict[str, str], list[ReplaceOption]]:
-    """The staples the deck is missing as board ideas with their reasons, and its outliers (bar kept ones) as
-    cards to replace."""
-    lists = f"{report.deck} lists" if report.sample.basis is Basis.ALL else f"top-cut {report.deck} lists"
-    ideas: dict[str, str] = {}
-    for card in report.missing:
-        parts: list[str] = []
-        if report.sample.performing:
-            parts.append(
-                f"in {card.lists} of {report.sample.performing} {lists} on EDHTop16 since {report.since}"
-            )
-        if report.peers:
-            parts.append(f"{card.peer_lists} of {len(report.peers)} recent Archidekt lists")
-        ideas[card.name] = "; ".join(parts)
-    cuts = [
-        ReplaceOption(card.name, f"in {card.lists} of {report.sample.performing} {lists}")
-        for card in report.outliers
-        if not card.flagged
-    ]
-    return ideas, cuts[:MAX_CUT_OPTIONS]
-
-
 def performing_lists(entries: Sequence[Entry]) -> tuple[list[Entry], Basis]:
     """The lists to learn from: top-cut ones, or every list best placing first when too few made a cut."""
     with_lists = [e for e in entries if e.cards]
@@ -261,6 +238,8 @@ def missing_staples(
     peers: Sequence[PeerList],
     names: Mapping[str, str],
     db: CardDb,
+    *,
+    limit: int | None = MAX_ROWS,
 ) -> tuple[CardShare, ...]:
     in_deck = {card_key(card.name) for card in deck.main_cards}
     aside = {card_key(card.name) for card in deck.aside_cards}
@@ -283,7 +262,28 @@ def missing_staples(
                 )
             )
     rows.sort(key=lambda r: (-r.share, -r.peer_share, r.name))
-    return tuple(rows[:MAX_ROWS])
+    return tuple(rows if limit is None else rows[:limit])
+
+
+@dataclass(slots=True, frozen=True)
+class Staples:
+    """Every staple the deck misses, and what was read to find them."""
+
+    rows: tuple[CardShare, ...]
+    # Lists read from EDHTop16 (top-cut ones when enough made a cut), and Archidekt decks read.
+    lists: int
+    basis: Basis
+    peers: int
+
+
+def all_staples(deck: Deck, data: MetaData, db: CardDb) -> Staples:
+    """The staples the deck misses, uncapped: what the commander's lists or recent Archidekt decks play."""
+    lists = _window(data.lists.data.entries if data.lists.data else (), data.since)
+    performing, basis = performing_lists(lists)
+    peers = data.peers.data.decks if data.peers.data else ()
+    names = _display_names(performing, peers, deck)
+    rows = missing_staples(deck, performing, peers, names, db, limit=None)
+    return Staples(rows, len(performing), basis, len(peers))
 
 
 def spicy_picks(deck: Deck, performing: Sequence[Entry]) -> tuple[SpicyPick, ...]:

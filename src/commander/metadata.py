@@ -207,22 +207,7 @@ def gather(
 
     def peers() -> Answer[PeerLists]:
         report(f"Archidekt: recent {name} decks")
-        request: Mapping[str, object] = {
-            "commander": deck.commanders[0],
-            "bracket": deck.bracket,
-            "decks": settings.peer_decks,
-            "user": sources.user.casefold(),
-        }
-        return cached_answer(
-            cache_item("archidekt", deck.commanders[0], str(deck.bracket)),
-            request,
-            _live(offline, lambda: _peer_lists(sources, deck, since, settings)),
-            _cache(folder, "Archidekt decks", _encode_peers, _decode_peers),
-            now=now,
-            refresh=refresh,
-            fresh_for=FRESH_FOR,
-            errors=_ERRORS,
-        )
+        return _peers(deck, sources, folder, since, now=now, refresh=refresh, offline=offline)
 
     # Different services, so they run side by side; each client keeps its own pace.
     def own_combos() -> Answer[tuple[ComboDetail, ...]]:
@@ -255,6 +240,59 @@ def gather(
     peer = in_background(peers, name="meta-peers")
     field_answer, combos, deck_combos = meta.result()
     return MetaData(name, since, own.result(), field_answer, peer.result(), combos, deck_combos)
+
+
+def gather_peers(
+    deck: Deck,
+    sources: MetaSources,
+    cache_root: Path,
+    *,
+    now: Clock,
+    refresh: bool,
+    offline: bool = False,
+) -> MetaData:
+    """Only the recent Archidekt decks for the commander at the deck's bracket, for decks below bracket 5:
+    EDHTop16 covers cEDH alone, so its parts are left unavailable."""
+    if not deck.commanders:
+        raise ValueError(f"{deck.name} has no commander")
+    since = window_start(now(), sources.settings)
+    folder = cache_root / CACHE_FOLDER
+    peers = _peers(deck, sources, folder, since, now=now, refresh=refresh, offline=offline)
+    why = "not read below bracket 5"
+    lists: Answer[CommanderEntries] = Answer(None, AnswerSource.UNAVAILABLE, None, why)
+    field: Answer[tuple[MetaCommander, ...]] = Answer(None, AnswerSource.UNAVAILABLE, None, why)
+    combos: Answer[tuple[CommanderCombos, ...]] = Answer(None, AnswerSource.UNAVAILABLE, None, why)
+    own: Answer[tuple[ComboDetail, ...]] = Answer(None, AnswerSource.UNAVAILABLE, None, why)
+    return MetaData(commander_name(deck.commanders), since, lists, field, peers, combos, own)
+
+
+def _peers(
+    deck: Deck,
+    sources: MetaSources,
+    folder: Path,
+    since: date,
+    *,
+    now: Clock,
+    refresh: bool,
+    offline: bool,
+) -> Answer[PeerLists]:
+    settings = sources.settings
+    request: Mapping[str, object] = {
+        "commander": deck.commanders[0],
+        "bracket": deck.bracket,
+        "decks": settings.peer_decks,
+        "user": sources.user.casefold(),
+    }
+    return cached_answer(
+        cache_item("archidekt", deck.commanders[0], str(deck.bracket)),
+        request,
+        _live(offline, lambda: _peer_lists(sources, deck, since, settings)),
+        _cache(folder, "Archidekt decks", _encode_peers, _decode_peers),
+        now=now,
+        refresh=refresh,
+        fresh_for=FRESH_FOR,
+        errors=_ERRORS,
+    )
 
 
 def core_request(commander: MetaCommander) -> dict[str, object] | None:

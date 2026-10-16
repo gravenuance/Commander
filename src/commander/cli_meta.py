@@ -7,7 +7,6 @@ from collections.abc import Callable, Sequence
 from typing import TextIO
 
 from commander.archidekt import SEARCH_INTERVAL_SECONDS, ArchidektSearch
-from commander.board import BoardService, feed_ideas, read_board
 from commander.carddb import CardDb
 from commander.cli_output import progress_printer
 from commander.clibase import EXIT_FAILURE, EXIT_OK, Context, UsageError, one_deck, open_card_db, workspace
@@ -15,6 +14,7 @@ from commander.config import cache_dir, config_path, read_config, resolve_user
 from commander.deckcache import AnswerSource
 from commander.deckprofile import read_profile
 from commander.edhtop16 import REQUEST_INTERVAL_SECONDS, SLOW_QUERY_SECONDS, Edhtop16Client, commander_url
+from commander.ideas import compile_ideas, ideas_summary
 from commander.meta import (
     Basis,
     CardCheck,
@@ -22,8 +22,6 @@ from commander.meta import (
     MetaAnswer,
     MetaReport,
     analyse,
-    board_ideas,
-    card_shares,
     check_card,
 )
 from commander.metacombos import AnswerRole, ComboAnswer
@@ -115,7 +113,7 @@ def _cmd_meta(args: argparse.Namespace, ctx: Context) -> int:
             report = analyse(deck.deck, data, read_profile(deck.folder), db)
             results.append((deck, data, report))
             if args.to_board:
-                _to_board(deck, report, card_shares(data), db, ctx)
+                _to_board(deck, data, db, ctx)
     for _, _, report in results:
         _warn_sources(report, ctx.err)
     _print_results(args, results, ctx.out)
@@ -158,13 +156,9 @@ def _decks(space: Workspace, query: str | None) -> list[StoredDeck]:
     return chosen
 
 
-def _to_board(
-    deck: StoredDeck, report: MetaReport, shares: dict[str, float], db: CardDb, ctx: Context
-) -> None:
-    ideas, cuts = board_ideas(report)
-    service = BoardService(deck.folder, deck.deck, db, now=ctx.now)
-    added = feed_ideas(service, ideas, cuts, read_board(deck.folder), shares or None)
-    print(f"put {len(added)} idea(s) on the {deck.deck.short_name} board", file=ctx.err)
+def _to_board(deck: StoredDeck, data: MetaData, db: CardDb, ctx: Context) -> None:
+    added = compile_ideas(deck, data, db, now=ctx.now)
+    print(f"{deck.deck.short_name} board: {ideas_summary(added)}", file=ctx.err)
 
 
 def _warn_sources(report: MetaReport, err: TextIO) -> None:

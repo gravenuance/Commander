@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 
 from commander.archidekt import PeerDeck, parse_deck
-from commander.board import ReplaceOption
 from commander.carddb import CardDb
 from commander.deckcache import Answer, AnswerSource
 from commander.deckprofile import Profile
@@ -15,7 +14,6 @@ from commander.meta import (
     AnswerKind,
     Basis,
     analyse,
-    board_ideas,
     card_key,
     check_card,
     key_pieces,
@@ -282,28 +280,6 @@ def test_two_faced_cards_compare_by_their_front_face() -> None:
 def test_the_report_names_the_deck_by_its_commander(deck: Deck, db: CardDb, tmp_path: Path) -> None:
     assert analyse(deck, meta_data([]), Profile(), db).deck == "Magda"
     assert tmp_path.exists()
-
-
-def test_board_ideas_are_the_missing_staples_and_cuts_the_unkept_outliers(deck: Deck, db: CardDb) -> None:
-    lists = [*TOP_CUT_LISTS[:4], entry(5, 40, 8, [("Arcane Signet", 0)])]
-    peers = [peer(1, ["Mind Stone"]), peer(2, ["Chaos Warp"]), peer(3, ["Chaos Warp"])]
-    ideas, cuts = board_ideas(analyse(deck, meta_data(lists, peers), Profile(), db))
-    assert ideas["Mind Stone"] == (
-        "in 3 of 5 top-cut Magda lists on EDHTop16 since 2026-08-16; 1 of 3 recent Archidekt lists"
-    )
-    assert (
-        ideas["Chaos Warp"]
-        == "in 0 of 5 top-cut Magda lists on EDHTop16 since 2026-08-16; 2 of 3 recent Archidekt lists"
-    )
-    assert cuts == [ReplaceOption("Disruptor Flute", "in 0 of 5 top-cut Magda lists")]
-    _, kept = board_ideas(analyse(deck, meta_data(lists, peers), Profile(keep_categories=("Stax",)), db))
-    assert kept == []
-
-
-def test_board_ideas_from_thin_data_say_so(deck: Deck, db: CardDb) -> None:
-    lists = [entry(20, 40, 8, [("Mind Stone", 0)]), entry(30, 40, 8, [("Mind Stone", 0)])]
-    ideas, _ = board_ideas(analyse(deck, meta_data(lists), Profile(), db))
-    assert ideas == {"Mind Stone": "in 2 of 2 Magda lists on EDHTop16 since 2026-08-16"}
 
 
 def test_a_spicy_card_in_one_list_off_the_cut_is_left_out(deck: Deck, db: CardDb) -> None:

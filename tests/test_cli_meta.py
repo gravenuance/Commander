@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from commander.board import Section, read_board
+from commander.board import Origin, Section, read_board
 from commander.carddb import CARD_DB_FILE
 from conftest import DECK_ID, FakeArchidekt, Json, deck_page, load_fixture
 from test_cli_apply import Run, run
@@ -210,20 +210,19 @@ def test_json_combos_carry_short_commander_names_and_answer_roles(home: Path, fa
 def test_to_board_suggests_the_missing_staples_once(home: Path, fake: FakeArchidekt) -> None:
     first = meta(home, fake, "magda", "--to-board")
     assert first.code == 0, first.err
-    assert "put 2 idea(s) on the Magda board" in first.err
+    assert "Magda board: +2 from meta\n" in first.err
     board = read_board(home / "decks" / FOLDER)
     card = board.find("Mind Stone")
     assert card is not None
-    assert card.section is Section.SUGGESTED
-    assert (
-        card.reason
-        == "in 5 of 5 top-cut Magda lists on EDHTop16 since 2026-08-16; 0 of 1 recent Archidekt lists"
+    assert (card.section, card.origin) == (Section.SUGGESTED, Origin.META)
+    assert card.reason == (
+        "in 5 of 5 top-cut Magda lists on EDHTop16 since 2026-08-16;"
+        " in 0 of 1 most-viewed recent Archidekt decks"
     )
-    assert [(o.name, o.reason) for o in card.replace] == [
-        ("Disruptor Flute", "in 0 of 5 top-cut Magda lists")
-    ]
+    # Replacement targets come from the card's role in the app, not from one cut list for every idea.
+    assert card.replace == ()
     again = meta(home, fake, "magda", "--to-board")
-    assert "put 0 idea(s) on the Magda board" in again.err
+    assert "Magda board: no new ideas\n" in again.err
 
 
 def test_every_bracket_5_deck_side_by_side(home: Path, fake: FakeArchidekt) -> None:

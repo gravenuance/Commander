@@ -300,9 +300,9 @@ def test_the_meta_brings_a_turned_down_card_back_once_its_share_rises_by_20_poin
     card = service.propose("Lightning Bolt", Actor.CLAUDE)
     service.decide(card.id, Status.REJECTED, Actor.YOU, share=0.1)
     ideas = {"Lightning Bolt": "in 29 of 40 lists"}
-    assert feed_ideas(service, ideas, [], read_board(tmp_path), {"lightning bolt": 0.29}) == []
-    assert feed_ideas(service, ideas, [], read_board(tmp_path), None) == []
-    [back] = feed_ideas(service, ideas, [], read_board(tmp_path), {"lightning bolt": 0.31})
+    assert feed_ideas(service, ideas, [], read_board(tmp_path), shares={"lightning bolt": 0.29}) == []
+    assert feed_ideas(service, ideas, [], read_board(tmp_path), shares=None) == []
+    [back] = feed_ideas(service, ideas, [], read_board(tmp_path), shares={"lightning bolt": 0.31})
     assert (back.id, back.status, back.rejected_share) == (card.id, Status.OPEN, None)
     assert back.reason == "back: in 31% of meta lists, up from 10% when turned down; in 29 of 40 lists"
 
@@ -313,12 +313,14 @@ def test_a_card_turned_down_without_a_known_share_gets_todays_as_its_baseline(
     card = service.propose("Lightning Bolt", Actor.CLAUDE)
     service.decide(card.id, Status.REJECTED, Actor.YOU)
     assert (
-        feed_ideas(service, {"Lightning Bolt": ""}, [], read_board(tmp_path), {"lightning bolt": 0.4}) == []
+        feed_ideas(service, {"Lightning Bolt": ""}, [], read_board(tmp_path), shares={"lightning bolt": 0.4})
+        == []
     )
     assert read_board(tmp_path).cards[0].rejected_share == pytest.approx(0.4)
     assert read_activity(tmp_path)[-1].action == "meta share noted"
     assert (
-        feed_ideas(service, {"Lightning Bolt": ""}, [], read_board(tmp_path), {"lightning bolt": 0.5}) == []
+        feed_ideas(service, {"Lightning Bolt": ""}, [], read_board(tmp_path), shares={"lightning bolt": 0.5})
+        == []
     )
 
 

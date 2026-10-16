@@ -28,7 +28,6 @@ from commander.board import (
     activity_json,
     board_stamp,
     card_json,
-    feed_ideas,
     read_activity,
     read_board,
 )
@@ -41,8 +40,9 @@ from commander.credentials import CredentialError, TokenStore
 from commander.deckgrid import GridGroup, deck_grid, image_url
 from commander.deckprofile import read_profile
 from commander.edhtop16 import REQUEST_INTERVAL_SECONDS, SLOW_QUERY_SECONDS, Edhtop16Client, Edhtop16Error
+from commander.ideas import compile_ideas
 from commander.labels import LabelError, Step, label_options, mark, set_label, to_get_json
-from commander.meta import analyse, board_ideas, card_shares
+from commander.meta import analyse, card_shares
 from commander.metadata import MetaData, MetaSources, cache_stamp, gather
 from commander.metapanel import combo_rows, own_combo_rows, piece_threats
 from commander.models import Deck
@@ -321,10 +321,8 @@ class Desk:
         with self._db() as db:
             report = analyse(stored.deck, data, read_profile(stored.folder), db)
             if not offline and stored.deck.bracket == CEDH_BRACKET:
-                # A refresh puts the meta's staples on the board, as `cmdr meta --to-board` does.
-                ideas, cuts = board_ideas(report)
-                service = BoardService(stored.folder, stored.deck, db, now=self._now)
-                feed_ideas(service, ideas, cuts, read_board(stored.folder), card_shares(data) or None)
+                # A refresh compiles the deck's ideas, as `cmdr sync` does (ADR 0014).
+                compile_ideas(stored, data, db, now=self._now)
         if data.lists.data is None and data.field.data is None and data.peers.data is None:
             return {"report": None, "errors": [] if offline else [s.error for s in report.sources if s.error]}
         return {

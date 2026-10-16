@@ -52,6 +52,17 @@ def targets_for(
     )
     if picked or info is None:
         return picked
+    return role_targets(info, main, protected=protected, shares=shares)
+
+
+def role_targets(
+    info: CardInfo,
+    main: Sequence[ResolvedCard],
+    *,
+    protected: Collection[str],
+    shares: Mapping[str, float] | None,
+) -> tuple[Target, ...]:
+    """The weakest deck cards in the card's role (see `targets_for`), at most MAX_TARGETS."""
     roles = [role for role in ANALYZED_ROLES if role in info.roles]
     pool = [r for r in main if _eligible(r, info, protected) and _same_role(r, roles)]
     ranked = sorted(pool, key=lambda r: _weakness(r, shares))
