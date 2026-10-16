@@ -17,9 +17,10 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 
+from commander.answers import card_key
 from commander.carddb import CardDb, CardInfo
 from commander.fsutil import write_text_atomic
-from commander.jsonshape import ShapeError, as_object, opt_str, req_int, req_list, req_str
+from commander.jsonshape import ShapeError, as_object, opt_float, opt_str, req_int, req_list, req_str
 from commander.models import Deck
 from commander.plan import AddCard, Plan, RemoveCard
 from commander.suggest import Suggestions, deck_identity, name_keys
@@ -38,6 +39,8 @@ MAX_LOG_LINE = 16 * 1024
 LOCK_TIMEOUT_SECONDS = 10.0
 # A lock file older than this was left by a crashed writer; a real update takes milliseconds.
 STALE_LOCK_SECONDS = 60.0
+# How far a turned-down card's share of the meta's lists must rise before the meta offers it again.
+RETURN_RISE = 0.20
 _LOCK_POLL_SECONDS = 0.05
 _THREAD_LOCK = threading.Lock()
 
@@ -89,10 +92,14 @@ class BoardCard:
     note: str
     added_at: str
     updated_at: str
+    # For a turned-down card: its share of the meta's lists when it was turned down; None when unknown.
+    rejected_share: float | None = None
 
     def __post_init__(self) -> None:
         if self.choice is not None and self.status not in {Status.ADD, Status.APPLIED}:
             raise ValueError(f"{self.name}: only a card being added has a chosen cut")
+        if self.rejected_share is not None and self.status is not Status.REJECTED:
+            raise ValueError(f"{self.name}: only a turned-down card keeps its meta share")
 
 
 @dataclass(slots=True, frozen=True)
@@ -207,6 +214,7 @@ def parse_board(raw: Mapping[str, object]) -> Board:
                 note=req_str(card, "note", where),
                 added_at=req_str(card, "addedAt", where),
                 updated_at=req_str(card, "updatedAt", where),
+                rejected_share=opt_float(card, "rejectedShare", where),
             )
         )
     return Board(tuple(cards))
@@ -230,6 +238,7 @@ def card_json(card: BoardCard) -> dict[str, object]:
         "note": card.note,
         "addedAt": card.added_at,
         "updatedAt": card.updated_at,
+        "rejectedShare": card.rejected_share,
     }
 
 
@@ -298,6 +307,7 @@ class BoardService:
                     choice=None,
                     note="",
                     updated_at=stamp,
+                    rejected_share=None,
                 )
                 save(_swap(board, card), Activity(stamp, actor, "reopened", card.name, reason))
                 return card
@@ -366,9 +376,20 @@ class BoardService:
             return updated
 
     def decide(
-        self, key: str, status: Status, actor: Actor, *, choice: str | None = None, note: str = ""
+        self,
+        key: str,
+        status: Status,
+        actor: Actor,
+        *,
+        choice: str | None = None,
+        note: str = "",
+        share: float | None = None,
     ) -> BoardCard:
-        """Mark a card to add (with the deck card to cut), turn it down, or reopen it."""
+        """Mark a card to add (with the deck card to cut), turn it down, or reopen it.
+
+        share is the card's share of the meta's lists now; a turned-down card keeps it, so a meta that has
+        since taken to the card can offer it again (`feed_ideas`).
+        """
         if status is Status.APPLIED:
             raise BoardError("a card counts as applied only once it is saved to Archidekt")
         note = _bounded(note, MAX_NOTE, "the note")
@@ -377,7 +398,15 @@ class BoardService:
             if card.status is Status.APPLIED:
                 raise BoardError(f"{card.name} is already in the deck")
             cut = self._choice(choice) if status is Status.ADD else None
-            updated = replace(card, status=status, choice=cut, note=note, updated_at=self._stamp())
+            kept_share = share if status is Status.REJECTED else None
+            updated = replace(
+                card,
+                status=status,
+                choice=cut,
+                note=note,
+                updated_at=self._stamp(),
+                rejected_share=kept_share,
+            )
             detail = "; ".join(filter(None, [f"cut {cut}" if cut else "", note]))
             save(
                 _swap(board, updated),
@@ -406,6 +435,18 @@ class BoardService:
             save(
                 Board(cards),
                 Activity(stamp, actor, "saved to Archidekt", None, f"{names}; snapshot '{snapshot}'"),
+            )
+
+    def remember_share(self, key: str, share: float) -> None:
+        """Give a turned-down card that has none its meta share now, as the baseline for its return."""
+        with self._editing() as (board, save):
+            card = _require(board, key)
+            if card.status is not Status.REJECTED or card.rejected_share is not None:
+                return
+            stamp = self._stamp()
+            save(
+                _swap(board, replace(card, rejected_share=share, updated_at=stamp)),
+                Activity(stamp, Actor.CMDR, "meta share noted", card.name, f"in {share:.0%} of meta lists"),
             )
 
     def note(self, actor: Actor, action: str, detail: str, card: str | None = None) -> None:
@@ -585,16 +626,27 @@ def feed_suggestions(service: BoardService, result: Suggestions, board: Board) -
 
 
 def feed_ideas(
-    service: BoardService, ideas: Mapping[str, str], cuts: Sequence[ReplaceOption], board: Board
+    service: BoardService,
+    ideas: Mapping[str, str],
+    cuts: Sequence[ReplaceOption],
+    board: Board,
+    shares: Mapping[str, float] | None = None,
 ) -> list[BoardCard]:
     """Put each idea (card name to reason) on the board as suggested by cmdr, with cuts as cards to replace.
 
-    Cards already on the board, in any state, are left alone, so a turned-down card is never offered again.
+    Cards already on the board are left alone, but with the meta's shares (by `card_key`) a turned-down one
+    comes back once its share has risen by RETURN_RISE since; one turned down without a known share gets
+    today's as its baseline.
     """
     added: list[BoardCard] = []
-    for name, reason in ideas.items():
-        if board.find(name) is not None:
-            continue
+    for name, idea in ideas.items():
+        reason = idea
+        existing = board.find(name)
+        if existing is not None:
+            back = _returning(service, existing, shares)
+            if back is None:
+                continue
+            reason = f"{back}; {idea}" if idea else back
         try:
             card = service.propose(
                 name, Actor.CMDR, section=Section.SUGGESTED, reason=reason, replace_options=cuts
@@ -604,6 +656,19 @@ def feed_ideas(
             continue
         added.append(card)
     return added
+
+
+def _returning(service: BoardService, card: BoardCard, shares: Mapping[str, float] | None) -> str | None:
+    """Why a turned-down card comes back to the board now, or None to leave it alone."""
+    if card.status is not Status.REJECTED or shares is None:
+        return None
+    now = shares.get(card_key(card.name), 0.0)
+    if card.rejected_share is None:
+        service.remember_share(card.id, now)
+        return None
+    if now < card.rejected_share + RETURN_RISE:
+        return None
+    return f"back: in {now:.0%} of meta lists, up from {card.rejected_share:.0%} when turned down"
 
 
 def import_aside(service: BoardService, deck: Deck, board: Board) -> list[BoardCard]:

@@ -58,6 +58,12 @@ def req_float(obj: Mapping[str, object], key: str, where: str) -> float:
     return float(value)
 
 
+def opt_float(obj: Mapping[str, object], key: str, where: str) -> float | None:
+    if obj.get(key) is None:
+        return None
+    return req_float(obj, key, where)
+
+
 def req_bool(obj: Mapping[str, object], key: str, where: str) -> bool:
     value = obj.get(key)
     if not isinstance(value, bool):

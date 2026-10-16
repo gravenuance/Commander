@@ -15,6 +15,7 @@ from pathlib import Path
 
 import httpx
 
+from commander.answers import card_key
 from commander.apply import NotYourDeckError, Resolution, SaveError
 from commander.archidekt import SEARCH_INTERVAL_SECONDS, ArchidektError, ArchidektSearch
 from commander.archidekt_edit import ArchidektAuth, ArchidektEditor, AuthError
@@ -253,8 +254,12 @@ class Desk:
         status = _DECISIONS.get(decision)
         if status is None:
             return {"error": f"unknown decision {decision!r}"}
+        stored = self._stored(deck_id)
+        board_card = read_board(stored.folder).find(card_id)
+        shares = self._meta_shares(stored.deck) if status is Status.REJECTED else None
+        share = shares.get(card_key(board_card.name), 0.0) if shares is not None and board_card else None
         with self._service(deck_id) as service:
-            card = service.decide(card_id, status, Actor.YOU, choice=choice or None, note=note)
+            card = service.decide(card_id, status, Actor.YOU, choice=choice or None, note=note, share=share)
         return {"card": card_json(card)}
 
     @_guarded

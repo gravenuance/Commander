@@ -15,7 +15,16 @@ from commander.config import cache_dir, config_path, read_config, resolve_user
 from commander.deckcache import AnswerSource
 from commander.deckprofile import read_profile
 from commander.edhtop16 import REQUEST_INTERVAL_SECONDS, SLOW_QUERY_SECONDS, Edhtop16Client, commander_url
-from commander.meta import Basis, CardCheck, CardShare, MetaReport, analyse, board_ideas, check_card
+from commander.meta import (
+    Basis,
+    CardCheck,
+    CardShare,
+    MetaReport,
+    analyse,
+    board_ideas,
+    card_shares,
+    check_card,
+)
 from commander.metacombos import AnswerRole, ComboAnswer
 from commander.metadata import MetaData, MetaSources, gather
 from commander.models import short_commander_name
@@ -105,7 +114,7 @@ def _cmd_meta(args: argparse.Namespace, ctx: Context) -> int:
             report = analyse(deck.deck, data, read_profile(deck.folder), db)
             results.append((deck, data, report))
             if args.to_board:
-                _to_board(deck, report, db, ctx)
+                _to_board(deck, report, card_shares(data), db, ctx)
     for _, _, report in results:
         _warn_sources(report, ctx.err)
     _print_results(args, results, ctx.out)
@@ -148,10 +157,12 @@ def _decks(space: Workspace, query: str | None) -> list[StoredDeck]:
     return chosen
 
 
-def _to_board(deck: StoredDeck, report: MetaReport, db: CardDb, ctx: Context) -> None:
+def _to_board(
+    deck: StoredDeck, report: MetaReport, shares: dict[str, float], db: CardDb, ctx: Context
+) -> None:
     ideas, cuts = board_ideas(report)
     service = BoardService(deck.folder, deck.deck, db, now=ctx.now)
-    added = feed_ideas(service, ideas, cuts, read_board(deck.folder))
+    added = feed_ideas(service, ideas, cuts, read_board(deck.folder), shares or None)
     print(f"put {len(added)} idea(s) on the {deck.deck.short_name} board", file=ctx.err)
 
 

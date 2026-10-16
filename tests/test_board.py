@@ -23,6 +23,7 @@ from commander.board import (
     Status,
     board_plan,
     board_stamp,
+    feed_ideas,
     import_aside,
     read_activity,
     read_board,
@@ -280,3 +281,63 @@ def test_turned_down_maybeboard_cards_are_dropped_by_the_next_save(
     # Once it is off the Maybeboard there is nothing left to drop.
     gone = replace(deck, cards=tuple(c for c in deck.cards if not c.name.startswith("Tempestra")))
     assert board_plan(gone, board) is None
+
+
+def test_a_turned_down_card_keeps_its_meta_share_until_reopened(
+    tmp_path: Path, service: BoardService
+) -> None:
+    card = service.propose("Lightning Bolt", Actor.CLAUDE)
+    service.decide(card.id, Status.REJECTED, Actor.YOU, share=0.1)
+    assert read_board(tmp_path).cards[0].rejected_share == pytest.approx(0.1)
+    assert service.propose("Lightning Bolt", Actor.YOU).rejected_share is None
+    # Only a turned-down card keeps one.
+    assert service.decide(card.id, Status.ADD, Actor.YOU, share=0.5).rejected_share is None
+
+
+def test_the_meta_brings_a_turned_down_card_back_once_its_share_rises_by_20_points(
+    tmp_path: Path, service: BoardService
+) -> None:
+    card = service.propose("Lightning Bolt", Actor.CLAUDE)
+    service.decide(card.id, Status.REJECTED, Actor.YOU, share=0.1)
+    ideas = {"Lightning Bolt": "in 29 of 40 lists"}
+    assert feed_ideas(service, ideas, [], read_board(tmp_path), {"lightning bolt": 0.29}) == []
+    assert feed_ideas(service, ideas, [], read_board(tmp_path), None) == []
+    [back] = feed_ideas(service, ideas, [], read_board(tmp_path), {"lightning bolt": 0.31})
+    assert (back.id, back.status, back.rejected_share) == (card.id, Status.OPEN, None)
+    assert back.reason == "back: in 31% of meta lists, up from 10% when turned down; in 29 of 40 lists"
+
+
+def test_a_card_turned_down_without_a_known_share_gets_todays_as_its_baseline(
+    tmp_path: Path, service: BoardService
+) -> None:
+    card = service.propose("Lightning Bolt", Actor.CLAUDE)
+    service.decide(card.id, Status.REJECTED, Actor.YOU)
+    assert (
+        feed_ideas(service, {"Lightning Bolt": ""}, [], read_board(tmp_path), {"lightning bolt": 0.4}) == []
+    )
+    assert read_board(tmp_path).cards[0].rejected_share == pytest.approx(0.4)
+    assert read_activity(tmp_path)[-1].action == "meta share noted"
+    assert (
+        feed_ideas(service, {"Lightning Bolt": ""}, [], read_board(tmp_path), {"lightning bolt": 0.5}) == []
+    )
+
+
+def test_a_meta_share_on_a_card_that_is_not_turned_down_is_refused(tmp_path: Path) -> None:
+    card: Json = {
+        "id": "a1",
+        "name": "Lightning Bolt",
+        "oracleId": "x",
+        "section": "considered",
+        "source": "you",
+        "reason": "",
+        "replace": [],
+        "status": "open",
+        "choice": None,
+        "note": "",
+        "addedAt": "t",
+        "updatedAt": "t",
+        "rejectedShare": 0.2,
+    }
+    (tmp_path / BOARD_FILE).write_text(json.dumps({"version": 1, "cards": [card]}), encoding="utf-8")
+    with pytest.raises(BoardError, match="only a turned-down card keeps its meta share"):
+        read_board(tmp_path)
