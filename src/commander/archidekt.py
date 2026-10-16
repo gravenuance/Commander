@@ -199,7 +199,19 @@ def parse_deck(raw: object) -> Deck:
         bracket=opt_int(deck, "edhBracket", "deck"),
         updated_at=req_str(deck, "updatedAt", "deck"),
         cards=tuple(cards),
+        tags=_deck_tags(deck),
     )
+
+
+def _deck_tags(deck: Mapping[str, object]) -> tuple[str, ...]:
+    """The deck tag names in Archidekt's order, each once; a deck with none may leave the field out."""
+    if "deckTags" not in deck:
+        return ()
+    names = (
+        req_str(as_object(item, f"deck.deckTags[{i}]"), "name", f"deck.deckTags[{i}]")
+        for i, item in enumerate(req_list(deck, "deckTags", "deck"))
+    )
+    return tuple(dict.fromkeys(names))
 
 
 def category_flags(raw: object) -> dict[str, bool]:

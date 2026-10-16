@@ -24,7 +24,7 @@ from commander.render import deck_list_markdown, notes_template
 
 log = logging.getLogger(__name__)
 
-SNAPSHOT_VERSION = 1
+SNAPSHOT_VERSION = 2
 SNAPSHOT_FILE = "deck.json"
 LIST_FILE = "list.md"
 NOTES_FILE = "notes.md"
@@ -133,6 +133,7 @@ def snapshot_json(deck: Deck) -> str:
         "owner": deck.owner,
         "bracket": deck.bracket,
         "updatedAt": deck.updated_at,
+        "tags": None if deck.tags is None else list(deck.tags),
         "cards": [
             {
                 "name": card.name,
@@ -179,12 +180,23 @@ def parse_snapshot(raw: object) -> Deck:
         bracket=opt_int(document, "bracket", "snapshot"),
         updated_at=req_str(document, "updatedAt", "snapshot"),
         cards=tuple(cards),
+        tags=_tags(document),
     )
+
+
+def _tags(document: Mapping[str, object]) -> tuple[str, ...] | None:
+    if "tags" not in document:
+        raise ShapeError("snapshot.tags is missing")
+    return None if document["tags"] is None else str_list(document, "tags", "snapshot")
 
 
 def _migrate(document: Mapping[str, object]) -> Mapping[str, object]:
     # Migrations from older snapshot versions go here, on the raw tree, before binding to Deck.
     version = req_int(document, "version", "snapshot")
+    if version == 1:
+        # Version 1 kept no deck tags; None says they are unknown, so the next sync fetches the deck again.
+        document = {**document, "version": 2, "tags": None}
+        version = 2
     if version != SNAPSHOT_VERSION:
         raise ShapeError(f"snapshot version {version} is not supported (expected {SNAPSHOT_VERSION})")
     return document

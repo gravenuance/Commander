@@ -93,6 +93,7 @@ def _is_current(workspace: Workspace, previous: Deck, summary: DeckSummary) -> b
     folder = workspace.folder_for(summary.id)
     return (
         previous.updated_at == summary.updated_at
+        and previous.tags is not None
         and folder is not None
         and folder.name == folder_name(previous)
     )

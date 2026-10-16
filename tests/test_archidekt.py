@@ -29,6 +29,17 @@ def test_parse_deck_reads_header_fields(raw_deck: Json) -> None:
     assert deck.url == "https://archidekt.com/decks/10004639"
 
 
+def test_parse_deck_reads_the_deck_tags_in_order(raw_deck: Json) -> None:
+    assert parse_deck(raw_deck).tags == ("Dwarves", "Vehicles", "cEDH")
+
+
+def test_a_deck_without_deck_tags_has_none(raw_deck: Json) -> None:
+    del raw_deck["deckTags"]
+    assert parse_deck(raw_deck).tags == ()
+    raw_deck["deckTags"] = [{"name": "Stax"}, {"name": "Stax"}]
+    assert parse_deck(raw_deck).tags == ("Stax",)
+
+
 def test_parse_deck_splits_main_deck_from_maybeboard(raw_deck: Json) -> None:
     deck = parse_deck(raw_deck)
     assert deck.commanders == ("Magda, Brazen Outlaw",)
@@ -95,6 +106,10 @@ def included_as_number(deck: Json) -> None:
     deck["categories"][0]["includedInDeck"] = 1
 
 
+def tag_without_name(deck: Json) -> None:
+    del deck["deckTags"][1]["name"]
+
+
 @pytest.mark.parametrize(
     ("mutate", "message"),
     [
@@ -102,6 +117,7 @@ def included_as_number(deck: Json) -> None:
         (quantity_as_text, "deck.cards[0].quantity"),
         (drop_owner_name, "deck.owner.username"),
         (included_as_number, "includedInDeck"),
+        (tag_without_name, "deck.deckTags[1].name"),
     ],
 )
 def test_parse_deck_rejects_wrong_shapes(

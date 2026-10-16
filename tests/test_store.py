@@ -93,6 +93,32 @@ def test_snapshot_from_a_newer_version_is_skipped(tmp_path: Path, deck: Deck) ->
     assert workspace.load(deck.id) is None
 
 
+def test_snapshot_keeps_the_deck_tags(tmp_path: Path, deck: Deck) -> None:
+    folder = Workspace(tmp_path).save(deck)
+    document = json.loads((folder / "deck.json").read_text(encoding="utf-8"))
+    assert document["version"] == 2
+    assert document["tags"] == ["Dwarves", "Vehicles", "cEDH"]
+
+
+def test_a_snapshot_from_before_deck_tags_loads_with_them_unknown(tmp_path: Path, deck: Deck) -> None:
+    workspace = Workspace(tmp_path)
+    folder = workspace.save(deck)
+    document = json.loads((folder / "deck.json").read_text(encoding="utf-8"))
+    document["version"] = 1
+    del document["tags"]
+    (folder / "deck.json").write_text(json.dumps(document), encoding="utf-8")
+    assert workspace.load(deck.id) == replace(deck, tags=None)
+
+
+def test_a_snapshot_missing_its_tags_is_skipped(tmp_path: Path, deck: Deck) -> None:
+    workspace = Workspace(tmp_path)
+    folder = workspace.save(deck)
+    document = json.loads((folder / "deck.json").read_text(encoding="utf-8"))
+    del document["tags"]
+    (folder / "deck.json").write_text(json.dumps(document), encoding="utf-8")
+    assert workspace.load(deck.id) is None
+
+
 def test_load_all_ignores_unrelated_folders(tmp_path: Path, deck: Deck) -> None:
     workspace = Workspace(tmp_path)
     workspace.save(deck)

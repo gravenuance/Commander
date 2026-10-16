@@ -47,6 +47,8 @@ class Deck:
     bracket: int | None
     updated_at: str
     cards: tuple[DeckCard, ...]
+    # Archidekt's deck tags (Stax, Dwarves, cEDH...); None for a snapshot saved before they were kept.
+    tags: tuple[str, ...] | None = ()
 
     def __post_init__(self) -> None:
         if self.id < 1:
