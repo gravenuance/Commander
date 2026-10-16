@@ -107,6 +107,12 @@ def test_a_wider_leaning_folds_into_a_narrower_one_holding_most_of_its_cards(db:
     assert [leaning.tag for leaning in find_leanings(main, peers(5), db)] == ["reanimate-creature"]
 
 
+def test_ignoring_a_narrower_leaning_keeps_the_wider_one_folded_into_it_hidden(db: CardDb) -> None:
+    main = resolved(db, deck_cards(20, 21, 22, 23, 24))
+    # reanimate's cards are 20-24 and reanimate-creature's 21-24: ignoring the narrower one hides both.
+    assert find_leanings(main, peers(5), db, ignore={"reanimate-creature"}) == ()
+
+
 def pool(*fillers: int) -> MetaData:
     lists = Answer(PeerLists(tuple(peers(5, *fillers)), 0), AnswerSource.FETCHED, None, None)
     gone: Answer[Any] = Answer(None, AnswerSource.UNAVAILABLE, None, "test")

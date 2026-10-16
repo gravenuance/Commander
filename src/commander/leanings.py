@@ -66,7 +66,7 @@ def find_leanings(
             for slug in lineage.get(r.info.oracle_id, ()):
                 held.setdefault(slug, []).append(r.card.name)
     theirs = _peer_counts(peers, commanders, db)
-    skip = {slug for root in TRIVIA_ROOTS for slug in db.tag_subtree(root)} | set(ignore)
+    skip = {slug for root in TRIVIA_ROOTS for slug in db.tag_subtree(root)}
     found: list[Leaning] = []
     for slug, cards in held.items():
         count = len(cards)
@@ -79,7 +79,8 @@ def find_leanings(
             found.append(Leaning(slug, tuple(sorted(cards, key=str.casefold)), mean, len(peers)))
     sizes = db.tag_sizes(leaning.tag for leaning in found)
     found = [f for f in found if MIN_TAG_CARDS <= sizes.get(f.tag, 0) <= MAX_TAG_CARDS]
-    kept = [f for f in found if not _folds(f, found, sizes)]
+    # Ignored leanings still fold their wider tags away, or ignoring gives-flying would surface gives-evasion.
+    kept = [f for f in found if not _folds(f, found, sizes) and f.tag not in ignore]
     kept.sort(key=lambda f: (f.peer_mean - len(f.cards), f.tag))
     return tuple(kept[:MAX_LEANINGS])
 
