@@ -160,11 +160,11 @@ function renderDecks() {
     const button = item.firstChild;
     button.replaceChildren(
       el("span", { class: "short", text: deck.short, title: deck.short }),
-      deck.queued ? el("span", { class: "pill", text: String(deck.queued), title: `${deck.queued} queued` }) : el("span"),
+      deck.error ? el("span", { class: "pill error", text: "!", title: deck.error }) : deck.queued ? el("span", { class: "pill", text: String(deck.queued), title: `${deck.queued} queued` }) : el("span"),
       el("span", { class: "full", text: deck.name, title: deck.name }),
     );
     button.setAttribute("aria-current", state.current === deck.id ? "true" : "false");
-    button.setAttribute("aria-label", `${deck.short}, ${deck.name}${deck.queued ? `, ${deck.queued} queued` : ""}`);
+    button.setAttribute("aria-label", `${deck.short}, ${deck.name}${deck.error ? `, ${deck.error}` : deck.queued ? `, ${deck.queued} queued` : ""}`);
     place(list, item, index);
   }
   for (const item of [...list.children]) if (!seen.has(item.dataset.id)) item.remove();

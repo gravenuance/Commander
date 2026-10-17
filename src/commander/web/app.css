@@ -238,6 +238,7 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   background: var(--accent);
   color: var(--accent-text);
 }
+.pill.error { background: var(--danger); color: var(--on-danger); }
 
 /* Main */
 .main {
