@@ -7,6 +7,7 @@ Cast Your Spells? A 2022 Update", TCGplayer, 2022), with his rules for gold card
 other land counts. Both assume casual Commander; cEDH decks are compared with tournament lists instead.
 """
 
+import math
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -47,12 +48,20 @@ OPPONENT_LAND = 0.75
 OPPONENT_ROCK = 0.5
 # A Fabled Passage or Pathway in a deck of three or more colours, where it has to choose.
 CHOOSING_SOURCE = 2 / 3
-# A land that enters tapped only sometimes is about a quarter of a tap-land.
+# A land that enters tapped only sometimes, on a condition that is no basic land type (a fast land), is
+# about a quarter of a tap-land.
 CONDITIONAL_TAPPED = 0.25
+# A land that enters tapped this seldom counts as untapped when planning; fast lands just do.
+MOSTLY_UNTAPPED = CONDITIONAL_TAPPED
+# The cards seen by turn three: the opening seven and two draws.
+CARDS_SEEN = 9
 GOLD_EXTRA = 1
 _TAPPED = ("enters tapped", "enters the battlefield tapped", "onto the battlefield tapped")
 # Check lands, reveal lands, Fabled Passage: tapped only when a condition fails.
 _SOMETIMES_TAPPED = ("unless", "if you control", "if you don't", "untap that land")
+# Check lands and reveal lands: untapped given a land of the basic types they name.
+_TYPED_CONDITION = ("unless you control a", "you may reveal a")
+_TYPE_WORD = re.compile(r"\b(plains|island|swamp|mountain|forest)\b")
 # Cavern of Souls and its kind: their coloured mana casts only some spells.
 RESTRICTED = "spend this mana only"
 _PIP = re.compile(r"\{([^}]+)\}")
@@ -154,7 +163,8 @@ def analyse_mana(
     colours = sorted(identity, key=COLORS.index)
     scale = lands.lands / TABLE_LANDS
     skip = {name.casefold() for name in alternative_cost}
-    sources = [Source.of(info, quantity, len(colours)) for quantity, info in the_99]
+    deck_lands = DeckLands.of(the_99)
+    sources = [Source.of(info, quantity, len(colours), deck_lands) for quantity, info in the_99]
     checked = [info for _, info, _ in entries if not info_is_land(info) and info.name.casefold() not in skip]
     found = tuple(
         ColourSources(colour, _land_sources(sources, colour), _needs(checked, colour, sources, scale))
@@ -259,6 +269,33 @@ def info_is_land(info: CardMana) -> bool:
 
 
 @dataclass(slots=True, frozen=True)
+class DeckLands:
+    """The 99's size and its cards with basic land types, which decide when a check land enters untapped."""
+
+    cards: int
+    # Each set of basic land types that cards have, with the copies in the deck.
+    typed: Mapping[frozenset[str], int]
+
+    @staticmethod
+    def of(the_99: Sequence[tuple[int, CardMana]]) -> "DeckLands":
+        typed: dict[frozenset[str], int] = {}
+        for quantity, info in the_99:
+            # In hand or on the battlefield a two-faced card has only its front face.
+            types = frozenset(_TYPE_WORD.findall(front_type(info.type_line).casefold().partition("—")[2]))
+            if types:
+                typed[types] = typed.get(types, 0) + quantity
+        return DeckLands(sum(quantity for quantity, _ in the_99), typed)
+
+    def missed(self, types: frozenset[str]) -> float:
+        """The chance that none of the cards seen by turn three has one of these types, from the 99 less the
+        land itself: C(N - K, n) / C(N, n), the hypergeometric chance of drawing none of K among N cards."""
+        others = max(self.cards - 1, 0)
+        wanted = min(sum(n for found, n in self.typed.items() if found & types), others)
+        seen = min(CARDS_SEEN, others)
+        return math.comb(others - wanted, seen) / math.comb(others, seen)
+
+
+@dataclass(slots=True, frozen=True)
 class Source:
     """One card's worth to each colour, and the least mana value a spell needs before it counts."""
 
@@ -271,21 +308,19 @@ class Source:
     tapped: float = 0.0
 
     @staticmethod
-    def of(info: CardMana, quantity: int, deck_colours: int) -> "Source":
+    def of(info: CardMana, quantity: int, deck_colours: int, lands: DeckLands) -> "Source":
         text = info.oracle_text.casefold()
         made = set(info.produced)
         if info_is_land(info):
             colours = _land_colours(info, text, made, deck_colours)
-            return Source(
-                info.name, quantity, land=True, colours=colours, from_mana_value=1, tapped=tapped_share(text)
-            )
+            tapped = tapped_share(text, lands)
+            return Source(info.name, quantity, land=True, colours=colours, from_mana_value=1, tapped=tapped)
         if back_is_land(info.type_line):
             worth = MYTHIC_MDFC_SOURCE if info.rarity == "mythic" else MDFC_SOURCE
             back = info.oracle_text.split(FACE_SEPARATOR)[-1].casefold()
             colours = dict.fromkeys(made or _searched(back), worth)
-            return Source(
-                info.name, quantity, land=True, colours=colours, from_mana_value=1, tapped=tapped_share(back)
-            )
+            tapped = tapped_share(back, lands)
+            return Source(info.name, quantity, land=True, colours=colours, from_mana_value=1, tapped=tapped)
         mana_value = int(info.cmc)
         front = front_type(info.type_line)
         permanent = any(word in front for word in ("Artifact", "Creature", "Enchantment"))
@@ -341,14 +376,24 @@ def _searched(text: str) -> set[str]:
     return found
 
 
-def tapped_share(text: str) -> float:
+def tapped_share(text: str, lands: DeckLands) -> float:
     # Evolving Wilds and its kind put the land they find onto the battlefield tapped.
     if not any(phrase in text for phrase in _TAPPED):
         return 0.0
     # A shock land enters untapped whenever its owner pays the life.
     if "you may pay" in text:
         return 0.0
-    return CONDITIONAL_TAPPED if any(phrase in text for phrase in _SOMETIMES_TAPPED) else 1.0
+    if not any(phrase in text for phrase in _SOMETIMES_TAPPED):
+        return 1.0
+    types = frozenset(_TYPE_WORD.findall(text))
+    if types and any(phrase in text for phrase in _TYPED_CONDITION):
+        return lands.missed(types)
+    return CONDITIONAL_TAPPED
+
+
+def mostly_untapped(tapped: float) -> bool:
+    """Whether a land with this tapped share counts as an untapped one in the mana plan."""
+    return tapped <= MOSTLY_UNTAPPED
 
 
 def _needs(

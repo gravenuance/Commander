@@ -9,10 +9,10 @@ from dataclasses import dataclass, replace
 from commander.carddb import COLORS, CardMana, back_is_land, front_type
 from commander.manabase import (
     COLOUR_NAMES,
-    CONDITIONAL_TAPPED,
     GOLD_EXTRA,
     RESTRICTED,
     TABLE_LANDS,
+    DeckLands,
     ManaBase,
     Source,
     analyse_mana,
@@ -21,8 +21,8 @@ from commander.manabase import (
     fixed_pips,
     info_is_land,
     is_mana_card,
+    mostly_untapped,
     needed_sources,
-    tapped_share,
     without_commanders,
 )
 from commander.models import Deck
@@ -161,9 +161,12 @@ def suggest_mana(
     # _named_lands takes each replaced basic off after; basics_only keeps the count before it.
     basics_only = dict(after)
     budget = _Budget(budget_cents)
-    named = _named_lands(after, need, names, options, budget=budget, held=held, deck_colours=len(colours))
+    lands = DeckLands.of(the_99)
+    named = _named_lands(
+        after, need, names, options, budget=budget, held=held, deck_colours=len(colours), lands=lands
+    )
     taken = held | {s.add.casefold() for s in named}
-    tapped = _tapped_swaps(the_99, options, budget=budget, held=taken, colours=colours)
+    tapped = _tapped_swaps(the_99, options, budget=budget, held=taken, colours=colours, lands=lands)
     plan_swaps = (*swaps, *named, *tapped)
     cut_candidates = _cut_candidates(the_99, change)
     followed = _followed(deck, names, now, after, swaps=plan_swaps, cuts=cut_candidates[: max(change, 0)])
@@ -242,8 +245,9 @@ def _demands(
     """Every card's call on each colour, on curve and, for one-drops, from untapped lands on turn one."""
     entries = deck_entries(deck, cards)
     basics = set(names.values())
+    lands = DeckLands.of(without_commanders(entries))
     others = [
-        Source.of(info, quantity, len(colours))
+        Source.of(info, quantity, len(colours), lands)
         for quantity, info, commander in entries
         if not commander and info.name not in basics
     ]
@@ -358,6 +362,7 @@ def _named_lands(
     budget: _Budget,
     held: set[str],
     deck_colours: int,
+    lands: DeckLands,
 ) -> list[Swap]:
     """Untapped lands for the gaps basics leave, each in place of a basic of a colour it also makes."""
     swaps: list[Swap] = []
@@ -371,7 +376,7 @@ def _named_lands(
         return lambda: (
             (option, (colour, partner))
             for option, partner in _lands_for(
-                colour, gap, basics, options, taken=taken, deck_colours=deck_colours
+                colour, gap, basics, options, taken=taken, deck_colours=deck_colours, lands=lands
             )
         )
 
@@ -398,6 +403,7 @@ def _lands_for(
     *,
     taken: set[str],
     deck_colours: int,
+    lands: DeckLands,
 ) -> Iterator[tuple[LandOption, str]]:
     """Untapped lands making colour, most played first, each with a colour whose basic it can replace, the
     one with most to spare. A fetch land may replace only a basic of a colour that meets its needs, since it
@@ -405,8 +411,8 @@ def _lands_for(
     for option in options:
         if option.mana.name.casefold() in taken or not _offerable(option.mana):
             continue
-        source = Source.of(option.mana, 1, deck_colours)
-        if source.tapped > CONDITIONAL_TAPPED or source.colours.get(colour, 0.0) < 1:
+        source = Source.of(option.mana, 1, deck_colours, lands)
+        if not mostly_untapped(source.tapped) or source.colours.get(colour, 0.0) < 1:
             continue
         partners = [
             c
@@ -427,6 +433,7 @@ def _tapped_swaps(
     budget: _Budget,
     held: set[str],
     colours: Sequence[str],
+    lands: DeckLands,
 ) -> list[Swap]:
     """Plain tap-lands, each with the most played untapped land that makes the same deck colours."""
     swaps: list[Swap] = []
@@ -437,8 +444,8 @@ def _tapped_swaps(
             for option in options:
                 if option.mana.name.casefold() in taken or not _offerable(option.mana):
                     continue
-                source = Source.of(option.mana, 1, len(colours))
-                if source.tapped == 0 and all(source.colours.get(c, 0.0) >= 1 for c in makes):
+                source = Source.of(option.mana, 1, len(colours), lands)
+                if mostly_untapped(source.tapped) and all(source.colours.get(c, 0.0) >= 1 for c in makes):
                     yield option, None
 
         return found
@@ -446,12 +453,7 @@ def _tapped_swaps(
     for _, info in the_99:
         if len(swaps) >= MAX_TAPPED_SWAPS:
             break
-        text = info.oracle_text.casefold()
-        if not info_is_land(info) or _is_basic(info) or tapped_share(text) < 1 or not _plain(text):
-            continue
-        makes = {
-            c for c, worth in Source.of(info, 1, len(colours)).colours.items() if c in colours and worth > 0
-        }
+        makes = _tap_land_colours(info, colours, lands)
         # No colour of the deck's to match, so no land is the same colours.
         found = budget.pick([twins(makes)]) if makes else None
         if found is None:
@@ -462,6 +464,16 @@ def _tapped_swaps(
             Swap(option.mana.name, 1, info.name, "same colours, enters untapped", option.cents, within)
         )
     return swaps
+
+
+def _tap_land_colours(info: CardMana, colours: Sequence[str], lands: DeckLands) -> set[str]:
+    """The deck colours a plain tap-land makes; none for any other card, or a land that is mostly untapped."""
+    if not info_is_land(info) or _is_basic(info) or not _plain(info.oracle_text.casefold()):
+        return set()
+    source = Source.of(info, 1, len(colours), lands)
+    if mostly_untapped(source.tapped):
+        return set()
+    return {c for c, worth in source.colours.items() if c in colours and worth > 0}
 
 
 def _offerable(info: CardMana) -> bool:

@@ -172,24 +172,62 @@ def test_a_shock_land_counts_as_untapped() -> None:
     assert report.tapped_lands == 0
 
 
-def test_lands_that_fetch_tapped_or_reveal_count_as_tapped_or_sometimes_tapped() -> None:
+def test_lands_that_fetch_tapped_or_enter_tapped_on_a_count_are_tapped_or_sometimes_tapped() -> None:
     wilds = card(
         "Evolving Wilds",
         type_line="Land",
         text="{T}, Sacrifice this land: Search your library for a basic land card, put it onto the "
         "battlefield tapped.",
     )
-    snarl = card(
-        "Furycalm Snarl",
+    cliffs = card(
+        "Blackcleave Cliffs",
         type_line="Land",
-        text="As this land enters, you may reveal a Mountain or Plains card from your hand. If you don't, "
-        "this land enters tapped.\n{T}: Add {R} or {W}.",
-        produced="RW",
+        text="This land enters tapped unless you control two or fewer other lands.\n{T}: Add {B} or {R}.",
+        produced="BR",
     )
     report = analyse_mana(
-        deck_of(("Evolving Wilds", 1), ("Furycalm Snarl", 4)), by_name(LEADER, wilds, snarl)
+        deck_of(("Evolving Wilds", 1), ("Blackcleave Cliffs", 4)), by_name(LEADER, wilds, cliffs)
     )
     assert report.tapped_lands == 1 + 4 * 0.25
+
+
+FILLER = card("Filler", "{2}", 2, "Artifact")
+CLIFFTOP = card(
+    "Clifftop Retreat",
+    type_line="Land",
+    text="This land enters tapped unless you control a Mountain or a Plains.\n{T}: Add {R} or {W}.",
+    produced="RW",
+)
+SNARL = card(
+    "Furycalm Snarl",
+    type_line="Land",
+    text="As this land enters, you may reveal a Mountain or Plains card from your hand. If you don't, "
+    "this land enters tapped.\n{T}: Add {R} or {W}.",
+    produced="RW",
+)
+
+
+def test_a_check_land_is_mostly_untapped_in_a_deck_with_many_lands_of_its_types() -> None:
+    deck = deck_of(("Clifftop Retreat", 1), ("Plains", 3), ("Filler", 16))
+    report = analyse_mana(deck, by_name(LEADER, CLIFFTOP, PLAINS, FILLER))
+    # 3 Plains among the other 19 cards, 9 seen by turn three: none drawn is C(16,9) / C(19,9) = 720 / 5814.
+    assert report.tapped_lands == 0.12
+
+
+def test_a_check_land_is_mostly_tapped_in_a_deck_with_almost_none() -> None:
+    deck = deck_of(("Clifftop Retreat", 1), ("Plains", 1), ("Filler", 18))
+    report = analyse_mana(deck, by_name(LEADER, CLIFFTOP, PLAINS, FILLER))
+    # One Plains among the other 19 cards: it is missed with probability 10 / 19.
+    assert report.tapped_lands == 0.53
+
+
+def test_a_reveal_land_counts_typed_duals_and_leaves_out_other_basic_types() -> None:
+    forest = card("Forest", type_line="Basic Land — Forest", produced="G")
+    tundra = card("Tundra", type_line="Land — Plains Island", text="({T}: Add {W} or {U}.)", produced="WU")
+    deck = deck_of(("Furycalm Snarl", 1), ("Tundra", 2), ("Forest", 5), ("Filler", 12))
+    report = analyse_mana(deck, by_name(LEADER, SNARL, tundra, forest, FILLER))
+    # Two Plains-typed cards among the other 19 (the Forests do not count): missed with C(17,9) / C(19,9).
+    assert report.tapped_lands == 0.26
 
 
 def test_cards_with_only_hybrid_or_phyrexian_pips_are_listed_as_not_counted() -> None:

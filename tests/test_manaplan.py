@@ -26,6 +26,12 @@ CHANCERY = card(
     produced="WU",
 )
 TUNDRA = card("Tundra", type_line="Land — Plains Island", text="({T}: Add {W} or {U}.)", produced="WU")
+FORTRESS = card(
+    "Glacial Fortress",
+    type_line="Land",
+    text="This land enters tapped unless you control a Plains or an Island.\n{T}: Add {W} or {U}.",
+    produced="WU",
+)
 # Most played first: the Guildgate enters tapped, so a gap passes it by.
 OPTIONS = (LandOption(GUILDGATE, 25), LandOption(FOUNTAIN, 1500), LandOption(TUNDRA, 40000))
 KNOWN = (LEADER, PLAINS, ISLAND, FILLER, COUNTERSPELL, GUILDGATE, CHANCERY, FOUNTAIN, TUNDRA)
@@ -195,3 +201,25 @@ def test_a_tap_land_making_none_of_the_decks_colours_gets_no_twin() -> None:
     plan = suggest_mana(deck, cards, analyse_mana(deck, cards), options=OPTIONS)
     # An untapped Tundra is no twin of a land that makes only colourless mana, which the reason would claim.
     assert plan.swaps == ()
+
+
+def test_a_check_land_is_taken_or_refused_alike_to_close_a_gap_and_to_replace_a_tap_land() -> None:
+    cards = by_name(*KNOWN, FORTRESS)
+    options = (LandOption(FORTRESS, 1500),)
+    gap = deck_of(("Plains", 30), ("Island", 8), ("Filler", 60), ("Counterspell", 1))
+    twin = deck_of(("Plains", 18), ("Island", 18), ("Azorius Guildgate", 1), ("Filler", 60))
+    # 36 or more Plains and Islands among the 99: the Fortress is untapped about every game.
+    named = suggest_mana(gap, cards, analyse_mana(gap, cards), options=options)
+    assert [swap.add for swap in named.swaps] == ["Island", "Glacial Fortress"]
+    swapped = suggest_mana(twin, cards, analyse_mana(twin, cards), options=options)
+    assert swapped.swaps == (
+        Swap("Glacial Fortress", 1, "Azorius Guildgate", "same colours, enters untapped", 1500),
+    )
+    # Five Plains and Islands among 86 cards: it enters tapped more often than not, so neither step offers it.
+    sparse = deck_of(
+        ("Plains", 4), ("Island", 1), ("Azorius Guildgate", 1), ("Filler", 80), ("Counterspell", 1)
+    )
+    lists = [{"Plains": 4, "Island": 1}]
+    report = analyse_mana(sparse, cards, comparison=("recent decks", lists))
+    refused = suggest_mana(sparse, cards, report, options=options)
+    assert all(swap.add != "Glacial Fortress" for swap in refused.swaps)
