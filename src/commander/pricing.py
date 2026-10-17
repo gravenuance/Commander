@@ -71,6 +71,7 @@ def card_price(resolved: ResolvedCard) -> CardPrice:
     cheapest = resolved.info.cheapest_cents if resolved.info is not None else None
     unit: int | None = None
     if printing is not None:
+        # Only regular and foil EUR prices are kept, so the foil one is the estimate for Etched too.
         unit = printing.eur_cents if card.finish == NONFOIL_FINISH else printing.eur_foil_cents
     if unit is not None:
         return CardPrice(card.name, card.quantity, unit, PriceSource.PRINTING, cheapest)
