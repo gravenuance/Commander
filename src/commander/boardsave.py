@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 
+from commander.answers import card_key
 from commander.apply import ApplyOutcome, Resolution, SaveError, SaveResult, apply_to_live, fetch_own_deck
 from commander.archidekt_edit import ArchidektEditor, LiveDeck
 from commander.board import (
@@ -70,15 +71,20 @@ def save_board(
     folder = workspace.save(result.deck)
     pick_up_aside(StoredDeck(folder, result.deck), db, now=now)
     failed = {
-        c.name
+        card_key(c.name)
         for c in outcome.resolution.changes
         if any(m.startswith(f"{c.name}:") for m in result.mismatches)
     }
-    applied = [card for card in board.queued if card.name not in failed]
+    # A swap is done only when both its add and its cut are.
+    applied = [card for card in board.queued if not failed & _swap_keys(card)]
     service.mark_applied([card.id for card in applied], actor, result.snapshot)
     if result.mismatches:
         service.note(actor, "Archidekt shows differences", "; ".join(result.mismatches))
     return BoardSave(outcome.resolution, result, tuple(card.name for card in applied))
+
+
+def _swap_keys(card: BoardCard) -> set[str]:
+    return {card_key(name) for name in (card.name, card.choice) if name}
 
 
 def _live_plan(live: LiveDeck, board: Board) -> Plan:

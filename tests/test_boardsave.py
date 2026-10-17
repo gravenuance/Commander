@@ -25,15 +25,26 @@ def db(card_db_file: Path) -> Iterator[CardDb]:
         yield opened
 
 
+class LossyArchidekt(FakeArchidekt):
+    """Accepts every edit but quietly leaves out those on the entries in `ignored`."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.ignored: set[int] = set()
+
+    def _modify(self, deck: Json, edits: list[Json]) -> Json:
+        return super()._modify(deck, [e for e in edits if e.get("deckRelationId") not in self.ignored])
+
+
 @pytest.fixture
-def fake(raw_deck: Json) -> FakeArchidekt:
-    archidekt = FakeArchidekt()
+def fake(raw_deck: Json) -> LossyArchidekt:
+    archidekt = LossyArchidekt()
     archidekt.put(raw_deck)
     return archidekt
 
 
 @pytest.fixture
-def editor(fake: FakeArchidekt) -> Iterator[ArchidektEditor]:
+def editor(fake: LossyArchidekt) -> Iterator[ArchidektEditor]:
     with fake.client() as client:
         yield ArchidektEditor(Fetcher(client, sleep=lambda _: None), ACCESS_TOKEN)
 
@@ -174,3 +185,25 @@ def test_a_basic_land_swap_trims_the_copies_when_the_land_is_in_two_entries(
     assert live_quantity(fake, "Lightning Bolt") == 1
     assert saved.result is not None
     assert saved.result.mismatches == ()
+
+
+def test_a_swap_whose_cut_did_not_land_stays_queued(
+    fake: LossyArchidekt, service: BoardService, stored: StoredDeck, commit: Callable[[], BoardSave]
+) -> None:
+    queue(service, "Lightning Bolt", cut="Battered Golem")
+    queue(service, "Arcane Signet", cut="Disruptor Flute")
+    golem = live_entry(fake, "Battered Golem")
+    assert golem is not None
+    fake.ignored.add(golem["id"])
+
+    saved = commit()
+
+    assert saved.result is not None
+    assert saved.result.mismatches == (
+        "Battered Golem: expected it in Maybeboard, Archidekt shows Combo Pieces",
+    )
+    assert saved.applied == ("Arcane Signet",)
+    board = read_board(stored.folder)
+    statuses = {c.name: c.status for c in board.cards}
+    assert statuses["Lightning Bolt"] is Status.ADD
+    assert statuses["Arcane Signet"] is Status.APPLIED
