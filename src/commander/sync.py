@@ -2,11 +2,12 @@
 
 import logging
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import Enum
+from functools import partial
 
 from commander.archidekt import ArchidektClient, ArchidektError
+from commander.background import run_all
 from commander.diff import DeckDiff, diff_decks
 from commander.models import Deck, DeckSummary
 from commander.net import NetworkError
@@ -65,10 +66,14 @@ def sync_decks(
         else:
             to_fetch.append(_Plan(summary, previous))
 
-    pool = ThreadPoolExecutor(max_workers=MAX_PARALLEL_FETCHES)
+    # Daemon threads, so Ctrl-C ends the process without waiting for the fetches still in flight.
+    futures = run_all(
+        [partial(client.get_deck, plan.summary.id) for plan in to_fetch],
+        limit=MAX_PARALLEL_FETCHES,
+        name="deck-fetch",
+    )
     try:
-        futures = [(plan, pool.submit(client.get_deck, plan.summary.id)) for plan in to_fetch]
-        for plan, future in futures:
+        for plan, future in zip(to_fetch, futures, strict=True):
             try:
                 deck = future.result()
             except (NetworkError, ArchidektError) as error:
@@ -77,8 +82,8 @@ def sync_decks(
             on_progress(f"fetched {deck.name}")
             results.append(_apply(workspace, plan.previous, deck, dry_run=dry_run))
     finally:
-        # On Ctrl-C, drop queued fetches instead of waiting for them.
-        pool.shutdown(wait=False, cancel_futures=True)
+        for future in futures:
+            future.cancel()
 
     upstream_ids = {summary.id for summary in summaries}
     results += [
