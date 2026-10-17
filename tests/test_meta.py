@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from commander.answers import Piece, card_answers
 from commander.archidekt import PeerDeck, parse_deck
 from commander.carddb import CardDb, Theme
 from commander.deckcache import Answer, AnswerSource
@@ -26,10 +27,12 @@ from commander.metadata import CommanderEntries, MetaCommander, MetaData, PeerLi
 from commander.models import Deck
 from commander.spellbook import ComboDetail, ComboPiece
 from conftest import CHAOS_WARP, FILLER_CARDS, LIGHTNING_BOLT, Json, build_card_db, filler_card
+from test_scryfall import REMOVAL_ARTIFACT, removal_tag
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 SINCE = date(2026, 8, 16)
 MAGDA = "Magda, Brazen Outlaw"
+SWEEPER_TAG = "3fb7e4fd-5304-4120-b7c4-8a89f70ad3f0"
 # Made up for these tests: the fixture tags hold no creature or permanent removal.
 REMOVAL_TAGS = [
     json.dumps(
@@ -260,6 +263,25 @@ def test_answer_kinds_reach_the_piece_types_they_name(db: CardDb) -> None:
     assert AnswerKind.SWEEPER.hits(magda.type_line)
     assert not AnswerKind.PERMANENT_REMOVAL.hits(bolt.type_line)
     assert AnswerKind.COUNTERSPELL.hits(bolt.type_line)
+
+
+def test_a_sweeper_with_unreadable_text_reaches_creatures_only_as_a_board_wipe(tmp_path: Path) -> None:
+    mystery = "Reshape the battlefield in a way no rule here follows."
+    cards: list[str] = []
+    for index, name in ((3, "Vandal Twin"), (4, "Wipe Twin")):
+        raw = json.loads(extra_card(index, name, identity=[]))
+        raw["oracle_text"] = mystery
+        cards.append(json.dumps(raw))
+    vandal, wipe = (f"eeeeeeee-0000-4000-8000-{FILLER_CARDS + i:012d}" for i in (3, 4))
+    # Both are sweepers; Tagger files only the Vandal Twin under removal of artifacts (ADR 0020).
+    sweeper = removal_tag(SWEEPER_TAG, "sweeper", [vandal, wipe])
+    artifacts = removal_tag(REMOVAL_ARTIFACT, "removal-artifact", [vandal])
+    with CardDb(build_card_db(tmp_path, [sweeper, artifacts], cards)) as db:
+        answers = card_answers(db, {vandal: "Vandal Twin", wipe: "Wipe Twin"})
+    creature = Piece("Test Elf", "Creature — Elf", "G", power=1, toughness=1, mana_value=1)
+    rock = Piece("Test Rock", "Artifact", "", mana_value=2)
+    assert [answers[vandal].removal(p) for p in (creature, rock)] == [None, ""]
+    assert [answers[wipe].removal(p) for p in (creature, rock)] == ["", None]
 
 
 def test_a_card_check_compares_lists_with_and_without_the_card(deck: Deck) -> None:

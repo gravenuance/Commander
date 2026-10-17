@@ -10,7 +10,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from enum import Enum
 
-from commander.carddb import FACE_SEPARATOR, CardDb, Theme, front_name, front_type
+from commander.carddb import FACE_SEPARATOR, CardDb, Role, Theme, front_name, front_type
 
 
 def card_key(name: str) -> str:
@@ -215,10 +215,16 @@ def card_answers(db: CardDb, cards: Mapping[str, str]) -> dict[str, CardAnswer]:
         oracle_id: tuple(kind for kind in AnswerKind if oracle_id in kinds[kind]) for oracle_id in cards
     }
     texts = db.card_texts(oracle_id for oracle_id, found in tagged.items() if found)
+    modes = {o: read_modes(texts[o].text) if o in texts else None for o, found in tagged.items() if found}
+    # Without readable text the tags' reach stands in, and a sweeper reaches creatures only as a board wipe
+    # (ADR 0020): Vandalblast is tagged a sweeper too.
+    unread = [o for o, found in modes.items() if found is None and AnswerKind.SWEEPER in tagged[o]]
+    wipes = {o for o, info in db.cards(unread).items() if Role.BOARD_WIPE in info.roles}
+    for oracle_id in unread:
+        if oracle_id not in wipes:
+            tagged[oracle_id] = tuple(kind for kind in tagged[oracle_id] if kind is not AnswerKind.SWEEPER)
     return {
-        oracle_id: CardAnswer(
-            cards[oracle_id], found, read_modes(texts[oracle_id].text) if oracle_id in texts else None
-        )
+        oracle_id: CardAnswer(cards[oracle_id], found, modes[oracle_id])
         for oracle_id, found in tagged.items()
         if found
     }
