@@ -307,6 +307,28 @@ def test_export_copies_the_saved_deck_for_topdeck(desk: Desk) -> None:
     assert exported["cards"] == sum(int(line.split(" ", 1)[0]) for line in lines if line[:1].isdigit())
 
 
+def test_cardmarket_wants_copy_the_dont_have_cards_of_every_deck(desk: Desk) -> None:
+    assert desk.cardmarket_wants() == {"text": "", "cards": 0, "skipped": []}
+    desk.propose(DECK, "Arcane Signet")
+    desk.decide(DECK, first_card_id(desk), "add", None, "")
+    assert desk.commit(DECK, reviewed(desk))["saved"] is True
+
+    assert desk.cardmarket_wants() == {"text": "1 Arcane Signet\n", "cards": 1, "skipped": []}
+    desk.mark(DECK, "Arcane Signet", "ordered")
+    assert desk.cardmarket_wants() == {"text": "", "cards": 0, "skipped": []}
+
+
+def test_cardmarket_wants_name_the_decks_whose_labels_are_unknown(desk: Desk, settings: DeskSettings) -> None:
+    snapshot = settings.workspace / "10004639-honestly-though" / "deck.json"
+    document = json.loads(snapshot.read_text(encoding="utf-8"))
+    document["version"] = 2
+    for entry in document["cards"]:
+        del entry["label"]
+    snapshot.write_text(json.dumps(document), encoding="utf-8")
+
+    assert desk.cardmarket_wants() == {"text": "", "cards": 0, "skipped": ["Magda"]}
+
+
 def test_refusals_come_back_as_errors(desk: Desk) -> None:
     assert desk.propose(DECK, "Rhystic Study") == {"error": "Rhystic Study is outside the deck's colours (R)"}
     assert str(desk.deck(999)["error"]).startswith("deck 999 is not in ")

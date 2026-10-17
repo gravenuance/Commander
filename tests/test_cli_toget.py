@@ -127,3 +127,46 @@ def test_a_deck_saved_before_labels_were_kept_says_to_sync(home: Path, fake: Fak
         del card["label"]
     snapshot.write_text(json.dumps(document), encoding="utf-8")
     assert toget(home, fake).out == "Magda: labels unknown; run `cmdr sync`\n"
+
+
+def test_cardmarket_prints_the_dont_have_cards_as_a_wants_list(home: Path, fake: FakeArchidekt) -> None:
+    result = toget(home, fake, "--cardmarket")
+    assert (result.code, result.out, result.err) == (0, "1 Battered Golem\n", "")
+
+
+def test_cardmarket_prints_nothing_but_a_note_when_nothing_is_to_buy(home: Path, fake: FakeArchidekt) -> None:
+    snapshot = home / "decks" / FOLDER / "deck.json"
+    document = json.loads(snapshot.read_text(encoding="utf-8"))
+    for entry in document["cards"]:
+        if entry["name"] == "Battered Golem":
+            entry["label"] = "Getting"
+    snapshot.write_text(json.dumps(document), encoding="utf-8")
+
+    result = toget(home, fake, "--cardmarket")
+
+    assert (result.code, result.out, result.err) == (0, "", "nothing to buy\n")
+
+
+def test_cardmarket_skips_a_deck_without_labels_and_says_so(home: Path, fake: FakeArchidekt) -> None:
+    snapshot = home / "decks" / FOLDER / "deck.json"
+    document = json.loads(snapshot.read_text(encoding="utf-8"))
+    document["version"] = 2
+    for entry in document["cards"]:
+        del entry["label"]
+    snapshot.write_text(json.dumps(document), encoding="utf-8")
+
+    result = toget(home, fake, "--cardmarket")
+
+    assert (result.code, result.out) == (0, "")
+    assert result.err == "Magda: labels unknown; run `cmdr sync`\nnothing to buy\n"
+
+
+@pytest.mark.parametrize(
+    "args",
+    [("--json",), ("magda",), ("magda", "Battered Golem"), ("--ordered",), ("--arrived",)],
+)
+def test_cardmarket_refuses_other_arguments(home: Path, fake: FakeArchidekt, args: tuple[str, ...]) -> None:
+    result = toget(home, fake, "--cardmarket", *args)
+    assert (result.code, result.out) == (2, "")
+    assert result.err == "cmdr: --cardmarket takes no deck or card, and not --json, --ordered or --arrived\n"
+    assert not fake.card_writes()

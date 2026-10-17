@@ -54,7 +54,7 @@ from commander.carddb import CardDataError, CardDb, CardInfo, ResolvedCard
 from commander.changetext import change_mark, change_text
 from commander.config import ConfigError, MetaSettings, forget_account, switch_account, validate_user
 from commander.credentials import CredentialError, TokenStore
-from commander.deckexport import topdeck_text
+from commander.deckexport import cardmarket_wants_text, topdeck_text
 from commander.deckgrid import GridGroup, deck_grid, image_url
 from commander.deckprofile import MAX_ADJACENT, Profile, read_profile
 from commander.deckthemes import merge_themes
@@ -626,6 +626,12 @@ class Desk:
         """The saved deck as TopDeck.gg decklist text, for the clipboard."""
         deck = self._stored(deck_id).deck
         return {"text": topdeck_text(deck), "cards": sum(card.quantity for card in deck.main_cards)}
+
+    @_guarded
+    def cardmarket_wants(self) -> Json:
+        """Every deck's Don't Have cards as Cardmarket wants-list text, for the clipboard."""
+        wants = cardmarket_wants_text(stored.deck for stored in self._workspace.load_all())
+        return {"text": wants.text, "cards": wants.cards, "skipped": list(wants.skipped)}
 
     @_guarded
     def search(self, deck_id: int, text: str) -> Json:

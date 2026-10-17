@@ -34,6 +34,7 @@ async function loadDecks() {
   state.decks = answer.decks;
   $("loading").hidden = true;
   $("no-decks").hidden = state.decks.length > 0;
+  $("copy-to-buy").hidden = state.decks.length === 0;
   renderDecks();
   if (state.current === null && state.decks.length) await openDeck(state.decks[0].id);
 }
@@ -140,6 +141,20 @@ async function exportDeck() {
   } catch { /* shown in the status line */ }
 }
 
+// Copies every deck's Don't Have cards as a Cardmarket wants list; nothing is marked ordered.
+async function copyCardsToBuy() {
+  try {
+    const answer = await api("cardmarket_wants");
+    const skipped = answer.skipped.length ? `; labels unknown for ${answer.skipped.join(", ")}` : "";
+    if (!answer.cards) {
+      showStatus(`No Don't Have cards to copy${skipped}`);
+      return;
+    }
+    await copyText(answer.text);
+    showStatus(`Copied ${answer.cards} cards for Cardmarket${skipped}`);
+  } catch { /* shown in the status line */ }
+}
+
 async function copyText(text) {
   try {
     await navigator.clipboard.writeText(text);
@@ -152,7 +167,7 @@ async function copyText(text) {
     const copied = document.execCommand("copy");
     area.remove();
     if (!copied) {
-      showStatus("Could not copy the decklist", true);
+      showStatus("Could not copy to the clipboard", true);
       throw new Error("copy failed");
     }
   }

@@ -8,6 +8,7 @@ from commander.board import Actor, BoardService
 from commander.cli_output import write_json
 from commander.clibase import EXIT_OK, Context, UsageError, one_deck, open_card_db, workspace
 from commander.config import config_path, read_config, resolve_user
+from commander.deckexport import cardmarket_wants_text
 from commander.labels import Step, mark, to_get_json
 from commander.models import Deck
 from commander.net import Fetcher
@@ -18,6 +19,7 @@ examples:
   cmdr toget ellivere                            one deck's
   cmdr toget ellivere "Sylvan Safekeeper" --ordered   mark it ordered (label Getting) on Archidekt
   cmdr toget ellivere "Sylvan Safekeeper" --arrived   mark it arrived (no label)
+  cmdr toget --cardmarket                        every Don't Have card as a Cardmarket wants list
 """
 
 
@@ -36,11 +38,18 @@ def add_toget_commands(add_parser: Callable[..., argparse.ArgumentParser]) -> No
     toget.add_argument("--workspace", help="folder that holds the deck folders")
     toget.add_argument("--user", help="Archidekt username cmdr is set up for")
     toget.add_argument("--json", action="store_true", help="print the cards as JSON")
+    toget.add_argument(
+        "--cardmarket",
+        action="store_true",
+        help="print every deck's Don't Have cards as a Cardmarket wants list",
+    )
     toget.set_defaults(handler=_cmd_toget)
 
 
 def _cmd_toget(args: argparse.Namespace, ctx: Context) -> int:
     chosen = Step.ORDERED if args.ordered else Step.ARRIVED if args.arrived else None
+    if args.cardmarket:
+        return _cardmarket(args, ctx, marking=chosen is not None)
     if args.card is None and chosen is None:
         return _show(args, ctx)
     if args.card is None or chosen is None:
@@ -55,6 +64,19 @@ def _cmd_toget(args: argparse.Namespace, ctx: Context) -> int:
             editor, workspace(args, ctx), stored, service, name=args.card, step=chosen, actor=Actor.YOU
         )
     print(f"{marked.card}: {marked.before or 'no label'} -> {marked.after or 'no label'}", file=ctx.out)
+    return EXIT_OK
+
+
+def _cardmarket(args: argparse.Namespace, ctx: Context, *, marking: bool) -> int:
+    if args.json or marking or args.card is not None or args.deck is not None:
+        raise UsageError("--cardmarket takes no deck or card, and not --json, --ordered or --arrived")
+    decks = [stored.deck for stored in workspace(args, ctx).load_all()]
+    wants = cardmarket_wants_text(decks)
+    for name in wants.skipped:
+        print(f"{name}: labels unknown; run `cmdr sync`", file=ctx.err)
+    if not wants.text:
+        print("nothing to buy", file=ctx.err)
+    print(wants.text, end="", file=ctx.out)
     return EXIT_OK
 
 

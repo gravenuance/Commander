@@ -35,6 +35,7 @@ window.addEventListener("pywebviewready", async () => {
   setupCardSize();
   setupZoom();
   $("export").addEventListener("click", exportDeck);
+  $("copy-to-buy").addEventListener("click", copyCardsToBuy);
   setupSettings();
   setupLabelMenu();
   setupActivity();

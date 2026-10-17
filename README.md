@@ -476,10 +476,13 @@ that the API is open to use. `apply` relies on that and keeps requests few. See
 Cards still to buy carry the Archidekt label "Don't Have"; once ordered, "Getting"; once they arrive, no
 label. `toget` lists them and marks them; each mark is written to Archidekt at once, without a snapshot,
 and logged in the deck's activity. In the app, the flag on each grid card sets the same labels.
+`toget --cardmarket` and the app's "Copy cards to buy" button give every deck's Don't Have cards, summed,
+as a Cardmarket wants list to paste into its "Add Decklist" field; cards already Getting are left out.
 
 ```sh
 uv run cmdr toget                                          # every deck's cards still to get
 uv run cmdr toget ellivere --json                          # one deck, as JSON
+uv run cmdr toget --cardmarket                             # Don't Have cards of all decks, as a Cardmarket wants list
 uv run cmdr toget ellivere "Sylvan Safekeeper" --ordered   # label it Getting
 uv run cmdr toget ellivere "Sylvan Safekeeper" --arrived   # clear its label
 ```
