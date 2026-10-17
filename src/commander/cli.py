@@ -230,6 +230,11 @@ def main(  # noqa: PLR0911 — one exit code per failure class, mapped in one pl
     except KeyboardInterrupt:
         print("cmdr: interrupted", file=err)
         return EXIT_INTERRUPTED
+    except Exception as error:
+        # A bug, not a failure the user can act on: one line, and the traceback under -vv.
+        logging.getLogger(__name__).debug("unexpected error", exc_info=True)
+        print(f"cmdr: unexpected error: {type(error).__name__}: {error}", file=err)
+        return EXIT_FAILURE
 
 
 def _build_parser() -> argparse.ArgumentParser:

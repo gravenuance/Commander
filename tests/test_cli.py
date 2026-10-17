@@ -3,6 +3,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import httpx
 import pytest
 
 from commander import __version__
@@ -921,3 +922,27 @@ def test_suggest_needs_card_data_before_asking_spellbook(tmp_path: Path, archide
     assert result.code == 1
     assert "run `cmdr sync`" in result.err
     assert archidekt.spellbook.combo_bodies == []
+
+
+def _broken_client() -> httpx.Client:
+    raise RuntimeError("boom")
+
+
+def _sync_with_broken_client(tmp_path: Path, *flags: str) -> Run:
+    out, err = io.StringIO(), io.StringIO()
+    env = {"APPDATA": str(tmp_path / "appdata"), "LOCALAPPDATA": str(tmp_path / "localappdata")}
+    args = [*flags, "sync", "--user", "MAKKIS", "--workspace", str(tmp_path / "decks"), "--no-cards"]
+    code = main(args, env=env, client_factory=_broken_client, stdout=out, stderr=err, now=lambda: NOW)
+    return Run(code, out.getvalue(), err.getvalue())
+
+
+def test_an_unexpected_error_is_one_line_on_stderr_and_exit_1(tmp_path: Path) -> None:
+    result = _sync_with_broken_client(tmp_path)
+    assert (result.code, result.err) == (1, "cmdr: unexpected error: RuntimeError: boom\n")
+
+
+def test_an_unexpected_error_keeps_its_traceback_for_debug_output(tmp_path: Path) -> None:
+    result = _sync_with_broken_client(tmp_path, "-vv")
+    assert result.code == 1
+    assert "Traceback (most recent call last)" in result.err
+    assert "cmdr: unexpected error: RuntimeError: boom\n" in result.err
