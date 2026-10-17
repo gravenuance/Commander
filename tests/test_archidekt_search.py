@@ -91,6 +91,16 @@ def test_searches_and_deck_reads_are_paced() -> None:
     assert sleeps == [2.0]
 
 
+def test_a_deck_read_with_the_wrong_shape_is_an_archidekt_error() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"id": DECK_ID})
+
+    fetcher = Fetcher(httpx.Client(transport=httpx.MockTransport(handler)), max_attempts=1)
+
+    with pytest.raises(ArchidektError, match=f"unexpected data for deck {DECK_ID}"):
+        ArchidektSearch(fetcher, Pacer(0)).deck(DECK_ID)
+
+
 def test_a_time_without_a_zone_is_refused() -> None:
     page = search_page()
     page["results"][0]["updatedAt"] = "2026-10-15T20:22:13"

@@ -93,6 +93,7 @@ class ArchidektSearch:
         self._fetcher = fetcher
         self._pacer = pacer
         self._base_url = base_url.rstrip("/")
+        self._decks = ArchidektClient(fetcher, base_url)
 
     def recent_decks(self, commander: str, *, bracket: int | None, since: datetime) -> list[PeerDeck]:
         """Commander decks led by `commander` (full name) and updated at or after `since`, newest first."""
@@ -121,11 +122,7 @@ class ArchidektSearch:
 
     def deck(self, deck_id: int) -> Deck:
         self._pacer.wait()
-        raw = self._fetcher.get_json(f"{self._base_url}/decks/{deck_id}/")
-        try:
-            return parse_deck(raw)
-        except (ShapeError, ValueError) as error:
-            raise ArchidektError(f"unexpected data for deck {deck_id}: {error}") from error
+        return self._decks.get_deck(deck_id)
 
 
 def parse_search_page(raw: object) -> tuple[list[PeerDeck], str | None]:
