@@ -19,7 +19,7 @@ The owner chose (2026-10-17):
 
 ## Decision
 
-`manabase.suggest_mana` builds the plan in four steps, each the smallest change that helps.
+`manaplan.suggest_mana` builds the plan in four steps, each the smallest change that helps.
 
 1. **Land count.** It moves only when the deck is more than one land off Karsten's formula *and* outside the
    range of the recent Archidekt lists of the commander (when there are any). More lands name the costliest
