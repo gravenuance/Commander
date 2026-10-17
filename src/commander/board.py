@@ -47,6 +47,8 @@ STALE_LOCK_SECONDS = 60.0
 # How far a turned-down card's share of the meta's lists must rise before the meta offers it again.
 RETURN_RISE = 0.20
 _LOCK_POLL_SECONDS = 0.05
+# Basic land names, Wastes included, for telling a basic swap; manabase and manaplan list only the five
+# coloured basics, by type or colour, because Wastes has no land type and makes no colour.
 _BASIC_LAND_NAMES = frozenset({"plains", "island", "swamp", "mountain", "forest", "wastes"})
 _THREAD_LOCK = threading.Lock()
 
