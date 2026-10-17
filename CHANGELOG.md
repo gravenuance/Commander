@@ -95,7 +95,37 @@
   once, and has Update from Archidekt and Sign out at the foot of the deck list. Without a config it opens on the
   sign-in screen instead of stopping. `cmdr sync` and the app share one sync (`syncrun.run_sync`).
 
+- The app and `Commander.exe` have their own icon, a low-pixel card back with see-through corners
+  (`tools/make_icon.py` draws it).
+
 ### Fixed
+- Board saves plan from the deck as it is on Archidekt: a queued card the deck already holds is marked
+  applied and its cut is not made, and nothing is written when every queued card is already there. Cuts
+  reach a card split over several entries, the commander is never cut, a move into the deck brings the
+  copies asked for, and a swap whose cut failed stays queued. `cmdr board plan` does the same and gains
+  `--user`.
+- A board left locked by a crashed run can be taken over safely, and a failed activity write is reported
+  instead of lost. Old deck profiles are migrated; unreadable or oversized ones are refused with a message.
+  A deck of free cards has no budget ceiling.
+- Network and storage: a refused read asks you to sign in, and a dropped connection gives a plain error.
+  A rotated Archidekt login is kept and an expired one is refreshed. `sync` skips decks owned by another
+  account, still finishes the card data download when a deck fails, and names a card-data failure in its
+  summary. Temporary files no longer collide or pile up, saves retry while Windows briefly holds a file
+  open, and cache entries dated in the future count as stale.
+- Research: staples are legal and in the deck's colours; peer decks must share every commander; hidden
+  cards count once; meta caches keep each time window apart; a colourless deck keeps its land count with
+  no Wastes (ADR 0024); a spell//land double-faced card is never a cut; the mana plan rounds halves away
+  from zero; the Mana tab lists cards that cost only hybrid mana.
+- Desktop app: the deck list loads when one deck's board is damaged and marks that deck with a red "!";
+  Save is refused when the board changed after Review opened; saves, labels, marks and mana swaps wait
+  for a running update; a button stays disabled while its request runs, so a double click acts once;
+  quick deck switches and quick typing show only the latest answer; label text is black or white to suit
+  the label's colour; messages name the app's buttons, not `cmdr` commands; a crash before the window
+  opens reaches the log.
+- CLI: an unexpected error prints one line and exits 1; board file, lock and "nothing queued" failures
+  exit 1, and `cmdr init` over an existing config exits 2. A move into the deck of several copies says how
+  many. Emoji deck names print when output is redirected on Windows.
+
 - The Mana tab no longer counts the basics its named lands replace as basic cuts: Arabella's "Mountain 9 → 5"
   is now "Mountain 9 → 9 (−4 for the lands below)".
 - The Mana tab counts shock lands as untapped, Evolving Wilds and its kind as tapped, and reveal lands
@@ -125,6 +155,10 @@
   bracket ceiling and price cap (Pantlaza got Ephemerate though its profile excludes flicker).
 
 ### Changed
+- Escape in the app's card search closes the list of matches first and keeps what you typed.
+- `cmdr tags --json` writes non-ASCII characters as they are, like the other commands.
+- Code layout: `cli.py` is split into `cli_analysis` and `cli_suggest`, the app page into one script per
+  area, and the mana plan into `manaplan.py`.
 - App usability: ideas that name no card to replace (suggestions, Sideboard and Maybeboard cards, proposals
   matching nothing) show under *No cut yet* instead of not at all; a save says plainly how many changes went
   to Archidekt; errors stay until dismissed; *Sync decks* is *Update from Archidekt*, *Rejected* is
