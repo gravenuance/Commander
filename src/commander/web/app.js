@@ -1460,6 +1460,7 @@ async function openReview() {
   try {
     const result = await api("preview", state.current);
     showResolution(result);
+    save.dataset.stamp = result.stamp;
     busy("");
     const count = result.changes.length;
     save.textContent = `Save ${count} change${count === 1 ? "" : "s"} to Archidekt`;
@@ -1474,7 +1475,7 @@ async function openReview() {
 async function saveChanges() {
   busy("Saving to Archidekt…");
   try {
-    const result = await api("commit", state.current);
+    const result = await api("commit", state.current, $("review-save").dataset.stamp);
     busy("");
     if (!result.saved) {
       showResolution(result);

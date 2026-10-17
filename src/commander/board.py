@@ -4,6 +4,7 @@ Each deck folder holds board.json (the cards now) and activity.jsonl (every chan
 desktop app, the CLI and Claude all work from the same files and can catch up on each other (ADR 0006).
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -51,6 +52,14 @@ _THREAD_LOCK = threading.Lock()
 
 class BoardError(Exception):
     """The board cannot do what was asked; the message says why, in a few plain words."""
+
+
+class BoardIOError(BoardError):
+    """The board's files or lock failed (not the request): the CLI exits 1 for it, not 2."""
+
+
+class NothingQueuedError(BoardError):
+    """A save or plan was asked for with no card queued: a failed run, not a usage error."""
 
 
 class Section(Enum):
@@ -166,6 +175,17 @@ def board_stamp(folder: Path) -> str:
     return files_stamp(folder, (BOARD_FILE, ACTIVITY_FILE, "deck.json", "profile.toml"))
 
 
+def board_digest(folder: Path) -> str:
+    """A hash of board.json's content, to tell whether the board changed between two looks."""
+    try:
+        data = (folder / BOARD_FILE).read_bytes()
+    except FileNotFoundError:
+        return "-"
+    except OSError as error:
+        raise BoardIOError(f"cannot read {folder / BOARD_FILE}: {error}") from error
+    return hashlib.sha256(data).hexdigest()
+
+
 def files_stamp(folder: Path, names: Iterable[str]) -> str:
     """Changes whenever one of the folder's files does: their times and sizes, "-" for a missing one."""
     parts: list[str] = []
@@ -186,11 +206,11 @@ def read_board(folder: Path) -> Board:
     except FileNotFoundError:
         return Board(())
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise BoardError(f"cannot read {path}: {error}") from error
+        raise BoardIOError(f"cannot read {path}: {error}") from error
     try:
         return parse_board(_migrate(as_object(raw, "board")))
     except (ShapeError, ValueError) as error:
-        raise BoardError(f"{path}: {error}") from error
+        raise BoardIOError(f"{path}: {error}") from error
 
 
 def read_activity(folder: Path, *, since: str | None = None) -> list[Activity]:
@@ -201,7 +221,7 @@ def read_activity(folder: Path, *, since: str | None = None) -> list[Activity]:
     except FileNotFoundError:
         return []
     except (OSError, UnicodeDecodeError) as error:
-        raise BoardError(f"cannot read {path}: {error}") from error
+        raise BoardIOError(f"cannot read {path}: {error}") from error
     entries: list[Activity] = []
     for number, line in enumerate(text.splitlines(), 1):
         if not line.strip():
@@ -612,7 +632,7 @@ class BoardService:
                     # The board is written first, so the decision stands; say that the log is short of it.
                     log.exception("board saved but its activity line was not written (%s)", entry.action)
                     saved = "saved on the board, but its activity line could not be written"
-                    raise BoardError(f"{entry.action}: {saved} ({error})") from error
+                    raise BoardIOError(f"{entry.action}: {saved} ({error})") from error
 
             yield board, save
 
@@ -677,7 +697,7 @@ def _board_lock(folder: Path) -> Generator[None]:
                 if _lock_is_stale(path) and _clear_stale_lock(path):
                     continue
                 if time.monotonic() > deadline:
-                    raise BoardError(f"the board is busy ({path} is held); try again") from None
+                    raise BoardIOError(f"the board is busy ({path} is held); try again") from None
                 time.sleep(_LOCK_POLL_SECONDS)
         try:
             os.write(fd, str(os.getpid()).encode("ascii"))

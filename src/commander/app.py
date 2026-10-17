@@ -6,18 +6,15 @@ runs; the page calls Desk's methods directly through pywebview's bridge.
 
 import logging
 import platform
-import sys
-import threading
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from importlib import resources
-from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from types import TracebackType
 
 import httpx
 
 from commander import __version__
+from commander.applog import install_file_log
 from commander.carddb import CARD_DB_FILE
 from commander.config import ConfigError, cache_dir, config_path, read_config, resolve_user, resolve_workspace
 from commander.credentials import TokenStore
@@ -26,10 +23,6 @@ from commander.desk import Desk, DeskSettings
 log = logging.getLogger(__name__)
 
 WINDOW_TITLE = "Commander"
-LOG_FILE = "commander.log"
-LOG_BYTES = 5 * 1024 * 1024
-LOG_FILES = 5
-ENV_LOG_LEVEL = "CMDR_LOG_LEVEL"
 _CSS_SLOT = "/*APP_CSS*/"
 _JS_SLOT = "/*APP_JS*/"
 
@@ -68,22 +61,8 @@ def desk_settings(
 
 
 def setup_logging(folder: Path, env: Mapping[str, str], settings: DeskSettings) -> Path:
-    """A rotating log file for the app, opened with what produced it, and hooks for crashes."""
-    logs = folder / "logs"
-    logs.mkdir(parents=True, exist_ok=True)
-    path = logs / LOG_FILE
-    handler = RotatingFileHandler(path, maxBytes=LOG_BYTES, backupCount=LOG_FILES, encoding="utf-8")
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-    root = logging.getLogger()
-    # Handlers already there (the CLI's stderr) keep the level they had; only the file gets more.
-    for existing in root.handlers:
-        if existing.level == logging.NOTSET:
-            existing.setLevel(root.level)
-    root.addHandler(handler)
-    level = env.get(ENV_LOG_LEVEL, "INFO").upper()
-    root.setLevel(level if level in logging.getLevelNamesMapping() else logging.INFO)
-    for noisy in ("httpx", "httpcore", "pywebview"):
-        logging.getLogger(noisy).setLevel(logging.WARNING)
+    """The app's rotating log file, opened already by the entry point, headed by what produced it."""
+    path = install_file_log(folder, env)
     log.info(
         "Commander %s on Python %s, %s; decks in %s, card data %s, user %s",
         __version__,
@@ -93,8 +72,6 @@ def setup_logging(folder: Path, env: Mapping[str, str], settings: DeskSettings) 
         settings.card_db,
         settings.user or "not set",
     )
-    sys.excepthook = _log_crash
-    threading.excepthook = _log_thread_crash
     return path
 
 
@@ -132,17 +109,3 @@ def launch(
     settings = desk_settings(env, config=config, workspace=workspace, user=user)
     setup_logging(cache_dir(env), env, settings)
     run_app(Desk(settings, client_factory=client_factory, token_store=token_store, now=now), debug=debug)
-
-
-def _log_crash(kind: type[BaseException], error: BaseException, trace: TracebackType | None) -> None:
-    log.critical("unhandled exception", exc_info=(kind, error, trace))
-    sys.__excepthook__(kind, error, trace)
-
-
-def _log_thread_crash(args: threading.ExceptHookArgs) -> None:
-    if args.exc_value is not None:
-        log.critical(
-            "unhandled exception in thread %s",
-            args.thread.name if args.thread else "?",
-            exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
-        )

@@ -80,7 +80,8 @@ def change_text(change: Change) -> str:
         copies = f"{change.before} " if change.before > 1 else ""
         return f"{mark} {copies}{change.name}{board}"
     if change.kind is ChangeKind.MOVE_IN:
-        moved = f"{mark} {change.name} into the deck from the maybeboard"
+        copies = f"{change.after} " if change.after > 1 else ""
+        moved = f"{mark} {copies}{change.name} into the deck from the maybeboard"
         return f"{moved}, in {change.category}{raise_text(change.raises)}"
     if change.kind is ChangeKind.SET_ASIDE:
         return f"{mark} {change.name} to the {change.category}"

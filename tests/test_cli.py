@@ -1,8 +1,10 @@
 import io
 import json
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import httpx
 import pytest
 
 from commander import __version__
@@ -225,7 +227,7 @@ def test_init_refuses_to_overwrite_without_force(tmp_path: Path) -> None:
     args = ["init", "--user", "MAKKIS", "--workspace", str(tmp_path)]
     run(args, tmp_path)
     second = run(args, tmp_path)
-    assert second.code == 1
+    assert second.code == 2
     assert "pass --force" in second.err
     assert run([*args, "--force"], tmp_path).code == 0
 
@@ -921,3 +923,44 @@ def test_suggest_needs_card_data_before_asking_spellbook(tmp_path: Path, archide
     assert result.code == 1
     assert "run `cmdr sync`" in result.err
     assert archidekt.spellbook.combo_bodies == []
+
+
+def test_an_emoji_deck_name_survives_a_redirected_cp1252_stdout(
+    tmp_path: Path, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw_deck["name"] = "Honestly 🎲 though"
+    fake = FakeArchidekt()
+    fake.put(raw_deck)
+    assert sync(tmp_path, fake).code == 0
+    raw_out, raw_err = io.BytesIO(), io.BytesIO()
+    # What a Windows pipe gives a process: the ANSI codepage, not a terminal.
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(raw_out, encoding="cp1252", write_through=True))
+    monkeypatch.setattr(sys, "stderr", io.TextIOWrapper(raw_err, encoding="cp1252", write_through=True))
+    env = {"APPDATA": str(tmp_path / "appdata"), "LOCALAPPDATA": str(tmp_path / "localappdata")}
+    code = main(["list", "--workspace", str(tmp_path / "decks")], env=env, now=lambda: NOW)
+    assert code == 0
+    assert "Honestly 🎲 though" in raw_out.getvalue().decode("utf-8")
+
+
+def _broken_client() -> httpx.Client:
+    raise RuntimeError("boom")
+
+
+def _sync_with_broken_client(tmp_path: Path, *flags: str) -> Run:
+    out, err = io.StringIO(), io.StringIO()
+    env = {"APPDATA": str(tmp_path / "appdata"), "LOCALAPPDATA": str(tmp_path / "localappdata")}
+    args = [*flags, "sync", "--user", "MAKKIS", "--workspace", str(tmp_path / "decks"), "--no-cards"]
+    code = main(args, env=env, client_factory=_broken_client, stdout=out, stderr=err, now=lambda: NOW)
+    return Run(code, out.getvalue(), err.getvalue())
+
+
+def test_an_unexpected_error_is_one_line_on_stderr_and_exit_1(tmp_path: Path) -> None:
+    result = _sync_with_broken_client(tmp_path)
+    assert (result.code, result.err) == (1, "cmdr: unexpected error: RuntimeError: boom\n")
+
+
+def test_an_unexpected_error_keeps_its_traceback_for_debug_output(tmp_path: Path) -> None:
+    result = _sync_with_broken_client(tmp_path, "-vv")
+    assert result.code == 1
+    assert "Traceback (most recent call last)" in result.err
+    assert "cmdr: unexpected error: RuntimeError: boom\n" in result.err

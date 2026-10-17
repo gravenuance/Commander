@@ -31,6 +31,7 @@ from commander.board import (
     ReplaceOption,
     Status,
     activity_json,
+    board_digest,
     board_stamp,
     card_json,
     files_stamp,
@@ -148,11 +149,19 @@ class _SyncState:
 def sync_summary(outcome: SyncOutcome) -> str:
     """One line for the status bar: what changed, or what failed."""
     counts = {status: sum(1 for r in outcome.results if r.status is status) for status in SyncStatus}
-    if counts[SyncStatus.FAILED] or outcome.cards.state is CardState.FAILED:
-        return f"Update finished with problems: {counts[SyncStatus.FAILED]} decks failed; see the log."
+    problems: list[str] = []
+    if failed := counts[SyncStatus.FAILED]:
+        problems.append(f"{_decks(failed)} failed")
+    if outcome.cards.state is CardState.FAILED:
+        problems.append(f"card data failed ({outcome.cards.detail})")
+    if problems:
+        return f"Update finished with problems: {', '.join(problems)}; see the log."
     changed = counts[SyncStatus.NEW] + counts[SyncStatus.UPDATED]
-    total = len(outcome.results)
-    return f"Updated {total} deck{'' if total == 1 else 's'} from Archidekt, {changed} changed."
+    return f"Updated {_decks(len(outcome.results))} from Archidekt, {changed} changed."
+
+
+def _decks(count: int) -> str:
+    return f"{count} deck{'' if count == 1 else 's'}"
 
 
 @dataclass(slots=True, frozen=True)
@@ -217,8 +226,8 @@ class Desk:
         config = self._config()
         user = user.strip()
         validate_user(user)
-        if self._syncing():
-            return {"error": "Wait for the update to finish, then sign in."}
+        if busy := self._updating("sign in"):
+            return busy
         with self._client_factory() as http:
             ArchidektAuth(Fetcher(http), self._token_store).login(user, user, password)
         folder = switch_account(config, user, documents=self._documents())
@@ -232,8 +241,8 @@ class Desk:
     def sign_out(self) -> Json:
         """Remove the saved login and forget the account; its deck folder stays for the next sign-in."""
         config = self._config()
-        if self._syncing():
-            return {"error": "Wait for the update to finish, then sign out."}
+        if busy := self._updating("sign out"):
+            return busy
         user = self._settings.user
         if user:
             self._token_store.delete(user)
@@ -269,6 +278,12 @@ class Desk:
     def _syncing(self) -> bool:
         with self._sync_lock:
             return self._sync.running
+
+    def _updating(self, then: str) -> Json | None:
+        """The refusal for a change that would race the running update, else None."""
+        if self._syncing():
+            return {"error": f"Wait for the update to finish, then {then}."}
+        return None
 
     def _start_sync(self, user: str) -> None:
         with self._sync_lock:
@@ -320,16 +335,23 @@ class Desk:
     def decks(self) -> Json:
         rows: list[Json] = []
         for stored in self._workspace.load_all():
-            board = read_board(stored.folder)
-            rows.append(
-                {
-                    "id": stored.deck.id,
-                    "short": stored.deck.short_name,
-                    "name": stored.deck.name,
-                    "queued": board.pending(stored.deck),
-                    "open": sum(1 for c in board.cards if c.status is Status.OPEN),
-                }
-            )
+            row: Json = {
+                "id": stored.deck.id,
+                "short": stored.deck.short_name,
+                "name": stored.deck.name,
+                "queued": 0,
+                "open": 0,
+            }
+            try:
+                board = read_board(stored.folder)
+            except BoardError as error:
+                # One deck's damaged board must not hide the others.
+                log.warning("deck %s: %s", stored.deck.id, error)
+                row["error"] = str(error)
+            else:
+                row["queued"] = board.pending(stored.deck)
+                row["open"] = sum(1 for c in board.cards if c.status is Status.OPEN)
+            rows.append(row)
         rows.sort(key=lambda row: str(row["short"]).casefold())
         return {"decks": rows}
 
@@ -396,6 +418,8 @@ class Desk:
     @_guarded
     def set_label(self, deck_id: int, name: str, label: str) -> Json:
         """Give one deck card one of the deck's labels ("" for none) on Archidekt at once (ADR 0010)."""
+        if busy := self._updating("change the label"):
+            return busy
         stored = self._stored(deck_id)
         user = self._user()
         with self._service_and_db(stored) as (service, _), self._client_factory() as http:
@@ -409,6 +433,8 @@ class Desk:
     @_guarded
     def mark(self, deck_id: int, name: str, step: str) -> Json:
         """Mark one deck card ordered or arrived on Archidekt at once (ADR 0010)."""
+        if busy := self._updating("mark the card"):
+            return busy
         try:
             chosen = Step(step)
         except ValueError:
@@ -491,6 +517,8 @@ class Desk:
     @_guarded
     def mana_to_board(self, deck_id: int) -> Json:
         """Put the suggested swaps on the board under Considering, each with its cut; the user decides."""
+        if busy := self._updating("add the swaps"):
+            return busy
         _, plan = self._mana(deck_id)
         if plan is None:
             return {"error": "bracket 5 decks follow the tournament lists, not Karsten's numbers"}
@@ -632,6 +660,8 @@ class Desk:
     def preview(self, deck_id: int) -> Json:
         stored = self._stored(deck_id)
         user = self._user()
+        # Taken before the board is read, so a change made during the preview shows up at the save.
+        stamp = board_digest(stored.folder)
         with self._db() as db, self._client_factory() as http:
             fetcher = Fetcher(http)
             auth = ArchidektAuth(fetcher, self._token_store)
@@ -644,12 +674,18 @@ class Desk:
             )
         view = _resolution_json(outcome.resolution)
         view["bracket"] = preview_json(bracket)
+        view["stamp"] = stamp
         return view
 
     @_guarded
-    def commit(self, deck_id: int) -> Json:
+    def commit(self, deck_id: int, stamp: str) -> Json:
+        """Save the queued cards, if the board is still as the preview with this stamp saw it."""
+        if busy := self._updating("save"):
+            return busy
         stored = self._stored(deck_id)
         user = self._user()
+        if board_digest(stored.folder) != stamp:
+            return {"error": "The board changed after the preview; open Review again before saving."}
         with self._service_and_db(stored) as (service, db), self._client_factory() as http:
             fetcher = Fetcher(http)
             editor = ArchidektEditor(fetcher, ArchidektAuth(fetcher, self._token_store).access_token(user))
@@ -751,12 +787,14 @@ class Desk:
         folder = self._workspace.folder_for(int(deck_id))
         deck = self._workspace.load(int(deck_id)) if folder else None
         if folder is None or deck is None:
-            raise BoardError(f"deck {deck_id} is not in {self._settings.workspace}; run `cmdr sync`")
+            raise BoardError(
+                f"deck {deck_id} is not in {self._settings.workspace}; press Update from Archidekt"
+            )
         return StoredDeck(folder, deck)
 
     def _user(self) -> str:
         if not self._settings.user:
-            raise ConfigError("no Archidekt username; run `cmdr init` first")
+            raise ConfigError("Sign in to Archidekt first.")
         return self._settings.user
 
     @contextmanager

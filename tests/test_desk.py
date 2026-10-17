@@ -1,7 +1,9 @@
 """The desktop app's bridge, called as the page calls it, against the fake Archidekt."""
 
+import json
 import re
 import shutil
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
@@ -69,6 +71,11 @@ def names(answer: Json, key: str) -> list[str]:
     return cast("list[str]", answer[key])
 
 
+def reviewed(desk: Desk) -> str:
+    """The board stamp a preview hands back, which a save must present."""
+    return str(desk.preview(DECK)["stamp"])
+
+
 def first_card_id(desk: Desk) -> str:
     return str(items(desk.deck(DECK), "cards")[0]["id"])
 
@@ -88,6 +95,25 @@ def test_decks_are_listed_by_commander_short_name(desk: Desk) -> None:
     assert desk.decks() == {
         "decks": [{"id": DECK, "short": "Magda", "name": "Honestly, though..", "queued": 0, "open": 0}]
     }
+
+
+def test_a_deck_with_a_damaged_board_lists_with_an_error_and_the_others_still_load(
+    desk: Desk, settings: DeskSettings
+) -> None:
+    first = settings.workspace / "10004639-honestly-though"
+    second = settings.workspace / "10004640-second"
+    shutil.copytree(first, second)
+    snapshot = json.loads((second / "deck.json").read_text(encoding="utf-8"))
+    snapshot["id"] = 10004640
+    snapshot["name"] = "Zeta"
+    (second / "deck.json").write_text(json.dumps(snapshot), encoding="utf-8")
+    (first / "board.json").write_text("{not json", encoding="utf-8")
+    listed = items(desk.decks(), "decks")
+    assert [row["id"] for row in listed] == [10004639, 10004640]
+    assert "board.json" in str(listed[0]["error"])
+    assert listed[0]["name"] == "Honestly, though.."
+    assert "error" not in listed[1]
+    assert (listed[1]["name"], listed[1]["queued"]) == ("Zeta", 0)
 
 
 def test_a_proposed_card_shows_with_its_card_facts(desk: Desk) -> None:
@@ -318,7 +344,7 @@ def test_a_card_saved_into_the_deck_is_to_get_until_it_arrives(desk: Desk) -> No
     assert desk.deck(DECK)["toGet"] == []
     desk.propose(DECK, "Arcane Signet")
     desk.decide(DECK, first_card_id(desk), "add", None, "")
-    assert desk.commit(DECK)["saved"] is True
+    assert desk.commit(DECK, reviewed(desk))["saved"] is True
     signet = {"name": "Arcane Signet", "quantity": 1, "label": "Don't Have", "category": "Artifact"}
     assert desk.deck(DECK)["toGet"] == [signet]
 
@@ -350,7 +376,7 @@ def test_preview_and_commit_save_the_queued_cards(desk: Desk, fake: FakeArchidek
     )
     assert not fake.card_writes()
 
-    saved = desk.commit(DECK)
+    saved = desk.commit(DECK, str(preview["stamp"]))
     assert saved["saved"] is True
     assert saved["applied"] == ["Arcane Signet"]
     assert saved["snapshot"] == "before cmdr apply 2026-10-15 12:00:00 UTC"
@@ -362,14 +388,70 @@ def test_commit_without_a_login_says_how_to_sign_in(settings: DeskSettings, fake
     desk.propose(DECK, "Arcane Signet")
     card_id = first_card_id(desk)
     desk.decide(DECK, card_id, "add", None, "")
-    answer = desk.commit(DECK)
+    answer = desk.commit(DECK, reviewed(desk))
     assert "cmdr login" in str(answer["error"])
     assert not fake.card_writes()
 
 
-def test_without_a_username_previews_ask_for_cmdr_init(settings: DeskSettings, fake: FakeArchidekt) -> None:
+def _commit(desk: Desk) -> Json:
+    return desk.commit(DECK, "any")
+
+
+def _set_label(desk: Desk) -> Json:
+    return desk.set_label(DECK, "Battered Golem", "Getting")
+
+
+def _mark(desk: Desk) -> Json:
+    return desk.mark(DECK, "Battered Golem", "ordered")
+
+
+def _mana_to_board(desk: Desk) -> Json:
+    return desk.mana_to_board(DECK)
+
+
+@pytest.mark.parametrize(
+    ("call", "then"),
+    [
+        (_commit, "save"),
+        (_set_label, "change the label"),
+        (_mark, "mark the card"),
+        (_mana_to_board, "add the swaps"),
+    ],
+)
+def test_nothing_changes_the_deck_or_board_while_an_update_runs(
+    settings: DeskSettings, fake: FakeArchidekt, call: Callable[[Desk], Json], then: str
+) -> None:
+    pending: list[Callable[[], None]] = []
+    desk = Desk(
+        settings,
+        client_factory=fake.client,
+        token_store=MemoryTokenStore({"makkis": REFRESH_TOKEN}),
+        now=lambda: NOW,
+        pacer_factory=lambda _: Pacer(0),
+        background=pending.append,
+    )
+    desk.sync()
+    assert len(pending) == 1
+    assert call(desk) == {"error": f"Wait for the update to finish, then {then}."}
+    assert not fake.card_writes()
+    assert not (settings.workspace / "10004639-honestly-though" / "board.json").exists()
+
+
+def test_commit_refuses_a_board_that_changed_since_the_preview(desk: Desk, fake: FakeArchidekt) -> None:
+    desk.propose(DECK, "Arcane Signet")
+    desk.decide(DECK, first_card_id(desk), "add", None, "")
+    stamp = reviewed(desk)
+    desk.propose(DECK, "Lightning Bolt")
+    assert desk.commit(DECK, stamp) == {
+        "error": "The board changed after the preview; open Review again before saving."
+    }
+    assert not fake.card_writes()
+    assert desk.commit(DECK, reviewed(desk))["saved"] is True
+
+
+def test_without_a_username_previews_ask_to_sign_in(settings: DeskSettings, fake: FakeArchidekt) -> None:
     desk = make_desk(DeskSettings(settings.workspace, settings.card_db, None), fake)
-    assert desk.preview(DECK) == {"error": "no Archidekt username; run `cmdr init` first"}
+    assert desk.preview(DECK) == {"error": "Sign in to Archidekt first."}
 
 
 def test_unexpected_failures_are_logged_not_raised(desk: Desk, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -422,4 +504,4 @@ def test_a_failed_refresh_with_nothing_cached_says_why(desk: Desk, fake: FakeArc
 
 def test_refreshing_meta_needs_a_username(settings: DeskSettings, fake: FakeArchidekt) -> None:
     nameless = make_desk(DeskSettings(settings.workspace, settings.card_db, None), fake)
-    assert nameless.refresh_meta(DECK) == {"error": "no Archidekt username; run `cmdr init` first"}
+    assert nameless.refresh_meta(DECK) == {"error": "Sign in to Archidekt first."}

@@ -6,6 +6,7 @@ from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from typing import TextIO
 
+from commander.apply import fetch_own_deck
 from commander.archidekt_edit import ArchidektAuth, ArchidektEditor
 from commander.board import (
     Activity,
@@ -13,16 +14,16 @@ from commander.board import (
     Board,
     BoardCard,
     BoardService,
+    NothingQueuedError,
     ReplaceOption,
     Section,
     Status,
     activity_json,
     board_json,
-    board_plan,
     read_activity,
     read_board,
 )
-from commander.boardsave import preview_board, save_board
+from commander.boardsave import live_plan, preview_board, save_board
 from commander.bracketpreview import spellbook_preview
 from commander.carddb import CardDb
 from commander.cli_output import (
@@ -110,7 +111,12 @@ def add_board_commands(add_parser: Callable[..., argparse.ArgumentParser]) -> No
     log.add_argument("--json", action="store_true", help="print the entries as JSON")
     log.set_defaults(handler=_cmd_log)
 
-    plan = _deck_action(actions.add_parser, "plan", "print the queued cards as a plan file for `cmdr apply`")
+    plan = _deck_action(
+        actions.add_parser,
+        "plan",
+        "print the queued cards, as the deck on Archidekt needs them, as a plan file for `cmdr apply`",
+    )
+    plan.add_argument("--user", help="Archidekt username cmdr is set up for")
     plan.set_defaults(handler=_cmd_plan)
 
     commit = _deck_action(
@@ -230,9 +236,16 @@ def _cmd_log(args: argparse.Namespace, ctx: Context) -> int:
 
 def _cmd_plan(args: argparse.Namespace, ctx: Context) -> int:
     stored = one_deck(workspace(args, ctx), args.deck)
-    plan = board_plan(stored.deck, read_board(stored.folder))
+    user = resolve_user(args.user, ctx.env, read_config(config_path(args.config, ctx.env)))
+    with ctx.client_factory() as http:
+        fetcher = Fetcher(http)
+        auth = ArchidektAuth(fetcher, ctx.token_store)
+        # Reading a public deck needs no login; a private one does.
+        editor = ArchidektEditor(fetcher, auth.access_token(user) if auth.has_login(user) else None)
+        live = fetch_own_deck(editor, stored.deck.id, user=user)
+    plan = live_plan(live, read_board(stored.folder))
     if plan is None:
-        raise UsageError(f"nothing is queued on the {stored.deck.short_name} board")
+        raise NothingQueuedError("every queued card is already in the deck on Archidekt")
     ctx.out.write(plan_toml(plan))
     return EXIT_OK
 
