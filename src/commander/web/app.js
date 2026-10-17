@@ -344,7 +344,7 @@ function considered(cards) {
   return withinFirst(cards.filter((c) => c.status === "add" || (c.status === "open" && c.targets.length)));
 }
 
-// Below bracket 5, cards within the deck's budget (its average card) before dearer ones (ADR 0025).
+// Below bracket 5, cards within the deck's budget (a little over its average card) before dearer ones (ADR 0025).
 function withinFirst(cards) {
   return [...cards].sort((a, b) => (a.withinBudget === false) - (b.withinBudget === false));
 }
@@ -425,7 +425,7 @@ function buildTile(card) {
     }),
     card.gameChanger ? el("span", { class: "badge status gc", text: "Game changer" }) : null,
     card.withinBudget === false
-      ? el("span", { class: "badge status over", text: "Over budget", title: "Dearer than the deck's average card" })
+      ? el("span", { class: "badge status over", text: "Over budget", title: "Over 25% above the deck's average card" })
       : null);
 
   const targets = el("div", { class: "targets", hidden: true, role: "group", "aria-label": `Replace with ${card.name}` },
@@ -964,7 +964,7 @@ function planSection(deck, p) {
     })));
   const within = p.swaps.filter((s) => s.withinBudget);
   const over = p.swaps.filter((s) => !s.withinBudget);
-  const budget = p.budgetCents !== null ? ` (${euro(p.budgetCents)} average card)` : "";
+  const budget = p.budgetCents !== null ? ` (up to ${euro(p.budgetCents)})` : "";
   if (within.length) section.append(swapGroup(over.length ? `Within budget${budget}` : "", within));
   if (over.length) section.append(swapGroup("Over budget", over));
   if (p.stillShort.length) {

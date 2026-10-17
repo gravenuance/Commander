@@ -1012,7 +1012,8 @@ def _print_suggestions(result: Suggestions, out: TextIO, *, details: bool) -> No
     budget = result.budget
     if budget.working is not None:
         ceiling = f", nothing over {price_text(budget.ceiling)}" if budget.ceiling is not None else ""
-        print(f"budget: average card {price_text(budget.working)}{ceiling}", file=out)
+        within = f", within budget up to {price_text(budget.line)}" if budget.line is not None else ""
+        print(f"budget: average card {price_text(budget.working)}{within}{ceiling}", file=out)
     _print_pieces(result, out, details=details)
     _print_roles(result, out)
     _print_themed(result, out)

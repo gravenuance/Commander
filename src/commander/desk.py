@@ -795,7 +795,7 @@ def _land_options(db: CardDb, deck: Deck, folder: Path) -> tuple[list[LandOption
         for mana, cents in db.lands(identity, max_cents=budget.ceiling)
         if mana.name.casefold() not in skip
     ]
-    return options, budget.working
+    return options, budget.line
 
 
 def _image_url(db: CardDb, info: CardInfo) -> str | None:

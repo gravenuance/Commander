@@ -3,8 +3,8 @@
 ## Unreleased
 
 ### Added
-- Below bracket 5 every idea keeps to the deck's budget (ADR 0025): its average card is the working budget,
-  25% above its dearest card the ceiling. `suggest`, the ideas compiled on sync and the Mana tab put ideas
+- Below bracket 5 every idea keeps to the deck's budget (ADR 0025): up to 25% over its average card is
+  within budget, and 25% above its dearest card is the ceiling. `suggest`, the ideas compiled on sync and the Mana tab put ideas
   within budget first and offer none above the ceiling; Considering marks the rest "Over budget".
   `cmdr suggest --any-price` ignores the deck's budget.
 - The Mana tab suggests how the mana base should change below bracket 5 (ADR 0024): the land count when

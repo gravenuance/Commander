@@ -21,7 +21,9 @@ consideration:
 `commander.budget` reads a deck's budget from the cheapest EUR price of each main card, weighted by copies.
 Basics are left out (they cost next to nothing and would drag the average down); the commander counts.
 
-- **Working budget:** the average card. An idea at or under it is within budget.
+- **Working budget:** the average card. An idea up to 25% over it (`WITHIN_MARGIN`) is within budget: the
+  owner counts Boros Charm at €4.19 within Arabella's €3.72 average, and Charismatic Conqueror at €21.09
+  over it.
 - **Ceiling:** 25% above the deck's dearest card (`OVER_BUDGET_MARGIN`). Nothing dearer is offered, and
   nothing unpriced, as the profile's price limit already did.
 - **Profile price limit:** when set, it caps both.
@@ -43,7 +45,7 @@ Where it applies:
 
 - On 2026-10-17 the casual decks' working budgets run from €0.74 (Ashling) to €4.44 (Chatterfang).
 - Ideas compiled before this stay on the boards, marked and listed last; new syncs add none over the ceiling.
-- A card a few cents over the average (Muldrotha at €0.83 for Ashling) is marked over budget: the line is the
-  owner's, and the badge is a hint, not a refusal.
+- A card a little over the average (Muldrotha at €0.83 for Ashling's €0.74) is within budget; the badge
+  marks only clearly dearer cards, and is a hint, not a refusal.
 - Prices are the cheapest regular printing in Scryfall's daily data; a card without a EUR price is never
   within budget.

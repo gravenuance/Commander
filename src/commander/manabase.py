@@ -164,7 +164,7 @@ class Swap:
     reason: str
     # One added copy's cheapest price; None for basics and unpriced cards.
     cents: int | None = None
-    # Whether it costs at most the deck's average card; basics always do.
+    # Whether it is within the deck's budget (ADR 0025); basics always are.
     within_budget: bool = True
 
 
@@ -198,7 +198,7 @@ class ManaPlan:
     colours: tuple[ColourOutcome, ...]
     # Cards still short of sources once the plan is followed.
     still_short: tuple[str, ...]
-    # The deck's working budget, its average card; None when unknown.
+    # The dearest a land within the deck's budget may be (ADR 0025); None when unknown.
     budget_cents: int | None = None
 
     @property
@@ -232,8 +232,8 @@ def suggest_mana(
     The land count moves only when it is more than LAND_TOLERANCE off his formula and outside the range of
     the compared lists. Basics then move from colours with sources to spare to colours short of them. What
     basics cannot close, untapped lands from options close, each in place of a basic of a colour it also
-    makes; plain tap-lands get an untapped land of the same colours. A named land within budget_cents (the
-    deck's average card) comes before a more played one over it; one over it is taken only when none within
+    makes; plain tap-lands get an untapped land of the same colours. A named land within budget_cents (its
+    budget line, ADR 0025) comes before a more played one over it; one over it is taken only when none within
     fits, and is marked so. cards must hold every basic land type.
     """
     colours = [colour.colour for colour in report.colours]
@@ -424,7 +424,7 @@ def _basic_swaps(start: Mapping[str, int], end: Mapping[str, int], names: Mappin
 
 @dataclass(slots=True)
 class _Budget:
-    """The deck's working budget: its average card (ADR 0024); None when nothing in it has a price."""
+    """The dearest a land within the deck's budget may be (ADR 0025); None when nothing in it has a price."""
 
     average: int | None
 

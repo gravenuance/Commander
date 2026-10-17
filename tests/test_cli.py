@@ -747,8 +747,9 @@ def test_suggest_keeps_to_the_decks_budget_below_bracket_5(
 ) -> None:
     raw_deck["edhBracket"] = 3
     out = suggest(["magda"], tmp_path, synced(tmp_path, raw_deck), own_cache).out
-    # Magda 6.79, Disruptor Flute 2.17 and Battered Golem 0.35 average 3.10; 25% over Magda is 8.49.
-    assert "budget: average card €3.10, nothing over €8.49\n" in out
+    # Magda 6.79, Disruptor Flute 2.17 and Battered Golem 0.35 average 3.10, so within budget runs to
+    # 3.10 x 1.25 = 3.88; 25% over Magda is 8.49.
+    assert "budget: average card €3.10, within budget up to €3.88, nothing over €8.49\n" in out
     # Splinter Twin (6.68) stays, marked; Aggravated Assault (16.93) and Jeska's Will (33.80) go.
     assert "      €6.68  Splinter Twin (1 combo: Spicy) (over budget)\n" in out
     assert "Aggravated Assault" not in out

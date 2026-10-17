@@ -19,6 +19,13 @@ def test_the_profiles_price_limit_caps_both_and_bracket_5_has_no_budget_of_its_o
 
 def test_within_and_allows_treat_unpriced_cards_as_unknown() -> None:
     budget = Budget(200, 500)
-    assert (budget.within(200), budget.within(201), budget.within(None)) == (True, False, False)
+    # Within budget runs to 25% over the average card: 2.00 x 1.25 = 2.50.
+    assert (budget.within(250), budget.within(251), budget.within(None)) == (True, False, False)
     assert (budget.allows(500), budget.allows(501), budget.allows(None)) == (True, False, False)
     assert Budget(None, None).within(None)
+
+
+def test_the_within_line_never_passes_the_ceiling() -> None:
+    assert Budget(200, 500).line == 250
+    assert Budget(200, 220).line == 220
+    assert Budget(None, 500).line is None

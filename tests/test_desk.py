@@ -194,8 +194,9 @@ def test_below_bracket_5_considering_marks_cards_over_the_decks_budget(
     desk.propose(DECK, "Splinter Twin")
     desk.propose(DECK, "Arcane Signet")
     view = desk.deck(DECK)
-    # Magda 6.79, Disruptor Flute 2.17, Battered Golem 0.35: average 3.10, ceiling 25% over Magda.
-    assert view["budget"] == {"working": 310, "ceiling": 849}
+    # Magda 6.79, Disruptor Flute 2.17, Battered Golem 0.35: average 3.10, within budget to 25% over it
+    # (3.88), ceiling 25% over Magda. Splinter Twin (6.68) is over budget.
+    assert view["budget"] == {"working": 310, "within": 388, "ceiling": 849}
     within = {str(card["name"]): card["withinBudget"] for card in items(view, "cards")}
     # The sync put the Maybeboard's Hoverbike (0.14) and Tempestra (0.24) on the board too.
     assert within == {
@@ -209,7 +210,7 @@ def test_below_bracket_5_considering_marks_cards_over_the_decks_budget(
 def test_bracket_5_decks_have_no_budget_in_considering(desk: Desk) -> None:
     desk.propose(DECK, "Splinter Twin")
     view = desk.deck(DECK)
-    assert view["budget"] == {"working": None, "ceiling": None}
+    assert view["budget"] == {"working": None, "within": None, "ceiling": None}
     assert [card["withinBudget"] for card in items(view, "cards")] == [None]
 
 
