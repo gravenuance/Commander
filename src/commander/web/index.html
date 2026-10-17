@@ -16,7 +16,7 @@
       <p id="account-name" class="account-name"></p>
       <p id="sync-status" class="muted small sync-status" role="status" aria-live="polite"></p>
       <div class="account-actions">
-        <button id="sync-decks" class="button small" type="button" hidden>Sync decks</button>
+        <button id="sync-decks" class="button small" type="button" hidden>Update from Archidekt</button>
         <button id="sign-out" class="button quiet small" type="button" hidden>Sign out</button>
         <button id="sign-in" class="button primary small" type="button" hidden>Sign in</button>
       </div>
@@ -31,7 +31,7 @@
     <div id="no-decks" class="state" hidden>
       <span class="state-icon" aria-hidden="true">🂠</span>
       <span>No decks yet.</span>
-      <button id="no-decks-sync" class="button primary" type="button" hidden>Sync decks</button>
+      <button id="no-decks-sync" class="button primary" type="button" hidden>Update from Archidekt</button>
     </div>
 
     <section id="deck" class="deck" hidden aria-labelledby="deck-short">
@@ -159,7 +159,7 @@
   <h2 id="settings-title">Settings for <span id="settings-deck"></span></h2>
   <section class="setting" aria-labelledby="settings-adjacent-title">
     <h3 id="settings-adjacent-title">Commanders that play alike</h3>
-    <p class="muted small">Their recent Archidekt decks give ideas on each sync. For a partner pair, add one
+    <p class="muted small">Their recent Archidekt decks give ideas on each update. For a partner pair, add one
       and click its “+ partner”.</p>
     <ul id="settings-adjacent" class="setting-chips" aria-label="Commanders that play alike"></ul>
     <div class="propose setting-input" role="combobox" aria-haspopup="listbox" aria-owns="settings-adjacent-results" aria-expanded="false">
@@ -202,7 +202,10 @@
   </div>
 </dialog>
 
-<div id="status" class="toast" role="status" aria-live="polite" hidden></div>
+<div id="status" class="toast" hidden>
+  <span id="status-text" class="toast-text" role="status" aria-live="polite"></span>
+  <button id="status-close" class="toast-close" type="button" aria-label="Dismiss" title="Dismiss">×</button>
+</div>
 <script>/*APP_JS*/</script>
 </body>
 </html>

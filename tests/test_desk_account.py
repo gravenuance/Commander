@@ -75,7 +75,7 @@ def test_a_first_sign_in_saves_the_account_gives_it_a_folder_and_syncs(env: Env)
     assert env.tokens.get("makkis") == REFRESH_TOKEN
     status = sync_of(answer)
     assert status["running"] is False
-    assert str(status["summary"]).startswith("Decks synced: 1, 1 changed")
+    assert str(status["summary"]).startswith("Updated 1 deck from Archidekt, 1 changed")
     assert (folder / "10004639-honestly-though" / "deck.json").is_file()
     assert [d["short"] for d in cast("list[Json]", desk.decks()["decks"])] == ["Magda"]
 
@@ -117,7 +117,7 @@ def test_no_second_sync_and_no_account_change_while_one_runs(env: Env) -> None:
     assert sync_of(answer)["running"] is True
     desk.sync()
     assert len(env.pending) == 1
-    assert desk.sign_in("MAKKIS", PASSWORD) == {"error": "Wait for the sync to finish, then sign in."}
-    assert desk.sign_out() == {"error": "Wait for the sync to finish, then sign out."}
+    assert desk.sign_in("MAKKIS", PASSWORD) == {"error": "Wait for the update to finish, then sign in."}
+    assert desk.sign_out() == {"error": "Wait for the update to finish, then sign out."}
     env.pending.pop()()
     assert sync_of(desk.account())["running"] is False

@@ -4,6 +4,8 @@
 const POLL_MS = 2000;
 const SEARCH_DELAY_MS = 150;
 const STATUS_MS = 6000;
+// A save changes the deck on Archidekt; its confirmation stays long enough to be noticed.
+const SAVED_MS = 12000;
 const META_BRACKET = 5;
 const DECK_TAGS_SHOWN = 4;
 const THREATS_SHOWN = 4;
@@ -64,14 +66,22 @@ async function api(name, ...args) {
   return answer;
 }
 
+// Confirmations fade after ms; errors stay, announced at once, until dismissed.
 let statusTimer = 0;
-function showStatus(text, error = false) {
+function showStatus(text, error = false, ms = STATUS_MS) {
   const box = $("status");
-  box.textContent = text;
+  const line = $("status-text");
+  line.setAttribute("aria-live", error ? "assertive" : "polite");
+  line.textContent = text;
   box.classList.toggle("error", error);
   box.hidden = false;
   clearTimeout(statusTimer);
-  statusTimer = setTimeout(() => { box.hidden = true; }, STATUS_MS);
+  if (!error) statusTimer = setTimeout(hideStatus, ms);
+}
+
+function hideStatus() {
+  clearTimeout(statusTimer);
+  $("status").hidden = true;
 }
 
 const euro = (cents) => (cents === null || cents === undefined ? "" : `€${(cents / 100).toFixed(2)}`);
@@ -290,6 +300,15 @@ function buildGridCard(card) {
   node.addEventListener("click", (event) => {
     if (!event.target.closest("button")) zoom(card);
   });
+  if (card.image) {
+    node.tabIndex = 0;
+    node.addEventListener("keydown", (event) => {
+      if (event.target === node && (event.key === "Enter" || event.key === " ")) {
+        event.preventDefault();
+        zoom(card);
+      }
+    });
+  }
   return node;
 }
 
@@ -299,13 +318,19 @@ function zoom(card) {
   const image = $("zoom-image");
   image.src = card.image.replace("/normal/", "/large/");
   image.alt = card.name;
+  zoomOpener = document.activeElement;
   $("zoom").showModal();
   $("zoom-close").focus();
 }
 
+let zoomOpener = null;
 function setupZoom() {
   const dialog = $("zoom");
   $("zoom-close").addEventListener("click", () => dialog.close());
+  dialog.addEventListener("close", () => {
+    if (zoomOpener && zoomOpener.isConnected) zoomOpener.focus();
+    zoomOpener = null;
+  });
   // A click on the faded backdrop lands on the dialog itself, outside the image.
   dialog.addEventListener("click", (event) => {
     if (event.target === dialog) dialog.close();
@@ -1299,8 +1324,10 @@ async function saveChanges() {
       return;
     }
     $("review-dialog").close();
-    const missed = result.mismatches.length ? `; Archidekt differs: ${result.mismatches.join("; ")}` : "";
-    showStatus(`Saved. Restore point “${result.snapshot}” is on Archidekt${missed}`, Boolean(missed));
+    const count = result.changes.length;
+    const saved = `Saved ${count} change${count === 1 ? "" : "s"} to Archidekt`;
+    if (result.mismatches.length) showStatus(`${saved}, but Archidekt differs: ${result.mismatches.join("; ")}`, true);
+    else showStatus(`${saved}. Restore point in Activity.`, false, SAVED_MS);
     await refresh();
   } catch {
     busy("");
@@ -1511,6 +1538,7 @@ window.addEventListener("pywebviewready", async () => {
   setupActivity();
   setupBracket();
   setupAccount();
+  $("status-close").addEventListener("click", hideStatus);
   try {
     const account = await loadAccount();
     if (account && !account.user) openSignIn();

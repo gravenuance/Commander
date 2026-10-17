@@ -329,7 +329,7 @@ Without one it opens on **Sign in to Archidekt**: the username and password go t
 and the login token is kept in Windows Credential Manager, as `cmdr login` keeps it. Each account has its
 own deck folder, remembered in the config's `[workspaces]` table. Your own keeps the folder `cmdr init` set,
 and a new account gets a sibling folder named `decks-<username>`. Signing in as a new account syncs its
-decks at once. The foot of the deck list shows who is signed in, with **Sync decks** (the same as
+decks at once. The foot of the deck list shows who is signed in, with **Update from Archidekt** (the same as
 `cmdr sync`, card data and ideas included, its progress shown beneath) and **Sign out**, which removes the
 saved login. Signing in again finds the same folder.
 

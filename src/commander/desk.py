@@ -144,9 +144,10 @@ def sync_summary(outcome: SyncOutcome) -> str:
     """One line for the status bar: what changed, or what failed."""
     counts = {status: sum(1 for r in outcome.results if r.status is status) for status in SyncStatus}
     if counts[SyncStatus.FAILED] or outcome.cards.state is CardState.FAILED:
-        return f"Sync finished with problems: {counts[SyncStatus.FAILED]} decks failed; see the log."
+        return f"Update finished with problems: {counts[SyncStatus.FAILED]} decks failed; see the log."
     changed = counts[SyncStatus.NEW] + counts[SyncStatus.UPDATED]
-    return f"Decks synced: {len(outcome.results)}, {changed} changed."
+    total = len(outcome.results)
+    return f"Updated {total} deck{'' if total == 1 else 's'} from Archidekt, {changed} changed."
 
 
 @dataclass(slots=True, frozen=True)
@@ -212,7 +213,7 @@ class Desk:
         user = user.strip()
         validate_user(user)
         if self._syncing():
-            return {"error": "Wait for the sync to finish, then sign in."}
+            return {"error": "Wait for the update to finish, then sign in."}
         with self._client_factory() as http:
             ArchidektAuth(Fetcher(http), self._token_store).login(user, user, password)
         folder = switch_account(config, user, documents=self._documents())
@@ -226,7 +227,7 @@ class Desk:
         """Remove the saved login and forget the account; its deck folder stays for the next sign-in."""
         config = self._config()
         if self._syncing():
-            return {"error": "Wait for the sync to finish, then sign out."}
+            return {"error": "Wait for the update to finish, then sign out."}
         user = self._settings.user
         if user:
             self._token_store.delete(user)
@@ -266,7 +267,7 @@ class Desk:
         with self._sync_lock:
             if self._sync.running:
                 return
-            self._sync = _SyncState(running=True, progress="Starting the sync")
+            self._sync = _SyncState(running=True, progress="Starting the update")
         self._background(lambda: self._run_sync(user))
 
     def _run_sync(self, user: str) -> None:
@@ -279,11 +280,11 @@ class Desk:
             )
         except _EXPECTED as error:
             log.warning("sync failed: %s", error)
-            self._finish_sync(f"Sync failed: {error}", failed=True)
+            self._finish_sync(f"Update failed: {error}", failed=True)
             return
         except Exception:
             log.exception("sync failed unexpectedly")
-            self._finish_sync("Sync failed; the details are in the log.", failed=True)
+            self._finish_sync("Update failed; the details are in the log.", failed=True)
             return
         for warning in outcome.warnings:
             log.warning("sync: %s", warning)

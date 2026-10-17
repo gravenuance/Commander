@@ -1,7 +1,7 @@
 """A full sync: the decks, the card data, the account's labels, the boards and the ideas (ADR 0023).
 
-`cmdr sync` and the app's Sync decks button both run it; neither prints from in here, so each failure
-comes back as a warning to show the way the caller shows things.
+`cmdr sync` and the app's Update from Archidekt button both run it; neither prints from in here, so
+each failure comes back as a warning to show the way the caller shows things.
 """
 
 import logging
