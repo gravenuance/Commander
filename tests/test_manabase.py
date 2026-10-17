@@ -310,3 +310,27 @@ def test_lands_are_cut_only_as_far_as_the_basics_go() -> None:
     # 45 lands against 37.7 is seven too many, but only the two Plains can go.
     assert (plan.lands, plan.target, plan.land_change) == (45, 37.7, -2)
     assert plan.basics[0] == BasicCount("W", "Plains", 2, 0)
+
+
+@pytest.mark.parametrize(
+    ("lands", "spells", "target", "change"),
+    [
+        # Fifteen spells of total mana value 29 make 31.42 + 3.13 x 29/15 = 37.5.
+        (35, (14, 1), 37.5, 3),  # 2.5 short: halves round away from zero
+        (40, (14, 1), 37.5, -3),  # 2.5 over
+        (36, (14, 1), 37.5, 2),  # 1.5 short
+        # Ten spells of total mana value 21 make 38.0.
+        (37, (9, 3), 38.0, 0),  # exactly one short is within the tolerance
+        (36, (9, 3), 38.0, 2),  # two short
+    ],
+)
+def test_the_land_change_rounds_halves_away_from_zero(
+    lands: int, spells: tuple[int, int], target: float, change: int
+) -> None:
+    # Nine or fourteen two-drops and one more spell, so the average mana value is what the target needs.
+    twos, other = spells
+    one_more = card("Odd", "{" + str(other) + "}", other, "Artifact")
+    deck = deck_of(("Plains", lands // 2 + lands % 2), ("Island", lands // 2), ("Filler", twos), ("Odd", 1))
+    cards = by_name(*KNOWN, one_more)
+    plan = suggest_mana(deck, cards, analyse_mana(deck, cards), options=())
+    assert (plan.lands, plan.target, plan.land_change) == (lands, target, change)

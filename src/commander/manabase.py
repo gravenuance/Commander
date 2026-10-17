@@ -7,6 +7,7 @@ Cast Your Spells? A 2022 Update", TCGplayer, 2022), with his rules for gold card
 other land counts. Both assume casual Commander; cEDH decks are compared with tournament lists instead.
 """
 
+import math
 import re
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -299,13 +300,15 @@ def suggest_mana(
 
 def _land_change(report: ManaBase) -> int:
     lands = report.lands.lands
-    off = report.lands.suggested - lands
+    # Both counts are to a hundredth, so rounding the difference too keeps float noise off the edges.
+    off = round(report.lands.suggested - lands, 2)
     if abs(off) <= LAND_TOLERANCE:
         return 0
     compared = report.comparison
     if compared is not None and compared.lands_low <= lands <= compared.lands_high:
         return 0
-    return round(off)
+    # Python rounds halves to even; a half land short is a whole one, over or under.
+    return int(math.copysign(math.floor(abs(off) + 0.5), off))
 
 
 def _carried_by_basics(change: int, now: Mapping[str, int], names: Mapping[str, str]) -> int:
