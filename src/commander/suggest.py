@@ -544,10 +544,6 @@ def _held(card: ComboCard, held_ids: set[str], held_names: set[str]) -> bool:
     return (card.oracle_id is not None and card.oracle_id in held_ids) or card.name.casefold() in held_names
 
 
-def affordable(price_cents: int | None, max_cents: int | None) -> bool:
-    return max_cents is None or (price_cents is not None and price_cents <= max_cents)
-
-
 def _matches_to_json(matches: ComboMatches) -> dict[str, object]:
     return {
         "included": [_variant_to_json(v) for v in matches.included],
