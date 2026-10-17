@@ -415,6 +415,8 @@ class FakeArchidekt:
         self.peer_pages: dict[str, Json] = {}
         # The account's card labels, as /api/decks/colorTags/ lists them; none unless a test sets some.
         self.labels: list[Json] = []
+        # The status that read answers with; anything but 200 stands for a failed read.
+        self.labels_status = 200
 
     def put(self, deck: Json) -> None:
         self.decks[deck["id"]] = copy.deepcopy(deck)
@@ -429,6 +431,8 @@ class FakeArchidekt:
             return self.edhtop16.handler(request)
         if request.url.path == "/api/decks/colorTags/":
             self.requests.append(request.url.path)
+            if self.labels_status != HTTP_OK:
+                return httpx.Response(self.labels_status)
             return httpx.Response(200, json=self.labels) if self._signed_in(request) else httpx.Response(401)
         return self.archidekt(request)
 

@@ -18,7 +18,7 @@ from commander.apply import (
     verify,
 )
 from commander.archidekt import parse_deck
-from commander.archidekt_edit import ArchidektEditor, EditKind, LiveDeck, parse_entry_states
+from commander.archidekt_edit import ArchidektEditor, AuthError, EditKind, LiveDeck, parse_entry_states
 from commander.carddb import CardDb, CardInfo
 from commander.changetext import change_text
 from commander.models import Deck
@@ -508,6 +508,36 @@ def test_a_failed_save_after_the_snapshot_names_it(
         f"/api/decks/{DECK_ID}/snapshots/",
         f"/api/decks/{DECK_ID}/modifyCards/v2/",
     ]
+
+
+def test_a_save_whose_label_read_fails_labels_incoming_cards_in_the_default_colour(
+    fake: FakeArchidekt, editor: ArchidektEditor, db: CardDb
+) -> None:
+    live = editor.get_deck(DECK_ID)
+    resolution = resolve_plan(live.deck, plan([AddCard("Arcane Signet")]), db)
+    fake.labels = [{"id": 2, "color": "#fa0d11", "name": "Don't Have"}]
+    fake.labels_status = 500
+    progress: list[str] = []
+
+    result = save(editor, live, resolution, now=lambda: NOW, on_progress=progress.append)
+
+    assert result.mismatches == ()
+    # Archidekt's default colour for Don't Have (ADR 0012), not the account's #fa0d11.
+    assert {w["modifications"]["label"] for w in fake.card_writes()} == {"Don't Have,#f47373"}
+    assert any("labels" in line and "default colours" in line for line in progress)
+
+
+def test_a_save_stops_before_any_write_when_the_label_read_is_refused(
+    fake: FakeArchidekt, editor: ArchidektEditor, db: CardDb
+) -> None:
+    live = editor.get_deck(DECK_ID)
+    resolution = resolve_plan(live.deck, plan([AddCard("Arcane Signet")]), db)
+    fake.labels_status = 401
+
+    with pytest.raises(AuthError, match="refused the login"):
+        save(editor, live, resolution, now=lambda: NOW)
+
+    assert fake.writes == []
 
 
 def test_save_refuses_a_resolution_with_problems_or_no_changes(deck: Deck, raw_deck: Json) -> None:

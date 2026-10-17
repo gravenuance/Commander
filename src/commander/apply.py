@@ -378,8 +378,7 @@ def save(
                     " Nothing was changed"
                 )
             card_ids[change.scryfall_id] = card_id
-    # Don't Have goes on in the colour the account gives it (ADR 0012).
-    dont_have = label_value(DONT_HAVE_LABEL, dict(editor.account_labels()))
+    dont_have = label_value(DONT_HAVE_LABEL, _account_colours(editor, on_progress))
     edits = card_edits(resolution.changes, live.entries, card_ids, dont_have)
     # Seconds keep two saves in one minute apart; Archidekt accepts snapshots with equal names.
     snapshot = f"before cmdr apply {now().strftime('%Y-%m-%d %H:%M:%S')} UTC"
@@ -402,6 +401,17 @@ def save(
             "the local copy may be behind"
         ) from error
     return SaveResult(after, snapshot, tuple(verify(resolution.changes, deck, after)))
+
+
+def _account_colours(editor: ArchidektEditor, on_progress: Callable[[str], None]) -> dict[str, str]:
+    """The account's label colours, which Don't Have goes on in (ADR 0012). A failed read falls back to
+    Archidekt's default colours; a refused login still stops the save, as its writes would be refused."""
+    try:
+        return dict(editor.account_labels())
+    except (NetworkError, ArchidektError) as error:
+        log.warning("could not read the account's card labels: %s", error)
+        on_progress(f"could not read your card labels ({error}); labelling in Archidekt's default colours")
+        return {}
 
 
 def card_edits(
