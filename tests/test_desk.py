@@ -3,6 +3,7 @@
 import json
 import re
 import shutil
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
@@ -390,6 +391,50 @@ def test_commit_without_a_login_says_how_to_sign_in(settings: DeskSettings, fake
     answer = desk.commit(DECK, reviewed(desk))
     assert "cmdr login" in str(answer["error"])
     assert not fake.card_writes()
+
+
+def _commit(desk: Desk) -> Json:
+    return desk.commit(DECK, "any")
+
+
+def _set_label(desk: Desk) -> Json:
+    return desk.set_label(DECK, "Battered Golem", "Getting")
+
+
+def _mark(desk: Desk) -> Json:
+    return desk.mark(DECK, "Battered Golem", "ordered")
+
+
+def _mana_to_board(desk: Desk) -> Json:
+    return desk.mana_to_board(DECK)
+
+
+@pytest.mark.parametrize(
+    ("call", "then"),
+    [
+        (_commit, "save"),
+        (_set_label, "change the label"),
+        (_mark, "mark the card"),
+        (_mana_to_board, "add the swaps"),
+    ],
+)
+def test_nothing_changes_the_deck_or_board_while_an_update_runs(
+    settings: DeskSettings, fake: FakeArchidekt, call: Callable[[Desk], Json], then: str
+) -> None:
+    pending: list[Callable[[], None]] = []
+    desk = Desk(
+        settings,
+        client_factory=fake.client,
+        token_store=MemoryTokenStore({"makkis": REFRESH_TOKEN}),
+        now=lambda: NOW,
+        pacer_factory=lambda _: Pacer(0),
+        background=pending.append,
+    )
+    desk.sync()
+    assert len(pending) == 1
+    assert call(desk) == {"error": f"Wait for the update to finish, then {then}."}
+    assert not fake.card_writes()
+    assert not (settings.workspace / "10004639-honestly-though" / "board.json").exists()
 
 
 def test_commit_refuses_a_board_that_changed_since_the_preview(desk: Desk, fake: FakeArchidekt) -> None:

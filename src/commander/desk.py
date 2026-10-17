@@ -218,8 +218,8 @@ class Desk:
         config = self._config()
         user = user.strip()
         validate_user(user)
-        if self._syncing():
-            return {"error": "Wait for the update to finish, then sign in."}
+        if busy := self._updating("sign in"):
+            return busy
         with self._client_factory() as http:
             ArchidektAuth(Fetcher(http), self._token_store).login(user, user, password)
         folder = switch_account(config, user, documents=self._documents())
@@ -233,8 +233,8 @@ class Desk:
     def sign_out(self) -> Json:
         """Remove the saved login and forget the account; its deck folder stays for the next sign-in."""
         config = self._config()
-        if self._syncing():
-            return {"error": "Wait for the update to finish, then sign out."}
+        if busy := self._updating("sign out"):
+            return busy
         user = self._settings.user
         if user:
             self._token_store.delete(user)
@@ -270,6 +270,12 @@ class Desk:
     def _syncing(self) -> bool:
         with self._sync_lock:
             return self._sync.running
+
+    def _updating(self, then: str) -> Json | None:
+        """The refusal for a change that would race the running update, else None."""
+        if self._syncing():
+            return {"error": f"Wait for the update to finish, then {then}."}
+        return None
 
     def _start_sync(self, user: str) -> None:
         with self._sync_lock:
@@ -404,6 +410,8 @@ class Desk:
     @_guarded
     def set_label(self, deck_id: int, name: str, label: str) -> Json:
         """Give one deck card one of the deck's labels ("" for none) on Archidekt at once (ADR 0010)."""
+        if busy := self._updating("change the label"):
+            return busy
         stored = self._stored(deck_id)
         user = self._user()
         with self._service_and_db(stored) as (service, _), self._client_factory() as http:
@@ -417,6 +425,8 @@ class Desk:
     @_guarded
     def mark(self, deck_id: int, name: str, step: str) -> Json:
         """Mark one deck card ordered or arrived on Archidekt at once (ADR 0010)."""
+        if busy := self._updating("mark the card"):
+            return busy
         try:
             chosen = Step(step)
         except ValueError:
@@ -499,6 +509,8 @@ class Desk:
     @_guarded
     def mana_to_board(self, deck_id: int) -> Json:
         """Put the suggested swaps on the board under Considering, each with its cut; the user decides."""
+        if busy := self._updating("add the swaps"):
+            return busy
         _, plan = self._mana(deck_id)
         if plan is None:
             return {"error": "bracket 5 decks follow the tournament lists, not Karsten's numbers"}
@@ -660,6 +672,8 @@ class Desk:
     @_guarded
     def commit(self, deck_id: int, stamp: str) -> Json:
         """Save the queued cards, if the board is still as the preview with this stamp saw it."""
+        if busy := self._updating("save"):
+            return busy
         stored = self._stored(deck_id)
         user = self._user()
         if board_digest(stored.folder) != stamp:
