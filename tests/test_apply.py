@@ -20,7 +20,7 @@ from commander.apply import (
 from commander.archidekt import parse_deck
 from commander.archidekt_edit import ArchidektEditor, EditKind, LiveDeck, parse_entry_states
 from commander.carddb import CardDb, CardInfo
-from commander.cli_output import change_text
+from commander.changetext import change_text
 from commander.models import Deck
 from commander.net import Fetcher
 from commander.plan import AddCard, Plan, RemoveCard

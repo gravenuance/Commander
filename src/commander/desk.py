@@ -51,8 +51,7 @@ from commander.bracketcheck import check_bracket, check_json
 from commander.bracketpreview import preview_json, spellbook_preview
 from commander.budget import resolved_budget
 from commander.carddb import CardDataError, CardDb, CardInfo, ResolvedCard
-from commander.cli_meta import report_json
-from commander.cli_output import change_mark, change_text
+from commander.changetext import change_mark, change_text
 from commander.config import ConfigError, MetaSettings, forget_account, switch_account, validate_user
 from commander.credentials import CredentialError, TokenStore
 from commander.deckexport import topdeck_text
@@ -74,6 +73,7 @@ from commander.metadata import (
     gather_for,
     meta_sources,
 )
+from commander.metajson import report_json
 from commander.metapanel import combo_rows, key_card_rows, stopper_rows, untouched
 from commander.models import Deck
 from commander.net import Fetcher, NetworkError, Pacer

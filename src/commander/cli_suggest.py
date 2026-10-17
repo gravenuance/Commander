@@ -7,13 +7,13 @@ from typing import TextIO
 
 from commander.analysis import ANALYZED_ROLES
 from commander.board import BoardService, feed_suggestions, read_board
+from commander.changetext import raise_text
 from commander.cli_output import (
     ROLE_HEADINGS,
     TAG_ORDER,
     count_text,
     price_text,
     raise_json,
-    raise_text,
     warn_answer,
     write_json,
 )
