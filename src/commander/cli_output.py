@@ -1,14 +1,18 @@
 """Output shared by several `cmdr` commands: plan previews and save outcomes, prices and bracket marks."""
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TextIO
 
 from commander.apply import Change, ChangeKind, Resolution, SaveResult
 from commander.bracketcheck import BracketCheck
 from commander.bracketpreview import BracketPreview
+from commander.carddb import Role
+from commander.deckcache import Answer, AnswerSource
+from commander.models import Deck
 from commander.pricing import format_eur
+from commander.spellbook import BracketTag
 from commander.suggest import BracketRaise
 
 _CHANGE_MARKS = {
@@ -133,3 +137,33 @@ def progress_printer(err: TextIO) -> Callable[[str], None]:
     if not err.isatty():
         return lambda _: None
     return lambda message: print(message, file=err)
+
+
+ROLE_HEADINGS: Mapping[Role, str] = {
+    Role.RAMP: "ramp",
+    Role.DRAW: "draw",
+    Role.REMOVAL: "removal",
+    Role.BOARD_WIPE: "wipes",
+    Role.TUTOR: "tutors",
+    Role.PROTECTION: "protect",
+    Role.RECURSION: "recursion",
+    Role.COUNTERSPELL: "counters",
+}
+
+
+TAG_ORDER = {tag: index for index, tag in enumerate(BracketTag)}
+
+
+def warn_answer[T](deck: Deck, answer: Answer[T], what: str, err: TextIO) -> None:
+    if answer.source is AnswerSource.UNAVAILABLE:
+        print(f"cmdr: {deck.name}: no {what}: {answer.error}", file=err)
+    elif answer.source is AnswerSource.STALE and answer.fetched_at is not None:
+        print(
+            f"cmdr: {deck.name}: showing the {what} from {answer.fetched_at.date().isoformat()}; "
+            f"refreshing it failed: {answer.error}",
+            file=err,
+        )
+
+
+def count_text(value: int | None) -> str:
+    return "-" if value is None else str(value)
