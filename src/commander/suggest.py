@@ -6,7 +6,7 @@ automated requests.
 """
 
 from collections.abc import Collection, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 from itertools import islice
 from pathlib import Path
@@ -181,7 +181,7 @@ def suggest(
             protected=protected_cards(main, options.keep_names, options.keep_categories),
             themed=db.matching(options.themes, (r.info.oracle_id for r in main if r.info)),
         ),
-        hidden=picker.hidden,
+        hidden=len(picker.hidden_ids),
         ceiling=options.ceiling,
         budget=budget,
     )
@@ -229,7 +229,8 @@ class _Picker:
     bracket: int | None
     changers: int
     budget: Budget = NO_BUDGET
-    hidden: int = 0
+    # The cards the ceiling hid, once each however many sections skipped them.
+    hidden_ids: set[str] = field(default_factory=set[str])
 
     def pick(self, candidates: Iterator[CardInfo], *, theme_first: bool) -> list[RoleIdea]:
         # Ranked candidates come lazily; a window this deep leaves room for themed ones to move up.
@@ -251,7 +252,7 @@ class _Picker:
             if info.oracle_id in banned or name_keys(info.name) & self.options.exclude_names:
                 continue
             raises = card_raise(info, self.bracket, self.changers)
-            if self._too_high(raises):
+            if self._too_high(raises, info.oracle_id):
                 continue
             fits = tuple(dict.fromkeys(label for label, held in labelled if info.oracle_id in held))
             within = self.budget.within(info.cheapest_cents)
@@ -271,19 +272,20 @@ class _Picker:
                 piece.name
             ) & self.options.exclude_names:
                 continue
-            if not self.budget.allows(piece.price_cents) or self._too_high(piece.raises):
+            key = piece.info.oracle_id if piece.info else piece.name.casefold()
+            if not self.budget.allows(piece.price_cents) or self._too_high(piece.raises, key):
                 continue
             kept.append(piece)
         # Within the deck's working budget first, in the order given within each half.
         kept.sort(key=lambda piece: not self.budget.within(piece.price_cents))
         return kept
 
-    def _too_high(self, raises: BracketRaise | None) -> bool:
+    def _too_high(self, raises: BracketRaise | None, key: str) -> bool:
         too_high = (
             raises is not None and self.options.ceiling is not None and raises.bracket > self.options.ceiling
         )
         if too_high:
-            self.hidden += 1
+            self.hidden_ids.add(key)
         return too_high
 
 

@@ -1,4 +1,5 @@
 import copy
+import json
 from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -26,7 +27,7 @@ from commander.suggest import (
     options_for,
     suggest,
 )
-from conftest import FakeSpellbook, Json, load_fixture
+from conftest import JESKAS_WILL, FakeSpellbook, Json, build_card_db, load_fixture
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 OPTIONS = SuggestOptions(DEFAULT_TARGETS, count=5, max_cents=None)
@@ -188,6 +189,27 @@ def test_within_bracket_hides_ideas_that_raise_it(deck: Deck, db: CardDb) -> Non
     result = run(replace(deck, bracket=2), db, options=replace(ANY_PRICE, ceiling=2))
     assert [p.name for p in result.pieces] == ["Maskwood Nexus"]
     assert [i.info.name for i in result.roles[0].ideas] == ["Arcane Signet", "Mind Stone"]
+    assert result.hidden == 3
+
+
+def test_a_card_hidden_in_two_short_roles_counts_once(deck: Deck, tmp_path: Path) -> None:
+    # Draw is made to hold Jeska's Will alone, a game changer already offered for ramp.
+    draw = json.dumps(
+        {
+            "object": "tag",
+            "id": "b6448c45-ce65-4848-aa98-2151e4e07437",
+            "slug": "draw",
+            "type": "oracle",
+            "child_ids": [],
+            "taggings": [{"oracle_id": JESKAS_WILL, "weight": "median"}],
+        }
+    )
+    with CardDb(build_card_db(tmp_path, [draw])) as both:
+        result = run(replace(deck, bracket=2), both, options=replace(ANY_PRICE, ceiling=2))
+    ramp, draws = (next(t for t in result.roles if t.role is role) for role in (Role.RAMP, Role.DRAW))
+    assert [i.info.name for i in ramp.ideas] == ["Arcane Signet", "Mind Stone"]
+    assert draws.ideas == ()
+    # Aggravated Assault, Splinter Twin and Jeska's Will, which both roles skip.
     assert result.hidden == 3
 
 
