@@ -1,5 +1,6 @@
 """The desktop app's bridge, called as the page calls it, against the fake Archidekt."""
 
+import json
 import re
 import shutil
 from datetime import UTC, datetime
@@ -88,6 +89,25 @@ def test_decks_are_listed_by_commander_short_name(desk: Desk) -> None:
     assert desk.decks() == {
         "decks": [{"id": DECK, "short": "Magda", "name": "Honestly, though..", "queued": 0, "open": 0}]
     }
+
+
+def test_a_deck_with_a_damaged_board_lists_with_an_error_and_the_others_still_load(
+    desk: Desk, settings: DeskSettings
+) -> None:
+    first = settings.workspace / "10004639-honestly-though"
+    second = settings.workspace / "10004640-second"
+    shutil.copytree(first, second)
+    snapshot = json.loads((second / "deck.json").read_text(encoding="utf-8"))
+    snapshot["id"] = 10004640
+    snapshot["name"] = "Zeta"
+    (second / "deck.json").write_text(json.dumps(snapshot), encoding="utf-8")
+    (first / "board.json").write_text("{not json", encoding="utf-8")
+    listed = items(desk.decks(), "decks")
+    assert [row["id"] for row in listed] == [10004639, 10004640]
+    assert "board.json" in str(listed[0]["error"])
+    assert listed[0]["name"] == "Honestly, though.."
+    assert "error" not in listed[1]
+    assert (listed[1]["name"], listed[1]["queued"]) == ("Zeta", 0)
 
 
 def test_a_proposed_card_shows_with_its_card_facts(desk: Desk) -> None:

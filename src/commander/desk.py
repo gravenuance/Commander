@@ -320,16 +320,23 @@ class Desk:
     def decks(self) -> Json:
         rows: list[Json] = []
         for stored in self._workspace.load_all():
-            board = read_board(stored.folder)
-            rows.append(
-                {
-                    "id": stored.deck.id,
-                    "short": stored.deck.short_name,
-                    "name": stored.deck.name,
-                    "queued": board.pending(stored.deck),
-                    "open": sum(1 for c in board.cards if c.status is Status.OPEN),
-                }
-            )
+            row: Json = {
+                "id": stored.deck.id,
+                "short": stored.deck.short_name,
+                "name": stored.deck.name,
+                "queued": 0,
+                "open": 0,
+            }
+            try:
+                board = read_board(stored.folder)
+            except BoardError as error:
+                # One deck's damaged board must not hide the others.
+                log.warning("deck %s: %s", stored.deck.id, error)
+                row["error"] = str(error)
+            else:
+                row["queued"] = board.pending(stored.deck)
+                row["open"] = sum(1 for c in board.cards if c.status is Status.OPEN)
+            rows.append(row)
         rows.sort(key=lambda row: str(row["short"]).casefold())
         return {"decks": rows}
 
