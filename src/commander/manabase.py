@@ -249,10 +249,10 @@ def suggest_mana(
         if card.name.casefold() not in commander_names and (info := cards.get(card.name.casefold()))
     ]
     held = {info.name.casefold() for _, info in the_99}
-    change = _land_change(report)
-    lands_after = report.lands.lands + change
     names = _basic_names(the_99, colours, cards)
     now = {c: sum(q for q, info in the_99 if info.name == names.get(c)) for c in colours}
+    change = _carried_by_basics(_land_change(report), now, names)
+    lands_after = report.lands.lands + change
     demands = _demands(deck, cards, colours, names, alternative)
     total = sum(now.values()) + change
     need = {
@@ -306,6 +306,14 @@ def _land_change(report: ManaBase) -> int:
     if compared is not None and compared.lands_low <= lands <= compared.lands_high:
         return 0
     return round(off)
+
+
+def _carried_by_basics(change: int, now: Mapping[str, int], names: Mapping[str, str]) -> int:
+    """The land change basics can carry: added as a colour's basic, cut from the basics held. A colourless
+    deck has no basic to add, and the spells made room for would be cut for nothing."""
+    if change > 0:
+        return change if names else 0
+    return max(change, -sum(now.values()))
 
 
 def _basic_names(

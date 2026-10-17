@@ -287,3 +287,26 @@ def test_lands_within_the_budget_come_first_and_dearer_ones_are_marked() -> None
         ("Tundra", False),
     ]
     assert plan.budget_cents == 2000
+
+
+def test_a_colourless_deck_keeps_its_land_count_as_no_basic_can_be_added() -> None:
+    leader = card("Leader", "{3}", 3, "Legendary Artifact Creature — Golem")
+    waste = card("Ruins", type_line="Land", produced="C")
+    deck = deck_of(("Ruins", 20), ("Filler", 79))
+    cards = by_name(leader, waste, FILLER)
+    plan = suggest_mana(deck, cards, analyse_mana(deck, cards), options=())
+    # Karsten wants 31.42 + 3.13 x 2 = 37.7 lands, but no basic land type can be added for a deck with no
+    # coloured pips, and the spells the plan would cut have no land to take their place.
+    assert (plan.lands, plan.target) == (20, 37.7)
+    assert plan.land_change == 0
+    assert plan.cut_candidates == ()
+    assert plan.unchanged
+
+
+def test_lands_are_cut_only_as_far_as_the_basics_go() -> None:
+    deck = deck_of(("Tundra", 43), ("Plains", 2), ("Filler", 54))
+    cards = by_name(*KNOWN)
+    plan = suggest_mana(deck, cards, analyse_mana(deck, cards), options=())
+    # 45 lands against 37.7 is seven too many, but only the two Plains can go.
+    assert (plan.lands, plan.target, plan.land_change) == (45, 37.7, -2)
+    assert plan.basics[0] == BasicCount("W", "Plains", 2, 0)
