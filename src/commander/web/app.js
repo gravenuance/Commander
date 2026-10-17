@@ -649,6 +649,14 @@ function setupActivity() {
   for (const tab of RAIL_TABS) {
     $(`${tab}-toggle`).addEventListener("click", () => showRail(railTab === tab ? null : tab));
   }
+  // The open rail covers part of the main view, so Escape from inside it folds it and returns focus to its tab.
+  $("activity-pane").addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || railTab === null) return;
+    event.stopPropagation();
+    const toggle = $(`${railTab}-toggle`);
+    showRail(null);
+    toggle.focus();
+  });
   showRail(open);
 }
 
@@ -659,7 +667,6 @@ function showRail(tab) {
     $(name).hidden = name !== tab;
   }
   $("activity-pane").classList.toggle("open", tab !== null);
-  $("app").classList.toggle("activity-open", tab !== null);
   try { localStorage.setItem(ACTIVITY_KEY, tab || "0"); } catch { /* as above */ }
   if (tab === "mana") loadMana();
 }

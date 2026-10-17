@@ -60,7 +60,10 @@
   --text-l: 1.25rem;
   --text-xl: 1.75rem;
   --shadow: 0 1px 2px rgb(0 0 0 / 8%), 0 2px 8px rgb(0 0 0 / 6%);
+  --shadow-raised: -4px 0 24px rgb(0 0 0 / 14%);
   --fast: 120ms;
+  --nav-w: 220px;
+  --icon-button: 28px;
   --art-width: 72px;
   --card-w: 160px;
   --card-h: calc(var(--card-w) * 680 / 488);
@@ -97,6 +100,7 @@
     --cmdr: #93b4dc;
     --archidekt: #e6b07a;
     --shadow: 0 1px 2px rgb(0 0 0 / 40%);
+    --shadow-raised: -4px 0 24px rgb(0 0 0 / 55%);
     --on-danger: #1a0d0a;
   }
 }
@@ -123,35 +127,38 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 }
 
 .app {
+  position: relative;
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr) var(--rail-w);
+  grid-template-columns: var(--nav-w) minmax(0, 1fr) var(--rail-w);
   height: 100vh;
 }
-.app.activity-open { grid-template-columns: 220px minmax(0, 1fr) var(--activity-w); }
 
-/* Deck list */
+/* Deck list: the brand and the account stay put, only the decks scroll. */
 .decks {
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
   border-right: 1px solid var(--border);
   background: var(--surface);
-  overflow-y: auto;
-  padding: var(--space-4) var(--space-2);
+  padding: var(--space-5) var(--space-2) var(--space-3);
 }
 /* At the foot of the deck list: who is signed in, the sync and its progress. */
 .account {
-  margin-top: auto;
-  padding: var(--space-3) var(--space-2) 0;
+  flex: none;
+  margin-top: var(--space-2);
+  padding: var(--space-3) var(--space-3) 0;
   border-top: 1px solid var(--border);
   display: grid;
-  gap: var(--space-1);
+  gap: var(--space-2);
 }
 .account-name, .sync-status { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .account-name { font-weight: 600; }
 .account-name:empty, .sync-status:empty { display: none; }
-.account-actions { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.account-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .signin-form { display: grid; gap: var(--space-3); min-width: 320px; }
 .signin-form h2 { margin: 0; }
+.signin-form .dialog-actions { margin-top: var(--space-1); }
 .field { display: grid; gap: var(--space-1); font-size: var(--text-s); font-weight: 600; }
 .field input {
   min-height: 36px;
@@ -166,14 +173,27 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .field input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 .field-error { margin: 0; color: var(--danger); font-size: var(--text-s); }
 .brand {
-  margin: 0 var(--space-2) var(--space-3);
+  flex: none;
+  margin: 0 var(--space-3) var(--space-3);
   font-size: var(--text-s);
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--muted);
 }
-.deck-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.deck-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+  align-content: start;
+}
+/* Inside the scrolling list an outer ring would be clipped at its edges. */
+.deck-button:focus-visible { outline-offset: -2px; }
 .deck-button {
   width: 100%;
   min-height: 44px;
@@ -254,7 +274,7 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .leanings { margin: 0; display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; font-size: var(--text-s); }
 .leanings:empty { display: none; }
 .leanings-label { color: var(--muted); }
-.leaning { padding: 0 var(--space-2); border: 1px dashed var(--border-strong); border-radius: var(--radius-s); color: var(--muted); cursor: help; }
+.leaning { padding: 0 var(--space-2); border: 1px dashed var(--border-strong); border-radius: var(--radius-xs); color: var(--muted); cursor: help; }
 .chip {
   padding: 1px var(--space-2);
   border: 1px solid var(--border-strong);
@@ -345,7 +365,7 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .button.quiet { border-color: transparent; background: transparent; font-weight: 500; }
 .button.quiet:hover:not(:disabled) { background: var(--surface-2); }
 .button.small { min-height: 28px; padding: var(--space-1) var(--space-3); font-size: var(--text-s); }
-.button.icon { padding: 0; width: 28px; min-height: 28px; font-size: 1.1rem; line-height: 1; }
+.button.icon { padding: 0; width: var(--icon-button); min-height: var(--icon-button); font-size: 1.1rem; line-height: 1; }
 
 .chevron {
   display: inline-block;
@@ -372,7 +392,15 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   background: var(--sunk);
   border-radius: var(--radius) var(--radius) 0 0;
 }
-.side { min-height: 0; overflow-y: auto; display: grid; gap: var(--space-4); align-content: start; padding-bottom: var(--space-5); }
+/* Top padding matches the grid pane's, so the first panel title lines up with the card size row. */
+.side {
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  gap: var(--space-5);
+  align-content: start;
+  padding: var(--space-3) 0 var(--space-5);
+}
 @media (width < 1100px) {
   .main { overflow-y: auto; }
   .deck { flex: none; }
@@ -389,6 +417,7 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   gap: var(--space-2);
   min-height: 24px;
   padding: 0 var(--space-1);
+  margin-left: calc(-1 * var(--space-1));
   border: 0;
   border-radius: var(--radius-s);
   background: transparent;
@@ -439,8 +468,8 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .art .art-name { padding-left: var(--space-2); font-size: var(--text-2xs); }
 .qty {
   position: absolute;
-  top: var(--space-1);
-  right: var(--space-1);
+  top: 2px;
+  right: 2px;
   padding: 0 6px;
   border-radius: var(--radius-pill);
   background: var(--flag);
@@ -536,6 +565,7 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   gap: var(--space-2);
   min-height: 28px;
   padding: 0 var(--space-1);
+  margin-left: calc(-1 * var(--space-1));
   border: 0;
   border-radius: var(--radius-s);
   background: transparent;
@@ -550,7 +580,7 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .panel-toggle:hover { background: var(--surface-2); }
 .count { font-weight: 500; }
 .cards { display: grid; gap: var(--space-3); }
-.empty { color: var(--muted); font-size: var(--text-s); }
+.empty { margin: 0; color: var(--muted); font-size: var(--text-s); }
 
 /* Considered card */
 .card {
@@ -559,7 +589,8 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   grid-template-columns: var(--art-width) minmax(0, 1fr);
   gap: var(--space-3);
   padding: var(--space-3);
-  padding-right: 36px;
+  /* Room for the reject button, with the same gap on both of its sides. */
+  padding-right: calc(var(--icon-button) + 2 * var(--space-2));
   background: var(--surface);
   border: 1px solid var(--border);
   border-left: 4px solid var(--border);
@@ -586,7 +617,7 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   cursor: pointer;
 }
 .card-name { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.reject { position: absolute; top: var(--space-1); right: var(--space-1); }
+.reject { position: absolute; top: var(--space-2); right: var(--space-2); }
 .cost { display: inline-flex; gap: 2px; flex-shrink: 0; }
 .pip {
   min-width: 18px;
@@ -683,13 +714,20 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .menu-item[aria-checked="true"]::after { content: "✓"; margin-left: auto; color: var(--accent); }
 .swatch { width: 12px; height: 12px; border-radius: var(--radius-xs); border: 1px solid var(--border-strong); background: var(--label, transparent); }
 
-/* Activity rail */
+/* Activity rail: folded it is a strip of tabs; open it lies over the main view instead of narrowing it. */
 .activity {
   display: flex;
   flex-direction: column;
   min-height: 0;
   border-left: 1px solid var(--border);
   background: var(--surface);
+}
+.activity.open {
+  position: absolute;
+  z-index: 10;
+  inset: 0 0 0 auto;
+  width: var(--activity-w);
+  box-shadow: var(--shadow-raised);
 }
 .rail-toggle {
   display: flex;
@@ -724,7 +762,7 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .activity-list .who.archidekt { color: var(--archidekt); }
 .activity-list .detail { color: var(--muted); overflow-wrap: anywhere; }
 @media (width < 900px) {
-  .app, .app.activity-open { grid-template-columns: 180px minmax(0, 1fr); }
+  .app { grid-template-columns: 180px minmax(0, 1fr); }
   .activity { display: none; }
 }
 
@@ -749,6 +787,7 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .problems li { background: var(--danger-soft); }
 .problems li::before { content: "Problem: "; font-weight: 600; }
 .warnings li { background: var(--warn-soft); }
+.review-size { margin: 0; }
 .review-bracket { margin: var(--space-1) 0 0; font-size: var(--text-s); }
 .review-bracket.warn { color: var(--warn); font-weight: 600; }
 .warnings li::before { content: "Warning: "; font-weight: 600; }
