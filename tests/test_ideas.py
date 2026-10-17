@@ -48,7 +48,7 @@ def test_below_bracket_5_only_archidekt_decks_speak(deck: Deck) -> None:
     assert found == [Idea("Lotus Petal", Origin.DECKS, "in 3 of 4 most-viewed recent Archidekt decks", 0.75)]
 
 
-def test_each_source_keeps_its_top_ideas_with_a_target_and_settles(
+def test_each_source_keeps_its_top_ideas_and_settles(
     deck: Deck, db: CardDb, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(ideas_module, "MAX_PER_SOURCE", 1)
@@ -78,6 +78,26 @@ def test_each_source_keeps_its_top_ideas_with_a_target_and_settles(
     turned_down = read_board(tmp_path).find(meta.name)
     assert turned_down is not None
     assert turned_down.status is Status.REJECTED
+
+
+def test_an_idea_with_no_deck_card_to_replace_still_goes_on_the_board_and_takes_a_place(
+    deck: Deck, db: CardDb, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Ancient Tomb is ramp, and the deck's only ramp is its commander, who is never offered as a cut.
+    peers = [peer(i, ["Ancient Tomb", "Arcane Signet"]) for i in range(1, 4)]
+    stored = StoredDeck(tmp_path, deck)
+    added = compile_ideas(stored, meta_data([], peers), db, now=lambda: NOW)
+    assert sorted(c.name for c in added[Origin.DECKS]) == ["Ancient Tomb", "Arcane Signet"]
+    tomb = read_board(tmp_path).find("Ancient Tomb")
+    assert tomb is not None
+    assert (tomb.status, tomb.origin, tomb.replace) == (Status.OPEN, Origin.DECKS, ())
+
+    # Both are in 3 of 3 decks, so the one place goes to the first by name: the idea with no target.
+    monkeypatch.setattr(ideas_module, "MAX_PER_SOURCE", 1)
+    other = tmp_path / "limited"
+    other.mkdir()
+    [only] = compile_ideas(StoredDeck(other, deck), meta_data([], peers), db, now=lambda: NOW)[Origin.DECKS]
+    assert only.name == "Ancient Tomb"
 
 
 def compiled_names(folder: Path, deck: Deck, db: CardDb, profile: str) -> dict[Origin, list[str]]:

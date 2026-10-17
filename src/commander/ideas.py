@@ -3,11 +3,12 @@
 Bracket 5 decks get the staples of their commander's EDHTop16 lists ("meta") and of the most-viewed recent
 Archidekt decks for the commander ("archidekt decks"); decks below bracket 5 get the Archidekt ones only,
 from decks at their own bracket. Each source puts at most MAX_PER_SOURCE ideas on the board, most played
-first, and only ideas with a deck card to replace. A deck whose profile names commanders that play alike
-also gets the staples of their pooled recent Archidekt decks ("adjacent decks", ADR 0015). Ideas pass the
-profile's exclusions, bracket ceiling and price cap; below bracket 5 also the deck's budget (ADR 0025),
-those within its working budget first. EDHREC is never asked (ADR 0003): its rank, from
-Scryfall's data, only orders the cards an idea could replace.
+first. An idea with no deck card to replace is still put on the board, where the app lists it as "No cut
+yet". A deck whose profile names commanders that play alike also gets the staples of their pooled recent
+Archidekt decks ("adjacent decks", ADR 0015). Ideas pass the profile's exclusions, bracket ceiling and
+price cap; below bracket 5 also the deck's budget (ADR 0025), those within its working budget first.
+EDHREC is never asked (ADR 0003): its rank, from Scryfall's data, only orders the cards an idea could
+replace.
 """
 
 from collections.abc import Callable, Sequence
@@ -37,7 +38,6 @@ from commander.models import Deck, short_commander_name
 from commander.playstyle import Fit
 from commander.store import StoredDeck
 from commander.suggest import IdeaFilter, name_keys_of
-from commander.targets import deck_cut_rules, role_targets, with_ideas
 
 MAX_PER_SOURCE = 50
 
@@ -96,7 +96,7 @@ def adjacent_ideas(
 def compile_ideas(
     stored: StoredDeck, data: MetaData, db: CardDb, *, now: Clock, adjacent: Sequence[PeerList] = ()
 ) -> dict[Origin, list[BoardCard]]:
-    """Put each source's most-played ideas with a card to replace on the deck's board; what each added.
+    """Put each source's most-played ideas on the deck's board; what each added.
 
     adjacent holds the pooled decks of the commanders the deck's profile names as alike (ADR 0015).
     Ideas already on the board count towards a source's MAX_PER_SOURCE, so repeated syncs settle on the
@@ -111,7 +111,6 @@ def compile_ideas(
     board = read_board(stored.folder)
     main = db.resolve(deck.main_cards)
     infos = db.cards_named(idea.name for idea in ideas)
-    rules = with_ideas(deck_cut_rules(deck, main, profile, db, data), infos.values(), db)
     budget = resolved_budget(deck.bracket, main, profile.max_card_cents)
     screen = IdeaFilter(
         db,
@@ -139,7 +138,7 @@ def compile_ideas(
             if placed >= MAX_PER_SOURCE:
                 break
             info = infos.get(idea.name.casefold())
-            if info is None or screen.admit(info, banned) is None or not role_targets(info, main, rules):
+            if info is None or screen.admit(info, banned) is None:
                 continue
             existing = board.find(idea.name)
             if existing is not None and existing.status is not Status.REJECTED:

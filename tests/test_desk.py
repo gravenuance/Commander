@@ -13,13 +13,16 @@ import pytest
 
 from commander import desk as desk_module
 from commander.app import desk_settings, page_html
-from commander.carddb import CARD_DB_FILE
+from commander.carddb import CARD_DB_FILE, CardDb
 from commander.desk import Desk, DeskSettings
+from commander.ideas import compile_ideas
 from commander.metadata import CACHE_FOLDER
 from commander.net import Pacer
+from commander.store import StoredDeck, Workspace
 from conftest import REFRESH_TOKEN, FakeArchidekt, Json, MemoryTokenStore
 from test_cli_apply import run
 from test_cli_meta import ALIKE_PROFILE, MAGDA, magda_page, put_ygra_decks
+from test_meta import meta_data, peer
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 DECK = 10004639
@@ -380,6 +383,26 @@ def test_each_board_card_comes_with_the_deck_cards_it_could_replace(desk: Desk) 
     assert {t["source"] for t in targets} == {"role"}
     assert all(str(t["reason"]).startswith(("same role", "fills no role")) for t in targets)
     assert "Magda, Brazen Outlaw" not in {t["name"] for t in targets}
+
+
+def test_a_compiled_idea_with_no_deck_card_to_replace_comes_in_the_view_with_no_targets(
+    settings: DeskSettings, desk: Desk
+) -> None:
+    deck = Workspace(settings.workspace).load(DECK)
+    folder = Workspace(settings.workspace).folder_for(DECK)
+    assert deck is not None
+    assert folder is not None
+    peers = [peer(i, ["Ancient Tomb"]) for i in range(1, 4)]
+    with CardDb(settings.card_db) as db:
+        compile_ideas(StoredDeck(folder, deck), meta_data([], peers), db, now=lambda: NOW)
+    [tomb] = items(desk.deck(DECK), "cards")
+    # What the page's uncut() picks up for the "No cut yet" fold: open, with nothing to replace.
+    assert (tomb["name"], tomb["status"], tomb["origin"], tomb["targets"]) == (
+        "Ancient Tomb",
+        "open",
+        "archidekt decks",
+        [],
+    )
 
 
 def test_preview_and_commit_save_the_queued_cards(desk: Desk, fake: FakeArchidekt) -> None:
