@@ -1,5 +1,6 @@
 import io
 import json
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -922,6 +923,23 @@ def test_suggest_needs_card_data_before_asking_spellbook(tmp_path: Path, archide
     assert result.code == 1
     assert "run `cmdr sync`" in result.err
     assert archidekt.spellbook.combo_bodies == []
+
+
+def test_an_emoji_deck_name_survives_a_redirected_cp1252_stdout(
+    tmp_path: Path, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw_deck["name"] = "Honestly 🎲 though"
+    fake = FakeArchidekt()
+    fake.put(raw_deck)
+    assert sync(tmp_path, fake).code == 0
+    raw_out, raw_err = io.BytesIO(), io.BytesIO()
+    # What a Windows pipe gives a process: the ANSI codepage, not a terminal.
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(raw_out, encoding="cp1252", write_through=True))
+    monkeypatch.setattr(sys, "stderr", io.TextIOWrapper(raw_err, encoding="cp1252", write_through=True))
+    env = {"APPDATA": str(tmp_path / "appdata"), "LOCALAPPDATA": str(tmp_path / "localappdata")}
+    code = main(["list", "--workspace", str(tmp_path / "decks")], env=env, now=lambda: NOW)
+    assert code == 0
+    assert "Honestly 🎲 though" in raw_out.getvalue().decode("utf-8")
 
 
 def _broken_client() -> httpx.Client:
