@@ -2,13 +2,15 @@
 
 import logging
 import sqlite3
-from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
+import time
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Literal, Self
 
+from commander.fsutil import new_temp_path, replace_with_retry
 from commander.models import DeckCard
 
 log = logging.getLogger(__name__)
@@ -16,6 +18,8 @@ log = logging.getLogger(__name__)
 # Bump whenever the tables or the meaning of a column change; an old file is rebuilt, never migrated.
 SCHEMA_VERSION = 7
 CARD_DB_FILE = "cards.sqlite"
+# The suffix of a database being built beside the real one; a crash can leave such a file behind.
+BUILD_SUFFIX = ".building"
 _QUERY_CHUNK = 500
 _CARD_QUERIES = {
     "oracle_id": "SELECT oracle_id, name, mana_cost, cmc, type_line, color_identity, game_changer,"
@@ -688,16 +692,27 @@ def write_card_db(
     *,
     tags: Mapping[str, Tag] | None = None,
     gates: Sequence[TextGate] = (),
+    sleep: Callable[[float], None] = time.sleep,
 ) -> int:
-    """Build a fresh database next to dest and swap it in; returns the number of printings written."""
-    temp = dest.with_name(f".{dest.name}.building")
-    temp.unlink(missing_ok=True)
+    """Build a fresh database next to dest and swap it in; returns the number of printings written.
+
+    Another process (a CLI sync beside the app) may be building or reading the same database: each build
+    has its own temp file, and a swap blocked by a reader is retried before giving up with the old data kept.
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    temp = new_temp_path(dest.parent, dest.name, BUILD_SUFFIX)
     try:
         count = _fill(temp, cards, role_members, meta, tags=tags or {}, gates=gates)
-        temp.replace(dest)
+        replace_with_retry(temp, dest, sleep=sleep)
     except sqlite3.Error as error:
         temp.unlink(missing_ok=True)
         raise CardDataError(f"cannot build card data in {dest.parent}: {error}") from error
+    except PermissionError as error:
+        temp.unlink(missing_ok=True)
+        log.exception("cannot replace %s", dest)
+        raise CardDataError(
+            f"{dest} is in use by another program; the previous card data is kept, try again shortly"
+        ) from error
     except BaseException:
         temp.unlink(missing_ok=True)
         raise

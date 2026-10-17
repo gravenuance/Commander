@@ -16,6 +16,7 @@ from enum import Enum
 from pathlib import Path
 
 from commander.carddb import (
+    BUILD_SUFFIX,
     CARD_DB_FILE,
     COLORS,
     FACE_SEPARATOR,
@@ -28,6 +29,7 @@ from commander.carddb import (
     read_meta,
     write_card_db,
 )
+from commander.fsutil import new_temp_path
 from commander.jsonshape import (
     ShapeError,
     as_list,
@@ -48,6 +50,9 @@ FILE_HOST_PREFIX = "https://data.scryfall.io/"
 CARDS_FILE = "default_cards"
 TAGS_FILE = "oracle_tags"
 MAX_BULK_BYTES = 512 * 1024 * 1024
+DOWNLOAD_SUFFIX = ".jsonl.gz.part"
+# A temp file this old is from a run that died; younger ones may belong to a sync still running.
+STALE_TEMP_SECONDS = 24 * 3600
 MAX_LINE_CHARS = 1024 * 1024
 MAX_BAD_FRACTION = 0.01
 MIN_CARDS = 10_000
@@ -177,8 +182,10 @@ def refresh_card_db(
         return CardRefresh(RefreshStatus.CURRENT, current)
 
     folder.mkdir(parents=True, exist_ok=True)
-    cards_gz = folder / f".{CARDS_FILE}.jsonl.gz.part"
-    tags_gz = folder / f".{TAGS_FILE}.jsonl.gz.part"
+    _clear_stale_temp_files(folder, now())
+    # Their own names, as a CLI sync and the app may both be refreshing into this folder.
+    cards_gz = new_temp_path(folder, CARDS_FILE, DOWNLOAD_SUFFIX)
+    tags_gz = new_temp_path(folder, TAGS_FILE, DOWNLOAD_SUFFIX)
     try:
         size = f" ({cards_file.size // 1024 // 1024} MB)" if cards_file.size else ""
         on_progress(f"downloading Scryfall card data{size}")
@@ -195,6 +202,19 @@ def refresh_card_db(
         tags_gz.unlink(missing_ok=True)
     log.info("card data rebuilt: %d printings", count)
     return CardRefresh(RefreshStatus.UPDATED, meta, count)
+
+
+def _clear_stale_temp_files(folder: Path, now: datetime) -> None:
+    """Delete downloads and half-built databases a crashed run left behind; recent ones may be another's."""
+    cutoff = now.timestamp() - STALE_TEMP_SECONDS
+    for pattern in (f".*{DOWNLOAD_SUFFIX}", f".*{BUILD_SUFFIX}"):
+        for path in folder.glob(pattern):
+            try:
+                if path.is_file() and path.stat().st_mtime < cutoff:
+                    path.unlink()
+                    log.info("removed the stale temp file %s", path.name)
+            except OSError as error:
+                log.warning("could not remove the stale temp file %s: %s", path.name, error)
 
 
 def parse_bulk_listing(raw: object) -> dict[str, BulkFile]:
