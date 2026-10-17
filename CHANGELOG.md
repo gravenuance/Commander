@@ -96,6 +96,8 @@
   sign-in screen instead of stopping. `cmdr sync` and the app share one sync (`syncrun.run_sync`).
 
 ### Fixed
+- The Mana tab no longer counts the basics its named lands replace as basic cuts: Arabella's "Mountain 9 → 5"
+  is now "Mountain 9 → 9 (−4 for the lands below)".
 - The Mana tab counts shock lands as untapped, Evolving Wilds and its kind as tapped, and reveal lands
   and Fabled Passage as sometimes tapped.
 - Saving a board that cuts a basic land takes out one copy; it used to move every copy to the Maybeboard.

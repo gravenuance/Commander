@@ -971,7 +971,8 @@ function planSection(deck, p) {
       const outcome = p.colours.find((c) => c.colour === b.colour);
       return el("li", { class: `mana-basic${b.now === b.after ? "" : " changed"}` },
         el("span", { class: `pip ${b.colour}`, text: b.colour, title: COLOUR_NAMES[b.colour] }),
-        el("span", { text: `${b.name} ${b.now} → ${b.after}` }),
+        el("span", {}, document.createTextNode(`${b.name} ${b.now} → ${b.after}`),
+          b.replaced ? el("span", { class: "muted small", text: ` (−${b.replaced} for the lands below)` }) : null),
         outcome ? el("span", { class: "muted small", text: `${outcome.shortNow} → ${outcome.shortAfter} short` }) : null);
     })));
   const within = p.swaps.filter((s) => s.withinBudget);

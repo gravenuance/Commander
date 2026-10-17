@@ -50,6 +50,10 @@ runs. A shock land in an Ashling list whose dearest card is €7.16 makes no sen
   only where none within fits. The tab shows the swaps in two groups, within budget and over budget.
 - The profile's price limit, when set, caps both.
 
+Each basic's count after the plan shows only the land count and basic-for-basic moves; the basics the named
+lands replace are shown apart ("Mountain 9 → 9, −4 for the lands below"). Counted together they read as
+cuts with nothing in their place whenever the owner skips the named lands (Arabella, 2026-10-17).
+
 The plan is checked by running the analysis again on the deck as it would leave it; the tab shows each
 colour's short cards now and after, and what is still short.
 

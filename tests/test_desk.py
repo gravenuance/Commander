@@ -176,7 +176,9 @@ def test_below_bracket_5_the_mana_tab_suggests_the_land_count_and_basics(
     change = cast("int", plan["landChange"])
     assert change == round(cast("float", plan["target"]) - cast("float", plan["lands"]))
     assert change > 0
-    assert items(plan, "basics") == [{"colour": "R", "name": "Mountain", "now": 6, "after": 6 + change}]
+    assert items(plan, "basics") == [
+        {"colour": "R", "name": "Mountain", "now": 6, "after": 6 + change, "replaced": 0}
+    ]
     # Mono-red with no tap-lands: nothing to swap, so nothing goes on the board.
     assert plan["swaps"] == []
     assert desk.mana_to_board(DECK) == {"added": [], "skipped": 0}

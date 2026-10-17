@@ -173,7 +173,11 @@ class BasicCount:
     colour: str
     name: str
     now: int
+    # After the land count and basic-for-basic moves alone.
     after: int
+    # Of the rest, how many the named lands among the swaps replace; kept apart so the count never reads as
+    # a cut when those lands are left out.
+    replaced: int = 0
 
 
 @dataclass(slots=True, frozen=True)
@@ -261,7 +265,8 @@ def suggest_mana(
     counted = _count_change(now, need, change, names)
     after = _rebalance(counted, need, names)
     swaps = _basic_swaps(counted, after, names)
-    # _named_lands takes each replaced basic off after.
+    # _named_lands takes each replaced basic off after; basics_only keeps the count before it.
+    basics_only = dict(after)
     budget = _Budget(budget_cents)
     named = _named_lands(after, need, names, options, budget=budget, held=held, deck_colours=len(colours))
     taken = held | {s.add.casefold() for s in named}
@@ -277,7 +282,11 @@ def suggest_mana(
         target=report.lands.suggested,
         land_change=change,
         cut_candidates=cut_candidates,
-        basics=tuple(BasicCount(c, names[c], now[c], after[c]) for c in colours if c in names),
+        basics=tuple(
+            BasicCount(c, names[c], now[c], basics_only[c], basics_only[c] - after[c])
+            for c in colours
+            if c in names
+        ),
         swaps=plan_swaps,
         colours=tuple(
             ColourOutcome(colour.colour, len(colour.shortfalls), len(short_after.get(colour.colour, ())))
@@ -984,7 +993,10 @@ def plan_json(plan: ManaPlan) -> dict[str, object]:
         "target": plan.target,
         "landChange": plan.land_change,
         "cutCandidates": list(plan.cut_candidates),
-        "basics": [{"colour": b.colour, "name": b.name, "now": b.now, "after": b.after} for b in plan.basics],
+        "basics": [
+            {"colour": b.colour, "name": b.name, "now": b.now, "after": b.after, "replaced": b.replaced}
+            for b in plan.basics
+        ],
         "swaps": [
             {
                 "add": s.add,

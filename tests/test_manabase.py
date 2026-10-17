@@ -194,7 +194,8 @@ def test_basics_move_to_the_short_colour_and_untapped_duals_close_what_is_left()
         Swap("Hallowed Fountain", 1, "Plains", "Blue is short of sources; enters untapped", 1500),
         Swap("Tundra", 1, "Plains", "Blue is short of sources; enters untapped", 40000),
     )
-    assert plan.basics == (BasicCount("W", "Plains", 30, 16), BasicCount("U", "Island", 8, 20))
+    # Twelve Plains become Islands; the two lands each take a further Plains, counted apart.
+    assert plan.basics == (BasicCount("W", "Plains", 30, 18, 2), BasicCount("U", "Island", 8, 20))
     # Blue: 22 sources after, still short of Counterspell's 27.8; the commander is met.
     assert plan.colours == (ColourOutcome("W", 0, 0), ColourOutcome("U", 2, 1))
     assert plan.still_short == ("Counterspell",)
