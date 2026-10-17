@@ -81,6 +81,19 @@ def test_ordered_then_arrived_change_the_label_on_archidekt_and_locally(
     ]
 
 
+def test_a_mark_whose_read_back_fails_says_to_run_sync(
+    home: Path, fake: FakeArchidekt, memory_keyring: MemoryKeyring
+) -> None:
+    signed_in(memory_keyring)
+    fake.fail_reads_after_edit = True
+
+    result = toget(home, fake, "magda", "Battered Golem", "--ordered")
+
+    assert result.code == 1
+    assert result.err.startswith("cmdr: Archidekt took the change, but reading the deck back failed (")
+    assert result.err.endswith(" returned HTTP 404); run `cmdr sync`\n")
+
+
 def test_a_mark_that_changes_nothing_writes_nothing(
     home: Path, fake: FakeArchidekt, memory_keyring: MemoryKeyring
 ) -> None:

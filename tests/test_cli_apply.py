@@ -283,7 +283,7 @@ def test_a_preview_with_an_expired_login_goes_on_without_it(
 
     assert result.code == 0
     assert result.err == (
-        "cmdr: the saved Archidekt login has expired; run `cmdr login` again; previewing without signing in\n"
+        "cmdr: the saved Archidekt login has expired; run `cmdr login`; previewing without signing in\n"
     )
 
 

@@ -21,7 +21,13 @@ from commander.apply import (
     apply_plan,
 )
 from commander.archidekt import ArchidektError
-from commander.archidekt_edit import ArchidektAuth, ArchidektEditor, AuthError
+from commander.archidekt_edit import (
+    ArchidektAuth,
+    ArchidektEditor,
+    AuthError,
+    ReadBackError,
+    SignInRequiredError,
+)
 from commander.board import (
     BoardError,
     BoardIOError,
@@ -221,6 +227,9 @@ def main(  # noqa: PLR0911 — one exit code per failure class, mapped in one pl
     except (ConfigError, UsageError, PlanError, NotYourDeckError, BoardError) as error:
         print(f"cmdr: {error}", file=err)
         return EXIT_USAGE
+    except (SignInRequiredError, ReadBackError) as error:
+        print(f"cmdr: {_with_remedy(error)}", file=err)
+        return EXIT_FAILURE
     except (
         NetworkError,
         ArchidektError,
@@ -245,6 +254,15 @@ def main(  # noqa: PLR0911 — one exit code per failure class, mapped in one pl
         logging.getLogger(__name__).debug("unexpected error", exc_info=True)
         print(f"cmdr: unexpected error: {type(error).__name__}: {error}", file=err)
         return EXIT_FAILURE
+
+
+def _with_remedy(error: Exception) -> str:
+    """The error's message plus the cmdr command that fixes it; shared modules leave that to the front end."""
+    if isinstance(error, SignInRequiredError):
+        return f"{error}; run `cmdr login`"
+    if isinstance(error, ReadBackError):
+        return f"{error}; run `cmdr sync`"
+    return str(error)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -688,7 +706,7 @@ def _access_token(auth: ArchidektAuth, user: str, args: argparse.Namespace, ctx:
     try:
         return auth.access_token(user)
     except AuthError as error:
-        print(f"cmdr: {error}; previewing without signing in", file=ctx.err)
+        print(f"cmdr: {_with_remedy(error)}; previewing without signing in", file=ctx.err)
         return None
 
 

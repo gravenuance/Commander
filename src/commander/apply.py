@@ -16,6 +16,7 @@ from commander.archidekt_edit import (
     EditKind,
     EntryState,
     LiveDeck,
+    ReadBackError,
     label_value,
     new_entry_state,
 )
@@ -340,6 +341,10 @@ class SaveError(Exception):
     """Saving stopped; the message says whether anything reached Archidekt."""
 
 
+class SaveReadBackError(SaveError, ReadBackError):
+    """The changes reached Archidekt, but reading the deck back failed."""
+
+
 @dataclass(slots=True, frozen=True)
 class SaveResult:
     deck: Deck
@@ -392,9 +397,9 @@ def save(
     try:
         after = editor.get_deck(deck.id).deck
     except (NetworkError, ArchidektError) as error:
-        raise SaveError(
+        raise SaveReadBackError(
             f"Archidekt accepted the changes, but reading the deck back failed ({error}); "
-            "run `cmdr sync` to check the deck and update the local copy"
+            "the local copy may be behind"
         ) from error
     return SaveResult(after, snapshot, tuple(verify(resolution.changes, deck, after)))
 

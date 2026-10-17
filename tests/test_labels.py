@@ -92,6 +92,17 @@ def test_a_label_change_archidekt_refuses_is_noted_on_the_board_activity(
     assert "HTTP 500" in latest["detail"]
 
 
+def test_a_label_whose_read_back_fails_says_to_press_update(desk: Desk, fake: FakeArchidekt) -> None:
+    fake.fail_reads_after_edit = True
+
+    result = desk.set_label(DECK, "Battered Golem", "Proxy")
+
+    assert result == {
+        "error": "Archidekt took the change, but reading the deck back failed "
+        "(https://archidekt.com/api/decks/10004639/ returned HTTP 404). Press Update from Archidekt."
+    }
+
+
 # The account's labels as Archidekt lists them (ADR 0012): shared by every deck, in the account's colours.
 ACCOUNT: list[Json] = [
     {"id": 4, "color": "#ab12cd", "name": "Proxy"},

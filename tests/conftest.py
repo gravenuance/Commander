@@ -399,6 +399,8 @@ class FakeArchidekt:
         self.user = user
         self.decks: dict[int, Json] = {}
         self.failing: dict[int, int] = {}
+        # Set to make every read of a deck fail once a modifyCards has been applied to it.
+        self.fail_reads_after_edit = False
         self.requests: list[str] = []
         self.writes: list[tuple[str, str, Json, str | None]] = []
         self.write_status: dict[str, int] = {}
@@ -517,7 +519,10 @@ class FakeArchidekt:
         if path.endswith("/snapshots/"):
             return httpx.Response(201, json={"id": 1, "name": body["name"]})
         if path.endswith("/modifyCards/v2/"):
-            return httpx.Response(200, json=self._modify(self.decks[deck_id], body["cards"]))
+            answer = self._modify(self.decks[deck_id], body["cards"])
+            if self.fail_reads_after_edit:
+                self.failing[deck_id] = 404
+            return httpx.Response(200, json=answer)
         return httpx.Response(404)
 
     def _modify(self, deck: Json, edits: list[Json]) -> Json:

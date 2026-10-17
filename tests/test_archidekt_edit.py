@@ -16,6 +16,7 @@ from commander.archidekt_edit import (
     CardEdit,
     EditKind,
     EntryState,
+    SignInRequiredError,
     edit_json,
     label_value,
     new_entry_state,
@@ -117,18 +118,22 @@ def test_access_token_comes_from_the_saved_refresh_token(fake: FakeArchidekt, fe
     assert fake.writes[0][1:3] == ("/api/rest-auth/token/refresh/", {"refresh": REFRESH_TOKEN})
 
 
-def test_without_a_saved_login_access_token_asks_for_cmdr_login(
+def test_without_a_saved_login_access_token_says_so_for_any_front_end(
     fake: FakeArchidekt, fetcher: Fetcher
 ) -> None:
-    with pytest.raises(AuthError, match="run `cmdr login`"):
+    with pytest.raises(SignInRequiredError) as raised:
         ArchidektAuth(fetcher, MemoryTokenStore()).access_token("MAKKIS")
+
+    assert str(raised.value) == "not signed in to Archidekt as MAKKIS"
 
     assert fake.writes == []
 
 
-def test_an_expired_refresh_token_asks_to_log_in_again(fetcher: Fetcher) -> None:
-    with pytest.raises(AuthError, match="expired; run `cmdr login` again"):
+def test_an_expired_refresh_token_says_the_login_expired(fetcher: Fetcher) -> None:
+    with pytest.raises(SignInRequiredError) as raised:
         ArchidektAuth(fetcher, MemoryTokenStore({"makkis": "old"})).access_token("MAKKIS")
+
+    assert str(raised.value) == "the saved Archidekt login has expired"
 
 
 @pytest.mark.parametrize(
@@ -207,9 +212,11 @@ def test_writes_carry_the_token_and_go_out_once(fake: FakeArchidekt, fetcher: Fe
     assert fake.writes[0][2] == {"name": "before", "description": "why"}
 
 
-def test_writing_without_a_token_asks_for_cmdr_login(fake: FakeArchidekt, fetcher: Fetcher) -> None:
-    with pytest.raises(AuthError, match="run `cmdr login`"):
+def test_writing_without_a_token_says_saving_needs_a_login(fake: FakeArchidekt, fetcher: Fetcher) -> None:
+    with pytest.raises(SignInRequiredError) as raised:
         ArchidektEditor(fetcher, None).create_snapshot(DECK_ID, "before", "why")
+
+    assert str(raised.value) == "saving needs an Archidekt login"
 
     assert fake.writes == []
 
@@ -217,7 +224,11 @@ def test_writing_without_a_token_asks_for_cmdr_login(fake: FakeArchidekt, fetche
 @pytest.mark.parametrize(
     ("status", "error", "message"),
     [
-        (403, AuthError, r"HTTP 403\); is the deck yours"),
+        (
+            403,
+            SignInRequiredError,
+            r"\(HTTP 403\); the deck may not be yours, or the login has expired$",
+        ),
         (429, ArchidektError, "limiting requests"),
         (500, NetworkError, "HTTP 500"),
     ],
@@ -413,24 +424,30 @@ def test_a_label_takes_the_account_colour_else_archidekt_default() -> None:
 def test_reading_the_account_labels_needs_a_login() -> None:
     with (
         httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(500))) as client,
-        pytest.raises(AuthError, match="cmdr login"),
+        pytest.raises(SignInRequiredError) as raised,
     ):
         ArchidektEditor(Fetcher(client), None).account_labels()
 
+    assert str(raised.value) == "reading your labels needs an Archidekt login"
 
-def test_an_expired_login_on_the_labels_read_asks_to_log_in_again(fetcher: Fetcher) -> None:
-    with pytest.raises(AuthError, match="run `cmdr login` again"):
+
+def test_an_expired_login_on_the_labels_read_says_the_login_was_refused(fetcher: Fetcher) -> None:
+    with pytest.raises(SignInRequiredError) as raised:
         ArchidektEditor(fetcher, "expired access token").account_labels()
+
+    assert str(raised.value) == "Archidekt refused the login"
 
 
 @pytest.mark.parametrize("status", [401, 403])
-def test_a_refused_login_on_a_deck_read_asks_to_log_in_again(
+def test_a_refused_login_on_a_deck_read_says_the_login_was_refused(
     fake: FakeArchidekt, fetcher: Fetcher, status: int
 ) -> None:
     fake.failing[DECK_ID] = status
 
-    with pytest.raises(AuthError, match="run `cmdr login` again"):
+    with pytest.raises(SignInRequiredError) as raised:
         ArchidektEditor(fetcher, ACCESS_TOKEN).get_deck(DECK_ID)
+
+    assert str(raised.value) == "Archidekt refused the login"
 
 
 def test_a_refused_deck_read_without_a_login_stays_a_network_error(

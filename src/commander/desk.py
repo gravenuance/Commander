@@ -20,7 +20,13 @@ import httpx
 from commander.answers import card_key
 from commander.apply import NotYourDeckError, Resolution, SaveError
 from commander.archidekt import ArchidektError
-from commander.archidekt_edit import ArchidektAuth, ArchidektEditor, AuthError
+from commander.archidekt_edit import (
+    ArchidektAuth,
+    ArchidektEditor,
+    AuthError,
+    ReadBackError,
+    SignInRequiredError,
+)
 from commander.background import in_background
 from commander.board import (
     Actor,
@@ -123,12 +129,21 @@ def _guard[**P](method: Callable[P, Json], *, show_args: bool) -> Callable[P, Js
             return method(*args, **kwargs)
         except _EXPECTED as error:
             log.warning("%s failed: %s", method.__name__, error)
-            return {"error": str(error)}
+            return {"error": _app_text(error)}
         except Exception:
             log.exception("%s failed unexpectedly", method.__name__)
             return {"error": "Something went wrong; the details are in the log."}
 
     return call
+
+
+def _app_text(error: Exception) -> str:
+    """The error's message plus what to press in the app; shared modules leave the remedy to the front end."""
+    if isinstance(error, SignInRequiredError):
+        return f"{error}. Sign in to Archidekt."
+    if isinstance(error, ReadBackError):
+        return f"{error}. Press Update from Archidekt."
+    return str(error)
 
 
 def _sync_thread(work: Callable[[], None]) -> object:

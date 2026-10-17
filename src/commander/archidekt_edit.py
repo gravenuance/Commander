@@ -46,7 +46,17 @@ _TOO_MANY = 429
 
 
 class AuthError(Exception):
-    """No usable Archidekt login; the message says how to get one."""
+    """Signing in or using the login failed."""
+
+
+class SignInRequiredError(AuthError):
+    """No usable Archidekt login. The message states the problem; each front end adds how to sign in."""
+
+
+class ReadBackError(Exception):
+    """A change reached Archidekt but reading the deck back failed, so the local copy is behind.
+
+    Mixed into the save and label errors, so each front end can add how to update the deck."""
 
 
 class EditKind(Enum):
@@ -168,7 +178,7 @@ class ArchidektAuth:
     def access_token(self, user: str) -> str:
         refresh = self._store.get(user)
         if refresh is None:
-            raise AuthError(f"not signed in to Archidekt as {user}; run `cmdr login`")
+            raise SignInRequiredError(f"not signed in to Archidekt as {user}")
         try:
             return self._exchange(user, refresh)
         except AuthError:
@@ -185,7 +195,7 @@ class ArchidektAuth:
             )
         except HttpStatusError as error:
             if error.status in _UNAUTHORIZED:
-                raise AuthError("the saved Archidekt login has expired; run `cmdr login` again") from None
+                raise SignInRequiredError("the saved Archidekt login has expired") from None
             if error.status == _BAD_REQUEST:
                 raise ArchidektError(f"Archidekt rejected the token refresh: {error.detail}") from None
             raise
@@ -218,7 +228,7 @@ class ArchidektEditor:
         except HttpStatusError as error:
             # Without a token a 401/403 is the deck being private, which the status error already says.
             if self._headers is not None and error.status in _UNAUTHORIZED:
-                raise AuthError("Archidekt refused the login; run `cmdr login` again") from None
+                raise SignInRequiredError("Archidekt refused the login") from None
             raise
         try:
             return LiveDeck(parse_deck(raw), parse_entry_states(raw), category_flags(raw))
@@ -243,12 +253,12 @@ class ArchidektEditor:
     def account_labels(self) -> list[tuple[str, str]]:
         """The card labels the signed-in account keeps for all its decks, as (name, colour)."""
         if self._headers is None:
-            raise AuthError("reading your labels needs an Archidekt login; run `cmdr login`")
+            raise SignInRequiredError("reading your labels needs an Archidekt login")
         try:
             raw = self._fetcher.get_json(f"{self._base_url}/decks/colorTags/", headers=self._headers)
         except HttpStatusError as error:
             if error.status in _UNAUTHORIZED:
-                raise AuthError("Archidekt refused the login; run `cmdr login` again") from None
+                raise SignInRequiredError("Archidekt refused the login") from None
             raise
         try:
             return parse_account_labels(raw)
@@ -266,14 +276,14 @@ class ArchidektEditor:
 
     def _write(self, method: str, path: str, payload: object) -> None:
         if self._headers is None:
-            raise AuthError("saving needs an Archidekt login; run `cmdr login`")
+            raise SignInRequiredError("saving needs an Archidekt login")
         try:
             self._fetcher.send(method, self._base_url + path, payload, headers=self._headers)
         except HttpStatusError as error:
             if error.status in _UNAUTHORIZED:
-                raise AuthError(
-                    f"Archidekt refused the change (HTTP {error.status}); is the deck yours? "
-                    "If it is, run `cmdr login` again"
+                raise SignInRequiredError(
+                    f"Archidekt refused the change (HTTP {error.status}); "
+                    "the deck may not be yours, or the login has expired"
                 ) from None
             if error.status == _BAD_REQUEST:
                 raise ArchidektError(f"Archidekt rejected the change (HTTP 400): {error.detail}") from None

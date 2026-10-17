@@ -383,13 +383,15 @@ def test_preview_and_commit_save_the_queued_cards(desk: Desk, fake: FakeArchidek
     assert items(desk.deck(DECK), "cards")[0]["status"] == "applied"
 
 
-def test_commit_without_a_login_says_how_to_sign_in(settings: DeskSettings, fake: FakeArchidekt) -> None:
+def test_commit_without_a_login_says_how_to_sign_in_in_the_apps_words(
+    settings: DeskSettings, fake: FakeArchidekt
+) -> None:
     desk = make_desk(settings, fake, signed_in=False)
     desk.propose(DECK, "Arcane Signet")
     card_id = first_card_id(desk)
     desk.decide(DECK, card_id, "add", None, "")
     answer = desk.commit(DECK, reviewed(desk))
-    assert "cmdr login" in str(answer["error"])
+    assert answer == {"error": "not signed in to Archidekt as MAKKIS. Sign in to Archidekt."}
     assert not fake.card_writes()
 
 

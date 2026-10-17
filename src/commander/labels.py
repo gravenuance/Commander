@@ -19,6 +19,7 @@ from commander.archidekt_edit import (
     AuthError,
     CardEdit,
     EditKind,
+    ReadBackError,
     label_value,
 )
 from commander.board import Actor, BoardService
@@ -32,6 +33,10 @@ log = logging.getLogger(__name__)
 
 class LabelError(Exception):
     """The mark cannot be made; the message says why."""
+
+
+class LabelReadBackError(LabelError, ReadBackError):
+    """The label change reached Archidekt, but reading the deck back failed."""
 
 
 class Step(Enum):
@@ -170,8 +175,8 @@ def _relabel(  # noqa: PLR0917 — the shared body of set_label and mark
         after = editor.get_deck(deck_id).deck
     except (NetworkError, ArchidektError, AuthError) as error:
         log.info("reading deck %d back after a label change failed: %s", deck_id, error)
-        raise LabelError(
-            f"Archidekt took the change, but reading the deck back failed ({error}); run `cmdr sync`"
+        raise LabelReadBackError(
+            f"Archidekt took the change, but reading the deck back failed ({error})"
         ) from error
     workspace.save(after)
     service.note(actor, action, f"label {before or 'none'} -> {label or 'none'}", card)

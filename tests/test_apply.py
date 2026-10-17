@@ -10,6 +10,7 @@ from commander.apply import (
     ChangeKind,
     Resolution,
     SaveError,
+    SaveReadBackError,
     card_edits,
     default_category,
     resolve_plan,
@@ -595,8 +596,13 @@ def test_a_failed_read_back_says_the_changes_were_sent(
     resolution = resolve_plan(live.deck, plan(remove=[RemoveCard("Disruptor Flute")]), db)
     fake.failing[DECK_ID] = 404
 
-    with pytest.raises(SaveError, match="Archidekt accepted the changes, but reading the deck back failed"):
+    with pytest.raises(SaveReadBackError) as raised:
         save(editor, live, resolution, now=lambda: NOW)
+
+    assert str(raised.value) == (
+        "Archidekt accepted the changes, but reading the deck back failed "
+        "(https://archidekt.com/api/decks/10004639/ returned HTTP 404); the local copy may be behind"
+    )
 
     assert len(fake.writes) == 2
 
