@@ -1,5 +1,7 @@
 """The suggested mana plan: land count, basics, named lands and tap-land swaps (ADR 0024)."""
 
+from dataclasses import replace
+
 import pytest
 
 from commander.manabase import analyse_mana
@@ -162,6 +164,26 @@ def test_the_land_change_rounds_halves_away_from_zero(
     cards = by_name(*KNOWN, one_more)
     plan = suggest_mana(deck, cards, analyse_mana(deck, cards), options=())
     assert (plan.lands, plan.target, plan.land_change) == (lands, target, change)
+
+
+@pytest.mark.parametrize(
+    ("lands", "spells", "suggested", "change"),
+    [
+        # Just under 2.5 short and just over one short: float noise from the formula, not a real gap.
+        (35, (14, 1), 37.5 - 1e-13, 3),
+        (37, (9, 3), 38.0 + 1e-13, 0),
+    ],
+)
+def test_float_noise_in_the_suggested_count_does_not_move_a_land_change_edge(
+    lands: int, spells: tuple[int, int], suggested: float, change: int
+) -> None:
+    twos, other = spells
+    one_more = card("Odd", "{" + str(other) + "}", other, "Artifact")
+    deck = deck_of(("Plains", lands // 2 + lands % 2), ("Island", lands // 2), ("Filler", twos), ("Odd", 1))
+    cards = by_name(*KNOWN, one_more)
+    report = analyse_mana(deck, cards)
+    noisy = replace(report, lands=replace(report.lands, suggested=suggested))
+    assert suggest_mana(deck, cards, noisy, options=()).land_change == change
 
 
 def test_a_tap_land_making_none_of_the_decks_colours_gets_no_twin() -> None:

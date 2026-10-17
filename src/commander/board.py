@@ -17,6 +17,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import Enum
+from functools import cached_property
 from pathlib import Path
 
 from commander.answers import card_key
@@ -46,6 +47,8 @@ STALE_LOCK_SECONDS = 60.0
 # How far a turned-down card's share of the meta's lists must rise before the meta offers it again.
 RETURN_RISE = 0.20
 _LOCK_POLL_SECONDS = 0.05
+# Basic land names, Wastes included, for telling a basic swap; manabase and manaplan list only the five
+# coloured basics, by type or colour, because Wastes has no land type and makes no colour.
 _BASIC_LAND_NAMES = frozenset({"plains", "island", "swamp", "mountain", "forest", "wastes"})
 _THREAD_LOCK = threading.Lock()
 
@@ -562,6 +565,11 @@ class BoardService:
                 board, Activity(self._stamp(), actor, action, card, _bounded(detail, MAX_NOTE, "the detail"))
             )
 
+    @cached_property
+    def _identity(self) -> str | None:
+        # Once per service: the deck does not change under it, and a sync adds up to 150 cards.
+        return deck_identity(self._db.resolve(self._deck.main_cards))
+
     def _card(self, name: str) -> CardInfo:
         if not name.strip():
             raise BoardError("the card name is empty")
@@ -570,7 +578,7 @@ class BoardService:
             raise BoardError(f"no card named {name.strip()!r} (check the spelling)")
         if not info.commander_legal:
             raise BoardError(f"{info.name} is not legal in Commander")
-        identity = deck_identity(self._db.resolve(self._deck.main_cards))
+        identity = self._identity
         if identity is not None and not set(info.color_identity) <= set(identity):
             raise BoardError(f"{info.name} is outside the deck's colours ({identity or 'colourless'})")
         # A deck may run any number of a basic land, so a basic can be added when it already runs some.

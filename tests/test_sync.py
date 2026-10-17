@@ -108,3 +108,45 @@ def test_an_interrupted_sync_leaves_no_thread_that_keeps_the_process_alive(
         assert all(thread.daemon for thread in started)
     finally:
         release.set()
+
+
+def test_an_interrupted_sync_cancels_the_fetches_still_queued(tmp_path: Path, raw_deck: Json) -> None:
+    # Seven decks against four fetch threads: the first deck answers at once, the next five block, and the
+    # last two wait in the queue.
+    ids = [DECK_ID, *range(301, 307)]
+    fake = FakeArchidekt()
+    for deck_id in ids:
+        fake.put({**raw_deck, "id": deck_id, "name": f"Deck {deck_id}"})
+    release = threading.Event()
+    fetched: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/api/decks/") and request.url.path != "/api/decks/v3/":
+            deck_id = int(request.url.path.removeprefix("/api/decks/").rstrip("/"))
+            fetched.append(deck_id)
+            if deck_id != DECK_ID:
+                release.wait(timeout=30)
+        return fake.handler(request)
+
+    def on_progress(message: str) -> None:
+        if message.startswith("fetched"):
+            raise KeyboardInterrupt
+
+    before = set(threading.enumerate())
+    # The client stays open until the fetch threads are done, or a fetch left running would fail on it.
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        try:
+            with pytest.raises(KeyboardInterrupt):
+                sync_decks(
+                    ArchidektClient(Fetcher(client, sleep=lambda _: None)),
+                    Workspace(tmp_path / "decks"),
+                    "MAKKIS",
+                    on_progress=on_progress,
+                )
+        finally:
+            release.set()
+        for thread in set(threading.enumerate()) - before:
+            thread.join(timeout=30)
+
+    # The worker that finished the first deck may take the fifth before the cancel; nothing later runs.
+    assert set(fetched) <= set(ids[:5])

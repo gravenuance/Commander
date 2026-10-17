@@ -2,7 +2,7 @@ import json
 import os
 import re
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -28,7 +28,7 @@ from commander.board import (
     read_activity,
     read_board,
 )
-from commander.carddb import CardDb
+from commander.carddb import CardDb, ResolvedCard
 from commander.models import Deck
 from commander.plan import AddCard, Plan, RemoveCard
 from conftest import Json
@@ -106,6 +106,24 @@ def test_a_card_is_listed_once(service: BoardService) -> None:
     service.propose("Lightning Bolt", Actor.YOU)
     with pytest.raises(BoardError, match="Lightning Bolt is already on the board"):
         service.propose("Lightning Bolt", Actor.CLAUDE, section=Section.SUGGESTED)
+
+
+def test_the_decks_colour_identity_is_worked_out_once_for_many_cards(
+    service: BoardService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[int] = []
+    real = board_module.deck_identity
+
+    def counted(main: Sequence[ResolvedCard]) -> str | None:
+        calls.append(len(main))
+        return real(main)
+
+    monkeypatch.setattr(board_module, "deck_identity", counted)
+    for name in ("Lightning Bolt", "Arcane Signet", "Mountain"):
+        service.propose(name, Actor.YOU)
+    with pytest.raises(BoardError, match="outside the deck's colours"):
+        service.propose("Rhystic Study", Actor.YOU)
+    assert len(calls) == 1
 
 
 def test_research_records_the_reason_and_the_cards_to_replace(tmp_path: Path, service: BoardService) -> None:
