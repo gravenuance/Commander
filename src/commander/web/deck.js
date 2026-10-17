@@ -51,7 +51,7 @@ async function openDeck(id) {
     state.collapsed.clear();
     state.tagsKey = null;
     state.leaningsKey = null;
-    $("list-considered").replaceChildren();
+    $("list-considering").replaceChildren();
     $("grid").replaceChildren();
     closeLabelMenu(false);
     renderDecks();
@@ -94,7 +94,7 @@ function renderDeck() {
   $("meta").hidden = view.bracket !== META_BRACKET;
 
   renderGrid(view.grid);
-  renderConsidered(view.cards);
+  renderConsidering(view.cards);
   paint();
   paintBracket();
   renderActivity(view.activity);

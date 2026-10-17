@@ -1,4 +1,4 @@
-"""Compiling Considered from the meta and recent Archidekt decks (ADR 0014)."""
+"""Compiling Considering from the meta and recent Archidekt decks (ADR 0014)."""
 
 from dataclasses import replace
 from pathlib import Path

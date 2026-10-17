@@ -1,4 +1,4 @@
-"""`cmdr board`: the cards considered and suggested for a deck, decisions on them, and saving them."""
+"""`cmdr board`: the cards under consideration for a deck, decisions on them, and saving them."""
 
 import argparse
 import json
@@ -18,7 +18,6 @@ from commander.board import (
     BoardService,
     NothingQueuedError,
     ReplaceOption,
-    Section,
     Status,
     activity_json,
     board_json,
@@ -56,7 +55,7 @@ _ACTORS = {actor.value: actor for actor in Actor if actor is not Actor.CMDR}
 _DECISIONS = {"add": Status.ADD, "reject": Status.REJECTED, "reopen": Status.OPEN}
 _STATUS_TEXT = {Status.OPEN: "open", Status.ADD: "add", Status.REJECTED: "no", Status.APPLIED: "in deck"}
 _DESCRIPTION = """\
-Cards considered or suggested for one deck: research on them, decisions, and saving them to Archidekt.
+Cards under consideration for one deck: research on them, decisions, and saving them to Archidekt.
 The desktop app shows the same board; every change lands in the deck's activity log.
 
 examples:
@@ -72,7 +71,7 @@ examples:
 def add_board_commands(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
     board = add_parser(
         "board",
-        help="cards considered or suggested for a deck, decisions, and saving them",
+        help="cards under consideration for a deck, decisions, and saving them",
         description=_DESCRIPTION,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -84,7 +83,6 @@ def add_board_commands(add_parser: Callable[..., argparse.ArgumentParser]) -> No
 
     add = _deck_action(actions.add_parser, "add", "put a card on the board to research", by=True)
     add.add_argument("card", help="card name")
-    add.add_argument("--suggested", action="store_true", help="list it as suggested, not considered")
     add.add_argument("--reason", default="", help="why it might fit")
     _replace_argument(add)
     add.set_defaults(handler=_cmd_add)
@@ -94,7 +92,6 @@ def add_board_commands(add_parser: Callable[..., argparse.ArgumentParser]) -> No
     research.add_argument("--reason", help="why it fits or does not")
     _replace_argument(research)
     research.add_argument("--clear-replace", action="store_true", help="drop every card to replace")
-    research.add_argument("--move", choices=[s.value for s in Section], help="move it to the other list")
     research.set_defaults(handler=_cmd_research)
 
     decide = _deck_action(actions.add_parser, "decide", "add a card, turn it down, or reopen it", by=True)
@@ -170,19 +167,11 @@ def _cmd_show(args: argparse.Namespace, ctx: Context) -> int:
 
 
 def _cmd_add(args: argparse.Namespace, ctx: Context) -> int:
-    section = Section.SUGGESTED if args.suggested else Section.CONSIDERED
     with _board(args, ctx) as (stored, service, _):
         card = service.propose(
-            args.card,
-            _ACTORS[args.by],
-            section=section,
-            reason=args.reason,
-            replace_options=_options(args.replace),
+            args.card, _ACTORS[args.by], reason=args.reason, replace_options=_options(args.replace)
         )
-    print(
-        f"{card.name} is on the {stored.deck.short_name} board ({card.section.value}, id {card.id})",
-        file=ctx.out,
-    )
+    print(f"{card.name} is on the {stored.deck.short_name} board (considering, id {card.id})", file=ctx.out)
     return EXIT_OK
 
 
@@ -194,7 +183,6 @@ def _cmd_research(args: argparse.Namespace, ctx: Context) -> int:
             _ACTORS[args.by],
             reason=args.reason,
             replace_options=options,
-            section=Section(args.move) if args.move else None,
         )
     print(f"updated {card.name}", file=ctx.out)
     return EXIT_OK
@@ -306,13 +294,9 @@ def print_board(stored: StoredDeck, board: Board, out: TextIO) -> None:
     if not board.cards:
         print(f"the board is empty; `cmdr board add {deck.id} <card>` puts a card on it", file=out)
         return
-    for section in Section:
-        cards = [c for c in board.cards if c.section is section]
-        if not cards:
-            continue
-        print(f"\n{section.value}", file=out)
-        for card in cards:
-            _print_card(card, out)
+    print("\nconsidering", file=out)
+    for card in board.cards:
+        _print_card(card, out)
     queued = board.queued
     if queued:
         cuts = sum(1 for c in queued if c.choice)

@@ -126,6 +126,6 @@ def live_plan(live: LiveDeck, board: Board) -> Plan | None:
 
 
 def pick_up_aside(stored: StoredDeck, db: CardDb, *, now: Callable[[], datetime]) -> list[BoardCard]:
-    """Put the deck's Sideboard and Maybeboard cards on its board as considered; returns the new ones."""
+    """Put the deck's Sideboard and Maybeboard cards on its board under considering; returns the new ones."""
     service = BoardService(stored.folder, stored.deck, db, now=now)
     return import_aside(service, stored.deck, read_board(stored.folder))

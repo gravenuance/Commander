@@ -172,7 +172,7 @@ def _card_status(job: Future[CardRefresh] | None, options: SyncOptions) -> CardS
 
 
 def _pick_up_aside(workspace: Workspace, services: SyncServices, warnings: list[str]) -> dict[str, list[str]]:
-    """Each deck's Sideboard and Maybeboard cards new to its board, put there as considered."""
+    """Each deck's Sideboard and Maybeboard cards new to its board, put there under considering."""
     try:
         db = CardDb(services.cache / CARD_DB_FILE)
     except CardDataError as error:

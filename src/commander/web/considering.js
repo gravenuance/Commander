@@ -4,7 +4,7 @@
 
 /* Considering: every board card with somewhere to go, plus those already queued */
 
-function considered(cards) {
+function considering(cards) {
   return sortSuggestions(cards.filter((c) => c.status === "add" || (c.status === "open" && c.targets.length)));
 }
 
@@ -30,8 +30,8 @@ function uncut(cards) {
   return sortSuggestions(cards.filter((c) => c.status === "open" && !c.targets.length));
 }
 
-function renderConsidered(cards) {
-  const shown = considered(cards);
+function renderConsidering(cards) {
+  const shown = considering(cards);
   const waiting = uncut(cards);
   const live = new Set([...shown, ...waiting].map((c) => c.id));
   for (const id of [...state.tiles.keys()]) {
@@ -42,14 +42,14 @@ function renderConsidered(cards) {
   }
   if (!live.has(state.selected)) state.selected = null;
   if (!live.has(state.hovered)) state.hovered = null;
-  const list = $("list-considered");
+  const list = $("list-considering");
   shown.forEach((card, index) => place(list, tileFor(card), index));
   const waitingList = $("list-uncut");
   waiting.forEach((card, index) => place(waitingList, tileFor(card), index));
-  $("count-considered").textContent = shown.length ? `(${shown.length})` : "";
+  $("count-considering").textContent = shown.length ? `(${shown.length})` : "";
   $("uncut").hidden = !waiting.length;
   $("count-uncut").textContent = waiting.length ? `(${waiting.length})` : "";
-  $("empty-considered").hidden = shown.length + waiting.length > 0;
+  $("empty-considering").hidden = shown.length + waiting.length > 0;
   renderRejected(cards);
 }
 
@@ -163,7 +163,7 @@ function select(id) {
   first.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
 
-// Lights the grid for the considered card in focus: targets tinted, cards already queued out marked.
+// Lights the grid for the considering card in focus: targets tinted, cards already queued out marked.
 function paint() {
   const cards = [...state.tiles.values()].map((t) => t.card);
   const taken = new Map(cards.filter((c) => c.status === "add" && c.choice).map((c) => [c.choice, c]));
@@ -275,7 +275,7 @@ async function propose(name) {
         showStatus(`${answer.card.name}: pick the deck card it replaces`);
         return;
       }
-      const shown = considered(cards).some((c) => c.id === answer.card.id);
+      const shown = considering(cards).some((c) => c.id === answer.card.id);
       showStatus(shown ? `${answer.card.name} is under consideration` : `${answer.card.name} is not under consideration`, !shown);
     } catch { /* shown in the status line */ }
   });

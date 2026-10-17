@@ -590,7 +590,7 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .cards { display: grid; gap: var(--space-3); }
 .empty { margin: 0; color: var(--muted); font-size: var(--text-s); }
 
-/* Considered card */
+/* Considering card */
 .card {
   position: relative;
   display: grid;

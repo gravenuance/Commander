@@ -1,6 +1,6 @@
 """Which deck cards a board card could replace: hand-picked ones, else the weakest in its role."""
 
-from commander.board import Actor, BoardCard, ReplaceOption, Section, Status
+from commander.board import Actor, BoardCard, ReplaceOption, Status
 from commander.carddb import CardInfo, ResolvedCard, Role
 from commander.models import DeckCard
 from commander.targets import CutRules, Target, TargetSource, targets_for
@@ -29,7 +29,6 @@ def board_card(name: str, replace: tuple[ReplaceOption, ...] = (), source: Actor
         "id1",
         name,
         name.lower(),
-        Section.CONSIDERED,
         source,
         "",
         replace,

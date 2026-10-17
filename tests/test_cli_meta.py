@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from commander.board import Origin, Section, read_board
+from commander.board import Origin, read_board
 from commander.carddb import CARD_DB_FILE
 from conftest import DECK_ID, FakeArchidekt, Json, card_entry, deck_page, load_fixture
 from test_cli_apply import Run, run
@@ -219,7 +219,7 @@ def test_to_board_suggests_the_missing_staples_once(home: Path, fake: FakeArchid
     board = read_board(home / "decks" / FOLDER)
     card = board.find("Mind Stone")
     assert card is not None
-    assert (card.section, card.origin) == (Section.SUGGESTED, Origin.META)
+    assert card.origin is Origin.META
     assert card.reason == (
         "in 5 of 5 top-cut Magda lists on EDHTop16 since 2026-08-16;"
         " in 0 of 1 most-viewed recent Archidekt decks"
@@ -291,13 +291,13 @@ def sync(home: Path, fake: FakeArchidekt, *args: str) -> Run:
     return run(["sync", "--no-cards", *args, "--workspace", str(home / "decks")], home, fake)
 
 
-def test_sync_compiles_the_meta_staples_into_considered_once(home: Path, fake: FakeArchidekt) -> None:
+def test_sync_compiles_the_meta_staples_into_considering_once(home: Path, fake: FakeArchidekt) -> None:
     first = sync(home, fake)
     assert first.code == 0, first.err
     assert "Magda ideas: +2 from meta\n" in first.out
     card = read_board(home / "decks" / FOLDER).find("Jeska's Will")
     assert card is not None
-    assert (card.section, card.origin) == (Section.SUGGESTED, Origin.META)
+    assert card.origin is Origin.META
     again = sync(home, fake)
     assert again.code == 0, again.err
     assert "ideas:" not in again.out

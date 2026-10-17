@@ -86,7 +86,9 @@ def add_suggest_command(add_parser: Callable[..., argparse.ArgumentParser]) -> N
         "--json", action="store_true", help="print the ideas as JSON (prices in euro cents)"
     )
     suggest_.add_argument(
-        "--to-board", action="store_true", help="put the ideas on the deck's board as suggested (one deck)"
+        "--to-board",
+        action="store_true",
+        help="put the ideas on the deck's board under considering (one deck)",
     )
     suggest_.set_defaults(handler=_cmd_suggest)
 

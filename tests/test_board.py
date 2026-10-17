@@ -19,7 +19,6 @@ from commander.board import (
     BoardError,
     BoardService,
     ReplaceOption,
-    Section,
     Status,
     board_plan,
     board_stamp,
@@ -66,9 +65,8 @@ def service(tmp_path: Path, deck: Deck, db: CardDb) -> BoardService:
 
 def test_a_proposed_card_is_saved_by_its_real_name_and_logged(tmp_path: Path, service: BoardService) -> None:
     card = service.propose("lightning bolt", Actor.YOU, reason="cheap interaction")
-    assert (card.name, card.section, card.source, card.status) == (
+    assert (card.name, card.source, card.status) == (
         "Lightning Bolt",
-        Section.CONSIDERED,
         Actor.YOU,
         Status.OPEN,
     )
@@ -77,7 +75,7 @@ def test_a_proposed_card_is_saved_by_its_real_name_and_logged(tmp_path: Path, se
     assert (entry.at, entry.actor, entry.action, entry.card, entry.detail) == (
         "2026-10-15T12:01:00+00:00",
         Actor.YOU,
-        "proposed (considered)",
+        "proposed (considering)",
         "Lightning Bolt",
         "cheap interaction",
     )
@@ -105,7 +103,7 @@ def test_cards_that_cannot_join_the_deck_are_refused(
 def test_a_card_is_listed_once(service: BoardService) -> None:
     service.propose("Lightning Bolt", Actor.YOU)
     with pytest.raises(BoardError, match="Lightning Bolt is already on the board"):
-        service.propose("Lightning Bolt", Actor.CLAUDE, section=Section.SUGGESTED)
+        service.propose("Lightning Bolt", Actor.CLAUDE)
 
 
 def test_the_decks_colour_identity_is_worked_out_once_for_many_cards(
@@ -133,12 +131,11 @@ def test_research_records_the_reason_and_the_cards_to_replace(tmp_path: Path, se
         Actor.CLAUDE,
         reason="kills early dorks",
         replace_options=[ReplaceOption("battered golem", "slow"), ReplaceOption("Battered Golem")],
-        section=Section.SUGGESTED,
     )
     # Names come out as the deck spells them, and a repeat is dropped.
     assert researched.replace == (ReplaceOption("Battered Golem", "slow"),)
-    assert (researched.reason, researched.section) == ("kills early dorks", Section.SUGGESTED)
-    assert read_activity(tmp_path)[-1].detail == "reason, cards to replace, list"
+    assert researched.reason == "kills early dorks"
+    assert read_activity(tmp_path)[-1].detail == "reason, cards to replace"
 
 
 def test_a_card_to_replace_must_be_in_the_deck(service: BoardService) -> None:
@@ -199,7 +196,11 @@ def test_a_turned_down_card_is_reopened_when_proposed_again(tmp_path: Path, serv
     assert read_board(tmp_path).rejected_names == ("Lightning Bolt",)
     again = service.propose("Lightning Bolt", Actor.YOU)
     assert (again.id, again.status, again.reason, again.note) == (card.id, Status.OPEN, "first look", "")
-    assert [e.action for e in read_activity(tmp_path)] == ["proposed (considered)", "turned down", "reopened"]
+    assert [e.action for e in read_activity(tmp_path)] == [
+        "proposed (considering)",
+        "turned down",
+        "reopened",
+    ]
 
 
 def test_dropping_the_chosen_cut_from_the_options_reopens_the_card(service: BoardService) -> None:
@@ -243,9 +244,49 @@ def test_unreadable_or_newer_boards_are_refused(tmp_path: Path) -> None:
     (tmp_path / BOARD_FILE).write_text("{", encoding="utf-8")
     with pytest.raises(BoardError, match="cannot read"):
         read_board(tmp_path)
-    (tmp_path / BOARD_FILE).write_text(json.dumps({"version": 2, "cards": []}), encoding="utf-8")
-    with pytest.raises(BoardError, match="board version 2 is not supported"):
+    (tmp_path / BOARD_FILE).write_text(json.dumps({"version": 3, "cards": []}), encoding="utf-8")
+    with pytest.raises(BoardError, match="board version 3 is newer than this cmdr reads"):
         read_board(tmp_path)
+    (tmp_path / BOARD_FILE).write_text(json.dumps({"version": 0, "cards": []}), encoding="utf-8")
+    with pytest.raises(BoardError, match="board version 0 is not supported"):
+        read_board(tmp_path)
+
+
+def test_a_version_1_board_reads_with_every_card_considering_and_is_backed_up_before_its_next_save(
+    tmp_path: Path, service: BoardService
+) -> None:
+    def old_card(card_id: str, name: str, section: str) -> Json:
+        return {
+            "id": card_id,
+            "name": name,
+            "oracleId": "x",
+            "section": section,
+            "source": "claude",
+            "reason": "",
+            "replace": [],
+            "status": "open",
+            "choice": None,
+            "note": "",
+            "addedAt": "t",
+            "updatedAt": "t",
+        }
+
+    cards = [old_card("a1", "Lightning Bolt", "considered"), old_card("b2", "Arcane Signet", "suggested")]
+    original = json.dumps({"version": 1, "cards": cards}, indent=2) + "\n"
+    (tmp_path / BOARD_FILE).write_text(original, encoding="utf-8")
+    assert [c.name for c in read_board(tmp_path).cards] == ["Lightning Bolt", "Arcane Signet"]
+    assert (tmp_path / BOARD_FILE).read_text(encoding="utf-8") == original
+
+    service.decide("Lightning Bolt", Status.REJECTED, Actor.YOU)
+
+    saved = json.loads((tmp_path / BOARD_FILE).read_text(encoding="utf-8"))
+    assert saved["version"] == 2
+    assert all("section" not in card for card in saved["cards"])
+    assert (tmp_path / "board.v1.bak").read_text(encoding="utf-8") == original
+    # A board already at the current version is not backed up again.
+    (tmp_path / "board.v1.bak").write_text("kept", encoding="utf-8")
+    service.decide("Lightning Bolt", Status.OPEN, Actor.YOU)
+    assert (tmp_path / "board.v1.bak").read_text(encoding="utf-8") == "kept"
 
 
 def test_the_stamp_changes_with_every_edit(tmp_path: Path, service: BoardService) -> None:
@@ -331,14 +372,14 @@ def test_a_takeover_left_by_a_crashed_process_is_cleared_too(tmp_path: Path, ser
     assert len(read_board(tmp_path).cards) == 1
 
 
-def test_sideboard_and_maybeboard_cards_come_in_as_considered_once(
+def test_sideboard_and_maybeboard_cards_come_in_under_considering_once(
     tmp_path: Path, deck: Deck, service: BoardService
 ) -> None:
     added = import_aside(service, deck, read_board(tmp_path))
     # The fixture keeps High-Speed Hoverbike and Tempestra on its Maybeboard.
-    assert [(c.name, c.source, c.section, c.reason) for c in added] == [
-        ("High-Speed Hoverbike", Actor.ARCHIDEKT, Section.CONSIDERED, "on the Maybeboard on Archidekt"),
-        ("Tempestra, Dame of Games", Actor.ARCHIDEKT, Section.CONSIDERED, "on the Maybeboard on Archidekt"),
+    assert [(c.name, c.source, c.reason) for c in added] == [
+        ("High-Speed Hoverbike", Actor.ARCHIDEKT, "on the Maybeboard on Archidekt"),
+        ("Tempestra, Dame of Games", Actor.ARCHIDEKT, "on the Maybeboard on Archidekt"),
     ]
     assert import_aside(service, deck, read_board(tmp_path)) == []
 
@@ -419,7 +460,6 @@ def test_a_meta_share_on_a_card_that_is_not_turned_down_is_refused(tmp_path: Pat
         "id": "a1",
         "name": "Lightning Bolt",
         "oracleId": "x",
-        "section": "considered",
         "source": "you",
         "reason": "",
         "replace": [],
@@ -430,7 +470,7 @@ def test_a_meta_share_on_a_card_that_is_not_turned_down_is_refused(tmp_path: Pat
         "updatedAt": "t",
         "rejectedShare": 0.2,
     }
-    (tmp_path / BOARD_FILE).write_text(json.dumps({"version": 1, "cards": [card]}), encoding="utf-8")
+    (tmp_path / BOARD_FILE).write_text(json.dumps({"version": 2, "cards": [card]}), encoding="utf-8")
     with pytest.raises(BoardError, match="only a turned-down card keeps its meta share"):
         read_board(tmp_path)
 

@@ -152,7 +152,7 @@ def test_a_proposed_card_shows_with_its_card_facts(desk: Desk) -> None:
     )
     assert "Magda, Brazen Outlaw" not in names(view, "deckCards")
     assert "Battered Golem" in names(view, "deckCards")
-    assert [e["action"] for e in items(view, "activity")] == ["proposed (considered)"]
+    assert [e["action"] for e in items(view, "activity")] == ["proposed (considering)"]
 
 
 def test_decisions_and_removal_round_trip(desk: Desk) -> None:

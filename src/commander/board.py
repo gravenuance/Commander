@@ -1,4 +1,4 @@
-"""Deck boards: cards under consideration or suggested for one deck, their research, decisions and history.
+"""Deck boards: cards under consideration for one deck, their research, decisions and history.
 
 Each deck folder holds board.json (the cards now) and activity.jsonl (every change, oldest first), so the
 desktop app, the CLI and Claude all work from the same files and can catch up on each other (ADR 0006).
@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import secrets
+import shutil
 import threading
 import time
 from collections import Counter
@@ -33,7 +34,7 @@ log = logging.getLogger(__name__)
 BOARD_FILE = "board.json"
 ACTIVITY_FILE = "activity.jsonl"
 LOCK_FILE = ".board.lock"
-BOARD_VERSION = 1
+BOARD_VERSION = 2
 MAX_REASON = 4000
 MAX_NOTE = 1000
 MAX_REPLACE = 10
@@ -65,11 +66,6 @@ class NothingQueuedError(BoardError):
     """A save or plan was asked for with no card queued: a failed run, not a usage error."""
 
 
-class Section(Enum):
-    CONSIDERED = "considered"
-    SUGGESTED = "suggested"
-
-
 class Actor(Enum):
     YOU = "you"
     CLAUDE = "claude"
@@ -94,7 +90,7 @@ class ReplaceOption:
 
 
 class Origin(Enum):
-    """Where an idea compiled for Considered came from (ADR 0014); None for anything else."""
+    """Where an idea compiled for Considering came from (ADR 0014); None for anything else."""
 
     # Staples of the commander's EDHTop16 lists (bracket 5 only).
     META = "meta"
@@ -109,7 +105,6 @@ class BoardCard:
     id: str
     name: str
     oracle_id: str
-    section: Section
     source: Actor
     reason: str
     replace: tuple[ReplaceOption, ...]
@@ -203,15 +198,21 @@ def files_stamp(folder: Path, names: Iterable[str]) -> str:
 
 
 def read_board(folder: Path) -> Board:
+    return _read_stored(folder)[0]
+
+
+def _read_stored(folder: Path) -> tuple[Board, int]:
+    """The board and the format version its file was written in (BOARD_VERSION when there is no file)."""
     path = folder / BOARD_FILE
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        return Board(())
+        return Board(()), BOARD_VERSION
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise BoardIOError(f"cannot read {path}: {error}") from error
     try:
-        return parse_board(_migrate(as_object(raw, "board")))
+        tree = as_object(raw, "board")
+        return parse_board(_migrate(tree)), req_int(tree, "version", "board")
     except (ShapeError, ValueError) as error:
         raise BoardIOError(f"{path}: {error}") from error
 
@@ -250,7 +251,6 @@ def parse_board(raw: Mapping[str, object]) -> Board:
                 id=req_str(card, "id", where),
                 name=req_str(card, "name", where),
                 oracle_id=req_str(card, "oracleId", where),
-                section=Section(req_str(card, "section", where)),
                 source=Actor(req_str(card, "source", where)),
                 reason=req_str(card, "reason", where),
                 replace=tuple(
@@ -283,7 +283,6 @@ def card_json(card: BoardCard) -> dict[str, object]:
         "id": card.id,
         "name": card.name,
         "oracleId": card.oracle_id,
-        "section": card.section.value,
         "source": card.source.value,
         "reason": card.reason,
         "replace": [{"name": o.name, "reason": o.reason} for o in card.replace],
@@ -383,7 +382,6 @@ class BoardService:
         name: str,
         actor: Actor,
         *,
-        section: Section = Section.CONSIDERED,
         reason: str = "",
         replace_options: Sequence[ReplaceOption] = (),
         origin: Origin | None = None,
@@ -401,7 +399,6 @@ class BoardService:
             if existing is not None:
                 card = replace(
                     existing,
-                    section=section,
                     reason=reason or existing.reason,
                     replace=options or existing.replace,
                     status=Status.OPEN,
@@ -420,7 +417,6 @@ class BoardService:
                 id=secrets.token_hex(4),
                 name=info.name,
                 oracle_id=info.oracle_id,
-                section=section,
                 source=actor,
                 reason=reason,
                 replace=options,
@@ -434,7 +430,7 @@ class BoardService:
             )
             save(
                 Board((*board.cards, card)),
-                Activity(stamp, actor, f"proposed ({section.value})", card.name, reason),
+                Activity(stamp, actor, "proposed (considering)", card.name, reason),
             )
             return card
 
@@ -445,9 +441,8 @@ class BoardService:
         *,
         reason: str | None = None,
         replace_options: Sequence[ReplaceOption] | None = None,
-        section: Section | None = None,
     ) -> BoardCard:
-        """Record research on a card: its reason, the cards it could replace, or the list it belongs on."""
+        """Record research on a card: its reason, or the cards it could replace."""
         options = self._options(replace_options) if replace_options is not None else None
         bounded = _bounded(reason, MAX_REASON, "the reason") if reason is not None else None
         with self._editing() as (board, save):
@@ -458,7 +453,6 @@ class BoardService:
                 card,
                 reason=bounded if bounded is not None else card.reason,
                 replace=options if options is not None else card.replace,
-                section=section or card.section,
                 updated_at=self._stamp(),
             )
             if updated.choice is not None and updated.choice.casefold() not in {
@@ -470,7 +464,6 @@ class BoardService:
                 for what, before, after in (
                     ("reason", card.reason, updated.reason),
                     ("cards to replace", card.replace, updated.replace),
-                    ("list", card.section, updated.section),
                 )
                 if before != after
             ]
@@ -627,9 +620,13 @@ class BoardService:
     @contextmanager
     def _editing(self) -> Generator[tuple[Board, Callable[[Board, Activity], None]]]:
         with _board_lock(self._folder):
-            board = read_board(self._folder)
+            board, stored_version = _read_stored(self._folder)
 
             def save(updated: Board, entry: Activity) -> None:
+                nonlocal stored_version
+                if stored_version < BOARD_VERSION:
+                    _back_up_older(self._folder, stored_version)
+                    stored_version = BOARD_VERSION
                 write_text_atomic(
                     self._folder / BOARD_FILE,
                     json.dumps(board_json(updated), ensure_ascii=False, indent=2) + "\n",
@@ -666,6 +663,15 @@ def _bounded(text: str, limit: int, what: str) -> str:
     return cleaned
 
 
+def _back_up_older(folder: Path, version: int) -> None:
+    """Keep the board file as it was written in an older format, so a bad migration can be recovered."""
+    backup = folder / f"board.v{version}.bak"
+    try:
+        shutil.copyfile(folder / BOARD_FILE, backup)
+    except OSError as error:
+        raise BoardIOError(f"cannot back up {folder / BOARD_FILE} to {backup}: {error}") from error
+
+
 def _append_activity(folder: Path, entry: Activity) -> None:
     line = json.dumps(activity_json(entry), ensure_ascii=False) + "\n"
     with (folder / ACTIVITY_FILE).open("a", encoding="utf-8", newline="\n") as handle:
@@ -686,8 +692,19 @@ def _activity_from_json(raw: object) -> Activity:
 def _migrate(raw: Mapping[str, object]) -> Mapping[str, object]:
     # Migrations from older board versions go here, on the raw tree, before binding to Board.
     version = req_int(raw, "version", "board")
-    if version != BOARD_VERSION:
-        raise ShapeError(f"board version {version} is not supported (expected {BOARD_VERSION})")
+    if version > BOARD_VERSION:
+        raise ShapeError(f"board version {version} is newer than this cmdr reads (up to {BOARD_VERSION})")
+    if version < 1:
+        raise ShapeError(f"board version {version} is not supported")
+    if version == 1:
+        # Version 2 has one list, Considering, where version 1 had "considered" and "suggested".
+        raw = {
+            **raw,
+            "cards": [
+                {key: value for key, value in as_object(card, "board.cards").items() if key != "section"}
+                for card in req_list(raw, "cards", "board")
+            ],
+        }
     return raw
 
 
@@ -750,7 +767,7 @@ MAX_CUT_OPTIONS = 3
 
 
 def feed_suggestions(service: BoardService, result: Suggestions, board: Board) -> list[BoardCard]:
-    """Put suggest's ideas on the board as suggested by cmdr, the deck's cut candidates as cards to replace.
+    """Put suggest's ideas on the board under Considering, the deck's cut candidates as cards to replace.
 
     Cards already on the board, in any state, are left alone, so a turned-down card is never offered again.
     """
@@ -787,7 +804,7 @@ def feed_ideas(
     shares: Mapping[str, float] | None = None,
     origin: Origin | None = None,
 ) -> list[BoardCard]:
-    """Put each idea (card name to reason) on the board as suggested by cmdr, with cuts as cards to replace
+    """Put each idea (card name to reason) on the board under Considering, with cuts as cards to replace
     and where the ideas came from.
 
     Cards already on the board are left alone, but with the meta's shares (by `card_key`) a turned-down one
@@ -807,7 +824,6 @@ def feed_ideas(
             card = service.propose(
                 name,
                 Actor.CMDR,
-                section=Section.SUGGESTED,
                 reason=reason,
                 replace_options=cuts,
                 origin=origin,
@@ -833,7 +849,7 @@ def _returning(service: BoardService, card: BoardCard, shares: Mapping[str, floa
 
 
 def import_aside(service: BoardService, deck: Deck, board: Board) -> list[BoardCard]:
-    """Put the deck's Sideboard and Maybeboard cards on the board as considered, as picked on Archidekt.
+    """Put the deck's Sideboard and Maybeboard cards on the board under Considering, as picked on Archidekt.
 
     A card already on the board stays as it is, unless it was applied: one cut back to the Maybeboard since
     is reopened, so a swap can be weighed the other way round.

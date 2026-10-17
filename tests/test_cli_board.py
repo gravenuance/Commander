@@ -65,8 +65,8 @@ def test_an_empty_board_says_how_to_fill_it(home: Path, fake: FakeArchidekt) -> 
 def test_research_and_decisions_show_on_the_board(home: Path, fake: FakeArchidekt) -> None:
     added = board(home, fake, "add", "magda", "lightning bolt", "--reason", "kills dorks", "--by", "claude")
     assert added.code == 0, added.err
-    assert added.out.startswith("Lightning Bolt is on the Magda board (considered, id ")
-    assert board(home, fake, "add", "magda", "Arcane Signet", "--suggested").code == 0
+    assert added.out.startswith("Lightning Bolt is on the Magda board (considering, id ")
+    assert board(home, fake, "add", "magda", "Arcane Signet").code == 0
     researched = board(
         home,
         fake,
@@ -85,12 +85,10 @@ def test_research_and_decisions_show_on_the_board(home: Path, fake: FakeArchidek
 
     shown = board(home, fake, "show", "magda").out
     assert shown.splitlines()[2:] == [
-        "considered",
+        "considering",
         f"  [add, cut Battered Golem] Lightning Bolt  (by claude, id {board_id(home, 'Lightning Bolt')})",
         "      kills dorks",
         "      could replace Battered Golem: slow",
-        "",
-        "suggested",
         f"  [no] Arcane Signet  (by you, id {board_id(home, 'Arcane Signet')})",
         "      note: no room",
         "",
@@ -107,6 +105,16 @@ def test_board_refusals_are_usage_errors(home: Path, fake: FakeArchidekt) -> Non
     bad = board(home, fake, "add", "magda", "Lightning Bolt", "--replace", "=why")
     assert bad.code == 2
     assert "names no card" in bad.err
+
+
+def test_the_removed_section_flags_are_usage_errors(
+    home: Path, fake: FakeArchidekt, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert board(home, fake, "add", "magda", "Arcane Signet", "--suggested").code == 2
+    assert "unrecognized arguments: --suggested" in capsys.readouterr().err
+    assert board(home, fake, "add", "magda", "Arcane Signet").code == 0
+    assert board(home, fake, "research", "magda", "Arcane Signet", "--move", "suggested").code == 2
+    assert "unrecognized arguments: --move suggested" in capsys.readouterr().err
 
 
 def test_a_commander_cannot_be_named_as_a_card_to_replace(home: Path, fake: FakeArchidekt) -> None:
@@ -146,7 +154,7 @@ def test_log_shows_every_change_and_filters_by_time(home: Path, fake: FakeArchid
     board(home, fake, "remove", "magda", "Lightning Bolt")
     result = board(home, fake, "log")
     assert result.out == (
-        "2026-10-15T12:00:00+00:00  Magda  claude proposed (considered) Lightning Bolt\n"
+        "2026-10-15T12:00:00+00:00  Magda  claude proposed (considering) Lightning Bolt\n"
         "2026-10-15T12:00:00+00:00  Magda  you removed Lightning Bolt\n"
     )
     later = run(
@@ -157,7 +165,7 @@ def test_log_shows_every_change_and_filters_by_time(home: Path, fake: FakeArchid
     assert later.out == "nothing changed since 2026-10-15T12:00:00+00:00\n"
     rows = json.loads(run(["board", "log", "--json", "--workspace", str(home / "decks")], home, fake).out)
     assert [(r["deck"], r["deckName"], r["action"]) for r in rows] == [
-        (DECK_ID, "Magda", "proposed (considered)"),
+        (DECK_ID, "Magda", "proposed (considering)"),
         (DECK_ID, "Magda", "removed"),
     ]
 
@@ -220,14 +228,10 @@ def test_commit_previews_then_saves_and_marks_the_cards_applied(
     assert signet is not None
     assert flute is not None
     assert signet.status.value == "applied"
-    # The card swapped out comes back as considered, to weigh the swap the other way round.
-    assert (flute.status.value, flute.source.value, flute.section.value) == (
-        "open",
-        "archidekt",
-        "considered",
-    )
+    # The card swapped out comes back under considering, to weigh the swap the other way round.
+    assert (flute.status.value, flute.source.value) == ("open", "archidekt")
     assert [e.action for e in read_activity(folder(home))][-2:] == [
-        "proposed (considered)",
+        "proposed (considering)",
         "saved to Archidekt",
     ]
     nothing = board(home, fake, "commit", "magda")
@@ -294,7 +298,6 @@ def test_suggest_puts_its_ideas_on_the_board_once(home: Path, fake: FakeArchidek
     cards = read_board(folder(home)).cards
     assert cards
     assert {c.source.value for c in cards} == {"cmdr"}
-    assert {c.section.value for c in cards} == {"suggested"}
     signet = read_board(folder(home)).find("Arcane Signet")
     assert signet is not None
     assert signet.reason == "ramp is short: 2 of 10"
