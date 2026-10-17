@@ -80,6 +80,9 @@ def sync_decks(
                 results.append(_failed(plan.summary, str(error)))
                 continue
             on_progress(f"fetched {deck.name}")
+            if deck.owner.casefold() != user.casefold():
+                results.append(_failed(plan.summary, f"belongs to {deck.owner}, not {user}; skipped"))
+                continue
             results.append(_apply(workspace, plan.previous, deck, dry_run=dry_run))
     finally:
         for future in futures:

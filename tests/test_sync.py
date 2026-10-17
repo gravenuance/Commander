@@ -1,3 +1,4 @@
+import json
 import threading
 from collections.abc import Iterator
 from pathlib import Path
@@ -40,6 +41,39 @@ def test_a_deck_whose_answer_cannot_be_decoded_fails_alone(tmp_path: Path, raw_d
         OTHER_ID: SyncStatus.NEW,
     }
     assert (tmp_path / "decks" / "222-other").is_dir()
+
+
+def owned_by(fake: FakeArchidekt, owners: dict[int, str]) -> httpx.Client:
+    """A client whose deck answers name the given owner for those decks, as a mislisted deck would."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        response = fake.handler(request)
+        for deck_id, owner in owners.items():
+            if request.url.path == f"/api/decks/{deck_id}/":
+                return httpx.Response(
+                    200, json={**json.loads(response.content), "owner": {"username": owner}}
+                )
+        return response
+
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_a_deck_owned_by_someone_else_is_skipped_and_reported(tmp_path: Path, raw_deck: Json) -> None:
+    fake = FakeArchidekt()
+    fake.put(raw_deck)
+    fake.put({**raw_deck, "id": OTHER_ID, "name": "Other"})
+
+    with owned_by(fake, {DECK_ID: "Somebody", OTHER_ID: "makkis"}) as client:
+        results = sync_decks(
+            ArchidektClient(Fetcher(client, sleep=lambda _: None)), Workspace(tmp_path / "decks"), "MAKKIS"
+        )
+
+    by_id = {r.deck_id: r for r in results}
+    assert by_id[DECK_ID].status is SyncStatus.FAILED
+    assert by_id[DECK_ID].error == "belongs to Somebody, not MAKKIS; skipped"
+    # The owner's name is compared without regard to case, as Archidekt does.
+    assert by_id[OTHER_ID].status is SyncStatus.NEW
+    assert [p.name for p in (tmp_path / "decks").iterdir()] == ["222-other"]
 
 
 def test_an_interrupted_sync_leaves_no_thread_that_keeps_the_process_alive(
