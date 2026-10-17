@@ -353,6 +353,11 @@ def performing_entries(data: MetaData) -> list[Entry]:
     return performing_lists(lists)[0]
 
 
+def listed_entries(data: MetaData) -> list[Entry]:
+    """Every list with a decklist in the window, whatever it placed."""
+    return [e for e in _window(data.lists.data.entries if data.lists.data else (), data.since) if e.cards]
+
+
 def card_shares(data: MetaData) -> dict[str, float]:
     """Each card's share of the performing lists in the window, by `card_key`; empty without lists."""
     performing = performing_entries(data)
