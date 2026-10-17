@@ -438,8 +438,7 @@ class Desk:
         stored = self._stored(deck_id)
         user = self._user()
         with self._service_and_db(stored) as (service, _), self._client_factory() as http:
-            fetcher = Fetcher(http)
-            editor = ArchidektEditor(fetcher, ArchidektAuth(fetcher, self._token_store).access_token(user))
+            editor = self._editor(http, user)
             marked = set_label(
                 editor, self._workspace, stored, service, name=name, label=label, actor=Actor.YOU
             )
@@ -457,8 +456,7 @@ class Desk:
         stored = self._stored(deck_id)
         user = self._user()
         with self._service_and_db(stored) as (service, _), self._client_factory() as http:
-            fetcher = Fetcher(http)
-            editor = ArchidektEditor(fetcher, ArchidektAuth(fetcher, self._token_store).access_token(user))
+            editor = self._editor(http, user)
             marked = mark(editor, self._workspace, stored, service, name=name, step=chosen, actor=Actor.YOU)
         return {
             "card": marked.card,
@@ -702,8 +700,7 @@ class Desk:
         if board_digest(stored.folder) != stamp:
             return {"error": "The board changed after the preview; open Review again before saving."}
         with self._service_and_db(stored) as (service, db), self._client_factory() as http:
-            fetcher = Fetcher(http)
-            editor = ArchidektEditor(fetcher, ArchidektAuth(fetcher, self._token_store).access_token(user))
+            editor = self._editor(http, user)
             saved = save_board(
                 editor, self._workspace, stored, db, service, user=user, actor=Actor.YOU, now=self._now
             )
@@ -811,6 +808,11 @@ class Desk:
         if not self._settings.user:
             raise ConfigError("Sign in to Archidekt first.")
         return self._settings.user
+
+    def _editor(self, http: httpx.Client, user: str) -> ArchidektEditor:
+        """An Archidekt editor signed in as the user; the sign-in must be on file."""
+        fetcher = Fetcher(http)
+        return ArchidektEditor(fetcher, ArchidektAuth(fetcher, self._token_store).access_token(user))
 
     @contextmanager
     def _db(self) -> Generator[CardDb]:
