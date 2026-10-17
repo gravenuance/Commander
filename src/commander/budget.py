@@ -56,7 +56,8 @@ def deck_budget(bracket: int | None, prices: Iterable[tuple[int, int | None]], l
         return Budget(None, limit)
     priced = [(copies, cents) for copies, cents in prices if cents is not None]
     dearest = max((cents for _, cents in priced), default=None)
-    ceiling = round(dearest * OVER_BUDGET_MARGIN) if dearest is not None else None
+    # A deck whose dearest card is free shows no ceiling: a zero one would refuse every idea.
+    ceiling = round(dearest * OVER_BUDGET_MARGIN) if dearest else None
     return Budget(_capped(average_cents(priced), limit), _capped(ceiling, limit))
 
 

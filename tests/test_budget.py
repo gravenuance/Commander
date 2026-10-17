@@ -29,3 +29,12 @@ def test_the_within_line_never_passes_the_ceiling() -> None:
     assert Budget(200, 500).line == 250
     assert Budget(200, 220).line == 220
     assert Budget(None, 500).line is None
+
+
+def test_a_deck_of_free_cards_has_no_ceiling_so_ideas_are_marked_over_budget_not_refused() -> None:
+    free = deck_budget(3, [(5, 0), (3, 0)], None)
+
+    assert free == Budget(0, None)
+    assert (free.within(0), free.within(50), free.allows(50)) == (True, False, True)
+    # The profile's price limit still applies.
+    assert deck_budget(3, [(5, 0)], 300) == Budget(0, 300)
