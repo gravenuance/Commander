@@ -2,8 +2,10 @@
 
 import argparse
 import json
+import re
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from typing import TextIO
 
 from commander.apply import fetch_own_deck
@@ -49,6 +51,7 @@ from commander.net import Fetcher
 from commander.plan import Plan
 from commander.store import StoredDeck
 
+_TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(Z|\+00:00)?")
 _ACTORS = {actor.value: actor for actor in Actor if actor is not Actor.CMDR}
 _DECISIONS = {"add": Status.ADD, "reject": Status.REJECTED, "reopen": Status.OPEN}
 _STATUS_TEXT = {Status.OPEN: "open", Status.ADD: "add", Status.REJECTED: "no", Status.APPLIED: "in deck"}
@@ -215,11 +218,24 @@ def _cmd_remove(args: argparse.Namespace, ctx: Context) -> int:
     return EXIT_OK
 
 
+def _logged_time(text: str) -> str:
+    """A --since time as the activity log stores times: UTC to the second, like 2026-10-15T18:00:00+00:00.
+    The time may leave out its seconds and offset, or end in Z."""
+    refusal = UsageError(f"--since {text!r} is not a UTC time like 2026-10-15T18:00")
+    if not _TIME.fullmatch(text):
+        raise refusal
+    try:
+        return datetime.fromisoformat(text).replace(tzinfo=UTC).isoformat(timespec="seconds")
+    except ValueError:
+        raise refusal from None
+
+
 def _cmd_log(args: argparse.Namespace, ctx: Context) -> int:
+    since = _logged_time(args.since) if args.since else None
     space = workspace(args, ctx)
     decks = [one_deck(space, args.deck)] if args.deck else space.load_all()
     entries = sorted(
-        ((entry, stored) for stored in decks for entry in read_activity(stored.folder, since=args.since)),
+        ((entry, stored) for stored in decks for entry in read_activity(stored.folder, since=since)),
         key=lambda pair: pair[0].at,
     )
     if args.json:
@@ -227,7 +243,7 @@ def _cmd_log(args: argparse.Namespace, ctx: Context) -> int:
         write_json(rows, ctx.out)
         return EXIT_OK
     if not entries:
-        print("nothing changed" + (f" since {args.since}" if args.since else ""), file=ctx.out)
+        print("nothing changed" + (f" since {since}" if since else ""), file=ctx.out)
     for entry, stored in entries:
         print(activity_line(entry, stored.deck.short_name), file=ctx.out)
     return EXIT_OK

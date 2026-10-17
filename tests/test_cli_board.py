@@ -115,6 +115,32 @@ def test_a_commander_cannot_be_named_as_a_card_to_replace(home: Path, fake: Fake
     assert read_board(folder(home)).cards == ()
 
 
+def test_log_since_reads_a_utc_time_to_the_minute_and_compares_it_as_a_time(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    board(home, fake, "add", "magda", "Lightning Bolt", "--by", "claude")
+
+    def log_since(since: str) -> Run:
+        return board(home, fake, "log", "--since", since)
+
+    # The entry was made at 12:00:00, so a log after 12:00 has nothing and one after 11:59 has it.
+    assert log_since("2026-10-15T12:00").out == "nothing changed since 2026-10-15T12:00:00+00:00\n"
+    assert log_since("2026-10-15T11:59").out.count("claude proposed") == 1
+    assert log_since("2026-10-15T11:59:59+00:00").out.count("claude proposed") == 1
+    assert log_since("2026-10-15T11:59:59Z").out.count("claude proposed") == 1
+
+
+@pytest.mark.parametrize(
+    "since", ["yesterday", "2026-10-15 18:00", "2026-10-15", "2026-13-01T00:00", "18:00"]
+)
+def test_log_since_refuses_what_is_not_a_utc_time_like_the_help_shows(
+    home: Path, fake: FakeArchidekt, since: str
+) -> None:
+    result = board(home, fake, "log", "--since", since)
+    assert (result.code, result.out) == (2, "")
+    assert result.err == f"cmdr: --since {since!r} is not a UTC time like 2026-10-15T18:00\n"
+
+
 def test_log_shows_every_change_and_filters_by_time(home: Path, fake: FakeArchidekt) -> None:
     board(home, fake, "add", "magda", "Lightning Bolt", "--by", "claude")
     board(home, fake, "remove", "magda", "Lightning Bolt")
