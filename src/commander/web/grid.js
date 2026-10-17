@@ -101,6 +101,7 @@ function buildGridCard(card) {
     cardImage(card.image, card.name, "face"),
     card.quantity > 1 ? el("span", { class: "qty", text: `×${card.quantity}`, "aria-label": `${card.quantity} copies` }) : null,
     el("span", { class: "sr-only", text: card.name }),
+    card.share ? el("span", { class: "share", text: card.share.label, title: card.share.tip }) : null,
     flag,
     el("span", { class: "out-note", hidden: true }),
     swap);
