@@ -208,7 +208,11 @@ def gather(
 
     def lists() -> Answer[CommanderEntries]:
         report(f"EDHTop16: {name} lists")
-        request: Mapping[str, object] = {"commander": name, "minEventSize": settings.min_event_size}
+        request: Mapping[str, object] = {
+            "commander": name,
+            "minEventSize": settings.min_event_size,
+            "windowDays": settings.window_days,
+        }
         return cached_answer(
             cache_item("edhtop16", name),
             request,
@@ -401,6 +405,7 @@ def _group_peers(
         "commander": name,
         "bracket": bracket,
         "decks": settings.peer_decks,
+        "windowDays": settings.window_days,
         "user": sources.user.casefold(),
     }
     return cached_answer(

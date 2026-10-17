@@ -1,5 +1,6 @@
 import json
 import os
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
@@ -84,6 +85,7 @@ class Rig:
         self.spellbook.combos = load_fixture("spellbook_meta_kinnan.json")
         self.cache = tmp_path / "cache"
         self.now = NOW
+        self.settings = SETTINGS
 
     def sources(self) -> MetaSources:
         return MetaSources(
@@ -95,7 +97,7 @@ class Rig:
             SpellbookClient(Fetcher(self.spellbook.client(), max_attempts=1)),
             Pacer(0),
             "makkis",
-            SETTINGS,
+            self.settings,
         )
 
     def gather(self, *, refresh: bool = False, deck: Deck | None = None) -> MetaData:
@@ -179,6 +181,16 @@ def test_peer_caches_from_before_counts_and_categories_still_read(rig: Rig) -> N
     assert peers is not None
     # Without counts the land count can't be read, which differs from a deck with no basic land twice.
     assert {(p.multiples, p.planned) for p in peers.decks} == {(None, ())}
+
+
+def test_a_changed_window_does_not_read_the_cache_of_the_old_one(rig: Rig) -> None:
+    rig.gather()
+    rig.settings = replace(SETTINGS, window_days=30)
+    asked = (len(rig.edhtop16.requests), len(rig.archidekt.requests))
+    data = rig.gather()
+    assert (len(rig.edhtop16.requests), len(rig.archidekt.requests)) > asked
+    assert {data.lists.source, data.field.source, data.peers.source} == {AnswerSource.FETCHED}
+    assert data.since == date(2026, 9, 15)
 
 
 def test_refresh_fetches_again(rig: Rig) -> None:
