@@ -354,13 +354,15 @@ def test_sync_with_every_source_down_keeps_the_board_and_succeeds(home: Path, fa
 YGRA = "Ygra, Eater of All"
 
 
-def test_sync_learns_from_the_commanders_the_profile_names_as_alike(home: Path, fake: FakeArchidekt) -> None:
-    profile = 'version = 1\n[ideas]\ncommanders = ["Ygra, Eater of All"]\n'
-    (home / "decks" / FOLDER / "profile.toml").write_text(profile, encoding="utf-8")
-    # Three Ygra decks, the fewest that make staples; two of them play Arcane Signet.
+ALIKE_PROFILE = 'version = 1\n[ideas]\ncommanders = ["Ygra, Eater of All"]\n'
+
+
+def put_ygra_decks(fake: FakeArchidekt) -> None:
+    """Three recent Ygra decks, the fewest that make staples; two of them play Arcane Signet."""
     ygra = (PEER_ID + 10, PEER_ID + 11, PEER_ID + 12)
     for deck_id in ygra:
-        led_by_ygra = copy.deepcopy(fake.decks[PEER_ID])
+        led_by_ygra = copy.deepcopy(fake.decks[DECK_ID])
+        led_by_ygra["owner"] = {"id": 5, "username": "someone"}
         for card in led_by_ygra["cards"]:
             if card["card"]["oracleCard"]["name"] == MAGDA:
                 card["card"]["oracleCard"]["name"] = YGRA
@@ -368,12 +370,41 @@ def test_sync_learns_from_the_commanders_the_profile_names_as_alike(home: Path, 
     for deck_id in ygra[:2]:
         fake.decks[deck_id]["cards"].append(card_entry(9_100, "Arcane Signet", ["Ramp"]))
     fake.peer_pages[YGRA] = deck_page([peer_row(d, "someone", 50) for d in ygra])
+
+
+def test_sync_learns_from_the_commanders_the_profile_names_as_alike(home: Path, fake: FakeArchidekt) -> None:
+    (home / "decks" / FOLDER / "profile.toml").write_text(ALIKE_PROFILE, encoding="utf-8")
+    put_ygra_decks(fake)
     result = sync(home, fake)
     assert result.code == 0, result.err
     assert "Magda ideas: +2 from meta, +1 from adjacent decks\n" in result.out
     card = read_board(home / "decks" / FOLDER).find("Arcane Signet")
     assert card is not None
     assert (card.origin, card.reason) == (Origin.ADJACENT, "in 2 of 3 recent Ygra decks")
+
+
+def test_to_board_learns_from_the_commanders_the_profile_names_as_alike(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    (home / "decks" / FOLDER / "profile.toml").write_text(ALIKE_PROFILE, encoding="utf-8")
+    put_ygra_decks(fake)
+    result = meta(home, fake, "magda", "--to-board")
+    assert result.code == 0, result.err
+    assert "Magda board: +2 from meta, +1 from adjacent decks\n" in result.err
+    card = read_board(home / "decks" / FOLDER).find("Arcane Signet")
+    assert card is not None
+    assert (card.origin, card.reason) == (Origin.ADJACENT, "in 2 of 3 recent Ygra decks")
+
+
+def test_to_board_names_an_alike_commander_it_cannot_search_and_carries_on(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    (home / "decks" / FOLDER / "profile.toml").write_text(ALIKE_PROFILE, encoding="utf-8")
+    fake.peer_pages[YGRA] = {"unexpected": True}
+    result = meta(home, fake, "magda", "--to-board")
+    assert result.code == 0, result.err
+    assert "cmdr: Magda: no recent Ygra, Eater of All decks to learn from (" in result.err
+    assert "Magda board: +2 from meta\n" in result.err
 
 
 def test_sync_names_an_alike_commander_it_cannot_search_and_carries_on(

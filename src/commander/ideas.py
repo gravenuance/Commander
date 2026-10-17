@@ -10,9 +10,10 @@ those within its working budget first. EDHREC is never asked (ADR 0003): its ran
 Scryfall's data, only orders the cards an idea could replace.
 """
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date
+from pathlib import Path
 
 from commander.analysis import game_changers
 from commander.board import BoardCard, BoardService, Origin, Status, feed_ideas, read_board
@@ -31,7 +32,7 @@ from commander.meta import (
     card_shares,
     pool_staples,
 )
-from commander.metadata import MetaData, PeerList
+from commander.metadata import MetaData, MetaSources, PeerList, Progress, gather_adjacent
 from commander.models import Deck, short_commander_name
 from commander.playstyle import Fit
 from commander.store import StoredDeck
@@ -150,6 +151,34 @@ def compile_ideas(
             added[origin].extend(new)
             placed += len(new)
     return added
+
+
+def compile_ideas_with_adjacent(
+    stored: StoredDeck,
+    data: MetaData,
+    db: CardDb,
+    sources: MetaSources,
+    cache_root: Path,
+    *,
+    now: Clock,
+    refresh: bool,
+    warn: Callable[[str], None],
+    on_progress: Progress | None = None,
+) -> dict[Origin, list[BoardCard]]:
+    """`compile_ideas` with the recent decks of the commanders the deck's profile names as alike gathered
+    first (ADR 0015); a commander whose decks cannot be read is named to warn, and the rest carry on."""
+    adjacent = gather_adjacent(
+        stored.deck,
+        read_profile(stored.folder).adjacent,
+        sources,
+        cache_root,
+        now=now,
+        refresh=refresh,
+        on_progress=on_progress,
+    )
+    for name, why in adjacent.errors:
+        warn(f"{stored.deck.short_name}: no recent {name} decks to learn from ({why})")
+    return compile_ideas(stored, data, db, now=now, adjacent=adjacent.decks)
 
 
 def ideas_summary(added: dict[Origin, list[BoardCard]]) -> str:

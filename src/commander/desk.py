@@ -59,7 +59,7 @@ from commander.deckgrid import GridGroup, deck_grid, image_url
 from commander.deckprofile import MAX_ADJACENT, Profile, read_profile
 from commander.deckthemes import merge_themes
 from commander.edhtop16 import Edhtop16Error
-from commander.ideas import compile_ideas
+from commander.ideas import compile_ideas_with_adjacent
 from commander.labels import LabelError, Step, label_options, mark, set_label, to_get_json
 from commander.leanings import leaning_json
 from commander.manabase import ALTERNATIVE_COST_TAGS, analyse_mana, mana_json
@@ -68,6 +68,7 @@ from commander.meta import analyse, card_shares, peer_shares, performing_entries
 from commander.metadata import (
     CEDH_BRACKET,
     MetaData,
+    MetaSources,
     cache_stamp,
     gather,
     gather_for,
@@ -736,7 +737,7 @@ class Desk:
             report = analyse(stored.deck, data, read_profile(stored.folder), db)
             if not offline and stored.deck.bracket == CEDH_BRACKET:
                 # A refresh compiles the deck's ideas, as `cmdr sync` does (ADR 0014).
-                compile_ideas(stored, data, db, now=self._now)
+                self._compile_ideas(stored, data, db)
         if data.lists.data is None and data.field.data is None and data.peers.data is None:
             return {"report": None, "errors": [] if offline else [s.error for s in report.sources if s.error]}
         return {
@@ -796,10 +797,30 @@ class Desk:
 
     def _gather(self, deck: Deck, *, offline: bool, read: Callable[..., MetaData] = gather) -> MetaData:
         with self._client_factory() as http:
-            sources = meta_sources(http, self._pacer_factory, self._settings.user or "", self._settings.meta)
             return read(
-                deck, sources, self._settings.cache, now=self._now, refresh=not offline, offline=offline
+                deck,
+                self._meta_sources(http),
+                self._settings.cache,
+                now=self._now,
+                refresh=not offline,
+                offline=offline,
             )
+
+    def _compile_ideas(self, stored: StoredDeck, data: MetaData, db: CardDb) -> None:
+        with self._client_factory() as http:
+            compile_ideas_with_adjacent(
+                stored,
+                data,
+                db,
+                self._meta_sources(http),
+                self._settings.cache,
+                now=self._now,
+                refresh=True,
+                warn=log.warning,
+            )
+
+    def _meta_sources(self, http: httpx.Client) -> MetaSources:
+        return meta_sources(http, self._pacer_factory, self._settings.user or "", self._settings.meta)
 
     def _stored(self, deck_id: int) -> StoredDeck:
         folder = self._workspace.folder_for(int(deck_id))

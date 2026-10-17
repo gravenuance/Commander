@@ -19,7 +19,7 @@ from commander.metadata import CACHE_FOLDER
 from commander.net import Pacer
 from conftest import REFRESH_TOKEN, FakeArchidekt, Json, MemoryTokenStore
 from test_cli_apply import run
-from test_cli_meta import MAGDA, magda_page
+from test_cli_meta import ALIKE_PROFILE, MAGDA, magda_page, put_ygra_decks
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 DECK = 10004639
@@ -536,6 +536,22 @@ def test_meta_opens_from_cache_and_refreshes_on_demand(desk: Desk, fake: FakeArc
     assert {c["name"]: c["inclusion"] for c in board} == {"Jeska's Will": 0.4, "Mind Stone": 1.0}
     desk.meta(DECK)
     assert len(items(desk.deck(DECK), "cards")) == len(board)
+
+
+def test_refreshing_meta_also_learns_from_the_commanders_the_profile_names_as_alike(
+    desk: Desk, fake: FakeArchidekt, settings: DeskSettings
+) -> None:
+    fake.edhtop16.pages[MAGDA] = [magda_page()]
+    profile = settings.workspace / "10004639-honestly-though" / "profile.toml"
+    profile.write_text(ALIKE_PROFILE, encoding="utf-8")
+    put_ygra_decks(fake)
+    desk.refresh_meta(DECK)
+    board = items(desk.deck(DECK), "cards")
+    assert sorted((c["name"], c["origin"]) for c in board) == [
+        ("Arcane Signet", "adjacent decks"),
+        ("Jeska's Will", "meta"),
+        ("Mind Stone", "meta"),
+    ]
 
 
 def test_a_failed_refresh_with_nothing_cached_says_why(desk: Desk, fake: FakeArchidekt) -> None:

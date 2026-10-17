@@ -14,7 +14,7 @@ from commander.config import MetaSettings, cache_dir, config_path, read_config, 
 from commander.deckcache import AnswerSource
 from commander.deckprofile import read_profile
 from commander.edhtop16 import commander_url
-from commander.ideas import compile_ideas, ideas_summary
+from commander.ideas import compile_ideas_with_adjacent, ideas_summary
 from commander.meta import (
     Basis,
     CardCheck,
@@ -24,7 +24,7 @@ from commander.meta import (
     check_card,
 )
 from commander.metacombos import AnswerRole, ComboAnswer
-from commander.metadata import CEDH_BRACKET, MetaData, MetaSources, gather
+from commander.metadata import CEDH_BRACKET, MetaData, MetaSources, Progress, gather
 from commander.metadata import meta_sources as shared_meta_sources
 from commander.metajson import report_json
 from commander.models import short_commander_name
@@ -105,7 +105,7 @@ def _cmd_meta(args: argparse.Namespace, ctx: Context) -> int:
             report = analyse(deck.deck, data, read_profile(deck.folder), db)
             results.append((deck, data, report))
             if args.to_board:
-                _to_board(deck, data, db, ctx)
+                _to_board(deck, data, db, sources, ctx, refresh=args.refresh, progress=progress)
     for _, _, report in results:
         _warn_sources(report, ctx.err)
     _print_results(args, results, ctx.out)
@@ -150,8 +150,30 @@ def _decks(space: Workspace, query: str | None) -> list[StoredDeck]:
     return chosen
 
 
-def _to_board(deck: StoredDeck, data: MetaData, db: CardDb, ctx: Context) -> None:
-    added = compile_ideas(deck, data, db, now=ctx.now)
+def _to_board(
+    deck: StoredDeck,
+    data: MetaData,
+    db: CardDb,
+    sources: MetaSources,
+    ctx: Context,
+    *,
+    refresh: bool,
+    progress: Progress,
+) -> None:
+    def warn(message: str) -> None:
+        print(f"cmdr: {message}", file=ctx.err)
+
+    added = compile_ideas_with_adjacent(
+        deck,
+        data,
+        db,
+        sources,
+        cache_dir(ctx.env),
+        now=ctx.now,
+        refresh=refresh,
+        warn=warn,
+        on_progress=progress,
+    )
     print(f"{deck.deck.short_name} board: {ideas_summary(added)}", file=ctx.err)
 
 

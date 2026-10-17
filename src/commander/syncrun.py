@@ -22,9 +22,9 @@ from commander.carddb import CARD_DB_FILE, CardDataError, CardDb
 from commander.config import MetaSettings
 from commander.credentials import CredentialError, TokenStore
 from commander.deckcache import Clock
-from commander.deckprofile import ProfileError, read_profile
-from commander.ideas import compile_ideas
-from commander.metadata import Progress, gather_adjacent, gather_for, meta_sources
+from commander.deckprofile import ProfileError
+from commander.ideas import compile_ideas_with_adjacent
+from commander.metadata import Progress, gather_for, meta_sources
 from commander.net import Fetcher, NetworkError, Pacer
 from commander.scryfall import CardRefresh, RefreshStatus, ScryfallClient, ScryfallError, refresh_card_db
 from commander.store import Workspace
@@ -220,20 +220,16 @@ def _compile_ideas(
                 data = gather_for(
                     deck, sources, services.cache, now=services.now, refresh=False, on_progress=progress
                 )
-                groups = read_profile(stored.folder).adjacent
-                adjacent = gather_adjacent(
-                    deck,
-                    groups,
+                found[deck.short_name] = compile_ideas_with_adjacent(
+                    stored,
+                    data,
+                    db,
                     sources,
                     services.cache,
                     now=services.now,
                     refresh=False,
+                    warn=warnings.append,
                     on_progress=progress,
-                )
-                for name, why in adjacent.errors:
-                    warnings.append(f"{deck.short_name}: no recent {name} decks to learn from ({why})")
-                found[deck.short_name] = compile_ideas(
-                    stored, data, db, now=services.now, adjacent=adjacent.decks
                 )
             except (BoardError, ProfileError) as error:
                 warnings.append(f"{deck.short_name} ideas not compiled: {error}")
