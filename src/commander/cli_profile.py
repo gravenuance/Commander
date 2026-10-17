@@ -23,8 +23,8 @@ from commander.targets import deck_cut_rules
 
 _BROAD_TAGS = {
     BroadKind.PLAY_STYLE: "how the deck plays, not a theme",
-    BroadKind.ROLE: "a role, which suggest already has targets for, not a theme",
-    BroadKind.CARD_TYPE: "a card type, too broad to be a theme",
+    BroadKind.ROLE: "a role, not a theme",
+    BroadKind.CARD_TYPE: "a card type, not a theme",
 }
 
 

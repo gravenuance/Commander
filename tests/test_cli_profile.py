@@ -190,6 +190,6 @@ def test_deck_tags_too_broad_for_a_theme_say_which_kind_they_are(
     assert code == 0
     assert out.splitlines()[-3:] == [
         "  cEDH (deck tag): how the deck plays, not a theme",
-        "  Draw (deck tag): a role, which suggest already has targets for, not a theme",
-        "  Creatures (deck tag): a card type, too broad to be a theme",
+        "  Draw (deck tag): a role, not a theme",
+        "  Creatures (deck tag): a card type, not a theme",
     ]
