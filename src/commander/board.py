@@ -21,7 +21,7 @@ from pathlib import Path
 from commander.answers import card_key
 from commander.carddb import CardDb, CardInfo
 from commander.fsutil import write_text_atomic
-from commander.jsonshape import ShapeError, as_object, opt_float, opt_str, req_int, req_list, req_str
+from commander.jsonshape import ShapeError, as_object, opt_float, opt_int, opt_str, req_int, req_list, req_str
 from commander.models import Deck
 from commander.plan import AddCard, Plan, RemoveCard
 from commander.suggest import Suggestions, deck_identity, name_keys
@@ -36,6 +36,8 @@ MAX_REASON = 4000
 MAX_NOTE = 1000
 MAX_REPLACE = 10
 MAX_CARDS = 500
+# A deck holds at most 99 cards besides its commander.
+MAX_COPIES = 99
 MAX_LOG_LINE = 16 * 1024
 LOCK_TIMEOUT_SECONDS = 10.0
 # A lock file older than this was left by a crashed writer; a real update takes milliseconds.
@@ -107,8 +109,12 @@ class BoardCard:
     # For a turned-down card: its share of the meta's lists when it was turned down; None when unknown.
     rejected_share: float | None = None
     origin: Origin | None = None
+    # Copies to add, each taking a copy of the chosen cut: a basic land swap moves several at once.
+    copies: int = 1
 
     def __post_init__(self) -> None:
+        if not 1 <= self.copies <= MAX_COPIES:
+            raise ValueError(f"{self.name}: copies must be 1-{MAX_COPIES}, got {self.copies}")
         if self.choice is not None and self.status not in {Status.ADD, Status.APPLIED}:
             raise ValueError(f"{self.name}: only a card being added has a chosen cut")
         if self.rejected_share is not None and self.status is not Status.REJECTED:
@@ -234,6 +240,7 @@ def parse_board(raw: Mapping[str, object]) -> Board:
                 updated_at=req_str(card, "updatedAt", where),
                 rejected_share=opt_float(card, "rejectedShare", where),
                 origin=_origin(opt_str(card, "origin", where)),
+                copies=opt_int(card, "copies", where) or 1,
             )
         )
     return Board(tuple(cards))
@@ -263,6 +270,7 @@ def card_json(card: BoardCard) -> dict[str, object]:
         "updatedAt": card.updated_at,
         "rejectedShare": card.rejected_share,
         "origin": card.origin.value if card.origin else None,
+        "copies": card.copies,
     }
 
 
@@ -281,20 +289,29 @@ def board_plan(deck: Deck, board: Board) -> Plan | None:
 
     It adds every queued card and moves its chosen cut to the Maybeboard, so the swap can be weighed the
     other way round later, and takes turned-down cards off the Sideboard or Maybeboard. A cut the deck holds
-    more copies of, such as a basic land, loses one copy per card that names it instead.
+    more copies of, such as a basic land, loses one copy for each copy a card adds (most add one) instead.
     """
     queued = board.queued
     drop = board.to_drop(deck)
     if not queued and not drop:
         return None
-    return Plan(str(deck.id), tuple(AddCard(card.name) for card in queued), _cuts(deck, queued), drop)
+    held = _held(deck)
+    adds = tuple(AddCard(card.name, held[card_key(card.name)] + card.copies) for card in queued)
+    return Plan(str(deck.id), adds, _cuts(held, queued), drop)
 
 
-def _cuts(deck: Deck, queued: Sequence[BoardCard]) -> tuple[RemoveCard, ...]:
+def _held(deck: Deck) -> Counter[str]:
     held = Counter[str]()
     for card in deck.main_cards:
         held[card_key(card.name)] += card.quantity
-    named = Counter(card_key(card.choice) for card in queued if card.choice)
+    return held
+
+
+def _cuts(held: Counter[str], queued: Sequence[BoardCard]) -> tuple[RemoveCard, ...]:
+    named = Counter[str]()
+    for card in queued:
+        if card.choice:
+            named[card_key(card.choice)] += card.copies
     cuts: dict[str, RemoveCard] = {}
     for card in queued:
         if card.choice and (key := card_key(card.choice)) not in cuts:
@@ -323,6 +340,7 @@ class BoardService:
         reason: str = "",
         replace_options: Sequence[ReplaceOption] = (),
         origin: Origin | None = None,
+        copies: int = 1,
     ) -> BoardCard:
         """Put a card on the board; a card turned down or applied before is reopened, not listed twice."""
         info = self._card(name)
@@ -345,6 +363,7 @@ class BoardService:
                     updated_at=stamp,
                     rejected_share=None,
                     origin=origin or existing.origin,
+                    copies=copies,
                 )
                 save(_swap(board, card), Activity(stamp, actor, "reopened", card.name, reason))
                 return card
@@ -364,6 +383,7 @@ class BoardService:
                 added_at=stamp,
                 updated_at=stamp,
                 origin=origin,
+                copies=copies,
             )
             save(
                 Board((*board.cards, card)),
@@ -436,6 +456,8 @@ class BoardService:
             if card.status is Status.APPLIED:
                 raise BoardError(f"{card.name} is already in the deck")
             cut = self._choice(choice) if status is Status.ADD else None
+            if cut is not None and (held := self._copies(cut)) < card.copies:
+                raise BoardError(f"{card.name} adds {card.copies} copies; the deck has only {held} {cut}")
             kept_share = share if status is Status.REJECTED else None
             updated = replace(
                 card,
@@ -505,7 +527,9 @@ class BoardService:
         identity = deck_identity(self._db.resolve(self._deck.main_cards))
         if identity is not None and not set(info.color_identity) <= set(identity):
             raise BoardError(f"{info.name} is outside the deck's colours ({identity or 'colourless'})")
-        if any(name_keys(c.name) & name_keys(info.name) for c in self._deck.main_cards):
+        # A deck may run any number of a basic land, so a basic can be added when it already runs some.
+        basic = info.front_type_line.startswith("Basic ")
+        if not basic and any(name_keys(c.name) & name_keys(info.name) for c in self._deck.main_cards):
             raise BoardError(f"{info.name} is already in the deck")
         return info
 
@@ -529,6 +553,9 @@ class BoardService:
         if held is None:
             raise BoardError(f"{choice.strip()!r} is not in the deck, so it cannot make room")
         return held
+
+    def _copies(self, name: str) -> int:
+        return sum(c.quantity for c in self._deck.main_cards if c.name == name)
 
     def _held(self, name: str) -> str | None:
         keys = name_keys(name.strip())

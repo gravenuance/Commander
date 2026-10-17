@@ -154,6 +154,34 @@ def test_the_mana_tab_reports_lands_and_colour_sources(desk: Desk) -> None:
     assert mana["comparison"] is None
 
 
+def test_bracket_5_decks_get_no_mana_suggestion(desk: Desk) -> None:
+    # The fixture deck is set to 5 on Archidekt: tournament lists, not Karsten, guide its mana base.
+    assert desk.mana(DECK)["plan"] is None
+    assert desk.mana_to_board(DECK) == {
+        "error": "bracket 5 decks follow the tournament lists, not Karsten's numbers"
+    }
+
+
+def test_below_bracket_5_the_mana_tab_suggests_the_land_count_and_basics(
+    desk: Desk, settings: DeskSettings, fake: FakeArchidekt, tmp_path: Path
+) -> None:
+    fake.decks[DECK]["edhBracket"] = 3
+    fake.decks[DECK]["updatedAt"] = "2026-10-16T10:00:00.000000Z"
+    assert (
+        run(["sync", "--no-cards", "--no-ideas", "--workspace", str(settings.workspace)], tmp_path, fake).code
+        == 0
+    )
+    plan = cast("Json", desk.mana(DECK)["plan"])
+    # Six Mountains are far below Karsten's count; with nothing to compare, the count moves.
+    change = cast("int", plan["landChange"])
+    assert change == round(cast("float", plan["target"]) - cast("float", plan["lands"]))
+    assert change > 0
+    assert items(plan, "basics") == [{"colour": "R", "name": "Mountain", "now": 6, "after": 6 + change}]
+    # Mono-red with no tap-lands: nothing to swap, so nothing goes on the board.
+    assert plan["swaps"] == []
+    assert desk.mana_to_board(DECK) == {"added": [], "skipped": 0}
+
+
 def test_the_bracket_check_names_what_lifts_the_estimate_above_the_ceiling(
     desk: Desk, settings: DeskSettings, fake: FakeArchidekt
 ) -> None:

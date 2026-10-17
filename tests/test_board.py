@@ -358,3 +358,21 @@ def test_a_meta_share_on_a_card_that_is_not_turned_down_is_refused(tmp_path: Pat
     (tmp_path / BOARD_FILE).write_text(json.dumps({"version": 1, "cards": [card]}), encoding="utf-8")
     with pytest.raises(BoardError, match="only a turned-down card keeps its meta share"):
         read_board(tmp_path)
+
+
+def test_a_card_adding_several_copies_cuts_as_many_of_its_choice(
+    deck: Deck, tmp_path: Path, service: BoardService
+) -> None:
+    # A basic swap from the Mana tab: two more Mountains in place of two of the six.
+    card = service.propose("Mountain", Actor.CMDR, replace_options=[ReplaceOption("Mountain")], copies=2)
+    assert read_board(tmp_path).cards[0].copies == 2
+    service.decide(card.id, Status.ADD, Actor.YOU, choice="Mountain")
+    # Six held: the add asks for at least 6 + 2, the cut keeps 6 - 2 of the same card.
+    plan = board_plan(deck, read_board(tmp_path))
+    assert plan == Plan("10004639", (AddCard("Mountain", 8),), (RemoveCard("Mountain", keep=4),))
+
+
+def test_a_card_adding_several_copies_cannot_cut_a_single_card(service: BoardService) -> None:
+    card = service.propose("Lightning Bolt", Actor.CMDR, copies=2)
+    with pytest.raises(BoardError, match="adds 2 copies; the deck has only 1 Battered Golem"):
+        service.decide(card.id, Status.ADD, Actor.YOU, choice="Battered Golem")

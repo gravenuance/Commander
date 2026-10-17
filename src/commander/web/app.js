@@ -84,6 +84,7 @@ function hideStatus() {
   $("status").hidden = true;
 }
 
+const times = (copies, name) => (copies > 1 ? `${copies} × ${name}` : name);
 const euro = (cents) => (cents === null || cents === undefined ? "" : `€${(cents / 100).toFixed(2)}`);
 const pct = (share) => `${Math.round(share * 100)}%`;
 
@@ -405,7 +406,7 @@ function buildTile(card) {
     class: "pick", type: "button", "aria-pressed": "false", title: card.name,
     "aria-label": `${card.name}: show what it could replace`,
     onclick: () => select(card.id),
-  }, el("span", { class: "card-name", text: card.name }));
+  }, el("span", { class: "card-name", text: times(card.copies, card.name) }));
   pick.addEventListener("focus", () => hover(card.id));
   pick.addEventListener("blur", () => hover(null));
 
@@ -432,7 +433,7 @@ function buildTile(card) {
     el("div", { class: "card-title" }, pick, manaCost(card.manaCost)),
     meta,
     queued ? el("p", { class: "replacing" },
-      el("span", { text: `Replacing ${card.choice}` }),
+      el("span", { text: `Replacing ${times(card.copies, card.choice)}` }),
       el("button", { class: "button quiet small", type: "button", text: "Undo", "aria-label": `Undo ${card.name} replacing ${card.choice}`,
         onclick: () => decide(card, "reopen") })) : null,
     targets,
@@ -925,7 +926,74 @@ function renderMana(deck, m) {
   const source = el("p", { class: "muted small mana-source" }, document.createTextNode("From Frank Karsten's "),
     el("a", { href: KARSTEN_LANDS, target: "_blank", rel: "noopener", text: "land count" }), document.createTextNode(" and "),
     el("a", { href: KARSTEN_SOURCES, target: "_blank", rel: "noopener", text: "colour source" }), document.createTextNode(" articles."));
-  $("mana").replaceChildren(lands, colours, tapped, skipped || "", source);
+  $("mana").replaceChildren(lands, colours, tapped, skipped || "", m.plan ? planSection(deck, m.plan) : "", source);
+}
+
+// The suggested mana base below bracket 5 (ADR 0024): land count, basics by colour, then named swaps.
+function planSection(deck, p) {
+  const section = el("section", { class: "mana-section mana-plan", "aria-labelledby": "mana-plan-title" },
+    el("h3", { id: "mana-plan-title", text: "Suggested changes" }));
+  if (p.unchanged) {
+    section.append(el("p", { class: "muted small", text: "Meets Karsten's numbers; nothing to change." }));
+    return section;
+  }
+  if (p.landChange) {
+    const run = Math.round(p.lands + p.landChange);
+    section.append(el("p", { class: "mana-line" },
+      el("span", {}, el("strong", { text: `Run ${run} lands` }),
+        el("span", { class: "muted", text: ` (${p.landChange > 0 ? "+" : "−"}${Math.abs(p.landChange)})` })),
+      p.cutCandidates.length
+        ? el("span", { class: "muted small", text: `Room from: ${p.cutCandidates.join(", ")}` })
+        : el("span", { class: "muted small", text: "Fewer basics, as below." })));
+  }
+  section.append(el("ul", { class: "mana-basics", "aria-label": "Basic lands and cards short of sources" },
+    ...p.basics.map((b) => {
+      const outcome = p.colours.find((c) => c.colour === b.colour);
+      return el("li", { class: `mana-basic${b.now === b.after ? "" : " changed"}` },
+        el("span", { class: `pip ${b.colour}`, text: b.colour, title: COLOUR_NAMES[b.colour] }),
+        el("span", { text: `${b.name} ${b.now} → ${b.after}` }),
+        outcome ? el("span", { class: "muted small", text: `${outcome.shortNow} → ${outcome.shortAfter} short` }) : null);
+    })));
+  const within = p.swaps.filter((s) => s.withinBudget);
+  const over = p.swaps.filter((s) => !s.withinBudget);
+  const budget = p.budgetCents !== null ? ` (${euro(p.budgetCents)} average card)` : "";
+  if (within.length) section.append(swapGroup(over.length ? `Within budget${budget}` : "", within));
+  if (over.length) section.append(swapGroup("Over budget", over));
+  if (p.stillShort.length) {
+    section.append(el("p", { class: "muted small", text: `Still short: ${p.stillShort.join(", ")}` }));
+  }
+  const waiting = p.swaps.filter((s) => !s.board).length;
+  if (waiting) {
+    section.append(el("button", {
+      class: "button primary small", type: "button", text: `Put ${waiting} swap${waiting === 1 ? "" : "s"} on the board`,
+      onclick: (event) => manaToBoard(deck, event.currentTarget),
+    }));
+  }
+  return section;
+}
+
+// Swaps under a small heading; with no heading when every swap is within budget.
+function swapGroup(title, swaps) {
+  const list = el("ul", { class: "mana-swaps", "aria-label": title || "Swaps" }, ...swaps.map((s) =>
+    el("li", { class: "mana-swap", title: s.reason },
+      el("span", { class: "swap-add", text: `+ ${times(s.copies, s.add)}` }),
+      el("span", { class: "muted small", text: `for ${times(s.copies, s.cut)}` }),
+      s.board ? el("span", { class: "badge status", text: s.board === "rejected" ? "Turned down" : "On the board" })
+        : s.cents !== null ? el("span", { class: "muted small", text: euro(s.cents) }) : null)));
+  return title ? el("div", { class: "mana-swap-group" }, el("p", { class: "mana-group-title", text: title }), list) : list;
+}
+
+async function manaToBoard(deck, button) {
+  button.disabled = true;
+  try {
+    const answer = await api("mana_to_board", deck);
+    const n = answer.added.length;
+    showStatus(`${n} swap${n === 1 ? "" : "s"} put under Considering`);
+    if (deck === state.current) await loadDeck();
+    loadMana();
+  } catch {
+    button.disabled = false; /* shown in the status line */
+  }
 }
 
 function needRow(n) {

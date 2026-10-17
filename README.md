@@ -350,6 +350,11 @@ base against Frank Karsten's published numbers
 - **Colour sources:** each colour's sources, with every card short of what his table asks to cast it on
   curve.
 - **Turn one:** one-drops without enough untapped lands.
+- **Suggested changes** (below bracket 5, [ADR 0024](docs/adr/0024-mana-base-suggestion.md)): how many lands
+  to run, how many of each basic, and untapped lands to name where basics can't close a gap, with
+  untapped twins for plain tap-lands. Named lands are split into within budget (the deck's average card)
+  and over budget (up to 25% above its dearest card). **Put swaps on the board** lists them under Considering, each with
+  its cut, for the usual Review and save.
 
 - **Considering**, on the right, lists every idea for the deck: yours, Claude's, the meta's and the
   tools'. Hover over an idea or click it to light the deck cards it could replace. Click one of them to

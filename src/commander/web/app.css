@@ -937,3 +937,13 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .mana-need .card-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mana-gap { color: var(--danger); font-variant-numeric: tabular-nums; font-weight: 600; }
 .mana-source a { color: var(--accent); }
+.mana-plan { display: grid; gap: var(--space-2); align-content: start; }
+.mana-plan h3, .mana-plan p { margin: 0; }
+.mana-plan .button { justify-self: start; }
+.mana-basics, .mana-swaps { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-1); }
+.mana-basic { display: grid; grid-template-columns: auto 1fr auto; gap: var(--space-2); align-items: center; }
+.mana-basic.changed > span:nth-child(2) { font-weight: 600; }
+.mana-swap { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-2); align-items: baseline; }
+.swap-add { font-weight: 600; }
+.mana-swap-group { display: grid; gap: var(--space-1); }
+.mana-group-title { font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }

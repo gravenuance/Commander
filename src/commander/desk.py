@@ -13,6 +13,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import wraps
 from pathlib import Path
+from typing import cast
 
 import httpx
 
@@ -26,6 +27,7 @@ from commander.board import (
     BoardCard,
     BoardError,
     BoardService,
+    ReplaceOption,
     Status,
     activity_json,
     board_stamp,
@@ -52,7 +54,18 @@ from commander.edhtop16 import Edhtop16Error
 from commander.ideas import compile_ideas
 from commander.labels import LabelError, Step, label_options, mark, set_label, to_get_json
 from commander.leanings import leaning_json
-from commander.manabase import ALTERNATIVE_COST_TAGS, analyse_mana, mana_json
+from commander.manabase import (
+    ALTERNATIVE_COST_TAGS,
+    BASIC_NAMES,
+    OVER_BUDGET_MARGIN,
+    LandOption,
+    ManaPlan,
+    analyse_mana,
+    average_cents,
+    mana_json,
+    plan_json,
+    suggest_mana,
+)
 from commander.meta import analyse, card_shares, performing_entries
 from commander.metadata import (
     CEDH_BRACKET,
@@ -460,14 +473,54 @@ class Desk:
 
     @_guarded
     def mana(self, deck_id: int) -> Json:
-        """The deck's mana base against Karsten's numbers and what other lists of its commander run."""
-        deck = self._stored(deck_id).deck
+        """The deck's mana base against Karsten's numbers, what other lists of its commander run and, below
+        bracket 5, how it should change (ADR 0024)."""
+        view, plan = self._mana(deck_id)
+        if plan is None:
+            view["plan"] = None
+            return view
+        board = read_board(self._stored(deck_id).folder)
+        shown = plan_json(plan)
+        for swap in cast("list[Json]", shown["swaps"]):
+            held = board.find(str(swap["add"]))
+            swap["board"] = held.status.value if held is not None else None
+        view["plan"] = shown
+        return view
+
+    @_guarded
+    def mana_to_board(self, deck_id: int) -> Json:
+        """Put the suggested swaps on the board under Considering, each with its cut; the user decides."""
+        _, plan = self._mana(deck_id)
+        if plan is None:
+            return {"error": "bracket 5 decks follow the tournament lists, not Karsten's numbers"}
+        board = read_board(self._stored(deck_id).folder)
+        added: list[Json] = []
+        with self._service(deck_id) as service:
+            for swap in plan.swaps:
+                # Like compiled ideas, a card on the board in any state, turned down too, is left alone.
+                if board.find(swap.add) is not None:
+                    continue
+                card = service.propose(
+                    swap.add,
+                    Actor.CMDR,
+                    reason=swap.reason,
+                    replace_options=(ReplaceOption(swap.cut, swap.reason),),
+                    copies=swap.copies,
+                )
+                added.append(card_json(card))
+        return {"added": added, "skipped": len(plan.swaps) - len(added)}
+
+    def _mana(self, deck_id: int) -> tuple[Json, ManaPlan | None]:
+        stored = self._stored(deck_id)
+        deck = stored.deck
         label, lists = self._mana_lists(deck)
+        cedh = deck.bracket == CEDH_BRACKET
         with self._db() as db:
             names = {card.name for card in deck.main_cards} | {name for listed in lists for name in listed}
-            cards = db.card_mana(names)
+            cards = db.card_mana(names | set(BASIC_NAMES.values()))
             ids = [info.oracle_id for card in deck.main_cards if (info := cards.get(card.name.casefold()))]
             lineage = db.tag_lineage(ids)
+            options, budget = ([], None) if cedh else _land_options(db, deck, stored.folder)
         alternative = [
             info.name
             for info in cards.values()
@@ -478,7 +531,12 @@ class Desk:
         )
         view = mana_json(report)
         view["compareWith"] = label
-        return view
+        if cedh:
+            return view, None
+        plan = suggest_mana(
+            deck, cards, report, alternative_cost=alternative, options=options, budget_cents=budget
+        )
+        return view, plan
 
     def _mana_lists(self, deck: Deck) -> tuple[str, list[dict[str, int]]]:
         """Bracket 5: the commander's top-cut tournament lists; else its recent Archidekt decks (ADR 0019)."""
@@ -714,6 +772,47 @@ class Desk:
             image=_image_url(db, info) if info else None,
         )
         return view
+
+
+def _land_options(db: CardDb, deck: Deck, folder: Path) -> tuple[list[LandOption], int | None]:
+    """Lands the suggestion may name, and the deck's working budget (ADR 0024).
+
+    Options are in the commander's identity, neither in the deck nor turned down on its board, and no dearer
+    than OVER_BUDGET_MARGIN above the deck's dearest card; the budget is its average card. The profile's price
+    limit caps both.
+    """
+    infos = db.cards_named(card.name for card in deck.main_cards)
+    identity = "".join(
+        sorted(
+            {
+                c
+                for name in deck.commanders
+                if (info := infos.get(name.casefold()))
+                for c in info.color_identity
+            }
+        )
+    )
+    prices = [
+        (card.quantity, info.cheapest_cents)
+        for card in deck.main_cards
+        if (info := infos.get(card.name.casefold())) and not info.front_type_line.startswith("Basic ")
+    ]
+    limit = read_profile(folder).max_card_cents
+    dearest = max((cents for _, cents in prices if cents is not None), default=None)
+    ceiling = _capped(round(dearest * OVER_BUDGET_MARGIN) if dearest is not None else None, limit)
+    skip = {card.name.casefold() for card in deck.cards} | {
+        name.casefold() for name in read_board(folder).rejected_names
+    }
+    options = [
+        LandOption(mana, cents)
+        for mana, cents in db.lands(identity, max_cents=ceiling)
+        if mana.name.casefold() not in skip
+    ]
+    return options, _capped(average_cents(prices), limit)
+
+
+def _capped(cents: int | None, limit: int | None) -> int | None:
+    return min((c for c in (cents, limit) if c is not None), default=None)
 
 
 def _image_url(db: CardDb, info: CardInfo) -> str | None:

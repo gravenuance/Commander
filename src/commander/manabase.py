@@ -8,8 +8,8 @@ other land counts. Both assume casual Commander; cEDH decks are compared with to
 """
 
 import re
-from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass, replace
 from statistics import median
 
 from commander.carddb import FACE_SEPARATOR, CardMana
@@ -49,7 +49,30 @@ CHOOSING_SOURCE = 2 / 3
 # A land that enters tapped only sometimes is about a quarter of a tap-land.
 CONDITIONAL_TAPPED = 0.25
 GOLD_EXTRA = 1
+# The suggestion (ADR 0024): a land count this close to Karsten's is left alone.
+LAND_TOLERANCE = 1
+# Needs are shown to a tenth; a gap smaller than that is no shortfall.
+SHORT_MARGIN = 0.05
+MAX_NAMED_LANDS = 4
+MAX_TAPPED_SWAPS = 3
+# Below bracket 5 a named land over the deck's average card is still offered, marked over budget, up to
+# this much above the deck's dearest card (ADR 0024).
+OVER_BUDGET_MARGIN = 1.25
+BASIC_NAMES = {"W": "Plains", "U": "Island", "B": "Swamp", "R": "Mountain", "G": "Forest"}
+# Lines of a land's text that make it a plain tap-land, with nothing else worth a slower turn.
+_PLAIN_LAND_LINES = (
+    "enters tapped",
+    "enters the battlefield tapped",
+    "{t}: add",
+    "choose a color",
+    "gain 1 life",
+)
 
+_TAPPED = ("enters tapped", "enters the battlefield tapped", "onto the battlefield tapped")
+# Check lands, reveal lands, Fabled Passage: tapped only when a condition fails.
+_SOMETIMES_TAPPED = ("unless", "if you control", "if you don't", "untap that land")
+# Cavern of Souls and its kind: their coloured mana casts only some spells.
+_RESTRICTED = "spend this mana only"
 _PIP = re.compile(r"\{([^}]+)\}")
 _BASIC_TYPES = {"plains": "W", "island": "U", "swamp": "B", "mountain": "R", "forest": "G"}
 _CHEAP_DRAW = (
@@ -124,6 +147,498 @@ class ManaBase:
     tapped_lands: float
     # Cards the colour check leaves out: cast for an alternative cost, or with no fixed coloured pips.
     skipped: tuple[str, ...]
+
+
+@dataclass(slots=True, frozen=True)
+class LandOption:
+    """A land the deck could run, from the card data; options come most played first."""
+
+    mana: CardMana
+    cents: int | None
+
+
+@dataclass(slots=True, frozen=True)
+class Swap:
+    """A change that keeps the deck's size: copies of add in, as many copies of cut out."""
+
+    add: str
+    copies: int
+    cut: str
+    reason: str
+    # One added copy's cheapest price; None for basics and unpriced cards.
+    cents: int | None = None
+    # Whether it costs at most the deck's average card; basics always do.
+    within_budget: bool = True
+
+
+@dataclass(slots=True, frozen=True)
+class BasicCount:
+    colour: str
+    name: str
+    now: int
+    after: int
+
+
+@dataclass(slots=True, frozen=True)
+class ColourOutcome:
+    colour: str
+    short_now: int
+    short_after: int
+
+
+@dataclass(slots=True, frozen=True)
+class ManaPlan:
+    """How the mana base should change: land count, basics by type, then named lands (ADR 0024)."""
+
+    lands: float
+    target: float
+    # Lands to add (positive) or cut (negative); 0 leaves the count as it is.
+    land_change: int
+    # For more lands: the spells that could make room, highest mana value first.
+    cut_candidates: tuple[str, ...]
+    basics: tuple[BasicCount, ...]
+    swaps: tuple[Swap, ...]
+    colours: tuple[ColourOutcome, ...]
+    # Cards still short of sources once the plan is followed.
+    still_short: tuple[str, ...]
+    # The deck's working budget, its average card; None when unknown.
+    budget_cents: int | None = None
+
+    @property
+    def unchanged(self) -> bool:
+        return not self.land_change and not self.swaps
+
+
+@dataclass(slots=True, frozen=True)
+class _Demand:
+    """One card's call on a colour: Karsten's table number and the sources other than that colour's basics."""
+
+    table: int
+    gold: bool
+    others: float
+
+    def basics_needed(self, lands: float) -> float:
+        return self.table * lands / TABLE_LANDS + (GOLD_EXTRA if self.gold else 0) - self.others
+
+
+def suggest_mana(
+    deck: Deck,
+    cards: Mapping[str, CardMana],
+    report: ManaBase,
+    *,
+    alternative_cost: Iterable[str] = (),
+    options: Sequence[LandOption] = (),
+    budget_cents: int | None = None,
+) -> ManaPlan:
+    """The smallest change that meets Karsten's numbers: the land count, then basics, then named lands.
+
+    The land count moves only when it is more than LAND_TOLERANCE off his formula and outside the range of
+    the compared lists. Basics then move from colours with sources to spare to colours short of them. What
+    basics cannot close, untapped lands from options close, each in place of a basic of a colour it also
+    makes; plain tap-lands get an untapped land of the same colours. A named land within budget_cents (the
+    deck's average card) comes before a more played one over it; one over it is taken only when none within
+    fits, and is marked so. cards must hold every basic land type.
+    """
+    colours = [colour.colour for colour in report.colours]
+    alternative = {name.casefold() for name in alternative_cost}
+    commander_names = {name.casefold() for name in deck.commanders}
+    the_99 = [
+        (card.quantity, info)
+        for card in deck.main_cards
+        if card.name.casefold() not in commander_names and (info := cards.get(card.name.casefold()))
+    ]
+    held = {info.name.casefold() for _, info in the_99}
+    change = _land_change(report)
+    lands_after = report.lands.lands + change
+    names = _basic_names(the_99, colours, cards)
+    now = {c: sum(q for q, info in the_99 if info.name == names.get(c)) for c in colours}
+    demands = _demands(deck, cards, colours, names, alternative)
+    total = sum(now.values()) + change
+    need = {
+        c: max(
+            (d.basics_needed(lands_after) for d in demands[c] if d.basics_needed(lands_after) <= total),
+            default=0.0,
+        )
+        for c in colours
+    }
+    counted = _count_change(now, need, change, names)
+    after = _rebalance(counted, need, names)
+    swaps = _basic_swaps(counted, after, names)
+    # _named_lands takes each replaced basic off after.
+    budget = _Budget(budget_cents)
+    named = _named_lands(after, need, names, options, budget=budget, held=held, deck_colours=len(colours))
+    taken = held | {s.add.casefold() for s in named}
+    tapped = _tapped_swaps(the_99, options, budget=budget, held=taken, colours=colours)
+    plan_swaps = (*swaps, *named, *tapped)
+    cut_candidates = _cut_candidates(the_99, change)
+    followed = _followed(deck, names, now, after, swaps=plan_swaps, cuts=cut_candidates[: max(change, 0)])
+    known = {**cards, **{o.mana.name.casefold(): o.mana for o in options}}
+    report_after = analyse_mana(followed, known, alternative_cost=alternative_cost)
+    short_after = {colour.colour: colour.shortfalls for colour in report_after.colours}
+    return ManaPlan(
+        lands=report.lands.lands,
+        target=report.lands.suggested,
+        land_change=change,
+        cut_candidates=cut_candidates,
+        basics=tuple(BasicCount(c, names[c], now[c], after[c]) for c in colours if c in names),
+        swaps=plan_swaps,
+        colours=tuple(
+            ColourOutcome(colour.colour, len(colour.shortfalls), len(short_after.get(colour.colour, ())))
+            for colour in report.colours
+        ),
+        still_short=tuple(sorted({need.card for needs in short_after.values() for need in needs})),
+        budget_cents=budget_cents,
+    )
+
+
+def average_cents(prices: Iterable[tuple[int, int | None]]) -> int | None:
+    """The deck's average card price from (copies, cents) pairs, unpriced cards left out; None for none.
+
+    Below bracket 5 a named land costs at most this (ADR 0024): a casual deck's budget shows in what it
+    already runs, so a land dearer than its average card doesn't fit it.
+    """
+    priced = [(copies, cents) for copies, cents in prices if cents is not None]
+    total = sum(copies for copies, _ in priced)
+    return round(sum(copies * cents for copies, cents in priced) / total) if total else None
+
+
+def _land_change(report: ManaBase) -> int:
+    lands = report.lands.lands
+    off = report.lands.suggested - lands
+    if abs(off) <= LAND_TOLERANCE:
+        return 0
+    compared = report.comparison
+    if compared is not None and compared.lands_low <= lands <= compared.lands_high:
+        return 0
+    return round(off)
+
+
+def _basic_names(
+    the_99: Sequence[tuple[int, CardMana]], colours: Sequence[str], cards: Mapping[str, CardMana]
+) -> dict[str, str]:
+    """Each colour's basic: the one the deck runs most (a snow basic, say), else the plain one."""
+    names: dict[str, str] = {}
+    for colour in colours:
+        runs = sorted(
+            ((q, info.name) for q, info in the_99 if _is_basic(info) and info.produced == colour),
+            reverse=True,
+        )
+        if runs:
+            names[colour] = runs[0][1]
+        elif BASIC_NAMES[colour].casefold() in cards:
+            names[colour] = BASIC_NAMES[colour]
+    return names
+
+
+def _is_basic(info: CardMana) -> bool:
+    return _front(info.type_line).startswith("Basic ") and info_is_land(info)
+
+
+def _demands(
+    deck: Deck,
+    cards: Mapping[str, CardMana],
+    colours: Sequence[str],
+    names: Mapping[str, str],
+    alternative: set[str],
+) -> dict[str, list[_Demand]]:
+    """Every card's call on each colour, on curve and, for one-drops, from untapped lands on turn one."""
+    commander_names = {name.casefold() for name in deck.commanders}
+    entries = [
+        (card.quantity, info, card.name.casefold() in commander_names)
+        for card in deck.main_cards
+        if (info := cards.get(card.name.casefold())) is not None
+    ]
+    basics = set(names.values())
+    others = [
+        _Source.of(info, quantity, len(colours))
+        for quantity, info, commander in entries
+        if not commander and info.name not in basics
+    ]
+    spells = [
+        info for _, info, _ in entries if not info_is_land(info) and info.name.casefold() not in alternative
+    ]
+    found: dict[str, list[_Demand]] = {c: [] for c in colours}
+    for info in spells:
+        pips = _pips(info.mana_cost)
+        gold = sum(1 for c in pips if c in COLOURS) > 1
+        mana_value = max(int(info.cmc), 1)
+        for colour in colours:
+            if colour not in pips:
+                continue
+            table = needed_sources(mana_value, pips[colour])
+            for untapped in (False, True) if mana_value == 1 else (False,):
+                have = sum(
+                    s.colours.get(colour, 0.0) * s.quantity * (1 - s.tapped if untapped else 1)
+                    for s in others
+                    if (s.land or not untapped) and mana_value >= s.from_mana_value
+                )
+                found[colour].append(_Demand(table, gold, have))
+    return found
+
+
+def _deficit(colour: str, basics: Mapping[str, int], need: Mapping[str, float]) -> float:
+    return need[colour] - basics[colour]
+
+
+def _count_change(
+    now: Mapping[str, int], need: Mapping[str, float], change: int, names: Mapping[str, str]
+) -> dict[str, int]:
+    """Added lands go to the colours shortest of sources; cut lands come from those with most to spare."""
+    basics = dict(now)
+    for _ in range(abs(change)):
+        if change > 0:
+            pool = [c for c in basics if c in names]
+            pick = max(pool, key=lambda c: _deficit(c, basics, need), default=None)
+            if pick is not None:
+                basics[pick] += 1
+        else:
+            pool = [c for c in basics if basics[c] > 0]
+            pick = min(pool, key=lambda c: _deficit(c, basics, need), default=None)
+            if pick is not None:
+                basics[pick] -= 1
+    return basics
+
+
+def _rebalance(
+    start: Mapping[str, int], need: Mapping[str, float], names: Mapping[str, str]
+) -> dict[str, int]:
+    """Moves basics one at a time to the shortest colour from the colour with most to spare, never making a
+    colour that meets its needs short."""
+    basics = dict(start)
+    for _ in range(sum(basics.values())):
+        short = [c for c in basics if c in names and _deficit(c, basics, need) > SHORT_MARGIN]
+        donors = [c for c in basics if basics[c] > 0 and _deficit(c, basics, need) + 1 <= SHORT_MARGIN]
+        if not short or not donors:
+            break
+        to = max(short, key=lambda c: _deficit(c, basics, need))
+        source = min(donors, key=lambda c: _deficit(c, basics, need))
+        basics[source] -= 1
+        basics[to] += 1
+    return basics
+
+
+def _basic_swaps(start: Mapping[str, int], end: Mapping[str, int], names: Mapping[str, str]) -> list[Swap]:
+    """Pairs the colours that gain basics with those that give them up."""
+    gains = {c: end[c] - start[c] for c in end if end[c] > start[c]}
+    losses = {c: start[c] - end[c] for c in end if end[c] < start[c]}
+    swaps: list[Swap] = []
+    for gain, gained in gains.items():
+        wanted = gained
+        for loss in list(losses):
+            moved = min(wanted, losses[loss])
+            if not moved:
+                continue
+            swaps.append(Swap(names[gain], moved, names[loss], f"{COLOUR_NAMES[gain]} is short of sources"))
+            wanted -= moved
+            losses[loss] -= moved
+            if not wanted:
+                break
+    return swaps
+
+
+@dataclass(slots=True)
+class _Budget:
+    """The deck's working budget: its average card (ADR 0024); None when nothing in it has a price."""
+
+    average: int | None
+
+    def fits(self, option: LandOption) -> bool:
+        return self.average is None or (option.cents is not None and option.cents <= self.average)
+
+    def pick[T](
+        self, tries: Sequence[Callable[[], Iterator[tuple[LandOption, T]]]]
+    ) -> tuple[LandOption, T, bool] | None:
+        """The first candidate within budget over all tries in order, else the first at any price; the flag
+        says whether it is within budget."""
+        for found in tries:
+            for option, extra in found():
+                if self.fits(option):
+                    return option, extra, True
+        for found in tries:
+            for option, extra in found():
+                return option, extra, False
+        return None
+
+
+def _named_lands(
+    basics: dict[str, int],
+    need: Mapping[str, float],
+    names: Mapping[str, str],
+    options: Sequence[LandOption],
+    *,
+    budget: _Budget,
+    held: set[str],
+    deck_colours: int,
+) -> list[Swap]:
+    """Untapped lands for the gaps basics leave, each in place of a basic of a colour it also makes."""
+    swaps: list[Swap] = []
+    taken = set(held)
+    extra = dict.fromkeys(basics, 0.0)
+
+    def gap(colour: str) -> float:
+        return need[colour] - basics[colour] - extra[colour]
+
+    def tries(colour: str) -> Callable[[], Iterator[tuple[LandOption, tuple[str, str]]]]:
+        return lambda: (
+            (option, (colour, partner))
+            for option, partner in _lands_for(
+                colour, gap, basics, options, taken=taken, deck_colours=deck_colours
+            )
+        )
+
+    while len(swaps) < MAX_NAMED_LANDS:
+        short = sorted((c for c in basics if gap(c) > SHORT_MARGIN), key=gap, reverse=True)
+        found = budget.pick([tries(colour) for colour in short])
+        if found is None:
+            return swaps
+        option, (colour, partner), within = found
+        taken.add(option.mana.name.casefold())
+        basics[partner] -= 1
+        extra[colour] += 1
+        extra[partner] += 1
+        reason = f"{COLOUR_NAMES[colour]} is short of sources; enters untapped"
+        swaps.append(Swap(option.mana.name, 1, names[partner], reason, option.cents, within))
+    return swaps
+
+
+def _lands_for(
+    colour: str,
+    gap: Callable[[str], float],
+    basics: Mapping[str, int],
+    options: Sequence[LandOption],
+    *,
+    taken: set[str],
+    deck_colours: int,
+) -> Iterator[tuple[LandOption, str]]:
+    """Untapped lands making colour, most played first, each with a colour whose basic it can replace, the
+    one with most to spare. A fetch land may replace only a basic of a colour that meets its needs, since it
+    finds nothing once the basics it fetches are gone; a land that makes both colours keeps them level."""
+    for option in options:
+        if option.mana.name.casefold() in taken or not _offerable(option.mana):
+            continue
+        source = _Source.of(option.mana, 1, deck_colours)
+        if source.tapped > CONDITIONAL_TAPPED or source.colours.get(colour, 0.0) < 1:
+            continue
+        partners = [
+            c
+            for c in basics
+            if c != colour
+            and basics[c] > 0
+            and source.colours.get(c, 0.0) >= 1
+            and (option.mana.produced or gap(c) <= SHORT_MARGIN)
+        ]
+        if partners:
+            yield option, min(partners, key=gap)
+
+
+def _tapped_swaps(
+    the_99: Sequence[tuple[int, CardMana]],
+    options: Sequence[LandOption],
+    *,
+    budget: _Budget,
+    held: set[str],
+    colours: Sequence[str],
+) -> list[Swap]:
+    """Plain tap-lands, each with the most played untapped land that makes the same deck colours."""
+    swaps: list[Swap] = []
+    taken = set(held)
+
+    def twins(makes: set[str]) -> Callable[[], Iterator[tuple[LandOption, None]]]:
+        def found() -> Iterator[tuple[LandOption, None]]:
+            for option in options:
+                if option.mana.name.casefold() in taken or not _offerable(option.mana):
+                    continue
+                source = _Source.of(option.mana, 1, len(colours))
+                if source.tapped == 0 and all(source.colours.get(c, 0.0) >= 1 for c in makes):
+                    yield option, None
+
+        return found
+
+    for _, info in the_99:
+        if len(swaps) >= MAX_TAPPED_SWAPS:
+            break
+        text = info.oracle_text.casefold()
+        if not info_is_land(info) or _is_basic(info) or _tapped(text) < 1 or not _plain(text):
+            continue
+        makes = {
+            c for c, worth in _Source.of(info, 1, len(colours)).colours.items() if c in colours and worth > 0
+        }
+        found = budget.pick([twins(makes)])
+        if found is None:
+            continue
+        option, _, within = found
+        taken.add(option.mana.name.casefold())
+        swaps.append(
+            Swap(option.mana.name, 1, info.name, "same colours, enters untapped", option.cents, within)
+        )
+    return swaps
+
+
+def _offerable(info: CardMana) -> bool:
+    return info_is_land(info) and not _is_basic(info) and _RESTRICTED not in info.oracle_text.casefold()
+
+
+def _plain(text: str) -> bool:
+    return all(any(part in line for part in _PLAIN_LAND_LINES) for line in text.splitlines() if line.strip())
+
+
+def _cut_candidates(the_99: Sequence[tuple[int, CardMana]], change: int) -> tuple[str, ...]:
+    """For more lands, the costliest spells: Karsten's count trades the top of the curve for lands. Cards
+    that make mana or fetch lands are ramp, which the count already weighs, so they stay."""
+    if change <= 0:
+        return ()
+    spells = sorted(
+        ((info.cmc, info.name) for _, info in the_99 if _cuttable(info)),
+        key=lambda pair: (-pair[0], pair[1]),
+    )
+    return tuple(name for _, name in spells[: change + 2])
+
+
+def _cuttable(info: CardMana) -> bool:
+    if info_is_land(info) or _back_is_land(info) or _mana_card(info):
+        return False
+    text = info.oracle_text.casefold()
+    return not ("search your library" in text and "land" in text)
+
+
+def _followed(
+    deck: Deck,
+    names: Mapping[str, str],
+    now: Mapping[str, int],
+    after: Mapping[str, int],
+    *,
+    swaps: Sequence[Swap],
+    cuts: Sequence[str],
+) -> Deck:
+    """The deck as the plan leaves it, so the analysis can be run on it again."""
+    counts: dict[str, int] = {card.name: card.quantity for card in deck.main_cards}
+    for colour, name in names.items():
+        counts[name] = counts.get(name, 0) + after[colour] - now[colour]
+    basics = set(names.values())
+    for swap in swaps:
+        if swap.add in basics and swap.cut in basics:
+            continue  # already in after
+        counts[swap.add] = counts.get(swap.add, 0) + swap.copies
+        if swap.cut not in basics:
+            counts[swap.cut] = counts.get(swap.cut, 0) - swap.copies
+    for name in cuts:
+        counts[name] = counts.get(name, 0) - 1
+    commanders = [card for card in deck.main_cards if card.name in deck.commanders]
+    kept = {card.name for card in commanders}
+    others = [card for card in deck.main_cards if card.name not in kept]
+    if not others:
+        return deck
+    # A plain row to copy, so no added card picks up the Commander category.
+    template = replace(others[0], categories=())
+    rows = [
+        replace(template, name=name, quantity=quantity)
+        for name, quantity in counts.items()
+        if quantity > 0 and name not in kept
+    ]
+    return replace(deck, cards=(*commanders, *rows))
+
+
+COLOUR_NAMES = {"W": "White", "U": "Blue", "B": "Black", "R": "Red", "G": "Green"}
 
 
 def analyse_mana(
@@ -320,9 +835,13 @@ def _searched(text: str) -> set[str]:
 
 
 def _tapped(text: str) -> float:
-    if "enters tapped" not in text and "enters the battlefield tapped" not in text:
+    # Evolving Wilds and its kind put the land they find onto the battlefield tapped.
+    if not any(phrase in text for phrase in _TAPPED):
         return 0.0
-    return CONDITIONAL_TAPPED if "unless" in text or "if you control" in text else 1.0
+    # A shock land enters untapped whenever its owner pays the life.
+    if "you may pay" in text:
+        return 0.0
+    return CONDITIONAL_TAPPED if any(phrase in text for phrase in _SOMETIMES_TAPPED) else 1.0
 
 
 def _needs(
@@ -469,4 +988,32 @@ def _need_json(need: Need) -> dict[str, object]:
         "needed": need.needed,
         "have": need.have,
         "short": need.short,
+    }
+
+
+def plan_json(plan: ManaPlan) -> dict[str, object]:
+    """The suggestion for the app's Mana tab."""
+    return {
+        "lands": plan.lands,
+        "target": plan.target,
+        "landChange": plan.land_change,
+        "cutCandidates": list(plan.cut_candidates),
+        "basics": [{"colour": b.colour, "name": b.name, "now": b.now, "after": b.after} for b in plan.basics],
+        "swaps": [
+            {
+                "add": s.add,
+                "copies": s.copies,
+                "cut": s.cut,
+                "reason": s.reason,
+                "cents": s.cents,
+                "withinBudget": s.within_budget,
+            }
+            for s in plan.swaps
+        ],
+        "colours": [
+            {"colour": c.colour, "shortNow": c.short_now, "shortAfter": c.short_after} for c in plan.colours
+        ],
+        "stillShort": list(plan.still_short),
+        "budgetCents": plan.budget_cents,
+        "unchanged": plan.unchanged,
     }

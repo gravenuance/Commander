@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- The Mana tab suggests how the mana base should change below bracket 5 (ADR 0024): the land count when
+  it is off Karsten's formula and outside other lists' range, the basics moved from colours with sources
+  to spare, named untapped lands for gaps basics can't close, and untapped twins for plain tap-lands.
+  Named lands keep to the deck's budget: within its average card first, then up to 25% over its dearest
+  card, shown apart. One button puts the swaps on the board; a board card can now add several copies of a
+  basic.
 - Previews show the bracket after the changes: `apply`, `board commit` and the app's Review dialog ask
   Commander Spellbook about the deck as the plan leaves it and show its estimate ("3-4 (Spicy), was 4+"),
   with the notes and causes of `bracket` when it lands above the Archidekt bracket or the profile's ceiling.
@@ -82,6 +88,8 @@
   sign-in screen instead of stopping. `cmdr sync` and the app share one sync (`syncrun.run_sync`).
 
 ### Fixed
+- The Mana tab counts shock lands as untapped, Evolving Wilds and its kind as tapped, and reveal lands
+  and Fabled Passage as sometimes tapped.
 - Saving a board that cuts a basic land takes out one copy; it used to move every copy to the Maybeboard.
 - A board wipe clears creatures (ADR 0020): sweepers that remove only artifacts, enchantments, lands or
   other noncreature permanents (Vandalblast, Bane of Progress, Armageddon) no longer count as board

@@ -74,6 +74,8 @@ _ANCESTORS_QUERY = """WITH RECURSIVE above(tag_id) AS (
 ) SELECT slug FROM above JOIN tag ON tag.tag_id = above.tag_id"""
 MAX_TAG_MATCHES = 50
 MAX_NAME_MATCHES = 20
+# Enough of the most played lands to find a dual or an untapped twin for any deck (ADR 0024).
+MAX_LANDS = 400
 _NAME_SEARCH_QUERY = f"""
 SELECT {_INFO_COLUMNS} FROM oracle
 WHERE commander_legal = 1 AND instr(name_key, :needle) > 0
@@ -103,6 +105,14 @@ ORDER BY instr(t.slug, :needle) != 1, cards DESC, t.slug
 LIMIT :limit
 """
 
+# Nonbasic lands that fit a deck, most played first; the caller keeps the ones whose front face is a land.
+_LAND_QUERY = f"""
+SELECT oracle.oracle_id, name, mana_cost, cmc, type_line, oracle_text, produced, rarity, cheapest_cents
+FROM oracle JOIN card_mana ON card_mana.oracle_id = oracle.oracle_id
+WHERE {_FITS_DECK} AND instr(type_line, 'Land') > 0 AND type_line NOT LIKE 'Basic %'
+ORDER BY edhrec_rank, oracle.oracle_id
+LIMIT :limit
+"""  # noqa: S608 — built from constant fragments and placeholders; every value is bound
 _CARD_MANA_QUERY = """
 SELECT o.oracle_id, o.name, o.mana_cost, o.cmc, o.type_line, o.oracle_text, m.produced, m.rarity
 FROM oracle o JOIN card_mana m ON m.oracle_id = o.oracle_id
@@ -552,6 +562,13 @@ class CardDb:
         """What each named card does for a mana base, by casefolded name; unknown names are left out."""
         rows = self._select_in(_CARD_MANA_QUERY, [name.casefold() for name in names])
         return {row[1].casefold(): CardMana(*row) for row in rows}
+
+    def lands(
+        self, identity: str, *, max_cents: int | None = None, limit: int = MAX_LANDS
+    ) -> list[tuple[CardMana, int | None]]:
+        """Legal nonbasic lands in a colour identity with their cheapest price, the most played first."""
+        params = {"identity": identity, "max_cents": max_cents, "limit": limit}
+        return [(CardMana(*row[:8]), row[8]) for row in self._query_named(_LAND_QUERY, params)]
 
     def card_text(self, oracle_id: str) -> CardText | None:
         rows = self._query(
