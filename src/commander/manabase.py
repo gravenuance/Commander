@@ -13,10 +13,9 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from statistics import median
 
-from commander.carddb import FACE_SEPARATOR, CardMana, back_is_land, front_face, front_type
+from commander.carddb import COLORS, FACE_SEPARATOR, CardMana, back_is_land, front_face, front_type
 from commander.models import Deck
 
-COLOURS = "WUBRG"
 # Karsten's 99-card table: sources needed for a spell of mana value M with N pips of one colour, keyed
 # (M, N). It assumes 41 lands; other land counts scale it.
 SOURCES_NEEDED: Mapping[tuple[int, int], int] = {
@@ -356,7 +355,7 @@ def _demands(
     found: dict[str, list[_Demand]] = {c: [] for c in colours}
     for info in spells:
         pips = _pips(info.mana_cost)
-        gold = sum(1 for c in pips if c in COLOURS) > 1
+        gold = sum(1 for c in pips if c in COLORS) > 1
         mana_value = max(int(info.cmc), 1)
         for colour in colours:
             if colour not in pips:
@@ -651,7 +650,7 @@ def analyse_mana(
     the_99 = _the_99(entries)
     lands = land_count(the_99)
     identity = {c for _, info, _ in entries for c in _pips_colours(info.mana_cost)} | _identity(deck, cards)
-    colours = sorted(identity, key=COLOURS.index)
+    colours = sorted(identity, key=COLORS.index)
     scale = lands.lands / TABLE_LANDS
     skip = {name.casefold() for name in alternative_cost}
     sources = [_Source.of(info, quantity, len(colours)) for quantity, info in the_99]
@@ -837,7 +836,7 @@ def _searched(text: str) -> set[str]:
     """The colours a land search can find, by the basic land types it names; any basic finds every colour."""
     found = {colour for land_type, colour in _BASIC_TYPES.items() if land_type in text}
     if not found and "basic land" in text:
-        return set(COLOURS)
+        return set(COLORS)
     return found
 
 
@@ -865,7 +864,7 @@ def _needs(
         if colour not in pips:
             continue
         mana_value = max(int(info.cmc), 1)
-        gold = sum(1 for c in pips if c in COLOURS) > 1
+        gold = sum(1 for c in pips if c in COLORS) > 1
         needed = needed_sources(mana_value, pips[colour]) * scale + (GOLD_EXTRA if gold else 0)
         have = _have(sources, colour, mana_value, untapped_only=untapped_only)
         found.append(Need(info.name, _pattern(mana_value, pips[colour]), round(needed, 1), round(have, 1)))
@@ -921,7 +920,7 @@ def _pips(mana_cost: str) -> dict[str, int]:
     """Fixed coloured and colourless pips of the front face; hybrid, Phyrexian and X pips are left out."""
     pips: dict[str, int] = {}
     for symbol in _PIP.findall(front_face(mana_cost)):
-        if symbol in COLOURS or symbol == "C":
+        if symbol in COLORS or symbol == "C":
             pips[symbol] = pips.get(symbol, 0) + 1
     return pips
 
@@ -929,11 +928,11 @@ def _pips(mana_cost: str) -> dict[str, int]:
 def _only_flexible_pips(info: CardMana) -> bool:
     """Coloured mana in the cost, but all of it hybrid or Phyrexian, so no colour has a fixed pip to check."""
     symbols = _PIP.findall(front_face(info.mana_cost))
-    return not _pips_colours(info.mana_cost) and any(set(symbol) & set(COLOURS) for symbol in symbols)
+    return not _pips_colours(info.mana_cost) and any(set(symbol) & set(COLORS) for symbol in symbols)
 
 
 def _pips_colours(mana_cost: str) -> set[str]:
-    return {c for c in _pips(mana_cost) if c in COLOURS}
+    return {c for c in _pips(mana_cost) if c in COLORS}
 
 
 def _identity(deck: Deck, cards: Mapping[str, CardMana]) -> set[str]:
