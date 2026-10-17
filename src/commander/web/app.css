@@ -366,6 +366,7 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .button:hover:not(:disabled) { background: var(--surface-2); }
 .button:active:not(:disabled) { transform: translateY(1px); }
 .button:disabled { opacity: 0.5; cursor: not-allowed; }
+[aria-busy="true"]:disabled { cursor: progress; }
 .button.primary { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
 .button.primary:hover:not(:disabled) { filter: brightness(1.08); background: var(--primary); }
 .button.quiet { border-color: transparent; background: transparent; font-weight: 500; }

@@ -66,6 +66,26 @@ async function api(name, ...args) {
   return answer;
 }
 
+// Disables the controls while work runs, so a second click or Enter cannot send a second request.
+async function whileBusy(controls, work) {
+  if (controls.some((control) => control.disabled)) return;
+  const focused = controls.find((control) => control === document.activeElement);
+  for (const control of controls) {
+    control.disabled = true;
+    control.setAttribute("aria-busy", "true");
+  }
+  try {
+    await work();
+  } finally {
+    for (const control of controls) {
+      control.disabled = false;
+      control.removeAttribute("aria-busy");
+    }
+    const lost = !document.activeElement || document.activeElement === document.body;
+    if (focused?.isConnected && lost) focused.focus();
+  }
+}
+
 // Confirmations fade after ms; errors stay, announced at once, until dismissed.
 let statusTimer = 0;
 function showStatus(text, error = false, ms = STATUS_MS) {
@@ -539,12 +559,16 @@ function paint() {
 async function swapIn(cardId, target) {
   const known = state.tiles.get(cardId);
   if (!known) return;
-  try {
-    await api("decide", state.current, cardId, "add", target, "");
-    state.selected = null;
-    showStatus(`${known.card.name} replaces ${target}`);
-    await refresh();
-  } catch { /* the status line already says what went wrong */ }
+  // Every swap control goes quiet, since a second one would queue a second replacement.
+  const controls = [...document.querySelectorAll(".swap, .targets button")];
+  await whileBusy(controls, async () => {
+    try {
+      await api("decide", state.current, cardId, "add", target, "");
+      state.selected = null;
+      showStatus(`${known.card.name} replaces ${target}`);
+      await refresh();
+    } catch { /* the status line already says what went wrong */ }
+  });
 }
 
 // Asks why a card is turned down; the reason is kept on the board and shows under Turned down.
@@ -569,12 +593,16 @@ function rejectForm(card) {
 }
 
 async function decide(card, decision, note = "") {
-  try {
-    await api("decide", state.current, card.id, decision, null, note);
-    if (decision === "reject") showStatus(`Turned down ${card.name}`);
-    await refresh();
-    $("main").focus();
-  } catch { /* shown in the status line */ }
+  const tile = state.tiles.get(card.id)?.node;
+  const controls = tile ? [...tile.querySelectorAll("button, input")] : [];
+  await whileBusy(controls, async () => {
+    try {
+      await api("decide", state.current, card.id, decision, null, note);
+      if (decision === "reject") showStatus(`Turned down ${card.name}`);
+      await refresh();
+      $("main").focus();
+    } catch { /* shown in the status line */ }
+  });
 }
 
 /* Label menu: the corner flag on each grid card */
@@ -641,18 +669,18 @@ async function chooseLabel(name, current, label) {
   closeLabelMenu(true);
   if (label === current) return;
   flag.classList.add("saving");
-  flag.setAttribute("aria-busy", "true");
-  try {
-    await api("set_label", state.current, name, label);
-    showStatus(label ? `${name}: ${label}` : `${name}: no label`);
-    await loadDeck();
-    // The grid was rebuilt around the new label; keep the keyboard on this card's flag.
-    const again = state.gridCards.get(name)?.querySelector(".flag");
-    const lost = !document.activeElement || document.activeElement === document.body;
-    if (again && lost) again.focus();
-  } catch { /* shown in the status line */ }
+  await whileBusy([flag], async () => {
+    try {
+      await api("set_label", state.current, name, label);
+      showStatus(label ? `${name}: ${label}` : `${name}: no label`);
+      await loadDeck();
+    } catch { /* shown in the status line */ }
+  });
   flag.classList.remove("saving");
-  flag.removeAttribute("aria-busy");
+  // The grid was rebuilt around the new label; keep the keyboard on this card's flag.
+  const again = state.gridCards.get(name)?.querySelector(".flag");
+  const lost = !document.activeElement || document.activeElement === document.body;
+  if (again && lost) again.focus();
 }
 
 /* Activity rail */
@@ -1321,20 +1349,22 @@ function closeResults() {
 
 async function propose(name) {
   closeResults();
-  try {
-    const answer = await api("propose", state.current, name);
-    $("propose-input").value = "";
-    await refresh();
-    const cards = state.view ? state.view.cards : [];
-    if (uncut(cards).some((c) => c.id === answer.card.id)) {
-      $("uncut").open = true;
-      select(answer.card.id);
-      showStatus(`${answer.card.name}: pick the deck card it replaces`);
-      return;
-    }
-    const shown = considered(cards).some((c) => c.id === answer.card.id);
-    showStatus(shown ? `${answer.card.name} is under consideration` : `${answer.card.name} is not under consideration`, !shown);
-  } catch { /* shown in the status line */ }
+  await whileBusy([$("propose-input")], async () => {
+    try {
+      const answer = await api("propose", state.current, name);
+      $("propose-input").value = "";
+      await refresh();
+      const cards = state.view ? state.view.cards : [];
+      if (uncut(cards).some((c) => c.id === answer.card.id)) {
+        $("uncut").open = true;
+        select(answer.card.id);
+        showStatus(`${answer.card.name}: pick the deck card it replaces`);
+        return;
+      }
+      const shown = considered(cards).some((c) => c.id === answer.card.id);
+      showStatus(shown ? `${answer.card.name} is under consideration` : `${answer.card.name} is not under consideration`, !shown);
+    } catch { /* shown in the status line */ }
+  });
 }
 
 /* Review and save */
