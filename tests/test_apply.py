@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from commander import apply as apply_module
 from commander.apply import (
     Change,
     ChangeKind,
@@ -22,7 +23,7 @@ from commander.archidekt_edit import ArchidektEditor, AuthError, EditKind, LiveD
 from commander.carddb import CardDb, CardInfo
 from commander.changetext import change_text
 from commander.models import Deck
-from commander.net import Fetcher
+from commander.net import MAX_ATTEMPTS, Fetcher
 from commander.plan import AddCard, Plan, RemoveCard
 from commander.suggest import BracketRaise
 from conftest import ACCESS_TOKEN, DECK_ID, FakeArchidekt, Json, archidekt_card_id
@@ -510,8 +511,39 @@ def test_a_failed_save_after_the_snapshot_names_it(
     ]
 
 
-def test_a_save_whose_label_read_fails_labels_incoming_cards_in_the_default_colour(
-    fake: FakeArchidekt, editor: ArchidektEditor, db: CardDb
+@pytest.fixture
+def label_waits(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """The waits before a label read is tried again, without actually waiting."""
+    waits: list[float] = []
+    monkeypatch.setattr(apply_module.time, "sleep", waits.append)
+    monkeypatch.setattr(apply_module, "LABEL_RETRY_SECONDS", 2.5)
+    return waits
+
+
+def label_reads(fake: FakeArchidekt) -> int:
+    return fake.requests.count("/api/decks/colorTags/")
+
+
+def test_a_failed_label_read_is_tried_once_more_after_a_wait_and_the_accounts_colour_is_used(
+    fake: FakeArchidekt, editor: ArchidektEditor, db: CardDb, label_waits: list[float]
+) -> None:
+    live = editor.get_deck(DECK_ID)
+    resolution = resolve_plan(live.deck, plan([AddCard("Arcane Signet")]), db)
+    fake.labels = [{"id": 2, "color": "#fa0d11", "name": "Don't Have"}]
+    # The whole first read fails, retries included.
+    fake.labels_failures = MAX_ATTEMPTS
+    progress: list[str] = []
+
+    result = save(editor, live, resolution, now=lambda: NOW, on_progress=progress.append)
+
+    assert result.mismatches == ()
+    assert {w["modifications"]["label"] for w in fake.card_writes()} == {"Don't Have,#fa0d11"}
+    assert (label_reads(fake), label_waits) == (MAX_ATTEMPTS + 1, [2.5])
+    assert not any("default colours" in line for line in progress)
+
+
+def test_a_save_whose_label_read_fails_twice_labels_incoming_cards_in_the_default_colour(
+    fake: FakeArchidekt, editor: ArchidektEditor, db: CardDb, label_waits: list[float]
 ) -> None:
     live = editor.get_deck(DECK_ID)
     resolution = resolve_plan(live.deck, plan([AddCard("Arcane Signet")]), db)
@@ -522,13 +554,14 @@ def test_a_save_whose_label_read_fails_labels_incoming_cards_in_the_default_colo
     result = save(editor, live, resolution, now=lambda: NOW, on_progress=progress.append)
 
     assert result.mismatches == ()
+    assert (label_reads(fake), label_waits) == (2 * MAX_ATTEMPTS, [2.5])
     # Archidekt's default colour for Don't Have (ADR 0012), not the account's #fa0d11.
     assert {w["modifications"]["label"] for w in fake.card_writes()} == {"Don't Have,#f47373"}
     assert any("labels" in line and "default colours" in line for line in progress)
 
 
 def test_a_save_stops_before_any_write_when_the_label_read_is_refused(
-    fake: FakeArchidekt, editor: ArchidektEditor, db: CardDb
+    fake: FakeArchidekt, editor: ArchidektEditor, db: CardDb, label_waits: list[float]
 ) -> None:
     live = editor.get_deck(DECK_ID)
     resolution = resolve_plan(live.deck, plan([AddCard("Arcane Signet")]), db)
@@ -538,6 +571,7 @@ def test_a_save_stops_before_any_write_when_the_label_read_is_refused(
         save(editor, live, resolution, now=lambda: NOW)
 
     assert fake.writes == []
+    assert (label_reads(fake), label_waits) == (1, [])
 
 
 def test_save_refuses_a_resolution_with_problems_or_no_changes(deck: Deck, raw_deck: Json) -> None:

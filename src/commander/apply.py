@@ -1,6 +1,7 @@
 """Turn a plan into checked changes against a deck as it is on Archidekt now, and save them (ADR 0004)."""
 
 import logging
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -47,6 +48,8 @@ _TYPE_CATEGORIES = (
     "Enchantment",
 )
 COMMANDER_DECK_SIZE = 100
+# How long to wait before reading the account's card labels a second time after a failed read.
+LABEL_RETRY_SECONDS = 3.0
 # A save creates a category the deck lacks. Seen live on 2026-10-15: Archidekt creates Maybeboard outside
 # the deck, and every other name, Sideboard included, inside it.
 _ASIDE_WHEN_CREATED = frozenset({"maybeboard"})
@@ -404,8 +407,16 @@ def save(
 
 
 def _account_colours(editor: ArchidektEditor, on_progress: Callable[[str], None]) -> dict[str, str]:
-    """The account's label colours, which Don't Have goes on in (ADR 0012). A failed read falls back to
-    Archidekt's default colours; a refused login still stops the save, as its writes would be refused."""
+    """The account's label colours, which Don't Have goes on in (ADR 0012). A failed read is tried once more
+    after a wait, then falls back to Archidekt's default colours; a refused login still stops the save, as
+    its writes would be refused."""
+    try:
+        return dict(editor.account_labels())
+    except (NetworkError, ArchidektError) as error:
+        log.info(
+            "could not read the account's card labels, trying again in %.0fs: %s", LABEL_RETRY_SECONDS, error
+        )
+    time.sleep(LABEL_RETRY_SECONDS)
     try:
         return dict(editor.account_labels())
     except (NetworkError, ArchidektError) as error:

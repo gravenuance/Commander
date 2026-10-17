@@ -417,6 +417,8 @@ class FakeArchidekt:
         self.labels: list[Json] = []
         # The status that read answers with; anything but 200 stands for a failed read.
         self.labels_status = 200
+        # How many of the first reads answer 500 before the rest are served as labels_status says.
+        self.labels_failures = 0
 
     def put(self, deck: Json) -> None:
         self.decks[deck["id"]] = copy.deepcopy(deck)
@@ -431,10 +433,16 @@ class FakeArchidekt:
             return self.edhtop16.handler(request)
         if request.url.path == "/api/decks/colorTags/":
             self.requests.append(request.url.path)
-            if self.labels_status != HTTP_OK:
-                return httpx.Response(self.labels_status)
-            return httpx.Response(200, json=self.labels) if self._signed_in(request) else httpx.Response(401)
+            return self.account_labels(request)
         return self.archidekt(request)
+
+    def account_labels(self, request: httpx.Request) -> httpx.Response:
+        if self.labels_failures > 0:
+            self.labels_failures -= 1
+            return httpx.Response(500)
+        if self.labels_status != HTTP_OK:
+            return httpx.Response(self.labels_status)
+        return httpx.Response(200, json=self.labels) if self._signed_in(request) else httpx.Response(401)
 
     def archidekt(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request.url.path)
