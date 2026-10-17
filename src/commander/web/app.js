@@ -17,6 +17,20 @@ const SIZE_KEY = "commander.cardSize";
 // Grid card widths; Scryfall's normal image is 488 px wide, sharp up to L even on a 2x screen.
 const CARD_SIZES = { s: 124, m: 160, l: 200 };
 const COLOUR = /^#[0-9a-f]{3,8}$/i;
+// WCAG relative luminance at which black and white text have the same contrast on a colour.
+const BLACK_INK_ABOVE = 0.179;
+
+// Sets --label to the colour and --on-label to black or white, whichever reads better on it.
+function setLabelColour(node, colour) {
+  let hex = colour.slice(1);
+  if (hex.length <= 4) hex = [...hex.slice(0, 3)].map((digit) => digit + digit).join("");
+  const [red, green, blue] = [0, 2, 4]
+    .map((at) => parseInt(hex.slice(at, at + 2), 16) / 255)
+    .map((channel) => (channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4));
+  const luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+  node.style.setProperty("--label", colour);
+  node.style.setProperty("--on-label", luminance > BLACK_INK_ABOVE ? "#000000" : "#ffffff");
+}
 
 const state = {
   decks: [],
@@ -310,7 +324,7 @@ function buildGridCard(card) {
     class: `flag ${label ? "set" : ""}`, type: "button", "aria-haspopup": "menu",
     "aria-label": `Label for ${card.name}: ${label || "none"}`, title: label || "Set label",
   });
-  if (label && COLOUR.test(card.labelColour)) flag.style.setProperty("--label", card.labelColour);
+  if (label && COLOUR.test(card.labelColour)) setLabelColour(flag, card.labelColour);
   flag.addEventListener("click", () => openLabelMenu(flag, card.name, label));
   const swap = el("button", { class: "swap", type: "button", hidden: true });
   swap.addEventListener("click", () => swapIn(swap.dataset.card, card.name));
@@ -624,7 +638,7 @@ function openLabelMenu(flag, name, current) {
       "aria-checked": String(label.name === current),
       onclick: () => chooseLabel(name, current, label.name),
     }, el("span", { class: "swatch", "aria-hidden": "true" }), el("span", { text: label.name || "No label" }));
-    if (COLOUR.test(label.colour)) item.style.setProperty("--label", label.colour);
+    if (COLOUR.test(label.colour)) setLabelColour(item, label.colour);
     return item;
   }));
   flag.setAttribute("aria-expanded", "true");
