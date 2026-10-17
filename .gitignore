@@ -15,3 +15,7 @@ dist/
 *.har
 *.bak
 .board.lock
+
+# Agent worktrees and PyInstaller output
+.claude/worktrees/
+Commander.spec
