@@ -13,7 +13,7 @@ from datetime import date
 from enum import Enum
 
 from commander.answers import CardAnswer, Piece, card_answers, card_key, piece_facts
-from commander.carddb import CardDb, CardInfo, Theme, front_type
+from commander.carddb import CardDb, CardInfo, Theme, front_name, front_type
 from commander.metadata import CommanderCombos, MetaCommander
 from commander.models import Deck
 from commander.spellbook import ComboDetail, ComboPiece
@@ -273,7 +273,7 @@ def _of_type(type_word: str | None, text: str, named: Sequence[ComboPiece]) -> b
     if type_word is None:
         return True
     if named:
-        return any(type_word in p.type_line.split(" // ", maxsplit=1)[0].split() for p in named)
+        return any(type_word in front_type(p.type_line).split() for p in named)
     hinted = {kind for word, kind in _TYPE_HINTS.items() if word in text}
     return not hinted or type_word in hinted
 
@@ -281,17 +281,17 @@ def _of_type(type_word: str | None, text: str, named: Sequence[ComboPiece]) -> b
 def _casts_only_creatures(combo: ComboDetail, steps: str) -> bool:
     """Whether every piece the steps cast is a creature; False when they name none."""
     cast = [p for p in combo.pieces if re.search(rf"\bcast {re.escape(_short(p.name))}", steps)]
-    return bool(cast) and all("Creature" in p.type_line.split(" // ", maxsplit=1)[0] for p in cast)
+    return bool(cast) and all("Creature" in front_type(p.type_line) for p in cast)
 
 
 def _short(name: str) -> str:
-    return name.split(" // ", maxsplit=1)[0].split(",", maxsplit=1)[0].casefold()
+    return front_name(name).split(",", maxsplit=1)[0].casefold()
 
 
 def _activated(piece: ComboPiece, scope: LockScope, steps: str) -> bool:
     if piece.zones and not set(piece.zones) & _BATTLEFIELD:
         return False
-    if scope.type_word and scope.type_word not in piece.type_line.split(" // ", maxsplit=1)[0].split():
+    if scope.type_word and scope.type_word not in front_type(piece.type_line).split():
         return False
     short = _short(piece.name)
     for line in steps.splitlines():

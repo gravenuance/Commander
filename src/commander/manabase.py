@@ -13,7 +13,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from statistics import median
 
-from commander.carddb import FACE_SEPARATOR, CardMana, back_is_land, front_face
+from commander.carddb import FACE_SEPARATOR, CardMana, back_is_land, front_face, front_type
 from commander.models import Deck
 
 COLOURS = "WUBRG"
@@ -332,7 +332,7 @@ def _basic_names(
 
 
 def _is_basic(info: CardMana) -> bool:
-    return _front(info.type_line).startswith("Basic ") and info_is_land(info)
+    return front_type(info.type_line).startswith("Basic ") and info_is_land(info)
 
 
 def _demands(
@@ -721,10 +721,10 @@ def cheap_draw(info: CardMana) -> bool:
     draws = any(phrase in text for phrase in _CHEAP_DRAW) and not any(
         word in text for word in ("{4}", "blood token", "investigate")
     )
-    if draws and "Creature" in _front(info.type_line):
+    if draws and "Creature" in front_type(info.type_line):
         draws = "when" in text and "enters" in text
     looks = (
-        "Creature" not in _front(info.type_line)
+        "Creature" not in front_type(info.type_line)
         and all(word in text for word in ("look", "library", "put", "your hand"))
         and not any(word in text for word in ("pay ", "pays"))
     )
@@ -737,7 +737,7 @@ def cheap_ramp(info: CardMana) -> bool:
     if info.cmc > CHEAP or info_is_land(info) or cheap_draw(info):
         return False
     adds = "add " in text and not any(word in text for word in ("add its ability", "add a lore counter"))
-    if adds and "Creature" in _front(info.type_line) and "dies" in text:
+    if adds and "Creature" in front_type(info.type_line) and "dies" in text:
         adds = False
     fetches = "search" in text and "your library" in text and ("land" in text or "basic" in text)
     fetches = fetches and "sacrifice" not in text
@@ -755,7 +755,7 @@ def needed_sources(mana_value: int, pips: int) -> int:
 
 
 def info_is_land(info: CardMana) -> bool:
-    return "Land" in _front(info.type_line).split()
+    return "Land" in front_type(info.type_line).split()
 
 
 @dataclass(slots=True, frozen=True)
@@ -787,9 +787,10 @@ class _Source:
                 info.name, quantity, land=True, colours=colours, from_mana_value=1, tapped=_tapped(back)
             )
         mana_value = int(info.cmc)
-        permanent = any(word in _front(info.type_line) for word in ("Artifact", "Creature", "Enchantment"))
+        front = front_type(info.type_line)
+        permanent = any(word in front for word in ("Artifact", "Creature", "Enchantment"))
         if made and permanent and "{t}" in text and "sacrifice" not in text:
-            worth = DORK if "Creature" in _front(info.type_line) else ROCK
+            worth = DORK if "Creature" in front else ROCK
             if "opponent" in text:
                 worth = min(worth, OPPONENT_DEPENDENT)
             colours = dict.fromkeys(made, worth)
@@ -943,10 +944,6 @@ def _identity(deck: Deck, cards: Mapping[str, CardMana]) -> set[str]:
 def _pattern(mana_value: int, pips: int) -> str:
     generic = mana_value - pips
     return (str(generic) if generic else "") + "C" * pips
-
-
-def _front(type_line: str) -> str:
-    return type_line.split(" // ", maxsplit=1)[0]
 
 
 # Tagger tags for cards usually cast for an alternative cost, which Karsten leaves out of colour needs.
