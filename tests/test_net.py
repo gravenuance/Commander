@@ -102,6 +102,16 @@ def test_does_not_retry_client_errors() -> None:
     assert script.calls == 1
 
 
+def test_a_refused_read_raises_the_status_error_callers_map_to_advice() -> None:
+    script = Script(httpx.Response(401))
+
+    with pytest.raises(HttpStatusError, match="HTTP 401") as raised:
+        fetcher(script, []).get_json(URL)
+
+    assert raised.value.status == 401
+    assert script.calls == 1
+
+
 def test_does_not_follow_redirects() -> None:
     script = Script(httpx.Response(302, headers={"Location": "https://elsewhere.example/"}))
     with pytest.raises(NetworkError, match="HTTP 302"):
@@ -140,6 +150,41 @@ def test_download_retries_and_keeps_only_the_successful_body(tmp_path: Path) -> 
     fetcher(script, sleeps).download(URL, dest, max_bytes=10)
     assert dest.read_bytes() == b"whole"
     assert sleeps == [1.0]
+
+
+class BrokenBody(httpx.SyncByteStream):
+    def __iter__(self) -> Iterator[bytes]:
+        yield b"["
+        raise httpx.DecodingError("bad gzip data")
+
+
+def test_an_undecodable_body_is_a_network_error_and_not_retried() -> None:
+    script = Script(httpx.Response(200, stream=BrokenBody()), httpx.Response(200, json=[]))
+
+    with pytest.raises(NetworkError, match="DecodingError"):
+        fetcher(script, []).get_json(URL)
+
+    assert script.calls == 1
+
+
+def test_a_malformed_url_is_a_network_error() -> None:
+    with pytest.raises(NetworkError, match="InvalidURL"):
+        fetcher(Script(), []).get_json("http://[::1/")
+
+
+def test_a_closed_client_is_a_network_error() -> None:
+    client = httpx.Client(transport=httpx.MockTransport(Script()))
+    client.close()
+
+    with pytest.raises(NetworkError, match="closed"):
+        Fetcher(client).get_json(URL)
+
+
+def test_a_write_with_an_undecodable_answer_is_a_network_error() -> None:
+    script = Script(httpx.Response(200, stream=BrokenBody()))
+
+    with pytest.raises(NetworkError, match="DecodingError"):
+        fetcher(script, []).send_json("POST", URL, {})
 
 
 def test_download_refuses_more_than_the_cap(tmp_path: Path) -> None:
@@ -181,6 +226,31 @@ def test_send_json_goes_out_once_and_takes_any_2xx() -> None:
     assert fetcher(created, sleeps).send_json("POST", URL, {"a": 1}) == {"id": 1}
     assert fetcher(empty, sleeps).send_json("PATCH", URL, {}) is None
     assert (created.calls, empty.calls, sleeps) == (1, 1, [])
+
+
+def test_send_takes_any_2xx_without_reading_the_body() -> None:
+    html = Script(httpx.Response(200, text="<html>saved</html>"))
+    huge = Script(httpx.Response(202, content=b"x" * (MAX_RESPONSE_BYTES + 1)))
+
+    fetcher(html, []).send("POST", URL, {"a": 1})
+    fetcher(huge, []).send("PATCH", URL, {})
+
+    assert (html.calls, huge.calls) == (1, 1)
+
+
+def test_send_raises_the_status_error_and_never_retries() -> None:
+    script = Script(httpx.Response(503, text="busy"), httpx.Response(200))
+    sleeps: list[float] = []
+
+    with pytest.raises(HttpStatusError, match=r"PATCH .* returned HTTP 503") as raised:
+        fetcher(script, sleeps).send("PATCH", URL, {})
+
+    assert (raised.value.status, raised.value.detail, script.calls, sleeps) == (503, "busy", 1, [])
+
+
+def test_send_says_a_timed_out_write_may_have_landed() -> None:
+    with pytest.raises(NetworkError, match="may or may not have been applied"):
+        fetcher(Script(httpx.ReadTimeout("slow")), []).send("POST", URL, {})
 
 
 def test_send_json_never_retries_a_failed_write() -> None:
@@ -250,3 +320,8 @@ def test_pacer_spaces_calls_apart() -> None:
 def test_pacer_refuses_a_negative_interval() -> None:
     with pytest.raises(ValueError, match="must not be negative"):
         Pacer(-1.0)
+
+
+def test_a_runtime_error_other_than_a_closed_client_is_not_swallowed() -> None:
+    with pytest.raises(RuntimeError, match="boom"):
+        fetcher(Script(RuntimeError("boom")), []).get_json(URL)

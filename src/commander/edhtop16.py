@@ -4,6 +4,7 @@ Its terms (read 2026-10-15) offer the API as-is but forbid excessive automated r
 and redistributing its statistics, so requests are paced and answers are cached outside the repo.
 """
 
+import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -22,6 +23,8 @@ from commander.jsonshape import (
     req_str,
 )
 from commander.net import Fetcher, Pacer
+
+log = logging.getLogger(__name__)
 
 API_URL = "https://edhtop16.com/api/graphql"
 SITE_URL = "https://edhtop16.com"
@@ -150,7 +153,10 @@ class Edhtop16Client:
     ) -> tuple[Entry, ...] | None:
         """The commander's entries from events on or after `since`, in `sort` order, or None for a commander
         EDHTop16 doesn't know. Newest-first reading stops at the first page that reaches past `since`;
-        best-first reading reads one page of `limit` and keeps the entries inside the window."""
+        best-first reading reads one page of `limit` and keeps the entries inside the window, so its limit
+        is at most PAGE_SIZE."""
+        if sort is EntrySort.TOP and limit > PAGE_SIZE:
+            raise ValueError(f"best-first reading takes one page: limit must be at most {PAGE_SIZE}")
         found: list[Entry] = []
         after: str | None = None
         for _ in range(MAX_PAGES):
@@ -202,16 +208,27 @@ class Edhtop16Client:
 
 def graphql_data(raw: object) -> Mapping[str, object]:
     """The `data` of a GraphQL answer. A missing commander comes back as null data beside an error, which the
-    caller reads as "not found"; errors without data mean the query itself was refused."""
+    caller reads as "not found"; errors without data mean the query itself was refused. Errors beside usable
+    data are logged and the data is used."""
     answer = as_object(raw, "answer")
     data = answer.get("data")
     if data is None:
-        messages = [
-            str(as_object(item, "answer.errors[]").get("message", "?"))
-            for item in req_list(answer, "errors", "answer")
-        ]
-        raise ShapeError("no data; errors: " + "; ".join(messages)[:300])
+        raise ShapeError(f"no data; errors: {_error_messages(answer)}")
+    if answer.get("errors"):
+        try:
+            messages = _error_messages(answer)
+        except ShapeError as error:
+            messages = f"unreadable ({error})"
+        log.warning("EDHTop16 answered with data and errors: %s", messages)
     return as_object(data, "answer.data")
+
+
+def _error_messages(answer: Mapping[str, object]) -> str:
+    messages = [
+        str(as_object(item, "answer.errors[]").get("message", "?"))
+        for item in req_list(answer, "errors", "answer")
+    ]
+    return "; ".join(messages)[:300]
 
 
 def parse_entries_page(data: Mapping[str, object]) -> tuple[list[Entry], str | None] | None:

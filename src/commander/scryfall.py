@@ -16,6 +16,7 @@ from enum import Enum
 from pathlib import Path
 
 from commander.carddb import (
+    BUILD_SUFFIX,
     CARD_DB_FILE,
     COLORS,
     FACE_SEPARATOR,
@@ -28,12 +29,14 @@ from commander.carddb import (
     read_meta,
     write_card_db,
 )
+from commander.fsutil import new_temp_path
 from commander.jsonshape import (
     ShapeError,
     as_list,
     as_object,
     opt_int,
     opt_str,
+    req_float,
     req_list,
     req_object,
     req_str,
@@ -48,6 +51,9 @@ FILE_HOST_PREFIX = "https://data.scryfall.io/"
 CARDS_FILE = "default_cards"
 TAGS_FILE = "oracle_tags"
 MAX_BULK_BYTES = 512 * 1024 * 1024
+DOWNLOAD_SUFFIX = ".jsonl.gz.part"
+# A temp file this old is from a run that died; younger ones may belong to a sync still running.
+STALE_TEMP_SECONDS = 24 * 3600
 MAX_LINE_CHARS = 1024 * 1024
 MAX_BAD_FRACTION = 0.01
 MIN_CARDS = 10_000
@@ -177,8 +183,10 @@ def refresh_card_db(
         return CardRefresh(RefreshStatus.CURRENT, current)
 
     folder.mkdir(parents=True, exist_ok=True)
-    cards_gz = folder / f".{CARDS_FILE}.jsonl.gz.part"
-    tags_gz = folder / f".{TAGS_FILE}.jsonl.gz.part"
+    _clear_stale_temp_files(folder, now())
+    # Their own names, as a CLI sync and the app may both be refreshing into this folder.
+    cards_gz = new_temp_path(folder, CARDS_FILE, DOWNLOAD_SUFFIX)
+    tags_gz = new_temp_path(folder, TAGS_FILE, DOWNLOAD_SUFFIX)
     try:
         size = f" ({cards_file.size // 1024 // 1024} MB)" if cards_file.size else ""
         on_progress(f"downloading Scryfall card data{size}")
@@ -195,6 +203,19 @@ def refresh_card_db(
         tags_gz.unlink(missing_ok=True)
     log.info("card data rebuilt: %d printings", count)
     return CardRefresh(RefreshStatus.UPDATED, meta, count)
+
+
+def _clear_stale_temp_files(folder: Path, now: datetime) -> None:
+    """Delete downloads and half-built databases a crashed run left behind; recent ones may be another's."""
+    cutoff = now.timestamp() - STALE_TEMP_SECONDS
+    for pattern in (f".*{DOWNLOAD_SUFFIX}", f".*{BUILD_SUFFIX}"):
+        for path in folder.glob(pattern):
+            try:
+                if path.is_file() and path.stat().st_mtime < cutoff:
+                    path.unlink()
+                    log.info("removed the stale temp file %s", path.name)
+            except OSError as error:
+                log.warning("could not remove the stale temp file %s: %s", path.name, error)
 
 
 def parse_bulk_listing(raw: object) -> dict[str, BulkFile]:
@@ -243,7 +264,7 @@ def parse_card(raw: object) -> ParsedCard | None:
         ),
         name=req_str(card, "name", where),
         mana_cost=opt_str(card, "mana_cost", where) or opt_str(front, "mana_cost", where) or "",
-        cmc=_number(card, "cmc", where) if "cmc" in card else _number(front, "cmc", where),
+        cmc=req_float(card, "cmc", where) if "cmc" in card else req_float(front, "cmc", where),
         type_line=type_line,
         color_identity=_colors(str_list(card, "color_identity", where)),
         colors=_card_colors(card, front, where),
@@ -417,13 +438,6 @@ def _regular(card: Mapping[str, object], where: str) -> bool:
         and card.get("oversized") is not True
         and opt_str(card, "set_type", where) != "memorabilia"
     )
-
-
-def _number(obj: Mapping[str, object], key: str, where: str) -> float:
-    value = obj.get(key)
-    if not isinstance(value, int | float) or isinstance(value, bool):
-        raise ShapeError(f"{where}.{key}: expected a number")
-    return float(value)
 
 
 def _card_colors(card: Mapping[str, object], front: Mapping[str, object], where: str) -> str:

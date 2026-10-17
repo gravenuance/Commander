@@ -1,5 +1,8 @@
 import json
+import logging
 import sqlite3
+import threading
+from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
 
@@ -12,6 +15,7 @@ from commander.carddb import (
     CardDataError,
     CardDataMeta,
     CardDb,
+    ParsedCard,
     Role,
     TagCount,
     TextGate,
@@ -324,3 +328,124 @@ def test_card_mana_reads_what_each_card_makes(tmp_path: Path) -> None:
     assert (dual.name, dual.type_line, dual.produced, dual.rarity) == ("Test Dual Land", "Land", "WU", "rare")
     # The fixture lines carry no produced_mana, so Mind Stone reads as making nothing here.
     assert found["mind stone"].produced == ""
+
+
+def tiny_db_inputs(folder: Path) -> tuple[Path, CardDataMeta]:
+    cards_gz, _ = write_bulk(folder / "bulk", cards=card_lines())
+    meta = CardDataMeta(CARDS_UPDATED_AT, "2026-10-15T00:00:00+00:00", "2026-10-15T12:00:00+00:00")
+    return cards_gz, meta
+
+
+def test_each_build_works_in_its_own_temp_file(tmp_path: Path) -> None:
+    cards_gz, meta = tiny_db_inputs(tmp_path)
+    dest = tmp_path / "cards.sqlite"
+    seen: list[list[str]] = []
+
+    def watching() -> Iterator[ParsedCard]:
+        seen.append(sorted(p.name for p in tmp_path.iterdir() if p.name.endswith(".building")))
+        yield from read_cards(cards_gz)
+
+    write_card_db(dest, watching(), {}, meta)
+    write_card_db(dest, watching(), {}, meta)
+
+    [first], [second] = seen
+    assert first != second
+    assert all(name.startswith(".cards.sqlite.") for name in (first, second))
+    assert not [p for p in tmp_path.iterdir() if p.name.endswith(".building")]
+
+
+def test_a_build_leaves_another_builds_temp_file_alone(tmp_path: Path) -> None:
+    cards_gz, meta = tiny_db_inputs(tmp_path)
+    foreign = tmp_path / ".cards.sqlite.building"
+    foreign.write_bytes(b"another process is building here")
+
+    write_card_db(tmp_path / "cards.sqlite", read_cards(cards_gz), {}, meta)
+
+    assert foreign.read_bytes() == b"another process is building here"
+
+
+def test_two_builds_into_one_database_do_not_break_each_other(tmp_path: Path) -> None:
+    cards_gz, meta = tiny_db_inputs(tmp_path)
+    dest = tmp_path / "cards.sqlite"
+    in_flight, resume = threading.Event(), threading.Event()
+    errors: list[BaseException] = []
+
+    def slow() -> Iterator[ParsedCard]:
+        cards = read_cards(cards_gz)
+        yield next(cards)
+        in_flight.set()
+        resume.wait(timeout=30)
+        yield from cards
+
+    def build_slowly() -> None:
+        try:
+            write_card_db(dest, slow(), {}, meta)
+        except BaseException as error:  # noqa: BLE001 — handed to the assertion below
+            errors.append(error)
+
+    builder = threading.Thread(target=build_slowly)
+    builder.start()
+    try:
+        assert in_flight.wait(timeout=30)
+        write_card_db(dest, read_cards(cards_gz), {}, meta)
+    finally:
+        resume.set()
+        builder.join(timeout=30)
+
+    assert errors == []
+    assert sorted(p.name for p in tmp_path.iterdir() if p.is_file()) == ["cards.sqlite"]
+    with CardDb(dest) as db:
+        assert db.meta() == meta
+
+
+def test_a_swap_that_fails_once_because_the_database_is_in_use_is_tried_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cards_gz, meta = tiny_db_inputs(tmp_path)
+    dest = tmp_path / "cards.sqlite"
+    real_replace = Path.replace
+    attempts: list[str] = []
+    sleeps: list[float] = []
+
+    def busy_once(self: Path, target: Path) -> Path:
+        attempts.append(target.name)
+        if len(attempts) == 1:
+            raise PermissionError(13, "The process cannot access the file")
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", busy_once)
+
+    write_card_db(dest, read_cards(cards_gz), {}, meta, sleep=sleeps.append)
+
+    assert attempts == ["cards.sqlite", "cards.sqlite"]
+    assert sleeps == [0.1]
+    with CardDb(dest) as db:
+        assert db.meta() == meta
+    assert sorted(p.name for p in tmp_path.iterdir() if p.is_file()) == ["cards.sqlite"]
+
+
+def test_a_swap_that_stays_blocked_keeps_the_old_data_and_says_so(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    cards_gz, meta = tiny_db_inputs(tmp_path)
+    dest = tmp_path / "cards.sqlite"
+    write_card_db(dest, read_cards(cards_gz), {}, meta)
+    before = dest.read_bytes()
+    attempts: list[Path] = []
+    sleeps: list[float] = []
+
+    def always_busy(_: Path, target: Path) -> Path:
+        attempts.append(target)
+        raise PermissionError(13, "The process cannot access the file")
+
+    monkeypatch.setattr(Path, "replace", always_busy)
+    newer = replace(meta, built_at="2026-10-16T12:00:00+00:00")
+
+    with pytest.raises(CardDataError, match=r"in use.*previous card data is kept"):
+        write_card_db(dest, read_cards(cards_gz), {}, newer, sleep=sleeps.append)
+
+    assert len(attempts) == 5
+    assert sleeps == [0.1, 0.2, 0.4, 0.8]
+    assert dest.read_bytes() == before
+    assert sorted(p.name for p in tmp_path.iterdir() if p.is_file()) == ["cards.sqlite"]
+    assert any(r.levelno == logging.ERROR and "cards.sqlite" in r.getMessage() for r in caplog.records)

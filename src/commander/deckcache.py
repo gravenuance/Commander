@@ -131,7 +131,8 @@ def cached_answer[T](
     """A recent cached answer, else a fresh one; if fetching fails with one of errors, the last good one."""
     key = request_key(request)
     cached = cache.load(item, key)
-    if cached is not None and not refresh and now() - cached.fetched_at < fresh_for:
+    # A time ahead of the clock (a wrong clock, a hand-edited file) cannot be trusted as recent.
+    if cached is not None and not refresh and timedelta(0) <= now() - cached.fetched_at < fresh_for:
         return Answer(cached.data, AnswerSource.CACHED, cached.fetched_at, None)
     try:
         data = fetch(request)

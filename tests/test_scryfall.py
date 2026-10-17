@@ -1,4 +1,5 @@
 import json
+import os
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -452,3 +453,34 @@ def test_colours_come_from_the_card_then_its_front_face_then_its_cost() -> None:
     flip["card_faces"][0]["colors"] = ["R"]
     parsed = [parse_card(talisman), parse_card(flip), parse_card(real_card("Magda, Brazen Outlaw", "plst"))]
     assert [card.colors if card else None for card in parsed] == ["", "R", "R"]
+
+
+def test_a_refresh_leaves_another_downloads_temp_files_alone(tmp_path: Path) -> None:
+    mine = tmp_path / ".default_cards.jsonl.gz.part"
+    theirs = tmp_path / ".oracle_tags.jsonl.gz.part"
+    mine.write_bytes(b"a CLI sync is downloading this")
+    theirs.write_bytes(b"and this")
+
+    refresh(FakeScryfall(), tmp_path)
+
+    assert (mine.read_bytes(), theirs.read_bytes()) == (b"a CLI sync is downloading this", b"and this")
+
+
+def test_a_refresh_clears_temp_files_a_crash_left_over_a_day_ago(tmp_path: Path) -> None:
+    day = 24 * 3600.0
+    old_download = tmp_path / ".default_cards.abc123.jsonl.gz.part"
+    old_build = tmp_path / ".cards.sqlite.abc123.building"
+    recent_download = tmp_path / ".oracle_tags.def456.jsonl.gz.part"
+    other = tmp_path / "notes.txt"
+    for path, age in (
+        (old_download, 2 * day),
+        (old_build, day + 60),
+        (recent_download, day - 60),
+        (other, 9 * day),
+    ):
+        path.write_bytes(b"x")
+        os.utime(path, (NOW.timestamp() - age, NOW.timestamp() - age))
+
+    refresh(FakeScryfall(), tmp_path)
+
+    assert sorted(p.name for p in tmp_path.iterdir()) == [recent_download.name, CARD_DB_FILE, "notes.txt"]

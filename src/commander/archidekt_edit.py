@@ -12,11 +12,12 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from commander.archidekt import API_BASE, ArchidektError, category_flags, parse_deck
-from commander.credentials import TokenStore
+from commander.credentials import CredentialError, TokenStore
 from commander.jsonshape import (
     ShapeError,
     as_list,
     as_object,
+    opt_float,
     opt_str,
     req_bool,
     req_int,
@@ -169,6 +170,16 @@ class ArchidektAuth:
         if refresh is None:
             raise AuthError(f"not signed in to Archidekt as {user}; run `cmdr login`")
         try:
+            return self._exchange(user, refresh)
+        except AuthError:
+            newer = self._store.get(user)
+            if newer is None or newer == refresh:
+                raise
+            # Another process (the app beside the CLI) refreshed and rotated the token after this read it.
+            return self._exchange(user, newer)
+
+    def _exchange(self, user: str, refresh: str) -> str:
+        try:
             raw = self._fetcher.send_json(
                 "POST", f"{self._base_url}/rest-auth/token/refresh/", {"refresh": refresh}
             )
@@ -185,7 +196,11 @@ class ArchidektAuth:
         except ShapeError as error:
             raise ArchidektError(f"unexpected token answer from Archidekt: {error}") from error
         if rotated and rotated != refresh:
-            self._store.put(user, rotated)
+            try:
+                self._store.put(user, rotated)
+            except CredentialError as error:
+                # The access token still works for this run; the next run may need `cmdr login`.
+                log.warning("could not save the rotated Archidekt login for %s: %s", user, error)
         return token
 
 
@@ -198,7 +213,13 @@ class ArchidektEditor:
         self._base_url = base_url.rstrip("/")
 
     def get_deck(self, deck_id: int) -> LiveDeck:
-        raw = self._fetcher.get_json(f"{self._base_url}/decks/{deck_id}/", headers=self._headers)
+        try:
+            raw = self._fetcher.get_json(f"{self._base_url}/decks/{deck_id}/", headers=self._headers)
+        except HttpStatusError as error:
+            # Without a token a 401/403 is the deck being private, which the status error already says.
+            if self._headers is not None and error.status in _UNAUTHORIZED:
+                raise AuthError("Archidekt refused the login; run `cmdr login` again") from None
+            raise
         try:
             return LiveDeck(parse_deck(raw), parse_entry_states(raw), category_flags(raw))
         except (ShapeError, ValueError) as error:
@@ -247,7 +268,7 @@ class ArchidektEditor:
         if self._headers is None:
             raise AuthError("saving needs an Archidekt login; run `cmdr login`")
         try:
-            self._fetcher.send_json(method, self._base_url + path, payload, headers=self._headers)
+            self._fetcher.send(method, self._base_url + path, payload, headers=self._headers)
         except HttpStatusError as error:
             if error.status in _UNAUTHORIZED:
                 raise AuthError(
@@ -302,15 +323,6 @@ def parse_entry_states(raw: object) -> dict[int, EntryState]:
             modifier=opt_str(entry, "modifier", where) or "Normal",
             companion=req_bool(entry, "companion", where) if companion is not None else False,
             flipped_default=req_bool(entry, "flippedDefault", where) if flipped is not None else False,
-            custom_cmc=_opt_number(entry, "customCmc", where),
+            custom_cmc=opt_float(entry, "customCmc", where),
         )
     return states
-
-
-def _opt_number(obj: Mapping[str, object], key: str, where: str) -> float | None:
-    value = obj.get(key)
-    if value is None:
-        return None
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        raise ShapeError(f"{where}.{key}: expected a number")
-    return value

@@ -1,8 +1,10 @@
 import importlib
 import json
-from collections.abc import Iterator
+import logging
+from collections.abc import Callable, Iterator
 
 import httpx
+import keyring.errors
 import pytest
 
 from commander.archidekt import ArchidektError
@@ -21,7 +23,7 @@ from commander.archidekt_edit import (
     parse_entry_states,
 )
 from commander.credentials import SERVICE, CredentialError, KeyringTokenStore
-from commander.net import Fetcher, NetworkError
+from commander.net import MAX_RESPONSE_BYTES, Fetcher, NetworkError
 from conftest import (
     ACCESS_TOKEN,
     DECK_ID,
@@ -312,6 +314,17 @@ def test_parse_entry_states_rejects_odd_fields(raw_deck: Json, key: str, value: 
         parse_entry_states(json.loads(json.dumps(raw_deck)))
 
 
+@pytest.mark.parametrize(("raw", "expected"), [(3, 3.0), (2.5, 2.5), (None, None)])
+def test_parse_entry_states_reads_a_custom_mana_value(
+    raw_deck: Json, raw: object, expected: float | None
+) -> None:
+    raw_deck["cards"][1]["customCmc"] = raw
+
+    states = parse_entry_states(raw_deck)
+
+    assert states[raw_deck["cards"][1]["id"]].custom_cmc == expected
+
+
 def test_keyring_token_store_round_trip(memory_keyring: MemoryKeyring) -> None:
     store = KeyringTokenStore()
 
@@ -403,3 +416,133 @@ def test_reading_the_account_labels_needs_a_login() -> None:
         pytest.raises(AuthError, match="cmdr login"),
     ):
         ArchidektEditor(Fetcher(client), None).account_labels()
+
+
+def test_an_expired_login_on_the_labels_read_asks_to_log_in_again(fetcher: Fetcher) -> None:
+    with pytest.raises(AuthError, match="run `cmdr login` again"):
+        ArchidektEditor(fetcher, "expired access token").account_labels()
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_a_refused_login_on_a_deck_read_asks_to_log_in_again(
+    fake: FakeArchidekt, fetcher: Fetcher, status: int
+) -> None:
+    fake.failing[DECK_ID] = status
+
+    with pytest.raises(AuthError, match="run `cmdr login` again"):
+        ArchidektEditor(fetcher, ACCESS_TOKEN).get_deck(DECK_ID)
+
+
+def test_a_refused_deck_read_without_a_login_stays_a_network_error(
+    fake: FakeArchidekt, fetcher: Fetcher
+) -> None:
+    fake.failing[DECK_ID] = 403
+
+    with pytest.raises(NetworkError, match="HTTP 403"):
+        ArchidektEditor(fetcher, None).get_deck(DECK_ID)
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [b"<html>saved</html>", b"[" + b" " * MAX_RESPONSE_BYTES + b"]"],
+    ids=["html", "over the size cap"],
+)
+def test_a_saved_write_counts_whatever_the_body_of_the_answer_is(answer: bytes) -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.method)
+        return httpx.Response(200, content=answer)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        editor = ArchidektEditor(Fetcher(client, sleep=lambda _: None), ACCESS_TOKEN)
+        editor.create_snapshot(DECK_ID, "before", "why")
+        editor.modify_cards(DECK_ID, [CardEdit(EditKind.ADD, 1, 1, new_entry_state("Ramp"))])
+
+    # Raising here would have the user retry, and the add would be applied twice.
+    assert calls == ["POST", "PATCH"]
+
+
+def refresh_handler(
+    seen: list[str], on_refresh: Callable[[str], httpx.Response]
+) -> Callable[[httpx.Request], httpx.Response]:
+    def handler(request: httpx.Request) -> httpx.Response:
+        refresh = json.loads(request.content)["refresh"]
+        seen.append(refresh)
+        return on_refresh(refresh)
+
+    return handler
+
+
+def test_a_rotated_token_that_cannot_be_saved_is_logged_and_the_access_token_still_returned(
+    memory_keyring: MemoryKeyring, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    store = KeyringTokenStore()
+    store.put("MAKKIS", "r1")
+
+    def locked(*_: str) -> None:
+        raise keyring.errors.PasswordSetError("vault locked")
+
+    monkeypatch.setattr(memory_keyring, "set_password", locked)
+    answer = {"access": "a2", "refresh": "r2-secret"}
+
+    with (
+        httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200, json=answer))) as client,
+        caplog.at_level(logging.WARNING, logger="commander.archidekt_edit"),
+    ):
+        token = ArchidektAuth(Fetcher(client), store).access_token("MAKKIS")
+
+    assert token == "a2"
+    assert store.get("MAKKIS") == "r1"
+    [warning] = caplog.messages
+    assert warning == (
+        "could not save the rotated Archidekt login for MAKKIS: "
+        "could not save the Archidekt login: vault locked"
+    )
+
+
+def test_a_refused_refresh_is_retried_once_with_the_token_another_process_saved() -> None:
+    store = MemoryTokenStore({"makkis": "r1"})
+    seen: list[str] = []
+
+    def on_refresh(refresh: str) -> httpx.Response:
+        if refresh == "r1":
+            store.put("MAKKIS", "r2")  # the app refreshed and rotated it meanwhile
+            return httpx.Response(401)
+        return httpx.Response(200, json={"access": "a3"})
+
+    with httpx.Client(transport=httpx.MockTransport(refresh_handler(seen, on_refresh))) as client:
+        assert ArchidektAuth(Fetcher(client), store).access_token("MAKKIS") == "a3"
+
+    assert seen == ["r1", "r2"]
+
+
+def test_a_refused_refresh_is_not_retried_when_the_saved_token_is_unchanged() -> None:
+    seen: list[str] = []
+
+    with (
+        httpx.Client(
+            transport=httpx.MockTransport(refresh_handler(seen, lambda _: httpx.Response(401)))
+        ) as client,
+        pytest.raises(AuthError, match="has expired"),
+    ):
+        ArchidektAuth(Fetcher(client), MemoryTokenStore({"makkis": "r1"})).access_token("MAKKIS")
+
+    assert seen == ["r1"]
+
+
+def test_the_retry_with_a_newer_token_happens_once_only() -> None:
+    store = MemoryTokenStore({"makkis": "r1"})
+    seen: list[str] = []
+
+    def on_refresh(refresh: str) -> httpx.Response:
+        store.put("MAKKIS", "r2" if refresh == "r1" else "r3")
+        return httpx.Response(401)
+
+    with (
+        httpx.Client(transport=httpx.MockTransport(refresh_handler(seen, on_refresh))) as client,
+        pytest.raises(AuthError, match="has expired"),
+    ):
+        ArchidektAuth(Fetcher(client), store).access_token("MAKKIS")
+
+    assert seen == ["r1", "r2"]
