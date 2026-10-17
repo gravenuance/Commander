@@ -13,6 +13,7 @@ from commander.board import (
     Board,
     BoardCard,
     BoardService,
+    NothingQueuedError,
     ReplaceOption,
     Section,
     Status,
@@ -232,7 +233,7 @@ def _cmd_plan(args: argparse.Namespace, ctx: Context) -> int:
     stored = one_deck(workspace(args, ctx), args.deck)
     plan = board_plan(stored.deck, read_board(stored.folder))
     if plan is None:
-        raise UsageError(f"nothing is queued on the {stored.deck.short_name} board")
+        raise NothingQueuedError(f"nothing is queued on the {stored.deck.short_name} board")
     ctx.out.write(plan_toml(plan))
     return EXIT_OK
 

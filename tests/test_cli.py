@@ -226,7 +226,7 @@ def test_init_refuses_to_overwrite_without_force(tmp_path: Path) -> None:
     args = ["init", "--user", "MAKKIS", "--workspace", str(tmp_path)]
     run(args, tmp_path)
     second = run(args, tmp_path)
-    assert second.code == 1
+    assert second.code == 2
     assert "pass --force" in second.err
     assert run([*args, "--force"], tmp_path).code == 0
 

@@ -22,7 +22,14 @@ from commander.apply import (
 )
 from commander.archidekt import ArchidektError
 from commander.archidekt_edit import ArchidektAuth, ArchidektEditor, AuthError
-from commander.board import BoardError, BoardService, feed_suggestions, read_board
+from commander.board import (
+    BoardError,
+    BoardIOError,
+    BoardService,
+    NothingQueuedError,
+    feed_suggestions,
+    read_board,
+)
 from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
 from commander.bracket import BracketReport, EstimateResult, bracket_cards, estimate_cache, estimate_decks
 from commander.bracketcheck import check_json
@@ -208,6 +215,9 @@ def main(  # noqa: PLR0911 — one exit code per failure class, mapped in one pl
         return EXIT_USAGE
     try:
         return command(args, context)
+    except (BoardIOError, NothingQueuedError) as error:
+        print(f"cmdr: {error}", file=err)
+        return EXIT_FAILURE
     except (ConfigError, UsageError, PlanError, NotYourDeckError, BoardError) as error:
         print(f"cmdr: {error}", file=err)
         return EXIT_USAGE
@@ -398,7 +408,7 @@ def _cmd_init(args: argparse.Namespace, ctx: Context) -> int:
     path = config_path(args.config, ctx.env)
     if path.exists() and not args.force:
         print(f"cmdr: {path} already exists; pass --force to replace it", file=ctx.err)
-        return EXIT_FAILURE
+        return EXIT_USAGE
     workspace = Path(args.workspace).resolve()
     write_config(path, args.user, workspace)
     print(f"saved {path}", file=ctx.out)

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from commander import board as board_module
 from commander.board import read_activity, read_board
 from commander.carddb import CARD_DB_FILE
 from conftest import DECK_ID, FakeArchidekt, Json, MemoryKeyring, card_entry
@@ -136,7 +137,8 @@ def test_log_shows_every_change_and_filters_by_time(home: Path, fake: FakeArchid
 
 
 def test_plan_prints_the_queued_cards_for_apply(home: Path, fake: FakeArchidekt) -> None:
-    assert board(home, fake, "plan", "magda").code == 2
+    empty = board(home, fake, "plan", "magda")
+    assert (empty.code, empty.err) == (1, "cmdr: nothing is queued on the Magda board\n")
     board(home, fake, "add", "magda", "Arcane Signet", "--replace", "Disruptor Flute")
     board(home, fake, "decide", "magda", "Arcane Signet", "add", "--cut", "Disruptor Flute")
     result = board(home, fake, "plan", "magda")
@@ -182,7 +184,30 @@ def test_commit_previews_then_saves_and_marks_the_cards_applied(
         "proposed (considered)",
         "saved to Archidekt",
     ]
-    assert board(home, fake, "commit", "magda").code == 2
+    nothing = board(home, fake, "commit", "magda")
+    assert (nothing.code, nothing.err) == (1, "cmdr: nothing is queued to add\n")
+
+
+def test_a_damaged_board_file_is_a_failure_not_a_usage_error(home: Path, fake: FakeArchidekt) -> None:
+    (folder(home) / "board.json").write_text("{not json", encoding="utf-8")
+    result = board(home, fake, "show", "magda")
+    assert result.code == 1
+    assert "cannot read" in result.err
+
+
+def test_a_busy_board_is_a_failure_not_a_usage_error(
+    home: Path, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(board_module, "LOCK_TIMEOUT_SECONDS", 0.0)
+    (folder(home) / board_module.LOCK_FILE).write_text("123", encoding="utf-8")
+    result = board(home, fake, "add", "magda", "Arcane Signet")
+    assert result.code == 1
+    assert "the board is busy" in result.err
+
+
+def test_a_card_that_cannot_go_on_the_board_is_still_a_usage_error(home: Path, fake: FakeArchidekt) -> None:
+    result = board(home, fake, "add", "magda", "Not A Real Card")
+    assert result.code == 2
 
 
 def test_commit_marks_cards_already_in_the_deck_on_archidekt_applied_without_writing(

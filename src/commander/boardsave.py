@@ -11,8 +11,8 @@ from commander.board import (
     Actor,
     Board,
     BoardCard,
-    BoardError,
     BoardService,
+    NothingQueuedError,
     already_added,
     board_plan,
     import_aside,
@@ -121,7 +121,7 @@ def _live_plan(live: LiveDeck, board: Board) -> Plan | None:
     """The plan from the live deck; None when every queued card is already in it."""
     plan = board_plan(live.deck, board)
     if plan is None and not board.queued:
-        raise BoardError("nothing is queued to add")
+        raise NothingQueuedError("nothing is queued to add")
     return plan
 
 
