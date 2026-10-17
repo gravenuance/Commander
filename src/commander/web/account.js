@@ -59,8 +59,6 @@ async function signIn() {
   $("signin-error").hidden = true;
   try {
     const answer = await window.pywebview.api.sign_in($("signin-user").value, password.value);
-    // The password leaves the page either way: a retry types it again.
-    password.value = "";
     if (answer.error) {
       $("signin-error").textContent = answer.error;
       $("signin-error").hidden = false;
@@ -75,6 +73,8 @@ async function signIn() {
     $("signin-error").textContent = "Signing in failed; the details are in the log.";
     $("signin-error").hidden = false;
   } finally {
+    // The password leaves the page however the call ends: a retry types it again.
+    password.value = "";
     submit.disabled = false;
   }
 }
