@@ -149,11 +149,19 @@ class _SyncState:
 def sync_summary(outcome: SyncOutcome) -> str:
     """One line for the status bar: what changed, or what failed."""
     counts = {status: sum(1 for r in outcome.results if r.status is status) for status in SyncStatus}
-    if counts[SyncStatus.FAILED] or outcome.cards.state is CardState.FAILED:
-        return f"Update finished with problems: {counts[SyncStatus.FAILED]} decks failed; see the log."
+    problems: list[str] = []
+    if failed := counts[SyncStatus.FAILED]:
+        problems.append(f"{_decks(failed)} failed")
+    if outcome.cards.state is CardState.FAILED:
+        problems.append(f"card data failed ({outcome.cards.detail})")
+    if problems:
+        return f"Update finished with problems: {', '.join(problems)}; see the log."
     changed = counts[SyncStatus.NEW] + counts[SyncStatus.UPDATED]
-    total = len(outcome.results)
-    return f"Updated {total} deck{'' if total == 1 else 's'} from Archidekt, {changed} changed."
+    return f"Updated {_decks(len(outcome.results))} from Archidekt, {changed} changed."
+
+
+def _decks(count: int) -> str:
+    return f"{count} deck{'' if count == 1 else 's'}"
 
 
 @dataclass(slots=True, frozen=True)
@@ -779,12 +787,14 @@ class Desk:
         folder = self._workspace.folder_for(int(deck_id))
         deck = self._workspace.load(int(deck_id)) if folder else None
         if folder is None or deck is None:
-            raise BoardError(f"deck {deck_id} is not in {self._settings.workspace}; run `cmdr sync`")
+            raise BoardError(
+                f"deck {deck_id} is not in {self._settings.workspace}; press Update from Archidekt"
+            )
         return StoredDeck(folder, deck)
 
     def _user(self) -> str:
         if not self._settings.user:
-            raise ConfigError("no Archidekt username; run `cmdr init` first")
+            raise ConfigError("Sign in to Archidekt first.")
         return self._settings.user
 
     @contextmanager

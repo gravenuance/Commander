@@ -449,9 +449,9 @@ def test_commit_refuses_a_board_that_changed_since_the_preview(desk: Desk, fake:
     assert desk.commit(DECK, reviewed(desk))["saved"] is True
 
 
-def test_without_a_username_previews_ask_for_cmdr_init(settings: DeskSettings, fake: FakeArchidekt) -> None:
+def test_without_a_username_previews_ask_to_sign_in(settings: DeskSettings, fake: FakeArchidekt) -> None:
     desk = make_desk(DeskSettings(settings.workspace, settings.card_db, None), fake)
-    assert desk.preview(DECK) == {"error": "no Archidekt username; run `cmdr init` first"}
+    assert desk.preview(DECK) == {"error": "Sign in to Archidekt first."}
 
 
 def test_unexpected_failures_are_logged_not_raised(desk: Desk, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -504,4 +504,4 @@ def test_a_failed_refresh_with_nothing_cached_says_why(desk: Desk, fake: FakeArc
 
 def test_refreshing_meta_needs_a_username(settings: DeskSettings, fake: FakeArchidekt) -> None:
     nameless = make_desk(DeskSettings(settings.workspace, settings.card_db, None), fake)
-    assert nameless.refresh_meta(DECK) == {"error": "no Archidekt username; run `cmdr init` first"}
+    assert nameless.refresh_meta(DECK) == {"error": "Sign in to Archidekt first."}
