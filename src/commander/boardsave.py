@@ -37,7 +37,7 @@ def preview_board(
     """The changes the queued cards would make to the deck as it is on Archidekt now."""
     live = fetch_own_deck(editor, stored.deck.id, user=user)
     board = read_board(stored.folder)
-    plan = _live_plan(live, board)
+    plan = live_plan(live, board)
     if plan is None:
         return ApplyOutcome(_nothing_to_change(live, board), None)
     return _noting_done(apply_to_live(editor, live, plan, db, save_changes=False, now=now), live, board)
@@ -64,7 +64,7 @@ def save_board(
     """
     board = read_board(stored.folder)
     live = fetch_own_deck(editor, stored.deck.id, user=user)
-    plan = _live_plan(live, board)
+    plan = live_plan(live, board)
     if plan is None:
         resolution = _nothing_to_change(live, board)
         folder = workspace.save(live.deck)
@@ -117,7 +117,7 @@ def _swap_keys(card: BoardCard) -> set[str]:
     return {card_key(name) for name in (card.name, card.choice) if name}
 
 
-def _live_plan(live: LiveDeck, board: Board) -> Plan | None:
+def live_plan(live: LiveDeck, board: Board) -> Plan | None:
     """The plan from the live deck; None when every queued card is already in it."""
     plan = board_plan(live.deck, board)
     if plan is None and not board.queued:

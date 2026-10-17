@@ -138,7 +138,7 @@ def test_log_shows_every_change_and_filters_by_time(home: Path, fake: FakeArchid
 
 def test_plan_prints_the_queued_cards_for_apply(home: Path, fake: FakeArchidekt) -> None:
     empty = board(home, fake, "plan", "magda")
-    assert (empty.code, empty.err) == (1, "cmdr: nothing is queued on the Magda board\n")
+    assert (empty.code, empty.err) == (1, "cmdr: nothing is queued to add\n")
     board(home, fake, "add", "magda", "Arcane Signet", "--replace", "Disruptor Flute")
     board(home, fake, "decide", "magda", "Arcane Signet", "add", "--cut", "Disruptor Flute")
     result = board(home, fake, "plan", "magda")
@@ -146,6 +146,26 @@ def test_plan_prints_the_queued_cards_for_apply(home: Path, fake: FakeArchidekt)
         'deck = "10004639"\nadd = ["Arcane Signet"]\n'
         'remove = [{name = "Disruptor Flute", maybeboard = true}]\n'
     )
+
+
+def test_plan_leaves_out_cards_the_deck_on_archidekt_already_holds(home: Path, fake: FakeArchidekt) -> None:
+    for card in ("Arcane Signet", "Lightning Bolt"):
+        board(home, fake, "add", "magda", card)
+        board(home, fake, "decide", "magda", card, "add")
+    # Added on archidekt.com since the last sync, so the local copy of the deck is behind.
+    fake.decks[DECK_ID]["cards"].append(card_entry(7_000_000_001, "Arcane Signet", ["Artifact"]))
+    result = board(home, fake, "plan", "magda")
+    assert result.code == 0, result.err
+    assert result.out == 'deck = "10004639"\nadd = ["Lightning Bolt"]\n'
+
+
+def test_plan_of_cards_all_in_the_deck_on_archidekt_is_a_failed_run(home: Path, fake: FakeArchidekt) -> None:
+    board(home, fake, "add", "magda", "Arcane Signet")
+    board(home, fake, "decide", "magda", "Arcane Signet", "add")
+    fake.decks[DECK_ID]["cards"].append(card_entry(7_000_000_001, "Arcane Signet", ["Artifact"]))
+    result = board(home, fake, "plan", "magda")
+    assert result.code == 1
+    assert result.err == "cmdr: every queued card is already in the deck on Archidekt\n"
 
 
 def test_commit_previews_then_saves_and_marks_the_cards_applied(
