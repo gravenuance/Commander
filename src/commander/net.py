@@ -131,12 +131,14 @@ class Fetcher:
                     detail = _detail_text(_read_start(response, ERROR_DETAIL_BYTES))
                     raise HttpStatusError(f"{method} {url} returned HTTP {status}", status, detail)
                 return read_success(response)
-        except (httpx.TimeoutException, httpx.TransportError) as error:
+        except httpx.RequestError as error:
             log.warning("%s %s failed: %s", method, url, error.__class__.__name__)
             # A timeout leaves it unknown whether the server applied the write.
             raise NetworkError(
                 f"{method} {url} failed ({error.__class__.__name__}); it may or may not have been applied"
             ) from error
+        except (httpx.InvalidURL, RuntimeError) as error:
+            raise self._not_sent(url, error) from error
         finally:
             elapsed = self._monotonic() - started
             if elapsed > self._slow_after:
@@ -168,6 +170,12 @@ class Fetcher:
             except (httpx.TimeoutException, httpx.TransportError) as error:
                 self._give_up_or_wait(attempt, url, str(error) or type(error).__name__, None)
                 continue
+            except httpx.RequestError as error:
+                # A body that cannot be decoded or a redirect loop will fail the same way again.
+                log.warning("request failed: %s (%s)", url, error.__class__.__name__)
+                raise NetworkError(f"{url} failed ({error.__class__.__name__})") from error
+            except (httpx.InvalidURL, RuntimeError) as error:
+                raise self._not_sent(url, error) from error
             elapsed = self._monotonic() - started
             if elapsed > self._slow_after:
                 log.warning("slow request: %s took %.1fs", url, elapsed)
@@ -178,6 +186,17 @@ class Fetcher:
                 continue
             raise HttpStatusError(f"{url} returned HTTP {status}", status)
         raise AssertionError("unreachable: the last attempt raises")  # pragma: no cover
+
+    def _not_sent(self, url: str, error: Exception) -> NetworkError:
+        """The error for a request that never went out: a bad URL, or a client closed under a running sync.
+
+        Any other RuntimeError is a programming error and is raised as it is.
+        """
+        if isinstance(error, RuntimeError) and not self._client.is_closed:
+            raise error
+        log.warning("request not sent: %s (%s)", url, error.__class__.__name__)
+        reason = "the HTTP client was closed" if isinstance(error, RuntimeError) else "invalid URL"
+        return NetworkError(f"{url} not requested: {reason} ({error.__class__.__name__})")
 
     def _give_up_or_wait(self, attempt: int, url: str, reason: str, retry_after: str | None) -> None:
         if attempt >= self._max_attempts:

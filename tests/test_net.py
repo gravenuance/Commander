@@ -152,6 +152,41 @@ def test_download_retries_and_keeps_only_the_successful_body(tmp_path: Path) -> 
     assert sleeps == [1.0]
 
 
+class BrokenBody(httpx.SyncByteStream):
+    def __iter__(self) -> Iterator[bytes]:
+        yield b"["
+        raise httpx.DecodingError("bad gzip data")
+
+
+def test_an_undecodable_body_is_a_network_error_and_not_retried() -> None:
+    script = Script(httpx.Response(200, stream=BrokenBody()), httpx.Response(200, json=[]))
+
+    with pytest.raises(NetworkError, match="DecodingError"):
+        fetcher(script, []).get_json(URL)
+
+    assert script.calls == 1
+
+
+def test_a_malformed_url_is_a_network_error() -> None:
+    with pytest.raises(NetworkError, match="InvalidURL"):
+        fetcher(Script(), []).get_json("http://[::1/")
+
+
+def test_a_closed_client_is_a_network_error() -> None:
+    client = httpx.Client(transport=httpx.MockTransport(Script()))
+    client.close()
+
+    with pytest.raises(NetworkError, match="closed"):
+        Fetcher(client).get_json(URL)
+
+
+def test_a_write_with_an_undecodable_answer_is_a_network_error() -> None:
+    script = Script(httpx.Response(200, stream=BrokenBody()))
+
+    with pytest.raises(NetworkError, match="DecodingError"):
+        fetcher(script, []).send_json("POST", URL, {})
+
+
 def test_download_refuses_more_than_the_cap(tmp_path: Path) -> None:
     script = Script(httpx.Response(200, content=b"x" * (2 * 1024 * 1024 + 1)))
     with pytest.raises(NetworkError, match="more than 2 MB"):
@@ -285,3 +320,8 @@ def test_pacer_spaces_calls_apart() -> None:
 def test_pacer_refuses_a_negative_interval() -> None:
     with pytest.raises(ValueError, match="must not be negative"):
         Pacer(-1.0)
+
+
+def test_a_runtime_error_other_than_a_closed_client_is_not_swallowed() -> None:
+    with pytest.raises(RuntimeError, match="boom"):
+        fetcher(Script(RuntimeError("boom")), []).get_json(URL)
