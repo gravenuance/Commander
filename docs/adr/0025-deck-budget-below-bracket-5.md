@@ -36,9 +36,11 @@ Where it applies:
   report states the budget. `--any-price` turns the deck's budget off (the profile limit still holds).
 - **Ideas compiled on sync (ADR 0014):** the ceiling replaces the profile's price limit, and each source
   places its within-budget ideas first, most played first within each half.
-- **Considering in the app:** each board card says whether it is within budget, an "Over budget" badge marks
-  the others, and within-budget cards are listed first. Cards the owner or Claude proposed are marked, never
-  refused.
+- **Considering in the app:** each board card says whether it is within budget and an "Over budget" badge
+  marks the others. Cards the owner or Claude proposed are marked, never refused, and no card is ever taken
+  off a board for its price (owner, 2026-10-17). The owner set the order: their own cards, Claude's, the
+  meta's, the Archidekt decks', then the rest; within each group, over-budget cards last, the rest by
+  inclusion (the share of the top-cut lists for a meta idea, of the recent Archidekt decks otherwise).
 - **The Mana tab (ADR 0024):** named lands follow the same budget.
 
 ## Consequences

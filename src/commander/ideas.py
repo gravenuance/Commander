@@ -38,7 +38,7 @@ from commander.store import StoredDeck
 from commander.suggest import card_raise, name_keys
 from commander.targets import deck_cut_rules, role_targets, with_ideas
 
-MAX_PER_SOURCE = 10
+MAX_PER_SOURCE = 50
 
 
 @dataclass(slots=True, frozen=True)

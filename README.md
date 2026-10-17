@@ -313,7 +313,7 @@ Each `sync` also compiles ideas from other players into Considering
 ([ADR 0014](docs/adr/0014-considered-compiled-on-every-sync.md)). A bracket 5 deck gets the staples it
 misses from its commander's EDHTop16 lists ("meta") and from the most-viewed recent Archidekt decks for
 its commander ("archidekt decks"); other decks get the Archidekt ones, from decks at their own bracket. Each
-source adds at most 10, most played first, and only cards with a deck card to replace. EDHREC is never
+source adds at most 50, most played first, and only cards with a deck card to replace. EDHREC is never
 asked. Answers are cached for a day with `meta`'s, so the first sync of the day takes a few minutes and
 the rest are quick. If every source for a deck fails, its board stays as it was and the sync still
 succeeds. `sync --no-ideas` skips this step.
@@ -362,8 +362,9 @@ base against Frank Karsten's published numbers
   and over budget (up to 25% above its dearest card). **Put swaps on the board** lists them under Considering, each with
   its cut, for the usual Review and save.
 
-- **Considering**, on the right, lists every idea for the deck: yours, Claude's, the meta's and the
-  tools'. Hover over an idea or click it to light the deck cards it could replace. Click one of them to
+- **Considering**, on the right, lists every idea for the deck in this order: yours, Claude's, the meta's,
+  the Archidekt decks', then the rest. Within each group ideas over the deck's budget come last, and the
+  others come by how many of the lists play them. Hover over an idea or click it to light the deck cards it could replace. Click one of them to
   queue the swap; once an idea is clicked, any other deck card but the commander can be clicked too.
   Ideas that name no card to replace yet wait under *No cut yet*: click one, then the deck card it
   replaces.

@@ -37,7 +37,7 @@ Option 2.
   asks nothing.
 - An idea is a staple the deck lacks: in at least 40% of at least two EDHTop16 lists ("meta"), or else in
   at least half of at least three Archidekt decks ("archidekt decks"). Each source puts at most 10 on the
-  board, most played first, and only ideas with a deck card to replace. Ideas already on the board fill
+  board (50 since 2026-10-17: no deck came near hundreds, and the owner wants to see more), most played first, and only ideas with a deck card to replace. Ideas already on the board fill
   places, so repeated syncs settle on the current top ideas instead of piling up; a turned-down or banned
   card takes none.
 - A board card keeps its source in an optional `origin` field; the app's badge shows it.

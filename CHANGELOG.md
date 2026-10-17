@@ -7,6 +7,9 @@
   within budget, and 25% above its dearest card is the ceiling. `suggest`, the ideas compiled on sync and the Mana tab put ideas
   within budget first and offer none above the ceiling; Considering marks the rest "Over budget".
   `cmdr suggest --any-price` ignores the deck's budget.
+- Considering lists your ideas first, then Claude's, the meta's, the Archidekt decks' and the rest; within
+  each, over-budget ideas last and the others by how many lists play them. Each sync now compiles up to 50
+  ideas per source (was 10).
 - The Mana tab suggests how the mana base should change below bracket 5 (ADR 0024): the land count when
   it is off Karsten's formula and outside other lists' range, the basics moved from colours with sources
   to spare, named untapped lands for gaps basics can't close, and untapped twins for plain tap-lands.

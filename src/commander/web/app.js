@@ -341,17 +341,29 @@ function setupZoom() {
 /* Considering: every board card with somewhere to go, plus those already queued */
 
 function considered(cards) {
-  return withinFirst(cards.filter((c) => c.status === "add" || (c.status === "open" && c.targets.length)));
+  return sortSuggestions(cards.filter((c) => c.status === "add" || (c.status === "open" && c.targets.length)));
 }
 
-// Below bracket 5, cards within the deck's budget (a little over its average card) before dearer ones (ADR 0025).
-function withinFirst(cards) {
-  return [...cards].sort((a, b) => (a.withinBudget === false) - (b.withinBudget === false));
+// Your cards, then Claude's, then meta ideas, then Archidekt deck ideas, then everything else. Within
+// each group, cards over the deck's budget (ADR 0025) go last; then the most included first.
+function suggestionGroup(card) {
+  if (card.source === "you") return 0;
+  if (card.source === "claude") return 1;
+  if (card.origin === "meta") return 2;
+  if (card.origin === "archidekt decks") return 3;
+  return 4;
+}
+
+function sortSuggestions(cards) {
+  return [...cards].sort((a, b) =>
+    suggestionGroup(a) - suggestionGroup(b)
+    || (a.withinBudget === false) - (b.withinBudget === false)
+    || (b.inclusion ?? -1) - (a.inclusion ?? -1));
 }
 
 // Ideas with no deck card named to replace yet; selecting one offers every deck card as its cut.
 function uncut(cards) {
-  return withinFirst(cards.filter((c) => c.status === "open" && !c.targets.length));
+  return sortSuggestions(cards.filter((c) => c.status === "open" && !c.targets.length));
 }
 
 function renderConsidered(cards) {

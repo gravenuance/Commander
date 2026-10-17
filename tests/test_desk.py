@@ -404,6 +404,8 @@ def test_meta_opens_from_cache_and_refreshes_on_demand(desk: Desk, fake: FakeArc
         ("Jeska's Will", "cmdr", "meta"),
         ("Mind Stone", "cmdr", "meta"),
     ]
+    # Their inclusion, for ordering Considering: Mind Stone is in all five top-cut lists, Jeska's Will in two.
+    assert {c["name"]: c["inclusion"] for c in board} == {"Jeska's Will": 0.4, "Mind Stone": 1.0}
     desk.meta(DECK)
     assert len(items(desk.deck(DECK), "cards")) == len(board)
 

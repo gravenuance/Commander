@@ -27,6 +27,7 @@ from commander.board import (
     BoardCard,
     BoardError,
     BoardService,
+    Origin,
     ReplaceOption,
     Status,
     activity_json,
@@ -65,7 +66,7 @@ from commander.manabase import (
     plan_json,
     suggest_mana,
 )
-from commander.meta import analyse, card_shares, performing_entries
+from commander.meta import analyse, card_shares, peer_shares, performing_entries
 from commander.metadata import (
     CEDH_BRACKET,
     MetaData,
@@ -359,12 +360,14 @@ class Desk:
             infos = db.cards(card.oracle_id for card in board.cards)
             rules = with_ideas(self._deck_rules(stored, main, profile, db), infos.values(), db)
             budget = resolved_budget(stored.deck.bracket, main, profile.max_card_cents)
+            inclusion = self._inclusion(stored.deck)
             cards = [
                 {
                     **self._card_view(db, card),
                     "withinBudget": None
                     if budget.working is None
                     else budget.within(info.cheapest_cents if (info := infos.get(card.oracle_id)) else None),
+                    "inclusion": inclusion(card),
                     "dropping": card.name in drop,
                     "targets": [
                         _target_json(t) for t in targets_for(card, infos.get(card.oracle_id), main, rules)
@@ -696,6 +699,21 @@ class Desk:
             "combos": combo_rows(report.combos),
             "racing": report.style.races,
         }
+
+    def _inclusion(self, deck: Deck) -> Callable[[BoardCard], float | None]:
+        """Each board card's share of the lists that play it, from cached answers: the top-cut lists for a
+        meta idea, the recent Archidekt decks for the rest, else the other; None when neither knows it."""
+        data = self._pool(deck)
+        meta = card_shares(data) if data is not None else {}
+        peers = peer_shares(data.peers.data.decks) if data is not None and data.peers.data else {}
+
+        def inclusion(card: BoardCard) -> float | None:
+            key = card_key(card.name)
+            first, second = (meta, peers) if card.origin is Origin.META else (peers, meta)
+            share = first.get(key, second.get(key))
+            return round(share, 4) if share is not None else None
+
+        return inclusion
 
     def _meta_shares(self, deck: Deck) -> dict[str, float] | None:
         """Each card's share of the meta's lists, for bracket 5 decks with cached meta answers; else None."""
