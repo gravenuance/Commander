@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from commander.archidekt import API_BASE, ArchidektError, category_flags, parse_deck
-from commander.credentials import TokenStore
+from commander.credentials import CredentialError, TokenStore
 from commander.jsonshape import (
     ShapeError,
     as_list,
@@ -169,6 +169,16 @@ class ArchidektAuth:
         if refresh is None:
             raise AuthError(f"not signed in to Archidekt as {user}; run `cmdr login`")
         try:
+            return self._exchange(user, refresh)
+        except AuthError:
+            newer = self._store.get(user)
+            if newer is None or newer == refresh:
+                raise
+            # Another process (the app beside the CLI) refreshed and rotated the token after this read it.
+            return self._exchange(user, newer)
+
+    def _exchange(self, user: str, refresh: str) -> str:
+        try:
             raw = self._fetcher.send_json(
                 "POST", f"{self._base_url}/rest-auth/token/refresh/", {"refresh": refresh}
             )
@@ -185,7 +195,11 @@ class ArchidektAuth:
         except ShapeError as error:
             raise ArchidektError(f"unexpected token answer from Archidekt: {error}") from error
         if rotated and rotated != refresh:
-            self._store.put(user, rotated)
+            try:
+                self._store.put(user, rotated)
+            except CredentialError as error:
+                # The access token still works for this run; the next run may need `cmdr login`.
+                log.warning("could not save the rotated Archidekt login for %s: %s", user, error)
         return token
 
 

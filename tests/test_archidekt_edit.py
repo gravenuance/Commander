@@ -1,8 +1,10 @@
 import importlib
 import json
-from collections.abc import Iterator
+import logging
+from collections.abc import Callable, Iterator
 
 import httpx
+import keyring.errors
 import pytest
 
 from commander.archidekt import ArchidektError
@@ -448,3 +450,88 @@ def test_a_saved_write_counts_whatever_the_body_of_the_answer_is(answer: bytes) 
 
     # Raising here would have the user retry, and the add would be applied twice.
     assert calls == ["POST", "PATCH"]
+
+
+def refresh_handler(
+    seen: list[str], on_refresh: Callable[[str], httpx.Response]
+) -> Callable[[httpx.Request], httpx.Response]:
+    def handler(request: httpx.Request) -> httpx.Response:
+        refresh = json.loads(request.content)["refresh"]
+        seen.append(refresh)
+        return on_refresh(refresh)
+
+    return handler
+
+
+def test_a_rotated_token_that_cannot_be_saved_is_logged_and_the_access_token_still_returned(
+    memory_keyring: MemoryKeyring, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    store = KeyringTokenStore()
+    store.put("MAKKIS", "r1")
+
+    def locked(*_: str) -> None:
+        raise keyring.errors.PasswordSetError("vault locked")
+
+    monkeypatch.setattr(memory_keyring, "set_password", locked)
+    answer = {"access": "a2", "refresh": "r2-secret"}
+
+    with (
+        httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200, json=answer))) as client,
+        caplog.at_level(logging.WARNING, logger="commander.archidekt_edit"),
+    ):
+        token = ArchidektAuth(Fetcher(client), store).access_token("MAKKIS")
+
+    assert token == "a2"
+    assert store.get("MAKKIS") == "r1"
+    [warning] = caplog.messages
+    assert warning == (
+        "could not save the rotated Archidekt login for MAKKIS: "
+        "could not save the Archidekt login: vault locked"
+    )
+
+
+def test_a_refused_refresh_is_retried_once_with_the_token_another_process_saved() -> None:
+    store = MemoryTokenStore({"makkis": "r1"})
+    seen: list[str] = []
+
+    def on_refresh(refresh: str) -> httpx.Response:
+        if refresh == "r1":
+            store.put("MAKKIS", "r2")  # the app refreshed and rotated it meanwhile
+            return httpx.Response(401)
+        return httpx.Response(200, json={"access": "a3"})
+
+    with httpx.Client(transport=httpx.MockTransport(refresh_handler(seen, on_refresh))) as client:
+        assert ArchidektAuth(Fetcher(client), store).access_token("MAKKIS") == "a3"
+
+    assert seen == ["r1", "r2"]
+
+
+def test_a_refused_refresh_is_not_retried_when_the_saved_token_is_unchanged() -> None:
+    seen: list[str] = []
+
+    with (
+        httpx.Client(
+            transport=httpx.MockTransport(refresh_handler(seen, lambda _: httpx.Response(401)))
+        ) as client,
+        pytest.raises(AuthError, match="has expired"),
+    ):
+        ArchidektAuth(Fetcher(client), MemoryTokenStore({"makkis": "r1"})).access_token("MAKKIS")
+
+    assert seen == ["r1"]
+
+
+def test_the_retry_with_a_newer_token_happens_once_only() -> None:
+    store = MemoryTokenStore({"makkis": "r1"})
+    seen: list[str] = []
+
+    def on_refresh(refresh: str) -> httpx.Response:
+        store.put("MAKKIS", "r2" if refresh == "r1" else "r3")
+        return httpx.Response(401)
+
+    with (
+        httpx.Client(transport=httpx.MockTransport(refresh_handler(seen, on_refresh))) as client,
+        pytest.raises(AuthError, match="has expired"),
+    ):
+        ArchidektAuth(Fetcher(client), store).access_token("MAKKIS")
+
+    assert seen == ["r1", "r2"]
