@@ -107,6 +107,11 @@
   bracket ceiling and price cap (Pantlaza got Ephemerate though its profile excludes flicker).
 
 ### Changed
+- App usability: ideas that name no card to replace (suggestions, Sideboard and Maybeboard cards, proposals
+  matching nothing) show under *No cut yet* instead of not at all; a save says plainly how many changes went
+  to Archidekt; errors stay until dismissed; *Sync decks* is *Update from Archidekt*, *Rejected* is
+  *Turned down*, *Export* is *Copy decklist*; grid cards zoom from the keyboard; colours, radii, type sizes
+  and focus rings all come from the design tokens.
 - Commander short names skip a leading "The" and keep the first word: "Gitrog", "Tevesh".
 - Desktop app: the Suggested and Decided lists are gone (suggestions join Considered; decided cards
   leave the app), the activity column folds to a rail, and ideas from `suggest` no longer all offer the
