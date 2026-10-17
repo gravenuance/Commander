@@ -471,8 +471,10 @@ def check_card(name: str, deck: Deck, data: MetaData) -> CardCheck:
     key = card_key(name)
     lists = [e for e in _window(data.lists.data.entries if data.lists.data else (), data.since) if e.cards]
     performing, _ = performing_lists(lists)
-    having = [e for e in lists if key in {card_key(c.name) for c in e.cards}]
-    lacking = [e for e in lists if e not in having]
+    having: list[Entry] = []
+    lacking: list[Entry] = []
+    for e in lists:
+        (having if _plays(e, key) else lacking).append(e)
     peers = data.peers.data.decks if data.peers.data else ()
     meta_lists = [e for c in (data.field.data or ()) for e in _window(c.entries, data.since) if e.cards]
     spice = [c.spice for e in lists for c in e.cards if card_key(c.name) == key]
@@ -480,7 +482,7 @@ def check_card(name: str, deck: Deck, data: MetaData) -> CardCheck:
         name=name,
         in_deck=key in {card_key(card.name) for card in deck.main_cards},
         performing=len(performing),
-        performing_with=sum(1 for e in performing if e in having),
+        performing_with=sum(1 for e in performing if _plays(e, key)),
         lists=len(lists),
         lists_with=len(having),
         top_cuts_with=sum(1 for e in having if e.made_top_cut),
@@ -491,8 +493,12 @@ def check_card(name: str, deck: Deck, data: MetaData) -> CardCheck:
         peers_with=sum(1 for p in peers if key in {card_key(n) for n in p.cards}),
         spice=max(spice) if spice else None,
         meta_lists=len(meta_lists),
-        meta_lists_with=sum(1 for e in meta_lists if key in {card_key(c.name) for c in e.cards}),
+        meta_lists_with=sum(1 for e in meta_lists if _plays(e, key)),
     )
+
+
+def _plays(entry: Entry, key: str) -> bool:
+    return any(card_key(c.name) == key for c in entry.cards)
 
 
 def _state[T](name: str, answer: Answer[T]) -> SourceState:
