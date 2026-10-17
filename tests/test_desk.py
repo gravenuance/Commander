@@ -70,6 +70,11 @@ def names(answer: Json, key: str) -> list[str]:
     return cast("list[str]", answer[key])
 
 
+def reviewed(desk: Desk) -> str:
+    """The board stamp a preview hands back, which a save must present."""
+    return str(desk.preview(DECK)["stamp"])
+
+
 def first_card_id(desk: Desk) -> str:
     return str(items(desk.deck(DECK), "cards")[0]["id"])
 
@@ -338,7 +343,7 @@ def test_a_card_saved_into_the_deck_is_to_get_until_it_arrives(desk: Desk) -> No
     assert desk.deck(DECK)["toGet"] == []
     desk.propose(DECK, "Arcane Signet")
     desk.decide(DECK, first_card_id(desk), "add", None, "")
-    assert desk.commit(DECK)["saved"] is True
+    assert desk.commit(DECK, reviewed(desk))["saved"] is True
     signet = {"name": "Arcane Signet", "quantity": 1, "label": "Don't Have", "category": "Artifact"}
     assert desk.deck(DECK)["toGet"] == [signet]
 
@@ -370,7 +375,7 @@ def test_preview_and_commit_save_the_queued_cards(desk: Desk, fake: FakeArchidek
     )
     assert not fake.card_writes()
 
-    saved = desk.commit(DECK)
+    saved = desk.commit(DECK, str(preview["stamp"]))
     assert saved["saved"] is True
     assert saved["applied"] == ["Arcane Signet"]
     assert saved["snapshot"] == "before cmdr apply 2026-10-15 12:00:00 UTC"
@@ -382,9 +387,21 @@ def test_commit_without_a_login_says_how_to_sign_in(settings: DeskSettings, fake
     desk.propose(DECK, "Arcane Signet")
     card_id = first_card_id(desk)
     desk.decide(DECK, card_id, "add", None, "")
-    answer = desk.commit(DECK)
+    answer = desk.commit(DECK, reviewed(desk))
     assert "cmdr login" in str(answer["error"])
     assert not fake.card_writes()
+
+
+def test_commit_refuses_a_board_that_changed_since_the_preview(desk: Desk, fake: FakeArchidekt) -> None:
+    desk.propose(DECK, "Arcane Signet")
+    desk.decide(DECK, first_card_id(desk), "add", None, "")
+    stamp = reviewed(desk)
+    desk.propose(DECK, "Lightning Bolt")
+    assert desk.commit(DECK, stamp) == {
+        "error": "The board changed after the preview; open Review again before saving."
+    }
+    assert not fake.card_writes()
+    assert desk.commit(DECK, reviewed(desk))["saved"] is True
 
 
 def test_without_a_username_previews_ask_for_cmdr_init(settings: DeskSettings, fake: FakeArchidekt) -> None:

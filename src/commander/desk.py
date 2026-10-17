@@ -31,6 +31,7 @@ from commander.board import (
     ReplaceOption,
     Status,
     activity_json,
+    board_digest,
     board_stamp,
     card_json,
     files_stamp,
@@ -639,6 +640,8 @@ class Desk:
     def preview(self, deck_id: int) -> Json:
         stored = self._stored(deck_id)
         user = self._user()
+        # Taken before the board is read, so a change made during the preview shows up at the save.
+        stamp = board_digest(stored.folder)
         with self._db() as db, self._client_factory() as http:
             fetcher = Fetcher(http)
             auth = ArchidektAuth(fetcher, self._token_store)
@@ -651,12 +654,16 @@ class Desk:
             )
         view = _resolution_json(outcome.resolution)
         view["bracket"] = preview_json(bracket)
+        view["stamp"] = stamp
         return view
 
     @_guarded
-    def commit(self, deck_id: int) -> Json:
+    def commit(self, deck_id: int, stamp: str) -> Json:
+        """Save the queued cards, if the board is still as the preview with this stamp saw it."""
         stored = self._stored(deck_id)
         user = self._user()
+        if board_digest(stored.folder) != stamp:
+            return {"error": "The board changed after the preview; open Review again before saving."}
         with self._service_and_db(stored) as (service, db), self._client_factory() as http:
             fetcher = Fetcher(http)
             editor = ArchidektEditor(fetcher, ArchidektAuth(fetcher, self._token_store).access_token(user))

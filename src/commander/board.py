@@ -4,6 +4,7 @@ Each deck folder holds board.json (the cards now) and activity.jsonl (every chan
 desktop app, the CLI and Claude all work from the same files and can catch up on each other (ADR 0006).
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -172,6 +173,17 @@ class Board:
 def board_stamp(folder: Path) -> str:
     """Changes whenever the board, its activity or the deck snapshot changes; cheap enough to poll."""
     return files_stamp(folder, (BOARD_FILE, ACTIVITY_FILE, "deck.json", "profile.toml"))
+
+
+def board_digest(folder: Path) -> str:
+    """A hash of board.json's content, to tell whether the board changed between two looks."""
+    try:
+        data = (folder / BOARD_FILE).read_bytes()
+    except FileNotFoundError:
+        return "-"
+    except OSError as error:
+        raise BoardIOError(f"cannot read {folder / BOARD_FILE}: {error}") from error
+    return hashlib.sha256(data).hexdigest()
 
 
 def files_stamp(folder: Path, names: Iterable[str]) -> str:
