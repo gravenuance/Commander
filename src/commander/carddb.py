@@ -48,6 +48,8 @@ WHERE role = :role AND {_FITS_DECK}
 ORDER BY edhrec_rank, oracle.oracle_id
 """  # noqa: S608 — built from constant fragments and placeholders; every value is bound
 COLORS = "WUBRG"
+# Joins the faces of a two-faced card in its name, type line and mana cost.
+_NAME_FACE_SEPARATOR = " // "
 FACE_SEPARATOR = "\n//\n"
 # The tags given, grown by every sub-tag; UNION drops repeats, so a cycle in the tag tree still ends.
 _SUBTREE_CTE = """WITH RECURSIVE subtree(tag_id) AS (
@@ -187,6 +189,25 @@ class Role(Enum):
     MASS_LAND_DENIAL = "mass land denial"
 
 
+def front_face(text: str) -> str:
+    """The front face of a two-faced card's name, type line or mana cost; one-faced text comes back as is."""
+    return text.split(_NAME_FACE_SEPARATOR, maxsplit=1)[0]
+
+
+def front_name(name: str) -> str:
+    return front_face(name)
+
+
+def front_type(type_line: str) -> str:
+    return front_face(type_line)
+
+
+def back_is_land(type_line: str) -> bool:
+    """A card that is a spell on its front face and a land on its back (Shatterskull Smashing)."""
+    faces = type_line.split(_NAME_FACE_SEPARATOR)
+    return len(faces) > 1 and "Land" in faces[-1].split() and "Land" not in faces[0].split()
+
+
 @dataclass(slots=True, frozen=True)
 class CardInfo:
     """Facts shared by every printing of a card."""
@@ -206,7 +227,7 @@ class CardInfo:
 
     @property
     def front_type_line(self) -> str:
-        return self.type_line.split(" // ")[0]
+        return front_type(self.type_line)
 
     @property
     def is_land(self) -> bool:

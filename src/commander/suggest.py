@@ -14,7 +14,7 @@ from pathlib import Path
 from commander.analysis import ANALYZED_ROLES, CATEGORY_ALIASES, game_changers
 from commander.background import run_all
 from commander.budget import NO_BUDGET, Budget, resolved_budget
-from commander.carddb import COLORS, NO_THEME, CardDb, CardInfo, ResolvedCard, Role, Theme
+from commander.carddb import COLORS, NO_THEME, CardDb, CardInfo, ResolvedCard, Role, Theme, back_is_land
 from commander.deckcache import Answer, AnswerSource, Clock, DeckCache, cached_answer
 from commander.deckprofile import Profile, ResolvedThemes
 from commander.jsonshape import as_object, opt_int, opt_str, req_list, req_str, str_list
@@ -424,6 +424,7 @@ def cut_candidates(
             info is None
             or COMMANDER_CATEGORY in r.card.categories
             or info.is_land
+            or back_is_land(info.type_line)
             or any(fills_role(r, role) for role in ANALYZED_ROLES)
             or info.oracle_id in protected
             or info.oracle_id in combo_ids

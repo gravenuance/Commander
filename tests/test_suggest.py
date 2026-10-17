@@ -8,10 +8,10 @@ from pathlib import Path
 import pytest
 
 from commander.archidekt import parse_deck
-from commander.carddb import CardDb, CardInfo, Role, Theme
+from commander.carddb import CardDb, CardInfo, ResolvedCard, Role, Theme
 from commander.deckcache import Answer, AnswerSource
 from commander.deckprofile import Profile, ResolvedThemes
-from commander.models import Deck
+from commander.models import Deck, DeckCard
 from commander.net import Fetcher
 from commander.spellbook import ComboMatches, SpellbookClient, parse_matches
 from commander.suggest import (
@@ -22,6 +22,7 @@ from commander.suggest import (
     SuggestOptions,
     card_raise,
     combos_cache,
+    cut_candidates,
     find_combos,
     find_deck_combos,
     options_for,
@@ -509,3 +510,30 @@ def test_options_take_flags_then_profile_then_config_then_defaults(deck: Deck) -
     assert (flagged.max_cents, flagged.ceiling) == (100, 5)
     plain = options_for(deck, Profile(), themes, {}, count=5, max_cents=None, within_bracket=False)
     assert (plain.targets, plain.max_cents, plain.ceiling) == (DEFAULT_TARGETS, None, None)
+
+
+def resolved(name: str, type_line: str, rank: int) -> ResolvedCard:
+    card = DeckCard(name, 1, ("Main",), True, "sid", 1, 1, "tst", "1", "Normal")  # noqa: FBT003 — positional like the model
+    info = CardInfo(
+        oracle_id=f"id-{name}",
+        name=name,
+        mana_cost="{1}{G}",
+        cmc=2.0,
+        type_line=type_line,
+        color_identity="G",
+        game_changer=False,
+        commander_legal=True,
+        cheapest_cents=None,
+        edhrec_rank=rank,
+        roles=frozenset(),
+    )
+    return ResolvedCard(card, info, None)
+
+
+def test_a_spell_with_a_land_back_is_never_offered_as_a_cut() -> None:
+    main = [
+        resolved("Plain Spell", "Sorcery", 5000),
+        # The least played of them all, yet the mana tab counts it as part of a land.
+        resolved("Turntimber Symbiosis // Turntimber, Serpentine Wood", "Sorcery // Land — Forest", 9000),
+    ]
+    assert [c.name for c in cut_candidates(main, None, count=5)] == ["Plain Spell"]

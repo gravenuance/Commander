@@ -13,7 +13,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from statistics import median
 
-from commander.carddb import FACE_SEPARATOR, CardMana
+from commander.carddb import FACE_SEPARATOR, CardMana, back_is_land
 from commander.models import Deck
 
 COLOURS = "WUBRG"
@@ -602,7 +602,7 @@ def _cut_candidates(the_99: Sequence[tuple[int, CardMana]], change: int) -> tupl
 
 
 def _cuttable(info: CardMana) -> bool:
-    if info_is_land(info) or _back_is_land(info) or _mana_card(info):
+    if info_is_land(info) or back_is_land(info.type_line) or _mana_card(info):
         return False
     text = info.oracle_text.casefold()
     return not ("search your library" in text and "land" in text)
@@ -710,7 +710,7 @@ def land_count(cards: Sequence[tuple[int, CardMana]]) -> LandCount:
         if info_is_land(info):
             lands += quantity
             continue
-        if _back_is_land(info):
+        if back_is_land(info.type_line):
             land_spells += quantity
             lands += quantity * (MYTHIC_MDFC_LAND if info.rarity == "mythic" else MDFC_LAND)
         spells += [info.cmc] * quantity
@@ -794,7 +794,7 @@ class _Source:
             return _Source(
                 info.name, quantity, land=True, colours=colours, from_mana_value=1, tapped=_tapped(text)
             )
-        if _back_is_land(info):
+        if back_is_land(info.type_line):
             worth = MYTHIC_MDFC_SOURCE if info.rarity == "mythic" else MDFC_SOURCE
             back = info.oracle_text.split(FACE_SEPARATOR)[-1].casefold()
             colours = dict.fromkeys(made or _searched(back), worth)
@@ -909,7 +909,7 @@ def _compare(
 
 
 def _mana_card(info: CardMana) -> bool:
-    return bool(info.produced) and not info_is_land(info) and not _back_is_land(info)
+    return bool(info.produced) and not info_is_land(info) and not back_is_land(info.type_line)
 
 
 def _pips(mana_cost: str) -> dict[str, int]:
@@ -938,11 +938,6 @@ def _pattern(mana_value: int, pips: int) -> str:
 
 def _front(type_line: str) -> str:
     return type_line.split(" // ", maxsplit=1)[0]
-
-
-def _back_is_land(info: CardMana) -> bool:
-    faces = info.type_line.split(" // ")
-    return len(faces) > 1 and "Land" in faces[-1].split() and not info_is_land(info)
 
 
 # Tagger tags for cards usually cast for an alternative cost, which Karsten leaves out of colour needs.

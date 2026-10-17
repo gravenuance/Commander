@@ -16,6 +16,9 @@ from commander.carddb import (
     TagCount,
     TextGate,
     Theme,
+    back_is_land,
+    front_name,
+    front_type,
     read_meta,
     write_card_db,
 )
@@ -324,3 +327,19 @@ def test_card_mana_reads_what_each_card_makes(tmp_path: Path) -> None:
     assert (dual.name, dual.type_line, dual.produced, dual.rarity) == ("Test Dual Land", "Land", "WU", "rare")
     # The fixture lines carry no produced_mana, so Mind Stone reads as making nothing here.
     assert found["mind stone"].produced == ""
+
+
+def test_two_faced_text_is_read_by_its_front_face() -> None:
+    assert (
+        front_name("Fable of the Mirror-Breaker // Reflection of Kiki-Jiki") == "Fable of the Mirror-Breaker"
+    )
+    assert front_type("Sorcery // Land — Forest") == "Sorcery"
+    assert front_name("Sol Ring") == "Sol Ring"
+
+
+def test_only_a_spell_with_a_land_back_is_a_back_face_land() -> None:
+    assert back_is_land("Sorcery // Land — Forest")
+    assert not back_is_land("Land — Forest")
+    assert not back_is_land("Creature — Human // Creature — Werewolf")
+    # A land on the front is a land, not a spell with a land back.
+    assert not back_is_land("Land // Land")
