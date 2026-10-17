@@ -23,7 +23,7 @@ from commander.metacombos import AnswerRole
 from commander.metadata import CommanderEntries, MetaCommander, MetaData, PeerList, PeerLists
 from commander.models import Deck
 from commander.spellbook import ComboDetail, ComboPiece
-from conftest import CHAOS_WARP, LIGHTNING_BOLT, Json, build_card_db
+from conftest import CHAOS_WARP, FILLER_CARDS, LIGHTNING_BOLT, Json, build_card_db, filler_card
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 SINCE = date(2026, 8, 16)
@@ -53,9 +53,25 @@ REMOVAL_TAGS = [
 ]
 
 
+BANNED_CARD = "Banned Test Card"
+BLUE_CARD = "Blue Test Card"
+
+
+def extra_card(index: int, name: str, *, identity: list[str], legal: str = "legal") -> str:
+    raw = json.loads(filler_card(FILLER_CARDS + index, name))
+    raw["color_identity"] = identity
+    raw["legalities"] = {"commander": legal}
+    return json.dumps(raw)
+
+
 @pytest.fixture(scope="module")
 def db(tmp_path_factory: pytest.TempPathFactory) -> Iterator[CardDb]:
-    with CardDb(build_card_db(tmp_path_factory.mktemp("metadb"), REMOVAL_TAGS)) as opened:
+    # A card banned since the lists were played, and one outside Magda's red identity.
+    extra = [
+        extra_card(1, BANNED_CARD, identity=[], legal="banned"),
+        extra_card(2, BLUE_CARD, identity=["U"]),
+    ]
+    with CardDb(build_card_db(tmp_path_factory.mktemp("metadb"), REMOVAL_TAGS, extra)) as opened:
         yield opened
 
 
@@ -153,6 +169,15 @@ def test_missing_staples_come_from_performing_and_archidekt_lists(deck: Deck, db
     ]
     assert report.missing[0].share == pytest.approx(0.6)
     assert report.missing[4].peer_share == pytest.approx(2 / 3)
+
+
+def test_missing_staples_leave_out_banned_and_off_colour_cards(deck: Deck, db: CardDb) -> None:
+    played = [("Mind Stone", 0), (BANNED_CARD, 0), (BLUE_CARD, 0), ("Too New To Know", 0)]
+    lists = [entry(i, 40, 8, played) for i in range(1, 6)]
+    peers = [peer(i, [BANNED_CARD, BLUE_CARD]) for i in range(1, 4)]
+    report = analyse(deck, meta_data(lists, peers), Profile(), db)
+    # A card the card data lacks can't be judged, so it stays.
+    assert [c.name for c in report.missing] == ["Mind Stone", "Too New To Know"]
 
 
 def test_spicy_picks_skip_deck_cards_and_mild_ones(deck: Deck, db: CardDb) -> None:

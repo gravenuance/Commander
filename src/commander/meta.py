@@ -20,6 +20,7 @@ from commander.metadata import MetaCommander, MetaData, PeerList
 from commander.models import COMMANDER_CATEGORY, Deck
 from commander.playstyle import NEUTRAL, Fit, PlayStyle, deck_play_style, fit_order, staple_fits
 from commander.spellbook import ComboDetail
+from commander.suggest import deck_identity
 
 # Fewer top-cut lists than this, and every list in the window stands in, marked thin.
 MIN_PERFORMING = 5
@@ -251,10 +252,27 @@ def missing_staples(
                     names[key], counts[key], share, peer_counts[key], peer_share, spice.get(key), key in aside
                 )
             )
+    rows = _playable(rows, deck, db)
     fits = staple_fits((r.name for r in rows), style, db)
     rows = [replace(r, fit=fits.get(r.name.casefold(), Fit.NEUTRAL)) for r in rows]
     rows.sort(key=lambda r: (fit_order(r.fit), -r.share, -r.peer_share, r.name))
     return tuple(rows if limit is None else rows[:limit])
+
+
+def _playable(rows: Sequence[CardShare], deck: Deck, db: CardDb) -> list[CardShare]:
+    """The rows the deck could play: lists older than a ban, or in other colours, name cards it can't."""
+    identity = deck_identity(db.resolve(deck.main_cards))
+    found = db.cards_named(r.name for r in rows)
+    kept: list[CardShare] = []
+    for row in rows:
+        # A name the card data doesn't spell the same may still be a two-faced card's front face.
+        info = found.get(row.name.casefold()) or db.card_named(row.name)
+        if info is not None and not (
+            info.commander_legal and (identity is None or set(info.color_identity) <= set(identity))
+        ):
+            continue
+        kept.append(row)
+    return kept
 
 
 @dataclass(slots=True, frozen=True)
