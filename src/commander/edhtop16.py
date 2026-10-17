@@ -150,7 +150,10 @@ class Edhtop16Client:
     ) -> tuple[Entry, ...] | None:
         """The commander's entries from events on or after `since`, in `sort` order, or None for a commander
         EDHTop16 doesn't know. Newest-first reading stops at the first page that reaches past `since`;
-        best-first reading reads one page of `limit` and keeps the entries inside the window."""
+        best-first reading reads one page of `limit` and keeps the entries inside the window, so its limit
+        is at most PAGE_SIZE."""
+        if sort is EntrySort.TOP and limit > PAGE_SIZE:
+            raise ValueError(f"best-first reading takes one page: limit must be at most {PAGE_SIZE}")
         found: list[Entry] = []
         after: str | None = None
         for _ in range(MAX_PAGES):
