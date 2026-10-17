@@ -12,7 +12,7 @@ EUR prices and brackets. The README covers usage; this file covers working on it
 - Put research on a board: `uv run cmdr board add <deck> "<card>" --by claude --reason "..." --replace "<deck card>=<why>"`, or `board research` for a card already there; the decision is the user's
 - Cards still to buy: `uv run cmdr toget [deck]`; `uv run cmdr toget <deck> "<card>" --ordered|--arrived` writes the label to Archidekt at once (ADR 0010), so only on the user's say-so
 - Change a deck: `uv run cmdr apply <plan.toml>` previews; `--save` writes to Archidekt and needs `uv run cmdr login` once (the user types the password; never ask for it or pass it on a command line)
-- Desktop app: `uv run cmdr app`; its log is `%LOCALAPPDATA%\Commander\logs\commander.log` (`CMDR_LOG_LEVEL=DEBUG` logs every bridge call). Build the exe: `uv run --group build pyinstaller --noconfirm --clean --onefile --windowed --name Commander --add-data "src/commander/web;commander/web" src/commander/app_main.py` (lands in `dist/`)
+- Desktop app: `uv run cmdr app`; its log is `%LOCALAPPDATA%\Commander\logs\commander.log` (`CMDR_LOG_LEVEL=DEBUG` logs every bridge call). Build the exe: `uv run --group build pyinstaller --noconfirm --clean --onefile --windowed --name Commander --icon src/commander/web/commander.ico --add-data "src/commander/web;commander/web" src/commander/app_main.py` (lands in `dist/`)
 
 ## Conventions
 - Signing in to the app as another account switches the config's `user` and `workspace` to that account's folder (ADR 0023), and the CLI follows; before deck work, check that `uv run cmdr list` shows the user's decks from `decks/`.

@@ -401,7 +401,7 @@ the web inspector.
 To build a single `Commander.exe` that needs no Python:
 
 ```sh
-uv run --group build pyinstaller --noconfirm --clean --onefile --windowed --name Commander --add-data "src/commander/web;commander/web" src/commander/app_main.py
+uv run --group build pyinstaller --noconfirm --clean --onefile --windowed --name Commander --icon src/commander/web/commander.ico --add-data "src/commander/web;commander/web" src/commander/app_main.py
 ```
 
 The exe lands in `dist/`. It is not code-signed, so Windows SmartScreen warns the first time it runs;

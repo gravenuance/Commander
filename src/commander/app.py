@@ -91,7 +91,9 @@ def run_app(desk: Desk, *, debug: bool = False) -> None:
         text_select=True,
     )
     log.info("window opened")
-    webview.start(debug=debug, private_mode=True)
+    # A packed exe unpacks its data to a folder, so the icon has a real path for WinForms to load.
+    with resources.as_file(resources.files("commander") / "web" / "commander.ico") as icon:
+        webview.start(debug=debug, private_mode=True, icon=str(icon))
     log.info("window closed")
 
 

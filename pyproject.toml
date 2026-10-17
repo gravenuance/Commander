@@ -60,9 +60,12 @@ ignore = [
     "S105",    # made-up passwords and tokens for the fake Archidekt
     "S106",    # same
 ]
+"tools/**" = [
+    "INP001",  # one-off scripts run by path, not a package
+]
 
 [tool.pyright]
-include = ["src", "tests"]
+include = ["src", "tests", "tools"]
 typeCheckingMode = "strict"
 pythonVersion = "3.13"
 venvPath = "."
