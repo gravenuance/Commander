@@ -1,10 +1,10 @@
 """`cmdr profile`: show a deck's profile as suggest reads it, or start one from a commented template."""
 
 import argparse
-import json
 from collections.abc import Callable, Sequence
 
 from commander.cli_meta import meta_sources
+from commander.cli_output import write_json
 from commander.clibase import EXIT_OK, Context, one_deck, open_card_db, workspace
 from commander.config import cache_dir, config_path, read_config
 from commander.deckprofile import (
@@ -65,8 +65,7 @@ def _cmd_profile(args: argparse.Namespace, ctx: Context) -> int:
             "unknownIgnores": unknown_ignores,
             "leanings": [leaning_json(leaning) for leaning in leanings],
         }
-        json.dump(document, ctx.out, ensure_ascii=False, indent=2)
-        ctx.out.write("\n")
+        write_json(document, ctx.out)
         return EXIT_OK
     path = profile_path(stored.folder)
     print(f"{stored.deck.name} ({stored.deck.id})", file=ctx.out)

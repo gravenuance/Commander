@@ -1,5 +1,6 @@
 """Output shared by several `cmdr` commands: plan previews and save outcomes, prices and bracket marks."""
 
+import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import TextIO
@@ -120,6 +121,12 @@ def raise_text(raises: BracketRaise | None) -> str:
 
 def raise_json(raises: BracketRaise | None) -> dict[str, object] | None:
     return {"bracket": raises.bracket, "reason": raises.reason} if raises else None
+
+
+def write_json(document: object, out: TextIO) -> None:
+    """A command's `--json` answer: indented UTF-8 JSON and a newline."""
+    json.dump(document, out, ensure_ascii=False, indent=2)
+    out.write("\n")
 
 
 def progress_printer(err: TextIO) -> Callable[[str], None]:

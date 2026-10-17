@@ -2,14 +2,13 @@
 which of the meta's cards answer its key cards."""
 
 import argparse
-import json
 from collections.abc import Callable, Sequence
 from typing import TextIO
 
 import httpx
 
 from commander.carddb import CardDb
-from commander.cli_output import progress_printer
+from commander.cli_output import progress_printer, write_json
 from commander.clibase import EXIT_FAILURE, EXIT_OK, Context, UsageError, one_deck, open_card_db, workspace
 from commander.config import MetaSettings, cache_dir, config_path, read_config, resolve_user
 from commander.deckcache import AnswerSource
@@ -124,13 +123,10 @@ def _print_results(
 ) -> None:
     if args.json:
         checks = [check_card(name, s.deck, data) for s, data, _ in results for name in args.card]
-        json.dump(
+        write_json(
             {"reports": [report_json(r) for _, _, r in results], "cards": [check_json(c) for c in checks]},
             out,
-            ensure_ascii=False,
-            indent=2,
         )
-        out.write("\n")
         return
     if args.card:
         [(deck, data, report)] = results

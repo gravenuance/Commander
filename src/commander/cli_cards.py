@@ -1,10 +1,10 @@
 """`cmdr card` and `cmdr tags`: look up a card's rules text and tags, and find Tagger tags by name."""
 
 import argparse
-import json
 from collections.abc import Callable
 
 from commander.carddb import CardDb, CardInfo, CardText
+from commander.cli_output import write_json
 from commander.clibase import EXIT_OK, Context, UsageError, open_card_db
 from commander.pricing import format_eur
 
@@ -59,8 +59,7 @@ def _cmd_card(args: argparse.Namespace, ctx: Context) -> int:
     with open_card_db(ctx) as db:
         cards = look_up(db, args.name)
     if args.json:
-        json.dump([card_json(info, text) for info, text in cards], ctx.out, ensure_ascii=False, indent=2)
-        ctx.out.write("\n")
+        write_json([card_json(info, text) for info, text in cards], ctx.out)
         return EXIT_OK
     for index, (info, text) in enumerate(cards):
         if index:
@@ -95,8 +94,7 @@ def _cmd_tags(args: argparse.Namespace, ctx: Context) -> int:
     with open_card_db(ctx) as db:
         found = db.find_tags(args.text)
     if args.json:
-        json.dump([{"slug": t.slug, "cards": t.cards} for t in found], ctx.out, indent=2)
-        ctx.out.write("\n")
+        write_json([{"slug": t.slug, "cards": t.cards} for t in found], ctx.out)
         return EXIT_OK
     if not found:
         print(f"no tag contains {args.text.strip()!r}", file=ctx.out)

@@ -1,11 +1,11 @@
 """`cmdr toget`: the cards the decks still have to get, and marking one ordered or arrived (ADR 0010)."""
 
 import argparse
-import json
 from collections.abc import Callable
 
 from commander.archidekt_edit import ArchidektAuth, ArchidektEditor
 from commander.board import Actor, BoardService
+from commander.cli_output import write_json
 from commander.clibase import EXIT_OK, Context, UsageError, one_deck, open_card_db, workspace
 from commander.config import config_path, read_config, resolve_user
 from commander.labels import Step, mark, to_get_json
@@ -64,8 +64,7 @@ def _show(args: argparse.Namespace, ctx: Context) -> int:
     decks.sort(key=lambda d: d.short_name.casefold())
     if args.json:
         document = [{"deck": d.id, "short": d.short_name, "cards": to_get_json(d)} for d in decks]
-        json.dump(document, ctx.out, ensure_ascii=False, indent=2)
-        ctx.out.write("\n")
+        write_json(document, ctx.out)
         return EXIT_OK
     for line in toget_lines(decks):
         print(line, file=ctx.out)

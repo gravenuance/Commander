@@ -2,7 +2,6 @@
 
 import argparse
 import getpass
-import json
 import logging
 import sys
 from collections.abc import Callable, Mapping, Sequence
@@ -54,6 +53,7 @@ from commander.cli_output import (
     progress_printer,
     raise_json,
     raise_text,
+    write_json,
 )
 from commander.cli_profile import add_profile_commands
 from commander.cli_toget import add_toget_commands
@@ -458,8 +458,7 @@ def _cmd_sync(args: argparse.Namespace, ctx: Context) -> int:
                 for short, added in outcome.ideas.items()
             },
         }
-        json.dump(document, ctx.out, ensure_ascii=False, indent=2)
-        ctx.out.write("\n")
+        write_json(document, ctx.out)
     else:
         _print_sync_report(outcome.results, ctx.out, dry_run=args.dry_run)
         print(f"card data: {outcome.cards.state.value}, {outcome.cards.detail}", file=ctx.out)
@@ -482,8 +481,7 @@ def _cmd_analyze(args: argparse.Namespace, ctx: Context) -> int:
     with open_card_db(ctx) as db:
         analyses = [analyze(s.deck, db.resolve(s.deck.main_cards), db.available_roles) for s in decks]
     if args.json:
-        json.dump([_analysis_json(a) for a in analyses], ctx.out, ensure_ascii=False, indent=2)
-        ctx.out.write("\n")
+        write_json([_analysis_json(a) for a in analyses], ctx.out)
     elif args.deck:
         for analysis in analyses:
             _print_analysis(analysis, ctx.out, details=args.details)
@@ -498,8 +496,7 @@ def _cmd_price(args: argparse.Namespace, ctx: Context) -> int:
         prices = [price_deck(s.deck, db.resolve(s.deck.main_cards)) for s in decks]
         meta = db.meta()
     if args.json:
-        json.dump([_price_json(p) for p in prices], ctx.out, ensure_ascii=False, indent=2)
-        ctx.out.write("\n")
+        write_json([_price_json(p) for p in prices], ctx.out)
         return EXIT_OK
     print(f"Cardmarket prices in EUR, from Scryfall data of {day(meta.cards_updated_at)}", file=ctx.out)
     if args.deck:
@@ -531,8 +528,7 @@ def _cmd_bracket(args: argparse.Namespace, ctx: Context) -> int:
     for report in reports:
         _warn_answer(report.deck, report.result, "bracket estimate", ctx.err)
     if args.json:
-        json.dump([_bracket_json(r) for r in reports], ctx.out, ensure_ascii=False, indent=2)
-        ctx.out.write("\n")
+        write_json([_bracket_json(r) for r in reports], ctx.out)
     elif args.deck:
         for report in reports:
             _print_bracket(report, ctx.out, details=args.details)
@@ -597,8 +593,7 @@ def _cmd_suggest(args: argparse.Namespace, ctx: Context) -> int:
     for result in results:
         _warn_answer(result.deck, result.combos, "combo list", ctx.err)
     if args.json:
-        json.dump([_suggestions_json(r) for r in results], ctx.out, ensure_ascii=False, indent=2)
-        ctx.out.write("\n")
+        write_json([_suggestions_json(r) for r in results], ctx.out)
     elif args.deck:
         print(
             f"prices: each card's cheapest printing in EUR, Scryfall data of {day(meta.cards_updated_at)}",
@@ -668,8 +663,7 @@ def _cmd_apply(args: argparse.Namespace, ctx: Context) -> int:
         folder = workspace.save(result.deck)
     if args.json:
         answer = _apply_json(resolution, result) | {"bracketAfter": preview_json(preview)}
-        json.dump(answer, ctx.out, ensure_ascii=False, indent=2)
-        ctx.out.write("\n")
+        write_json(answer, ctx.out)
     else:
         print_resolution(resolution, ctx.out)
         print_bracket_preview(preview, ctx.out)
@@ -727,8 +721,7 @@ def _cmd_list(args: argparse.Namespace, ctx: Context) -> int:
             }
             for s in stored
         ]
-        json.dump(rows, ctx.out, ensure_ascii=False, indent=2)
-        ctx.out.write("\n")
+        write_json(rows, ctx.out)
         return EXIT_OK
     for s in stored:
         bracket = s.deck.bracket if s.deck.bracket is not None else "-"
