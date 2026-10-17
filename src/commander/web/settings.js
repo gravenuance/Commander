@@ -93,58 +93,13 @@ async function saveSettings() {
   } catch { /* shown in the status line */ }
 }
 
-// A text box that offers matches as you type; arrows move, Enter takes the highlighted match or the text.
-function autocomplete(input, list, find, pick) {
-  let timer = 0;
-  let sent = 0;
-  let items = [];
-  let active = -1;
-  const close = () => { items = []; active = -1; list.hidden = true; input.parentElement.setAttribute("aria-expanded", "false"); };
-  const mark = (index) => {
-    active = index;
-    [...list.children].forEach((item, i) => item.setAttribute("aria-selected", String(i === index)));
-    list.children[index]?.scrollIntoView({ block: "nearest" });
-  };
-  input.addEventListener("input", () => {
-    clearTimeout(timer);
-    const mine = ++sent;
-    timer = setTimeout(async () => {
-      let found = [];
-      try { found = await find(input.value); } catch { /* the status line says what went wrong */ }
-      // A newer keystroke supersedes this answer; a box that lost focus gets no list back.
-      if (mine !== sent) return;
-      if (document.activeElement !== input) { close(); return; }
-      items = found;
-      active = -1;
-      list.replaceChildren(...items.map((item) => el("li", {
-        role: "option", "aria-selected": "false",
-        onmousedown: (event) => { event.preventDefault(); close(); pick(item.value); },
-      }, el("span", { text: item.label }), item.hint ? el("span", { class: "type", text: item.hint }) : null)));
-      list.hidden = items.length === 0;
-      input.parentElement.setAttribute("aria-expanded", String(!list.hidden));
-    }, SEARCH_DELAY_MS);
-  });
-  input.addEventListener("keydown", (event) => {
-    if (event.key === "ArrowDown" && items.length) { event.preventDefault(); mark((active + 1) % items.length); }
-    else if (event.key === "ArrowUp" && items.length) { event.preventDefault(); mark((active - 1 + items.length) % items.length); }
-    else if (event.key === "Enter") {
-      event.preventDefault();
-      const value = active >= 0 ? items[active].value : input.value.trim();
-      sent++;
-      close();
-      if (value) pick(value);
-    } else if (event.key === "Escape" && !list.hidden) { event.preventDefault(); event.stopPropagation(); close(); }
-  });
-  input.addEventListener("blur", () => setTimeout(close, 150));
-}
-
 function setupSettings() {
   $("settings").addEventListener("click", openSettings);
   $("settings-cancel").addEventListener("click", () => $("settings-dialog").close());
   $("settings-save").addEventListener("click", saveSettings);
   const adjacent = $("settings-adjacent-input");
   // A partner pair is typed "First + Second": matches are for the name after the last +.
-  autocomplete(adjacent, $("settings-adjacent-results"), async (text) => {
+  combobox(adjacent, $("settings-adjacent-results"), async (text) => {
     const parts = text.split("+");
     const typed = parts.pop().trim();
     if (typed.length < 2) return [];
@@ -152,7 +107,7 @@ function setupSettings() {
     const answer = await api("find_commanders", typed);
     return answer.names.map((name) => ({ label: name, value: [...head, name].join(" + ") }));
   }, addAdjacent);
-  autocomplete($("settings-ignore-input"), $("settings-ignore-results"), async (text) => {
+  combobox($("settings-ignore-input"), $("settings-ignore-results"), async (text) => {
     const needle = text.trim().toLowerCase();
     if (needle.length < 2) return [];
     const own = [...settingsState.themes.map((t) => ({ label: t.name, value: t.name, hint: t.kind })),

@@ -251,68 +251,18 @@ async function decide(card, decision, note = "") {
 
 /* Proposing a card */
 
-let searchTimer = 0;
-let searchSent = 0;
 function setupPropose() {
-  const input = $("propose-input");
-  input.addEventListener("input", () => {
-    clearTimeout(searchTimer);
-    searchSent++;
-    searchTimer = setTimeout(search, SEARCH_DELAY_MS);
-  });
-  input.addEventListener("keydown", (event) => {
-    const count = state.results.length;
-    if (event.key === "ArrowDown" && count) { event.preventDefault(); highlight((state.active + 1) % count); }
-    else if (event.key === "ArrowUp" && count) { event.preventDefault(); highlight((state.active - 1 + count) % count); }
-    else if (event.key === "Enter") {
-      event.preventDefault();
-      const name = state.active >= 0 ? state.results[state.active].name : input.value.trim();
-      if (name) propose(name);
-    } else if (event.key === "Escape") closeResults();
-  });
-  input.addEventListener("blur", () => setTimeout(closeResults, 150));
+  combobox($("propose-input"), $("propose-results"), findCards, propose);
 }
 
-async function search() {
-  const text = $("propose-input").value.trim();
-  if (text.length < 2 || state.current === null) { closeResults(); return; }
-  const mine = ++searchSent;
-  try {
-    const answer = await api("search", state.current, text);
-    // A newer keystroke or a proposal supersedes this answer; a box that lost focus gets no list back.
-    if (mine !== searchSent) return;
-    if (document.activeElement !== $("propose-input")) { closeResults(); return; }
-    state.results = answer.cards;
-    state.active = -1;
-    const list = $("propose-results");
-    list.replaceChildren(...answer.cards.map((card, index) => el("li", {
-      role: "option", id: `result-${index}`, "aria-selected": "false",
-      onmousedown: (event) => { event.preventDefault(); propose(card.name); },
-    }, el("span", { text: card.name }), el("span", { class: "type", text: card.typeLine }))));
-    list.hidden = answer.cards.length === 0;
-    $("propose-box").setAttribute("aria-expanded", String(!list.hidden));
-  } catch { closeResults(); }
-}
-
-function highlight(index) {
-  state.active = index;
-  const list = $("propose-results");
-  [...list.children].forEach((item, i) => item.setAttribute("aria-selected", String(i === index)));
-  $("propose-input").setAttribute("aria-activedescendant", `result-${index}`);
-  list.children[index]?.scrollIntoView({ block: "nearest" });
-}
-
-function closeResults() {
-  state.results = [];
-  state.active = -1;
-  $("propose-results").hidden = true;
-  $("propose-box").setAttribute("aria-expanded", "false");
-  $("propose-input").removeAttribute("aria-activedescendant");
+async function findCards(text) {
+  const typed = text.trim();
+  if (typed.length < 2 || state.current === null) return [];
+  const answer = await api("search", state.current, typed);
+  return answer.cards.map((card) => ({ label: card.name, value: card.name, hint: card.typeLine }));
 }
 
 async function propose(name) {
-  searchSent++;
-  closeResults();
   await whileBusy([$("propose-input")], async () => {
     try {
       const answer = await api("propose", state.current, name);

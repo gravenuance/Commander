@@ -22,8 +22,6 @@ const state = {
   leaningsKey: null,
   selected: null,
   hovered: null,
-  results: [],
-  active: -1,
   busy: false,
 };
 
@@ -121,4 +119,59 @@ function panel(loader, renderer, { wanted = () => true, keyOf = JSON.stringify }
     } catch { /* shown in the status line */ }
   }
   return { load, render };
+}
+
+// A text box that offers matches as you type, as an ARIA combobox over a listbox: arrows move through the
+// matches, Enter takes the highlighted one or the typed text, Escape closes the list. `find(text)` answers
+// [{ label, value, hint? }] and `pick(value)` takes the choice. An answer that a newer keystroke has
+// superseded, or that arrives after the box lost focus, is dropped.
+function combobox(input, list, find, pick) {
+  let timer = 0;
+  let sent = 0;
+  let items = [];
+  let active = -1;
+  const close = () => {
+    items = [];
+    active = -1;
+    list.hidden = true;
+    input.setAttribute("aria-expanded", "false");
+    input.removeAttribute("aria-activedescendant");
+  };
+  const mark = (index) => {
+    active = index;
+    [...list.children].forEach((item, i) => item.setAttribute("aria-selected", String(i === index)));
+    input.setAttribute("aria-activedescendant", list.children[index].id);
+    list.children[index].scrollIntoView({ block: "nearest" });
+  };
+  input.addEventListener("input", () => {
+    clearTimeout(timer);
+    const mine = ++sent;
+    timer = setTimeout(async () => {
+      let found = [];
+      try { found = await find(input.value); } catch { /* the status line says what went wrong */ }
+      if (mine !== sent) return;
+      if (document.activeElement !== input) { close(); return; }
+      items = found;
+      active = -1;
+      input.removeAttribute("aria-activedescendant");
+      list.replaceChildren(...items.map((item, index) => el("li", {
+        role: "option", id: `${list.id}-option-${index}`, "aria-selected": "false",
+        onmousedown: (event) => { event.preventDefault(); close(); pick(item.value); },
+      }, el("span", { text: item.label }), item.hint ? el("span", { class: "type", text: item.hint }) : null)));
+      list.hidden = items.length === 0;
+      input.setAttribute("aria-expanded", String(!list.hidden));
+    }, SEARCH_DELAY_MS);
+  });
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown" && items.length) { event.preventDefault(); mark((active + 1) % items.length); }
+    else if (event.key === "ArrowUp" && items.length) { event.preventDefault(); mark((active - 1 + items.length) % items.length); }
+    else if (event.key === "Enter") {
+      event.preventDefault();
+      const value = active >= 0 ? items[active].value : input.value.trim();
+      sent++;
+      close();
+      if (value) pick(value);
+    } else if (event.key === "Escape" && !list.hidden) { event.preventDefault(); event.stopPropagation(); close(); }
+  });
+  input.addEventListener("blur", () => setTimeout(close, 150));
 }
