@@ -334,3 +334,14 @@ def test_the_land_change_rounds_halves_away_from_zero(
     cards = by_name(*KNOWN, one_more)
     plan = suggest_mana(deck, cards, analyse_mana(deck, cards), options=())
     assert (plan.lands, plan.target, plan.land_change) == (lands, target, change)
+
+
+def test_a_tap_land_making_none_of_the_decks_colours_gets_no_twin() -> None:
+    ruins = card(
+        "Tapped Ruins", type_line="Land", text="This land enters tapped.\n{T}: Add {C}.", produced="C"
+    )
+    deck = deck_of(("Plains", 18), ("Island", 18), ("Tapped Ruins", 1), ("Filler", 60))
+    cards = by_name(*KNOWN, ruins)
+    plan = suggest_mana(deck, cards, analyse_mana(deck, cards), options=OPTIONS)
+    # An untapped Tundra is no twin of a land that makes only colourless mana, which the reason would claim.
+    assert plan.swaps == ()

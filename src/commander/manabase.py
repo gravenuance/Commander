@@ -569,7 +569,8 @@ def _tapped_swaps(
         makes = {
             c for c, worth in _Source.of(info, 1, len(colours)).colours.items() if c in colours and worth > 0
         }
-        found = budget.pick([twins(makes)])
+        # No colour of the deck's to match, so no land is the same colours.
+        found = budget.pick([twins(makes)]) if makes else None
         if found is None:
             continue
         option, _, within = found
