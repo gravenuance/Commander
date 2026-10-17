@@ -391,3 +391,11 @@ def test_a_queued_card_the_deck_already_holds_neither_adds_nor_cuts(
     assert board_plan(deck, read_board(tmp_path)) == Plan(
         "10004639", (AddCard("Arcane Signet"),), (RemoveCard("Mountain", keep=5),)
     )
+
+
+def test_a_commander_cannot_make_room(service: BoardService) -> None:
+    card = service.propose("Lightning Bolt", Actor.YOU)
+    with pytest.raises(BoardError, match="Magda, Brazen Outlaw is a commander, so it cannot make room"):
+        service.research(card.id, Actor.CLAUDE, replace_options=[ReplaceOption("magda, brazen outlaw")])
+    with pytest.raises(BoardError, match="Magda, Brazen Outlaw is a commander, so it cannot make room"):
+        service.decide(card.id, Status.ADD, Actor.YOU, choice="Magda, Brazen Outlaw")

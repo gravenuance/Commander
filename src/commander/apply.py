@@ -20,7 +20,14 @@ from commander.archidekt_edit import (
     new_entry_state,
 )
 from commander.carddb import CardDb, CardInfo, Printing
-from commander.models import ASIDE_CATEGORIES, DONT_HAVE_LABEL, MAYBEBOARD_CATEGORY, Deck, DeckCard
+from commander.models import (
+    ASIDE_CATEGORIES,
+    COMMANDER_CATEGORY,
+    DONT_HAVE_LABEL,
+    MAYBEBOARD_CATEGORY,
+    Deck,
+    DeckCard,
+)
 from commander.net import NetworkError
 from commander.plan import AddCard, Plan, RemoveCard
 from commander.suggest import BracketRaise, card_raise, deck_identity
@@ -129,6 +136,9 @@ class _Resolver:
     def remove(self, wanted: RemoveCard) -> None:
         # Only cards counted in the deck; a maybeboard copy stays.
         entries = [e for e in _entries_named(self.deck, wanted.name) if e.in_deck]
+        if any(COMMANDER_CATEGORY in e.categories for e in entries):
+            self.problems.append(f"remove {wanted.name}: it is a commander and stays in the deck")
+            return
         if any(e.entry_id in self.removed_entries for e in entries):
             self.problems.append(f"remove {wanted.name}: the plan already removes this card")
             return

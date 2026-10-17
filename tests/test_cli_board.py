@@ -108,6 +108,12 @@ def test_board_refusals_are_usage_errors(home: Path, fake: FakeArchidekt) -> Non
     assert "names no card" in bad.err
 
 
+def test_a_commander_cannot_be_named_as_a_card_to_replace(home: Path, fake: FakeArchidekt) -> None:
+    add = board(home, fake, "add", "magda", "Lightning Bolt", "--replace", "Magda, Brazen Outlaw=why not")
+    assert (add.code, add.err) == (2, "cmdr: Magda, Brazen Outlaw is a commander, so it cannot make room\n")
+    assert read_board(folder(home)).cards == ()
+
+
 def test_log_shows_every_change_and_filters_by_time(home: Path, fake: FakeArchidekt) -> None:
     board(home, fake, "add", "magda", "Lightning Bolt", "--by", "claude")
     board(home, fake, "remove", "magda", "Lightning Bolt")

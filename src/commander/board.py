@@ -22,7 +22,7 @@ from commander.answers import card_key
 from commander.carddb import CardDb, CardInfo
 from commander.fsutil import write_text_atomic
 from commander.jsonshape import ShapeError, as_object, opt_float, opt_int, opt_str, req_int, req_list, req_str
-from commander.models import Deck
+from commander.models import COMMANDER_CATEGORY, Deck
 from commander.plan import AddCard, Plan, RemoveCard
 from commander.suggest import Suggestions, deck_identity, name_keys
 
@@ -575,8 +575,14 @@ class BoardService:
         return sum(c.quantity for c in self._deck.main_cards if c.name == name)
 
     def _held(self, name: str) -> str | None:
+        """The deck's spelling of a card that can make room, None when it is not in the deck."""
         keys = name_keys(name.strip())
-        return next((c.name for c in self._deck.main_cards if name_keys(c.name) & keys), None)
+        card = next((c for c in self._deck.main_cards if name_keys(c.name) & keys), None)
+        if card is None:
+            return None
+        if COMMANDER_CATEGORY in card.categories:
+            raise BoardError(f"{card.name} is a commander, so it cannot make room")
+        return card.name
 
     def _stamp(self) -> str:
         return self._now().isoformat(timespec="seconds")

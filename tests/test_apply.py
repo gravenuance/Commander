@@ -277,6 +277,19 @@ def test_keep_counts_every_entry_of_the_card(deck: Deck, db: CardDb) -> None:
     assert resolution.skipped == ("remove Mountain: already 10",)
 
 
+def test_a_commander_is_never_removed(deck: Deck, db: CardDb) -> None:
+    for wanted in (
+        RemoveCard("Magda, Brazen Outlaw"),
+        RemoveCard("Magda, Brazen Outlaw", maybeboard=True),
+    ):
+        resolution = resolve_plan(deck, plan(remove=[wanted]), db)
+
+        assert resolution.changes == ()
+        assert resolution.problems == (
+            "remove Magda, Brazen Outlaw: it is a commander and stays in the deck",
+        )
+
+
 def test_a_full_deck_has_no_size_warning(deck: Deck, db: CardDb) -> None:
     mountain = next(c for c in deck.cards if c.name == "Mountain")
     full = replace(deck, cards=tuple(replace(c, quantity=97) if c is mountain else c for c in deck.cards))
