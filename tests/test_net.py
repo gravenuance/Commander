@@ -102,6 +102,16 @@ def test_does_not_retry_client_errors() -> None:
     assert script.calls == 1
 
 
+def test_a_refused_read_raises_the_status_error_callers_map_to_advice() -> None:
+    script = Script(httpx.Response(401))
+
+    with pytest.raises(HttpStatusError, match="HTTP 401") as raised:
+        fetcher(script, []).get_json(URL)
+
+    assert raised.value.status == 401
+    assert script.calls == 1
+
+
 def test_does_not_follow_redirects() -> None:
     script = Script(httpx.Response(302, headers={"Location": "https://elsewhere.example/"}))
     with pytest.raises(NetworkError, match="HTTP 302"):

@@ -198,7 +198,13 @@ class ArchidektEditor:
         self._base_url = base_url.rstrip("/")
 
     def get_deck(self, deck_id: int) -> LiveDeck:
-        raw = self._fetcher.get_json(f"{self._base_url}/decks/{deck_id}/", headers=self._headers)
+        try:
+            raw = self._fetcher.get_json(f"{self._base_url}/decks/{deck_id}/", headers=self._headers)
+        except HttpStatusError as error:
+            # Without a token a 401/403 is the deck being private, which the status error already says.
+            if self._headers is not None and error.status in _UNAUTHORIZED:
+                raise AuthError("Archidekt refused the login; run `cmdr login` again") from None
+            raise
         try:
             return LiveDeck(parse_deck(raw), parse_entry_states(raw), category_flags(raw))
         except (ShapeError, ValueError) as error:

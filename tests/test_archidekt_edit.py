@@ -403,3 +403,27 @@ def test_reading_the_account_labels_needs_a_login() -> None:
         pytest.raises(AuthError, match="cmdr login"),
     ):
         ArchidektEditor(Fetcher(client), None).account_labels()
+
+
+def test_an_expired_login_on_the_labels_read_asks_to_log_in_again(fetcher: Fetcher) -> None:
+    with pytest.raises(AuthError, match="run `cmdr login` again"):
+        ArchidektEditor(fetcher, "expired access token").account_labels()
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_a_refused_login_on_a_deck_read_asks_to_log_in_again(
+    fake: FakeArchidekt, fetcher: Fetcher, status: int
+) -> None:
+    fake.failing[DECK_ID] = status
+
+    with pytest.raises(AuthError, match="run `cmdr login` again"):
+        ArchidektEditor(fetcher, ACCESS_TOKEN).get_deck(DECK_ID)
+
+
+def test_a_refused_deck_read_without_a_login_stays_a_network_error(
+    fake: FakeArchidekt, fetcher: Fetcher
+) -> None:
+    fake.failing[DECK_ID] = 403
+
+    with pytest.raises(NetworkError, match="HTTP 403"):
+        ArchidektEditor(fetcher, None).get_deck(DECK_ID)

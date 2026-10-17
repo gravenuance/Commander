@@ -32,7 +32,8 @@ class NetworkError(Exception):
 
 
 class HttpStatusError(NetworkError):
-    """The server answered a write with a status outside 2xx; callers map some statuses to advice.
+    """The server answered with a status outside 2xx that retrying would not change; callers map some
+    statuses to advice (a refused login, a rejected write).
 
     detail holds the start of the server's answer, which usually says what it rejected. It is kept out of
     the message, so a caller chooses whether to show it.
@@ -157,7 +158,7 @@ class Fetcher:
             if status in _RETRY_STATUSES:
                 self._give_up_or_wait(attempt, url, f"HTTP {status}", retry_after)
                 continue
-            raise NetworkError(f"{url} returned HTTP {status}")
+            raise HttpStatusError(f"{url} returned HTTP {status}", status)
         raise AssertionError("unreachable: the last attempt raises")  # pragma: no cover
 
     def _give_up_or_wait(self, attempt: int, url: str, reason: str, retry_after: str | None) -> None:
