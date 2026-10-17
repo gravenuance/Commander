@@ -356,3 +356,25 @@ def test_an_adjacent_group_that_cannot_be_read_is_named(rig: Rig) -> None:
     [(name, why)] = found.errors
     assert name == MAGDA
     assert "HTTP 500" in why
+
+
+def test_a_future_dated_and_a_malformed_entry_leave_the_commander_lists_readable(rig: Rig) -> None:
+    page = load_fixture("edhtop16_entries_ellivere.json")
+    node_edges = page["data"]["commander"]["entries"]["edges"]
+    future = json.loads(json.dumps(node_edges[0]))
+    future["node"]["tournament"].update(
+        {"TID": "future-test-event", "tournamentDate": "2030-10-26T10:00:00.000Z"}
+    )
+    broken = json.loads(json.dumps(node_edges[0]))
+    broken["node"]["decklistItems"][0]["spice"] = None
+    node_edges[:0] = [future, broken]
+    rig.edhtop16.pages[ELLIVERE] = [page]
+
+    lists = rig.gather().lists.data
+
+    assert lists is not None
+    assert [e.tournament.held_on for e in lists.entries] == [
+        date(2026, 10, 4),
+        date(2026, 9, 13),
+        date(2026, 8, 16),
+    ]

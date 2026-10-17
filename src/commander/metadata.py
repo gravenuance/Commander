@@ -177,8 +177,12 @@ def cache_stamp(cache_root: Path) -> str:
     return f"{count}:{newest}"
 
 
+def utc_today(now: datetime) -> date:
+    return now.astimezone(UTC).date()
+
+
 def window_start(now: datetime, settings: MetaSettings) -> date:
-    return now.astimezone(UTC).date() - timedelta(days=settings.window_days)
+    return utc_today(now) - timedelta(days=settings.window_days)
 
 
 def gather(
@@ -200,6 +204,7 @@ def gather(
     name = commander_name(deck.commanders)
     settings = sources.settings
     since = window_start(now(), settings)
+    until = utc_today(now())
     folder = cache_root / CACHE_FOLDER
 
     def report(step: str) -> None:
@@ -216,7 +221,7 @@ def gather(
         return cached_answer(
             cache_item("edhtop16", name),
             request,
-            _live(offline, lambda: _own_entries(sources.edhtop16, name, since, settings)),
+            _live(offline, lambda: _own_entries(sources.edhtop16, name, since, until, settings)),
             _cache(folder, "EDHTop16 lists", _encode_entries, _decode_entries),
             now=now,
             refresh=refresh,
@@ -235,7 +240,7 @@ def gather(
         return cached_answer(
             "edhtop16-meta",
             request,
-            _live(offline, lambda: _meta_field(sources.edhtop16, since, settings)),
+            _live(offline, lambda: _meta_field(sources.edhtop16, since, until, settings)),
             _cache(folder, "EDHTop16 meta", _encode_field, _decode_field),
             now=now,
             refresh=refresh,
@@ -500,14 +505,23 @@ def _live[T](offline: bool, fetch: Callable[[], T]) -> Callable[[Mapping[str, ob
     return run
 
 
-def _own_entries(client: Edhtop16Client, name: str, since: date, settings: MetaSettings) -> CommanderEntries:
+def _own_entries(
+    client: Edhtop16Client, name: str, since: date, until: date, settings: MetaSettings
+) -> CommanderEntries:
     found = client.entries(
-        name, since=since, min_event_size=settings.min_event_size, sort=EntrySort.NEW, limit=MAX_OWN_ENTRIES
+        name,
+        since=since,
+        until=until,
+        min_event_size=settings.min_event_size,
+        sort=EntrySort.NEW,
+        limit=MAX_OWN_ENTRIES,
     )
     return CommanderEntries(name, found is not None, found or ())
 
 
-def _meta_field(client: Edhtop16Client, since: date, settings: MetaSettings) -> tuple[MetaCommander, ...]:
+def _meta_field(
+    client: Edhtop16Client, since: date, until: date, settings: MetaSettings
+) -> tuple[MetaCommander, ...]:
     if settings.meta_commanders == 0:
         return ()
     ranked = client.top_commanders(
@@ -518,6 +532,7 @@ def _meta_field(client: Edhtop16Client, since: date, settings: MetaSettings) -> 
         entries = client.entries(
             stats.name,
             since=since,
+            until=until,
             min_event_size=settings.min_event_size,
             sort=EntrySort.TOP,
             limit=settings.meta_lists,

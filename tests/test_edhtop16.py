@@ -1,5 +1,6 @@
 import copy
 import logging
+from collections.abc import Callable
 from datetime import date
 
 import httpx
@@ -15,12 +16,14 @@ from commander.edhtop16 import (
     graphql_data,
     parse_entries_page,
 )
+from commander.jsonshape import ShapeError
 from commander.net import Fetcher, NetworkError, Pacer
 from conftest import FakeEdhtop16, Json, load_fixture
 
 ELLIVERE = "Ellivere of the Wild Court"
 KINNAN = "Kinnan, Bonder Prodigy"
 SINCE = date(2026, 8, 16)
+UNTIL = date(2026, 11, 14)
 
 
 class Clock:
@@ -86,7 +89,9 @@ def test_a_page_without_more_has_no_cursor() -> None:
 
 def test_newest_first_stops_at_the_page_reaching_past_the_window() -> None:
     fake = FakeEdhtop16()
-    found = client_for(fake).entries(ELLIVERE, since=SINCE, min_event_size=16, sort=EntrySort.NEW, limit=400)
+    found = client_for(fake).entries(
+        ELLIVERE, since=SINCE, until=UNTIL, min_event_size=16, sort=EntrySort.NEW, limit=400
+    )
     assert found is not None
     assert [e.tournament.held_on for e in found] == [date(2026, 10, 4), date(2026, 9, 13), date(2026, 8, 16)]
     assert fake.requests == [
@@ -99,7 +104,9 @@ def test_newest_first_follows_the_cursor_while_the_window_lasts() -> None:
     inside = ellivere_page()
     inside["data"]["commander"]["entries"]["edges"] = edges(inside)[:3]
     fake.pages[ELLIVERE] = [inside, ellivere_page()]
-    found = client_for(fake).entries(ELLIVERE, since=SINCE, min_event_size=16, sort=EntrySort.NEW, limit=400)
+    found = client_for(fake).entries(
+        ELLIVERE, since=SINCE, until=UNTIL, min_event_size=16, sort=EntrySort.NEW, limit=400
+    )
     assert found is not None
     assert len(found) == 6
     assert [r["after"] for r in fake.requests] == [None, "4"]
@@ -108,7 +115,9 @@ def test_newest_first_follows_the_cursor_while_the_window_lasts() -> None:
 def test_best_first_keeps_reading_past_old_entries_and_honours_the_limit() -> None:
     fake = FakeEdhtop16()
     client = client_for(fake)
-    found = client.entries(KINNAN, since=date(2026, 9, 1), min_event_size=16, sort=EntrySort.TOP, limit=1)
+    found = client.entries(
+        KINNAN, since=date(2026, 9, 1), until=UNTIL, min_event_size=16, sort=EntrySort.TOP, limit=1
+    )
     assert found is not None
     assert [(e.standing, e.made_top_cut) for e in found] == [(1, True)]
     assert fake.requests[-1]["first"] == 1
@@ -121,7 +130,7 @@ def test_best_first_drops_entries_older_than_the_window() -> None:
     page["data"]["commander"]["entries"]["pageInfo"] = {"hasNextPage": False, "endCursor": "2"}
     fake.pages[KINNAN] = [page]
     found = client_for(fake).entries(
-        KINNAN, since=date(2026, 10, 1), min_event_size=16, sort=EntrySort.TOP, limit=2
+        KINNAN, since=date(2026, 10, 1), until=UNTIL, min_event_size=16, sort=EntrySort.TOP, limit=2
     )
     assert found is not None
     assert [e.tournament.held_on for e in found] == [date(2026, 10, 7)]
@@ -129,7 +138,9 @@ def test_best_first_drops_entries_older_than_the_window() -> None:
 
 def test_a_commander_edhtop16_does_not_know_is_none() -> None:
     fake = FakeEdhtop16()
-    found = client_for(fake).entries("Nobody", since=SINCE, min_event_size=16, sort=EntrySort.NEW, limit=10)
+    found = client_for(fake).entries(
+        "Nobody", since=SINCE, until=UNTIL, min_event_size=16, sort=EntrySort.NEW, limit=10
+    )
     assert found is None
 
 
@@ -177,13 +188,20 @@ def test_a_server_error_is_a_network_error() -> None:
         client_for(fake).top_commanders(since=SINCE, min_event_size=16, count=1)
 
 
-def test_spice_outside_its_scale_is_refused() -> None:
+def test_spice_outside_its_scale_skips_the_entry(caplog: pytest.LogCaptureFixture) -> None:
     fake = FakeEdhtop16()
     page = ellivere_page()
     edges(page)[0]["node"]["decklistItems"][0]["spice"] = 5
     fake.pages[ELLIVERE] = [page]
-    with pytest.raises(Edhtop16Error, match=r"spice: 5 is outside 0-4"):
-        client_for(fake).entries(ELLIVERE, since=SINCE, min_event_size=16, sort=EntrySort.NEW, limit=10)
+
+    with caplog.at_level(logging.WARNING, logger="commander.edhtop16"):
+        found = client_for(fake).entries(
+            ELLIVERE, since=SINCE, until=UNTIL, min_event_size=16, sort=EntrySort.NEW, limit=10
+        )
+
+    assert found is not None
+    assert len(found) == 2
+    assert "spice: 5 is outside 0-4" in caplog.text
 
 
 @pytest.mark.parametrize("link", ["https://evil.example/x", "//evil.example/x", "decklist/x"])
@@ -233,7 +251,7 @@ def test_a_whole_number_rate_is_read_as_a_number_but_true_is_not() -> None:
 def test_best_first_reads_a_single_page() -> None:
     fake = FakeEdhtop16()
     found = client_for(fake).entries(
-        KINNAN, since=date(2026, 10, 1), min_event_size=16, sort=EntrySort.TOP, limit=30
+        KINNAN, since=date(2026, 10, 1), until=UNTIL, min_event_size=16, sort=EntrySort.TOP, limit=30
     )
     assert found is not None
     assert len(found) == 1
@@ -245,7 +263,7 @@ def test_best_first_refuses_a_limit_a_single_page_cannot_hold() -> None:
 
     with pytest.raises(ValueError, match="at most 50"):
         client_for(fake).entries(
-            KINNAN, since=date(2026, 10, 1), min_event_size=16, sort=EntrySort.TOP, limit=51
+            KINNAN, since=date(2026, 10, 1), until=UNTIL, min_event_size=16, sort=EntrySort.TOP, limit=51
         )
 
     assert fake.requests == []
@@ -255,8 +273,10 @@ def test_best_first_takes_a_full_page_and_newest_first_may_ask_for_more() -> Non
     fake = FakeEdhtop16()
     client = client_for(fake)
 
-    client.entries(KINNAN, since=date(2026, 10, 1), min_event_size=16, sort=EntrySort.TOP, limit=50)
-    client.entries(ELLIVERE, since=SINCE, min_event_size=16, sort=EntrySort.NEW, limit=400)
+    client.entries(
+        KINNAN, since=date(2026, 10, 1), until=UNTIL, min_event_size=16, sort=EntrySort.TOP, limit=50
+    )
+    client.entries(ELLIVERE, since=SINCE, until=UNTIL, min_event_size=16, sort=EntrySort.NEW, limit=400)
 
     assert [r["first"] for r in fake.requests] == [50, 50]
 
@@ -295,3 +315,151 @@ def test_an_answer_with_data_and_no_errors_logs_nothing(caplog: pytest.LogCaptur
         graphql_data({"data": {"commanders": []}, "errors": []})
 
     assert caplog.messages == []
+
+
+def future_edge() -> Json:
+    # A made-up test event dated far ahead, as EDHTop16 serves them at the top of newest-first reads.
+    edge = copy.deepcopy(edges(ellivere_page())[0])
+    edge["node"]["tournament"].update(
+        {"TID": "future-test-event", "tournamentDate": "2030-10-26T10:00:00.000Z"}
+    )
+    return edge
+
+
+def test_a_malformed_entry_is_skipped_with_a_warning(caplog: pytest.LogCaptureFixture) -> None:
+    page = ellivere_page()
+    edges(page)[1]["node"]["decklistItems"][0]["spice"] = None
+    broken_name = edges(page)[1]["node"]["tournament"]["name"]
+
+    with caplog.at_level(logging.WARNING, logger="commander.edhtop16"):
+        parsed = parse_entries_page(page["data"])
+
+    assert parsed is not None
+    entries, after = parsed
+    assert [e.tournament.held_on for e in entries] == [
+        date(2026, 10, 4),
+        date(2026, 8, 16),
+        date(2026, 7, 19),
+    ]
+    assert after == "4"
+    assert len(caplog.records) == 1
+    assert caplog.records[0].levelno == logging.WARNING
+    assert broken_name in caplog.text
+    assert "spice" in caplog.text
+
+
+def bad_date(node: Json) -> None:
+    node["tournament"]["tournamentDate"] = "not a date"
+
+
+def no_decklist(node: Json) -> None:
+    node["decklistItems"] = None
+
+
+def no_tournament(node: Json) -> None:
+    node["tournament"] = None
+
+
+def spice_off_the_scale(node: Json) -> None:
+    node["decklistItems"][0]["spice"] = 9
+
+
+@pytest.mark.parametrize("damage", [bad_date, no_decklist, no_tournament, spice_off_the_scale])
+def test_any_single_broken_entry_leaves_the_rest_of_the_page(
+    damage: Callable[[Json], None], caplog: pytest.LogCaptureFixture
+) -> None:
+    page = ellivere_page()
+    damage(edges(page)[0]["node"])
+
+    with caplog.at_level(logging.WARNING, logger="commander.edhtop16"):
+        parsed = parse_entries_page(page["data"])
+
+    assert parsed is not None
+    assert len(parsed[0]) == 3
+    assert len(caplog.records) == 1
+
+
+def test_the_whole_commander_still_reads_when_one_entry_is_malformed() -> None:
+    fake = FakeEdhtop16()
+    page = ellivere_page()
+    edges(page)[0]["node"]["decklistItems"][0]["spice"] = None
+    fake.pages[ELLIVERE] = [page]
+
+    found = client_for(fake).entries(
+        ELLIVERE, since=SINCE, until=UNTIL, min_event_size=16, sort=EntrySort.NEW, limit=400
+    )
+
+    assert found is not None
+    assert [e.tournament.held_on for e in found] == [date(2026, 9, 13), date(2026, 8, 16)]
+
+
+def test_a_future_dated_entry_is_left_out_and_does_not_stop_the_paging() -> None:
+    fake = FakeEdhtop16()
+    inside = ellivere_page()
+    inside["data"]["commander"]["entries"]["edges"] = [future_edge(), *edges(inside)[:3]]
+    fake.pages[ELLIVERE] = [inside, ellivere_page()]
+
+    found = client_for(fake).entries(
+        ELLIVERE, since=SINCE, until=date(2026, 10, 31), min_event_size=16, sort=EntrySort.NEW, limit=400
+    )
+
+    assert found is not None
+    assert "future-test-event" not in [e.tournament.tid for e in found]
+    assert len(found) == 6
+    assert [r["after"] for r in fake.requests] == [None, "4"]
+
+
+def test_the_last_day_of_the_window_still_counts() -> None:
+    fake = FakeEdhtop16()
+
+    found = client_for(fake).entries(
+        ELLIVERE, since=SINCE, until=date(2026, 10, 4), min_event_size=16, sort=EntrySort.NEW, limit=400
+    )
+
+    assert found is not None
+    assert [e.tournament.held_on for e in found] == [date(2026, 10, 4), date(2026, 9, 13), date(2026, 8, 16)]
+
+
+def test_best_first_leaves_out_future_dated_entries() -> None:
+    fake = FakeEdhtop16()
+    page = copy.deepcopy(load_fixture("edhtop16_entries_kinnan_top.json"))
+    edges(page).insert(0, future_edge())
+    fake.pages[KINNAN] = [page]
+
+    found = client_for(fake).entries(
+        KINNAN, since=date(2026, 10, 1), until=UNTIL, min_event_size=16, sort=EntrySort.TOP, limit=10
+    )
+
+    assert found is not None
+    assert [e.tournament.held_on for e in found] == [date(2026, 10, 7)]
+
+
+def edges_not_a_list(connection: Json) -> None:
+    connection["edges"] = "none"
+
+
+def no_edges(connection: Json) -> None:
+    del connection["edges"]
+
+
+def no_page_info(connection: Json) -> None:
+    del connection["pageInfo"]
+
+
+def edge_not_an_object(connection: Json) -> None:
+    connection["edges"] = [None]
+
+
+@pytest.mark.parametrize("damage", [edges_not_a_list, no_edges, no_page_info, edge_not_an_object])
+def test_a_page_with_a_broken_overall_shape_is_still_refused(damage: Callable[[Json], None]) -> None:
+    fake = FakeEdhtop16()
+    page = ellivere_page()
+    damage(page["data"]["commander"]["entries"])
+    fake.pages[ELLIVERE] = [page]
+
+    with pytest.raises(ShapeError):
+        parse_entries_page(page["data"])
+    with pytest.raises(Edhtop16Error, match="unexpected entries for"):
+        client_for(fake).entries(
+            ELLIVERE, since=SINCE, until=UNTIL, min_event_size=16, sort=EntrySort.NEW, limit=10
+        )

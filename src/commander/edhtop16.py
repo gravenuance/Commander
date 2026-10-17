@@ -149,12 +149,13 @@ class Edhtop16Client:
         self._url = url
 
     def entries(
-        self, commander: str, *, since: date, min_event_size: int, sort: EntrySort, limit: int
+        self, commander: str, *, since: date, until: date, min_event_size: int, sort: EntrySort, limit: int
     ) -> tuple[Entry, ...] | None:
-        """The commander's entries from events on or after `since`, in `sort` order, or None for a commander
-        EDHTop16 doesn't know. Newest-first reading stops at the first page that reaches past `since`;
-        best-first reading reads one page of `limit` and keeps the entries inside the window, so its limit
-        is at most PAGE_SIZE."""
+        """The commander's entries from events held from `since` to `until` (both inclusive), in `sort` order,
+        or None for a commander EDHTop16 doesn't know. Newest-first reading stops at the first page that
+        reaches past `since`; events after `until` (test events dated in the future) are skipped and don't
+        end it. Best-first reading reads one page of `limit` and keeps the entries inside the window, so its
+        limit is at most PAGE_SIZE."""
         if sort is EntrySort.TOP and limit > PAGE_SIZE:
             raise ValueError(f"best-first reading takes one page: limit must be at most {PAGE_SIZE}")
         found: list[Entry] = []
@@ -175,7 +176,7 @@ class Edhtop16Client:
             if page is None:
                 return None
             entries, after = page
-            found.extend(entry for entry in entries if entry.tournament.held_on >= since)
+            found.extend(entry for entry in entries if since <= entry.tournament.held_on <= until)
             reached_past = any(entry.tournament.held_on < since for entry in entries)
             # Best-first reading takes one page: further pages only hold worse placings.
             if after is None or len(found) >= limit or sort is EntrySort.TOP or reached_past:
@@ -240,13 +241,24 @@ def parse_entries_page(data: Mapping[str, object]) -> tuple[list[Entry], str | N
     page_info = req_object(connection, "pageInfo", where)
     after = opt_str(page_info, "endCursor", f"{where}.pageInfo")
     has_next = req_bool(page_info, "hasNextPage", f"{where}.pageInfo")
-    entries = [
-        parse_entry(
-            req_object(as_object(edge, f"{where}.edges[{i}]"), "node", f"{where}.edges[{i}]"), f"{where}[{i}]"
-        )
-        for i, edge in enumerate(req_list(connection, "edges", where))
-    ]
+    entries: list[Entry] = []
+    for index, edge in enumerate(req_list(connection, "edges", where)):
+        node = as_object(edge, f"{where}.edges[{index}]").get("node")
+        try:
+            entries.append(parse_entry(as_object(node, f"{where}.edges[{index}].node"), f"{where}[{index}]"))
+        except ValueError as error:  # ShapeError, or a date that doesn't parse
+            log.warning("Skipping malformed EDHTop16 entry %s: %s", _entry_label(node, index), error)
     return entries, after if has_next else None
+
+
+def _entry_label(node: object, index: int) -> str:
+    """Names an entry for a log line by its event, or by its place on the page when that is unreadable."""
+    try:
+        tournament = req_object(as_object(node, "node"), "tournament", "node")
+        name = opt_str(tournament, "name", "node.tournament") or opt_str(tournament, "TID", "node.tournament")
+    except ShapeError:
+        return f"#{index}"
+    return f"{name[:80]!r} (#{index})" if name else f"#{index}"
 
 
 def parse_entry(node: Mapping[str, object], where: str) -> Entry:
