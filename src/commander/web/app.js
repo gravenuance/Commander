@@ -1103,7 +1103,7 @@ async function exportDeck() {
   try {
     const answer = await api("export", state.current);
     await copyText(answer.text);
-    showStatus(`Copied ${answer.cards} cards for TopDeck.gg (the saved deck; queued changes are not in it)`);
+    showStatus(`Copied ${answer.cards} cards for TopDeck.gg; queued changes are not included`);
   } catch { /* shown in the status line */ }
 }
 

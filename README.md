@@ -335,7 +335,7 @@ saved login. Signing in again finds the same folder.
 
 `cmdr app` opens a window over every deck's board. Pick a deck on the left to see it as a card grid,
 grouped by card type with counts and EUR totals. S, M and L above the grid set the card size. Click a
-card to see it large (× or Esc closes it). Export, next to the commander's name, copies the saved deck
+card to see it large (× or Esc closes it). Copy decklist, next to the commander's name, copies the saved deck
 in TopDeck.gg's decklist format (`~~Commanders~~`, then `~~Mainboard~~`, one `1 Name` a line).
 Settings, beside it, edits two lists in the deck's `profile.toml` with autocomplete: the commanders
 that play alike (`[ideas] commanders`; "+ partner" on one makes a pair) and the themes to ignore
