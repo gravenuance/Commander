@@ -354,7 +354,9 @@ base against Frank Karsten's published numbers
 - **Considering**, on the right, lists every idea for the deck: yours, Claude's, the meta's and the
   tools'. Hover over an idea or click it to light the deck cards it could replace. Click one of them to
   queue the swap; once an idea is clicked, any other deck card but the commander can be clicked too.
-  × turns the idea down, with a reason if you like: turned-down cards wait under *Rejected* (closed until
+  Ideas that name no card to replace yet wait under *No cut yet*: click one, then the deck card it
+  replaces.
+  × turns the idea down, with a reason if you like: turned-down cards wait under *Turned down* (closed until
   opened) with their reasons, and Reconsider brings one back. Considering, Meta and each Meta section
   fold, and stay as you left them. The suggested targets are the cards you or Claude picked, or else the
   weakest cards in the same role ([ADR 0011](docs/adr/0011-app-deck-grid-and-replacement-targets.md)),

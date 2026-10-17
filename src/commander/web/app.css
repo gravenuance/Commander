@@ -789,9 +789,10 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .key-chips .deck-chip { cursor: help; font-size: var(--text-s); }
 .untouched { margin-top: var(--space-2); }
 
-/* Rejected, under Considering */
-.rejected { margin-top: var(--space-3); }
-.rejected > summary { cursor: pointer; font-weight: 600; color: var(--muted); width: fit-content; }
+/* No cut yet and Turned down, under Considering */
+.fold-group { margin-top: var(--space-3); }
+.fold-group > summary { cursor: pointer; font-weight: 600; color: var(--muted); width: fit-content; }
+.fold-group > .cards { margin-top: var(--space-2); }
 .rejected-list { list-style: none; margin: var(--space-2) 0 0; padding: 0; display: grid; gap: var(--space-2); }
 .rejected-card { padding: var(--space-2) 0; border-top: 1px solid var(--border); }
 .rejected-card p { margin: 0; }

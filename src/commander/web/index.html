@@ -81,8 +81,12 @@
             <div id="considered-body" class="panel-body">
               <div id="list-considered" class="cards" role="list"></div>
               <p id="empty-considered" class="empty" hidden><span aria-hidden="true">🃏</span> Nothing to consider. Propose a card above.</p>
-              <details id="rejected" class="rejected" hidden>
-                <summary>Rejected <span class="count" id="count-rejected"></span></summary>
+              <details id="uncut" class="fold-group" hidden>
+                <summary>No cut yet <span class="count" id="count-uncut"></span></summary>
+                <div id="list-uncut" class="cards" role="list"></div>
+              </details>
+              <details id="rejected" class="fold-group" hidden>
+                <summary>Turned down <span class="count" id="count-rejected"></span></summary>
                 <ul id="list-rejected" class="rejected-list"></ul>
               </details>
             </div>

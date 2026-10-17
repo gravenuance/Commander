@@ -318,9 +318,15 @@ function considered(cards) {
   return cards.filter((c) => c.status === "add" || (c.status === "open" && c.targets.length));
 }
 
+// Ideas with no deck card named to replace yet; selecting one offers every deck card as its cut.
+function uncut(cards) {
+  return cards.filter((c) => c.status === "open" && !c.targets.length);
+}
+
 function renderConsidered(cards) {
   const shown = considered(cards);
-  const live = new Set(shown.map((c) => c.id));
+  const waiting = uncut(cards);
+  const live = new Set([...shown, ...waiting].map((c) => c.id));
   for (const id of [...state.tiles.keys()]) {
     if (!live.has(id)) {
       state.tiles.get(id).node.remove();
@@ -331,8 +337,12 @@ function renderConsidered(cards) {
   if (!live.has(state.hovered)) state.hovered = null;
   const list = $("list-considered");
   shown.forEach((card, index) => place(list, tileFor(card), index));
+  const waitingList = $("list-uncut");
+  waiting.forEach((card, index) => place(waitingList, tileFor(card), index));
   $("count-considered").textContent = shown.length ? `(${shown.length})` : "";
-  $("empty-considered").hidden = shown.length > 0;
+  $("uncut").hidden = !waiting.length;
+  $("count-uncut").textContent = waiting.length ? `(${waiting.length})` : "";
+  $("empty-considered").hidden = shown.length + waiting.length > 0;
   renderRejected(cards);
 }
 
@@ -385,10 +395,12 @@ function buildTile(card) {
     card.gameChanger ? el("span", { class: "badge status gc", text: "Game changer" }) : null);
 
   const targets = el("div", { class: "targets", hidden: true, role: "group", "aria-label": `Replace with ${card.name}` },
-    ...card.targets.map((t) => el("button", {
-      class: `target ${t.source}`, type: "button", text: t.name, title: t.reason,
-      "aria-label": `Replace ${t.name}: ${t.reason}`, onclick: () => swapIn(card.id, t.name),
-    })));
+    ...(card.targets.length
+      ? card.targets.map((t) => el("button", {
+        class: `target ${t.source}`, type: "button", text: t.name, title: t.reason,
+        "aria-label": `Replace ${t.name}: ${t.reason}`, onclick: () => swapIn(card.id, t.name),
+      }))
+      : [el("p", { class: "muted small", text: "Pick the deck card it replaces" })]));
 
   const reasoning = [card.reason, card.note].filter(Boolean).join("\n");
   const body = el("div", { class: "card-body" },
@@ -489,7 +501,7 @@ async function swapIn(cardId, target) {
   } catch { /* the status line already says what went wrong */ }
 }
 
-// Asks why a card is turned down; the reason is kept on the board and shows under Rejected.
+// Asks why a card is turned down; the reason is kept on the board and shows under Turned down.
 function rejectForm(card) {
   const input = el("input", { type: "text", class: "input small", placeholder: "Why? (optional)", maxlength: "200",
     "aria-label": `Why turn down ${card.name}` });
@@ -1192,8 +1204,15 @@ async function propose(name) {
     const answer = await api("propose", state.current, name);
     $("propose-input").value = "";
     await refresh();
-    const shown = state.view && considered(state.view.cards).some((c) => c.id === answer.card.id);
-    showStatus(shown ? `${answer.card.name} is under consideration` : `${answer.card.name} has nothing to replace`, !shown);
+    const cards = state.view ? state.view.cards : [];
+    if (uncut(cards).some((c) => c.id === answer.card.id)) {
+      $("uncut").open = true;
+      select(answer.card.id);
+      showStatus(`${answer.card.name}: pick the deck card it replaces`);
+      return;
+    }
+    const shown = considered(cards).some((c) => c.id === answer.card.id);
+    showStatus(shown ? `${answer.card.name} is under consideration` : `${answer.card.name} is not under consideration`, !shown);
   } catch { /* shown in the status line */ }
 }
 
