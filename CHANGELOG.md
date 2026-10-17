@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.4.0 - 2026-10-17
+
 ### Added
 - Below bracket 5 every idea keeps to the deck's budget (ADR 0025): up to 25% over its average card is
   within budget, and 25% above its dearest card is the ceiling. `suggest`, the ideas compiled on sync and the Mana tab put ideas
@@ -155,6 +157,10 @@
   bracket ceiling and price cap (Pantlaza got Ephemerate though its profile excludes flicker).
 
 ### Changed
+- Releases are built on GitHub from the version tag: `Commander.exe` with `SHA256SUMS.txt` and build
+  provenance (`gh attestation verify`). CI runs the full check on every push.
+- `decks/` is no longer part of the repository: it holds your own decks and notes; keep their history in
+  a git repository of its own.
 - Escape in the app's card search closes the list of matches first and keeps what you typed.
 - `cmdr tags --json` writes non-ASCII characters as they are, like the other commands.
 - Code layout: `cli.py` is split into `cli_analysis` and `cli_suggest`, the app page into one script per
