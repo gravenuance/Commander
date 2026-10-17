@@ -360,7 +360,11 @@ def test_sync_learns_from_the_commanders_the_profile_names_as_alike(home: Path, 
     # Three Ygra decks, the fewest that make staples; two of them play Arcane Signet.
     ygra = (PEER_ID + 10, PEER_ID + 11, PEER_ID + 12)
     for deck_id in ygra:
-        fake.put({**fake.decks[PEER_ID], "id": deck_id})
+        led_by_ygra = copy.deepcopy(fake.decks[PEER_ID])
+        for card in led_by_ygra["cards"]:
+            if card["card"]["oracleCard"]["name"] == MAGDA:
+                card["card"]["oracleCard"]["name"] = YGRA
+        fake.put({**led_by_ygra, "id": deck_id})
     for deck_id in ygra[:2]:
         fake.decks[deck_id]["cards"].append(card_entry(9_100, "Arcane Signet", ["Ramp"]))
     fake.peer_pages[YGRA] = deck_page([peer_row(d, "someone", 50) for d in ygra])

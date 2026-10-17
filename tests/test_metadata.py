@@ -37,7 +37,9 @@ class FakeArchidektSearch:
 
     def __init__(self) -> None:
         self.broken: set[int] = set()
-        # Decks served with Kodama of the East Tree as Magda's partner.
+        # The commander every served deck is led by (the fixture deck's Magda renamed).
+        self.commander = ELLIVERE
+        # Decks served with Kodama of the East Tree as the commander's partner.
         self.partnered: set[int] = set()
         self.status = 200
         self.requests: list[str] = []
@@ -52,6 +54,9 @@ class FakeArchidektSearch:
         if deck_id in self.broken:
             return httpx.Response(200, json={"id": deck_id})
         deck = load_fixture(f"deck_{DECK_ID}.json")
+        for entry in deck["cards"]:
+            if entry["card"]["oracleCard"]["name"] == MAGDA:
+                entry["card"]["oracleCard"]["name"] = self.commander
         if deck_id in self.partnered:
             deck["cards"].append(card_entry(9_200, KODAMA, ["Commander"]))
         return httpx.Response(200, json=deck)
@@ -137,7 +142,7 @@ def test_gathers_the_commander_lists_the_meta_and_archidekt_decks(rig: Rig) -> N
         (13668856, 1847),
         (7432856, 1782),
     ]
-    assert "Magda, Brazen Outlaw" in peers.decks[0].cards
+    assert ELLIVERE in peers.decks[0].cards
     # Counts above one are kept, so a deck's basic lands can be counted (ADR 0019).
     multiples = peers.decks[0].multiples
     assert multiples
@@ -311,15 +316,24 @@ def adjacent(rig: Rig, *groups: tuple[str, ...]) -> AdjacentDecks:
 
 def test_a_partner_pair_keeps_only_decks_led_by_both(rig: Rig) -> None:
     # The 3rd, 5th and 11th most viewed pair Magda with Kodama; nine hits are read for three decks.
+    rig.archidekt.commander = MAGDA
     rig.archidekt.partnered = {7432856, 23074747, 26605393}
     found = adjacent(rig, (MAGDA, KODAMA))
     assert [p.deck.id for p in found.decks] == [7432856, 23074747]
     assert found.errors == ()
 
 
+def test_a_lone_commander_leaves_out_decks_that_pair_it_with_a_partner(rig: Rig) -> None:
+    # The 3rd most viewed pairs Magda with Kodama; its off-colour cards would skew a lone Magda's meta.
+    rig.archidekt.commander = MAGDA
+    rig.archidekt.partnered = {7432856}
+    found = adjacent(rig, (MAGDA,))
+    assert [p.deck.id for p in found.decks] == [5553433, 13668856]
+
+
 def test_adjacent_groups_pool_their_decks_once_each(rig: Rig) -> None:
     # The fake search answers every commander with the same decks, so the second group adds none.
-    found = adjacent(rig, (MAGDA,), (ELLIVERE,))
+    found = adjacent(rig, (ELLIVERE,), (ELLIVERE,))
     assert [p.deck.id for p in found.decks] == [5553433, 13668856, 7432856]
 
 
