@@ -42,7 +42,9 @@ LAND_RAMP = 0.5
 LATE_RAMP_FROM = 5
 # A card that is no source at all.
 NEVER = 99
-OPPONENT_DEPENDENT = 0.75
+# A land that makes what an opponent's land could (Exotic Orchard), and the rock that does (Fellwar Stone).
+OPPONENT_LAND = 0.75
+OPPONENT_ROCK = 0.5
 # A Fabled Passage or Pathway in a deck of three or more colours, where it has to choose.
 CHOOSING_SOURCE = 2 / 3
 # A land that enters tapped only sometimes is about a quarter of a tap-land.
@@ -290,7 +292,7 @@ class Source:
         if made and permanent and "{t}" in text and "sacrifice" not in text:
             worth = DORK if "Creature" in front else ROCK
             if "opponent" in text:
-                worth = min(worth, OPPONENT_DEPENDENT)
+                worth = min(worth, OPPONENT_ROCK)
             colours = dict.fromkeys(made, worth)
             return Source(info.name, quantity, land=False, colours=colours, from_mana_value=mana_value + 1)
         searched: set[str] = _searched(text) if "search your library" in text and "land" in text else set()
@@ -319,7 +321,7 @@ def without_commanders(entries: Sequence[tuple[int, CardMana, bool]]) -> list[tu
 
 def _land_colours(info: CardMana, text: str, made: set[str], deck_colours: int) -> dict[str, float]:
     if "opponent" in text and "could produce" in text:
-        return dict.fromkeys("WUBRG", OPPONENT_DEPENDENT)
+        return dict.fromkeys("WUBRG", OPPONENT_LAND)
     if made:
         # A Pathway makes one of its two colours, chosen as it is played.
         choosing = " // " in info.type_line and deck_colours >= 3  # noqa: PLR2004 — three colours or more

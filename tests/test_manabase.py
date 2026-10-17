@@ -123,6 +123,22 @@ def test_fetches_choosing_lands_and_opponent_lands_count_as_karsten_says() -> No
     assert lands == {"W": 1 + 2 + 3, "U": 1 + 2 + 3, "B": 2 + 3}
 
 
+def test_a_rock_that_depends_on_opponents_counts_half_a_source() -> None:
+    stone = card(
+        "Fellwar Stone",
+        "{2}",
+        2,
+        "Artifact",
+        text="{T}: Add one mana of any color that a land an opponent controls could produce.",
+        produced="WUBRG",
+    )
+    deck = deck_of(("Plains", 20), ("Fellwar Stone", 1), ("Wrath of God", 1))
+    report = analyse_mana(deck, by_name(LEADER, PLAINS, WRATH, stone))
+    wrath = next(need for need in report.colours[0].needs if need.card == "Wrath of God")
+    # Fellwar Stone is half a source, where a plain rock is three-quarters.
+    assert wrath.have == 20.5
+
+
 def test_pitch_spells_are_left_out_and_lists_compared_by_median() -> None:
     force = card(
         "Force of Will", "{3}{U}{U}", 5, text="You may pay 1 life and exile a blue card rather than pay."
