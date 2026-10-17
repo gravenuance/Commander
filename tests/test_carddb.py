@@ -20,6 +20,9 @@ from commander.carddb import (
     TagCount,
     TextGate,
     Theme,
+    back_is_land,
+    front_name,
+    front_type,
     read_meta,
     write_card_db,
 )
@@ -247,6 +250,19 @@ def test_card_text_of_an_unknown_card_is_none(card_db_file: Path) -> None:
         assert db.card_text("00000000-0000-0000-0000-000000000000") is None
 
 
+def test_card_texts_read_many_cards_at_once_and_leave_unknown_ones_out(card_db_file: Path) -> None:
+    unknown = "00000000-0000-0000-0000-000000000000"
+    with CardDb(card_db_file) as db:
+        info = db.card_named("Sundering Eruption")
+        assert info is not None
+        texts = db.card_texts([MAGDA_ORACLE, info.oracle_id, unknown, MAGDA_ORACLE])
+    assert set(texts) == {MAGDA_ORACLE, info.oracle_id}
+    magda = texts[MAGDA_ORACLE]
+    assert (magda.keywords, magda.power, magda.toughness) == (("treasure",), "2", "1")
+    assert magda.tags == ("combat-ramp", "tutor-artifact")
+    assert FACE_SEPARATOR in texts[info.oracle_id].text
+
+
 def test_theme_matches_whole_type_words_only(card_db_file: Path) -> None:
     deck = {MAGDA_ORACLE, ARCANE_SIGNET}
     with CardDb(card_db_file) as db:
@@ -449,3 +465,19 @@ def test_a_swap_that_stays_blocked_keeps_the_old_data_and_says_so(
     assert dest.read_bytes() == before
     assert sorted(p.name for p in tmp_path.iterdir() if p.is_file()) == ["cards.sqlite"]
     assert any(r.levelno == logging.ERROR and "cards.sqlite" in r.getMessage() for r in caplog.records)
+
+
+def test_two_faced_text_is_read_by_its_front_face() -> None:
+    assert (
+        front_name("Fable of the Mirror-Breaker // Reflection of Kiki-Jiki") == "Fable of the Mirror-Breaker"
+    )
+    assert front_type("Sorcery // Land — Forest") == "Sorcery"
+    assert front_name("Sol Ring") == "Sol Ring"
+
+
+def test_only_a_spell_with_a_land_back_is_a_back_face_land() -> None:
+    assert back_is_land("Sorcery // Land — Forest")
+    assert not back_is_land("Land — Forest")
+    assert not back_is_land("Creature — Human // Creature — Werewolf")
+    # A land on the front is a land, not a spell with a land back.
+    assert not back_is_land("Land // Land")

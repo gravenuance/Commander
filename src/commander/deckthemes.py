@@ -13,7 +13,7 @@ from dataclasses import dataclass, replace
 from enum import Enum
 
 from commander.analysis import CARD_TYPES, CATEGORY_ALIASES
-from commander.carddb import CardDb, ResolvedCard, Theme
+from commander.carddb import CardDb, ResolvedCard, Theme, front_type
 from commander.deckprofile import (
     PROFILE_THEME,
     Profile,
@@ -393,7 +393,7 @@ class _BaseShares:
 
 
 def _subtypes(type_line: str) -> list[str]:
-    front = type_line.split(" // ", maxsplit=1)[0]
+    front = front_type(type_line)
     return front.split(" — ", maxsplit=1)[1].split() if " — " in front else []
 
 

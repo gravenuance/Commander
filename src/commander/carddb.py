@@ -52,6 +52,8 @@ WHERE role = :role AND {_FITS_DECK}
 ORDER BY edhrec_rank, oracle.oracle_id
 """  # noqa: S608 — built from constant fragments and placeholders; every value is bound
 COLORS = "WUBRG"
+# Joins the faces of a two-faced card in its name, type line and mana cost.
+_NAME_FACE_SEPARATOR = " // "
 FACE_SEPARATOR = "\n//\n"
 # The tags given, grown by every sub-tag; UNION drops repeats, so a cycle in the tag tree still ends.
 _SUBTREE_CTE = """WITH RECURSIVE subtree(tag_id) AS (
@@ -191,6 +193,31 @@ class Role(Enum):
     MASS_LAND_DENIAL = "mass land denial"
 
 
+def front_face(text: str) -> str:
+    """The front face of a two-faced card's name, type line or mana cost; one-faced text comes back as is."""
+    return text.split(_NAME_FACE_SEPARATOR, maxsplit=1)[0]
+
+
+def front_name(name: str) -> str:
+    return front_face(name)
+
+
+def front_type(type_line: str) -> str:
+    return front_face(type_line)
+
+
+def name_keys(name: str) -> frozenset[str]:
+    """The casefolded names a card answers to: its full name and, for two faces, the front face's."""
+    key = name.casefold()
+    return frozenset({key, front_name(key)})
+
+
+def back_is_land(type_line: str) -> bool:
+    """A card that is a spell on its front face and a land on its back (Shatterskull Smashing)."""
+    faces = type_line.split(_NAME_FACE_SEPARATOR)
+    return len(faces) > 1 and "Land" in faces[-1].split() and "Land" not in faces[0].split()
+
+
 @dataclass(slots=True, frozen=True)
 class CardInfo:
     """Facts shared by every printing of a card."""
@@ -210,7 +237,7 @@ class CardInfo:
 
     @property
     def front_type_line(self) -> str:
-        return self.type_line.split(" // ")[0]
+        return front_type(self.type_line)
 
     @property
     def is_land(self) -> bool:
@@ -575,27 +602,35 @@ class CardDb:
         return [(CardMana(*row[:8]), row[8]) for row in self._query_named(_LAND_QUERY, params)]
 
     def card_text(self, oracle_id: str) -> CardText | None:
-        rows = self._query(
-            "SELECT oracle_text, keywords, power, toughness, colors FROM oracle WHERE oracle_id = ?",
-            [oracle_id],
+        return self.card_texts([oracle_id]).get(oracle_id)
+
+    def card_texts(self, oracle_ids: Iterable[str]) -> dict[str, CardText]:
+        """Rules text, keywords and tags by oracle id; unknown ids are left out."""
+        ids = set(oracle_ids)
+        rows = self._select_in(
+            "SELECT oracle_id, oracle_text, keywords, power, toughness, colors FROM oracle"
+            " WHERE oracle_id IN ({})",
+            ids,
         )
-        if not rows:
-            return None
-        text, keywords, power, toughness, colors = rows[0]
-        tags = self._query(
-            "SELECT slug FROM tag JOIN tag_member ON tag.tag_id = tag_member.tag_id"
-            " WHERE oracle_id = ? ORDER BY slug",
-            [oracle_id],
-        )
-        return CardText(
-            oracle_id,
-            text,
-            tuple(k for k in keywords.split("|") if k),
-            power,
-            toughness,
-            colors,
-            tuple(t[0] for t in tags),
-        )
+        slugs: dict[str, list[str]] = {}
+        for oracle_id, slug in self._select_in(
+            "SELECT oracle_id, slug FROM tag JOIN tag_member ON tag.tag_id = tag_member.tag_id"
+            " WHERE oracle_id IN ({}) ORDER BY slug",
+            ids,
+        ):
+            slugs.setdefault(oracle_id, []).append(slug)
+        return {
+            oracle_id: CardText(
+                oracle_id,
+                text,
+                tuple(k for k in keywords.split("|") if k),
+                power,
+                toughness,
+                colors,
+                tuple(slugs.get(oracle_id, ())),
+            )
+            for oracle_id, text, keywords, power, toughness, colors in rows
+        }
 
     def _query_named(self, sql: str, params: Mapping[str, object]) -> list[Any]:
         try:

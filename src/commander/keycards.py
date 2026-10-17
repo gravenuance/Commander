@@ -45,8 +45,6 @@ def key_cards(
     cards = [card for card in deck.main_cards if card.name.casefold() not in _ignored(profile)]
     infos = db.cards_named(card.name for card in cards)
     reasons: dict[str, list[str]] = {card.name: [] for card in cards}
-    keep_names = {card_key(name) for name in profile.keep_cards}
-    keep_categories = {category.casefold() for category in profile.keep_categories}
     planned = Counter(card_key(name) for peer in peers for name in set(peer.planned))
     costly = _costly(deck, db)
     for card in cards:
@@ -67,7 +65,7 @@ def key_cards(
             why.append(f"{planned[key]} of {len(peers)} recent decks file it under a combo or win category")
         if card.name in costly:
             why.append(costly[card.name])
-        if key in keep_names or {c.casefold() for c in card.categories} & keep_categories:
+        if profile.keeps(card.name, card.categories):
             why.append("kept by your profile")
     found = [KeyCard(name, tuple(why)) for name, why in reasons.items() if why]
     found.sort(key=lambda k: ("your commander" not in k.reasons, -len(k.reasons), k.name.casefold()))

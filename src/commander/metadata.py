@@ -208,7 +208,11 @@ def gather(
 
     def lists() -> Answer[CommanderEntries]:
         report(f"EDHTop16: {name} lists")
-        request: Mapping[str, object] = {"commander": name, "minEventSize": settings.min_event_size}
+        request: Mapping[str, object] = {
+            "commander": name,
+            "minEventSize": settings.min_event_size,
+            "windowDays": settings.window_days,
+        }
         return cached_answer(
             cache_item("edhtop16", name),
             request,
@@ -401,6 +405,7 @@ def _group_peers(
         "commander": name,
         "bracket": bracket,
         "decks": settings.peer_decks,
+        "windowDays": settings.window_days,
         "user": sources.user.casefold(),
     }
     return cached_answer(
@@ -538,7 +543,8 @@ def _peer_lists(
     others = [d for d in found if d.owner.casefold() != user and d.id != own_id]
     others.sort(key=lambda d: (-d.views, d.id))
     wanted = {name.casefold() for name in group}
-    # The search finds one commander; with a partner, decks pairing it with another are read and dropped.
+    # The search finds one commander: decks pairing it with a partner or Background are read and dropped, and
+    # so are decks led by only one of a pair.
     reads = settings.peer_decks * (PARTNER_READS if len(group) > 1 else 1)
     lists: list[PeerList] = []
     skipped = 0
@@ -552,7 +558,7 @@ def _peer_lists(
             log.warning("skipping Archidekt deck %d: %s", peer.id, error)
             skipped += 1
             continue
-        if len(group) > 1 and not wanted <= {name.casefold() for name in full.commanders}:
+        if wanted != {name.casefold() for name in full.commanders}:
             continue
         names = sorted({card.name for card in full.main_cards})
         planned = sorted({card.name for card in full.main_cards if any(map(plan_category, card.categories))})

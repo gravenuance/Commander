@@ -5,8 +5,8 @@ Combos come from Commander Spellbook; roles, prices and popularity ranks come fr
 automated requests.
 """
 
-from collections.abc import Collection, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass, field
 from functools import partial
 from itertools import islice
 from pathlib import Path
@@ -14,7 +14,17 @@ from pathlib import Path
 from commander.analysis import ANALYZED_ROLES, CATEGORY_ALIASES, game_changers
 from commander.background import run_all
 from commander.budget import NO_BUDGET, Budget, resolved_budget
-from commander.carddb import COLORS, NO_THEME, CardDb, CardInfo, ResolvedCard, Role, Theme
+from commander.carddb import (
+    COLORS,
+    NO_THEME,
+    CardDb,
+    CardInfo,
+    ResolvedCard,
+    Role,
+    Theme,
+    back_is_land,
+    name_keys,
+)
 from commander.deckcache import Answer, AnswerSource, Clock, DeckCache, cached_answer
 from commander.deckprofile import Profile, ResolvedThemes
 from commander.jsonshape import as_object, opt_int, opt_str, req_list, req_str, str_list
@@ -62,9 +72,8 @@ class SuggestOptions:
     exclude: Theme = NO_THEME
     # Casefolded card names: never suggested, and never offered as cuts.
     exclude_names: frozenset[str] = frozenset()
-    keep_names: frozenset[str] = frozenset()
-    # Casefolded Archidekt categories whose cards are never offered as cuts.
-    keep_categories: frozenset[str] = frozenset()
+    # Its kept cards and categories are never offered as cuts.
+    keep: Profile = field(default_factory=Profile)
     # Below bracket 5, narrow max_cents to the deck's own budget and put ideas within it first (ADR 0025).
     deck_budget: bool = True
 
@@ -155,10 +164,19 @@ def suggest(
         if options.deck_budget
         else Budget(None, options.max_cents)
     )
-    picker = _Picker(db, options, deck.bracket, len(game_changers(main)), budget)
+    screen = IdeaFilter(
+        db,
+        options.exclude,
+        options.exclude_names,
+        deck.bracket,
+        len(game_changers(main)),
+        options.ceiling,
+        budget,
+    )
+    picker = _Picker(db, options, screen)
     identity = deck_identity(main)
     data = combos.data
-    pieces = combo_pieces(main, data, db, bracket=deck.bracket, changers=picker.changers) if data else []
+    pieces = combo_pieces(main, data, db, bracket=deck.bracket, changers=screen.changers) if data else []
     kept = picker.pieces(pieces)
     roles = role_targets(main, db, identity, options, picker)
     themed: list[RoleIdea] = []
@@ -178,10 +196,10 @@ def suggest(
             main,
             data,
             count=options.count,
-            protected=protected_cards(main, options.keep_names, options.keep_categories),
+            protected=protected_cards(main, options.keep),
             themed=db.matching(options.themes, (r.info.oracle_id for r in main if r.info)),
         ),
-        hidden=picker.hidden,
+        hidden=len(screen.hidden_ids),
         ceiling=options.ceiling,
         budget=budget,
     )
@@ -204,7 +222,7 @@ def options_for(
     rejected holds card names already turned down for the deck; they are never suggested again.
     """
     ceiling = deck.bracket if within_bracket else profile.bracket_ceiling
-    excluded = {key for name in (*profile.exclude_cards, *rejected) for key in name_keys(name)}
+    excluded = name_keys_of((*profile.exclude_cards, *rejected))
     return SuggestOptions(
         targets={**DEFAULT_TARGETS, **config_targets, **profile.targets},
         count=count,
@@ -213,29 +231,71 @@ def options_for(
         themes=themes.themes,
         theme_labels=themes.labelled,
         exclude=themes.exclude,
-        exclude_names=frozenset(excluded),
-        keep_names=frozenset(key for name in profile.keep_cards for key in name_keys(name)),
-        keep_categories=frozenset(category.casefold() for category in profile.keep_categories),
+        exclude_names=excluded,
+        keep=profile,
         deck_budget=deck_budget,
     )
 
 
+@dataclass(slots=True, frozen=True)
+class Admitted:
+    """An idea the filter lets in, with the bracket it would lift the deck to (None when it lifts none)."""
+
+    raises: BracketRaise | None
+
+
+@dataclass(slots=True)
+class IdeaFilter:
+    """What keeps a card out of the ideas, for `suggest` and the ideas compiled on sync alike: an excluded
+    theme or name, a bracket above the ceiling, a price over the budget's ceiling. It counts what the
+    ceiling hides, once per card however many sections skip it."""
+
+    db: CardDb
+    exclude: Theme
+    # Casefolded names (`name_keys`) never offered.
+    exclude_names: frozenset[str]
+    # The deck's bracket and how many game changers it already runs, which decide what a card would raise.
+    bracket: int | None
+    changers: int
+    ceiling: int | None
+    budget: Budget = NO_BUDGET
+    hidden_ids: set[str] = field(default_factory=set[str])
+
+    def banned(self, oracle_ids: Iterable[str]) -> frozenset[str]:
+        """The cards among these that the excluded theme matches."""
+        return self.db.matching(self.exclude, oracle_ids)
+
+    def excludes(self, name: str, oracle_id: str | None, banned: Collection[str]) -> bool:
+        return (oracle_id is not None and oracle_id in banned) or bool(name_keys(name) & self.exclude_names)
+
+    def too_high(self, raises: BracketRaise | None, key: str) -> bool:
+        """Whether the card lifts the deck above the ceiling; such a card is counted as hidden."""
+        too_high = raises is not None and self.ceiling is not None and raises.bracket > self.ceiling
+        if too_high:
+            self.hidden_ids.add(key)
+        return too_high
+
+    def admit(self, info: CardInfo, banned: Collection[str]) -> Admitted | None:
+        """The card with what it would raise, or None when the profile, ceiling or budget keeps it out."""
+        if self.excludes(info.name, info.oracle_id, banned) or not self.budget.allows(info.cheapest_cents):
+            return None
+        raises = card_raise(info, self.bracket, self.changers)
+        return None if self.too_high(raises, info.oracle_id) else Admitted(raises)
+
+
 @dataclass(slots=True)
 class _Picker:
-    """Filters ideas by the options (exclusions, price, ceiling) and counts what the ceiling hides."""
+    """Ranks the ideas the filter lets in: themed ones and those within the deck's budget first."""
 
     db: CardDb
     options: SuggestOptions
-    bracket: int | None
-    changers: int
-    budget: Budget = NO_BUDGET
-    hidden: int = 0
+    screen: IdeaFilter
 
     def pick(self, candidates: Iterator[CardInfo], *, theme_first: bool) -> list[RoleIdea]:
         # Ranked candidates come lazily; a window this deep leaves room for themed ones to move up.
         window = list(islice(candidates, IDEA_WINDOW))
         ids = [info.oracle_id for info in window]
-        banned = self.db.matching(self.options.exclude, ids)
+        banned = self.screen.banned(ids)
         themed = self.db.matching(self.options.themes, ids)
         labelled = [(label, self.db.matching(theme, ids)) for label, theme in self.options.theme_labels]
         if theme_first:
@@ -245,18 +305,18 @@ class _Picker:
             # a card that fits more of the deck's themes comes first, the most played first among equals.
             window.sort(key=lambda info: -len({label for label, held in labelled if info.oracle_id in held}))
         # Ideas within the deck's working budget come before dearer ones, each kept in the order above.
-        window.sort(key=lambda info: not self.budget.within(info.cheapest_cents))
+        window.sort(key=lambda info: not self.screen.budget.within(info.cheapest_cents))
         ideas: list[RoleIdea] = []
         for info in window:
-            if info.oracle_id in banned or name_keys(info.name) & self.options.exclude_names:
-                continue
-            raises = card_raise(info, self.bracket, self.changers)
-            if self._too_high(raises):
+            admitted = self.screen.admit(info, banned)
+            if admitted is None:
                 continue
             fits = tuple(dict.fromkeys(label for label, held in labelled if info.oracle_id in held))
-            within = self.budget.within(info.cheapest_cents)
+            within = self.screen.budget.within(info.cheapest_cents)
             ideas.append(
-                RoleIdea(info, raises, themed=info.oracle_id in themed, fits=fits, within_budget=within)
+                RoleIdea(
+                    info, admitted.raises, themed=info.oracle_id in themed, fits=fits, within_budget=within
+                )
             )
             if len(ideas) == self.options.count:
                 break
@@ -264,33 +324,24 @@ class _Picker:
 
     def pieces(self, pieces: Sequence[ComboPiece]) -> list[ComboPiece]:
         ids = [p.info.oracle_id for p in pieces if p.info]
-        banned = self.db.matching(self.options.exclude, ids)
+        banned = self.screen.banned(ids)
         kept: list[ComboPiece] = []
         for piece in pieces:
-            if (piece.info and piece.info.oracle_id in banned) or name_keys(
-                piece.name
-            ) & self.options.exclude_names:
+            oracle_id = piece.info.oracle_id if piece.info else None
+            if self.screen.excludes(piece.name, oracle_id, banned):
                 continue
-            if not self.budget.allows(piece.price_cents) or self._too_high(piece.raises):
+            key = oracle_id or piece.name.casefold()
+            if not self.screen.budget.allows(piece.price_cents) or self.screen.too_high(piece.raises, key):
                 continue
             kept.append(piece)
         # Within the deck's working budget first, in the order given within each half.
-        kept.sort(key=lambda piece: not self.budget.within(piece.price_cents))
+        kept.sort(key=lambda piece: not self.screen.budget.within(piece.price_cents))
         return kept
 
-    def _too_high(self, raises: BracketRaise | None) -> bool:
-        too_high = (
-            raises is not None and self.options.ceiling is not None and raises.bracket > self.options.ceiling
-        )
-        if too_high:
-            self.hidden += 1
-        return too_high
 
-
-def name_keys(name: str) -> frozenset[str]:
-    """The casefolded names a card answers to: its full name and, for two faces, the front face's."""
-    key = name.casefold()
-    return frozenset({key, key.split(" // ")[0]})
+def name_keys_of(names: Iterable[str]) -> frozenset[str]:
+    """Every `name_keys` of the names given, for matching a card against a list of names."""
+    return frozenset(key for name in names for key in name_keys(name))
 
 
 def deck_identity(main: Sequence[ResolvedCard]) -> str | None:
@@ -371,7 +422,7 @@ def role_targets(
         if have >= target:
             targets.append(RoleTarget(role, have, target, ()))
             continue
-        candidates = db.candidates(role, identity, exclude=exclude, max_cents=picker.budget.ceiling)
+        candidates = db.candidates(role, identity, exclude=exclude, max_cents=picker.screen.budget.ceiling)
         targets.append(RoleTarget(role, have, target, tuple(picker.pick(candidates, theme_first=True))))
     return tuple(targets)
 
@@ -384,18 +435,11 @@ def fills_role(card: ResolvedCard, role: Role) -> bool:
     return any(category.casefold() in aliases for category in card.card.categories)
 
 
-def protected_cards(
-    main: Sequence[ResolvedCard], keep_names: Collection[str], keep_categories: Collection[str]
-) -> frozenset[str]:
-    """Oracle ids of deck cards kept by name key or casefolded category, so never offered as cuts."""
-    protected: set[str] = set()
-    for r in main:
-        if r.info is None:
-            continue
-        categories = {category.casefold() for category in r.card.categories}
-        if categories & set(keep_categories) or name_keys(r.card.name) & set(keep_names):
-            protected.add(r.info.oracle_id)
-    return frozenset(protected)
+def protected_cards(main: Sequence[ResolvedCard], profile: Profile) -> frozenset[str]:
+    """Oracle ids of the deck cards the profile keeps, so never offered as cuts or replaced."""
+    return frozenset(
+        r.info.oracle_id for r in main if r.info is not None and profile.keeps(r.card.name, r.card.categories)
+    )
 
 
 def cut_candidates(
@@ -422,6 +466,7 @@ def cut_candidates(
             info is None
             or COMMANDER_CATEGORY in r.card.categories
             or info.is_land
+            or back_is_land(info.type_line)
             or any(fills_role(r, role) for role in ANALYZED_ROLES)
             or info.oracle_id in protected
             or info.oracle_id in combo_ids
@@ -497,10 +542,6 @@ def _highest(raises: Collection[BracketRaise | None]) -> BracketRaise | None:
 
 def _held(card: ComboCard, held_ids: set[str], held_names: set[str]) -> bool:
     return (card.oracle_id is not None and card.oracle_id in held_ids) or card.name.casefold() in held_names
-
-
-def affordable(price_cents: int | None, max_cents: int | None) -> bool:
-    return max_cents is None or (price_cents is not None and price_cents <= max_cents)
 
 
 def _matches_to_json(matches: ComboMatches) -> dict[str, object]:

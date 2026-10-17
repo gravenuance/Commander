@@ -10,12 +10,12 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from enum import Enum
 
-from commander.carddb import FACE_SEPARATOR, CardDb, Theme
+from commander.carddb import FACE_SEPARATOR, CardDb, Theme, front_name, front_type
 
 
 def card_key(name: str) -> str:
     """The name lists are compared by: the front face, casefolded, as sites spell two-faced cards apart."""
-    return name.casefold().split(" // ")[0]
+    return front_name(name.casefold())
 
 
 class AnswerKind(Enum):
@@ -42,7 +42,7 @@ class AnswerKind(Enum):
 
     def hits(self, type_line: str) -> bool:
         """Whether this kind of answer reaches a card of this type line (front face of a two-faced card)."""
-        words = type_line.split(" // ", maxsplit=1)[0].split()
+        words = front_type(type_line).split()
         if self.reaches == "any":
             return True
         if self.reaches == "permanent":
@@ -87,7 +87,7 @@ class Piece:
 
     @property
     def types(self) -> frozenset[str]:
-        return frozenset(self.type_line.split(" // ", maxsplit=1)[0].split())
+        return frozenset(front_type(self.type_line).split())
 
     @property
     def is_permanent(self) -> bool:
@@ -211,14 +211,17 @@ def _surest(catches: Iterable[str]) -> str | None:
 def card_answers(db: CardDb, cards: Mapping[str, str]) -> dict[str, CardAnswer]:
     """The removal and counter cards among `cards` (oracle id to name), keyed by oracle id."""
     kinds = answer_kinds(db, list(cards))
-    found: dict[str, CardAnswer] = {}
-    for oracle_id, name in cards.items():
-        tagged = tuple(kind for kind in AnswerKind if oracle_id in kinds[kind])
-        if not tagged:
-            continue
-        text = db.card_text(oracle_id)
-        found[oracle_id] = CardAnswer(name, tagged, read_modes(text.text) if text else None)
-    return found
+    tagged = {
+        oracle_id: tuple(kind for kind in AnswerKind if oracle_id in kinds[kind]) for oracle_id in cards
+    }
+    texts = db.card_texts(oracle_id for oracle_id, found in tagged.items() if found)
+    return {
+        oracle_id: CardAnswer(
+            cards[oracle_id], found, read_modes(texts[oracle_id].text) if oracle_id in texts else None
+        )
+        for oracle_id, found in tagged.items()
+        if found
+    }
 
 
 def piece_facts(db: CardDb, pieces: Iterable[tuple[str, str]]) -> dict[str, Piece]:

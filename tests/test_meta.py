@@ -1,12 +1,13 @@
 import json
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
 
 from commander.archidekt import PeerDeck, parse_deck
-from commander.carddb import CardDb
+from commander.carddb import CardDb, Theme
 from commander.deckcache import Answer, AnswerSource
 from commander.deckprofile import Profile
 from commander.edhtop16 import CommanderStats, DecklistCard, Entry, Tournament
@@ -16,14 +17,15 @@ from commander.meta import (
     analyse,
     card_key,
     check_card,
+    meta_pool,
     own_combos,
     performing_lists,
 )
-from commander.metacombos import AnswerRole
+from commander.metacombos import AnswerRole, Stop
 from commander.metadata import CommanderEntries, MetaCommander, MetaData, PeerList, PeerLists
 from commander.models import Deck
 from commander.spellbook import ComboDetail, ComboPiece
-from conftest import CHAOS_WARP, LIGHTNING_BOLT, Json, build_card_db
+from conftest import CHAOS_WARP, FILLER_CARDS, LIGHTNING_BOLT, Json, build_card_db, filler_card
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 SINCE = date(2026, 8, 16)
@@ -53,9 +55,25 @@ REMOVAL_TAGS = [
 ]
 
 
+BANNED_CARD = "Banned Test Card"
+BLUE_CARD = "Blue Test Card"
+
+
+def extra_card(index: int, name: str, *, identity: list[str], legal: str = "legal") -> str:
+    raw = json.loads(filler_card(FILLER_CARDS + index, name))
+    raw["color_identity"] = identity
+    raw["legalities"] = {"commander": legal}
+    return json.dumps(raw)
+
+
 @pytest.fixture(scope="module")
 def db(tmp_path_factory: pytest.TempPathFactory) -> Iterator[CardDb]:
-    with CardDb(build_card_db(tmp_path_factory.mktemp("metadb"), REMOVAL_TAGS)) as opened:
+    # A card banned since the lists were played, and one outside Magda's red identity.
+    extra = [
+        extra_card(1, BANNED_CARD, identity=[], legal="banned"),
+        extra_card(2, BLUE_CARD, identity=["U"]),
+    ]
+    with CardDb(build_card_db(tmp_path_factory.mktemp("metadb"), REMOVAL_TAGS, extra)) as opened:
         yield opened
 
 
@@ -153,6 +171,15 @@ def test_missing_staples_come_from_performing_and_archidekt_lists(deck: Deck, db
     ]
     assert report.missing[0].share == pytest.approx(0.6)
     assert report.missing[4].peer_share == pytest.approx(2 / 3)
+
+
+def test_missing_staples_leave_out_banned_and_off_colour_cards(deck: Deck, db: CardDb) -> None:
+    played = [("Mind Stone", 0), (BANNED_CARD, 0), (BLUE_CARD, 0), ("Too New To Know", 0)]
+    lists = [entry(i, 40, 8, played) for i in range(1, 6)]
+    peers = [peer(i, [BANNED_CARD, BLUE_CARD]) for i in range(1, 4)]
+    report = analyse(deck, meta_data(lists, peers), Profile(), db)
+    # A card the card data lacks can't be judged, so it stays.
+    assert [c.name for c in report.missing] == ["Mind Stone", "Too New To Know"]
 
 
 def test_spicy_picks_skip_deck_cards_and_mild_ones(deck: Deck, db: CardDb) -> None:
@@ -292,18 +319,20 @@ def test_a_spicy_card_in_one_list_off_the_cut_is_left_out(deck: Deck, db: CardDb
     assert [(p.name, p.lists) for p in report.spicy] == [("Jeska's Will", 2)]
 
 
+GOLEM_COMBO = ComboDetail(
+    "1-2",
+    (
+        ComboPiece(MAGDA, "Legendary Creature — Dwarf Berserker", ("C",)),
+        ComboPiece("Battered Golem", "Artifact Creature — Golem", ("B",)),
+    ),
+    (),
+    ("Infinite artifact ETB",),
+    "Activate Battered Golem.\nRepeat.",
+)
+
+
 def test_the_decks_own_combos_list_what_the_meta_commonly_plays_against_them(db: CardDb) -> None:
-    combo = ComboDetail(
-        "1-2",
-        (
-            ComboPiece(MAGDA, "Legendary Creature — Dwarf Berserker", ("C",)),
-            ComboPiece("Battered Golem", "Artifact Creature — Golem", ("B",)),
-        ),
-        (),
-        ("Infinite artifact ETB",),
-        "Activate Battered Golem.\nRepeat.",
-    )
-    [found] = own_combos([combo], field(), db)
+    [found] = own_combos([GOLEM_COMBO], meta_pool(field(), db), db)
     assert found.pieces == (MAGDA, "Battered Golem")
     # Most played first; Mind Stone stops nothing; Chaos Warp's small-commander quarter is under the line.
     assert [(a.card, a.role, a.played_by) for a in found.answers] == [
@@ -311,4 +340,28 @@ def test_the_decks_own_combos_list_what_the_meta_commonly_plays_against_them(db:
         ("Chaos Warp", AnswerRole.REMOVAL, (("Big Commander", 0.5),)),
     ]
     assert found.answers[1].exposure == pytest.approx(0.5 * 0.04 + 0.25 * 0.02)
-    assert own_combos([], field(), db) == ()
+    assert own_combos([], meta_pool(field(), db), db) == ()
+
+
+def test_the_meta_pool_is_worked_out_once_for_the_threats_and_the_decks_combos(
+    deck: Deck, db: CardDb, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asked: list[tuple[Theme, tuple[str, ...]]] = []
+    real = db.matching
+
+    def counting(theme: Theme, oracle_ids: Iterable[str]) -> frozenset[str]:
+        ids = tuple(oracle_ids)
+        asked.append((theme, ids))
+        return real(theme, ids)
+
+    monkeypatch.setattr(db, "matching", counting)
+    data = replace(meta_data(TOP_CUT_LISTS, field=field()), own_combos=fetched((GOLEM_COMBO,)))
+    report = analyse(deck, data, Profile(keep_categories=("Stax",)), db)
+    assert report.threats
+    assert report.own_combos[0].answers
+    # Bolt, Chaos Warp and Mind Stone are the cards 30% of a top commander's lists play. Each answer kind and
+    # each way to stop a combo is looked up for them once, not once per report that reads them.
+    pool = {
+        info.oracle_id for info in db.cards_named(["Lightning Bolt", "Chaos Warp", "Mind Stone"]).values()
+    }
+    assert sum(1 for _, ids in asked if set(ids) == pool) == len(AnswerKind) + len(Stop)

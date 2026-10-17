@@ -941,7 +941,7 @@ function renderMana(deck, m) {
     el("p", { class: "muted small", text: `Lands that enter tapped: ${fmt(m.tappedLands)}` }));
   const skipped = m.skipped.length
     ? el("details", { class: "fold" }, el("summary", { text: `Not counted (${m.skipped.length})` }),
-      el("p", { text: `Usually cast for an alternative cost: ${m.skipped.join(", ")}` }))
+      el("p", { text: `Cast for an alternative cost, or paid with hybrid or Phyrexian mana: ${m.skipped.join(", ")}` }))
     : null;
   const source = el("p", { class: "muted small mana-source" }, document.createTextNode("From Frank Karsten's "),
     el("a", { href: KARSTEN_LANDS, target: "_blank", rel: "noopener", text: "land count" }), document.createTextNode(" and "),

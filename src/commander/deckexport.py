@@ -1,5 +1,6 @@
 """A deck as text other sites import: TopDeck.gg's tournament decklist."""
 
+from commander.carddb import front_name
 from commander.models import COMMANDER_CATEGORY, Deck
 
 
@@ -19,4 +20,4 @@ def topdeck_text(deck: Deck) -> str:
 
 
 def _line(quantity: int, name: str) -> str:
-    return f"{quantity} {name.split(' // ', maxsplit=1)[0]}"
+    return f"{quantity} {front_name(name)}"

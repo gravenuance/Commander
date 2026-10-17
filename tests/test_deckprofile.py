@@ -78,6 +78,19 @@ def test_full_profile_is_read(tmp_path: Path) -> None:
     )
 
 
+def test_a_profile_keeps_cards_by_either_face_of_a_name_or_by_category() -> None:
+    profile = Profile(keep_cards=("Sol Ring", "Fire // Ice"), keep_categories=("Stax",))
+    assert profile.keeps("sol ring")
+    # A two-faced card is kept under its front face or its whole name, whichever side spells it so.
+    assert profile.keeps("Fire")
+    assert profile.keeps("Fire // Ice")
+    assert Profile(keep_cards=("Fire",)).keeps("Fire // Ice")
+    assert profile.keeps("Mind Stone", ["Ramp", "STAX"])
+    assert not profile.keeps("Mind Stone", ["Ramp"])
+    assert not profile.keeps("Ice")
+    assert not Profile().keeps("Sol Ring", ["Stax"])
+
+
 def test_missing_profile_is_empty(tmp_path: Path) -> None:
     assert read_profile(tmp_path) == Profile()
 

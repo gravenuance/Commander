@@ -10,16 +10,16 @@ those within its working budget first. EDHREC is never asked (ADR 0003): its ran
 Scryfall's data, only orders the cards an idea could replace.
 """
 
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 
 from commander.analysis import game_changers
 from commander.board import BoardCard, BoardService, Origin, Status, feed_ideas, read_board
-from commander.budget import Budget, resolved_budget
-from commander.carddb import CardDb, CardInfo, ResolvedCard
+from commander.budget import resolved_budget
+from commander.carddb import CardDb
 from commander.deckcache import Clock
-from commander.deckprofile import Profile, read_profile, resolve_themes
+from commander.deckprofile import read_profile, resolve_themes
 from commander.meta import (
     MIN_PEER_LISTS,
     MIN_STAPLE_LISTS,
@@ -35,7 +35,7 @@ from commander.metadata import MetaData, PeerList
 from commander.models import Deck, short_commander_name
 from commander.playstyle import Fit
 from commander.store import StoredDeck
-from commander.suggest import card_raise, name_keys
+from commander.suggest import IdeaFilter, name_keys_of
 from commander.targets import deck_cut_rules, role_targets, with_ideas
 
 MAX_PER_SOURCE = 50
@@ -112,7 +112,16 @@ def compile_ideas(
     infos = db.cards_named(idea.name for idea in ideas)
     rules = with_ideas(deck_cut_rules(deck, main, profile, db, data), infos.values(), db)
     budget = resolved_budget(deck.bracket, main, profile.max_card_cents)
-    allowed = _profile_filter(deck, profile, main, db, infos.values(), budget=budget)
+    screen = IdeaFilter(
+        db,
+        resolve_themes(profile, db).exclude,
+        name_keys_of(profile.exclude_cards),
+        deck.bracket,
+        len(game_changers(main)),
+        profile.bracket_ceiling,
+        budget,
+    )
+    banned = screen.banned(info.oracle_id for info in infos.values())
 
     def within(idea: Idea) -> bool:
         info = infos.get(idea.name.casefold())
@@ -129,7 +138,7 @@ def compile_ideas(
             if placed >= MAX_PER_SOURCE:
                 break
             info = infos.get(idea.name.casefold())
-            if info is None or not allowed(info) or not role_targets(info, main, rules):
+            if info is None or screen.admit(info, banned) is None or not role_targets(info, main, rules):
                 continue
             existing = board.find(idea.name)
             if existing is not None and existing.status is not Status.REJECTED:
@@ -141,33 +150,6 @@ def compile_ideas(
             added[origin].extend(new)
             placed += len(new)
     return added
-
-
-def _profile_filter(
-    deck: Deck,
-    profile: Profile,
-    main: Sequence[ResolvedCard],
-    db: CardDb,
-    infos: Iterable[CardInfo],
-    *,
-    budget: Budget,
-) -> Callable[[CardInfo], bool]:
-    """Whether the profile lets a card in, as it does for `suggest`: not excluded by name, type, keyword
-    or tag, not lifting the deck over its bracket ceiling, and under the deck budget's ceiling."""
-    banned = db.matching(resolve_themes(profile, db).exclude, (info.oracle_id for info in infos))
-    banned_names = {key for name in profile.exclude_cards for key in name_keys(name)}
-    changers = len(game_changers(main))
-
-    def allowed(info: CardInfo) -> bool:
-        if info.oracle_id in banned or name_keys(info.name) & banned_names:
-            return False
-        raises = card_raise(info, deck.bracket, changers)
-        ceiling = profile.bracket_ceiling
-        if raises is not None and ceiling is not None and raises.bracket > ceiling:
-            return False
-        return budget.allows(info.cheapest_cents)
-
-    return allowed
 
 
 def ideas_summary(added: dict[Origin, list[BoardCard]]) -> str:

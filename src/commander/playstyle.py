@@ -11,7 +11,7 @@ from enum import Enum
 
 from commander.carddb import CardDb, CardInfo, Role
 from commander.manabase import ALTERNATIVE_COST_TAGS
-from commander.metacombos import pool_answers
+from commander.metacombos import pool_stops
 from commander.models import Deck
 
 INTERACTION = frozenset({Role.REMOVAL, Role.COUNTERSPELL, Role.BOARD_WIPE})
@@ -79,7 +79,7 @@ def staple_fits(names: Iterable[str], style: PlayStyle, db: CardDb) -> dict[str,
 
 def _traits(infos: Mapping[str, CardInfo], db: CardDb) -> dict[str, _Traits]:
     lineage = db.tag_lineage(info.oracle_id for info in infos.values())
-    stax = set(pool_answers((info.name for info in infos.values()), db).stops)
+    stax = set(pool_stops(infos.values(), db))
     found: dict[str, _Traits] = {}
     for key, info in infos.items():
         tags = lineage.get(info.oracle_id, frozenset())

@@ -13,7 +13,7 @@ from datetime import date
 from enum import Enum
 
 from commander.answers import CardAnswer, Piece, card_answers, card_key, piece_facts
-from commander.carddb import CardDb, Theme
+from commander.carddb import CardDb, CardInfo, Theme, front_name, front_type
 from commander.metadata import CommanderCombos, MetaCommander
 from commander.models import Deck
 from commander.spellbook import ComboDetail, ComboPiece
@@ -273,7 +273,7 @@ def _of_type(type_word: str | None, text: str, named: Sequence[ComboPiece]) -> b
     if type_word is None:
         return True
     if named:
-        return any(type_word in p.type_line.split(" // ", maxsplit=1)[0].split() for p in named)
+        return any(type_word in front_type(p.type_line).split() for p in named)
     hinted = {kind for word, kind in _TYPE_HINTS.items() if word in text}
     return not hinted or type_word in hinted
 
@@ -281,17 +281,17 @@ def _of_type(type_word: str | None, text: str, named: Sequence[ComboPiece]) -> b
 def _casts_only_creatures(combo: ComboDetail, steps: str) -> bool:
     """Whether every piece the steps cast is a creature; False when they name none."""
     cast = [p for p in combo.pieces if re.search(rf"\bcast {re.escape(_short(p.name))}", steps)]
-    return bool(cast) and all("Creature" in p.type_line.split(" // ", maxsplit=1)[0] for p in cast)
+    return bool(cast) and all("Creature" in front_type(p.type_line) for p in cast)
 
 
 def _short(name: str) -> str:
-    return name.split(" // ", maxsplit=1)[0].split(",", maxsplit=1)[0].casefold()
+    return front_name(name).split(",", maxsplit=1)[0].casefold()
 
 
 def _activated(piece: ComboPiece, scope: LockScope, steps: str) -> bool:
     if piece.zones and not set(piece.zones) & _BATTLEFIELD:
         return False
-    if scope.type_word and scope.type_word not in piece.type_line.split(" // ", maxsplit=1)[0].split():
+    if scope.type_word and scope.type_word not in front_type(piece.type_line).split():
         return False
     short = _short(piece.name)
     for line in steps.splitlines():
@@ -340,26 +340,34 @@ def _deck_answers(deck: Deck, db: CardDb) -> DeckAnswers:
 
 def pool_answers(names: Iterable[str], db: CardDb) -> DeckAnswers:
     """What each named card can do against a combo: a deck's cards, or the cards the meta plays."""
-    infos = db.cards_named(names)
-    by_id = {info.oracle_id: info.name for info in infos.values()}
-    one_shots = {
-        info.oracle_id
-        for info in infos.values()
-        if {"Instant", "Sorcery"} & set(info.type_line.split(" // ", maxsplit=1)[0].split())
+    return infos_answers(db.cards_named(names).values(), db)
+
+
+def infos_answers(infos: Iterable[CardInfo], db: CardDb) -> DeckAnswers:
+    """`pool_answers` for cards already looked up."""
+    pool = list(infos)
+    removal = {
+        answer.name: answer for answer in card_answers(db, {i.oracle_id: i.name for i in pool}).values()
     }
-    removal = {answer.name: answer for answer in card_answers(db, by_id).values()}
+    return DeckAnswers(removal, pool_stops(pool, db))
+
+
+def pool_stops(infos: Iterable[CardInfo], db: CardDb) -> dict[str, tuple[tuple[Stop, LockScope], ...]]:
+    """How each card of a pool stops combos, by card name; cards that stop none are left out."""
+    by_id = {info.oracle_id: info for info in infos}
     tagged = _stop_tags(db, list(by_id))
+    texts = db.card_texts(by_id)
     stops: dict[str, tuple[tuple[Stop, LockScope], ...]] = {}
-    for oracle_id, name in by_id.items():
-        text = db.card_text(oracle_id)
+    for oracle_id, info in by_id.items():
+        text = texts.get(oracle_id)
         found_stops = card_stops(
             text.text if text else "",
             {stop for stop in Stop if oracle_id in tagged[stop]},
-            one_shot=oracle_id in one_shots,
+            one_shot=bool({"Instant", "Sorcery"} & set(front_type(info.type_line).split())),
         )
         if found_stops:
-            stops[name] = found_stops
-    return DeckAnswers(removal, stops)
+            stops[info.name] = found_stops
+    return stops
 
 
 def card_stops(

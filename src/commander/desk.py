@@ -56,16 +56,8 @@ from commander.edhtop16 import Edhtop16Error
 from commander.ideas import compile_ideas
 from commander.labels import LabelError, Step, label_options, mark, set_label, to_get_json
 from commander.leanings import leaning_json
-from commander.manabase import (
-    ALTERNATIVE_COST_TAGS,
-    BASIC_NAMES,
-    LandOption,
-    ManaPlan,
-    analyse_mana,
-    mana_json,
-    plan_json,
-    suggest_mana,
-)
+from commander.manabase import ALTERNATIVE_COST_TAGS, analyse_mana, mana_json
+from commander.manaplan import BASIC_NAMES, LandOption, ManaPlan, plan_json, suggest_mana
 from commander.meta import analyse, card_shares, peer_shares, performing_entries
 from commander.metadata import (
     CEDH_BRACKET,

@@ -1,4 +1,5 @@
 import copy
+import json
 from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -7,26 +8,31 @@ from pathlib import Path
 import pytest
 
 from commander.archidekt import parse_deck
-from commander.carddb import CardDb, CardInfo, Role, Theme
+from commander.budget import NO_BUDGET, Budget
+from commander.carddb import NO_THEME, CardDb, CardInfo, ResolvedCard, Role, Theme
 from commander.deckcache import Answer, AnswerSource
 from commander.deckprofile import Profile, ResolvedThemes
-from commander.models import Deck
+from commander.models import Deck, DeckCard
 from commander.net import Fetcher
 from commander.spellbook import ComboMatches, SpellbookClient, parse_matches
 from commander.suggest import (
     DEFAULT_TARGETS,
+    Admitted,
     BracketRaise,
     ComboResult,
+    IdeaFilter,
     Suggestions,
     SuggestOptions,
     card_raise,
     combos_cache,
+    cut_candidates,
     find_combos,
     find_deck_combos,
+    name_keys_of,
     options_for,
     suggest,
 )
-from conftest import FakeSpellbook, Json, load_fixture
+from conftest import JESKAS_WILL, FakeSpellbook, Json, build_card_db, load_fixture
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 OPTIONS = SuggestOptions(DEFAULT_TARGETS, count=5, max_cents=None)
@@ -188,6 +194,27 @@ def test_within_bracket_hides_ideas_that_raise_it(deck: Deck, db: CardDb) -> Non
     result = run(replace(deck, bracket=2), db, options=replace(ANY_PRICE, ceiling=2))
     assert [p.name for p in result.pieces] == ["Maskwood Nexus"]
     assert [i.info.name for i in result.roles[0].ideas] == ["Arcane Signet", "Mind Stone"]
+    assert result.hidden == 3
+
+
+def test_a_card_hidden_in_two_short_roles_counts_once(deck: Deck, tmp_path: Path) -> None:
+    # Draw is made to hold Jeska's Will alone, a game changer already offered for ramp.
+    draw = json.dumps(
+        {
+            "object": "tag",
+            "id": "b6448c45-ce65-4848-aa98-2151e4e07437",
+            "slug": "draw",
+            "type": "oracle",
+            "child_ids": [],
+            "taggings": [{"oracle_id": JESKAS_WILL, "weight": "median"}],
+        }
+    )
+    with CardDb(build_card_db(tmp_path, [draw])) as both:
+        result = run(replace(deck, bracket=2), both, options=replace(ANY_PRICE, ceiling=2))
+    ramp, draws = (next(t for t in result.roles if t.role is role) for role in (Role.RAMP, Role.DRAW))
+    assert [i.info.name for i in ramp.ideas] == ["Arcane Signet", "Mind Stone"]
+    assert draws.ideas == ()
+    # Aggravated Assault, Splinter Twin and Jeska's Will, which both roles skip.
     assert result.hidden == 3
 
 
@@ -428,8 +455,8 @@ def test_themed_ideas_obey_the_ceiling_and_the_exclusions(deck: Deck, db: CardDb
 
 def test_kept_categories_and_names_are_never_cuts(deck: Deck, db: CardDb) -> None:
     whole = with_maybeboard_in_deck(deck)
-    assert run(whole, db, options=replace(OPTIONS, keep_categories=frozenset({"maybeboard"}))).cuts == ()
-    kept = run(whole, db, options=replace(OPTIONS, keep_names=frozenset({"high-speed hoverbike"})))
+    assert run(whole, db, options=replace(OPTIONS, keep=Profile(keep_categories=("Maybeboard",)))).cuts == ()
+    kept = run(whole, db, options=replace(OPTIONS, keep=Profile(keep_cards=("High-Speed Hoverbike",))))
     assert [c.name for c in kept.cuts] == ["Tempestra, Dame of Games"]
 
 
@@ -481,9 +508,95 @@ def test_options_take_flags_then_profile_then_config_then_defaults(deck: Deck) -
         "sundering eruption // volcanic fissure",
         "sundering eruption",
     }
-    assert (options.keep_names, options.keep_categories) == ({"sol ring"}, {"stax"})
+    assert options.keep == profile
     flagged = options_for(deck, profile, themes, config, count=3, max_cents=100, within_bracket=True)
     # --within-bracket caps at the deck's own bracket on Archidekt (5 for the fixture).
     assert (flagged.max_cents, flagged.ceiling) == (100, 5)
     plain = options_for(deck, Profile(), themes, {}, count=5, max_cents=None, within_bracket=False)
     assert (plain.targets, plain.max_cents, plain.ceiling) == (DEFAULT_TARGETS, None, None)
+
+
+def resolved(name: str, type_line: str, rank: int) -> ResolvedCard:
+    card = DeckCard(name, 1, ("Main",), True, "sid", 1, 1, "tst", "1", "Normal")  # noqa: FBT003 — positional like the model
+    info = CardInfo(
+        oracle_id=f"id-{name}",
+        name=name,
+        mana_cost="{1}{G}",
+        cmc=2.0,
+        type_line=type_line,
+        color_identity="G",
+        game_changer=False,
+        commander_legal=True,
+        cheapest_cents=None,
+        edhrec_rank=rank,
+        roles=frozenset(),
+    )
+    return ResolvedCard(card, info, None)
+
+
+def test_a_spell_with_a_land_back_is_never_offered_as_a_cut() -> None:
+    main = [
+        resolved("Plain Spell", "Sorcery", 5000),
+        # The least played of them all, yet the mana tab counts it as part of a land.
+        resolved("Turntimber Symbiosis // Turntimber, Serpentine Wood", "Sorcery // Land — Forest", 9000),
+    ]
+    assert [c.name for c in cut_candidates(main, None, count=5)] == ["Plain Spell"]
+
+
+def screen_for(
+    db: CardDb,
+    *,
+    exclude: Theme = NO_THEME,
+    exclude_names: frozenset[str] = frozenset(),
+    ceiling: int | None = None,
+    budget: Budget = NO_BUDGET,
+) -> IdeaFilter:
+    """A filter for a bracket 2 deck with no game changers."""
+    return IdeaFilter(db, exclude, exclude_names, bracket=2, changers=0, ceiling=ceiling, budget=budget)
+
+
+def card_info(db: CardDb, name: str) -> CardInfo:
+    info = db.card_named(name)
+    assert info is not None
+    return info
+
+
+def test_the_filter_keeps_out_excluded_themes_and_names(db: CardDb) -> None:
+    magda, will = card_info(db, "Magda, Brazen Outlaw"), card_info(db, "Jeska's Will")
+    screen = screen_for(db, exclude=Theme(types=("Dwarf",)), exclude_names=name_keys_of(["Jeska's Will"]))
+    banned = screen.banned([magda.oracle_id, will.oracle_id])
+    assert banned == {magda.oracle_id}
+    assert screen.admit(magda, banned) is None
+    assert screen.admit(will, banned) is None
+    assert screen.admit(card_info(db, "Mind Stone"), banned) == Admitted(None)
+
+
+def test_a_two_faced_card_is_excluded_by_its_front_face(db: CardDb) -> None:
+    eruption = card_info(db, "Sundering Eruption")
+    screen = screen_for(db, exclude_names=name_keys_of(["Sundering Eruption"]))
+    assert screen.excludes(eruption.name, eruption.oracle_id, ())
+    assert not screen_for(db).excludes(eruption.name, eruption.oracle_id, ())
+
+
+def test_the_filter_hides_cards_above_its_ceiling_and_counts_each_once(db: CardDb) -> None:
+    will = card_info(db, "Jeska's Will")
+    # A game changer lifts a bracket 2 deck to 3.
+    assert screen_for(db).admit(will, ()) == Admitted(BracketRaise(3, "game changer"))
+    screen = screen_for(db, ceiling=2)
+    assert screen.admit(will, ()) is None
+    assert screen.admit(will, ()) is None
+    assert screen.hidden_ids == {will.oracle_id}
+    assert screen_for(db, ceiling=3).admit(will, ()) == Admitted(BracketRaise(3, "game changer"))
+
+
+def test_the_filter_keeps_out_cards_over_the_budget_ceiling_or_unpriced(db: CardDb) -> None:
+    dear, unpriced = card_info(db, "Aggravated Assault"), card_info(db, "Filler Card 1")
+    assert (dear.cheapest_cents, unpriced.cheapest_cents) == (1693, None)
+    capped = screen_for(db, budget=Budget(None, 1000))
+    assert capped.admit(dear, ()) is None
+    assert capped.admit(unpriced, ()) is None
+    assert screen_for(db, budget=Budget(None, 2000)).admit(dear, ()) == Admitted(None)
+    # Without a ceiling any price, or none, is allowed.
+    assert screen_for(db).admit(unpriced, ()) == Admitted(None)
+    # A card kept out for its price is not counted as hidden by the ceiling.
+    assert capped.hidden_ids == set()
