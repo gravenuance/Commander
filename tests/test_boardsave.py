@@ -156,3 +156,21 @@ def test_another_users_deck_is_refused_before_anything_is_planned(
         preview("SOMEONE")
 
     assert read_board(stored.folder).queued[0].name == "Lightning Bolt"
+
+
+def test_a_basic_land_swap_trims_the_copies_when_the_land_is_in_two_entries(
+    fake: FakeArchidekt, service: BoardService, commit: Callable[[], BoardSave]
+) -> None:
+    queue(service, "Lightning Bolt", cut="Mountain")
+    # Archidekt shows four more Mountains in a second printing: ten in all.
+    fake.decks[DECK_ID]["cards"].append(card_entry(7_000_000_002, "Mountain", ["Land"], 4))
+
+    saved = commit()
+
+    mountains = sorted(
+        c["quantity"] for c in fake.decks[DECK_ID]["cards"] if c["card"]["oracleCard"]["name"] == "Mountain"
+    )
+    assert mountains == [3, 6]
+    assert live_quantity(fake, "Lightning Bolt") == 1
+    assert saved.result is not None
+    assert saved.result.mismatches == ()

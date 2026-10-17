@@ -141,16 +141,7 @@ class _Resolver:
         if wanted.maybeboard:
             self.changes.extend(self._set_aside(entry) for entry in entries)
             return
-        if wanted.keep == 0:
-            self.changes.extend(_change(ChangeKind.REMOVE, entry, 0) for entry in entries)
-            return
-        if len(entries) > 1:
-            self.problems.append(
-                f"remove {wanted.name}: the deck has it in {len(entries)} entries; remove it whole, "
-                "or change the copies on Archidekt"
-            )
-            return
-        self.changes.append(_change(ChangeKind.FEWER, entries[0], wanted.keep))
+        self.changes.extend(_cut_to(entries, held - wanted.keep))
 
     def add(self, wanted: AddCard, identity: str | None, changers: int) -> int:
         """Resolve one add; returns the game changers the deck holds after it."""
@@ -509,6 +500,20 @@ def apply_plan(
 def _entries_named(deck: Deck, name: str) -> list[DeckCard]:
     key = name.casefold()
     return [c for c in deck.cards if c.name.casefold() == key or c.name.casefold().split(" // ")[0] == key]
+
+
+def _cut_to(entries: Sequence[DeckCard], cut: int) -> list[Change]:
+    """Take cut copies out of the entries, the last entry first; an emptied entry is removed whole."""
+    changes: list[Change] = []
+    for entry in reversed(entries):
+        take = min(entry.quantity, cut)
+        if take == 0:
+            break
+        cut -= take
+        left = entry.quantity - take
+        changes.append(_change(ChangeKind.REMOVE if left == 0 else ChangeKind.FEWER, entry, left))
+    changes.reverse()
+    return changes
 
 
 def _change(kind: ChangeKind, entry: DeckCard, after: int) -> Change:

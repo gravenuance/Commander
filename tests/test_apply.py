@@ -215,17 +215,66 @@ def test_remove_skips_what_the_deck_already_meets(deck: Deck, db: CardDb) -> Non
     )
 
 
-def test_keep_on_a_card_in_several_entries_is_a_problem(deck: Deck, db: CardDb) -> None:
+def split_mountains(deck: Deck) -> Deck:
+    """The six Mountains plus four more in a second printing: ten in two entries."""
     mountain = next(c for c in deck.cards if c.name == "Mountain")
-    split = replace(deck, cards=(*deck.cards, replace(mountain, entry_id=1, quantity=2)))
+    return replace(deck, cards=(*deck.cards, replace(mountain, entry_id=1, quantity=4)))
 
-    whole = resolve_plan(split, plan(remove=[RemoveCard("Mountain")]), db)
-    partial = resolve_plan(split, plan(remove=[RemoveCard("Mountain", keep=1)]), db)
 
-    assert [c.after for c in whole.changes] == [0, 0]
-    assert partial.problems == (
-        "remove Mountain: the deck has it in 2 entries; remove it whole, or change the copies on Archidekt",
+def read_back(deck: Deck, quantities: dict[int, int]) -> Deck:
+    """The deck as Archidekt would show it with these entry quantities (0 drops the entry)."""
+    cards = tuple(
+        replace(c, quantity=quantities.get(c.entry_id, c.quantity))
+        for c in deck.cards
+        if quantities.get(c.entry_id, c.quantity) > 0
     )
+    return replace(deck, cards=cards)
+
+
+def test_cutting_copies_of_a_card_in_several_entries_takes_them_from_the_last_entry(
+    deck: Deck, db: CardDb
+) -> None:
+    split = split_mountains(deck)
+
+    resolution = resolve_plan(split, plan(remove=[RemoveCard("Mountain", keep=9)]), db)
+
+    assert resolution.problems == ()
+    assert [(c.kind, c.entry_id, c.before, c.after) for c in resolution.changes] == [
+        (ChangeKind.FEWER, 1, 4, 3)
+    ]
+    assert verify(resolution.changes, split, read_back(split, {1: 3})) == []
+
+
+def test_cutting_more_copies_than_the_last_entry_holds_empties_it_and_trims_the_one_before(
+    deck: Deck, db: CardDb
+) -> None:
+    split = split_mountains(deck)
+
+    resolution = resolve_plan(split, plan(remove=[RemoveCard("Mountain", keep=5)]), db)
+
+    assert resolution.problems == ()
+    assert [(c.kind, c.entry_id, c.before, c.after) for c in resolution.changes] == [
+        (ChangeKind.FEWER, MOUNTAIN_ENTRY, 6, 5),
+        (ChangeKind.REMOVE, 1, 4, 0),
+    ]
+    assert resolution.main_after == MAIN_CARDS + 4 - 5
+    assert verify(resolution.changes, split, read_back(split, {MOUNTAIN_ENTRY: 5, 1: 0})) == []
+
+
+def test_removing_a_card_in_several_entries_removes_each(deck: Deck, db: CardDb) -> None:
+    resolution = resolve_plan(split_mountains(deck), plan(remove=[RemoveCard("Mountain")]), db)
+
+    assert [(c.kind, c.entry_id, c.after) for c in resolution.changes] == [
+        (ChangeKind.REMOVE, MOUNTAIN_ENTRY, 0),
+        (ChangeKind.REMOVE, 1, 0),
+    ]
+
+
+def test_keep_counts_every_entry_of_the_card(deck: Deck, db: CardDb) -> None:
+    resolution = resolve_plan(split_mountains(deck), plan(remove=[RemoveCard("Mountain", keep=10)]), db)
+
+    assert resolution.changes == ()
+    assert resolution.skipped == ("remove Mountain: already 10",)
 
 
 def test_a_full_deck_has_no_size_warning(deck: Deck, db: CardDb) -> None:
