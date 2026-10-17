@@ -451,8 +451,8 @@ def test_themed_ideas_obey_the_ceiling_and_the_exclusions(deck: Deck, db: CardDb
 
 def test_kept_categories_and_names_are_never_cuts(deck: Deck, db: CardDb) -> None:
     whole = with_maybeboard_in_deck(deck)
-    assert run(whole, db, options=replace(OPTIONS, keep_categories=frozenset({"maybeboard"}))).cuts == ()
-    kept = run(whole, db, options=replace(OPTIONS, keep_names=frozenset({"high-speed hoverbike"})))
+    assert run(whole, db, options=replace(OPTIONS, keep=Profile(keep_categories=("Maybeboard",)))).cuts == ()
+    kept = run(whole, db, options=replace(OPTIONS, keep=Profile(keep_cards=("High-Speed Hoverbike",))))
     assert [c.name for c in kept.cuts] == ["Tempestra, Dame of Games"]
 
 
@@ -504,7 +504,7 @@ def test_options_take_flags_then_profile_then_config_then_defaults(deck: Deck) -
         "sundering eruption // volcanic fissure",
         "sundering eruption",
     }
-    assert (options.keep_names, options.keep_categories) == ({"sol ring"}, {"stax"})
+    assert options.keep == profile
     flagged = options_for(deck, profile, themes, config, count=3, max_cents=100, within_bracket=True)
     # --within-bracket caps at the deck's own bracket on Archidekt (5 for the fixture).
     assert (flagged.max_cents, flagged.ceiling) == (100, 5)

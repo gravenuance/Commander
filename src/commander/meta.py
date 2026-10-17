@@ -331,8 +331,6 @@ def outliers(
         return ()
     counts = _list_counts(performing)
     peer_counts = Counter(key for p in peers for key in {card_key(name) for name in p.cards})
-    keep_names = {card_key(name) for name in profile.keep_cards}
-    keep_categories = {category.casefold() for category in profile.keep_categories}
     basics = _basics(db, (card.name for card in deck.main_cards))
     rows: list[CardShare] = []
     for card in deck.main_cards:
@@ -342,7 +340,7 @@ def outliers(
         share = counts[key] / len(performing)
         if share >= OUTLIER_SHARE:
             continue
-        kept = key in keep_names or bool({c.casefold() for c in card.categories} & keep_categories)
+        kept = profile.keeps(card.name, card.categories)
         peer_share = peer_counts[key] / len(peers) if peers else 0.0
         rows.append(CardShare(card.name, counts[key], share, peer_counts[key], peer_share, None, kept))
     rows.sort(key=lambda r: (r.share, r.peer_share, r.name))

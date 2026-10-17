@@ -14,7 +14,17 @@ from pathlib import Path
 from commander.analysis import ANALYZED_ROLES, CATEGORY_ALIASES, game_changers
 from commander.background import run_all
 from commander.budget import NO_BUDGET, Budget, resolved_budget
-from commander.carddb import COLORS, NO_THEME, CardDb, CardInfo, ResolvedCard, Role, Theme, back_is_land
+from commander.carddb import (
+    COLORS,
+    NO_THEME,
+    CardDb,
+    CardInfo,
+    ResolvedCard,
+    Role,
+    Theme,
+    back_is_land,
+    name_keys,
+)
 from commander.deckcache import Answer, AnswerSource, Clock, DeckCache, cached_answer
 from commander.deckprofile import Profile, ResolvedThemes
 from commander.jsonshape import as_object, opt_int, opt_str, req_list, req_str, str_list
@@ -62,9 +72,8 @@ class SuggestOptions:
     exclude: Theme = NO_THEME
     # Casefolded card names: never suggested, and never offered as cuts.
     exclude_names: frozenset[str] = frozenset()
-    keep_names: frozenset[str] = frozenset()
-    # Casefolded Archidekt categories whose cards are never offered as cuts.
-    keep_categories: frozenset[str] = frozenset()
+    # Its kept cards and categories are never offered as cuts.
+    keep: Profile = field(default_factory=Profile)
     # Below bracket 5, narrow max_cents to the deck's own budget and put ideas within it first (ADR 0025).
     deck_budget: bool = True
 
@@ -178,7 +187,7 @@ def suggest(
             main,
             data,
             count=options.count,
-            protected=protected_cards(main, options.keep_names, options.keep_categories),
+            protected=protected_cards(main, options.keep),
             themed=db.matching(options.themes, (r.info.oracle_id for r in main if r.info)),
         ),
         hidden=len(picker.hidden_ids),
@@ -214,8 +223,7 @@ def options_for(
         theme_labels=themes.labelled,
         exclude=themes.exclude,
         exclude_names=frozenset(excluded),
-        keep_names=frozenset(key for name in profile.keep_cards for key in name_keys(name)),
-        keep_categories=frozenset(category.casefold() for category in profile.keep_categories),
+        keep=profile,
         deck_budget=deck_budget,
     )
 
@@ -287,12 +295,6 @@ class _Picker:
         if too_high:
             self.hidden_ids.add(key)
         return too_high
-
-
-def name_keys(name: str) -> frozenset[str]:
-    """The casefolded names a card answers to: its full name and, for two faces, the front face's."""
-    key = name.casefold()
-    return frozenset({key, key.split(" // ")[0]})
 
 
 def deck_identity(main: Sequence[ResolvedCard]) -> str | None:
@@ -386,18 +388,11 @@ def fills_role(card: ResolvedCard, role: Role) -> bool:
     return any(category.casefold() in aliases for category in card.card.categories)
 
 
-def protected_cards(
-    main: Sequence[ResolvedCard], keep_names: Collection[str], keep_categories: Collection[str]
-) -> frozenset[str]:
-    """Oracle ids of deck cards kept by name key or casefolded category, so never offered as cuts."""
-    protected: set[str] = set()
-    for r in main:
-        if r.info is None:
-            continue
-        categories = {category.casefold() for category in r.card.categories}
-        if categories & set(keep_categories) or name_keys(r.card.name) & set(keep_names):
-            protected.add(r.info.oracle_id)
-    return frozenset(protected)
+def protected_cards(main: Sequence[ResolvedCard], profile: Profile) -> frozenset[str]:
+    """Oracle ids of the deck cards the profile keeps, so never offered as cuts or replaced."""
+    return frozenset(
+        r.info.oracle_id for r in main if r.info is not None and profile.keeps(r.card.name, r.card.categories)
+    )
 
 
 def cut_candidates(

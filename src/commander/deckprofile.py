@@ -1,12 +1,12 @@
 """Deck profiles: what one deck wants from suggestions, kept by hand as profile.toml (ADR 0005)."""
 
 import tomllib
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
-from commander.carddb import CardDb, Role, Theme
+from commander.carddb import CardDb, Role, Theme, name_keys
 from commander.config import ConfigError, parse_targets
 from commander.fsutil import write_text_atomic
 from commander.models import Deck
@@ -89,6 +89,13 @@ class Profile:
             raise ValueError(f"bracket_ceiling must be 1-5, got {self.bracket_ceiling}")
         if self.max_card_cents is not None and self.max_card_cents < 0:
             raise ValueError(f"max_card_cents must not be negative, got {self.max_card_cents}")
+
+    def keeps(self, name: str, categories: Iterable[str] = ()) -> bool:
+        """Whether the profile keeps a deck card, by its name (either face) or one of its categories."""
+        if {c.casefold() for c in categories} & {c.casefold() for c in self.keep_categories}:
+            return True
+        keys = name_keys(name)
+        return any(keys & name_keys(kept) for kept in self.keep_cards)
 
 
 @dataclass(slots=True, frozen=True)

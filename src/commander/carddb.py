@@ -202,6 +202,12 @@ def front_type(type_line: str) -> str:
     return front_face(type_line)
 
 
+def name_keys(name: str) -> frozenset[str]:
+    """The casefolded names a card answers to: its full name and, for two faces, the front face's."""
+    key = name.casefold()
+    return frozenset({key, front_name(key)})
+
+
 def back_is_land(type_line: str) -> bool:
     """A card that is a spell on its front face and a land on its back (Shatterskull Smashing)."""
     faces = type_line.split(_NAME_FACE_SEPARATOR)

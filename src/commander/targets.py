@@ -14,7 +14,7 @@ from commander.leanings import Leaning, find_leanings
 from commander.meta import card_shares, peer_shares
 from commander.metadata import MetaData
 from commander.models import COMMANDER_CATEGORY, Deck
-from commander.suggest import fills_role, name_keys, protected_cards
+from commander.suggest import fills_role, protected_cards
 
 MAX_TARGETS = 3
 _PICKERS = frozenset({Actor.YOU, Actor.CLAUDE})
@@ -90,7 +90,7 @@ def deck_cut_rules(
             if leaning.tag in tag_ids
         ),
     )
-    rules = CutRules(kept_by_profile(main, profile), shares or None, shares_of, {}, leanings, matchers)
+    rules = CutRules(protected_cards(main, profile), shares or None, shares_of, {}, leanings, matchers)
     return with_ideas(rules, [r.info for r in main if r.info is not None], db)
 
 
@@ -154,13 +154,6 @@ def _by_word(spec: ThemeSpec, tag_ids: Mapping[str, str]) -> list[tuple[str, The
         *((keyword, Theme(keywords=(keyword,))) for keyword in spec.keywords),
         *((slug, Theme(tag_ids=(tag_ids[slug],))) for slug in spec.tags if slug in tag_ids),
     ]
-
-
-def kept_by_profile(main: Sequence[ResolvedCard], profile: Profile) -> frozenset[str]:
-    """Oracle ids of the deck cards the profile keeps by name or category: never targets."""
-    keep_names = {key for name in profile.keep_cards for key in name_keys(name)}
-    keep_categories = {category.casefold() for category in profile.keep_categories}
-    return protected_cards(main, keep_names, keep_categories)
 
 
 def _eligible(r: ResolvedCard, info: CardInfo, protected: Collection[str]) -> bool:
