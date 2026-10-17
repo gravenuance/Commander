@@ -133,7 +133,7 @@ def test_every_deck_offers_the_account_labels_in_the_account_colours(desk: Desk,
     assert grid_card(desk, "Disruptor Flute")["labelColour"] == "#ab12cd"
 
 
-def test_marks_write_the_buying_steps_in_the_account_colours(desk: Desk, fake: FakeArchidekt) -> None:
+def test_the_buying_steps_are_written_in_the_account_colours(desk: Desk, fake: FakeArchidekt) -> None:
     fake.labels = ACCOUNT
-    assert desk.mark(DECK, "Battered Golem", "ordered")["after"] == "Getting"
+    assert desk.set_label(DECK, "Battered Golem", "Getting")["after"] == "Getting"
     assert fake.card_writes()[-1]["modifications"]["label"] == "Getting,#0d9ffa"

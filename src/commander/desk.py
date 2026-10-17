@@ -60,7 +60,7 @@ from commander.deckprofile import MAX_ADJACENT, Profile, read_profile
 from commander.deckthemes import merge_themes
 from commander.edhtop16 import Edhtop16Error
 from commander.ideas import compile_ideas_with_adjacent
-from commander.labels import LabelError, Step, label_options, mark, set_label, to_get_json
+from commander.labels import LabelError, label_options, set_label
 from commander.leanings import leaning_json
 from commander.manabase import ALTERNATIVE_COST_TAGS, analyse_mana, mana_json
 from commander.manaplan import BASIC_NAMES, LandOption, ManaPlan, plan_json, suggest_mana
@@ -425,7 +425,6 @@ class Desk:
             "pending": board.pending(stored.deck),
             "cards": cards,
             "deckCards": sorted({c.name for c in stored.deck.main_cards if "Commander" not in c.categories}),
-            "toGet": to_get_json(stored.deck),
             "labels": [{"name": n, "colour": c} for n, c in label_options(stored.deck, account)],
             "grid": [_group_json(group, dict(account or ())) for group in grid],
             "activity": [activity_json(entry) for entry in reversed(activity)],
@@ -444,27 +443,6 @@ class Desk:
                 editor, self._workspace, stored, service, name=name, label=label, actor=Actor.YOU
             )
         return {"card": marked.card, "before": marked.before, "after": marked.after}
-
-    @_guarded
-    def mark(self, deck_id: int, name: str, step: str) -> Json:
-        """Mark one deck card ordered or arrived on Archidekt at once (ADR 0010)."""
-        if busy := self._updating("mark the card"):
-            return busy
-        try:
-            chosen = Step(step)
-        except ValueError:
-            return {"error": f"unknown step {step!r}"}
-        stored = self._stored(deck_id)
-        user = self._user()
-        with self._service_and_db(stored) as (service, _), self._client_factory() as http:
-            editor = self._editor(http, user)
-            marked = mark(editor, self._workspace, stored, service, name=name, step=chosen, actor=Actor.YOU)
-        return {
-            "card": marked.card,
-            "before": marked.before,
-            "after": marked.after,
-            "toGet": to_get_json(marked.deck),
-        }
 
     @_guarded
     def settings(self, deck_id: int) -> Json:

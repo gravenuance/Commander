@@ -314,7 +314,7 @@ def test_cardmarket_wants_copy_the_dont_have_cards_of_every_deck(desk: Desk) -> 
     assert desk.commit(DECK, reviewed(desk))["saved"] is True
 
     assert desk.cardmarket_wants() == {"text": "1 Arcane Signet\n", "cards": 1, "skipped": []}
-    desk.mark(DECK, "Arcane Signet", "ordered")
+    desk.set_label(DECK, "Arcane Signet", "Getting")
     assert desk.cardmarket_wants() == {"text": "", "cards": 0, "skipped": []}
 
 
@@ -382,22 +382,6 @@ def test_each_board_card_comes_with_the_deck_cards_it_could_replace(desk: Desk) 
     assert "Magda, Brazen Outlaw" not in {t["name"] for t in targets}
 
 
-def test_a_card_saved_into_the_deck_is_to_get_until_it_arrives(desk: Desk) -> None:
-    assert desk.deck(DECK)["toGet"] == []
-    desk.propose(DECK, "Arcane Signet")
-    desk.decide(DECK, first_card_id(desk), "add", None, "")
-    assert desk.commit(DECK, reviewed(desk))["saved"] is True
-    signet = {"name": "Arcane Signet", "quantity": 1, "label": "Don't Have", "category": "Artifact"}
-    assert desk.deck(DECK)["toGet"] == [signet]
-
-    ordered = desk.mark(DECK, "Arcane Signet", "ordered")
-    assert (ordered["before"], ordered["after"]) == ("Don't Have", "Getting")
-    assert ordered["toGet"] == [{**signet, "label": "Getting"}]
-    assert desk.mark(DECK, "Arcane Signet", "arrived")["toGet"] == []
-    assert desk.mark(DECK, "Arcane Signet", "lost") == {"error": "unknown step 'lost'"}
-    assert desk.mark(DECK, "Arcane Signet", "arrived") == {"error": "Arcane Signet is already marked arrived"}
-
-
 def test_preview_and_commit_save_the_queued_cards(desk: Desk, fake: FakeArchidekt) -> None:
     desk.propose(DECK, "Arcane Signet")
     card_id = first_card_id(desk)
@@ -445,10 +429,6 @@ def _set_label(desk: Desk) -> Json:
     return desk.set_label(DECK, "Battered Golem", "Getting")
 
 
-def _mark(desk: Desk) -> Json:
-    return desk.mark(DECK, "Battered Golem", "ordered")
-
-
 def _mana_to_board(desk: Desk) -> Json:
     return desk.mana_to_board(DECK)
 
@@ -458,7 +438,6 @@ def _mana_to_board(desk: Desk) -> Json:
     [
         (_commit, "save"),
         (_set_label, "change the label"),
-        (_mark, "mark the card"),
         (_mana_to_board, "add the swaps"),
     ],
 )
