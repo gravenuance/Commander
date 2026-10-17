@@ -19,6 +19,7 @@ from commander.apply import (
 from commander.archidekt import parse_deck
 from commander.archidekt_edit import ArchidektEditor, EditKind, LiveDeck, parse_entry_states
 from commander.carddb import CardDb, CardInfo
+from commander.cli_output import change_text
 from commander.models import Deck
 from commander.net import Fetcher
 from commander.plan import AddCard, Plan, RemoveCard
@@ -685,6 +686,13 @@ def test_moving_in_a_maybeboard_card_brings_the_copies_the_plan_asks_for(deck: D
     shown = replace(deck, cards=tuple(moved_in if c is bike else c for c in deck.cards))
     assert verify(resolution.changes, deck, shown) == []
     assert verify(resolution.changes, deck, deck) == ["High-Speed Hoverbike: expected 3, Archidekt shows 1"]
+
+
+def test_a_move_in_of_several_copies_says_how_many(deck: Deck, db: CardDb) -> None:
+    [one] = resolve_plan(deck, plan([AddCard("High-Speed Hoverbike")]), db).changes
+    [three] = resolve_plan(deck, plan([AddCard("High-Speed Hoverbike", 3)]), db).changes
+    assert change_text(one) == "+ High-Speed Hoverbike into the deck from the maybeboard, in Artifact"
+    assert change_text(three) == "+ 3 High-Speed Hoverbike into the deck from the maybeboard, in Artifact"
 
 
 def test_moving_in_keeps_a_maybeboard_stack_larger_than_the_plan_asks(deck: Deck, db: CardDb) -> None:
