@@ -1,11 +1,12 @@
 """The desktop app: one window over the deck boards, drawn by WebView2 through pywebview (ADR 0006).
 
-The page is the HTML, CSS and JavaScript in commander/web, inlined into one document, so no web server
+The page is the HTML, CSS and JavaScript files in commander/web, inlined into one document, so no web server
 runs; the page calls Desk's methods directly through pywebview's bridge.
 """
 
 import logging
 import platform
+import re
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from importlib import resources
@@ -24,21 +25,31 @@ log = logging.getLogger(__name__)
 
 WINDOW_TITLE = "Commander"
 _CSS_SLOT = "/*APP_CSS*/"
-_JS_SLOT = "/*APP_JS*/"
+# index.html lists the page scripts in the order they load; each tag is replaced by the file's text.
+_SCRIPT_TAG = re.compile(r'<script src="([a-z]+\.js)"></script>')
 
 
 def page_html() -> str:
-    """The app page with its stylesheet and script inlined."""
+    """The app page with its stylesheet and scripts inlined."""
     web = resources.files("commander") / "web"
     html = (web / "index.html").read_text(encoding="utf-8")
     css = (web / "app.css").read_text(encoding="utf-8")
-    script = (web / "app.js").read_text(encoding="utf-8")
     # Inlined text must not close its own element early.
-    if "</style" in css.casefold() or "</script" in script.casefold():
-        raise ValueError("app.css or app.js contains a closing tag of its own element")
-    if html.count(_CSS_SLOT) != 1 or html.count(_JS_SLOT) != 1:
-        raise ValueError("index.html must hold one stylesheet slot and one script slot")
-    return html.replace(_CSS_SLOT, css).replace(_JS_SLOT, script)
+    if "</style" in css.casefold():
+        raise ValueError("app.css contains a closing tag of its own element")
+    if html.count(_CSS_SLOT) != 1:
+        raise ValueError("index.html must hold one stylesheet slot")
+
+    def inline(tag: re.Match[str]) -> str:
+        script = (web / tag[1]).read_text(encoding="utf-8")
+        if "</script" in script.casefold():
+            raise ValueError(f"{tag[1]} contains a closing tag of its own element")
+        return f"<script>{script}</script>"
+
+    html, scripts = _SCRIPT_TAG.subn(inline, html.replace(_CSS_SLOT, css))
+    if scripts == 0:
+        raise ValueError("index.html must list the page scripts")
+    return html
 
 
 def desk_settings(

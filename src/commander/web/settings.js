@@ -1,0 +1,165 @@
+"use strict";
+
+/* Settings: the profile's commanders that play alike and themes to ignore */
+
+const settingsState = { deck: null, adjacent: [], ignore: [], themes: [], leanings: [], max: 8, pairWith: null };
+
+async function openSettings() {
+  const deck = state.current;
+  try {
+    const answer = await api("settings", deck);
+    Object.assign(settingsState, {
+      deck, adjacent: answer.adjacent, ignore: answer.ignore, themes: answer.themes,
+      leanings: answer.leanings, max: answer.maxAdjacent, pairWith: null,
+    });
+    $("settings-deck").textContent = $("deck-short").textContent;
+    renderSettings();
+    $("settings-dialog").showModal();
+    $("settings-adjacent-input").focus();
+  } catch { /* shown in the status line */ }
+}
+
+function renderSettings() {
+  const s = settingsState;
+  const chip = (text, remove, ...extra) => el("li", { class: "deck-chip setting-chip" }, el("span", { text }), ...extra,
+    el("button", { class: "chip-remove", type: "button", text: "×", "aria-label": `Remove ${text}`, onclick: remove }));
+  $("settings-adjacent").replaceChildren(...s.adjacent.map((group, index) => chip(group.join(" + "), () => {
+    s.adjacent.splice(index, 1);
+    s.pairWith = null;
+    renderSettings();
+  }, group.length === 1 ? el("button", {
+    class: "chip-pair", type: "button", text: s.pairWith === index ? "picking partner…" : "+ partner",
+    "aria-pressed": String(s.pairWith === index), "aria-label": `Pair ${group[0]} with a partner`,
+    onclick: () => {
+      s.pairWith = s.pairWith === index ? null : index;
+      renderSettings();
+      $("settings-adjacent-input").focus();
+    },
+  }) : null)));
+  const input = $("settings-adjacent-input");
+  const full = s.adjacent.length >= s.max && s.pairWith === null;
+  input.disabled = full;
+  input.placeholder = full ? `At most ${s.max}` : s.pairWith !== null ? `Partner for ${s.adjacent[s.pairWith][0]}` : "Add a commander";
+  $("settings-ignore").replaceChildren(...s.ignore.map((name, index) => chip(name, () => {
+    s.ignore.splice(index, 1);
+    renderSettings();
+  })));
+  // The deck's own themes and leanings, one click to ignore.
+  const ignored = new Set(s.ignore.map((name) => name.toLowerCase()));
+  const offers = [...s.themes.map((t) => ({ name: t.name, kind: t.kind })), ...s.leanings.map((tag) => ({ name: tag, kind: "leaning" }))]
+    .filter((o) => !ignored.has(o.name.toLowerCase()));
+  $("settings-offers").replaceChildren(...(offers.length ? [
+    el("p", { class: "muted small", text: "This deck's themes:" }),
+    el("ul", { class: "deck-chips" }, ...offers.map((o) => el("li", {},
+      el("button", { class: "deck-chip offer", type: "button", text: `+ ${o.name}`, title: `Ignore this ${o.kind}`,
+        onclick: () => addIgnore(o.name) })))),
+  ] : []));
+}
+
+function addAdjacent(text) {
+  const s = settingsState;
+  if (s.pairWith !== null && s.adjacent[s.pairWith]) {
+    s.adjacent[s.pairWith] = [s.adjacent[s.pairWith][0], text.trim()];
+    s.pairWith = null;
+    $("settings-adjacent-input").value = "";
+    renderSettings();
+    return;
+  }
+  const group = text.split("+").map((name) => name.trim()).filter(Boolean);
+  if (!group.length || group.length > 2) {
+    showStatus("A commander, or two partners joined by +", true);
+    return;
+  }
+  const key = group.map((n) => n.toLowerCase()).sort().join("|");
+  if (!settingsState.adjacent.some((g) => g.map((n) => n.toLowerCase()).sort().join("|") === key)) settingsState.adjacent.push(group);
+  $("settings-adjacent-input").value = "";
+  renderSettings();
+}
+
+function addIgnore(name) {
+  const text = name.trim();
+  if (text && !settingsState.ignore.some((n) => n.toLowerCase() === text.toLowerCase())) settingsState.ignore.push(text);
+  $("settings-ignore-input").value = "";
+  renderSettings();
+}
+
+async function saveSettings() {
+  const s = settingsState;
+  try {
+    await api("save_settings", s.deck, s.adjacent, s.ignore);
+    $("settings-dialog").close();
+    showStatus("Settings saved to the deck's profile.toml");
+    await refresh();
+  } catch { /* shown in the status line */ }
+}
+
+// A text box that offers matches as you type; arrows move, Enter takes the highlighted match or the text.
+function autocomplete(input, list, find, pick) {
+  let timer = 0;
+  let sent = 0;
+  let items = [];
+  let active = -1;
+  const close = () => { items = []; active = -1; list.hidden = true; input.parentElement.setAttribute("aria-expanded", "false"); };
+  const mark = (index) => {
+    active = index;
+    [...list.children].forEach((item, i) => item.setAttribute("aria-selected", String(i === index)));
+    list.children[index]?.scrollIntoView({ block: "nearest" });
+  };
+  input.addEventListener("input", () => {
+    clearTimeout(timer);
+    const mine = ++sent;
+    timer = setTimeout(async () => {
+      let found = [];
+      try { found = await find(input.value); } catch { /* the status line says what went wrong */ }
+      // A newer keystroke supersedes this answer; a box that lost focus gets no list back.
+      if (mine !== sent) return;
+      if (document.activeElement !== input) { close(); return; }
+      items = found;
+      active = -1;
+      list.replaceChildren(...items.map((item) => el("li", {
+        role: "option", "aria-selected": "false",
+        onmousedown: (event) => { event.preventDefault(); close(); pick(item.value); },
+      }, el("span", { text: item.label }), item.hint ? el("span", { class: "type", text: item.hint }) : null)));
+      list.hidden = items.length === 0;
+      input.parentElement.setAttribute("aria-expanded", String(!list.hidden));
+    }, SEARCH_DELAY_MS);
+  });
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown" && items.length) { event.preventDefault(); mark((active + 1) % items.length); }
+    else if (event.key === "ArrowUp" && items.length) { event.preventDefault(); mark((active - 1 + items.length) % items.length); }
+    else if (event.key === "Enter") {
+      event.preventDefault();
+      const value = active >= 0 ? items[active].value : input.value.trim();
+      sent++;
+      close();
+      if (value) pick(value);
+    } else if (event.key === "Escape" && !list.hidden) { event.preventDefault(); event.stopPropagation(); close(); }
+  });
+  input.addEventListener("blur", () => setTimeout(close, 150));
+}
+
+function setupSettings() {
+  $("settings").addEventListener("click", openSettings);
+  $("settings-cancel").addEventListener("click", () => $("settings-dialog").close());
+  $("settings-save").addEventListener("click", saveSettings);
+  const adjacent = $("settings-adjacent-input");
+  // A partner pair is typed "First + Second": matches are for the name after the last +.
+  autocomplete(adjacent, $("settings-adjacent-results"), async (text) => {
+    const parts = text.split("+");
+    const typed = parts.pop().trim();
+    if (typed.length < 2) return [];
+    const head = parts.map((p) => p.trim()).filter(Boolean);
+    const answer = await api("find_commanders", typed);
+    return answer.names.map((name) => ({ label: name, value: [...head, name].join(" + ") }));
+  }, addAdjacent);
+  autocomplete($("settings-ignore-input"), $("settings-ignore-results"), async (text) => {
+    const needle = text.trim().toLowerCase();
+    if (needle.length < 2) return [];
+    const own = [...settingsState.themes.map((t) => ({ label: t.name, value: t.name, hint: t.kind })),
+      ...settingsState.leanings.map((tag) => ({ label: tag, value: tag, hint: "leaning" }))]
+      .filter((o) => o.label.toLowerCase().includes(needle));
+    const answer = await api("find_tags", text);
+    const seen = new Set(own.map((o) => o.label.toLowerCase()));
+    return [...own, ...answer.tags.filter((t) => !seen.has(t.name)).map((t) => ({ label: t.name, value: t.name, hint: `Tagger tag, ${t.cards} cards` }))];
+  }, addIgnore);
+}

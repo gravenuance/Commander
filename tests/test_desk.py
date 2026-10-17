@@ -5,6 +5,7 @@ import re
 import shutil
 from collections.abc import Callable
 from datetime import UTC, datetime
+from importlib import resources
 from pathlib import Path
 from typing import cast
 
@@ -80,15 +81,34 @@ def first_card_id(desk: Desk) -> str:
     return str(items(desk.deck(DECK), "cards")[0]["id"])
 
 
-def test_page_inlines_its_stylesheet_and_script() -> None:
+WEB = Path(str(resources.files("commander") / "web"))
+# What would turn board text into markup.
+MARKUP_WRITERS = (".innerHTML", ".outerHTML", "insertAdjacentHTML", "document.write")
+
+
+def test_page_inlines_its_stylesheet_and_scripts() -> None:
     html = page_html()
     assert "/*APP_CSS*/" not in html
-    assert "/*APP_JS*/" not in html
+    assert "<script src=" not in html
     assert "--accent:" in html
     assert 'addEventListener("pywebviewready"' in html
     assert "Content-Security-Policy" in html
     # The page builds nodes from text only, so board text can never become markup.
     assert ".innerHTML" not in html
+
+
+def test_every_script_file_is_inlined_into_the_page() -> None:
+    html = page_html()
+    scripts = sorted(WEB.glob("*.js"))
+    assert len(scripts) > 1
+    for script in scripts:
+        assert script.read_text(encoding="utf-8") in html, script.name
+
+
+@pytest.mark.parametrize("script", sorted(WEB.glob("*.js")), ids=lambda path: path.name)
+def test_no_script_writes_markup(script: Path) -> None:
+    text = script.read_text(encoding="utf-8")
+    assert [writer for writer in MARKUP_WRITERS if writer in text] == []
 
 
 def test_decks_are_listed_by_commander_short_name(desk: Desk) -> None:
