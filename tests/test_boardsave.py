@@ -9,7 +9,7 @@ import pytest
 from commander.apply import ApplyOutcome, NotYourDeckError
 from commander.archidekt import parse_deck
 from commander.archidekt_edit import ArchidektEditor
-from commander.board import Actor, BoardError, BoardService, Status, read_board
+from commander.board import Actor, BoardError, BoardService, Status, import_aside, read_activity, read_board
 from commander.boardsave import BoardSave, preview_board, save_board
 from commander.carddb import CardDb
 from commander.net import Fetcher
@@ -146,16 +146,87 @@ def test_a_card_already_added_on_archidekt_does_not_cut_its_swap_again(
     assert saved.applied == ("Lightning Bolt", "Arcane Signet")
 
 
-def test_queued_cards_already_in_the_live_deck_leave_nothing_to_save(
+ALREADY = "Lightning Bolt: already in the deck on Archidekt; saving marks it applied"
+
+
+def test_a_preview_of_cards_all_already_in_the_live_deck_changes_nothing_and_says_so(
     fake: FakeArchidekt, service: BoardService, preview: Callable[..., ApplyOutcome]
 ) -> None:
     queue(service, "Lightning Bolt", cut="Battered Golem")
     fake.decks[DECK_ID]["cards"].append(card_entry(7_000_000_001, "Lightning Bolt", ["Burn"]))
 
-    with pytest.raises(BoardError, match="already in the deck on Archidekt"):
-        preview()
+    outcome = preview()
+
+    assert (outcome.resolution.changes, outcome.resolution.problems) == ((), ())
+    assert outcome.resolution.skipped == (ALREADY,)
+    assert outcome.result is None
+    assert fake.writes == []
+
+
+def test_a_preview_names_the_queued_cards_already_there_beside_the_changes(
+    fake: FakeArchidekt, service: BoardService, preview: Callable[..., ApplyOutcome]
+) -> None:
+    queue(service, "Lightning Bolt", cut="Battered Golem")
+    queue(service, "Arcane Signet")
+    fake.decks[DECK_ID]["cards"].append(card_entry(7_000_000_001, "Lightning Bolt", ["Burn"]))
+
+    outcome = preview()
+
+    assert [c.name for c in outcome.resolution.changes] == ["Arcane Signet"]
+    assert outcome.resolution.skipped == (ALREADY,)
+
+
+def test_saving_cards_all_already_in_the_live_deck_marks_them_applied_without_writing(
+    fake: FakeArchidekt,
+    service: BoardService,
+    stored: StoredDeck,
+    workspace: Workspace,
+    commit: Callable[[], BoardSave],
+) -> None:
+    queue(service, "Lightning Bolt", cut="Battered Golem")
+    fake.decks[DECK_ID]["cards"].append(card_entry(7_000_000_001, "Lightning Bolt", ["Burn"]))
+
+    saved = commit()
 
     assert fake.writes == []
+    assert saved.result is None
+    assert saved.applied == ("Lightning Bolt",)
+    assert saved.resolution.skipped == (ALREADY,)
+    board = read_board(stored.folder)
+    assert board.queued == ()
+    assert board.cards[0].status is Status.APPLIED
+    # Its chosen cut is not made.
+    golem = live_entry(fake, "Battered Golem")
+    assert golem is not None
+    assert golem["categories"] == ["Combo Pieces", "Ramp"]
+    activity = read_activity(stored.folder)[-1]
+    assert (activity.action, activity.detail) == (
+        "found in the deck on Archidekt",
+        "Lightning Bolt",
+    )
+    local = workspace.load(DECK_ID)
+    assert local is not None
+    assert "Lightning Bolt" in {c.name for c in local.cards}
+
+
+def test_turned_down_maybeboard_cards_alone_still_make_a_save(
+    service: BoardService, stored: StoredDeck, preview: Callable[..., ApplyOutcome]
+) -> None:
+    import_aside(service, stored.deck, read_board(stored.folder))
+    service.decide("Tempestra, Dame of Games", Status.REJECTED, Actor.YOU)
+
+    assert [(c.kind.value, c.name) for c in preview().resolution.changes] == [
+        ("off the maybeboard", "Tempestra, Dame of Games")
+    ]
+
+
+def test_an_empty_board_is_still_an_error_to_preview_or_save(
+    preview: Callable[..., ApplyOutcome], commit: Callable[[], BoardSave]
+) -> None:
+    with pytest.raises(BoardError, match="nothing is queued to add"):
+        preview()
+    with pytest.raises(BoardError, match="nothing is queued to add"):
+        commit()
 
 
 def test_another_users_deck_is_refused_before_anything_is_planned(

@@ -296,7 +296,8 @@ def board_plan(deck: Deck, board: Board) -> Plan | None:
     already holds (other than a basic land) is done, and neither adds nor cuts.
     """
     held = _held(deck)
-    queued = tuple(card for card in board.queued if not _already_added(held, card))
+    done = already_added(deck, board)
+    queued = tuple(card for card in board.queued if card not in done)
     drop = board.to_drop(deck)
     if not queued and not drop:
         return None
@@ -304,8 +305,14 @@ def board_plan(deck: Deck, board: Board) -> Plan | None:
     return Plan(str(deck.id), adds, _cuts(held, queued), drop)
 
 
-def _already_added(held: Counter[str], card: BoardCard) -> bool:
-    return not _is_basic_land(card.name) and held[card_key(card.name)] >= card.copies
+def already_added(deck: Deck, board: Board) -> tuple[BoardCard, ...]:
+    """The queued cards that deck already holds, other than basic lands: nothing is left to do for them."""
+    held = _held(deck)
+    return tuple(
+        card
+        for card in board.queued
+        if not _is_basic_land(card.name) and held[card_key(card.name)] >= card.copies
+    )
 
 
 def _add_target(held: Counter[str], card: BoardCard) -> int:
@@ -497,8 +504,9 @@ class BoardService:
             remaining = Board(tuple(c for c in board.cards if c.id != card.id))
             save(remaining, Activity(self._stamp(), actor, "removed", card.name, ""))
 
-    def mark_applied(self, ids: Sequence[str], actor: Actor, snapshot: str) -> None:
-        """Record that the queued cards with these ids were saved to Archidekt."""
+    def mark_applied(self, ids: Sequence[str], actor: Actor, snapshot: str | None) -> None:
+        """Record that the queued cards with these ids were saved to Archidekt, or, with no snapshot, were
+        found in the deck there already."""
         with self._editing() as (board, save):
             stamp = self._stamp()
             done = set(ids)
@@ -509,10 +517,11 @@ class BoardService:
                 for c in board.cards
             )
             names = ", ".join(c.name for c in board.cards if c.id in done)
-            save(
-                Board(cards),
-                Activity(stamp, actor, "saved to Archidekt", None, f"{names}; snapshot '{snapshot}'"),
-            )
+            if snapshot is None:
+                entry = Activity(stamp, actor, "found in the deck on Archidekt", None, names)
+            else:
+                entry = Activity(stamp, actor, "saved to Archidekt", None, f"{names}; snapshot '{snapshot}'")
+            save(Board(cards), entry)
 
     def remember_share(self, key: str, share: float) -> None:
         """Give a turned-down card that has none its meta share now, as the baseline for its return."""

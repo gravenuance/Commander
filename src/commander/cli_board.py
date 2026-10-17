@@ -265,6 +265,8 @@ def _cmd_commit(args: argparse.Namespace, ctx: Context) -> int:
         )
     print_resolution(saved.resolution, ctx.out)
     print_apply_outcome(saved.resolution, saved.result, stored.folder, ctx.out, save=True)
+    if saved.result is None and saved.applied:
+        print(f"marked applied, already in the deck: {', '.join(saved.applied)}", file=ctx.out)
     if saved.resolution.problems:
         return EXIT_USAGE
     return EXIT_FAILURE if saved.result is not None and saved.result.mismatches else EXIT_OK

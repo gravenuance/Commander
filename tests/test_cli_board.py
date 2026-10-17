@@ -8,7 +8,7 @@ import pytest
 
 from commander.board import read_activity, read_board
 from commander.carddb import CARD_DB_FILE
-from conftest import DECK_ID, FakeArchidekt, Json, MemoryKeyring
+from conftest import DECK_ID, FakeArchidekt, Json, MemoryKeyring, card_entry
 from test_cli_apply import SNAPSHOT, Run, run, saved_deck, signed_in
 
 FOLDER = "10004639-honestly-though"
@@ -183,6 +183,29 @@ def test_commit_previews_then_saves_and_marks_the_cards_applied(
         "saved to Archidekt",
     ]
     assert board(home, fake, "commit", "magda").code == 2
+
+
+def test_commit_marks_cards_already_in_the_deck_on_archidekt_applied_without_writing(
+    home: Path, fake: FakeArchidekt, memory_keyring: MemoryKeyring
+) -> None:
+    signed_in(memory_keyring)
+    board(home, fake, "add", "magda", "Arcane Signet", "--replace", "Disruptor Flute")
+    board(home, fake, "decide", "magda", "Arcane Signet", "add", "--cut", "Disruptor Flute")
+    fake.decks[DECK_ID]["cards"].append(card_entry(7_000_000_001, "Arcane Signet", ["Artifact"]))
+
+    preview = board(home, fake, "commit", "magda")
+    assert preview.code == 0, preview.err
+    assert (
+        "skipped, Arcane Signet: already in the deck on Archidekt; saving marks it applied\n" in preview.out
+    )
+
+    saved = board(home, fake, "commit", "magda", "--save")
+    assert saved.code == 0, saved.err
+    assert "marked applied, already in the deck: Arcane Signet\n" in saved.out
+    assert not fake.card_writes()
+    signet = read_board(folder(home)).find("Arcane Signet")
+    assert signet is not None
+    assert signet.status.value == "applied"
 
 
 def test_commit_needs_a_login(home: Path, fake: FakeArchidekt) -> None:
