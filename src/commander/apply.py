@@ -240,8 +240,14 @@ class _Resolver:
     ) -> Change:
         rest = [c for c in entry.categories if c.casefold() not in ASIDE_CATEGORIES]
         category = wanted.category or (rest[0] if rest else default_category(info))
+        # The entry keeps its own printing and copies, raised to the count the plan wants.
+        if wanted.set_code is not None and wanted.set_code != entry.set_code:
+            self.warnings.append(
+                f"{info.name}: it comes from the Maybeboard in its own printing "
+                f"({entry.set_code.upper()}), not {wanted.set_code.upper()}"
+            )
         return replace(
-            _change(ChangeKind.MOVE_IN, entry, entry.quantity),
+            _change(ChangeKind.MOVE_IN, entry, max(entry.quantity, wanted.quantity)),
             name=info.name,
             category=category,
             categories=(category, *(c for c in rest if c != category)),

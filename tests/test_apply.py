@@ -674,6 +674,39 @@ def test_adding_a_maybeboard_card_moves_its_entry_into_the_deck(deck: Deck, db: 
     assert resolution.main_after == MAIN_CARDS + 1
 
 
+def test_moving_in_a_maybeboard_card_brings_the_copies_the_plan_asks_for(deck: Deck, db: CardDb) -> None:
+    resolution = resolve_plan(deck, plan([AddCard("High-Speed Hoverbike", 3)]), db)
+
+    [moved] = resolution.changes
+    assert (moved.kind, moved.before, moved.after) == (ChangeKind.MOVE_IN, 1, 3)
+    assert resolution.main_after == MAIN_CARDS + 3
+    bike = next(c for c in deck.cards if c.name == "High-Speed Hoverbike")
+    moved_in = replace(bike, quantity=3, categories=("Artifact",), in_deck=True)
+    shown = replace(deck, cards=tuple(moved_in if c is bike else c for c in deck.cards))
+    assert verify(resolution.changes, deck, shown) == []
+    assert verify(resolution.changes, deck, deck) == ["High-Speed Hoverbike: expected 3, Archidekt shows 1"]
+
+
+def test_moving_in_keeps_a_maybeboard_stack_larger_than_the_plan_asks(deck: Deck, db: CardDb) -> None:
+    bike = next(c for c in deck.cards if c.name == "High-Speed Hoverbike")
+    stack = replace(deck, cards=tuple(replace(c, quantity=2) if c is bike else c for c in deck.cards))
+
+    resolution = resolve_plan(stack, plan([AddCard("High-Speed Hoverbike")]), db)
+
+    [moved] = resolution.changes
+    assert (moved.before, moved.after) == (2, 2)
+    assert resolution.main_after == MAIN_CARDS + 2
+
+
+def test_moving_in_warns_when_the_plan_names_another_printing(deck: Deck, db: CardDb) -> None:
+    resolution = resolve_plan(deck, plan([AddCard("High-Speed Hoverbike", set_code="sld")]), db)
+
+    assert resolution.problems == ()
+    assert resolution.warnings[0] == (
+        "High-Speed Hoverbike: it comes from the Maybeboard in its own printing (NEO), not SLD"
+    )
+
+
 def test_moving_back_restores_the_categories_kept_behind_the_maybeboard(deck: Deck, db: CardDb) -> None:
     golem = next(c for c in deck.cards if c.name == "Battered Golem")
     aside = replace(golem, categories=("Maybeboard", "Combo Pieces", "Ramp"), in_deck=False)
