@@ -345,3 +345,14 @@ def test_a_tap_land_making_none_of_the_decks_colours_gets_no_twin() -> None:
     plan = suggest_mana(deck, cards, analyse_mana(deck, cards), options=OPTIONS)
     # An untapped Tundra is no twin of a land that makes only colourless mana, which the reason would claim.
     assert plan.swaps == ()
+
+
+def test_cards_with_only_hybrid_or_phyrexian_pips_are_listed_as_not_counted() -> None:
+    hybrid = card("Boros Charm Twin", "{2}{W/U}{W/U}", 4, "Sorcery")
+    phyrexian = card("Gut Shot Twin", "{R/P}", 1, "Instant")
+    # One fixed pip beside a hybrid one is still counted, at the fixed one.
+    mixed = card("Mixed Bag", "{W}{W/U}", 2, "Instant")
+    deck = deck_of(("Plains", 20), ("Boros Charm Twin", 1), ("Gut Shot Twin", 1), ("Mixed Bag", 1))
+    report = analyse_mana(deck, by_name(LEADER, PLAINS, hybrid, phyrexian, mixed))
+    assert report.skipped == ("Boros Charm Twin", "Gut Shot Twin")
+    assert any(need.card == "Mixed Bag" for colour in report.colours for need in colour.needs)

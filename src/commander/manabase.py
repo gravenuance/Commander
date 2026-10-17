@@ -13,7 +13,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from statistics import median
 
-from commander.carddb import FACE_SEPARATOR, CardMana, back_is_land
+from commander.carddb import FACE_SEPARATOR, CardMana, back_is_land, front_face
 from commander.models import Deck
 
 COLOURS = "WUBRG"
@@ -143,7 +143,7 @@ class ManaBase:
     # One-drops needing a colour on turn one against the untapped lands that make it.
     turn_one: tuple[Need, ...]
     tapped_lands: float
-    # Cards the colour check leaves out: cast for an alternative cost, or with no fixed coloured pips.
+    # Cards the colour check leaves out: cast for an alternative cost, or paid with hybrid or Phyrexian mana.
     skipped: tuple[str, ...]
 
 
@@ -687,7 +687,11 @@ def analyse_mana(
         if need.short
     )
     skipped = tuple(
-        sorted(info.name for _, info, _ in entries if info.name.casefold() in skip and not info_is_land(info))
+        sorted(
+            info.name
+            for _, info, _ in entries
+            if not info_is_land(info) and (info.name.casefold() in skip or _only_flexible_pips(info))
+        )
     )
     tapped = sum(source.tapped * source.quantity for source in sources if source.land)
     return ManaBase(
@@ -914,12 +918,17 @@ def _mana_card(info: CardMana) -> bool:
 
 def _pips(mana_cost: str) -> dict[str, int]:
     """Fixed coloured and colourless pips of the front face; hybrid, Phyrexian and X pips are left out."""
-    front = mana_cost.split(" // ", maxsplit=1)[0]
     pips: dict[str, int] = {}
-    for symbol in _PIP.findall(front):
+    for symbol in _PIP.findall(front_face(mana_cost)):
         if symbol in COLOURS or symbol == "C":
             pips[symbol] = pips.get(symbol, 0) + 1
     return pips
+
+
+def _only_flexible_pips(info: CardMana) -> bool:
+    """Coloured mana in the cost, but all of it hybrid or Phyrexian, so no colour has a fixed pip to check."""
+    symbols = _PIP.findall(front_face(info.mana_cost))
+    return not _pips_colours(info.mana_cost) and any(set(symbol) & set(COLOURS) for symbol in symbols)
 
 
 def _pips_colours(mana_cost: str) -> set[str]:
