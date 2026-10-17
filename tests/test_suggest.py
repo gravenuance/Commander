@@ -8,7 +8,8 @@ from pathlib import Path
 import pytest
 
 from commander.archidekt import parse_deck
-from commander.carddb import CardDb, CardInfo, ResolvedCard, Role, Theme
+from commander.budget import NO_BUDGET, Budget
+from commander.carddb import NO_THEME, CardDb, CardInfo, ResolvedCard, Role, Theme
 from commander.deckcache import Answer, AnswerSource
 from commander.deckprofile import Profile, ResolvedThemes
 from commander.models import Deck, DeckCard
@@ -16,8 +17,10 @@ from commander.net import Fetcher
 from commander.spellbook import ComboMatches, SpellbookClient, parse_matches
 from commander.suggest import (
     DEFAULT_TARGETS,
+    Admitted,
     BracketRaise,
     ComboResult,
+    IdeaFilter,
     Suggestions,
     SuggestOptions,
     card_raise,
@@ -25,6 +28,7 @@ from commander.suggest import (
     cut_candidates,
     find_combos,
     find_deck_combos,
+    name_keys_of,
     options_for,
     suggest,
 )
@@ -537,3 +541,62 @@ def test_a_spell_with_a_land_back_is_never_offered_as_a_cut() -> None:
         resolved("Turntimber Symbiosis // Turntimber, Serpentine Wood", "Sorcery // Land — Forest", 9000),
     ]
     assert [c.name for c in cut_candidates(main, None, count=5)] == ["Plain Spell"]
+
+
+def screen_for(
+    db: CardDb,
+    *,
+    exclude: Theme = NO_THEME,
+    exclude_names: frozenset[str] = frozenset(),
+    ceiling: int | None = None,
+    budget: Budget = NO_BUDGET,
+) -> IdeaFilter:
+    """A filter for a bracket 2 deck with no game changers."""
+    return IdeaFilter(db, exclude, exclude_names, bracket=2, changers=0, ceiling=ceiling, budget=budget)
+
+
+def card_info(db: CardDb, name: str) -> CardInfo:
+    info = db.card_named(name)
+    assert info is not None
+    return info
+
+
+def test_the_filter_keeps_out_excluded_themes_and_names(db: CardDb) -> None:
+    magda, will = card_info(db, "Magda, Brazen Outlaw"), card_info(db, "Jeska's Will")
+    screen = screen_for(db, exclude=Theme(types=("Dwarf",)), exclude_names=name_keys_of(["Jeska's Will"]))
+    banned = screen.banned([magda.oracle_id, will.oracle_id])
+    assert banned == {magda.oracle_id}
+    assert screen.admit(magda, banned) is None
+    assert screen.admit(will, banned) is None
+    assert screen.admit(card_info(db, "Mind Stone"), banned) == Admitted(None)
+
+
+def test_a_two_faced_card_is_excluded_by_its_front_face(db: CardDb) -> None:
+    eruption = card_info(db, "Sundering Eruption")
+    screen = screen_for(db, exclude_names=name_keys_of(["Sundering Eruption"]))
+    assert screen.excludes(eruption.name, eruption.oracle_id, ())
+    assert not screen_for(db).excludes(eruption.name, eruption.oracle_id, ())
+
+
+def test_the_filter_hides_cards_above_its_ceiling_and_counts_each_once(db: CardDb) -> None:
+    will = card_info(db, "Jeska's Will")
+    # A game changer lifts a bracket 2 deck to 3.
+    assert screen_for(db).admit(will, ()) == Admitted(BracketRaise(3, "game changer"))
+    screen = screen_for(db, ceiling=2)
+    assert screen.admit(will, ()) is None
+    assert screen.admit(will, ()) is None
+    assert screen.hidden_ids == {will.oracle_id}
+    assert screen_for(db, ceiling=3).admit(will, ()) == Admitted(BracketRaise(3, "game changer"))
+
+
+def test_the_filter_keeps_out_cards_over_the_budget_ceiling_or_unpriced(db: CardDb) -> None:
+    dear, unpriced = card_info(db, "Aggravated Assault"), card_info(db, "Filler Card 1")
+    assert (dear.cheapest_cents, unpriced.cheapest_cents) == (1693, None)
+    capped = screen_for(db, budget=Budget(None, 1000))
+    assert capped.admit(dear, ()) is None
+    assert capped.admit(unpriced, ()) is None
+    assert screen_for(db, budget=Budget(None, 2000)).admit(dear, ()) == Admitted(None)
+    # Without a ceiling any price, or none, is allowed.
+    assert screen_for(db).admit(unpriced, ()) == Admitted(None)
+    # A card kept out for its price is not counted as hidden by the ceiling.
+    assert capped.hidden_ids == set()
