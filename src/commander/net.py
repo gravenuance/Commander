@@ -102,27 +102,45 @@ class Fetcher:
         Returns the decoded answer, or None for an empty one. Other statuses raise HttpStatusError. The
         payload and headers may hold secrets, so neither is ever logged or put in an error message.
         """
+        body = self._send_once(
+            method, url, payload, headers, lambda r: _read_capped(r, url, MAX_RESPONSE_BYTES)
+        )
+        return _decode_json(url, body) if body.strip() else None
+
+    def send(
+        self, method: str, url: str, payload: object, *, headers: Mapping[str, str] | None = None
+    ) -> None:
+        """Send a write once like send_json, for callers that ignore the answer: a 2xx counts as done
+        whatever its body, which is never read, since a failure here would have the user repeat the write."""
+        self._send_once(method, url, payload, headers, lambda _: None)
+
+    def _send_once[T](
+        self,
+        method: str,
+        url: str,
+        payload: object,
+        headers: Mapping[str, str] | None,
+        read_success: Callable[[httpx.Response], T],
+    ) -> T:
         started = self._monotonic()
         try:
             with self._client.stream(method, url, json=payload, headers=headers) as response:
                 status = response.status_code
-                if status in _SUCCESS:
-                    body = _read_capped(response, url, MAX_RESPONSE_BYTES)
-                else:
-                    body = _read_start(response, ERROR_DETAIL_BYTES)
+                if status not in _SUCCESS:
+                    log.info("%s %s returned HTTP %d", method, url, status)
+                    detail = _detail_text(_read_start(response, ERROR_DETAIL_BYTES))
+                    raise HttpStatusError(f"{method} {url} returned HTTP {status}", status, detail)
+                return read_success(response)
         except (httpx.TimeoutException, httpx.TransportError) as error:
             log.warning("%s %s failed: %s", method, url, error.__class__.__name__)
             # A timeout leaves it unknown whether the server applied the write.
             raise NetworkError(
                 f"{method} {url} failed ({error.__class__.__name__}); it may or may not have been applied"
             ) from error
-        elapsed = self._monotonic() - started
-        if elapsed > self._slow_after:
-            log.warning("slow request: %s %s took %.1fs", method, url, elapsed)
-        if status not in _SUCCESS:
-            log.info("%s %s returned HTTP %d", method, url, status)
-            raise HttpStatusError(f"{method} {url} returned HTTP {status}", status, _detail_text(body))
-        return _decode_json(url, body) if body.strip() else None
+        finally:
+            elapsed = self._monotonic() - started
+            if elapsed > self._slow_after:
+                log.warning("slow request: %s %s took %.1fs", method, url, elapsed)
 
     def download(self, url: str, dest: Path, *, max_bytes: int) -> int:
         """Stream a file into dest (replacing it), retrying only transient failures; returns its size."""

@@ -253,7 +253,7 @@ class ArchidektEditor:
         if self._headers is None:
             raise AuthError("saving needs an Archidekt login; run `cmdr login`")
         try:
-            self._fetcher.send_json(method, self._base_url + path, payload, headers=self._headers)
+            self._fetcher.send(method, self._base_url + path, payload, headers=self._headers)
         except HttpStatusError as error:
             if error.status in _UNAUTHORIZED:
                 raise AuthError(

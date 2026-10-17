@@ -193,6 +193,31 @@ def test_send_json_goes_out_once_and_takes_any_2xx() -> None:
     assert (created.calls, empty.calls, sleeps) == (1, 1, [])
 
 
+def test_send_takes_any_2xx_without_reading_the_body() -> None:
+    html = Script(httpx.Response(200, text="<html>saved</html>"))
+    huge = Script(httpx.Response(202, content=b"x" * (MAX_RESPONSE_BYTES + 1)))
+
+    fetcher(html, []).send("POST", URL, {"a": 1})
+    fetcher(huge, []).send("PATCH", URL, {})
+
+    assert (html.calls, huge.calls) == (1, 1)
+
+
+def test_send_raises_the_status_error_and_never_retries() -> None:
+    script = Script(httpx.Response(503, text="busy"), httpx.Response(200))
+    sleeps: list[float] = []
+
+    with pytest.raises(HttpStatusError, match=r"PATCH .* returned HTTP 503") as raised:
+        fetcher(script, sleeps).send("PATCH", URL, {})
+
+    assert (raised.value.status, raised.value.detail, script.calls, sleeps) == (503, "busy", 1, [])
+
+
+def test_send_says_a_timed_out_write_may_have_landed() -> None:
+    with pytest.raises(NetworkError, match="may or may not have been applied"):
+        fetcher(Script(httpx.ReadTimeout("slow")), []).send("POST", URL, {})
+
+
 def test_send_json_never_retries_a_failed_write() -> None:
     sleeps: list[float] = []
     script = Script(httpx.Response(503), httpx.Response(200, json={}))

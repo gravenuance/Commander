@@ -21,7 +21,7 @@ from commander.archidekt_edit import (
     parse_entry_states,
 )
 from commander.credentials import SERVICE, CredentialError, KeyringTokenStore
-from commander.net import Fetcher, NetworkError
+from commander.net import MAX_RESPONSE_BYTES, Fetcher, NetworkError
 from conftest import (
     ACCESS_TOKEN,
     DECK_ID,
@@ -427,3 +427,24 @@ def test_a_refused_deck_read_without_a_login_stays_a_network_error(
 
     with pytest.raises(NetworkError, match="HTTP 403"):
         ArchidektEditor(fetcher, None).get_deck(DECK_ID)
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [b"<html>saved</html>", b"[" + b" " * MAX_RESPONSE_BYTES + b"]"],
+    ids=["html", "over the size cap"],
+)
+def test_a_saved_write_counts_whatever_the_body_of_the_answer_is(answer: bytes) -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.method)
+        return httpx.Response(200, content=answer)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        editor = ArchidektEditor(Fetcher(client, sleep=lambda _: None), ACCESS_TOKEN)
+        editor.create_snapshot(DECK_ID, "before", "why")
+        editor.modify_cards(DECK_ID, [CardEdit(EditKind.ADD, 1, 1, new_entry_state("Ramp"))])
+
+    # Raising here would have the user retry, and the add would be applied twice.
+    assert calls == ["POST", "PATCH"]
