@@ -8,14 +8,14 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime
 from enum import Enum
 
-from commander.answers import AnswerKind, card_answers, card_key, piece_facts
+from commander.answers import AnswerKind, card_key, piece_facts
 from commander.archidekt import PeerDeck
-from commander.carddb import CardDb
+from commander.carddb import CardDb, CardInfo
 from commander.deckcache import Answer, AnswerSource
 from commander.deckprofile import Profile
 from commander.edhtop16 import CommanderStats, Entry
 from commander.keycards import KeyCard, key_cards
-from commander.metacombos import AnswerRole, MetaCombo, combo_answers, meta_combos, pool_answers
+from commander.metacombos import AnswerRole, DeckAnswers, MetaCombo, combo_answers, infos_answers, meta_combos
 from commander.metadata import MetaCommander, MetaData, PeerList
 from commander.models import COMMANDER_CATEGORY, Deck
 from commander.playstyle import NEUTRAL, Fit, PlayStyle, deck_play_style, fit_order, staple_fits
@@ -186,6 +186,7 @@ def analyse(deck: Deck, data: MetaData, profile: Profile, db: CardDb) -> MetaRep
     keys = key_cards(deck, profile, data.own_combos.data or (), peer_lists, db)
     names = _display_names(performing, peer_lists, deck)
     style = deck_play_style(deck)
+    pool = meta_pool(field, db)
     return MetaReport(
         deck=deck.short_name,
         commander=data.commander,
@@ -194,9 +195,9 @@ def analyse(deck: Deck, data: MetaData, profile: Profile, db: CardDb) -> MetaRep
         missing=missing_staples(deck, performing, peer_lists, names, db, style=style),
         spicy=spicy_picks(deck, performing),
         outliers=outliers(deck, performing, peer_lists, profile, db),
-        threats=threats((k.name for k in keys), field, db),
+        threats=threats((k.name for k in keys), pool, db),
         combos=meta_combos(deck, field, data.combos.data or (), data.since, db),
-        own_combos=own_combos(data.own_combos.data or (), field, db),
+        own_combos=own_combos(data.own_combos.data or (), pool, db),
         field=tuple(c.stats for c in (data.field.data or ())),
         peers=tuple(p.deck for p in peer_lists),
         peers_skipped=data.peers.data.skipped if data.peers.data else 0,
@@ -394,6 +395,24 @@ def _meta_pool(field: Sequence[MetaCommander]) -> dict[str, tuple[str, _Plays]]:
     }
 
 
+@dataclass(slots=True, frozen=True)
+class MetaPool:
+    """The cards the top commanders' lists commonly play, with what each can do against a combo."""
+
+    plays: Mapping[str, tuple[str, _Plays]]
+    # The card data of each, by `card_key`; a card it lacks is left out.
+    infos: Mapping[str, CardInfo]
+    answers: DeckAnswers
+
+
+def meta_pool(field: Sequence[MetaCommander], db: CardDb) -> MetaPool:
+    """The meta's common cards and their answers, worked out once for every report that reads them."""
+    plays = _meta_pool(field)
+    found = db.cards_named(name for name, _ in plays.values())
+    infos = {card_key(info.name): info for info in found.values()}
+    return MetaPool(plays, infos, infos_answers(found.values(), db))
+
+
 def _exposure(rows: _Plays) -> float:
     """Sum over the top commanders of meta share x the share of their lists playing the card."""
     return sum(share * meta for _, share, meta in rows)
@@ -403,21 +422,17 @@ def _played_by(rows: _Plays) -> tuple[tuple[str, float], ...]:
     return tuple(sorted(((n, s) for n, s, _ in rows if s >= THREAT_SHARE), key=lambda r: -r[1]))
 
 
-def own_combos(
-    combos: Sequence[ComboDetail], field: Sequence[MetaCommander], db: CardDb
-) -> tuple[OwnCombo, ...]:
+def own_combos(combos: Sequence[ComboDetail], pool: MetaPool, db: CardDb) -> tuple[OwnCombo, ...]:
     """The deck's combos, fewest pieces first, each with the cards the meta commonly plays that stop it."""
-    pool = _meta_pool(field)
     if not combos:
         return ()
-    answers = pool_answers((name for name, _ in pool.values()), db)
     facts = piece_facts(db, {(p.name, p.type_line) for combo in combos for p in combo.pieces})
     order = list(AnswerRole)
     found: list[OwnCombo] = []
     for combo in combos:
         stopping: list[MetaAnswer] = []
-        for answer in combo_answers(combo, answers, facts):
-            plays = pool.get(card_key(answer.card))
+        for answer in combo_answers(combo, pool.answers, facts):
+            plays = pool.plays.get(card_key(answer.card))
             if plays is None:
                 continue
             rows = plays[1]
@@ -434,25 +449,21 @@ def own_combos(
     return tuple(found[:MAX_OWN_COMBOS])
 
 
-def threats(pieces: Iterable[str], field: Sequence[MetaCommander], db: CardDb) -> tuple[Threat, ...]:
+def threats(pieces: Iterable[str], pool: MetaPool, db: CardDb) -> tuple[Threat, ...]:
     """Cards the top commanders' lists commonly play that answer at least one key piece."""
     # A key piece the card data lacks has no type line, so no answer could be matched to it.
     piece_info = [p for p in piece_facts(db, ((name, "") for name in pieces)).values() if p.type_line]
-    pool = _meta_pool(field)
-    infos = {card_key(info.name): info for info in db.cards_named(name for name, _ in pool.values()).values()}
-    answers = card_answers(db, {info.oracle_id: info.name for info in infos.values()})
     found: list[Threat] = []
-    for key in pool:
-        info = infos.get(key)
+    for key, (_, rows) in pool.plays.items():
+        info = pool.infos.get(key)
         if info is None:
             continue
-        answer = answers.get(info.oracle_id)
+        answer = pool.answers.removal.get(info.name)
         if answer is None:
             continue
         hit = sorted({p.name for p in piece_info if answer.removes(p) or answer.counters(p)})
         if not hit:
             continue
-        rows = pool[key][1]
         found.append(
             Threat(
                 name=info.name,

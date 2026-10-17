@@ -592,27 +592,35 @@ class CardDb:
         return [(CardMana(*row[:8]), row[8]) for row in self._query_named(_LAND_QUERY, params)]
 
     def card_text(self, oracle_id: str) -> CardText | None:
-        rows = self._query(
-            "SELECT oracle_text, keywords, power, toughness, colors FROM oracle WHERE oracle_id = ?",
-            [oracle_id],
+        return self.card_texts([oracle_id]).get(oracle_id)
+
+    def card_texts(self, oracle_ids: Iterable[str]) -> dict[str, CardText]:
+        """Rules text, keywords and tags by oracle id; unknown ids are left out."""
+        ids = set(oracle_ids)
+        rows = self._select_in(
+            "SELECT oracle_id, oracle_text, keywords, power, toughness, colors FROM oracle"
+            " WHERE oracle_id IN ({})",
+            ids,
         )
-        if not rows:
-            return None
-        text, keywords, power, toughness, colors = rows[0]
-        tags = self._query(
-            "SELECT slug FROM tag JOIN tag_member ON tag.tag_id = tag_member.tag_id"
-            " WHERE oracle_id = ? ORDER BY slug",
-            [oracle_id],
-        )
-        return CardText(
-            oracle_id,
-            text,
-            tuple(k for k in keywords.split("|") if k),
-            power,
-            toughness,
-            colors,
-            tuple(t[0] for t in tags),
-        )
+        slugs: dict[str, list[str]] = {}
+        for oracle_id, slug in self._select_in(
+            "SELECT oracle_id, slug FROM tag JOIN tag_member ON tag.tag_id = tag_member.tag_id"
+            " WHERE oracle_id IN ({}) ORDER BY slug",
+            ids,
+        ):
+            slugs.setdefault(oracle_id, []).append(slug)
+        return {
+            oracle_id: CardText(
+                oracle_id,
+                text,
+                tuple(k for k in keywords.split("|") if k),
+                power,
+                toughness,
+                colors,
+                tuple(slugs.get(oracle_id, ())),
+            )
+            for oracle_id, text, keywords, power, toughness, colors in rows
+        }
 
     def _query_named(self, sql: str, params: Mapping[str, object]) -> list[Any]:
         try:

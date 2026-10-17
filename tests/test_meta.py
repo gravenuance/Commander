@@ -1,12 +1,13 @@
 import json
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
 
 from commander.archidekt import PeerDeck, parse_deck
-from commander.carddb import CardDb
+from commander.carddb import CardDb, Theme
 from commander.deckcache import Answer, AnswerSource
 from commander.deckprofile import Profile
 from commander.edhtop16 import CommanderStats, DecklistCard, Entry, Tournament
@@ -16,10 +17,11 @@ from commander.meta import (
     analyse,
     card_key,
     check_card,
+    meta_pool,
     own_combos,
     performing_lists,
 )
-from commander.metacombos import AnswerRole
+from commander.metacombos import AnswerRole, Stop
 from commander.metadata import CommanderEntries, MetaCommander, MetaData, PeerList, PeerLists
 from commander.models import Deck
 from commander.spellbook import ComboDetail, ComboPiece
@@ -317,18 +319,20 @@ def test_a_spicy_card_in_one_list_off_the_cut_is_left_out(deck: Deck, db: CardDb
     assert [(p.name, p.lists) for p in report.spicy] == [("Jeska's Will", 2)]
 
 
+GOLEM_COMBO = ComboDetail(
+    "1-2",
+    (
+        ComboPiece(MAGDA, "Legendary Creature — Dwarf Berserker", ("C",)),
+        ComboPiece("Battered Golem", "Artifact Creature — Golem", ("B",)),
+    ),
+    (),
+    ("Infinite artifact ETB",),
+    "Activate Battered Golem.\nRepeat.",
+)
+
+
 def test_the_decks_own_combos_list_what_the_meta_commonly_plays_against_them(db: CardDb) -> None:
-    combo = ComboDetail(
-        "1-2",
-        (
-            ComboPiece(MAGDA, "Legendary Creature — Dwarf Berserker", ("C",)),
-            ComboPiece("Battered Golem", "Artifact Creature — Golem", ("B",)),
-        ),
-        (),
-        ("Infinite artifact ETB",),
-        "Activate Battered Golem.\nRepeat.",
-    )
-    [found] = own_combos([combo], field(), db)
+    [found] = own_combos([GOLEM_COMBO], meta_pool(field(), db), db)
     assert found.pieces == (MAGDA, "Battered Golem")
     # Most played first; Mind Stone stops nothing; Chaos Warp's small-commander quarter is under the line.
     assert [(a.card, a.role, a.played_by) for a in found.answers] == [
@@ -336,4 +340,28 @@ def test_the_decks_own_combos_list_what_the_meta_commonly_plays_against_them(db:
         ("Chaos Warp", AnswerRole.REMOVAL, (("Big Commander", 0.5),)),
     ]
     assert found.answers[1].exposure == pytest.approx(0.5 * 0.04 + 0.25 * 0.02)
-    assert own_combos([], field(), db) == ()
+    assert own_combos([], meta_pool(field(), db), db) == ()
+
+
+def test_the_meta_pool_is_worked_out_once_for_the_threats_and_the_decks_combos(
+    deck: Deck, db: CardDb, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asked: list[tuple[Theme, tuple[str, ...]]] = []
+    real = db.matching
+
+    def counting(theme: Theme, oracle_ids: Iterable[str]) -> frozenset[str]:
+        ids = tuple(oracle_ids)
+        asked.append((theme, ids))
+        return real(theme, ids)
+
+    monkeypatch.setattr(db, "matching", counting)
+    data = replace(meta_data(TOP_CUT_LISTS, field=field()), own_combos=fetched((GOLEM_COMBO,)))
+    report = analyse(deck, data, Profile(keep_categories=("Stax",)), db)
+    assert report.threats
+    assert report.own_combos[0].answers
+    # Bolt, Chaos Warp and Mind Stone are the cards 30% of a top commander's lists play. Each answer kind and
+    # each way to stop a combo is looked up for them once, not once per report that reads them.
+    pool = {
+        info.oracle_id for info in db.cards_named(["Lightning Bolt", "Chaos Warp", "Mind Stone"]).values()
+    }
+    assert sum(1 for _, ids in asked if set(ids) == pool) == len(AnswerKind) + len(Stop)

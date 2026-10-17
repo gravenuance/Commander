@@ -246,6 +246,19 @@ def test_card_text_of_an_unknown_card_is_none(card_db_file: Path) -> None:
         assert db.card_text("00000000-0000-0000-0000-000000000000") is None
 
 
+def test_card_texts_read_many_cards_at_once_and_leave_unknown_ones_out(card_db_file: Path) -> None:
+    unknown = "00000000-0000-0000-0000-000000000000"
+    with CardDb(card_db_file) as db:
+        info = db.card_named("Sundering Eruption")
+        assert info is not None
+        texts = db.card_texts([MAGDA_ORACLE, info.oracle_id, unknown, MAGDA_ORACLE])
+    assert set(texts) == {MAGDA_ORACLE, info.oracle_id}
+    magda = texts[MAGDA_ORACLE]
+    assert (magda.keywords, magda.power, magda.toughness) == (("treasure",), "2", "1")
+    assert magda.tags == ("combat-ramp", "tutor-artifact")
+    assert FACE_SEPARATOR in texts[info.oracle_id].text
+
+
 def test_theme_matches_whole_type_words_only(card_db_file: Path) -> None:
     deck = {MAGDA_ORACLE, ARCANE_SIGNET}
     with CardDb(card_db_file) as db:
