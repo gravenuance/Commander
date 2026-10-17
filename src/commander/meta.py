@@ -236,7 +236,7 @@ def missing_staples(
     in_deck = {card_key(card.name) for card in deck.main_cards}
     aside = {card_key(card.name) for card in deck.aside_cards}
     counts = _list_counts(performing)
-    peer_counts = Counter(key for p in peers for key in {card_key(name) for name in p.cards})
+    peer_counts = _peer_counts(peers)
     spice = _top_spice(performing)
     basics = _basics(db, names.values())
     rows: list[CardShare] = []
@@ -330,7 +330,7 @@ def outliers(
     if not performing:
         return ()
     counts = _list_counts(performing)
-    peer_counts = Counter(key for p in peers for key in {card_key(name) for name in p.cards})
+    peer_counts = _peer_counts(peers)
     basics = _basics(db, (card.name for card in deck.main_cards))
     rows: list[CardShare] = []
     for card in deck.main_cards:
@@ -365,7 +365,7 @@ def peer_shares(peers: Sequence[PeerList]) -> dict[str, float]:
     """Each card's share of the recent Archidekt decks, by `card_key`; empty below MIN_PEER_LISTS decks."""
     if len(peers) < MIN_PEER_LISTS:
         return {}
-    counts = Counter(key for p in peers for key in {card_key(name) for name in p.cards})
+    counts = _peer_counts(peers)
     return {key: count / len(peers) for key, count in counts.items()}
 
 
@@ -521,6 +521,10 @@ def _window(entries: Iterable[Entry], since: date) -> tuple[Entry, ...]:
 
 def _list_counts(entries: Iterable[Entry]) -> Counter[str]:
     return Counter(key for e in entries for key in {card_key(c.name) for c in e.cards})
+
+
+def _peer_counts(peers: Iterable[PeerList]) -> Counter[str]:
+    return Counter(key for p in peers for key in {card_key(name) for name in p.cards})
 
 
 def _top_spice(entries: Iterable[Entry]) -> dict[str, int]:
