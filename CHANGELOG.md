@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.5.0 - 2026-10-17
+
 ### Added
 - Cardmarket wants list: the app's "Copy cards to buy" button and `cmdr toget --cardmarket` give every deck's
   main-deck cards labelled "Don't Have" as `<quantity> <name>` lines to paste into Cardmarket's "Add Decklist"
