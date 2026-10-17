@@ -188,10 +188,13 @@ async function openDeck(id) {
   loadMeta();
 }
 
+// Counts deck requests, so an answer that arrives after a newer request was sent is dropped.
+let deckRequest = 0;
 async function loadDeck() {
   if (state.current === null) return;
+  const sent = ++deckRequest;
   const view = await api("deck", state.current);
-  if (view.id !== state.current) return;
+  if (sent !== deckRequest || view.id !== state.current) return;
   state.view = view;
   state.stamps[String(view.id)] = view.stamp;
   renderDeck();
@@ -1162,6 +1165,7 @@ async function saveSettings() {
 // A text box that offers matches as you type; arrows move, Enter takes the highlighted match or the text.
 function autocomplete(input, list, find, pick) {
   let timer = 0;
+  let sent = 0;
   let items = [];
   let active = -1;
   const close = () => { items = []; active = -1; list.hidden = true; input.parentElement.setAttribute("aria-expanded", "false"); };
@@ -1172,8 +1176,14 @@ function autocomplete(input, list, find, pick) {
   };
   input.addEventListener("input", () => {
     clearTimeout(timer);
+    const mine = ++sent;
     timer = setTimeout(async () => {
-      try { items = await find(input.value); } catch { items = []; }
+      let found = [];
+      try { found = await find(input.value); } catch { /* the status line says what went wrong */ }
+      // A newer keystroke supersedes this answer; a box that lost focus gets no list back.
+      if (mine !== sent) return;
+      if (document.activeElement !== input) { close(); return; }
+      items = found;
       active = -1;
       list.replaceChildren(...items.map((item) => el("li", {
         role: "option", "aria-selected": "false",
@@ -1189,6 +1199,7 @@ function autocomplete(input, list, find, pick) {
     else if (event.key === "Enter") {
       event.preventDefault();
       const value = active >= 0 ? items[active].value : input.value.trim();
+      sent++;
       close();
       if (value) pick(value);
     } else if (event.key === "Escape" && !list.hidden) { event.preventDefault(); event.stopPropagation(); close(); }
@@ -1295,10 +1306,12 @@ function setupPanels() {
 /* Proposing a card */
 
 let searchTimer = 0;
+let searchSent = 0;
 function setupPropose() {
   const input = $("propose-input");
   input.addEventListener("input", () => {
     clearTimeout(searchTimer);
+    searchSent++;
     searchTimer = setTimeout(search, SEARCH_DELAY_MS);
   });
   input.addEventListener("keydown", (event) => {
@@ -1317,8 +1330,12 @@ function setupPropose() {
 async function search() {
   const text = $("propose-input").value.trim();
   if (text.length < 2 || state.current === null) { closeResults(); return; }
+  const mine = ++searchSent;
   try {
     const answer = await api("search", state.current, text);
+    // A newer keystroke or a proposal supersedes this answer; a box that lost focus gets no list back.
+    if (mine !== searchSent) return;
+    if (document.activeElement !== $("propose-input")) { closeResults(); return; }
     state.results = answer.cards;
     state.active = -1;
     const list = $("propose-results");
@@ -1348,6 +1365,7 @@ function closeResults() {
 }
 
 async function propose(name) {
+  searchSent++;
   closeResults();
   await whileBusy([$("propose-input")], async () => {
     try {
