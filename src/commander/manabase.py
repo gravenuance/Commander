@@ -243,12 +243,7 @@ def suggest_mana(
     """
     colours = [colour.colour for colour in report.colours]
     alternative = {name.casefold() for name in alternative_cost}
-    commander_names = {name.casefold() for name in deck.commanders}
-    the_99 = [
-        (card.quantity, info)
-        for card in deck.main_cards
-        if card.name.casefold() not in commander_names and (info := cards.get(card.name.casefold()))
-    ]
+    the_99 = _the_99(_entries(deck, cards))
     held = {info.name.casefold() for _, info in the_99}
     names = _basic_names(the_99, colours, cards)
     now = {c: sum(q for q, info in the_99 if info.name == names.get(c)) for c in colours}
@@ -348,12 +343,7 @@ def _demands(
     alternative: set[str],
 ) -> dict[str, list[_Demand]]:
     """Every card's call on each colour, on curve and, for one-drops, from untapped lands on turn one."""
-    commander_names = {name.casefold() for name in deck.commanders}
-    entries = [
-        (card.quantity, info, card.name.casefold() in commander_names)
-        for card in deck.main_cards
-        if (info := cards.get(card.name.casefold())) is not None
-    ]
+    entries = _entries(deck, cards)
     basics = set(names.values())
     others = [
         _Source.of(info, quantity, len(colours))
@@ -373,11 +363,7 @@ def _demands(
                 continue
             table = needed_sources(mana_value, pips[colour])
             for untapped in (False, True) if mana_value == 1 else (False,):
-                have = sum(
-                    s.colours.get(colour, 0.0) * s.quantity * (1 - s.tapped if untapped else 1)
-                    for s in others
-                    if (s.land or not untapped) and mana_value >= s.from_mana_value
-                )
+                have = _have(others, colour, mana_value, untapped_only=untapped)
                 found[colour].append(_Demand(table, gold, have))
     return found
 
@@ -661,13 +647,8 @@ def analyse_mana(
     names the cards Tagger tags as cast for an alternative cost, which Karsten leaves out of colour needs.
     comparison is a label and the lists to compare the land count with, each by name and count.
     """
-    commander_names = {name.casefold() for name in deck.commanders}
-    entries = [
-        (card.quantity, info, card.name.casefold() in commander_names)
-        for card in deck.main_cards
-        if (info := cards.get(card.name.casefold())) is not None
-    ]
-    the_99 = [(quantity, info) for quantity, info, commander in entries if not commander]
+    entries = _entries(deck, cards)
+    the_99 = _the_99(entries)
     lands = land_count(the_99)
     identity = {c for _, info, _ in entries for c in _pips_colours(info.mana_cost)} | _identity(deck, cards)
     colours = sorted(identity, key=COLOURS.index)
@@ -823,6 +804,20 @@ class _Source:
         return _Source(info.name, quantity, land=False, colours={}, from_mana_value=NEVER)
 
 
+def _entries(deck: Deck, cards: Mapping[str, CardMana]) -> list[tuple[int, CardMana, bool]]:
+    """The deck's main cards the card data knows: copies, the card, and whether it is a commander."""
+    commander_names = {name.casefold() for name in deck.commanders}
+    return [
+        (card.quantity, info, card.name.casefold() in commander_names)
+        for card in deck.main_cards
+        if (info := cards.get(card.name.casefold())) is not None
+    ]
+
+
+def _the_99(entries: Sequence[tuple[int, CardMana, bool]]) -> list[tuple[int, CardMana]]:
+    return [(quantity, info) for quantity, info, commander in entries if not commander]
+
+
 def _land_colours(info: CardMana, text: str, made: set[str], deck_colours: int) -> dict[str, float]:
     if "opponent" in text and "could produce" in text:
         return dict.fromkeys("WUBRG", OPPONENT_DEPENDENT)
@@ -871,14 +866,19 @@ def _needs(
         mana_value = max(int(info.cmc), 1)
         gold = sum(1 for c in pips if c in COLOURS) > 1
         needed = needed_sources(mana_value, pips[colour]) * scale + (GOLD_EXTRA if gold else 0)
-        have = sum(
-            s.colours.get(colour, 0.0) * s.quantity * (1 - s.tapped if untapped_only else 1)
-            for s in sources
-            if (s.land or not untapped_only) and mana_value >= s.from_mana_value
-        )
+        have = _have(sources, colour, mana_value, untapped_only=untapped_only)
         found.append(Need(info.name, _pattern(mana_value, pips[colour]), round(needed, 1), round(have, 1)))
     found.sort(key=lambda n: (n.have - n.needed, n.card))
     return tuple(found)
+
+
+def _have(sources: Sequence[_Source], colour: str, mana_value: int, *, untapped_only: bool) -> float:
+    """The sources of a colour that help a spell of this mana value; on turn one only untapped lands do."""
+    return sum(
+        s.colours.get(colour, 0.0) * s.quantity * (1 - s.tapped if untapped_only else 1)
+        for s in sources
+        if (s.land or not untapped_only) and mana_value >= s.from_mana_value
+    )
 
 
 def _land_sources(sources: Sequence[_Source], colour: str) -> float:
