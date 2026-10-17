@@ -8,7 +8,7 @@ import pytest
 
 from commander.carddb import CARD_DB_FILE
 from commander.desk import Desk, DeskSettings
-from conftest import FakeArchidekt, Json
+from conftest import DECK_ID, FakeArchidekt, Json, card_entry
 from test_cli_apply import run, saved_deck
 from test_desk import DECK, make_desk
 
@@ -71,6 +71,25 @@ def test_a_label_the_deck_does_not_offer_or_one_already_set_writes_nothing(
         "error": "Disruptor Flute is already labelled Proxy"
     }
     assert not fake.card_writes()
+
+
+def test_a_two_faced_card_is_found_by_its_front_face(desk: Desk, fake: FakeArchidekt) -> None:
+    fake.decks[DECK_ID]["cards"].append(card_entry(7_000_000_003, "Fire // Ice", ["Burn"]))
+
+    assert desk.set_label(DECK, "fire", "Proxy") == {"card": "Fire // Ice", "before": "", "after": "Proxy"}
+
+
+def test_a_label_change_archidekt_refuses_is_noted_on_the_board_activity(
+    desk: Desk, fake: FakeArchidekt
+) -> None:
+    fake.write_status["modifyCards"] = 500
+
+    result = desk.set_label(DECK, "Battered Golem", "Proxy")
+
+    assert "HTTP 500" in str(result["error"])
+    [latest] = cast("list[Json]", desk.deck(DECK)["activity"])[:1]
+    assert (latest["action"], latest["card"]) == ("labelled Proxy failed", "Battered Golem")
+    assert "HTTP 500" in latest["detail"]
 
 
 # The account's labels as Archidekt lists them (ADR 0012): shared by every deck, in the account's colours.

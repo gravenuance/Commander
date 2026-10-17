@@ -25,6 +25,7 @@ from commander.board import Actor, BoardService
 from commander.models import GETTING_LABEL, Deck
 from commander.net import NetworkError
 from commander.store import StoredDeck, Workspace
+from commander.suggest import name_keys
 
 log = logging.getLogger(__name__)
 
@@ -141,7 +142,8 @@ def _relabel(  # noqa: PLR0917 — the shared body of set_label and mark
 ) -> Marked:
     deck_id = stored.deck.id
     live = editor.get_deck(deck_id)
-    entries = [c for c in live.deck.main_cards if c.name.casefold() == name.casefold()]
+    keys = name_keys(name)
+    entries = [c for c in live.deck.main_cards if name_keys(c.name) & keys]
     if not entries:
         raise LabelError(f"{name} is not in {stored.deck.short_name} on Archidekt")
     card = entries[0].name
@@ -159,7 +161,11 @@ def _relabel(  # noqa: PLR0917 — the shared body of set_label and mark
         for e in entries
         if e.label != label
     ]
-    editor.modify_cards(deck_id, edits)
+    try:
+        editor.modify_cards(deck_id, edits)
+    except (NetworkError, ArchidektError, AuthError) as error:
+        service.note(actor, f"{action} failed", str(error), card)
+        raise
     try:
         after = editor.get_deck(deck_id).deck
     except (NetworkError, ArchidektError, AuthError) as error:
