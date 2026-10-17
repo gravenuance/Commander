@@ -36,6 +36,7 @@ from commander.jsonshape import (
     as_object,
     opt_int,
     opt_str,
+    req_float,
     req_list,
     req_object,
     req_str,
@@ -263,7 +264,7 @@ def parse_card(raw: object) -> ParsedCard | None:
         ),
         name=req_str(card, "name", where),
         mana_cost=opt_str(card, "mana_cost", where) or opt_str(front, "mana_cost", where) or "",
-        cmc=_number(card, "cmc", where) if "cmc" in card else _number(front, "cmc", where),
+        cmc=req_float(card, "cmc", where) if "cmc" in card else req_float(front, "cmc", where),
         type_line=type_line,
         color_identity=_colors(str_list(card, "color_identity", where)),
         colors=_card_colors(card, front, where),
@@ -437,13 +438,6 @@ def _regular(card: Mapping[str, object], where: str) -> bool:
         and card.get("oversized") is not True
         and opt_str(card, "set_type", where) != "memorabilia"
     )
-
-
-def _number(obj: Mapping[str, object], key: str, where: str) -> float:
-    value = obj.get(key)
-    if not isinstance(value, int | float) or isinstance(value, bool):
-        raise ShapeError(f"{where}.{key}: expected a number")
-    return float(value)
 
 
 def _card_colors(card: Mapping[str, object], front: Mapping[str, object], where: str) -> str:

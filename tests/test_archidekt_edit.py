@@ -314,6 +314,17 @@ def test_parse_entry_states_rejects_odd_fields(raw_deck: Json, key: str, value: 
         parse_entry_states(json.loads(json.dumps(raw_deck)))
 
 
+@pytest.mark.parametrize(("raw", "expected"), [(3, 3.0), (2.5, 2.5), (None, None)])
+def test_parse_entry_states_reads_a_custom_mana_value(
+    raw_deck: Json, raw: object, expected: float | None
+) -> None:
+    raw_deck["cards"][1]["customCmc"] = raw
+
+    states = parse_entry_states(raw_deck)
+
+    assert states[raw_deck["cards"][1]["id"]].custom_cmc == expected
+
+
 def test_keyring_token_store_round_trip(memory_keyring: MemoryKeyring) -> None:
     store = KeyringTokenStore()
 

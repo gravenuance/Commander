@@ -17,6 +17,7 @@ from commander.jsonshape import (
     ShapeError,
     as_list,
     as_object,
+    opt_float,
     opt_str,
     req_bool,
     req_int,
@@ -322,15 +323,6 @@ def parse_entry_states(raw: object) -> dict[int, EntryState]:
             modifier=opt_str(entry, "modifier", where) or "Normal",
             companion=req_bool(entry, "companion", where) if companion is not None else False,
             flipped_default=req_bool(entry, "flippedDefault", where) if flipped is not None else False,
-            custom_cmc=_opt_number(entry, "customCmc", where),
+            custom_cmc=opt_float(entry, "customCmc", where),
         )
     return states
-
-
-def _opt_number(obj: Mapping[str, object], key: str, where: str) -> float | None:
-    value = obj.get(key)
-    if value is None:
-        return None
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        raise ShapeError(f"{where}.{key}: expected a number")
-    return value
