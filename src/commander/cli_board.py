@@ -23,8 +23,14 @@ from commander.board import (
     read_board,
 )
 from commander.boardsave import preview_board, save_board
+from commander.bracketpreview import spellbook_preview
 from commander.carddb import CardDb
-from commander.cli_output import print_apply_outcome, print_resolution, progress_printer
+from commander.cli_output import (
+    print_apply_outcome,
+    print_bracket_preview,
+    print_resolution,
+    progress_printer,
+)
 from commander.clibase import (
     EXIT_FAILURE,
     EXIT_OK,
@@ -35,7 +41,8 @@ from commander.clibase import (
     open_card_db,
     workspace,
 )
-from commander.config import config_path, read_config, resolve_user
+from commander.config import cache_dir, config_path, read_config, resolve_user
+from commander.deckprofile import read_profile
 from commander.net import Fetcher
 from commander.plan import Plan
 from commander.store import StoredDeck
@@ -237,7 +244,12 @@ def _cmd_commit(args: argparse.Namespace, ctx: Context) -> int:
         editor = ArchidektEditor(fetcher, ArchidektAuth(fetcher, ctx.token_store).access_token(user))
         if not args.save:
             outcome = preview_board(editor, stored, db, user=user, now=ctx.now)
+            ceiling = read_profile(stored.folder).bracket_ceiling
+            preview = spellbook_preview(
+                outcome.resolution, fetcher, cache_dir(ctx.env), ceiling=ceiling, now=ctx.now
+            )
             print_resolution(outcome.resolution, ctx.out)
+            print_bracket_preview(preview, ctx.out)
             print_apply_outcome(outcome.resolution, None, None, ctx.out, save=False)
             return EXIT_USAGE if outcome.resolution.problems else EXIT_OK
         saved = save_board(

@@ -729,6 +729,8 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .problems li { background: var(--danger-soft); }
 .problems li::before { content: "Problem: "; font-weight: 600; }
 .warnings li { background: var(--warn-soft); }
+.review-bracket { margin: var(--space-1) 0 0; font-size: var(--text-s); }
+.review-bracket.warn { color: var(--warn); font-weight: 600; }
 .warnings li::before { content: "Warning: "; font-weight: 600; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-4); }
 

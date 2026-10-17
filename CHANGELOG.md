@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Previews show the bracket after the changes: `apply`, `board commit` and the app's Review dialog ask
+  Commander Spellbook about the deck as the plan leaves it and show its estimate ("3-4 (Spicy), was 4+"),
+  with the notes and causes of `bracket` when it lands above the Archidekt bracket or the profile's ceiling.
+  `apply --json` gains `bracketAfter`.
 - Cards to get (ADR 0010): cards a save brings into a deck get the Archidekt label "Don't Have";
   `cmdr toget` lists each deck's Don't Have and Getting cards and marks one `--ordered` (Getting) or
   `--arrived` (no label) on Archidekt at once. The app's bridge has the same (`toGet` in the deck view,

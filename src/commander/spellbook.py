@@ -1,6 +1,6 @@
 """Commander Spellbook: the bracket a deck points to, its combos, and the combos it is one card short of."""
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import Enum
@@ -242,18 +242,33 @@ def parse_details(raw: object) -> tuple[ComboDetail, ...]:
     return tuple(details)
 
 
+@dataclass(slots=True, frozen=True)
+class RequestCard:
+    name: str
+    quantity: int
+    commander: bool
+
+
 def deck_request(deck: Deck) -> dict[str, object]:
     """The deck as Spellbook's DeckRequest: commanders apart from the rest, by name."""
+    return cards_request(
+        deck.name,
+        [RequestCard(c.name, c.quantity, COMMANDER_CATEGORY in c.categories) for c in deck.main_cards],
+    )
+
+
+def cards_request(deck_name: str, cards: Sequence[RequestCard]) -> dict[str, object]:
+    """A DeckRequest for any card list, such as a deck as a plan would leave it."""
     commanders: list[dict[str, object]] = []
     main: list[dict[str, object]] = []
-    for card in sorted(deck.main_cards, key=lambda c: c.name):
+    for card in sorted(cards, key=lambda c: c.name):
         if len(card.name) > MAX_NAME_LENGTH:
-            raise SpellbookError(f"{deck.name}: card name longer than {MAX_NAME_LENGTH} characters")
+            raise SpellbookError(f"{deck_name}: card name longer than {MAX_NAME_LENGTH} characters")
         entry: dict[str, object] = {"card": card.name, "quantity": card.quantity}
-        (commanders if COMMANDER_CATEGORY in card.categories else main).append(entry)
+        (commanders if card.commander else main).append(entry)
     if len(main) > MAX_MAIN_ENTRIES or len(commanders) > MAX_COMMANDERS:
         raise SpellbookError(
-            f"{deck.name}: Commander Spellbook takes at most {MAX_MAIN_ENTRIES} cards "
+            f"{deck_name}: Commander Spellbook takes at most {MAX_MAIN_ENTRIES} cards "
             f"and {MAX_COMMANDERS} commanders"
         )
     return {"commanders": commanders, "main": main}

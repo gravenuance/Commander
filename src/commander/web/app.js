@@ -1222,7 +1222,28 @@ function showResolution(result) {
     : `${result.before} → ${result.after} cards in the deck`;
   $("review-changes").replaceChildren(...result.changes.map((c) => el("li", { class: c.mark === "+" ? "add" : "cut", text: c.text.replace(/^[+-] /, "") })));
   $("review-problems").replaceChildren(...result.problems.map((text) => el("li", { text })));
-  $("review-warnings").replaceChildren(...result.warnings.map((text) => el("li", { text })));
+  const warnings = [...result.warnings, ...bracketWarnings(result.bracket)];
+  $("review-warnings").replaceChildren(...warnings.map((text) => el("li", { text })));
+  showReviewBracket(result.bracket);
+}
+
+// Spellbook's estimate for the deck once the changes are saved; absent when nothing counted changes.
+function showReviewBracket(bracket) {
+  const line = $("review-bracket");
+  line.hidden = !bracket;
+  if (!bracket) return;
+  const now = bracket.before && bracket.before !== bracket.after ? `, now ${bracket.before}` : "";
+  line.textContent = bracket.after
+    ? `Bracket after saving: ${bracket.after} (${bracket.afterLabel})${now}`
+    : "Bracket after saving: unknown, Commander Spellbook didn't answer";
+  line.title = bracket.unavailable || "";
+  line.classList.toggle("warn", bracket.check.notes.length > 0);
+}
+
+function bracketWarnings(bracket) {
+  if (!bracket) return [];
+  const causes = bracket.check.causes.map((c) => `${c.tag}: ${c.reason}: ${c.cards.join(" + ")}`);
+  return [...bracket.check.notes, ...causes];
 }
 
 async function openReview() {

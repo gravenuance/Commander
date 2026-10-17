@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import TextIO
 
 from commander.apply import Change, ChangeKind, Resolution, SaveResult
+from commander.bracketcheck import BracketCheck
+from commander.bracketpreview import BracketPreview
 from commander.pricing import format_eur
 from commander.suggest import BracketRaise
 
@@ -33,6 +35,32 @@ def print_resolution(resolution: Resolution, out: TextIO) -> None:
         print(f"  warning: {line}", file=out)
     for line in resolution.problems:
         print(f"  problem: {line}", file=out)
+
+
+def print_check(check: BracketCheck, out: TextIO) -> None:
+    """The notes of a bracket check, then the cards that lift the deck above its bracket."""
+    for note in check.notes:
+        print(f"  ! {note}", file=out)
+    if check.causes:
+        print("  because of:", file=out)
+        for cause in check.causes:
+            print(f"    {cause.tag.label:<10} {cause.reason.value}: {' + '.join(cause.cards)}", file=out)
+
+
+def print_bracket_preview(preview: BracketPreview | None, out: TextIO) -> None:
+    if preview is None:
+        return
+    after = preview.after.data
+    if after is None:
+        print(f"  bracket after these changes: unknown ({preview.after.error})", file=out)
+        return
+    was = (
+        f", was {preview.before.tag.brackets}"
+        if preview.before and preview.before.tag is not after.tag
+        else ""
+    )
+    print(f"  bracket after these changes: {after.tag.brackets} ({after.tag.label}){was}", file=out)
+    print_check(preview.check, out)
 
 
 def change_mark(change: Change) -> str:

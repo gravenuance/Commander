@@ -279,6 +279,13 @@ def test_preview_and_commit_save_the_queued_cards(desk: Desk, fake: FakeArchidek
         ("+", "Arcane Signet"),
     ]
     assert (preview["before"], preview["after"], preview["problems"]) == (9, 9, [])
+    # The fake Spellbook answers Ruthless for any list; the deck's bracket 5 allows it.
+    bracket = cast("Json", preview["bracket"])
+    assert (bracket["after"], bracket["afterLabel"], bracket["check"]) == (
+        "4+",
+        "Ruthless",
+        {"notes": [], "causes": []},
+    )
     assert not fake.card_writes()
 
     saved = desk.commit(DECK)

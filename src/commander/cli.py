@@ -26,6 +26,7 @@ from commander.board import BoardError, BoardService, feed_suggestions, read_boa
 from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
 from commander.bracket import BracketReport, EstimateResult, bracket_cards, estimate_cache, estimate_decks
 from commander.bracketcheck import check_json
+from commander.bracketpreview import preview_json, spellbook_preview
 from commander.carddb import CardDataError, Role
 from commander.cli_app import add_app_command
 from commander.cli_board import add_board_commands
@@ -34,6 +35,8 @@ from commander.cli_meta import add_meta_command
 from commander.cli_output import (
     price_text,
     print_apply_outcome,
+    print_bracket_preview,
+    print_check,
     print_resolution,
     progress_printer,
     raise_json,
@@ -617,18 +620,30 @@ def _cmd_apply(args: argparse.Namespace, ctx: Context) -> int:
             on_progress=progress_printer(ctx.err),
         )
         resolution, result = outcome.resolution, outcome.result
+        preview = None
+        if not args.save:
+            ceiling = _plan_ceiling(workspace, deck_id)
+            preview = spellbook_preview(resolution, fetcher, cache_dir(ctx.env), ceiling=ceiling, now=ctx.now)
     folder = None
     if result is not None and workspace is not None and workspace.folder_for(deck_id) is not None:
         folder = workspace.save(result.deck)
     if args.json:
-        json.dump(_apply_json(resolution, result), ctx.out, ensure_ascii=False, indent=2)
+        answer = _apply_json(resolution, result) | {"bracketAfter": preview_json(preview)}
+        json.dump(answer, ctx.out, ensure_ascii=False, indent=2)
         ctx.out.write("\n")
     else:
         print_resolution(resolution, ctx.out)
+        print_bracket_preview(preview, ctx.out)
         print_apply_outcome(resolution, result, folder, ctx.out, save=args.save)
     if resolution.problems:
         return EXIT_USAGE
     return EXIT_FAILURE if result is not None and result.mismatches else EXIT_OK
+
+
+def _plan_ceiling(workspace: Workspace | None, deck_id: int) -> int | None:
+    """The profile's bracket ceiling, when the deck has a folder in the workspace."""
+    folder = workspace.folder_for(deck_id) if workspace is not None else None
+    return read_profile(folder).bracket_ceiling if folder is not None else None
 
 
 def _plan_deck(query: str, args: argparse.Namespace, ctx: Context) -> tuple[int, Workspace | None]:
@@ -874,13 +889,7 @@ def _print_bracket(report: BracketReport, out: TextIO, *, details: bool) -> None
     print(f"{deck.name} ({deck.id})", file=out)
     print(f"{commanders}; {bracket}", file=out)
     print(f"estimate: {_estimate_text(result)}", file=out)
-    check = report.check
-    for note in check.notes:
-        print(f"  ! {note}", file=out)
-    if check.causes:
-        print("  because of:", file=out)
-        for cause in check.causes:
-            print(f"    {cause.tag.label:<10} {cause.reason.value}: {' + '.join(cause.cards)}", file=out)
+    print_check(report.check, out)
     print(_card_list("game changers", cards.game_changers), file=out)
     print(_card_list("tutors", cards.tutors), file=out)
     print(_card_list("mass land denial", cards.mass_land_denial), file=out)

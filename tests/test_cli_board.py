@@ -151,6 +151,7 @@ def test_commit_previews_then_saves_and_marks_the_cards_applied(
     assert preview.code == 0, preview.err
     assert "  - Disruptor Flute to the Maybeboard\n" in preview.out
     assert "  + Arcane Signet (FRC 20, €0.30) in Artifact\n" in preview.out
+    assert "  bracket after these changes: 4+ (Ruthless)\n" in preview.out
     assert not fake.card_writes()
 
     saved = board(home, fake, "commit", "magda", "--save")

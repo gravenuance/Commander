@@ -182,7 +182,10 @@ def test_apply_previews_without_signing_in_or_writing(
 
     assert result.code == 0
     assert (
-        result.out == PREVIEW + "preview only: run it again with --save to make these changes on Archidekt\n"
+        result.out
+        == PREVIEW
+        + "  bracket after these changes: 4+ (Ruthless)\n"
+        + "preview only: run it again with --save to make these changes on Archidekt\n"
     )
     assert archidekt.requests == [f"/api/decks/{DECK_ID}/"]
     assert archidekt.writes == []

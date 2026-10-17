@@ -428,7 +428,10 @@ uv run cmdr apply plan.toml --save     # make them on Archidekt
 The preview reads the deck as it is on Archidekt now and lists every change, the card count before and
 after, and the lines it skips. It stops with a problem (exit code 2) when a card doesn't exist, isn't legal
 in Commander or is outside the commander's colours; a card that would lift the deck above its bracket is
-marked as in `suggest`. `--save` first saves a snapshot of the deck on Archidekt called
+marked as in `suggest`. Below the changes comes Commander Spellbook's bracket estimate for the deck as the
+plan leaves it, beside the current one when that is cached, with the same notes and causes as `bracket`
+when it lands above the Archidekt bracket or the profile's ceiling. The estimate is cached on its own, so a
+preview never replaces the deck's. `board commit` and the app's Review dialog show it too. `--save` first saves a snapshot of the deck on Archidekt called
 `before cmdr apply <date> <time> UTC`, then sends all changes at once, reads the deck back to check each
 one, and rewrites the local copy if the deck is in your deck folder. To undo a save, restore that snapshot
 on Archidekt. `apply -` reads the plan from stdin, and `--json` prints the result as JSON.

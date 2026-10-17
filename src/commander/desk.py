@@ -38,6 +38,7 @@ from commander.boardsave import preview_board, save_board
 from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
 from commander.bracket import estimate_cache, estimate_deck
 from commander.bracketcheck import check_bracket, check_json
+from commander.bracketpreview import preview_json, spellbook_preview
 from commander.carddb import CardDataError, CardDb, CardInfo, ResolvedCard
 from commander.cli_meta import report_json
 from commander.cli_output import change_mark, change_text
@@ -577,7 +578,13 @@ class Desk:
             # A preview reads the deck; a public one needs no login, a private one does.
             token = auth.access_token(user) if auth.has_login(user) else None
             outcome = preview_board(ArchidektEditor(fetcher, token), stored, db, user=user, now=self._now)
-        return _resolution_json(outcome.resolution)
+            ceiling = read_profile(stored.folder).bracket_ceiling
+            bracket = spellbook_preview(
+                outcome.resolution, fetcher, self._settings.cache, ceiling=ceiling, now=self._now
+            )
+        view = _resolution_json(outcome.resolution)
+        view["bracket"] = preview_json(bracket)
+        return view
 
     @_guarded
     def commit(self, deck_id: int) -> Json:
