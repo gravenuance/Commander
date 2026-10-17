@@ -236,6 +236,20 @@ def test_the_stamp_changes_with_every_edit(tmp_path: Path, service: BoardService
     assert board_stamp(tmp_path) != before
 
 
+def test_a_decision_whose_activity_line_cannot_be_written_is_reported_not_lost(
+    tmp_path: Path, service: BoardService, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def disk_full(_folder: Path, _entry: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(board_module, "_append_activity", disk_full)
+    with pytest.raises(BoardError, match=r"saved on the board, but its activity line could not be written"):
+        service.propose("Lightning Bolt", Actor.YOU)
+    assert [c.name for c in read_board(tmp_path).cards] == ["Lightning Bolt"]
+    assert "disk full" in caplog.text
+    assert not (tmp_path / LOCK_FILE).exists()
+
+
 def test_a_held_lock_makes_the_board_busy(
     tmp_path: Path, service: BoardService, monkeypatch: pytest.MonkeyPatch
 ) -> None:

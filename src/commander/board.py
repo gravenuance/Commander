@@ -597,7 +597,13 @@ class BoardService:
                     self._folder / BOARD_FILE,
                     json.dumps(board_json(updated), ensure_ascii=False, indent=2) + "\n",
                 )
-                _append_activity(self._folder, entry)
+                try:
+                    _append_activity(self._folder, entry)
+                except OSError as error:
+                    # The board is written first, so the decision stands; say that the log is short of it.
+                    log.exception("board saved but its activity line was not written (%s)", entry.action)
+                    saved = "saved on the board, but its activity line could not be written"
+                    raise BoardError(f"{entry.action}: {saved} ({error})") from error
 
             yield board, save
 
