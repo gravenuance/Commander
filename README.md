@@ -7,6 +7,15 @@ from Cardmarket prices via [Scryfall](https://scryfall.com), estimates its brack
 [Commander Spellbook](https://commanderspellbook.com), suggests cards to add and to cut, and makes the
 changes you approve on Archidekt.
 
+## Download
+
+The desktop app is a single `Commander.exe` on the
+[Releases](https://github.com/gravenuance/Commander/releases) page, built by GitHub Actions from the release's
+tag. It is not code-signed, so Windows SmartScreen warns on the first launch ("More info", then "Run
+anyway"). Check the download against `SHA256SUMS.txt` from the same release
+(`Get-FileHash Commander.exe`), or verify its build provenance with
+`gh attestation verify Commander.exe --repo gravenuance/Commander`.
+
 ## Requirements
 
 - Python 3.13 and [uv](https://docs.astral.sh/uv/)
