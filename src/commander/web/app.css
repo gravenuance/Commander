@@ -11,6 +11,8 @@
   --accent: #1f6f5c;
   --accent-text: #ffffff;
   --accent-soft: #dcefe9;
+  --primary: #1f6f5c;
+  --on-primary: #ffffff;
   --selected: #cfe7df;
   --target: #b3261e;
   --target-tint: rgb(179 38 30 / 30%);
@@ -86,6 +88,9 @@
     --accent: #5fc4a8;
     --accent-text: #0e1a17;
     --accent-soft: #1d3a33;
+    /* The accent's hue, dark enough to carry the light text at 4.5:1. */
+    --primary: #29705c;
+    --on-primary: #ece9e3;
     --selected: #2b4a42;
     --target: #e5736a;
     --target-tint: rgb(58 29 29 / 73%);
@@ -155,7 +160,8 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .account-name, .sync-status { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .account-name { font-weight: 600; }
 .account-name:empty, .sync-status:empty { display: none; }
-.account-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+/* Full width, so both buttons share the name's left edge and the column's right edge. */
+.account-actions { display: grid; gap: var(--space-2); }
 .signin-form { display: grid; gap: var(--space-3); min-width: 320px; }
 .signin-form h2 { margin: 0; }
 .signin-form .dialog-actions { margin-top: var(--space-1); }
@@ -360,8 +366,8 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .button:hover:not(:disabled) { background: var(--surface-2); }
 .button:active:not(:disabled) { transform: translateY(1px); }
 .button:disabled { opacity: 0.5; cursor: not-allowed; }
-.button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
-.button.primary:hover:not(:disabled) { filter: brightness(1.08); background: var(--accent); }
+.button.primary { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
+.button.primary:hover:not(:disabled) { filter: brightness(1.08); background: var(--primary); }
 .button.quiet { border-color: transparent; background: transparent; font-weight: 500; }
 .button.quiet:hover:not(:disabled) { background: var(--surface-2); }
 .button.small { min-height: 28px; padding: var(--space-1) var(--space-3); font-size: var(--text-s); }
