@@ -19,3 +19,6 @@ dist/
 # Agent worktrees and PyInstaller output
 .claude/worktrees/
 Commander.spec
+
+# Your own decks: a local-only repository of their own (see CLAUDE.md)
+decks/

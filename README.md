@@ -32,7 +32,7 @@ This creates `.venv` with the exact versions pinned in `uv.lock`.
 ## Run
 
 ```sh
-uv run cmdr init --user MAKKIS --workspace decks   # one-time: save your username and the deck folder
+uv run cmdr init --user <archidekt-user> --workspace decks   # one-time: save your username and the deck folder
 uv run cmdr sync                                    # pull every public deck, report what changed, compile ideas
 uv run cmdr sync --no-ideas                         # the same, without compiling ideas from other players
 uv run cmdr list                                    # show the decks saved locally
@@ -499,6 +499,9 @@ Labels set on the Archidekt website come back with the next `sync`. See
 | `profile.toml` | What the deck wants from `suggest` | You, starting from `cmdr profile <deck> --init` |
 | `board.json` | Cards considered and suggested, their research and your decisions | `cmdr board`, the app, `suggest --to-board`, `sync` |
 | `activity.jsonl` | Every change to the board, who made it and when, oldest first | Whatever changes the board; never rewritten |
+
+`decks/` is gitignored, because it holds your own decks and notes. To keep their history, make it a git
+repository of its own (`git init decks`) and commit there after each sync.
 
 When a deck is renamed on Archidekt, `sync` renames its folder to match. When a deck disappears from
 Archidekt (deleted, or made private), `sync` reports it and keeps the local copy.
