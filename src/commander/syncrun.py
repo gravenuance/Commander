@@ -109,15 +109,22 @@ def run_sync(
                 ),
                 name="card-data",
             )
-        results = sync_decks(
-            ArchidektClient(fetcher),
-            workspace,
-            user,
-            force=options.force,
-            dry_run=options.dry_run,
-            on_progress=on_progress,
-        )
-        labels = None if options.dry_run else _sync_labels(fetcher, workspace, user, services, warnings)
+        try:
+            results = sync_decks(
+                ArchidektClient(fetcher),
+                workspace,
+                user,
+                force=options.force,
+                dry_run=options.dry_run,
+                on_progress=on_progress,
+            )
+            labels = None if options.dry_run else _sync_labels(fetcher, workspace, user, services, warnings)
+        except Exception:
+            # The download shares this client, which closes on leaving the block: wait for it, and log
+            # its status because there is no outcome to carry it.
+            card_status = _card_status(cards_job, options)
+            log.info("card data: %s, %s", card_status.state.value, card_status.detail)
+            raise
         cards = _card_status(cards_job, options)
     if options.dry_run:
         return SyncOutcome(results, cards, labels, warnings=warnings)
@@ -142,7 +149,11 @@ def _sync_labels(
     except (AuthError, CredentialError, NetworkError, ArchidektError) as error:
         warnings.append(f"card labels not refreshed: {error}")
         return None
-    workspace.save_account_labels(labels)
+    try:
+        workspace.save_account_labels(labels)
+    except OSError as error:
+        log.warning("could not save the card labels: %s", error)
+        warnings.append(f"card labels not saved: {error}")
     return labels
 
 
