@@ -362,6 +362,11 @@ def _add_suggest_arguments(suggest_: argparse.ArgumentParser) -> None:
         help="leave out cards dearer than this, and cards with no price",
     )
     suggest_.add_argument(
+        "--any-price",
+        action="store_true",
+        help="ignore the deck's own budget below bracket 5 (its average and dearest card)",
+    )
+    suggest_.add_argument(
         "--within-bracket",
         action="store_true",
         help="leave out ideas that would lift a deck above its bracket on Archidekt",
@@ -546,6 +551,7 @@ def _cmd_suggest(args: argparse.Namespace, ctx: Context) -> int:
                 count=args.count,
                 max_cents=args.max_price,
                 within_bracket=args.within_bracket,
+                deck_budget=not args.any_price,
                 rejected=read_board(folder).rejected_names,
             )
             results.append(suggest(deck, db.resolve(deck.main_cards), db, answer, options))
@@ -1003,6 +1009,10 @@ def _print_suggestions(result: Suggestions, out: TextIO, *, details: bool) -> No
     colours = "colours unknown" if result.identity is None else f"colours {result.identity or 'colourless'}"
     print(f"\n{deck.name} ({deck.id})", file=out)
     print(f"{commanders}; {bracket}; {colours}", file=out)
+    budget = result.budget
+    if budget.working is not None:
+        ceiling = f", nothing over {price_text(budget.ceiling)}" if budget.ceiling is not None else ""
+        print(f"budget: average card {price_text(budget.working)}{ceiling}", file=out)
     _print_pieces(result, out, details=details)
     _print_roles(result, out)
     _print_themed(result, out)
@@ -1033,9 +1043,10 @@ def _print_pieces(result: Suggestions, out: TextIO, *, details: bool) -> None:
     for piece in result.pieces:
         tags = sorted({v.tag for v in piece.combos}, key=lambda t: _TAG_ORDER[t])
         combos = f"{len(piece.combos)} combo{'' if len(piece.combos) == 1 else 's'}"
+        over = "" if result.budget.within(piece.price_cents) else " (over budget)"
         print(
             f"  {price_text(piece.price_cents):>9}  {piece.name} ({combos}: "
-            f"{', '.join(t.label for t in tags)}){raise_text(piece.raises)}",
+            f"{', '.join(t.label for t in tags)}){over}{raise_text(piece.raises)}",
             file=out,
         )
         needs = sorted({need for v in piece.combos for need in v.requirements})
@@ -1091,7 +1102,8 @@ def _print_idea(idea: RoleIdea, out: TextIO, *, mark_theme: bool = True) -> None
         f" (fits {', '.join(idea.fits)})" if idea.fits else " (theme)" if mark_theme and idea.themed else ""
     )
     price = price_text(idea.info.cheapest_cents)
-    print(f"  {price:>9}  {idea.info.name}{theme}{raise_text(idea.raises)}", file=out)
+    over = "" if idea.within_budget else " (over budget)"
+    print(f"  {price:>9}  {idea.info.name}{theme}{over}{raise_text(idea.raises)}", file=out)
 
 
 def _print_cuts(result: Suggestions, out: TextIO) -> None:
@@ -1146,6 +1158,7 @@ def _suggestions_json(result: Suggestions) -> dict[str, object]:
             {
                 "name": p.name,
                 "priceCents": p.price_cents,
+                "withinBudget": result.budget.within(p.price_cents),
                 "raises": raise_json(p.raises),
                 "combos": [
                     {
@@ -1179,6 +1192,7 @@ def _suggestions_json(result: Suggestions) -> dict[str, object]:
         ],
         "hidden": result.hidden,
         "ceiling": result.ceiling,
+        "budget": result.budget.json(),
     }
 
 
@@ -1190,6 +1204,7 @@ def _idea_json(idea: RoleIdea) -> dict[str, object]:
         "raises": raise_json(idea.raises),
         "themed": idea.themed,
         "fits": list(idea.fits),
+        "withinBudget": idea.within_budget,
     }
 
 

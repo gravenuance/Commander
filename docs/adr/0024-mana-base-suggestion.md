@@ -84,8 +84,9 @@ commander's top-cut lists (ADR 0007) instead:
 - **Colour weight by tempo:** the colours of the deck's one- and two-drops and of its win line weigh more
   than the colours of late cards.
 
-What stops it now: the top-cut lists give counts of lands but not the opening hands or turn one plays, and
-their shares can't be published (EDHTop16's terms), so the suggestion would name lands and give no tables.
+What stops it now: the top-cut lists give counts of lands but not the opening hands or turn one plays. The
+app may show each land's share of the lists, as the Meta panel does, since every copy fetches its own data;
+only committing those numbers to git is out (ADR 0007).
 
 ## Consequences
 
@@ -93,8 +94,7 @@ their shares can't be published (EDHTop16's terms), so the suggestion would name
   and other lists and short of black, so three Forests become Swamps and four go; Bello is short of red, so
   three Forests become Mountains and three red-making lands are named; Ashling (five colours) can't meet the
   table at 42 lands, so shock lands replace basics and thirteen cards stay short.
-- The owner wants the same budget rule (within, then over the deck's average card) for every card under
-  consideration below bracket 5, not only lands: compiled ideas (ADR 0014), `suggest` and Considering. That
-  is open.
+- The same budget rule now covers every card under consideration below bracket 5 (ADR 0025), and the
+  Mana tab reads its budget from there.
 - The plan is a threshold reading of Karsten's numbers, as ADR 0019 says: a card a few tenths short is close
   to his line, and the owner decides each swap on the board.

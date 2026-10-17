@@ -736,15 +736,30 @@ def test_suggest_details_show_each_combo(tmp_path: Path, archidekt: FakeArchidek
 
 def test_suggest_marks_ideas_that_raise_the_bracket(tmp_path: Path, raw_deck: Json, own_cache: Path) -> None:
     raw_deck["edhBracket"] = 2
-    out = suggest(["magda"], tmp_path, synced(tmp_path, raw_deck), own_cache).out
+    out = suggest(["magda", "--any-price"], tmp_path, synced(tmp_path, raw_deck), own_cache).out
     assert "     €16.93  Aggravated Assault (1 combo: Spicy)  ! bracket 3+ (Spicy combo)\n" in out
     assert "     €33.80  Jeska's Will  ! bracket 3+ (game changer)\n" in out
     assert "! adding it lifts the deck to at least that bracket; --within-bracket leaves these out\n" in out
 
 
+def test_suggest_keeps_to_the_decks_budget_below_bracket_5(
+    tmp_path: Path, raw_deck: Json, own_cache: Path
+) -> None:
+    raw_deck["edhBracket"] = 3
+    out = suggest(["magda"], tmp_path, synced(tmp_path, raw_deck), own_cache).out
+    # Magda 6.79, Disruptor Flute 2.17 and Battered Golem 0.35 average 3.10; 25% over Magda is 8.49.
+    assert "budget: average card €3.10, nothing over €8.49\n" in out
+    # Splinter Twin (6.68) stays, marked; Aggravated Assault (16.93) and Jeska's Will (33.80) go.
+    assert "      €6.68  Splinter Twin (1 combo: Spicy) (over budget)\n" in out
+    assert "Aggravated Assault" not in out
+    assert "Jeska's Will" not in out
+
+
 def test_suggest_within_bracket_hides_them(tmp_path: Path, raw_deck: Json, own_cache: Path) -> None:
     raw_deck["edhBracket"] = 2
-    out = suggest(["magda", "--within-bracket"], tmp_path, synced(tmp_path, raw_deck), own_cache).out
+    out = suggest(
+        ["magda", "--within-bracket", "--any-price"], tmp_path, synced(tmp_path, raw_deck), own_cache
+    ).out
     assert "Aggravated Assault" not in out
     assert "Jeska's Will" not in out
     assert "3 left out because they would lift the deck above bracket 2\n" in out
@@ -806,7 +821,7 @@ def test_suggest_targets_come_from_the_config_file(
 
 def test_suggest_table(tmp_path: Path, raw_deck: Json, own_cache: Path) -> None:
     raw_deck["edhBracket"] = 3
-    result = suggest([], tmp_path, synced(tmp_path, raw_deck), own_cache)
+    result = suggest(["--any-price"], tmp_path, synced(tmp_path, raw_deck), own_cache)
     header, row, *notes = result.out.splitlines()
     assert header.split() == ["id", "set", "combo", "ramp", "draw", "removal", "wipes", "cuts", "name"]
     assert row.split() == ["10004639", "3", "3", "2/10", "0/10", "1/8", "1/2", "0", "Honestly,", "though.."]
@@ -819,7 +834,9 @@ def test_suggest_table(tmp_path: Path, raw_deck: Json, own_cache: Path) -> None:
 
 def test_suggest_json(tmp_path: Path, raw_deck: Json, own_cache: Path) -> None:
     raw_deck["edhBracket"] = 2
-    [deck] = json.loads(suggest(["--json"], tmp_path, synced(tmp_path, raw_deck), own_cache).out)
+    [deck] = json.loads(
+        suggest(["--json", "--any-price"], tmp_path, synced(tmp_path, raw_deck), own_cache).out
+    )
     assert (deck["bracket"], deck["colorIdentity"], deck["hidden"], deck["cuts"]) == (2, "R", 0, [])
     assert deck["combos"] == {"source": "fetched", "fetchedAt": "2026-10-15T12:00:00+00:00", "error": None}
     assault = deck["comboPieces"][0]
@@ -849,6 +866,7 @@ def test_suggest_json(tmp_path: Path, raw_deck: Json, own_cache: Path) -> None:
         "raises": {"bracket": 3, "reason": "game changer"},
         "themed": False,
         "fits": [],
+        "withinBudget": True,
     }
 
 

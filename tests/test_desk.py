@@ -182,6 +182,37 @@ def test_below_bracket_5_the_mana_tab_suggests_the_land_count_and_basics(
     assert desk.mana_to_board(DECK) == {"added": [], "skipped": 0}
 
 
+def test_below_bracket_5_considering_marks_cards_over_the_decks_budget(
+    desk: Desk, settings: DeskSettings, fake: FakeArchidekt, tmp_path: Path
+) -> None:
+    fake.decks[DECK]["edhBracket"] = 3
+    fake.decks[DECK]["updatedAt"] = "2026-10-16T10:00:00.000000Z"
+    assert (
+        run(["sync", "--no-cards", "--no-ideas", "--workspace", str(settings.workspace)], tmp_path, fake).code
+        == 0
+    )
+    desk.propose(DECK, "Splinter Twin")
+    desk.propose(DECK, "Arcane Signet")
+    view = desk.deck(DECK)
+    # Magda 6.79, Disruptor Flute 2.17, Battered Golem 0.35: average 3.10, ceiling 25% over Magda.
+    assert view["budget"] == {"working": 310, "ceiling": 849}
+    within = {str(card["name"]): card["withinBudget"] for card in items(view, "cards")}
+    # The sync put the Maybeboard's Hoverbike (0.14) and Tempestra (0.24) on the board too.
+    assert within == {
+        "High-Speed Hoverbike": True,
+        "Tempestra, Dame of Games": True,
+        "Splinter Twin": False,
+        "Arcane Signet": True,
+    }
+
+
+def test_bracket_5_decks_have_no_budget_in_considering(desk: Desk) -> None:
+    desk.propose(DECK, "Splinter Twin")
+    view = desk.deck(DECK)
+    assert view["budget"] == {"working": None, "ceiling": None}
+    assert [card["withinBudget"] for card in items(view, "cards")] == [None]
+
+
 def test_the_bracket_check_names_what_lifts_the_estimate_above_the_ceiling(
     desk: Desk, settings: DeskSettings, fake: FakeArchidekt
 ) -> None:

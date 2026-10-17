@@ -13,6 +13,7 @@ from pathlib import Path
 
 from commander.analysis import ANALYZED_ROLES, CATEGORY_ALIASES, game_changers
 from commander.background import run_all
+from commander.budget import NO_BUDGET, Budget, resolved_budget
 from commander.carddb import COLORS, NO_THEME, CardDb, CardInfo, ResolvedCard, Role, Theme
 from commander.deckcache import Answer, AnswerSource, Clock, DeckCache, cached_answer
 from commander.deckprofile import Profile, ResolvedThemes
@@ -64,6 +65,8 @@ class SuggestOptions:
     keep_names: frozenset[str] = frozenset()
     # Casefolded Archidekt categories whose cards are never offered as cuts.
     keep_categories: frozenset[str] = frozenset()
+    # Below bracket 5, narrow max_cents to the deck's own budget and put ideas within it first (ADR 0025).
+    deck_budget: bool = True
 
     def __post_init__(self) -> None:
         if self.count < 1:
@@ -104,6 +107,8 @@ class RoleIdea:
     themed: bool = False
     # ...and these are the ones, by name ("profile", a deck tag or a category).
     fits: tuple[str, ...] = ()
+    # Within the deck's working budget (ADR 0025); every idea is at bracket 5.
+    within_budget: bool = True
 
 
 @dataclass(slots=True, frozen=True)
@@ -136,6 +141,7 @@ class Suggestions:
     # Ideas skipped because they would lift the deck above the ceiling.
     hidden: int
     ceiling: int | None = None
+    budget: Budget = NO_BUDGET
 
 
 def suggest(
@@ -143,7 +149,13 @@ def suggest(
 ) -> Suggestions:
     """Ideas for one deck; resolved must cover the deck's main cards."""
     main = [r for r in resolved if r.card.in_deck]
-    picker = _Picker(db, options, deck.bracket, len(game_changers(main)))
+    # The flag's or profile's price cap is the budget's limit; below bracket 5 the deck's cards narrow it.
+    budget = (
+        resolved_budget(deck.bracket, main, options.max_cents)
+        if options.deck_budget
+        else Budget(None, options.max_cents)
+    )
+    picker = _Picker(db, options, deck.bracket, len(game_changers(main)), budget)
     identity = deck_identity(main)
     data = combos.data
     pieces = combo_pieces(main, data, db, bracket=deck.bracket, changers=picker.changers) if data else []
@@ -152,7 +164,7 @@ def suggest(
     themed: list[RoleIdea] = []
     if identity is not None:
         held = {r.info.oracle_id for r in main if r.info}
-        candidates = db.theme_candidates(options.themes, identity, exclude=held, max_cents=options.max_cents)
+        candidates = db.theme_candidates(options.themes, identity, exclude=held, max_cents=budget.ceiling)
         themed = picker.pick(candidates, theme_first=False)
     return Suggestions(
         deck=deck,
@@ -171,6 +183,7 @@ def suggest(
         ),
         hidden=picker.hidden,
         ceiling=options.ceiling,
+        budget=budget,
     )
 
 
@@ -183,6 +196,7 @@ def options_for(
     count: int,
     max_cents: int | None,
     within_bracket: bool,
+    deck_budget: bool = True,
     rejected: Collection[str] = (),
 ) -> SuggestOptions:
     """One deck's options: flags first, then its profile, then the config file, then the defaults.
@@ -202,6 +216,7 @@ def options_for(
         exclude_names=frozenset(excluded),
         keep_names=frozenset(key for name in profile.keep_cards for key in name_keys(name)),
         keep_categories=frozenset(category.casefold() for category in profile.keep_categories),
+        deck_budget=deck_budget,
     )
 
 
@@ -213,6 +228,7 @@ class _Picker:
     options: SuggestOptions
     bracket: int | None
     changers: int
+    budget: Budget = NO_BUDGET
     hidden: int = 0
 
     def pick(self, candidates: Iterator[CardInfo], *, theme_first: bool) -> list[RoleIdea]:
@@ -228,6 +244,8 @@ class _Picker:
             # By popularity alone, staples of a broad theme (Tokens) crowd out the deck's own (Dinosaurs);
             # a card that fits more of the deck's themes comes first, the most played first among equals.
             window.sort(key=lambda info: -len({label for label, held in labelled if info.oracle_id in held}))
+        # Ideas within the deck's working budget come before dearer ones, each kept in the order above.
+        window.sort(key=lambda info: not self.budget.within(info.cheapest_cents))
         ideas: list[RoleIdea] = []
         for info in window:
             if info.oracle_id in banned or name_keys(info.name) & self.options.exclude_names:
@@ -236,7 +254,10 @@ class _Picker:
             if self._too_high(raises):
                 continue
             fits = tuple(dict.fromkeys(label for label, held in labelled if info.oracle_id in held))
-            ideas.append(RoleIdea(info, raises, themed=info.oracle_id in themed, fits=fits))
+            within = self.budget.within(info.cheapest_cents)
+            ideas.append(
+                RoleIdea(info, raises, themed=info.oracle_id in themed, fits=fits, within_budget=within)
+            )
             if len(ideas) == self.options.count:
                 break
         return ideas
@@ -250,9 +271,11 @@ class _Picker:
                 piece.name
             ) & self.options.exclude_names:
                 continue
-            if not affordable(piece.price_cents, self.options.max_cents) or self._too_high(piece.raises):
+            if not self.budget.allows(piece.price_cents) or self._too_high(piece.raises):
                 continue
             kept.append(piece)
+        # Within the deck's working budget first, in the order given within each half.
+        kept.sort(key=lambda piece: not self.budget.within(piece.price_cents))
         return kept
 
     def _too_high(self, raises: BracketRaise | None) -> bool:
@@ -348,7 +371,7 @@ def role_targets(
         if have >= target:
             targets.append(RoleTarget(role, have, target, ()))
             continue
-        candidates = db.candidates(role, identity, exclude=exclude, max_cents=options.max_cents)
+        candidates = db.candidates(role, identity, exclude=exclude, max_cents=picker.budget.ceiling)
         targets.append(RoleTarget(role, have, target, tuple(picker.pick(candidates, theme_first=True))))
     return tuple(targets)
 

@@ -341,12 +341,17 @@ function setupZoom() {
 /* Considering: every board card with somewhere to go, plus those already queued */
 
 function considered(cards) {
-  return cards.filter((c) => c.status === "add" || (c.status === "open" && c.targets.length));
+  return withinFirst(cards.filter((c) => c.status === "add" || (c.status === "open" && c.targets.length)));
+}
+
+// Below bracket 5, cards within the deck's budget (its average card) before dearer ones (ADR 0025).
+function withinFirst(cards) {
+  return [...cards].sort((a, b) => (a.withinBudget === false) - (b.withinBudget === false));
 }
 
 // Ideas with no deck card named to replace yet; selecting one offers every deck card as its cut.
 function uncut(cards) {
-  return cards.filter((c) => c.status === "open" && !c.targets.length);
+  return withinFirst(cards.filter((c) => c.status === "open" && !c.targets.length));
 }
 
 function renderConsidered(cards) {
@@ -418,7 +423,10 @@ function buildTile(card) {
       text: card.origin ?? card.source,
       title: card.origin ? `compiled by ${card.source} from the ${card.origin}` : `added by ${card.source}`,
     }),
-    card.gameChanger ? el("span", { class: "badge status gc", text: "Game changer" }) : null);
+    card.gameChanger ? el("span", { class: "badge status gc", text: "Game changer" }) : null,
+    card.withinBudget === false
+      ? el("span", { class: "badge status over", text: "Over budget", title: "Dearer than the deck's average card" })
+      : null);
 
   const targets = el("div", { class: "targets", hidden: true, role: "group", "aria-label": `Replace with ${card.name}` },
     ...(card.targets.length

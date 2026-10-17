@@ -9,7 +9,6 @@ from commander.manabase import (
     LandOption,
     Swap,
     analyse_mana,
-    average_cents,
     cheap_draw,
     cheap_ramp,
     land_count,
@@ -272,12 +271,6 @@ def test_a_land_whose_mana_casts_only_some_spells_is_never_offered() -> None:
     cards = by_name(*KNOWN, cavern)
     plan = suggest_mana(deck, cards, analyse_mana(deck, cards), options=(LandOption(cavern, 2000),))
     assert [swap.add for swap in plan.swaps] == ["Island"]
-
-
-def test_the_budget_is_the_average_card_price_weighted_by_copies() -> None:
-    # Two copies at 1.00 and one at 4.00 average 2.00; an unpriced card counts for nothing.
-    assert average_cents([(2, 100), (1, 400), (1, None)]) == 200
-    assert average_cents([(1, None)]) is None
 
 
 def test_lands_within_the_budget_come_first_and_dearer_ones_are_marked() -> None:

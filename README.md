@@ -150,6 +150,12 @@ below bracket 4) or by the tag of the combo it completes. `--within-bracket` lea
 `--max-price 5` leaves out cards over EUR 5 and cards with no price. `-n` sets how many ideas each list
 shows (default 5).
 
+Below bracket 5 ideas also keep to the deck's own budget
+([ADR 0025](docs/adr/0025-deck-budget-below-bracket-5.md)): the deck's average card price is its working
+budget, and nothing more than 25% above its dearest card is offered. Ideas within budget come first; the
+rest are marked "(over budget)", and in the app's Considering list "Over budget". `--any-price` ignores the
+deck's budget.
+
 EDHREC's own pages are not used: its terms of use forbid automated requests. See
 [ADR 0003](docs/adr/0003-suggestions-from-spellbook-and-scryfall.md).
 

@@ -55,9 +55,6 @@ LAND_TOLERANCE = 1
 SHORT_MARGIN = 0.05
 MAX_NAMED_LANDS = 4
 MAX_TAPPED_SWAPS = 3
-# Below bracket 5 a named land over the deck's average card is still offered, marked over budget, up to
-# this much above the deck's dearest card (ADR 0024).
-OVER_BUDGET_MARGIN = 1.25
 BASIC_NAMES = {"W": "Plains", "U": "Island", "B": "Swamp", "R": "Mountain", "G": "Forest"}
 # Lines of a land's text that make it a plain tap-land, with nothing else worth a slower turn.
 _PLAIN_LAND_LINES = (
@@ -289,17 +286,6 @@ def suggest_mana(
         still_short=tuple(sorted({need.card for needs in short_after.values() for need in needs})),
         budget_cents=budget_cents,
     )
-
-
-def average_cents(prices: Iterable[tuple[int, int | None]]) -> int | None:
-    """The deck's average card price from (copies, cents) pairs, unpriced cards left out; None for none.
-
-    Below bracket 5 a named land costs at most this (ADR 0024): a casual deck's budget shows in what it
-    already runs, so a land dearer than its average card doesn't fit it.
-    """
-    priced = [(copies, cents) for copies, cents in prices if cents is not None]
-    total = sum(copies for copies, _ in priced)
-    return round(sum(copies * cents for copies, cents in priced) / total) if total else None
 
 
 def _land_change(report: ManaBase) -> int:

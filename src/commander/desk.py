@@ -41,6 +41,7 @@ from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
 from commander.bracket import estimate_cache, estimate_deck
 from commander.bracketcheck import check_bracket, check_json
 from commander.bracketpreview import preview_json, spellbook_preview
+from commander.budget import resolved_budget
 from commander.carddb import CardDataError, CardDb, CardInfo, ResolvedCard
 from commander.cli_meta import report_json
 from commander.cli_output import change_mark, change_text
@@ -57,11 +58,9 @@ from commander.leanings import leaning_json
 from commander.manabase import (
     ALTERNATIVE_COST_TAGS,
     BASIC_NAMES,
-    OVER_BUDGET_MARGIN,
     LandOption,
     ManaPlan,
     analyse_mana,
-    average_cents,
     mana_json,
     plan_json,
     suggest_mana,
@@ -359,9 +358,13 @@ class Desk:
             grid = deck_grid(main)
             infos = db.cards(card.oracle_id for card in board.cards)
             rules = with_ideas(self._deck_rules(stored, main, profile, db), infos.values(), db)
+            budget = resolved_budget(stored.deck.bracket, main, profile.max_card_cents)
             cards = [
                 {
                     **self._card_view(db, card),
+                    "withinBudget": None
+                    if budget.working is None
+                    else budget.within(info.cheapest_cents if (info := infos.get(card.oracle_id)) else None),
                     "dropping": card.name in drop,
                     "targets": [
                         _target_json(t) for t in targets_for(card, infos.get(card.oracle_id), main, rules)
@@ -383,6 +386,7 @@ class Desk:
             "tags": list(stored.deck.tags or ()),
             "identity": identity,
             "stamp": board_stamp(stored.folder),
+            "budget": budget.json(),
             "pending": board.pending(stored.deck),
             "cards": cards,
             "deckCards": sorted({c.name for c in stored.deck.main_cards if "Commander" not in c.categories}),
@@ -775,44 +779,23 @@ class Desk:
 
 
 def _land_options(db: CardDb, deck: Deck, folder: Path) -> tuple[list[LandOption], int | None]:
-    """Lands the suggestion may name, and the deck's working budget (ADR 0024).
+    """Lands the suggestion may name, and the deck's working budget (ADR 0024, 0025).
 
-    Options are in the commander's identity, neither in the deck nor turned down on its board, and no dearer
-    than OVER_BUDGET_MARGIN above the deck's dearest card; the budget is its average card. The profile's price
-    limit caps both.
+    Options are in the commander's identity, neither in the deck nor turned down on its board, and within the
+    deck budget's ceiling.
     """
-    infos = db.cards_named(card.name for card in deck.main_cards)
-    identity = "".join(
-        sorted(
-            {
-                c
-                for name in deck.commanders
-                if (info := infos.get(name.casefold()))
-                for c in info.color_identity
-            }
-        )
-    )
-    prices = [
-        (card.quantity, info.cheapest_cents)
-        for card in deck.main_cards
-        if (info := infos.get(card.name.casefold())) and not info.front_type_line.startswith("Basic ")
-    ]
-    limit = read_profile(folder).max_card_cents
-    dearest = max((cents for _, cents in prices if cents is not None), default=None)
-    ceiling = _capped(round(dearest * OVER_BUDGET_MARGIN) if dearest is not None else None, limit)
+    main = db.resolve(deck.main_cards)
+    identity = deck_identity(main) or ""
+    budget = resolved_budget(deck.bracket, main, read_profile(folder).max_card_cents)
     skip = {card.name.casefold() for card in deck.cards} | {
         name.casefold() for name in read_board(folder).rejected_names
     }
     options = [
         LandOption(mana, cents)
-        for mana, cents in db.lands(identity, max_cents=ceiling)
+        for mana, cents in db.lands(identity, max_cents=budget.ceiling)
         if mana.name.casefold() not in skip
     ]
-    return options, _capped(average_cents(prices), limit)
-
-
-def _capped(cents: int | None, limit: int | None) -> int | None:
-    return min((c for c in (cents, limit) if c is not None), default=None)
+    return options, budget.working
 
 
 def _image_url(db: CardDb, info: CardInfo) -> str | None:

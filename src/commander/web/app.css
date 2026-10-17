@@ -660,6 +660,7 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .badge.status.racing { background: var(--surface-2); color: var(--muted); }
 .badge.status.gc { background: var(--warn-soft); }
 .badge.status.thin { background: var(--warn-soft); }
+.badge.status.over { background: var(--warn-soft); }
 .note { margin: 0; font-size: var(--text-s); color: var(--muted); font-style: italic; }
 .replacing {
   margin: 0;

@@ -109,7 +109,8 @@ def test_ideas_over_the_profiles_ceiling_or_price_cap_are_left_out(
     capped = compiled_names(
         tmp_path / "ceiling", replace(deck, bracket=2), db, "version = 1\nbracket_ceiling = 2\n"
     )
-    assert capped == {Origin.META: ["Mind Stone"], Origin.DECKS: ["Arcane Signet"], Origin.ADJACENT: []}
+    # Below bracket 5 the deck's budget (ADR 0025) also leaves out Mind Stone, which has no price.
+    assert capped == {Origin.META: [], Origin.DECKS: ["Arcane Signet"], Origin.ADJACENT: []}
     # Jeska's Will costs EUR 33.80 and Mind Stone has no price; Arcane Signet costs EUR 0.30.
     cheap = compiled_names(tmp_path / "price", deck, db, "version = 1\nmax_card_eur = 1\n")
     assert cheap == {Origin.META: [], Origin.DECKS: ["Arcane Signet"], Origin.ADJACENT: []}

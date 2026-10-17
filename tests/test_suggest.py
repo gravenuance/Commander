@@ -30,6 +30,7 @@ from conftest import FakeSpellbook, Json, load_fixture
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 OPTIONS = SuggestOptions(DEFAULT_TARGETS, count=5, max_cents=None)
+ANY_PRICE = replace(OPTIONS, deck_budget=False)
 
 
 @pytest.fixture
@@ -161,7 +162,8 @@ def test_price_limit_drops_dearer_and_unpriced_cards(deck: Deck, db: CardDb) -> 
 
 
 def test_ideas_that_raise_the_bracket_are_marked(deck: Deck, db: CardDb) -> None:
-    result = run(replace(deck, bracket=2), db)
+    # The deck's own budget would leave out the dearer pieces; this is about brackets alone.
+    result = run(replace(deck, bracket=2), db, options=ANY_PRICE)
     assert pieces(result) == [
         ("Aggravated Assault", 1693, 3),
         ("Maskwood Nexus", None, None),
@@ -175,7 +177,7 @@ def test_ideas_that_raise_the_bracket_are_marked(deck: Deck, db: CardDb) -> None
 
 def test_combo_whose_lowest_bracket_is_the_decks_own_raises_nothing(deck: Deck, db: CardDb) -> None:
     # Spicy fits brackets 3-4, so a bracket 3 deck stays where it is.
-    assert pieces(run(replace(deck, bracket=3), db)) == [
+    assert pieces(run(replace(deck, bracket=3), db, options=ANY_PRICE)) == [
         ("Aggravated Assault", 1693, None),
         ("Maskwood Nexus", None, None),
         ("Splinter Twin", 668, None),
@@ -183,7 +185,7 @@ def test_combo_whose_lowest_bracket_is_the_decks_own_raises_nothing(deck: Deck, 
 
 
 def test_within_bracket_hides_ideas_that_raise_it(deck: Deck, db: CardDb) -> None:
-    result = run(replace(deck, bracket=2), db, options=replace(OPTIONS, ceiling=2))
+    result = run(replace(deck, bracket=2), db, options=replace(ANY_PRICE, ceiling=2))
     assert [p.name for p in result.pieces] == ["Maskwood Nexus"]
     assert [i.info.name for i in result.roles[0].ideas] == ["Arcane Signet", "Mind Stone"]
     assert result.hidden == 3

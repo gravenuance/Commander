@@ -5,7 +5,8 @@ Archidekt decks for the commander ("archidekt decks"); decks below bracket 5 get
 from decks at their own bracket. Each source puts at most MAX_PER_SOURCE ideas on the board, most played
 first, and only ideas with a deck card to replace. A deck whose profile names commanders that play alike
 also gets the staples of their pooled recent Archidekt decks ("adjacent decks", ADR 0015). Ideas pass the
-profile's exclusions, bracket ceiling and price cap. EDHREC is never asked (ADR 0003): its rank, from
+profile's exclusions, bracket ceiling and price cap; below bracket 5 also the deck's budget (ADR 0025),
+those within its working budget first. EDHREC is never asked (ADR 0003): its rank, from
 Scryfall's data, only orders the cards an idea could replace.
 """
 
@@ -15,6 +16,7 @@ from datetime import date
 
 from commander.analysis import game_changers
 from commander.board import BoardCard, BoardService, Origin, Status, feed_ideas, read_board
+from commander.budget import Budget, resolved_budget
 from commander.carddb import CardDb, CardInfo, ResolvedCard
 from commander.deckcache import Clock
 from commander.deckprofile import Profile, read_profile, resolve_themes
@@ -33,7 +35,7 @@ from commander.metadata import MetaData, PeerList
 from commander.models import Deck, short_commander_name
 from commander.playstyle import Fit
 from commander.store import StoredDeck
-from commander.suggest import affordable, card_raise, name_keys
+from commander.suggest import card_raise, name_keys
 from commander.targets import deck_cut_rules, role_targets, with_ideas
 
 MAX_PER_SOURCE = 10
@@ -109,7 +111,15 @@ def compile_ideas(
     main = db.resolve(deck.main_cards)
     infos = db.cards_named(idea.name for idea in ideas)
     rules = with_ideas(deck_cut_rules(deck, main, profile, db, data), infos.values(), db)
-    allowed = _profile_filter(deck, profile, main, db, infos.values())
+    budget = resolved_budget(deck.bracket, main, profile.max_card_cents)
+    allowed = _profile_filter(deck, profile, main, db, infos.values(), budget=budget)
+
+    def within(idea: Idea) -> bool:
+        info = infos.get(idea.name.casefold())
+        return budget.within(info.cheapest_cents if info else None)
+
+    # Within the deck's working budget first, most played first within each half (ADR 0025).
+    ideas.sort(key=lambda idea: not within(idea))
     service = BoardService(stored.folder, deck, db, now=now)
     added: dict[Origin, list[BoardCard]] = {}
     for origin in Origin:
@@ -134,10 +144,16 @@ def compile_ideas(
 
 
 def _profile_filter(
-    deck: Deck, profile: Profile, main: Sequence[ResolvedCard], db: CardDb, infos: Iterable[CardInfo]
+    deck: Deck,
+    profile: Profile,
+    main: Sequence[ResolvedCard],
+    db: CardDb,
+    infos: Iterable[CardInfo],
+    *,
+    budget: Budget,
 ) -> Callable[[CardInfo], bool]:
     """Whether the profile lets a card in, as it does for `suggest`: not excluded by name, type, keyword
-    or tag, not lifting the deck over its bracket ceiling, and within its price cap."""
+    or tag, not lifting the deck over its bracket ceiling, and under the deck budget's ceiling."""
     banned = db.matching(resolve_themes(profile, db).exclude, (info.oracle_id for info in infos))
     banned_names = {key for name in profile.exclude_cards for key in name_keys(name)}
     changers = len(game_changers(main))
@@ -149,7 +165,7 @@ def _profile_filter(
         ceiling = profile.bracket_ceiling
         if raises is not None and ceiling is not None and raises.bracket > ceiling:
             return False
-        return affordable(info.cheapest_cents, profile.max_card_cents)
+        return budget.allows(info.cheapest_cents)
 
     return allowed
 
