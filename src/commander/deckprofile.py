@@ -109,20 +109,31 @@ def profile_path(folder: Path) -> Path:
 def read_profile(folder: Path) -> Profile:
     """The deck's profile, or an empty one when the folder has none."""
     path = profile_path(folder)
+    text = read_profile_text(path)
+    if text is None:
+        return Profile()
+    try:
+        raw = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as error:
+        raise ProfileError(f"cannot read {path}: {error}") from error
+    return parse_profile(migrate_profile(raw, path), str(path))
+
+
+def read_profile_text(path: Path) -> str | None:
+    """The profile file's text, None when there is no file; one too big or not UTF-8 is a ProfileError."""
     try:
         with path.open("rb") as handle:
             data = handle.read(MAX_PROFILE_BYTES + 1)
     except FileNotFoundError:
-        return Profile()
+        return None
     except OSError as error:
         raise ProfileError(f"cannot read {path}: {error}") from error
     if len(data) > MAX_PROFILE_BYTES:
         raise ProfileError(f"{path} is over {MAX_PROFILE_BYTES:,} bytes, too big for a profile")
     try:
-        raw = tomllib.loads(data.decode("utf-8-sig"))
-    except (UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError as error:
         raise ProfileError(f"cannot read {path}: {error}") from error
-    return parse_profile(_migrate(raw, path), str(path))
 
 
 def parse_profile(raw: Mapping[str, object], where: str) -> Profile:
@@ -234,7 +245,7 @@ def resolve_spec(spec: ThemeSpec, ids: Mapping[str, str]) -> Theme:
     return Theme(spec.types, spec.keywords, tuple(ids[slug] for slug in spec.tags if slug in ids))
 
 
-def _migrate(raw: dict[str, object], path: Path) -> dict[str, object]:
+def migrate_profile(raw: dict[str, object], path: Path) -> dict[str, object]:
     # Migrations from older profile versions go here, on the raw table, before reading fields.
     version = raw.get("version", PROFILE_VERSION)
     if version != PROFILE_VERSION:

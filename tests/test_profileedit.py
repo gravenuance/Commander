@@ -61,3 +61,26 @@ def test_too_many_commanders_leave_the_file_alone(tmp_path: Path) -> None:
     with pytest.raises(ProfileError, match="over 8 commanders"):
         save_settings(tmp_path, DECK, adjacent=[[f"Commander {i}"] for i in range(9)], ignore=[])
     assert (tmp_path / "profile.toml").read_text(encoding="utf-8") == PROFILE
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        pytest.param('version = 1\nideas = "Ygra"\n', "'ideas' must be a table", id="not-a-table"),
+        pytest.param("version = 2\n", "profile version 2 is not supported", id="newer-version"),
+        pytest.param("# " + "x" * 70_000 + "\n", "too big for a profile", id="over-size-limit"),
+    ],
+)
+def test_a_profile_that_cannot_be_read_as_one_raises_profile_error_and_stays_as_it_was(
+    tmp_path: Path, text: str, message: str
+) -> None:
+    (tmp_path / "profile.toml").write_text(text, encoding="utf-8")
+    with pytest.raises(ProfileError, match=message):
+        save_settings(tmp_path, DECK, adjacent=[["Ygra, Eater of All"]], ignore=[])
+    assert (tmp_path / "profile.toml").read_text(encoding="utf-8") == text
+
+
+def test_a_profile_in_another_encoding_raises_profile_error(tmp_path: Path) -> None:
+    (tmp_path / "profile.toml").write_bytes(b"version = 1\n# caf\xe9\n")
+    with pytest.raises(ProfileError, match="cannot read"):
+        save_settings(tmp_path, DECK, adjacent=[], ignore=[])

@@ -8,7 +8,15 @@ import tomlkit
 from tomlkit.exceptions import ParseError
 from tomlkit.items import Array, Table
 
-from commander.deckprofile import Profile, ProfileError, parse_profile, profile_path, profile_template
+from commander.deckprofile import (
+    Profile,
+    ProfileError,
+    migrate_profile,
+    parse_profile,
+    profile_path,
+    profile_template,
+    read_profile_text,
+)
 from commander.fsutil import write_text_atomic
 from commander.models import Deck
 
@@ -23,11 +31,14 @@ def save_settings(
     value raises ProfileError and leaves the file alone.
     """
     path = profile_path(folder)
-    text = path.read_text(encoding="utf-8") if path.exists() else profile_template(deck)
+    text = read_profile_text(path)
     try:
-        doc = tomlkit.parse(text)
+        doc = tomlkit.parse(profile_template(deck) if text is None else text)
     except ParseError as error:
         raise ProfileError(f"cannot read {path}: {error}") from error
+    # The file as it stands must be a profile before it is edited, so a wrong shape is an error here.
+    existing = migrate_profile(cast("dict[str, object]", doc.unwrap()), path)
+    parse_profile(existing, str(path))
     groups: dict[tuple[str, ...], list[str]] = {}
     for group in adjacent:
         names = [name.strip() for name in group if name.strip()]
