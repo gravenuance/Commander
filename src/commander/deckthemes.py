@@ -93,16 +93,23 @@ TRIVIA_TAGS = frozenset(
     }
 )
 TRIVIA_PREFIXES = ("cycle-", "namesake-", "virtual-")
-ROLES_AND_TYPES = frozenset(
-    {alias for aliases in CATEGORY_ALIASES.values() for alias in aliases}
-    | {card_type.casefold() for card_type in CARD_TYPES}
-)
+ROLE_NAMES = frozenset(alias for aliases in CATEGORY_ALIASES.values() for alias in aliases)
+TYPE_NAMES = frozenset(card_type.casefold() for card_type in CARD_TYPES)
+ROLES_AND_TYPES = ROLE_NAMES | TYPE_NAMES
 # Categories that hold roles, card types or deck parts, which suggest already covers or which carry no theme.
 NOT_THEMES = frozenset(
     ROLES_AND_TYPES
     | {"land", "lands", "commander", "combo", "combos", "combo pieces", "maybeboard", "sideboard", "maybe"}
     | {"uncategorized"}
 )
+
+
+class BroadKind(Enum):
+    """What a deck tag too broad to pick cards by is (ADR 0009)."""
+
+    PLAY_STYLE = "play style"
+    ROLE = "role"
+    CARD_TYPE = "card type"
 
 
 class ThemeSource(Enum):
@@ -263,17 +270,28 @@ def derive_themes(deck: Deck, db: CardDb, rules: CoverRules = CoverRules()) -> D
     return DeckThemes(tuple(themes), tuple(unmatched), tuple(vague), tuple(broad))
 
 
-def deck_tag_spec(name: str, db: CardDb) -> ThemeSpec | None:
-    """The cards a deck tag asks for; None when too broad, an empty spec for a name nothing matches."""
+def broad_kind(name: str) -> BroadKind | None:
+    """What a deck tag is when it is too broad to pick cards by; None for any other tag."""
     key = name.strip().casefold()
     if key in PLAY_STYLES:
+        return BroadKind.PLAY_STYLE
+    if key in OVERRIDES:
         return None
+    forms = set(_singulars(key))
+    # Roles have their own targets in suggest, and a card type ("Creatures") would take in half of all cards.
+    if forms & ROLE_NAMES:
+        return BroadKind.ROLE
+    return BroadKind.CARD_TYPE if forms & TYPE_NAMES else None
+
+
+def deck_tag_spec(name: str, db: CardDb) -> ThemeSpec | None:
+    """The cards a deck tag asks for; None when too broad, an empty spec for a name nothing matches."""
+    if broad_kind(name) is not None:
+        return None
+    key = name.strip().casefold()
     if key in OVERRIDES:
         return OVERRIDES[key]
     forms = _singulars(key)
-    # Roles have their own targets in suggest, and a card type ("Creatures") would take in half of all cards.
-    if set(forms) & ROLES_AND_TYPES:
-        return None
     words = [form for form in forms if " " not in form]
     type_word = next((w for w in words if db.theme_size(Theme(types=(w,)))), None)
     keyword = next((w for w in words if db.theme_size(Theme(keywords=(w,)))), None)

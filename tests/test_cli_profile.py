@@ -178,3 +178,18 @@ def test_suggest_prints_the_themed_section(tmp_path: Path, raw_deck: Json, own_c
     out = suggest(["magda"], tmp_path, fake, own_cache).out
     section = out.split("\ncards that fit the deck's themes (most played first)\n")[1]
     assert section.splitlines()[0].endswith("  Lightning Bolt (fits profile)")
+
+
+def test_deck_tags_too_broad_for_a_theme_say_which_kind_they_are(
+    tmp_path: Path, raw_deck: Json, own_cache: Path
+) -> None:
+    for position, name in enumerate(("Draw", "Creatures"), start=1):
+        raw_deck["deckTags"].append({"id": 1_547_800 + position, "tag": 90 + position, "name": name})
+    synced(tmp_path, raw_deck)
+    code, out, _ = profile(["magda"], tmp_path, own_cache)
+    assert code == 0
+    assert out.splitlines()[-3:] == [
+        "  cEDH (deck tag): how the deck plays, not a theme",
+        "  Draw (deck tag): a role, which suggest already has targets for, not a theme",
+        "  Creatures (deck tag): a card type, too broad to be a theme",
+    ]

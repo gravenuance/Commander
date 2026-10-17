@@ -15,11 +15,17 @@ from commander.deckprofile import (
     resolve_themes,
     write_profile_template,
 )
-from commander.deckthemes import DerivedTheme, MergedThemes, ThemeSource, merge_themes
+from commander.deckthemes import BroadKind, DerivedTheme, MergedThemes, ThemeSource, broad_kind, merge_themes
 from commander.leanings import Leaning, leaning_json, leaning_text
 from commander.metadata import gather_for
 from commander.pricing import format_eur
 from commander.targets import deck_cut_rules
+
+_BROAD_TAGS = {
+    BroadKind.PLAY_STYLE: "how the deck plays, not a theme",
+    BroadKind.ROLE: "a role, which suggest already has targets for, not a theme",
+    BroadKind.CARD_TYPE: "a card type, too broad to be a theme",
+}
 
 
 def add_profile_commands(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
@@ -131,7 +137,9 @@ def derived_lines(merged: MergedThemes) -> list[str]:
     used = {(t.source, t.name) for t in merged.used}
     lines = [_derived_line(t, (t.source, t.name) in used) for t in derived.themes]
     lines += [f"  {name} (deck tag): matches no type, keyword or Tagger tag" for name in derived.unmatched]
-    lines += [f"  {name} (deck tag): how the deck plays, not a theme" for name in derived.broad]
+    lines += [
+        f"  {name} (deck tag): {_BROAD_TAGS[kind]}" for name in derived.broad if (kind := broad_kind(name))
+    ]
     lines += [f"  {name} (category): its cards share nothing distinctive" for name in derived.vague]
     if not merged.profile_covered.empty:
         # Ideas are labelled by the deck tag, not "profile" as well.

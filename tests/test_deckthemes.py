@@ -9,12 +9,14 @@ from commander.carddb import CardDb, Theme
 from commander.deckprofile import Profile, ThemeSpec
 from commander.deckthemes import (
     OVERRIDES,
+    BroadKind,
     CoverRules,
     DeckThemes,
     DerivedTheme,
     Feature,
     FeatureKind,
     ThemeSource,
+    broad_kind,
     cover,
     deck_tag_spec,
     derive_themes,
@@ -140,6 +142,26 @@ def test_deck_tags_match_types_keywords_and_tags_by_name(
     db: CardDb, name: str, spec: ThemeSpec | None
 ) -> None:
     assert deck_tag_spec(name, db) == spec
+
+
+@pytest.mark.parametrize(
+    ("name", "kind"),
+    [
+        ("cEDH", BroadKind.PLAY_STYLE),
+        ("Tempo", BroadKind.PLAY_STYLE),
+        ("Draw", BroadKind.ROLE),
+        ("Board Wipes", BroadKind.ROLE),
+        ("Creatures", BroadKind.CARD_TYPE),
+        ("Instants", BroadKind.CARD_TYPE),
+        # An override names the cards for these, though they hold a card type.
+        ("Artifacts", None),
+        ("Dwarves", None),
+    ],
+)
+def test_a_deck_tag_too_broad_for_a_theme_is_a_play_style_a_role_or_a_card_type(
+    name: str, kind: BroadKind | None
+) -> None:
+    assert broad_kind(name) is kind
 
 
 def test_the_stax_override_names_real_tags() -> None:
