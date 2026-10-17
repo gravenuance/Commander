@@ -31,6 +31,7 @@ from commander.cli_output import (
     print_bracket_preview,
     print_resolution,
     progress_printer,
+    write_json,
 )
 from commander.clibase import (
     EXIT_FAILURE,
@@ -159,8 +160,7 @@ def _cmd_show(args: argparse.Namespace, ctx: Context) -> int:
     stored = one_deck(workspace(args, ctx), args.deck)
     board = read_board(stored.folder)
     if args.json:
-        json.dump({"deck": stored.deck.id, **board_json(board)}, ctx.out, ensure_ascii=False, indent=2)
-        ctx.out.write("\n")
+        write_json({"deck": stored.deck.id, **board_json(board)}, ctx.out)
         return EXIT_OK
     print_board(stored, board, ctx.out)
     return EXIT_OK
@@ -224,8 +224,7 @@ def _cmd_log(args: argparse.Namespace, ctx: Context) -> int:
     )
     if args.json:
         rows = [{"deck": s.deck.id, "deckName": s.deck.short_name, **activity_json(e)} for e, s in entries]
-        json.dump(rows, ctx.out, ensure_ascii=False, indent=2)
-        ctx.out.write("\n")
+        write_json(rows, ctx.out)
         return EXIT_OK
     if not entries:
         print("nothing changed" + (f" since {args.since}" if args.since else ""), file=ctx.out)

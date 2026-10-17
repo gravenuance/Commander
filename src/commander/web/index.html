@@ -51,9 +51,10 @@
         <p id="deck-archetype" class="archetype"></p>
         <div id="deck-leanings" class="leanings"></div>
         <div class="head-actions">
-          <div class="propose" role="combobox" aria-haspopup="listbox" aria-owns="propose-results" aria-expanded="false" id="propose-box">
-            <input id="propose-input" type="search" placeholder="Propose a card" aria-label="Propose a card"
-                   aria-autocomplete="list" aria-controls="propose-results" autocomplete="off" spellcheck="false">
+          <div class="propose">
+            <input id="propose-input" type="search" role="combobox" placeholder="Propose a card" aria-label="Propose a card"
+                   aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="propose-results"
+                   autocomplete="off" spellcheck="false">
             <ul id="propose-results" class="results" role="listbox" aria-label="Matching cards" hidden></ul>
           </div>
           <button id="review" class="button primary" type="button" disabled>Review changes</button>
@@ -162,9 +163,10 @@
     <p class="muted small">Their recent Archidekt decks give ideas on each update. For a partner pair, add one
       and click its “+ partner”.</p>
     <ul id="settings-adjacent" class="setting-chips" aria-label="Commanders that play alike"></ul>
-    <div class="propose setting-input" role="combobox" aria-haspopup="listbox" aria-owns="settings-adjacent-results" aria-expanded="false">
-      <input id="settings-adjacent-input" type="search" placeholder="Add a commander" aria-label="Add a commander"
-             aria-autocomplete="list" aria-controls="settings-adjacent-results" autocomplete="off" spellcheck="false">
+    <div class="propose setting-input">
+      <input id="settings-adjacent-input" type="search" role="combobox" placeholder="Add a commander" aria-label="Add a commander"
+             aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="settings-adjacent-results"
+             autocomplete="off" spellcheck="false">
       <ul id="settings-adjacent-results" class="results" role="listbox" aria-label="Matching commanders" hidden></ul>
     </div>
   </section>
@@ -173,9 +175,10 @@
     <p class="muted small">Deck tags, categories, leanings or any Scryfall Tagger tag that should not steer
       ideas or cuts.</p>
     <ul id="settings-ignore" class="setting-chips" aria-label="Themes to ignore"></ul>
-    <div class="propose setting-input" role="combobox" aria-haspopup="listbox" aria-owns="settings-ignore-results" aria-expanded="false">
-      <input id="settings-ignore-input" type="search" placeholder="Add a theme or tag" aria-label="Add a theme or tag"
-             aria-autocomplete="list" aria-controls="settings-ignore-results" autocomplete="off" spellcheck="false">
+    <div class="propose setting-input">
+      <input id="settings-ignore-input" type="search" role="combobox" placeholder="Add a theme or tag" aria-label="Add a theme or tag"
+             aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="settings-ignore-results"
+             autocomplete="off" spellcheck="false">
       <ul id="settings-ignore-results" class="results" role="listbox" aria-label="Matching themes and tags" hidden></ul>
     </div>
     <div id="settings-offers" class="setting-offers"></div>
@@ -206,6 +209,17 @@
   <span id="status-text" class="toast-text" role="status" aria-live="polite"></span>
   <button id="status-close" class="toast-close" type="button" aria-label="Dismiss" title="Dismiss">×</button>
 </div>
-<script>/*APP_JS*/</script>
+<script src="core.js"></script>
+<script src="grid.js"></script>
+<script src="considered.js"></script>
+<script src="deck.js"></script>
+<script src="bracket.js"></script>
+<script src="rail.js"></script>
+<script src="mana.js"></script>
+<script src="settings.js"></script>
+<script src="review.js"></script>
+<script src="meta.js"></script>
+<script src="account.js"></script>
+<script src="main.js"></script>
 </body>
 </html>

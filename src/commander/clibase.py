@@ -103,3 +103,20 @@ def warn_if_stale(meta: CardDataMeta, ctx: Context) -> None:
 def day(timestamp: str) -> str:
     # Scryfall timestamps are ISO 8601 in UTC; the date part is all a reader needs.
     return timestamp[:10]
+
+
+def non_negative(text: str) -> int:
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a whole number: {text!r}") from None
+    if value < 0:
+        raise argparse.ArgumentTypeError("must be 0 or more")
+    return value
+
+
+def positive(text: str) -> int:
+    value = non_negative(text)
+    if value == 0:
+        raise argparse.ArgumentTypeError("must be 1 or more")
+    return value
