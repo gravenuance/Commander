@@ -376,3 +376,18 @@ def test_a_card_adding_several_copies_cannot_cut_a_single_card(service: BoardSer
     card = service.propose("Lightning Bolt", Actor.CMDR, copies=2)
     with pytest.raises(BoardError, match="adds 2 copies; the deck has only 1 Battered Golem"):
         service.decide(card.id, Status.ADD, Actor.YOU, choice="Battered Golem")
+
+
+def test_a_queued_card_the_deck_already_holds_neither_adds_nor_cuts(
+    deck: Deck, tmp_path: Path, db: CardDb
+) -> None:
+    # Queued when the deck lacked Battered Golem; the deck as Archidekt has it now holds it.
+    earlier = replace(deck, cards=tuple(c for c in deck.cards if c.name != "Battered Golem"))
+    service = BoardService(tmp_path, earlier, db, now=Clock())
+    golem = service.propose("Battered Golem", Actor.YOU)
+    signet = service.propose("Arcane Signet", Actor.YOU)
+    service.decide(golem.id, Status.ADD, Actor.YOU, choice="Disruptor Flute")
+    service.decide(signet.id, Status.ADD, Actor.YOU, choice="Mountain")
+    assert board_plan(deck, read_board(tmp_path)) == Plan(
+        "10004639", (AddCard("Arcane Signet"),), (RemoveCard("Mountain", keep=5),)
+    )

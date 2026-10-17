@@ -463,6 +463,33 @@ class ApplyOutcome:
     result: SaveResult | None
 
 
+def fetch_own_deck(editor: ArchidektEditor, deck_id: int, *, user: str) -> LiveDeck:
+    """The deck as it is on Archidekt now; refuses another user's deck."""
+    live = editor.get_deck(deck_id)
+    if live.deck.owner.casefold() != user.casefold():
+        raise NotYourDeckError(
+            f"deck {deck_id} belongs to {live.deck.owner}, not {user}; cmdr edits only yours"
+        )
+    return live
+
+
+def apply_to_live(
+    editor: ArchidektEditor,
+    live: LiveDeck,
+    plan: Plan,
+    db: CardDb,
+    *,
+    save_changes: bool,
+    now: Callable[[], datetime],
+    on_progress: Callable[[str], None] = lambda _: None,
+) -> ApplyOutcome:
+    """Check a plan against a deck fetched from Archidekt; save it when asked and nothing is wrong."""
+    resolution = resolve_plan(live.deck, plan, db, categories=live.categories)
+    if not (save_changes and resolution.changes and not resolution.problems):
+        return ApplyOutcome(resolution, None)
+    return ApplyOutcome(resolution, save(editor, live, resolution, now=now, on_progress=on_progress))
+
+
 def apply_plan(
     editor: ArchidektEditor,
     deck_id: int,
@@ -475,15 +502,8 @@ def apply_plan(
     on_progress: Callable[[str], None] = lambda _: None,
 ) -> ApplyOutcome:
     """Check a plan against the deck as it is on Archidekt now; save it when asked and nothing is wrong."""
-    live = editor.get_deck(deck_id)
-    if live.deck.owner.casefold() != user.casefold():
-        raise NotYourDeckError(
-            f"deck {deck_id} belongs to {live.deck.owner}, not {user}; cmdr edits only yours"
-        )
-    resolution = resolve_plan(live.deck, plan, db, categories=live.categories)
-    if not (save_changes and resolution.changes and not resolution.problems):
-        return ApplyOutcome(resolution, None)
-    return ApplyOutcome(resolution, save(editor, live, resolution, now=now, on_progress=on_progress))
+    live = fetch_own_deck(editor, deck_id, user=user)
+    return apply_to_live(editor, live, plan, db, save_changes=save_changes, now=now, on_progress=on_progress)
 
 
 def _entries_named(deck: Deck, name: str) -> list[DeckCard]:

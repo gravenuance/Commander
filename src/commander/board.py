@@ -45,6 +45,7 @@ STALE_LOCK_SECONDS = 60.0
 # How far a turned-down card's share of the meta's lists must rise before the meta offers it again.
 RETURN_RISE = 0.20
 _LOCK_POLL_SECONDS = 0.05
+_BASIC_LAND_NAMES = frozenset({"plains", "island", "swamp", "mountain", "forest", "wastes"})
 _THREAD_LOCK = threading.Lock()
 
 
@@ -290,14 +291,30 @@ def board_plan(deck: Deck, board: Board) -> Plan | None:
     It adds every queued card and moves its chosen cut to the Maybeboard, so the swap can be weighed the
     other way round later, and takes turned-down cards off the Sideboard or Maybeboard. A cut the deck holds
     more copies of, such as a basic land, loses one copy for each copy a card adds (most add one) instead.
+
+    The counts come from deck, so it should be the deck as it is on Archidekt now: a queued card that deck
+    already holds (other than a basic land) is done, and neither adds nor cuts.
     """
-    queued = board.queued
+    held = _held(deck)
+    queued = tuple(card for card in board.queued if not _already_added(held, card))
     drop = board.to_drop(deck)
     if not queued and not drop:
         return None
-    held = _held(deck)
-    adds = tuple(AddCard(card.name, held[card_key(card.name)] + card.copies) for card in queued)
+    adds = tuple(AddCard(card.name, _add_target(held, card)) for card in queued)
     return Plan(str(deck.id), adds, _cuts(held, queued), drop)
+
+
+def _already_added(held: Counter[str], card: BoardCard) -> bool:
+    return not _is_basic_land(card.name) and held[card_key(card.name)] >= card.copies
+
+
+def _add_target(held: Counter[str], card: BoardCard) -> int:
+    # A basic land swap adds to the copies held; any other card is wanted in `copies` copies in all.
+    return card.copies + (held[card_key(card.name)] if _is_basic_land(card.name) else 0)
+
+
+def _is_basic_land(name: str) -> bool:
+    return card_key(name).removeprefix("snow-covered ") in _BASIC_LAND_NAMES
 
 
 def _held(deck: Deck) -> Counter[str]:
