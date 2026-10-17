@@ -107,6 +107,20 @@ def test_signing_out_removes_the_login_and_forgets_the_account(env: Env) -> None
     assert config.workspaces == {"makkis": env.documents / "Commander" / "decks-MAKKIS"}
 
 
+def test_signing_in_and_out_is_logged_without_the_password(
+    env: Env, caplog: pytest.LogCaptureFixture
+) -> None:
+    desk = env.desk()
+    folder = env.documents / "Commander" / "decks-MAKKIS"
+    with caplog.at_level(logging.INFO, logger="commander.desk"):
+        desk.sign_in("MAKKIS", PASSWORD)
+        desk.sign_out()
+    assert f"signed in as MAKKIS; decks in {folder}" in caplog.text
+    assert f"signed out MAKKIS; decks stay in {folder}" in caplog.text
+    assert PASSWORD not in caplog.text
+    assert REFRESH_TOKEN not in caplog.text
+
+
 def test_syncing_needs_an_account(env: Env) -> None:
     assert "no Archidekt username" in str(env.desk().sync()["error"])
 

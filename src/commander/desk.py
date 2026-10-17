@@ -231,6 +231,7 @@ class Desk:
             ArchidektAuth(Fetcher(http), self._token_store).login(user, user, password)
         folder = switch_account(config, user, documents=self._documents())
         self._use_account(user, folder)
+        log.info("signed in as %s; decks in %s", user, folder)
         if not self._workspace.load_all():
             self._start_sync(user)
         return self.account()
@@ -246,6 +247,7 @@ class Desk:
             self._token_store.delete(user)
         forget_account(config)
         self._settings = replace(self._settings, user=None)
+        log.info("signed out %s; decks stay in %s", user, self._settings.workspace)
         return self.account()
 
     @_guarded
