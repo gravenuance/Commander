@@ -298,7 +298,7 @@ EDHTOP16_API = "https://edhtop16.com/api/graphql"
 
 
 class FakeEdhtop16:
-    """Answers EDHTop16 GraphQL queries with trimmed real answers, one queued page per entries request.
+    """Answers EDHTop16 GraphQL queries with made-up answers, one queued page per entries request.
 
     `pages` maps a commander name to the answers its entries requests get, in order; an unknown commander gets
     the real "no rows" answer. Every request's variables are recorded.

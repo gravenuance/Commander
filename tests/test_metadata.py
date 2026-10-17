@@ -125,8 +125,8 @@ def test_gathers_the_commander_lists_the_meta_and_archidekt_decks(rig: Rig) -> N
     assert lists is not None
     assert lists.known
     assert [e.tournament.held_on for e in lists.entries] == [
-        date(2026, 10, 10),
-        date(2026, 9, 20),
+        date(2026, 10, 4),
+        date(2026, 9, 13),
         date(2026, 8, 16),
     ]
     field = data.field.data
