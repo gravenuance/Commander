@@ -659,9 +659,7 @@ def _board_lock(folder: Path) -> Generator[None]:
                 fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
                 break
             except FileExistsError:
-                if _lock_is_stale(path):
-                    log.warning("removing stale board lock %s", path)
-                    path.unlink(missing_ok=True)
+                if _lock_is_stale(path) and _clear_stale_lock(path):
                     continue
                 if time.monotonic() > deadline:
                     raise BoardError(f"the board is busy ({path} is held); try again") from None
@@ -672,6 +670,30 @@ def _board_lock(folder: Path) -> Generator[None]:
             yield
         finally:
             path.unlink(missing_ok=True)
+
+
+def _clear_stale_lock(path: Path) -> bool:
+    """Remove a stale lock; False when another process is doing so or the lock turned out to be fresh.
+
+    Whoever holds the takeover file alone removes the lock, and looks again first: a bare unlink after the
+    check could delete the lock another process made fresh in between.
+    """
+    guard = path.with_name(path.name + ".takeover")
+    try:
+        os.close(os.open(guard, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+    except FileExistsError:
+        if _lock_is_stale(guard):
+            log.warning("removing stale board takeover file %s", guard)
+            guard.unlink(missing_ok=True)
+        return False
+    try:
+        if not _lock_is_stale(path):
+            return False
+        log.warning("removing stale board lock %s", path)
+        path.unlink(missing_ok=True)
+        return True
+    finally:
+        guard.unlink(missing_ok=True)
 
 
 def _lock_is_stale(path: Path) -> bool:

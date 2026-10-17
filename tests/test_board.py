@@ -256,6 +256,49 @@ def test_a_stale_lock_is_cleared(tmp_path: Path, service: BoardService) -> None:
     assert len(read_board(tmp_path).cards) == 1
 
 
+def test_a_takeover_never_removes_a_lock_made_fresh_since_it_was_seen_stale(
+    tmp_path: Path, service: BoardService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Another process cleared the stale lock and took the board between our look and our unlink.
+    monkeypatch.setattr(board_module, "LOCK_TIMEOUT_SECONDS", 0.0)
+    lock = tmp_path / LOCK_FILE
+    lock.write_text("123", encoding="utf-8")
+    looks: list[Path] = []
+
+    def stale_at_first_sight(path: Path) -> bool:
+        looks.append(path)
+        return len(looks) == 1 or time.time() - path.stat().st_mtime > board_module.STALE_LOCK_SECONDS
+
+    monkeypatch.setattr(board_module, "_lock_is_stale", stale_at_first_sight)
+    with pytest.raises(BoardError, match="the board is busy"):
+        service.propose("Lightning Bolt", Actor.YOU)
+    assert lock.read_text(encoding="utf-8") == "123"
+
+
+def test_a_stale_lock_is_not_cleared_while_another_process_is_taking_it_over(
+    tmp_path: Path, service: BoardService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(board_module, "LOCK_TIMEOUT_SECONDS", 0.0)
+    lock = tmp_path / LOCK_FILE
+    lock.write_text("123", encoding="utf-8")
+    old = time.time() - 120
+    os.utime(lock, (old, old))
+    (tmp_path / f"{LOCK_FILE}.takeover").write_text("456", encoding="utf-8")
+    with pytest.raises(BoardError, match="the board is busy"):
+        service.propose("Lightning Bolt", Actor.YOU)
+    assert lock.exists()
+
+
+def test_a_takeover_left_by_a_crashed_process_is_cleared_too(tmp_path: Path, service: BoardService) -> None:
+    old = time.time() - 120
+    for name in (LOCK_FILE, f"{LOCK_FILE}.takeover"):
+        (tmp_path / name).write_text("123", encoding="utf-8")
+        os.utime(tmp_path / name, (old, old))
+    service.propose("Lightning Bolt", Actor.YOU)
+    assert sorted(p.name for p in tmp_path.glob(".board.lock*")) == []
+    assert len(read_board(tmp_path).cards) == 1
+
+
 def test_sideboard_and_maybeboard_cards_come_in_as_considered_once(
     tmp_path: Path, deck: Deck, service: BoardService
 ) -> None:
