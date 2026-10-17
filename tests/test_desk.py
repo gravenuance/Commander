@@ -374,6 +374,38 @@ def test_the_deck_view_carries_the_card_grid(desk: Desk) -> None:
     assert str(golem["image"]).startswith("https://cards.scryfall.io/normal/front/")
 
 
+def test_without_cached_lists_no_card_carries_a_share(desk: Desk) -> None:
+    desk.propose(DECK, "Lightning Bolt")
+    view = desk.deck(DECK)
+    [bolt] = items(view, "cards")
+    assert bolt["share"] is None
+    cards = [c for g in items(view, "grid") for c in cast("list[Json]", g["cards"])]
+    assert cards
+    assert all(c["share"] is None for c in cards)
+
+
+def test_the_deck_view_carries_each_cards_combined_share_on_deck_and_board_cards(
+    desk: Desk, fake: FakeArchidekt
+) -> None:
+    fake.edhtop16.pages[MAGDA] = [magda_page()]
+    desk.refresh_meta(DECK)
+    view = desk.deck(DECK)
+    grid = {c["name"]: c for g in items(view, "grid") for c in cast("list[Json]", g["cards"])}
+    golem = cast("Json", grid["Battered Golem"]["share"])
+    # In the first five of the six lists with a decklist; the sixth weighs 0.525 of the others' 4.75.
+    assert (golem["count"], golem["total"], golem["label"]) == (5, 6, "90%")
+    assert golem["share"] == pytest.approx(4.75 / 5.275, abs=1e-4)
+    assert golem["meta"] == {"share": golem["share"], "count": 5, "total": 6}
+    assert golem["archidekt"] is None
+    assert golem["tip"] == "meta 90% (5/6 lists)"
+    # A card no list plays is 0%, not missing; the commander is in every deck by definition.
+    mountain = cast("Json", grid["Mountain"]["share"])
+    assert (mountain["count"], mountain["total"], mountain["label"]) == (0, 6, "0%")
+    assert grid["Magda, Brazen Outlaw"]["share"] is None
+    stone = next(c for c in items(view, "cards") if c["name"] == "Mind Stone")
+    assert cast("Json", stone["share"])["label"] == "90%"
+
+
 def test_each_board_card_comes_with_the_deck_cards_it_could_replace(desk: Desk) -> None:
     desk.propose(DECK, "Lightning Bolt")
     [bolt] = items(desk.deck(DECK), "cards")
@@ -534,8 +566,15 @@ def test_meta_opens_from_cache_and_refreshes_on_demand(desk: Desk, fake: FakeArc
         ("Jeska's Will", "cmdr", "meta"),
         ("Mind Stone", "cmdr", "meta"),
     ]
-    # Their inclusion, for ordering Considering: Mind Stone is in all five top-cut lists, Jeska's Will in two.
-    assert {c["name"]: c["inclusion"] for c in board} == {"Jeska's Will": 0.4, "Mind Stone": 1.0}
+    # Their share, for ordering Considering: of the six lists with a decklist, Mind Stone is in the first five
+    # and Jeska's Will in the first two; the sixth, 20th of 40, weighs 0.525 against 1 to 0.9 for the others.
+    shares = {c["name"]: cast("Json", c["share"]) for c in board}
+    assert {name: (s["count"], s["total"]) for name, s in shares.items()} == {
+        "Jeska's Will": (2, 6),
+        "Mind Stone": (5, 6),
+    }
+    assert shares["Mind Stone"]["share"] == pytest.approx(4.75 / 5.275, abs=1e-4)
+    assert shares["Jeska's Will"]["share"] == pytest.approx(1.975 / 5.275, abs=1e-4)
     desk.meta(DECK)
     assert len(items(desk.deck(DECK), "cards")) == len(board)
 

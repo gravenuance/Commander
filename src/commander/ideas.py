@@ -30,7 +30,6 @@ from commander.meta import (
     Basis,
     Staples,
     all_staples,
-    card_shares,
     pool_staples,
 )
 from commander.metadata import MetaData, MetaSources, PeerList, Progress, gather_adjacent
@@ -38,6 +37,7 @@ from commander.models import Deck, short_commander_name
 from commander.playstyle import Fit
 from commander.store import StoredDeck
 from commander.suggest import IdeaFilter, name_keys_of
+from commander.weightedshare import weighted_shares
 
 MAX_PER_SOURCE = 50
 
@@ -107,7 +107,7 @@ def compile_ideas(
     profile = read_profile(stored.folder)
     ideas = staple_ideas(deck, all_staples(deck, data, db), data.since)
     ideas += adjacent_ideas(deck, adjacent, profile.adjacent, db)
-    shares = card_shares(data) or None
+    shares = weighted_shares(data, now=now).fractions() or None
     board = read_board(stored.folder)
     main = db.resolve(deck.main_cards)
     infos = db.cards_named(idea.name for idea in ideas)

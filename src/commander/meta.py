@@ -358,22 +358,6 @@ def listed_entries(data: MetaData) -> list[Entry]:
     return [e for e in _window(data.lists.data.entries if data.lists.data else (), data.since) if e.cards]
 
 
-def card_shares(data: MetaData) -> dict[str, float]:
-    """Each card's share of the performing lists in the window, by `card_key`; empty without lists."""
-    performing = performing_entries(data)
-    if not performing:
-        return {}
-    return {key: count / len(performing) for key, count in _list_counts(performing).items()}
-
-
-def peer_shares(peers: Sequence[PeerList]) -> dict[str, float]:
-    """Each card's share of the recent Archidekt decks, by `card_key`; empty below MIN_PEER_LISTS decks."""
-    if len(peers) < MIN_PEER_LISTS:
-        return {}
-    counts = _peer_counts(peers)
-    return {key: count / len(peers) for key, count in counts.items()}
-
-
 # Per top commander playing a card: (commander, share of its lists, the commander's meta share).
 type _Plays = list[tuple[str, float, float]]
 

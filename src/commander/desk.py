@@ -17,7 +17,6 @@ from typing import cast
 
 import httpx
 
-from commander.answers import card_key
 from commander.apply import NotYourDeckError, Resolution, SaveError
 from commander.archidekt import ArchidektError
 from commander.archidekt_edit import (
@@ -33,7 +32,6 @@ from commander.board import (
     BoardCard,
     BoardError,
     BoardService,
-    Origin,
     ReplaceOption,
     Status,
     activity_json,
@@ -64,7 +62,7 @@ from commander.labels import LabelError, label_options, set_label
 from commander.leanings import leaning_json
 from commander.manabase import ALTERNATIVE_COST_TAGS, analyse_mana, mana_json
 from commander.manaplan import BASIC_NAMES, LandOption, ManaPlan, plan_json, suggest_mana
-from commander.meta import analyse, card_shares, peer_shares, performing_entries
+from commander.meta import analyse, performing_entries
 from commander.metadata import (
     CEDH_BRACKET,
     MetaData,
@@ -76,7 +74,7 @@ from commander.metadata import (
 )
 from commander.metajson import report_json
 from commander.metapanel import combo_rows, key_card_rows, stopper_rows, untouched
-from commander.models import Deck
+from commander.models import COMMANDER_CATEGORY, Deck
 from commander.net import Fetcher, NetworkError, Pacer
 from commander.profileedit import save_settings
 from commander.spellbook import SpellbookClient
@@ -85,6 +83,14 @@ from commander.suggest import deck_identity
 from commander.sync import SyncStatus
 from commander.syncrun import CardState, SyncOutcome, SyncServices, run_sync
 from commander.targets import CutRules, Target, deck_cut_rules, targets_for, with_ideas
+from commander.weightedshare import (
+    ShareTable,
+    SourceShare,
+    WeightedShare,
+    share_label,
+    share_tip,
+    weighted_shares,
+)
 
 log = logging.getLogger(__name__)
 
@@ -216,8 +222,9 @@ class Desk:
         self._client_factory = client_factory
         self._token_store = token_store
         self._now = now
-        # Per deck: the meta cache stamp the shares were read at, and the shares.
+        # Per deck: the meta cache stamp the answers were read at, and what was made of them.
         self._pools: dict[int, tuple[str, MetaData]] = {}
+        self._tables: dict[int, tuple[str, ShareTable]] = {}
         self._rules: dict[int, tuple[str, CutRules]] = {}
         self._sync_lock = threading.Lock()
         self._sync = _SyncState()
@@ -392,14 +399,14 @@ class Desk:
             infos = db.cards(card.oracle_id for card in board.cards)
             rules = with_ideas(self._deck_rules(stored, main, profile, db), infos.values(), db)
             budget = resolved_budget(stored.deck.bracket, main, profile.max_card_cents)
-            inclusion = self._inclusion(stored.deck)
+            shares = self._shares(stored.deck)
             cards = [
                 {
                     **self._card_view(db, card),
                     "withinBudget": None
                     if budget.working is None
                     else budget.within(info.cheapest_cents if (info := infos.get(card.oracle_id)) else None),
-                    "inclusion": inclusion(card),
+                    "share": _share_json(shares.of(card.name)),
                     "dropping": card.name in drop,
                     "targets": [
                         _target_json(t) for t in targets_for(card, infos.get(card.oracle_id), main, rules)
@@ -426,7 +433,7 @@ class Desk:
             "cards": cards,
             "deckCards": sorted({c.name for c in stored.deck.main_cards if "Commander" not in c.categories}),
             "labels": [{"name": n, "colour": c} for n, c in label_options(stored.deck, account)],
-            "grid": [_group_json(group, dict(account or ())) for group in grid],
+            "grid": [_group_json(group, dict(account or ()), shares) for group in grid],
             "activity": [activity_json(entry) for entry in reversed(activity)],
         }
 
@@ -642,8 +649,12 @@ class Desk:
             return {"error": f"unknown decision {decision!r}"}
         stored = self._stored(deck_id)
         board_card = read_board(stored.folder).find(card_id)
-        shares = self._meta_shares(stored.deck) if status is Status.REJECTED else None
-        share = shares.get(card_key(board_card.name), 0.0) if shares is not None and board_card else None
+        found = (
+            self._shares(stored.deck).of(board_card.name)
+            if status is Status.REJECTED and board_card
+            else None
+        )
+        share = found.share if found is not None else None
         with self._service(deck_id) as service:
             card = service.decide(card_id, status, Actor.YOU, choice=choice or None, note=note, share=share)
         return {"card": card_json(card)}
@@ -727,37 +738,29 @@ class Desk:
             "racing": report.style.races,
         }
 
-    def _inclusion(self, deck: Deck) -> Callable[[BoardCard], float | None]:
-        """Each board card's share of the lists that play it, from cached answers: the top-cut lists for a
-        meta idea, the recent Archidekt decks for the rest, else the other; None when neither knows it."""
-        data = self._pool(deck)
-        meta = card_shares(data) if data is not None else {}
-        peers = peer_shares(data.peers.data.decks) if data is not None and data.peers.data else {}
-
-        def inclusion(card: BoardCard) -> float | None:
-            key = card_key(card.name)
-            first, second = (meta, peers) if card.origin is Origin.META else (peers, meta)
-            share = first.get(key, second.get(key))
-            return round(share, 4) if share is not None else None
-
-        return inclusion
-
-    def _meta_shares(self, deck: Deck) -> dict[str, float] | None:
-        """Each card's share of the meta's lists, for bracket 5 decks with cached meta answers; else None."""
-        data = self._pool(deck) if deck.bracket == CEDH_BRACKET else None
-        return (card_shares(data) or None) if data is not None else None
+    def _shares(self, deck: Deck) -> ShareTable:
+        """Each card's weighted share of the lists other players run with the deck's commander, from cached
+        answers; empty without any."""
+        stamp = f"{cache_stamp(self._settings.cache)}|{self._now().date()}"
+        known = self._tables.get(deck.id)
+        if known is not None and known[0] == stamp:
+            return known[1]
+        table = weighted_shares(self._pool(deck), now=self._now)
+        self._tables[deck.id] = (stamp, table)
+        return table
 
     def _deck_rules(
         self, stored: StoredDeck, main: Sequence[ResolvedCard], profile: Profile, db: CardDb
     ) -> CutRules:
         """The deck's cut rules, kept until its snapshot, its profile or the cached meta answers change."""
         stamp = (
-            f"{files_stamp(stored.folder, ('deck.json', 'profile.toml'))}|{cache_stamp(self._settings.cache)}"
+            f"{files_stamp(stored.folder, ('deck.json', 'profile.toml'))}"
+            f"|{cache_stamp(self._settings.cache)}|{self._now().date()}"
         )
         known = self._rules.get(stored.deck.id)
         if known is not None and known[0] == stamp:
             return known[1]
-        rules = deck_cut_rules(stored.deck, main, profile, db, self._pool(stored.deck))
+        rules = deck_cut_rules(stored.deck, main, profile, db, self._pool(stored.deck), now=self._now)
         self._rules[stored.deck.id] = (stamp, rules)
         return rules
 
@@ -878,8 +881,9 @@ def _image_url(db: CardDb, info: CardInfo) -> str | None:
     return image_url(regular[-1].scryfall_id)
 
 
-def _group_json(group: GridGroup, colours: Mapping[str, str]) -> Json:
-    """One grid group; a label the account keeps shows in the account's colour (ADR 0012)."""
+def _group_json(group: GridGroup, colours: Mapping[str, str], shares: ShareTable) -> Json:
+    """One grid group; a label the account keeps shows in the account's colour (ADR 0012). The commander
+    is in every list by definition, so it carries no share."""
     return {
         "name": group.name,
         "count": group.count,
@@ -893,10 +897,29 @@ def _group_json(group: GridGroup, colours: Mapping[str, str]) -> Json:
                 "label": c.label,
                 "labelColour": colours.get(c.label, c.label_colour) if c.label else c.label_colour,
                 "cents": c.cents,
+                "share": None if group.name == COMMANDER_CATEGORY else _share_json(shares.of(c.name)),
             }
             for c in group.cards
         ],
     }
+
+
+def _share_json(share: WeightedShare | None) -> Json | None:
+    """A card's weighted share, its raw count and each source's part, with the page's wording; None when no
+    list was read."""
+    if share is None:
+        return None
+    return {
+        **_source_json(share),
+        "label": share_label(share),
+        "tip": share_tip(share),
+        "meta": _source_json(share.meta) if share.meta else None,
+        "archidekt": _source_json(share.archidekt) if share.archidekt else None,
+    }
+
+
+def _source_json(part: SourceShare | WeightedShare) -> Json:
+    return {"share": round(part.share, 4), "count": part.count, "total": part.total}
 
 
 def _target_json(target: Target) -> Json:

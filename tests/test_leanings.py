@@ -71,6 +71,9 @@ def resolved(db: CardDb, cards: list[DeckCard]) -> list[ResolvedCard]:
     return [ResolvedCard(card, infos.get(card.name.casefold()), None) for card in cards]
 
 
+NOW = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
+
+
 def peers(count: int, *fillers: int) -> list[PeerList]:
     names = (f"Filler Card {COMMANDER}", "Ancient Tomb", *(f"Filler Card {i}" for i in fillers))
     when = datetime(2026, 10, 1, tzinfo=UTC)
@@ -114,7 +117,11 @@ def test_ignoring_a_narrower_leaning_keeps_the_wider_one_folded_into_it_hidden(d
 
 
 def pool(*fillers: int) -> MetaData:
-    lists = Answer(PeerLists(tuple(peers(5, *fillers)), 0), AnswerSource.FETCHED, None, None)
+    return pool_of(peers(5, *fillers))
+
+
+def pool_of(decks: list[PeerList]) -> MetaData:
+    lists = Answer(PeerLists(tuple(decks), 0), AnswerSource.FETCHED, None, None)
     gone: Answer[Any] = Answer(None, AnswerSource.UNAVAILABLE, None, "test")
     return MetaData(
         "Filler Card 100", datetime(2026, 8, 16, tzinfo=UTC).date(), gone, gone, lists, gone, gone
@@ -125,7 +132,7 @@ def test_cards_in_a_leaning_are_cut_only_for_ideas_in_it_and_lands_never_join_it
     cards = deck_cards(1, 2, 3, 4, 50, 51)
     deck = Deck(1, "test", "me", 3, "2026-10-16", tuple(cards))
     main = resolved(db, cards)
-    rules = deck_cut_rules(deck, main, Profile(), db, pool(50, 51))
+    rules = deck_cut_rules(deck, main, Profile(), db, pool(50, 51), now=lambda: NOW)
     assert [leaning.tag for leaning in rules.leanings] == ["extra-combat"]
     themed, plain = db.cards_named(["Filler Card 5", "Filler Card 60"]).values()
     rules = with_ideas(rules, [themed, plain], db)
@@ -133,7 +140,9 @@ def test_cards_in_a_leaning_are_cut_only_for_ideas_in_it_and_lands_never_join_it
     assert [t.name for t in role_targets(plain, main, rules)] == ["Filler Card 50", "Filler Card 51"]
     swap = role_targets(themed, main, rules)
     assert [t.name for t in swap][:3] == ["Filler Card 1", "Filler Card 2", "Filler Card 3"]
-    assert swap[0].reason.startswith("same theme (extra-combat); fills no role either; in 0% of recent decks")
+    assert swap[0].reason.startswith(
+        "same theme (extra-combat); fills no role either; in 0% of recent decks (0/5);"
+    )
     tomb = db.cards_named(["Ancient Tomb"])["ancient tomb"]
     assert "extra-combat" not in with_ideas(rules, [tomb], db).themes.get(tomb.oracle_id, frozenset())
 
@@ -143,7 +152,7 @@ def test_the_profiles_themes_are_named_by_their_words(db: CardDb) -> None:
     deck = Deck(1, "test", "me", 3, "2026-10-16", tuple(cards))
     profile = Profile(themes=ThemeSpec(tags=("reanimate",)))
     main = resolved(db, cards)
-    rules = deck_cut_rules(deck, main, profile, db, None)
+    rules = deck_cut_rules(deck, main, profile, db, None, now=lambda: NOW)
     idea = db.cards_named(["Filler Card 21"])["filler card 21"]
     rules = with_ideas(rules, [idea], db)
     assert rules.themes[idea.oracle_id] == frozenset({"reanimate"})
@@ -155,6 +164,32 @@ def test_a_profile_word_a_deck_tag_names_too_is_one_theme_under_the_deck_tag(db:
     deck = Deck(1, "test", "me", 3, "2026-10-16", tuple(cards), tags=("Reanimate",))
     # extra-combat is the profile's own, so its words still become themes, but reanimate is the deck tag's.
     profile = Profile(themes=ThemeSpec(tags=("reanimate", "extra-combat")))
-    rules = deck_cut_rules(deck, resolved(db, cards), profile, db, None)
+    rules = deck_cut_rules(deck, resolved(db, cards), profile, db, None, now=lambda: NOW)
     idea = db.cards_named(["Filler Card 21"])["filler card 21"]
     assert with_ideas(rules, [idea], db).themes[idea.oracle_id] == frozenset({"Reanimate"})
+
+
+def test_below_bracket_5_the_cuts_rank_by_the_share_of_recent_decks_weighted_by_age(db: CardDb) -> None:
+    cards = deck_cards(50, 51)
+    deck = Deck(1, "test", "me", 3, "2026-10-16", tuple(cards))
+    main = resolved(db, cards)
+    held = (f"Filler Card {COMMANDER}", "Ancient Tomb")
+    fresh, stale = NOW, datetime(2026, 3, 30, 12, 0, tzinfo=UTC)
+    decks = [
+        PeerList(PeerDeck(i, f"peer {i}", "someone", 10, when, 3), (*held, played))
+        for i, (when, played) in enumerate(
+            [
+                (fresh, "Filler Card 50"),
+                (fresh, "Filler Card 50"),
+                (stale, "Filler Card 51"),
+                (stale, "Filler Card 51"),
+            ]
+        )
+    ]
+    rules = deck_cut_rules(deck, main, Profile(), db, pool_of(decks), now=lambda: NOW)
+    idea = db.cards_named(["Filler Card 60"])["filler card 60"]
+    cuts = role_targets(idea, main, with_ideas(rules, [idea], db))
+    # Two of four decks play each, but the 200-day-old ones count for almost nothing; unweighted it is a tie.
+    assert [t.name for t in cuts] == ["Filler Card 51", "Filler Card 50"]
+    assert cuts[0].reason.startswith("fills no role either; in 1% of recent decks (2/4);")
+    assert cuts[1].reason.startswith("fills no role either; in 99% of recent decks (2/4);")

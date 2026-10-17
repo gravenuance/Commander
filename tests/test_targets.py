@@ -4,6 +4,7 @@ from commander.board import Actor, BoardCard, ReplaceOption, Status
 from commander.carddb import CardInfo, ResolvedCard, Role
 from commander.models import DeckCard
 from commander.targets import CutRules, Target, TargetSource, targets_for
+from commander.weightedshare import ShareTable, SourceShare, WeightedShare
 
 
 def info(
@@ -38,6 +39,21 @@ def board_card(name: str, replace: tuple[ReplaceOption, ...] = (), source: Actor
         "t",
         "t",
     )
+
+
+def table(shares: dict[str, float], *, meta: bool = True, both: bool = False) -> ShareTable:
+    """Shares of 20 lists, from the meta's EDHTop16 lists, else from recent decks, or from 10 of each."""
+
+    def made(share: float, total: int) -> SourceShare:
+        return SourceShare(share, round(share * total), total)
+
+    def card(share: float) -> WeightedShare:
+        if both:
+            return WeightedShare(share, round(share * 20), 20, made(share, 10), made(share, 10))
+        source = made(share, 20)
+        return WeightedShare(share, source.count, 20, source if meta else None, None if meta else source)
+
+    return ShareTable({key: card(share) for key, share in shares.items()}, card(0.0))
 
 
 def names(targets: tuple[Target, ...]) -> list[str]:
@@ -81,12 +97,12 @@ def test_without_picks_the_weakest_cards_in_the_same_role_least_played_first_unr
 
 
 def test_meta_share_ranks_before_popularity_and_shows_in_the_reason() -> None:
-    shares = {"compost": 0.6, "archivist of oghma": 0.0, "esper sentinel": 0.1, "sylvan library": 0.05}
+    shares = table({"compost": 0.6, "archivist of oghma": 0.0, "esper sentinel": 0.1, "sylvan library": 0.05})
     targets = targets_for(
         board_card("Mystic Remora"), info("Mystic Remora", (Role.DRAW,)), DECK, CutRules((), shares)
     )
     assert names(targets) == ["Archivist of Oghma", "Sylvan Library", "Esper Sentinel"]
-    assert targets[1].reason == "same role (draw); in 5% of meta lists; unranked on EDHREC"
+    assert targets[1].reason == "same role (draw); in 5% of meta lists (1/20); unranked on EDHREC"
 
 
 def test_a_role_counts_by_the_decks_own_category_too() -> None:
@@ -135,7 +151,22 @@ def test_a_card_serving_a_theme_is_cut_only_for_an_idea_serving_the_same_and_tho
     assert stax[0].reason == "same theme (Stax); fills no role either; EDHREC rank 4,000"
 
 
-def test_shares_name_what_they_are_of() -> None:
-    rules = CutRules((), {"kataki": 0.3}, "recent decks")
-    targets = targets_for(board_card("Thalia"), info("Thalia"), DECK, rules)
-    assert targets[0].reason == "fills no role either; in 0% of recent decks; EDHREC rank 800"
+def test_shares_name_the_sources_they_are_of() -> None:
+    thalia = board_card("Thalia")
+    decks = targets_for(thalia, info("Thalia"), DECK, CutRules((), table({"kataki": 0.3}, meta=False)))
+    assert decks[0].reason == "fills no role either; in 0% of recent decks (0/20); EDHREC rank 800"
+    pooled = targets_for(thalia, info("Thalia"), DECK, CutRules((), table({"kataki": 0.3}, both=True)))
+    assert (
+        pooled[1].reason
+        == "fills no role either; in 30% of meta lists and recent decks (6/20); EDHREC rank 4,000"
+    )
+
+
+def test_a_card_in_both_sources_ranks_by_the_one_pooled_share() -> None:
+    shares = table(
+        {"compost": 0.3, "archivist of oghma": 0.25, "esper sentinel": 0.9, "sylvan library": 0.6}, both=True
+    )
+    targets = targets_for(
+        board_card("Mystic Remora"), info("Mystic Remora", (Role.DRAW,)), DECK, CutRules((), shares)
+    )
+    assert names(targets) == ["Archivist of Oghma", "Compost", "Sylvan Library"]

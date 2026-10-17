@@ -5,16 +5,16 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 
 from commander.analysis import ANALYZED_ROLES
-from commander.answers import card_key
 from commander.board import Actor, BoardCard
 from commander.carddb import CardDb, CardInfo, ResolvedCard, Role, Theme
+from commander.deckcache import Clock
 from commander.deckprofile import PROFILE_THEME, Profile, ThemeSpec
 from commander.deckthemes import merge_themes
 from commander.leanings import Leaning, find_leanings
-from commander.meta import card_shares, peer_shares
 from commander.metadata import MetaData
 from commander.models import COMMANDER_CATEGORY, Deck
 from commander.suggest import fills_role, protected_cards
+from commander.weightedshare import ShareTable, share_reason, weighted_shares
 
 MAX_TARGETS = 3
 _PICKERS = frozenset({Actor.YOU, Actor.CLAUDE})
@@ -51,10 +51,8 @@ class CutRules:
 
     # Oracle ids never offered: the cards the profile keeps.
     protected: Collection[str] = frozenset()
-    # Each card's share of the meta's lists or of recent decks with the commander, by `card_key`.
-    shares: Mapping[str, float] | None = None
-    # What the shares are of, for the reasons: "meta lists" or "recent decks".
-    shares_of: str = "meta lists"
+    # Each card's weighted share of the meta's lists and recent decks with the commander; None without any.
+    shares: ShareTable | None = None
     # The themes and leanings each card serves, by oracle id, for deck cards and ideas alike.
     themes: Mapping[str, frozenset[str]] = field(default_factory=dict[str, frozenset[str]])
     leanings: tuple[Leaning, ...] = ()
@@ -62,16 +60,21 @@ class CutRules:
 
 
 def deck_cut_rules(
-    deck: Deck, main: Sequence[ResolvedCard], profile: Profile, db: CardDb, data: MetaData | None
+    deck: Deck,
+    main: Sequence[ResolvedCard],
+    profile: Profile,
+    db: CardDb,
+    data: MetaData | None,
+    *,
+    now: Clock,
 ) -> CutRules:
-    """The deck's kept cards, the meta's or recent decks' shares, its leanings, and the themes of its cards.
+    """The deck's kept cards, the meta's and recent decks' shares, its leanings, and the themes of its cards.
 
     The profile's own themes go by their words ("Dinosaur", "Discover"). data is what other players do
     with the commander (`gather_for`), None when nothing was read.
     """
     peers = data.peers.data.decks if data is not None and data.peers.data else ()
-    meta = card_shares(data) if data is not None else {}
-    shares, shares_of = (meta, "meta lists") if meta else (peer_shares(peers), "recent decks")
+    shares = weighted_shares(data, now=now)
     ignored = {name.strip().casefold() for name in profile.ignore_themes}
     leanings = find_leanings(main, peers, db, ignore=ignored)
     tag_ids = db.tag_ids([*profile.themes.tags, *(leaning.tag for leaning in leanings)])
@@ -90,7 +93,7 @@ def deck_cut_rules(
             if leaning.tag in tag_ids
         ),
     )
-    rules = CutRules(protected_cards(main, profile), shares or None, shares_of, {}, leanings, matchers)
+    rules = CutRules(protected_cards(main, profile), shares or None, {}, leanings, matchers)
     return with_ideas(rules, [r.info for r in main if r.info is not None], db)
 
 
@@ -130,8 +133,8 @@ def role_targets(info: CardInfo, main: Sequence[ResolvedCard], rules: CutRules) 
 
     Like for like: a deck card serving a theme or leaning is offered only for an idea serving one of the
     same, and those come first. A card with roles is matched to deck cards sharing one, a card without any
-    to deck cards filling none; lands only to lands. Weakest means the smallest share of the meta's lists
-    or recent decks (when known), then the least played on EDHREC, unranked cards last. Commanders and
+    to deck cards filling none; lands only to lands. Weakest means the smallest weighted share of the meta's
+    lists and recent decks (when known), then the least played on EDHREC, unranked cards last. Commanders and
     protected oracle ids are never offered.
     """
     roles = [role for role in ANALYZED_ROLES if role in info.roles]
@@ -186,8 +189,9 @@ def _shared(r: ResolvedCard, own: frozenset[str], rules: CutRules) -> frozenset[
     return _themes_of(r, rules) & own
 
 
-def _weakness(r: ResolvedCard, shares: Mapping[str, float] | None) -> tuple[float, bool, int, str]:
-    share = shares.get(card_key(r.card.name), 0.0) if shares is not None else 0.0
+def _weakness(r: ResolvedCard, shares: ShareTable | None) -> tuple[float, bool, int, str]:
+    found = shares.of(r.card.name) if shares is not None else None
+    share = found.share if found is not None else 0.0
     rank = r.info.edhrec_rank if r.info else None
     return (share, rank is None, -(rank or 0), r.card.name.casefold())
 
@@ -199,8 +203,9 @@ def _reason(r: ResolvedCard, roles: Sequence[Role], own: frozenset[str], rules: 
         parts.append(f"same theme ({', '.join(sorted(shared_themes, key=str.casefold))})")
     shared = [role.value for role in roles if fills_role(r, role)]
     parts.append(f"same role ({', '.join(shared)})" if shared else "fills no role either")
-    if rules.shares is not None:
-        parts.append(f"in {rules.shares.get(card_key(r.card.name), 0.0):.0%} of {rules.shares_of}")
+    share = rules.shares.of(r.card.name) if rules.shares is not None else None
+    if share is not None:
+        parts.append(share_reason(share))
     rank = r.info.edhrec_rank if r.info else None
     parts.append(f"EDHREC rank {rank:,}" if rank is not None else "unranked on EDHREC")
     return "; ".join(parts)

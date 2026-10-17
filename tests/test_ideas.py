@@ -10,6 +10,7 @@ from commander.board import Actor, BoardService, Origin, Status, read_board
 from commander.carddb import CardDb
 from commander.ideas import Idea, compile_ideas, ideas_summary, staple_ideas
 from commander.meta import Basis, CardShare, Staples
+from commander.metadata import PeerList
 from commander.models import Deck
 from commander.store import StoredDeck
 from test_meta import NOW, SINCE, db, deck, entry, meta_data, peer
@@ -98,6 +99,37 @@ def test_an_idea_with_no_deck_card_to_replace_still_goes_on_the_board_and_takes_
     other.mkdir()
     [only] = compile_ideas(StoredDeck(other, deck), meta_data([], peers), db, now=lambda: NOW)[Origin.DECKS]
     assert only.name == "Ancient Tomb"
+
+
+def test_below_bracket_5_a_turned_down_idea_comes_back_when_recent_decks_take_to_it(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    stored = StoredDeck(tmp_path, deck)
+    service = BoardService(tmp_path, deck, db, now=lambda: NOW)
+
+    def decks(playing: int) -> list[PeerList]:
+        return [peer(i, ["Arcane Signet"] if i <= playing else ["Unknown Card"]) for i in range(1, 11)]
+
+    [signet] = compile_ideas(stored, meta_data([], decks(5)), db, now=lambda: NOW)[Origin.DECKS]
+    # Turned down at 5 of 10 decks, so it only returns at 70%.
+    service.decide(signet.id, Status.REJECTED, Actor.YOU, share=0.5)
+    assert compile_ideas(stored, meta_data([], decks(6)), db, now=lambda: NOW)[Origin.DECKS] == []
+    [back] = compile_ideas(stored, meta_data([], decks(8)), db, now=lambda: NOW)[Origin.DECKS]
+    assert (back.name, back.status) == ("Arcane Signet", Status.OPEN)
+    assert back.reason.startswith("back: in 80% of the lists read, up from 50% when turned down")
+
+
+def test_a_turned_down_idea_with_no_share_noted_gets_the_decks_as_its_baseline(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    stored = StoredDeck(tmp_path, deck)
+    peers = [peer(i, ["Arcane Signet"]) for i in range(1, 4)]
+    [signet] = compile_ideas(stored, meta_data([], peers), db, now=lambda: NOW)[Origin.DECKS]
+    BoardService(tmp_path, deck, db, now=lambda: NOW).decide(signet.id, Status.REJECTED, Actor.YOU)
+    assert compile_ideas(stored, meta_data([], peers), db, now=lambda: NOW)[Origin.DECKS] == []
+    turned_down = read_board(tmp_path).find("Arcane Signet")
+    assert turned_down is not None
+    assert turned_down.rejected_share == pytest.approx(1.0)
 
 
 def compiled_names(folder: Path, deck: Deck, db: CardDb, profile: str) -> dict[Origin, list[str]]:

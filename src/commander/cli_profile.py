@@ -57,7 +57,9 @@ def _cmd_profile(args: argparse.Namespace, ctx: Context) -> int:
             data = gather_for(
                 stored.deck, sources, cache_dir(ctx.env), now=ctx.now, refresh=False, offline=True
             )
-        leanings = deck_cut_rules(stored.deck, db.resolve(stored.deck.main_cards), profile, db, data).leanings
+        leanings = deck_cut_rules(
+            stored.deck, db.resolve(stored.deck.main_cards), profile, db, data, now=ctx.now
+        ).leanings
     for slug in unknown:
         print(f"cmdr: tag {slug!r} is not a Tagger tag; `cmdr tags` finds them", file=ctx.err)
     for name in unknown_ignores:

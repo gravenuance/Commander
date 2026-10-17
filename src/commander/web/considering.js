@@ -9,7 +9,7 @@ function considering(cards) {
 }
 
 // Your cards, then Claude's, then meta ideas, then Archidekt deck ideas, then everything else. Within
-// each group, cards over the deck's budget (ADR 0025) go last; then the most included first.
+// each group, cards over the deck's budget (ADR 0025) go last; then the largest weighted share first.
 function suggestionGroup(card) {
   if (card.source === "you") return 0;
   if (card.source === "claude") return 1;
@@ -22,7 +22,7 @@ function sortSuggestions(cards) {
   return [...cards].sort((a, b) =>
     suggestionGroup(a) - suggestionGroup(b)
     || (a.withinBudget === false) - (b.withinBudget === false)
-    || (b.inclusion ?? -1) - (a.inclusion ?? -1));
+    || (b.share?.share ?? -1) - (a.share?.share ?? -1));
 }
 
 // Ideas with no deck card named to replace yet; selecting one offers every deck card as its cut.
@@ -94,6 +94,7 @@ function buildTile(card) {
   const meta = el("div", { class: "card-meta" },
     el("span", { class: "type", text: card.typeLine, title: card.typeLine }),
     card.priceCents !== null ? el("span", { text: euro(card.priceCents) }) : null,
+    card.share ? el("span", { class: "share", text: `${card.share.label} · ${card.share.count}/${card.share.total}`, title: card.share.tip }) : null,
     el("span", {
       class: `badge ${card.source}`,
       text: card.origin ?? card.source,

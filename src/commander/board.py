@@ -45,7 +45,7 @@ MAX_LOG_LINE = 16 * 1024
 LOCK_TIMEOUT_SECONDS = 10.0
 # A lock file older than this was left by a crashed writer; a real update takes milliseconds.
 STALE_LOCK_SECONDS = 60.0
-# How far a turned-down card's share of the meta's lists must rise before the meta offers it again.
+# How far a turned-down card's share of the lists read must rise before it is offered again.
 RETURN_RISE = 0.20
 _LOCK_POLL_SECONDS = 0.05
 # Basic land names, Wastes included, for telling a basic swap; manabase and manaplan list only the five
@@ -114,7 +114,7 @@ class BoardCard:
     note: str
     added_at: str
     updated_at: str
-    # For a turned-down card: its share of the meta's lists when it was turned down; None when unknown.
+    # For a turned-down card: its share of the lists read when it was turned down; None when unknown.
     rejected_share: float | None = None
     origin: Origin | None = None
     # Copies to add, each taking a copy of the chosen cut: a basic land swap moves several at once.
@@ -126,7 +126,7 @@ class BoardCard:
         if self.choice is not None and self.status not in {Status.ADD, Status.APPLIED}:
             raise ValueError(f"{self.name}: only a card being added has a chosen cut")
         if self.rejected_share is not None and self.status is not Status.REJECTED:
-            raise ValueError(f"{self.name}: only a turned-down card keeps its meta share")
+            raise ValueError(f"{self.name}: only a turned-down card keeps its share")
 
 
 @dataclass(slots=True, frozen=True)
@@ -485,8 +485,8 @@ class BoardService:
     ) -> BoardCard:
         """Mark a card to add (with the deck card to cut), turn it down, or reopen it.
 
-        share is the card's share of the meta's lists now; a turned-down card keeps it, so a meta that has
-        since taken to the card can offer it again (`feed_ideas`).
+        share is the card's weighted share of the lists read now; a turned-down card keeps it, so lists that
+        have since taken to the card can offer it again (`feed_ideas`).
         """
         if status is Status.APPLIED:
             raise BoardError("a card counts as applied only once it is saved to Archidekt")
@@ -540,7 +540,7 @@ class BoardService:
             save(Board(cards), entry)
 
     def remember_share(self, key: str, share: float) -> None:
-        """Give a turned-down card that has none its meta share now, as the baseline for its return."""
+        """Give a turned-down card that has none its share now, as the baseline for its return."""
         with self._editing() as (board, save):
             card = _require(board, key)
             if card.status is not Status.REJECTED or card.rejected_share is not None:
@@ -548,7 +548,7 @@ class BoardService:
             stamp = self._stamp()
             save(
                 _swap(board, replace(card, rejected_share=share, updated_at=stamp)),
-                Activity(stamp, Actor.CMDR, "meta share noted", card.name, f"in {share:.0%} of meta lists"),
+                Activity(stamp, Actor.CMDR, "share noted", card.name, f"in {share:.0%} of the lists read"),
             )
 
     def note(self, actor: Actor, action: str, detail: str, card: str | None = None) -> None:
@@ -807,9 +807,9 @@ def feed_ideas(
     """Put each idea (card name to reason) on the board under Considering, with cuts as cards to replace
     and where the ideas came from.
 
-    Cards already on the board are left alone, but with the meta's shares (by `card_key`) a turned-down one
-    comes back once its share has risen by RETURN_RISE since; one turned down without a known share gets
-    today's as its baseline.
+    Cards already on the board are left alone, but with the weighted shares of the lists read (by `card_key`)
+    a turned-down one comes back once its share has risen by RETURN_RISE since; one turned down without a
+    known share gets today's as its baseline.
     """
     added: list[BoardCard] = []
     for name, idea in ideas.items():
@@ -845,7 +845,7 @@ def _returning(service: BoardService, card: BoardCard, shares: Mapping[str, floa
         return None
     if now < card.rejected_share + RETURN_RISE:
         return None
-    return f"back: in {now:.0%} of meta lists, up from {card.rejected_share:.0%} when turned down"
+    return f"back: in {now:.0%} of the lists read, up from {card.rejected_share:.0%} when turned down"
 
 
 def import_aside(service: BoardService, deck: Deck, board: Board) -> list[BoardCard]:
