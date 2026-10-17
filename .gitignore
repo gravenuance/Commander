@@ -16,9 +16,10 @@ dist/
 *.bak
 .board.lock
 
-# Agent worktrees and PyInstaller output
+# Agent instructions and worktrees, and PyInstaller output
+CLAUDE.md
 .claude/worktrees/
 Commander.spec
 
-# Your own decks: a local-only repository of their own (see CLAUDE.md)
+# Your own decks: a local-only repository of their own
 decks/
