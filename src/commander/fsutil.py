@@ -20,7 +20,7 @@ def write_text_atomic(path: Path, text: str) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(text)
-        temp.replace(path)
+        replace_with_retry(temp, path)
     except BaseException:
         temp.unlink(missing_ok=True)
         raise
