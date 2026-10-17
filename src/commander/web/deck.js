@@ -54,11 +54,11 @@ async function openDeck(id) {
     $("grid").replaceChildren();
     closeLabelMenu(false);
     renderDecks();
-    renderMeta(id, null);
+    metaPanel.render(id, null);
     $("meta-empty").hidden = true;
   }
   await loadDeck();
-  loadMeta();
+  metaPanel.load();
 }
 
 // Counts deck requests, so an answer that arrives after a newer request was sent is dropped.
@@ -97,8 +97,8 @@ function renderDeck() {
   paint();
   paintBracket();
   renderActivity(view.activity);
-  loadMana();
-  loadBracket();
+  manaPanel.load();
+  bracketPanel.load();
 }
 
 function renderTags(tags) {
@@ -171,7 +171,7 @@ function setupPanels() {
       const open = toggle.getAttribute("aria-expanded") !== "true";
       show(open);
       try { localStorage.setItem(key, open ? "1" : "0"); } catch { /* as above */ }
-      if (open && toggle.id === "h-meta") loadMeta();
+      if (open && toggle.id === "h-meta") metaPanel.load();
     });
   }
   document.addEventListener("keydown", (event) => {

@@ -37,7 +37,7 @@ function showRail(tab) {
   }
   $("activity-pane").classList.toggle("open", tab !== null);
   try { localStorage.setItem(ACTIVITY_KEY, tab || "0"); } catch { /* as above */ }
-  if (tab === "mana") loadMana();
+  if (tab === "mana") manaPanel.load();
 }
 
 function renderActivity(entries) {

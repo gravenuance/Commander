@@ -2,7 +2,8 @@
 
 /* Bracket: Spellbook's estimate beside the set bracket and the ceiling, and the cards that lift it (ADR 0021) */
 
-const bracketState = { deck: null, key: null, marks: new Map() };
+const bracketState = { deck: null, marks: new Map() };
+const bracketPanel = panel((deck) => api("bracket", deck), renderBracket);
 
 function setupBracket() {
   const chip = $("bracket-check");
@@ -14,20 +15,8 @@ function setupBracket() {
   });
 }
 
-async function loadBracket() {
-  if (state.current === null) return;
-  const deck = state.current;
-  try {
-    const answer = await api("bracket", deck);
-    if (deck === state.current) renderBracket(deck, answer);
-  } catch { /* shown in the status line */ }
-}
-
-function renderBracket(deck, b) {
-  const key = JSON.stringify(b);
-  if (bracketState.deck === deck && bracketState.key === key) return;
-  const newDeck = bracketState.deck !== deck;
-  Object.assign(bracketState, { deck, key, marks: bracketMarks(b.causes) });
+function renderBracket(deck, b, newDeck) {
+  Object.assign(bracketState, { deck, marks: bracketMarks(b.causes) });
   const chip = $("bracket-check");
   const detail = $("bracket-detail");
   const gap = b.notes.length > 0;

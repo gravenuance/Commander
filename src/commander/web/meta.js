@@ -7,7 +7,7 @@ const ANSWERS_SHOWN = 6;
 
 /* Meta (bracket 5): what in the meta stops the deck's key cards, and what stops the meta's combos */
 
-const metaState = { key: null, deck: null, busy: false };
+const metaState = { busy: false };
 
 function metaWanted() {
   return state.view && state.view.id === state.current && state.view.bracket === META_BRACKET
@@ -18,14 +18,11 @@ function setupMeta() {
   $("meta-refresh").addEventListener("click", refreshMeta);
 }
 
-async function loadMeta() {
-  if (!metaWanted() || metaState.busy) return;
-  const deck = state.current;
-  try {
-    const answer = await api("meta", deck);
-    if (deck === state.current) renderMeta(deck, answer);
-  } catch { /* shown in the status line */ }
-}
+// An answer without a report reads the same as none.
+const metaPanel = panel((deck) => api("meta", deck), renderMeta, {
+  wanted: () => metaWanted() && !metaState.busy,
+  keyOf: (answer) => JSON.stringify(answer && answer.report ? answer : null),
+});
 
 async function refreshMeta() {
   const deck = state.current;
@@ -34,7 +31,7 @@ async function refreshMeta() {
   $("meta-refresh").disabled = true;
   try {
     const answer = await api("refresh_meta", deck);
-    if (deck === state.current) renderMeta(deck, answer);
+    if (deck === state.current) metaPanel.render(deck, answer);
     if (!answer.report && answer.errors.length) showStatus(answer.errors[0], true);
     await loadDeck();
   } catch { /* shown in the status line */ }
@@ -45,10 +42,6 @@ async function refreshMeta() {
 
 function renderMeta(deck, answer) {
   const report = answer ? answer.report : null;
-  const key = JSON.stringify(report ? answer : null);
-  if (metaState.deck === deck && metaState.key === key) return;
-  metaState.deck = deck;
-  metaState.key = key;
   $("meta-empty").hidden = Boolean(report);
   $("meta-thin").hidden = !report || !report.sample.thin;
   if (!report) {

@@ -2,24 +2,13 @@
 
 /* Mana: the deck's mana base against Frank Karsten's published numbers (ADR 0019) */
 
-const manaState = { deck: null, key: null };
 const COLOUR_NAMES = { W: "White", U: "Blue", B: "Black", R: "Red", G: "Green", C: "Colourless" };
 const KARSTEN_LANDS = "https://www.tcgplayer.com/content/article/How-Many-Lands-Do-You-Need-in-Your-Deck-An-Updated-Analysis/cd1c1a24-d439-4a8e-b369-b936edb0b38a/";
 const KARSTEN_SOURCES = "https://www.tcgplayer.com/content/article/How-Many-Sources-Do-You-Need-to-Consistently-Cast-Your-Spells-A-2022-Update/dc23a7d2-0a16-4c0b-ad36-586fcca03ad8/";
 
-async function loadMana() {
-  if (railTab !== "mana" || state.current === null) return;
-  const deck = state.current;
-  try {
-    const answer = await api("mana", deck);
-    if (deck === state.current) renderMana(deck, answer);
-  } catch { /* shown in the status line */ }
-}
+const manaPanel = panel((deck) => api("mana", deck), renderMana, { wanted: () => railTab === "mana" });
 
 function renderMana(deck, m) {
-  const key = JSON.stringify(m);
-  if (manaState.deck === deck && manaState.key === key) return;
-  Object.assign(manaState, { deck, key });
   const l = m.lands;
   const c = m.comparison;
   const cedh = state.view && state.view.bracket === META_BRACKET;
@@ -125,7 +114,7 @@ async function manaToBoard(deck, button) {
     const n = answer.added.length;
     showStatus(`${n} swap${n === 1 ? "" : "s"} put under Considering`);
     if (deck === state.current) await loadDeck();
-    loadMana();
+    manaPanel.load();
   } catch {
     button.disabled = false; /* shown in the status line */
   }

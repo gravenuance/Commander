@@ -97,3 +97,28 @@ function hideStatus() {
 const times = (copies, name) => (copies > 1 ? `${copies} × ${name}` : name);
 const euro = (cents) => (cents === null || cents === undefined ? "" : `€${(cents / 100).toFixed(2)}`);
 const pct = (share) => `${Math.round(share * 100)}%`;
+
+// A panel that loads an answer for the open deck and draws it. `load()` drops an answer that arrives after
+// the deck changed; `render(deck, answer)` skips one the panel already shows. The renderer is called with
+// (deck, answer, fresh), fresh meaning this deck was not on show before. `wanted` says when a request is
+// worth sending; `keyOf` decides which answers count as the same.
+function panel(loader, renderer, { wanted = () => true, keyOf = JSON.stringify } = {}) {
+  const shown = { deck: null, key: null };
+  function render(deck, answer) {
+    const key = keyOf(answer);
+    if (shown.deck === deck && shown.key === key) return;
+    const fresh = shown.deck !== deck;
+    shown.deck = deck;
+    shown.key = key;
+    renderer(deck, answer, fresh);
+  }
+  async function load() {
+    if (state.current === null || !wanted()) return;
+    const deck = state.current;
+    try {
+      const answer = await loader(deck);
+      if (deck === state.current) render(deck, answer);
+    } catch { /* shown in the status line */ }
+  }
+  return { load, render };
+}

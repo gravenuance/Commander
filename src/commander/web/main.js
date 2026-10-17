@@ -21,7 +21,7 @@ async function poll() {
       if (accountState.syncing) await loadAccount();
       const metaChanged = answer.meta !== state.metaStamp;
       state.metaStamp = answer.meta;
-      if (metaChanged) await loadMeta();
+      if (metaChanged) await metaPanel.load();
     }
   } catch { /* a missed poll is retried on the next tick */ }
   setTimeout(poll, POLL_MS);
