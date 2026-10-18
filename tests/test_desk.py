@@ -991,7 +991,7 @@ def function_body(script: str, signature: str) -> str:
 
 def test_a_considering_tile_shows_the_combined_share_as_a_pill_button_in_place_of_badge_and_counts() -> None:
     tile = function_body(CONSIDERING, "function buildTile(card) {")
-    assert "card.share ? sharePill(card) : sourceBadge(card)" in tile
+    assert "card.share || card.pool ? sharePill(card) : sourceBadge(card)" in tile
     # The plain count line and the origin text badge are gone from the tile; the counts are in the popover.
     assert "card.share.count}/" not in CONSIDERING
     assert "originLabel(" not in tile
