@@ -144,11 +144,20 @@ def test_top_cut_lists_perform_when_there_are_enough() -> None:
     assert [e.standing for e in lists] == [1, 2, 3, 4, 5]
 
 
-def test_too_few_top_cuts_fall_back_to_every_list_best_first() -> None:
+def test_a_single_top_cut_list_is_enough_to_perform() -> None:
     off_cut = entry(30, 40, 8, [("Mind Stone", 0)])
-    lists, basis = performing_lists([off_cut, *TOP_CUT_LISTS[:4]])
+    lists, basis = performing_lists([off_cut, TOP_CUT_LISTS[0]])
+    assert basis is Basis.TOP_CUT
+    assert [e.standing for e in lists] == [1]
+
+
+def test_without_any_top_cut_every_list_performs_best_first() -> None:
+    first = entry(30, 40, 8, [("Mind Stone", 0)])
+    second = entry(12, 40, 8, [("Mind Stone", 0)])
+    no_list = entry(1, 40, 8, [])
+    lists, basis = performing_lists([first, no_list, second])
     assert basis is Basis.ALL
-    assert [e.standing for e in lists] == [1, 2, 3, 4, 30]
+    assert [e.standing for e in lists] == [12, 30]
 
 
 def test_sample_counts_only_the_window_and_flags_thin_data(deck: Deck, db: CardDb) -> None:

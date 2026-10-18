@@ -211,7 +211,7 @@ def print_report(report: MetaReport, out: TextIO) -> None:
             file=out,
         )
     if sample.known and sample.thin:
-        reason = "few top cuts" if sample.basis is Basis.ALL else "few lists"
+        reason = "no top cuts" if sample.basis is Basis.ALL else "few lists"
         print(f"  thin data ({reason}): read shares as hints, not evidence", file=out)
     _print_missing(report, out)
     _print_spicy(report, out)

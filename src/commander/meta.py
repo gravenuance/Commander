@@ -22,8 +22,6 @@ from commander.playstyle import NEUTRAL, Fit, PlayStyle, deck_play_style, fit_or
 from commander.spellbook import ComboDetail
 from commander.suggest import deck_identity
 
-# Fewer top-cut lists than this, and every list in the window stands in, marked thin.
-MIN_PERFORMING = 5
 # Fewer lists with decklists than this is too few to judge a card by, whatever placed.
 THIN_LISTS = 10
 # A card missing from the deck is a staple when this share of performing lists play it (at least two lists)...
@@ -214,10 +212,10 @@ def analyse(deck: Deck, data: MetaData, profile: Profile, db: CardDb) -> MetaRep
 
 
 def performing_lists(entries: Sequence[Entry]) -> tuple[list[Entry], Basis]:
-    """The lists to learn from: top-cut ones, or every list best placing first when too few made a cut."""
+    """The lists to learn from: top-cut ones, or every list best placing first when none made a cut."""
     with_lists = [e for e in entries if e.cards]
     top = [e for e in with_lists if e.made_top_cut]
-    if len(top) >= MIN_PERFORMING:
+    if top:
         return sorted(top, key=lambda e: e.placing), Basis.TOP_CUT
     return sorted(with_lists, key=lambda e: e.placing), Basis.ALL
 
@@ -348,7 +346,7 @@ def outliers(
 
 
 def performing_entries(data: MetaData) -> list[Entry]:
-    """The commander's lists to learn from in the window: top cuts, or every list when too few made one."""
+    """The commander's lists to learn from in the window: top cuts, or every list when none made one."""
     lists = _window(data.lists.data.entries if data.lists.data else (), data.since)
     return performing_lists(lists)[0]
 
