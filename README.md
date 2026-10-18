@@ -384,7 +384,7 @@ lacks that its profile, bracket ceiling and budget allow:
   passes is relabelled to the source that plays it more. The same goes for alike ideas once the profile lists
   no commander. `sync`, `meta --to-board` and the app all follow the setting.
 
-A card is an idea from the first two when the lower bound of its weighted share reaches 0.32
+A card is an idea from the first two when the lower bound of its weighted share reaches 0.30
 ([ADR 0026](docs/adr/0026-one-weighted-share-per-card.md)); it goes to the source that plays it more. Each
 source takes its ideas by its part of that share times the play-style weight (see *cEDH meta*), ideas within the deck's
 budget before the rest. An idea with no deck card to replace is still put on the board, under *No cut yet*

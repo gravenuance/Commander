@@ -211,21 +211,21 @@ def test_the_table_takes_its_effective_sample_size_from_every_scaled_weight() ->
     assert weighted_shares(None, now=lambda: NOW).effective_n == 0.0
 
 
-def test_a_card_is_an_idea_from_a_lower_bound_of_32_percent() -> None:
-    assert IDEA_LOWER_BOUND == 0.32
+def test_a_card_is_an_idea_from_a_lower_bound_of_30_percent() -> None:
+    assert IDEA_LOWER_BOUND == 0.30
     seen = WeightedShare(0.0, 0, 10, None, None)
 
     def table(share: float, n: float) -> ShareTable:
         card = WeightedShare(share, round(share * 10), 10, None, SourceShare(share, round(share * 10), 10))
         return ShareTable({"mind stone": card}, seen, n)
 
-    # Lower bounds 0.3968 and 0.3127 at ten lists.
-    assert table(0.7, 10).is_idea("Mind Stone")
-    assert not table(0.6, 10).is_idea("Mind Stone")
-    # The same share on a fifth of the evidence is not enough, and on ten times of it is.
+    # Lower bounds 0.3127 and 0.2366 at ten lists.
+    assert table(0.6, 10).is_idea("Mind Stone")
+    assert not table(0.5, 10).is_idea("Mind Stone")
+    # The same share on a fifth of the evidence is not enough, and on ten times of it a lower one is.
     assert not table(0.7, 2).is_idea("Mind Stone")
-    assert table(0.42, 100).is_idea("Mind Stone")
-    assert not table(0.4, 100).is_idea("Mind Stone")
+    assert table(0.4, 100).is_idea("Mind Stone")
+    assert not table(0.38, 100).is_idea("Mind Stone")
     # A card no list plays, and a table with no lists at all.
     assert not table(0.7, 10).is_idea("Fury")
     assert not ShareTable({}, WeightedShare(0.0, 0, 0, None, None)).is_idea("Mind Stone")

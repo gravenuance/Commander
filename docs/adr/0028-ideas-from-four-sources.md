@@ -40,7 +40,7 @@ Option 2 for both. `sync` compiles up to 50 ideas per source onto each deck's bo
 How a card qualifies and where it ranks:
 
 - **meta and archidekt decks:** a card the deck lacks is an idea when the Wilson bound of its weighted share,
-  over every list read, reaches 0.32 (ADR 0026). It goes to the source whose weighted share of it is
+  over every list read, reaches 0.30 (ADR 0026). It goes to the source whose weighted share of it is
   larger, the meta on a tie. Below bracket 4 only the Archidekt decks exist.
 - **adjacent and tagged decks:** the card is played by at least half of a pool of at least three decks (the
   rule as it stands; whether these pools move to the Wilson test is open).

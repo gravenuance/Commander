@@ -40,9 +40,10 @@ Option 3, in `commander.weightedshare`.
   playing it over the number of lists, both sources together. The raw count (`12/35`) and each source's part
   are kept beside it.
 - **The idea test:** a card is an idea when the lower bound of its share's Wilson score interval (95%) is at
-  least 0.32. The interval is taken on the Kish effective sample size of the weights, (sum w)^2 / sum w^2, so
+  least 0.30. The interval is taken on the Kish effective sample size of the weights, (sum w)^2 / sum w^2, so
   a few heavy lists count as the few they are. With every list weighing the same, 60 decks need a share of
-  about 44% and 10 decks about 61%. The bound of 0.32 was the best F1 of a backtest.
+  about 42% and 10 decks about 58%. A backtest's best F1 was at 0.32; 0.30 (precision 0.920, recall 0.929, F1
+  0.9245 against 0.9260) is within noise of it, and the owner chose it for the extra recall.
 - **Where it is used:** the idea test (ADR 0028), the ranking of cut targets and the cuts across roles and
   themes (ADR 0029), the return of a turned-down card once its share has risen 20 points (`RETURN_RISE`, at
   every bracket now), the order within a group of Considering, the order each source's ideas are taken in (the source's part of

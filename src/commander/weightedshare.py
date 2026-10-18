@@ -30,8 +30,9 @@ MIN_SIZE_FACTOR = 0.25
 UNKNOWN_PERCENTILE = 0.5
 # 95% confidence, two-sided.
 WILSON_Z = 1.96
-# A card is an idea when the Wilson lower bound of its weighted share reaches this (a backtest's best F1).
-IDEA_LOWER_BOUND = 0.32
+# A card is an idea when the Wilson lower bound of its weighted share reaches this. A backtest's best F1 was
+# at 0.32; 0.30 is within noise of it and was chosen for recall.
+IDEA_LOWER_BOUND = 0.30
 
 
 @dataclass(slots=True, frozen=True)

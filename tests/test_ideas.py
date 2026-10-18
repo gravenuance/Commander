@@ -299,11 +299,11 @@ def decks_playing(playing: int, total: int) -> list[PeerList]:
     return [peer(i, ["Arcane Signet"] if i <= playing else ["Unknown Card"]) for i in range(1, total + 1)]
 
 
-def test_a_card_is_an_idea_when_the_wilson_lower_bound_of_its_share_reaches_32_percent(
+def test_a_card_is_an_idea_when_the_wilson_lower_bound_of_its_share_reaches_30_percent(
     deck: Deck, db: CardDb, tmp_path: Path
 ) -> None:
-    # Ten equal decks: 7 playing it have a lower bound of 0.397, 6 of 0.313.
-    for playing, expected in ((7, ["Arcane Signet"]), (6, [])):
+    # Ten equal decks: 6 playing it have a lower bound of 0.313, 5 of 0.237.
+    for playing, expected in ((6, ["Arcane Signet"]), (5, [])):
         folder = tmp_path / f"playing-{playing}"
         folder.mkdir()
         added = compile_ideas(
