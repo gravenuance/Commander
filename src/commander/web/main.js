@@ -43,7 +43,11 @@ window.addEventListener("pywebviewready", async () => {
   $("status-close").addEventListener("click", hideStatus);
   try {
     const account = await loadAccount();
-    if (account && !account.signedIn) {
+    if (!account) {
+      // The account could not be read: no lists either, and the note says why.
+      showSignedOut();
+      paintSync(false, true, ACCOUNT_FAILED_NOTE);
+    } else if (!account.signedIn) {
       // No lists until a sign-in succeeds; the dialog opens over the empty page.
       showSignedOut();
       openSignIn();
