@@ -16,8 +16,10 @@ from commander.board import (
     BOARD_FILE,
     LOCK_FILE,
     Actor,
+    BoardCard,
     BoardError,
     BoardService,
+    Origin,
     ReplaceOption,
     Status,
     board_plan,
@@ -412,6 +414,67 @@ def test_turned_down_maybeboard_cards_are_dropped_by_the_next_save(
     # Once it is off the Maybeboard there is nothing left to drop.
     gone = replace(deck, cards=tuple(c for c in deck.cards if not c.name.startswith("Tempestra")))
     assert board_plan(gone, board) is None
+
+
+def test_a_tagged_idea_carries_the_deck_tag_that_found_it_through_the_board_file(
+    tmp_path: Path, service: BoardService
+) -> None:
+    card = service.propose("Lightning Bolt", Actor.CMDR, origin=Origin.TAGGED, origin_tag="Landfall")
+    assert (card.origin, card.origin_tag) == (Origin.TAGGED, "Landfall")
+    assert Origin.TAGGED.value == "tagged decks"
+    assert read_board(tmp_path).cards == (card,)
+    saved = json.loads((tmp_path / BOARD_FILE).read_text(encoding="utf-8"))
+    assert (saved["cards"][0]["origin"], saved["cards"][0]["originTag"]) == ("tagged decks", "Landfall")
+
+
+def test_a_card_without_an_origin_tag_saves_none_and_a_board_from_before_it_reads(
+    tmp_path: Path, service: BoardService
+) -> None:
+    service.propose("Lightning Bolt", Actor.CMDR, origin=Origin.DECKS)
+    path = tmp_path / BOARD_FILE
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["version"] == 2
+    assert saved["cards"][0]["originTag"] is None
+    del saved["cards"][0]["originTag"]
+    path.write_text(json.dumps(saved), encoding="utf-8")
+    [card] = read_board(tmp_path).cards
+    assert (card.origin, card.origin_tag) == (Origin.DECKS, None)
+
+
+def test_a_reopened_idea_takes_the_new_origin_and_tag(tmp_path: Path, service: BoardService) -> None:
+    card = service.propose("Lightning Bolt", Actor.CMDR, origin=Origin.TAGGED, origin_tag="Landfall")
+    service.decide(card.id, Status.REJECTED, Actor.YOU)
+    assert service.propose("Lightning Bolt", Actor.CMDR).origin_tag == "Landfall"
+    service.decide(card.id, Status.REJECTED, Actor.YOU)
+    again = service.propose("Lightning Bolt", Actor.CMDR, origin=Origin.TAGGED, origin_tag="Tokens")
+    assert again.origin_tag == "Tokens"
+    service.decide(card.id, Status.REJECTED, Actor.YOU)
+    assert service.propose("Lightning Bolt", Actor.CMDR, origin=Origin.DECKS).origin_tag is None
+
+
+def test_only_a_tagged_idea_may_name_a_tag() -> None:
+    def card(origin: Origin | None, tag: str | None) -> BoardCard:
+        return BoardCard(
+            "a1",
+            "Lightning Bolt",
+            "x",
+            Actor.CMDR,
+            "",
+            (),
+            Status.OPEN,
+            None,
+            "",
+            "t",
+            "t",
+            origin=origin,
+            origin_tag=tag,
+        )
+
+    assert card(Origin.TAGGED, "Landfall").origin_tag == "Landfall"
+    with pytest.raises(ValueError, match="only a tagged"):
+        card(Origin.DECKS, "Landfall")
+    with pytest.raises(ValueError, match="only a tagged"):
+        card(None, "Landfall")
 
 
 def test_a_turned_down_card_keeps_its_share_until_reopened(tmp_path: Path, service: BoardService) -> None:

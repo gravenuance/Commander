@@ -98,6 +98,8 @@ class Origin(Enum):
     DECKS = "archidekt decks"
     # Staples of recent Archidekt decks led by the commanders the deck's profile names as alike (ADR 0015).
     ADJACENT = "adjacent decks"
+    # Staples of recent Archidekt decks of any commander carrying one of the deck's theme tags.
+    TAGGED = "tagged decks"
 
 
 @dataclass(slots=True, frozen=True)
@@ -117,6 +119,8 @@ class BoardCard:
     # For a turned-down card: its share of the lists read when it was turned down; None when unknown.
     rejected_share: float | None = None
     origin: Origin | None = None
+    # For a tagged idea: the deck tag whose decks play the card.
+    origin_tag: str | None = None
     # Copies to add, each taking a copy of the chosen cut: a basic land swap moves several at once.
     copies: int = 1
 
@@ -127,6 +131,8 @@ class BoardCard:
             raise ValueError(f"{self.name}: only a card being added has a chosen cut")
         if self.rejected_share is not None and self.status is not Status.REJECTED:
             raise ValueError(f"{self.name}: only a turned-down card keeps its share")
+        if self.origin_tag is not None and self.origin is not Origin.TAGGED:
+            raise ValueError(f"{self.name}: only a tagged idea names a tag")
 
 
 @dataclass(slots=True, frozen=True)
@@ -264,6 +270,7 @@ def parse_board(raw: Mapping[str, object]) -> Board:
                 updated_at=req_str(card, "updatedAt", where),
                 rejected_share=opt_float(card, "rejectedShare", where),
                 origin=_origin(opt_str(card, "origin", where)),
+                origin_tag=opt_str(card, "originTag", where),
                 copies=opt_int(card, "copies", where) or 1,
             )
         )
@@ -293,6 +300,7 @@ def card_json(card: BoardCard) -> dict[str, object]:
         "updatedAt": card.updated_at,
         "rejectedShare": card.rejected_share,
         "origin": card.origin.value if card.origin else None,
+        "originTag": card.origin_tag,
         "copies": card.copies,
     }
 
@@ -385,6 +393,7 @@ class BoardService:
         reason: str = "",
         replace_options: Sequence[ReplaceOption] = (),
         origin: Origin | None = None,
+        origin_tag: str | None = None,
         copies: int = 1,
     ) -> BoardCard:
         """Put a card on the board; a card turned down or applied before is reopened, not listed twice."""
@@ -407,6 +416,7 @@ class BoardService:
                     updated_at=stamp,
                     rejected_share=None,
                     origin=origin or existing.origin,
+                    origin_tag=origin_tag if origin else existing.origin_tag,
                     copies=copies,
                 )
                 save(_swap(board, card), Activity(stamp, actor, "reopened", card.name, reason))
@@ -426,6 +436,7 @@ class BoardService:
                 added_at=stamp,
                 updated_at=stamp,
                 origin=origin,
+                origin_tag=origin_tag,
                 copies=copies,
             )
             save(
@@ -803,9 +814,10 @@ def feed_ideas(
     *,
     shares: Mapping[str, float] | None = None,
     origin: Origin | None = None,
+    origin_tag: str | None = None,
 ) -> list[BoardCard]:
     """Put each idea (card name to reason) on the board under Considering, with cuts as cards to replace
-    and where the ideas came from.
+    and where the ideas came from (origin_tag: the deck tag, for tagged decks).
 
     Cards already on the board are left alone, but with the weighted shares of the lists read (by `card_key`)
     a turned-down one comes back once its share has risen by RETURN_RISE since; one turned down without a
@@ -827,6 +839,7 @@ def feed_ideas(
                 reason=reason,
                 replace_options=cuts,
                 origin=origin,
+                origin_tag=origin_tag,
             )
         except BoardError as error:
             log.info("not putting %s on the board: %s", name, error)
