@@ -36,6 +36,8 @@ from commander.archidekt import (
 from commander.background import in_background
 from commander.config import MetaSettings
 from commander.deckcache import Answer, AnswerSource, Clock, DeckCache, cache_item, cached_answer
+from commander.deckreads import FOLDER as DECK_READS_FOLDER
+from commander.deckreads import DeckRead, DeckReads, decode_multiples, read_of
 from commander.edhtop16 import (
     REQUEST_INTERVAL_SECONDS,
     SLOW_QUERY_SECONDS,
@@ -62,7 +64,7 @@ from commander.jsonshape import (
     req_str,
     str_list,
 )
-from commander.models import Deck, plan_category
+from commander.models import Deck
 from commander.net import Fetcher, NetworkError, Pacer
 from commander.spellbook import FRESH_FOR as SPELLBOOK_FRESH_FOR
 from commander.spellbook import (
@@ -471,7 +473,15 @@ def _group_peers(
         request,
         _live(
             offline,
-            lambda: _peer_lists(sources, group, bracket, own_id=own_id, since=since, settings=settings),
+            lambda: _peer_lists(
+                sources,
+                DeckReads(folder / DECK_READS_FOLDER),
+                group,
+                bracket,
+                own_id=own_id,
+                since=since,
+                now=now,
+            ),
         ),
         _cache(folder, "Archidekt decks", _encode_peers, _decode_peers),
         now=now,
@@ -596,13 +606,15 @@ def _meta_field(
 
 def _peer_lists(
     sources: MetaSources,
+    reads: DeckReads,
     group: tuple[str, ...],
     bracket: int | None,
     *,
     own_id: int | None,
     since: date,
-    settings: MetaSettings,
+    now: Clock,
 ) -> PeerLists:
+    settings = sources.settings
     if settings.peer_decks == 0:
         return PeerLists((), 0)
     start = datetime(since.year, since.month, since.day, tzinfo=UTC)
@@ -615,23 +627,27 @@ def _peer_lists(
     lists: list[PeerList] = []
     skipped = 0
     for peer in most_viewed(others, limit=settings.peer_decks):
-        try:
-            full = sources.archidekt.deck(peer.id)
-        except ArchidektError as error:
-            # One unreadable deck shouldn't cost the others; the count is shown with the results.
-            log.warning("skipping Archidekt deck %d: %s", peer.id, error)
-            skipped += 1
+        read = reads.load(peer)
+        if read is None:
+            try:
+                read = read_of(sources.archidekt.deck(peer.id))
+            except ArchidektError as error:
+                # One unreadable deck shouldn't cost the others; the count is shown with the results.
+                log.warning("skipping Archidekt deck %d: %s", peer.id, error)
+                skipped += 1
+                continue
+            _keep(reads, peer, read, now())
+        if wanted != {name.casefold() for name in read.commanders}:
             continue
-        if wanted != {name.casefold() for name in full.commanders}:
-            continue
-        names = sorted({card.name for card in full.main_cards})
-        planned = sorted({card.name for card in full.main_cards if any(map(plan_category, card.categories))})
-        counts: dict[str, int] = {}
-        for card in full.main_cards:
-            counts[card.name] = counts.get(card.name, 0) + card.quantity
-        multiples = tuple(sorted((name, count) for name, count in counts.items() if count > 1))
-        lists.append(PeerList(peer, tuple(names), tuple(planned), multiples))
+        lists.append(PeerList(peer, read.cards, read.planned, read.multiples))
     return PeerLists(tuple(lists), skipped)
+
+
+def _keep(reads: DeckReads, peer: PeerDeck, read: DeckRead, at: datetime) -> None:
+    try:
+        reads.save(peer, read, at)
+    except OSError as error:
+        log.warning("could not cache Archidekt deck %d: %s", peer.id, error)
 
 
 def _cache[T](
@@ -790,15 +806,7 @@ def _decode_peers(raw: object) -> PeerLists:
 
 def _multiples(d: Mapping[str, object], where: str) -> tuple[tuple[str, int], ...] | None:
     raw = d.get("multiples")
-    if raw is None:
-        return None
-    found: list[tuple[str, int]] = []
-    for index, item in enumerate(as_list(raw, f"{where}.multiples")):
-        pair = as_list(item, f"{where}.multiples[{index}]")
-        if len(pair) != 2 or not isinstance(pair[0], str) or not isinstance(pair[1], int):  # noqa: PLR2004 — a pair
-            raise ShapeError(f"{where}.multiples[{index}]: expected [name, count]")
-        found.append((pair[0], pair[1]))
-    return tuple(found)
+    return None if raw is None else decode_multiples(raw, f"{where}.multiples")
 
 
 def _encode_combos(combos: tuple[ComboDetail, ...]) -> object:

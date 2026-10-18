@@ -10,6 +10,7 @@ import pytest
 from commander.archidekt import ArchidektSearch
 from commander.config import MetaSettings
 from commander.deckcache import AnswerSource, request_key
+from commander.deckreads import FOLDER as DECK_READS_FOLDER
 from commander.edhtop16 import Edhtop16Client
 from commander.metadata import (
     CACHE_FOLDER,
@@ -48,8 +49,11 @@ class FakeArchidektSearch:
         # The search answer; the trimmed real page when None.
         self.page: Json | None = None
         self.requests: list[str] = []
-        # The query of each search request.
+        # The query of each search request, and the id of each deck read.
         self.searches: list[dict[str, str]] = []
+        self.deck_reads: list[int] = []
+        # Deck reads past this many get a 429.
+        self.limit_reads: int | None = None
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request.url.path)
@@ -60,6 +64,9 @@ class FakeArchidektSearch:
         if request.url.path == "/api/decks/v3/":
             return httpx.Response(200, json=self.page or load_fixture("archidekt_search_ellivere.json"))
         deck_id = int(request.url.path.strip("/").split("/")[-1])
+        if self.limit_reads is not None and len(self.deck_reads) >= self.limit_reads:
+            return httpx.Response(429)
+        self.deck_reads.append(deck_id)
         if deck_id in self.broken:
             return httpx.Response(200, json={"id": deck_id})
         deck = load_fixture(f"deck_{DECK_ID}.json")
@@ -92,6 +99,8 @@ class Rig:
         self.spellbook = FakeSpellbook()
         self.spellbook.combos = load_fixture("spellbook_meta_kinnan.json")
         self.cache = tmp_path / "cache"
+        # The pauses Archidekt's pacer would have slept.
+        self.sleeps: list[float] = []
         self.now = NOW
         self.settings = SETTINGS
 
@@ -100,7 +109,7 @@ class Rig:
             Edhtop16Client(Fetcher(self.edhtop16.client(), max_attempts=1), Pacer(0)),
             ArchidektSearch(
                 Fetcher(httpx.Client(transport=httpx.MockTransport(self.archidekt.handler)), max_attempts=1),
-                Pacer(0),
+                Pacer(0, sleep=self.sleeps.append),
             ),
             SpellbookClient(Fetcher(self.spellbook.client(), max_attempts=1)),
             Pacer(0),
@@ -210,6 +219,92 @@ def test_a_bracket_4_deck_offline_asks_nothing(rig: Rig) -> None:
 def test_a_bracket_5_deck_reads_only_bracket_5_of_archidekt(rig: Rig) -> None:
     bracketed(rig, 5)
     assert [q["edhBracket"] for q in rig.archidekt.searches] == ["5"]
+
+
+def deck_files(rig: Rig) -> list[Path]:
+    return sorted((rig.cache / CACHE_FOLDER / DECK_READS_FOLDER).glob("*.json"))
+
+
+def test_a_deck_unchanged_since_it_was_read_is_never_read_again(rig: Rig) -> None:
+    rig.gather()
+    assert rig.archidekt.deck_reads == [5553433, 13668856, 7432856]
+    assert [p.name for p in deck_files(rig)] == ["13668856.json", "5553433.json", "7432856.json"]
+    rig.now = NOW + timedelta(days=2)
+    again = rig.gather(refresh=True)
+    assert rig.archidekt.deck_reads == [5553433, 13668856, 7432856]
+    assert again.peers.source is AnswerSource.FETCHED
+    assert again.peers.data is not None
+    assert [p.deck.id for p in again.peers.data.decks] == [5553433, 13668856, 7432856]
+
+
+def test_a_deck_edited_since_it_was_read_is_read_again_alone(rig: Rig) -> None:
+    rig.gather()
+    page = load_fixture("archidekt_search_ellivere.json")
+    [edited] = [r for r in page["results"] if r["id"] == 13668856]
+    edited["updatedAt"] = "2026-10-14T08:00:00.000000Z"
+    rig.archidekt.page = page
+    rig.now = NOW + timedelta(days=2)
+    data = rig.gather(refresh=True)
+    assert rig.archidekt.deck_reads == [5553433, 13668856, 7432856, 13668856]
+    assert data.peers.data is not None
+    assert {p.deck.id: p.deck.updated_at.day for p in data.peers.data.decks}[13668856] == 14
+
+
+def test_a_corrupt_deck_cache_file_is_a_miss_that_is_logged_and_repaired(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    rig.gather()
+    broken = rig.cache / CACHE_FOLDER / DECK_READS_FOLDER / "13668856.json"
+    broken.write_text("{not json", encoding="utf-8")
+    other = rig.cache / CACHE_FOLDER / DECK_READS_FOLDER / "5553433.json"
+    other.write_text(
+        json.dumps({"version": 1, "key": "x", "fetchedAt": "2026-10-15T12:00:00+00:00"}), encoding="utf-8"
+    )
+    with caplog.at_level("WARNING"):
+        data = rig.gather(refresh=True)
+    assert sorted(rig.archidekt.deck_reads[3:]) == [5553433, 13668856]
+    assert data.peers.data is not None
+    assert len(data.peers.data.decks) == 3
+    assert "ignoring unreadable cached Archidekt deck" in caplog.text
+    assert json.loads(broken.read_text(encoding="utf-8"))["version"] == 1
+    reads = len(rig.archidekt.deck_reads)
+    rig.gather(refresh=True)
+    assert len(rig.archidekt.deck_reads) == reads
+
+
+def test_a_deck_cached_in_another_shape_is_a_miss_not_a_crash(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    rig.gather()
+    path = rig.cache / CACHE_FOLDER / DECK_READS_FOLDER / "7432856.json"
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["answer"]["cards"] = "Mind Stone"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    raw["version"] = 0
+    other = path.with_name("5553433.json")
+    other.write_text(json.dumps(raw), encoding="utf-8")
+    with caplog.at_level("WARNING"):
+        data = rig.gather(refresh=True)
+    assert sorted(rig.archidekt.deck_reads[3:]) == [5553433, 7432856]
+    assert data.peers.data is not None
+    assert len(data.peers.data.decks) == 3
+    assert "ignoring malformed cached Archidekt deck" in caplog.text
+
+
+def test_after_a_rate_limit_the_next_run_reads_only_the_decks_still_missing(rig: Rig) -> None:
+    rig.archidekt.limit_reads = 2
+    stopped = rig.gather()
+    # Two 429s in a row end the run; the 180 seconds were waited between them.
+    assert stopped.peers.source is AnswerSource.UNAVAILABLE
+    assert stopped.peers.error is not None
+    assert "HTTP 429" in stopped.peers.error
+    assert rig.sleeps == [pytest.approx(180.0, abs=1.0)]
+    assert [p.name for p in deck_files(rig)] == ["13668856.json", "5553433.json"]
+    rig.archidekt.limit_reads = None
+    rig.now = NOW + timedelta(minutes=10)
+    resumed = rig.gather()
+    assert rig.archidekt.deck_reads == [5553433, 13668856, 7432856]
+    assert resumed.peers.source is AnswerSource.FETCHED
 
 
 def test_a_search_that_finds_no_decks_gives_an_empty_answer_not_an_error(rig: Rig) -> None:
