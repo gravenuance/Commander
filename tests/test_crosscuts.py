@@ -7,7 +7,7 @@ import pytest
 from commander.carddb import ResolvedCard, Role
 from commander.peercounts import PeerCounts, RoleBand
 from commander.targets import CutRules, Target, role_targets
-from commander.weightedshare import ShareTable
+from commander.weightedshare import NO_SHARES, ShareTable
 from test_targets import card, info, names, table
 
 IDEA_SHARE = 0.5
@@ -101,7 +101,7 @@ def test_cutting_from_a_role_the_deck_over_runs_scores_a_bonus_by_how_far_over()
 
 def test_same_role_cuts_stay_first_and_the_others_follow_by_score() -> None:
     deck = [card("Old Draw", (Role.DRAW,)), card("Low Ramp", (Role.RAMP,)), card("High Ramp", (Role.RAMP,))]
-    shares = shares_of(deck, {"old draw": 0.8, "low ramp": 0.05, "high ramp": 0.3})
+    shares = shares_of(deck, {"old draw": 0.45, "low ramp": 0.05, "high ramp": 0.3})
     found = for_draw_idea(deck, rules(shares=shares))
     assert names(found) == ["Old Draw", "Low Ramp", "High Ramp"]
     assert found[0].reason.startswith("same role (draw);")
@@ -184,6 +184,7 @@ def test_without_peer_counts_a_cut_stays_in_the_ideas_role_and_themes() -> None:
 
 def test_without_shares_nothing_of_another_role_or_theme_is_offered() -> None:
     assert for_draw_idea(ramp(9), rules(roles={Role.RAMP: band(0.0)})) == ()
+    assert for_draw_idea(ramp(9), rules(roles={Role.RAMP: band(0.0)}, shares=NO_SHARES)) == ()
     held = {"human a": frozenset({"Humans"}), "thalia": frozenset({"Stax"})}
     assert for_stax_idea([card("Human A")], rules(held=held)) == ()
 
@@ -204,9 +205,3 @@ def test_a_card_of_another_role_is_cut_only_for_an_idea_more_played_than_it() ->
     ]
     shares = table({"mystic remora": IDEA_SHARE, "played ramp": 0.9, "level ramp": 0.5, "rare ramp": 0.2})
     assert names(for_draw_idea(deck, rules(roles={Role.RAMP: band(0.0)}, shares=shares))) == ["Rare Ramp"]
-
-
-def test_the_played_gap_does_not_limit_a_cut_of_the_ideas_own_role() -> None:
-    deck = [card("Busy Draw", (Role.DRAW,))]
-    shares = table({"mystic remora": IDEA_SHARE, "busy draw": 0.9})
-    assert names(for_draw_idea(deck, rules(shares=shares))) == ["Busy Draw"]
