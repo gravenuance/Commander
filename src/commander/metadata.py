@@ -69,7 +69,7 @@ from commander.jsonshape import (
     str_list,
 )
 from commander.models import Deck
-from commander.net import Fetcher, NetworkError, Pacer
+from commander.net import Fetcher, HttpStatusError, NetworkError, Pacer
 from commander.spellbook import FRESH_FOR as SPELLBOOK_FRESH_FOR
 from commander.spellbook import (
     META_REQUEST_INTERVAL_SECONDS,
@@ -81,6 +81,10 @@ from commander.spellbook import (
 )
 
 log = logging.getLogger(__name__)
+
+# A deck read answered with one of these means that deck went private or was deleted, not that Archidekt is
+# unwell.
+_DECK_GONE_STATUSES = frozenset({403, 404, 410})
 
 FRESH_FOR = timedelta(hours=24)
 CACHE_VERSION = 1
@@ -787,6 +791,12 @@ def _read_peers(
                 read = read_of(sources.archidekt.deck(peer.id))
             except ArchidektError as error:
                 # One unreadable deck shouldn't cost the others; the count is shown with the results.
+                log.warning("skipping Archidekt deck %d: %s", peer.id, error)
+                skipped += 1
+                continue
+            except HttpStatusError as error:
+                if error.status not in _DECK_GONE_STATUSES:
+                    raise
                 log.warning("skipping Archidekt deck %d: %s", peer.id, error)
                 skipped += 1
                 continue

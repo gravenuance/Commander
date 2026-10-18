@@ -42,6 +42,8 @@ class FakeArchidektSearch:
 
     def __init__(self) -> None:
         self.broken: set[int] = set()
+        # Decks whose read gets this HTTP status instead.
+        self.refused: dict[int, int] = {}
         # The commander every served deck is led by (the fixture deck's Magda renamed).
         self.commander = ELLIVERE
         # Decks served with Kodama of the East Tree as the commander's partner.
@@ -70,6 +72,8 @@ class FakeArchidektSearch:
         if self.limit_reads is not None and len(self.deck_reads) >= self.limit_reads:
             return httpx.Response(429)
         self.deck_reads.append(deck_id)
+        if deck_id in self.refused:
+            return httpx.Response(self.refused[deck_id])
         if deck_id in self.broken:
             return httpx.Response(200, json={"id": deck_id})
         deck = load_fixture(f"deck_{DECK_ID}.json")
@@ -389,6 +393,23 @@ def test_after_archidekt_gives_up_on_a_rate_limit_later_gathers_of_the_run_send_
 
     assert second.peers.source is AnswerSource.UNAVAILABLE
     assert (len(rig.archidekt.requests), rig.sleeps) == (sent, slept)
+
+
+@pytest.mark.parametrize("status", [403, 404, 410])
+def test_a_deck_that_went_private_or_was_deleted_is_skipped_not_fatal(rig: Rig, status: int) -> None:
+    rig.archidekt.refused[13668856] = status
+    peers = rig.gather().peers.data
+    assert peers is not None
+    assert [p.deck.id for p in peers.decks] == [5553433, 7432856]
+    assert peers.skipped == 1
+
+
+@pytest.mark.parametrize("status", [401, 500])
+def test_any_other_refused_deck_read_still_fails_the_source(rig: Rig, status: int) -> None:
+    rig.archidekt.refused[13668856] = status
+    peers = rig.gather().peers
+    assert peers.source is AnswerSource.UNAVAILABLE
+    assert peers.data is None
 
 
 def test_a_search_that_finds_no_decks_gives_an_empty_answer_not_an_error(rig: Rig) -> None:
