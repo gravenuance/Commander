@@ -313,6 +313,7 @@ class Desk:
         self._settings = replace(self._settings, user=user, workspace=folder)
         self._workspace = Workspace(folder)
         self._pools.clear()
+        self._tables.clear()
         self._rules.clear()
         with self._sync_lock:
             self._open_deck = None
