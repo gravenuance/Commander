@@ -227,6 +227,8 @@ class Desk:
         self._rules: dict[int, tuple[str, CutRules]] = {}
         self._sync_lock = threading.Lock()
         self._sync = _SyncState()
+        # What each running write to the decks or Archidekt is called; guarded by _sync_lock like the sync.
+        self._writes: list[str] = []
 
     @_guarded
     def account(self) -> Json:
@@ -248,13 +250,14 @@ class Desk:
         config = self._config()
         user = user.strip()
         validate_user(user)
-        if busy := self._updating("sign in"):
-            return busy
-        with self._client_factory() as http:
-            ArchidektAuth(Fetcher(http), self._token_store).login(user, user, password)
-        folder = switch_account(config, user, documents=self._documents())
-        self._use_account(user, folder)
-        log.info("signed in as %s; decks in %s", user, folder)
+        with self._writing("sign-in", "sign in") as busy:
+            if busy:
+                return busy
+            with self._client_factory() as http:
+                ArchidektAuth(Fetcher(http), self._token_store).login(user, user, password)
+            folder = switch_account(config, user, documents=self._documents())
+            self._use_account(user, folder)
+            log.info("signed in as %s; decks in %s", user, folder)
         if not self._workspace.load_all():
             self._start_sync(user)
         return self.account()
@@ -263,20 +266,22 @@ class Desk:
     def sign_out(self) -> Json:
         """Remove the saved login and forget the account; its deck folder stays for the next sign-in."""
         config = self._config()
-        if busy := self._updating("sign out"):
-            return busy
-        user = self._settings.user
-        if user:
-            self._token_store.delete(user)
-        forget_account(config)
-        self._settings = replace(self._settings, user=None)
-        log.info("signed out %s; decks stay in %s", user, self._settings.workspace)
+        with self._writing("sign-out", "sign out") as busy:
+            if busy:
+                return busy
+            user = self._settings.user
+            if user:
+                self._token_store.delete(user)
+            forget_account(config)
+            self._settings = replace(self._settings, user=None)
+            log.info("signed out %s; decks stay in %s", user, self._settings.workspace)
         return self.account()
 
     @_guarded
     def sync(self) -> Json:
         """Start syncing the account's decks in the background; sync_status follows it."""
-        self._start_sync(self._user())
+        if busy := self._start_sync(self._user()):
+            return busy
         return self._sync_json()
 
     @_guarded
@@ -297,22 +302,36 @@ class Desk:
         self._pools.clear()
         self._rules.clear()
 
-    def _syncing(self) -> bool:
-        with self._sync_lock:
-            return self._sync.running
+    @contextmanager
+    def _writing(self, doing: str, then: str) -> Generator[Json | None]:
+        """Marks a write to the decks or Archidekt as running, so no sync starts meanwhile.
 
-    def _updating(self, then: str) -> Json | None:
-        """The refusal for a change that would race the running sync, else None."""
-        if self._syncing():
-            return {"error": f"Wait for the sync to finish, then {then}."}
-        return None
-
-    def _start_sync(self, user: str) -> None:
+        Yields the refusal instead, and marks nothing, when a sync already runs: the check and the mark
+        are one step under the lock, so a sync and a write cannot both start.
+        """
         with self._sync_lock:
+            busy = self._sync.running
+            if not busy:
+                self._writes.append(doing)
+        if busy:
+            yield {"error": f"Wait for the sync to finish, then {then}."}
+            return
+        try:
+            yield None
+        finally:
+            with self._sync_lock:
+                self._writes.remove(doing)
+
+    def _start_sync(self, user: str) -> Json | None:
+        """Starts the sync unless one runs already; the refusal when a write is under way."""
+        with self._sync_lock:
+            if self._writes:
+                return {"error": f"Wait for the {self._writes[0]} to finish, then sync."}
             if self._sync.running:
-                return
+                return None
             self._sync = _SyncState(running=True, progress="Starting the sync")
         self._background(lambda: self._run_sync(user))
+        return None
 
     def _run_sync(self, user: str) -> None:
         services = SyncServices(
@@ -439,15 +458,16 @@ class Desk:
     @_guarded
     def set_label(self, deck_id: int, name: str, label: str) -> Json:
         """Give one deck card one of the deck's labels ("" for none) on Archidekt at once (ADR 0010)."""
-        if busy := self._updating("change the label"):
-            return busy
-        stored = self._stored(deck_id)
-        user = self._user()
-        with self._service_and_db(stored) as (service, _), self._client_factory() as http:
-            editor = self._editor(http, user)
-            marked = set_label(
-                editor, self._workspace, stored, service, name=name, label=label, actor=Actor.YOU
-            )
+        with self._writing("label change", "change the label") as busy:
+            if busy:
+                return busy
+            stored = self._stored(deck_id)
+            user = self._user()
+            with self._service_and_db(stored) as (service, _), self._client_factory() as http:
+                editor = self._editor(http, user)
+                marked = set_label(
+                    editor, self._workspace, stored, service, name=name, label=label, actor=Actor.YOU
+                )
         return {"card": marked.card, "before": marked.before, "after": marked.after}
 
     @_guarded
@@ -515,26 +535,27 @@ class Desk:
     @_guarded
     def mana_to_board(self, deck_id: int) -> Json:
         """Put the suggested swaps on the board under Considering, each with its cut; the user decides."""
-        if busy := self._updating("add the swaps"):
-            return busy
-        _, plan = self._mana(deck_id)
-        if plan is None:
-            return {"error": "bracket 5 decks follow the tournament lists, not Karsten's numbers"}
-        board = read_board(self._stored(deck_id).folder)
-        added: list[Json] = []
-        with self._service(deck_id) as service:
-            for swap in plan.swaps:
-                # Like compiled ideas, a card on the board in any state, turned down too, is left alone.
-                if board.find(swap.add) is not None:
-                    continue
-                card = service.propose(
-                    swap.add,
-                    Actor.CMDR,
-                    reason=swap.reason,
-                    replace_options=(ReplaceOption(swap.cut, swap.reason),),
-                    copies=swap.copies,
-                )
-                added.append(card_json(card))
+        with self._writing("swaps", "add the swaps") as busy:
+            if busy:
+                return busy
+            _, plan = self._mana(deck_id)
+            if plan is None:
+                return {"error": "bracket 5 decks follow the tournament lists, not Karsten's numbers"}
+            board = read_board(self._stored(deck_id).folder)
+            added: list[Json] = []
+            with self._service(deck_id) as service:
+                for swap in plan.swaps:
+                    # Like compiled ideas, a card on the board in any state, turned down too, is left alone.
+                    if board.find(swap.add) is not None:
+                        continue
+                    card = service.propose(
+                        swap.add,
+                        Actor.CMDR,
+                        reason=swap.reason,
+                        replace_options=(ReplaceOption(swap.cut, swap.reason),),
+                        copies=swap.copies,
+                    )
+                    added.append(card_json(card))
         return {"added": added, "skipped": len(plan.swaps) - len(added)}
 
     def _mana(self, deck_id: int) -> tuple[Json, ManaPlan | None]:
@@ -688,17 +709,18 @@ class Desk:
     @_guarded
     def commit(self, deck_id: int, stamp: str) -> Json:
         """Save the queued cards, if the board is still as the preview with this stamp saw it."""
-        if busy := self._updating("save"):
-            return busy
-        stored = self._stored(deck_id)
-        user = self._user()
-        if board_digest(stored.folder) != stamp:
-            return {"error": "The board changed after the preview; open Review again before saving."}
-        with self._service_and_db(stored) as (service, db), self._client_factory() as http:
-            editor = self._editor(http, user)
-            saved = save_board(
-                editor, self._workspace, stored, db, service, user=user, actor=Actor.YOU, now=self._now
-            )
+        with self._writing("save", "save") as busy:
+            if busy:
+                return busy
+            stored = self._stored(deck_id)
+            user = self._user()
+            if board_digest(stored.folder) != stamp:
+                return {"error": "The board changed after the preview; open Review again before saving."}
+            with self._service_and_db(stored) as (service, db), self._client_factory() as http:
+                editor = self._editor(http, user)
+                saved = save_board(
+                    editor, self._workspace, stored, db, service, user=user, actor=Actor.YOU, now=self._now
+                )
         view = _resolution_json(saved.resolution)
         result = saved.result
         view["saved"] = result is not None
