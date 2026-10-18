@@ -1,5 +1,6 @@
 """The desktop app's bridge, called as the page calls it, against the fake Archidekt."""
 
+import copy
 import json
 import re
 import shutil
@@ -12,18 +13,22 @@ from typing import cast
 import pytest
 
 from commander import desk as desk_module
+from commander import syncrun
 from commander.app import desk_settings, page_html
 from commander.carddb import CARD_DB_FILE, CardDb
 from commander.desk import Desk, DeskSettings
 from commander.ideas import compile_ideas
 from commander.metadata import CACHE_FOLDER
 from commander.net import Pacer
+from commander.scryfall import CardRefresh
 from commander.store import StoredDeck, Workspace
+from commander.viewscore import ViewScores
 from conftest import REFRESH_TOKEN, FakeArchidekt, Json, MemoryTokenStore
 from test_cli_apply import run
 from test_cli_meta import MAGDA, magda_page
 from test_cli_meta import meta as cli_meta
 from test_meta import meta_data, peer
+from test_syncrun import DOWNLOADED, stub_meta
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 DECK = 10004639
@@ -781,3 +786,102 @@ def test_a_sync_asked_for_during_a_board_edit_or_settings_save_is_refused(
         {"error": "Wait for the settings save to finish, then sync."},
     ]
     assert pending == []
+
+
+def view_scores(settings: DeskSettings) -> dict[int, float]:
+    return ViewScores(settings.cache / "views.json", lambda: NOW).scores()
+
+
+def test_opening_a_deck_adds_one_to_its_view_score_and_reloading_it_adds_nothing(
+    desk: Desk, settings: DeskSettings
+) -> None:
+    assert desk.open_deck(DECK) == {}
+    desk.deck(DECK)
+    desk.deck(DECK)
+    assert view_scores(settings) == {DECK: 1.0}
+    desk.open_deck(DECK)
+    assert view_scores(settings) == {DECK: 2.0}
+
+
+def test_a_deck_the_page_opens_by_itself_is_no_view(desk: Desk, settings: DeskSettings) -> None:
+    assert desk.open_deck(DECK, viewed=False) == {}
+    assert view_scores(settings) == {}
+
+
+def test_opening_a_deck_that_is_not_there_scores_nothing(desk: Desk, settings: DeskSettings) -> None:
+    answer = desk.open_deck(999)
+    assert "press Sync" in str(answer["error"])
+    assert view_scores(settings) == {}
+
+
+EXTRA_DECKS = (20001, 20002, 20003)
+
+
+def with_extra_decks(settings: DeskSettings, fake: FakeArchidekt, raw_deck: Json) -> None:
+    """Three more decks in the workspace, which sort after the fixture deck."""
+    for deck_id in EXTRA_DECKS:
+        deck = copy.deepcopy(raw_deck)
+        deck["id"], deck["name"] = deck_id, f"Deck {deck_id}"
+        fake.put(deck)
+    home = settings.workspace.parent
+    assert (
+        run(["sync", "--no-cards", "--no-ideas", "--workspace", str(settings.workspace)], home, fake).code
+        == 0
+    )
+
+
+def sync_with_stubs(
+    desk: Desk,
+    pending: list[Callable[[], None]],
+    monkeypatch: pytest.MonkeyPatch,
+    after_gather: Callable[[int], None] = lambda _: None,
+) -> list[int]:
+    """Run the sync the desk is holding back, with the network reads of the ideas phase replaced."""
+    gathered = stub_meta(monkeypatch, after_gather)
+
+    def download(*_: object, **__: object) -> CardRefresh:
+        return DOWNLOADED
+
+    monkeypatch.setattr(syncrun, "refresh_card_db", download)
+    desk.sync()
+    [start] = pending
+    start()
+    assert desk.sync_status()["failed"] is False
+    return gathered
+
+
+def test_a_sync_fetches_the_deck_open_in_the_app_first_then_the_rest_by_views(
+    settings: DeskSettings, fake: FakeArchidekt, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_extra_decks(settings, fake, raw_deck)
+    desk, pending = deferred_desk(settings, fake)
+    desk.open_deck(20003)
+    desk.open_deck(20003)
+    desk.open_deck(20002)
+    # 20002 is open, so it goes first; 20003 has two views and the others none.
+    assert sync_with_stubs(desk, pending, monkeypatch) == [20002, 20003, DECK, 20001]
+
+
+def test_a_sync_without_an_open_deck_goes_by_views(
+    settings: DeskSettings, fake: FakeArchidekt, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_extra_decks(settings, fake, raw_deck)
+    desk, pending = deferred_desk(settings, fake)
+    ViewScores(settings.cache / "views.json", lambda: NOW).record_open(20001)
+    assert sync_with_stubs(desk, pending, monkeypatch) == [20001, DECK, 20002, 20003]
+
+
+def test_a_deck_opened_during_the_sync_is_fetched_after_the_one_in_progress(
+    settings: DeskSettings, fake: FakeArchidekt, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_extra_decks(settings, fake, raw_deck)
+    desk, pending = deferred_desk(settings, fake)
+    desk.open_deck(20001)
+
+    def open_another_during_the_first_fetch(deck_id: int) -> None:
+        if deck_id == 20001:
+            desk.open_deck(20003)
+
+    gathered = sync_with_stubs(desk, pending, monkeypatch, open_another_during_the_first_fetch)
+    assert gathered == [20001, 20003, DECK, 20002]
+    assert view_scores(settings) == {20001: 1.0, 20003: 1.0}

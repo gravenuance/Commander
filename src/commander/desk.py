@@ -58,6 +58,7 @@ from commander.deckgrid import GridGroup, deck_grid, image_url
 from commander.deckprofile import MAX_ADJACENT, Profile, read_profile
 from commander.deckthemes import merge_themes
 from commander.edhtop16 import Edhtop16Error
+from commander.fetchpriority import FetchPriority
 from commander.labels import LabelError, label_options, set_label
 from commander.landswap import comparison_lists
 from commander.leanings import leaning_json
@@ -84,6 +85,7 @@ from commander.suggest import deck_identity
 from commander.sync import SyncStatus
 from commander.syncrun import CardState, SyncOutcome, SyncServices, run_sync
 from commander.targets import CutRules, Target, deck_cut_rules, targets_for, with_ideas
+from commander.viewscore import VIEWS_FILE, ViewScores
 from commander.weightedshare import (
     ShareTable,
     SourceShare,
@@ -229,6 +231,11 @@ class Desk:
         self._rules: dict[int, tuple[str, CutRules]] = {}
         self._sync_lock = threading.Lock()
         self._sync = _SyncState()
+        # How often each deck is opened, and the deck open now; the sync fetches by both (ADR 0034).
+        self._views = ViewScores(settings.cache / VIEWS_FILE, now)
+        self._open_deck: int | None = None
+        # Set while a sync runs, so a deck opened meanwhile goes next; guarded by _sync_lock like the sync.
+        self._priority: FetchPriority | None = None
         # What each running write to the decks or Archidekt is called; guarded by _sync_lock like the sync.
         self._writes: list[str] = []
 
@@ -303,6 +310,8 @@ class Desk:
         self._workspace = Workspace(folder)
         self._pools.clear()
         self._rules.clear()
+        with self._sync_lock:
+            self._open_deck = None
 
     @contextmanager
     def _writing(self, doing: str, then: str) -> Generator[Json | None]:
@@ -332,16 +341,22 @@ class Desk:
             if self._sync.running:
                 return None
             self._sync = _SyncState(running=True, progress="Starting the sync")
-        self._background(lambda: self._run_sync(user))
+            self._priority = priority = FetchPriority(self._open_deck)
+        self._background(lambda: self._run_sync(user, priority))
         return None
 
-    def _run_sync(self, user: str) -> None:
+    def _run_sync(self, user: str, priority: FetchPriority) -> None:
         services = SyncServices(
             self._client_factory, self._token_store, self._settings.cache, self._now, self._pacer_factory
         )
         try:
             outcome = run_sync(
-                services, self._workspace, user, self._settings.meta, on_progress=self._sync_progress
+                services,
+                self._workspace,
+                user,
+                self._settings.meta,
+                priority=priority,
+                on_progress=self._sync_progress,
             )
         except _EXPECTED as error:
             log.warning("sync failed: %s", error)
@@ -362,6 +377,7 @@ class Desk:
     def _finish_sync(self, summary: str, *, failed: bool, warnings: Sequence[str] = ()) -> None:
         with self._sync_lock:
             self._sync = _SyncState(summary=summary, failed=failed, warnings=list(warnings))
+            self._priority = None
 
     def _sync_json(self) -> Json:
         with self._sync_lock:
@@ -373,6 +389,21 @@ class Desk:
                 "failed": state.failed,
                 "warnings": list(state.warnings),
             }
+
+    @_guarded
+    def open_deck(self, deck_id: int, viewed: bool = True) -> Json:  # noqa: FBT001, FBT002 — the page's call
+        """The page opened a deck: it is the one a running or coming sync fetches first (ADR 0034).
+
+        A deck the user chose counts as a view; one the page opened by itself (`viewed` false) does not.
+        """
+        stored = self._stored(deck_id)
+        if viewed:
+            self._views.record_open(stored.deck.id)
+        with self._sync_lock:
+            self._open_deck = stored.deck.id
+            if self._priority:
+                self._priority.prefer(stored.deck.id)
+        return {}
 
     @_guarded
     def decks(self) -> Json:
