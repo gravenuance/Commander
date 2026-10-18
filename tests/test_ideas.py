@@ -1,6 +1,7 @@
 """Compiling Considering from the meta and recent Archidekt decks (ADR 0028)."""
 
 from dataclasses import replace
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,27 @@ def share(name: str, lists: int, of_lists: int, peers: int, of_peers: int) -> Ca
     return CardShare(
         name, lists, lists / of_lists if of_lists else 0.0, peers, peers / of_peers, spice=None, flagged=False
     )
+
+
+def test_a_source_caps_its_ideas_by_weighted_share_not_plain_share(
+    deck: Deck, db: CardDb, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ideas_module, "MAX_PER_SOURCE", 1)
+    old, recent = date(2026, 8, 20), date(2026, 10, 10)
+    # Mind Stone is in 8 of 10 lists but 3 of them are old; Jeska's Will is in 7, all recent: plain 0.8 > 0.7,
+    # weighted the other way round.
+    lists = [
+        entry(
+            2,
+            40,
+            8,
+            [*([("Mind Stone", 0)] if i <= 8 else []), *([("Jeska's Will", 0)] if i >= 4 else [])],
+            old if i <= 3 else recent,
+        )
+        for i in range(1, 11)
+    ]
+    added = compile_ideas(StoredDeck(tmp_path, deck), meta_data(lists), db, now=lambda: NOW)
+    assert [c.name for c in added[Origin.META]] == ["Jeska's Will"]
 
 
 def test_staples_become_ideas_of_the_source_playing_them_more_most_played_first(deck: Deck) -> None:

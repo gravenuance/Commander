@@ -45,7 +45,8 @@ Option 3, in `commander.weightedshare`.
   about 44% and 10 decks about 61%. The bound of 0.32 was the best F1 of a backtest.
 - **Where it is used:** the idea test (ADR 0028), the ranking of cut targets and the cuts across roles and
   themes (ADR 0029), the return of a turned-down card once its share has risen 20 points (`RETURN_RISE`, at
-  every bracket now), the order within a group of Considering, and the share pill on each grid and board card
+  every bracket now), the order within a group of Considering, the order each source's ideas are taken in (the source's part of
+  it, times the play-style weight), and the share pill on each grid and board card
   with the sources in its tooltip. The commander carries none.
 - **Where it is not:** `cmdr meta` keeps the raw shares and the 40% and half-of-the-decks thresholds it
   reports, and the pools of ADR 0028's adjacent and tagged decks keep their half-of-the-pool rule.

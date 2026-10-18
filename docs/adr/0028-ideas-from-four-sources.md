@@ -43,8 +43,9 @@ How a card qualifies and where it ranks:
   tie. Below bracket 4 only the Archidekt decks exist.
 - **adjacent and tagged decks:** the card is played by at least half of a pool of at least three decks (the
   rule as it stands; whether these pools move to the Wilson test is open).
-- **Ranking:** each source takes its ideas in order of score, the source's share times the deck's play-style
-  weight (ADR 0031), and off-plan cards are not compiled. Within budget comes before over budget (ADR 0025).
+- **Ranking:** each source takes its ideas in order of score, the source's weighted share times the deck's
+  play-style weight (ADR 0031; adjacent and tagged ideas have no weighted share and use the pool's plain
+  share), and off-plan cards are not compiled. Within budget comes before over budget (ADR 0025).
   Ideas already on the board fill places, so repeated syncs settle on the current top 50. A turned-down card
   takes none unless its share has risen 20 points (ADR 0026).
 - **Filters,** as for `suggest`: the profile's exclusions, the bracket ceiling, the price limit and, below

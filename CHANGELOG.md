@@ -38,7 +38,7 @@
   one list made the cut (was five).
 - Ideas (ADR 0028): a card from the commander's lists or decks is an idea when the Wilson lower bound of its
   weighted share reaches 0.32 (was 40% of the lists or half the decks), and each source adds up to 50,
-  taking its ideas by share times the play-style weight.
+  taking its ideas by the source's weighted share times the play-style weight.
 - `cmdr meta --to-board` compiles the deck's ideas from all four sources as `sync` does, not the meta's
   staples alone.
 - Play-style weights replace the three bands of ADR 0022: staples sort by share times weight, and the report

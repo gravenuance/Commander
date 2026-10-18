@@ -4,7 +4,8 @@ Decks at brackets 4 and 5 get the staples of their commander's EDHTop16 lists ("
 recent Archidekt decks ("archidekt decks"), the latter at the deck's own bracket and the one above; lower
 brackets get the Archidekt ones only. A card is one of these ideas when the lower bound of its weighted
 share, over every list read, reaches IDEA_LOWER_BOUND (ADR 0026); it belongs to the source that plays it
-more. An idea's score is that source's plain share times its weight for the deck's play style (ADR 0031).
+more. An idea's score is that source's weighted share times its weight for the deck's play style (ADR 0031);
+adjacent and tagged ideas have no weighted share and use the pool's plain share.
 Each source puts at most MAX_PER_SOURCE ideas on the board, highest score first. An idea with no deck card
 to replace is still put on the board, where the app lists it as "No cut yet". A deck whose profile names
 commanders that play alike also gets the cards at least half of their pooled recent Archidekt decks play
@@ -33,7 +34,7 @@ from commander.models import Deck, short_commander_name
 from commander.playstyle import Fit
 from commander.store import StoredDeck
 from commander.suggest import IdeaFilter, name_keys_of
-from commander.weightedshare import weighted_shares
+from commander.weightedshare import NO_SHARES, ShareTable, SourceShare, weighted_shares
 
 MAX_PER_SOURCE = 50
 
@@ -43,7 +44,8 @@ class Idea:
     name: str
     origin: Origin
     reason: str
-    # The share of the source's lists or decks playing the card.
+    # The share that orders the source's ideas: its weighted share for meta and decks, the pool's plain share
+    # for adjacent and tagged, which have no weighted share.
     share: float
     # For a tagged idea: the deck tag whose decks play it.
     tag: str | None = None
@@ -60,10 +62,19 @@ def _best_first(ideas: list[Idea]) -> list[Idea]:
     return sorted(ideas, key=lambda idea: (-idea.score, idea.name))
 
 
-def staple_ideas(deck: Deck, staples: Staples, since: date) -> list[Idea]:
+def _source_share(table: ShareTable, name: str, origin: Origin, plain: float) -> float:
+    """The card's weighted share in the origin's source; the plain share when the table holds none."""
+    found = table.of(name)
+    part: SourceShare | None = None
+    if found is not None:
+        part = found.meta if origin is Origin.META else found.archidekt
+    return part.share if part else plain
+
+
+def staple_ideas(deck: Deck, staples: Staples, since: date, table: ShareTable = NO_SHARES) -> list[Idea]:
     """The missing staples as ideas, each from the source that plays it more: "meta" for the EDHTop16 lists
     (also on a tie), else "archidekt decks". The rows are staples already: `compile_ideas` picks them by the
-    weighted share's lower bound."""
+    weighted share's lower bound, and an idea carries the chosen source's weighted share from `table`."""
     lists = f"{deck.short_name} lists" if staples.basis is Basis.ALL else f"top-cut {deck.short_name} lists"
     ideas: list[Idea] = []
     # What the deck's play style doesn't need (a Turbo deck's interaction) is no idea for it (ADR 0031).
@@ -75,9 +86,11 @@ def staple_ideas(deck: Deck, staples: Staples, since: date) -> list[Idea]:
             parts.append(f"in {row.peer_lists} of {staples.peers} most-viewed recent Archidekt decks")
         reason = "; ".join(parts)
         if staples.lists and (not staples.peers or row.share >= row.peer_share):
-            ideas.append(Idea(row.name, Origin.META, reason, row.share, multiplier=row.multiplier))
+            share = _source_share(table, row.name, Origin.META, row.share)
+            ideas.append(Idea(row.name, Origin.META, reason, share, multiplier=row.multiplier))
         else:
-            ideas.append(Idea(row.name, Origin.DECKS, reason, row.peer_share, multiplier=row.multiplier))
+            share = _source_share(table, row.name, Origin.DECKS, row.peer_share)
+            ideas.append(Idea(row.name, Origin.DECKS, reason, share, multiplier=row.multiplier))
     return _best_first(ideas)
 
 
@@ -147,7 +160,7 @@ def compile_ideas(
     deck = stored.deck
     profile = read_profile(stored.folder)
     table = weighted_shares(data, now=now)
-    ideas = staple_ideas(deck, all_staples(deck, data, db, is_staple=table.is_idea), data.since)
+    ideas = staple_ideas(deck, all_staples(deck, data, db, is_staple=table.is_idea), data.since, table)
     ideas += adjacent_ideas(deck, adjacent, profile.adjacent, db)
     ideas += tagged_ideas(deck, tagged, db)
     shares = table.fractions() or None
