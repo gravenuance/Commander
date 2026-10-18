@@ -27,6 +27,7 @@ from conftest import REFRESH_TOKEN, FakeArchidekt, Json, MemoryTokenStore
 from test_cli_apply import run
 from test_cli_meta import MAGDA, magda_page
 from test_cli_meta import meta as cli_meta
+from test_ideas import ALIKE, tag_pool
 from test_meta import meta_data, peer
 from test_syncrun import DOWNLOADED, stub_meta
 
@@ -498,13 +499,42 @@ def test_a_compiled_idea_with_no_deck_card_to_replace_comes_in_the_view_with_no_
     with CardDb(settings.card_db) as db:
         compile_ideas(StoredDeck(folder, deck), meta_data([], peers), db, now=lambda: NOW)
     [tomb] = items(desk.deck(DECK), "cards")
-    # What the page's uncut() picks up for the "No cut yet" fold: open, with nothing to replace.
+    # What the page's uncut() picks up for the "No cut yet" panel: open, with nothing to replace.
     assert (tomb["name"], tomb["status"], tomb["origin"], tomb["targets"]) == (
         "Ancient Tomb",
         "open",
         "archidekt decks",
         [],
     )
+
+
+def test_an_alike_or_tagged_idea_carries_its_pools_count_total_and_share(
+    settings: DeskSettings, desk: Desk
+) -> None:
+    store = Workspace(settings.workspace)
+    deck = store.load(DECK)
+    folder = store.folder_for(DECK)
+    assert deck is not None
+    assert folder is not None
+    (folder / "profile.toml").write_text(ALIKE, encoding="utf-8")
+    alike = [peer(1, ["Arcane Signet"]), peer(2, ["Arcane Signet"]), peer(3, []), peer(4, [])]
+    landfall = tag_pool("Landfall", ["Ancient Tomb"], ["Ancient Tomb"], ["Ancient Tomb"], [])
+    with CardDb(settings.card_db) as db:
+        compile_ideas(
+            StoredDeck(folder, deck),
+            meta_data([], []),
+            db,
+            now=lambda: NOW,
+            adjacent=alike,
+            tagged=[landfall],
+        )
+    desk.propose(DECK, "Lightning Bolt")
+    cards = {c["name"]: c for c in items(desk.deck(DECK), "cards")}
+    # The pool's own share, not the commander's lists': it is what the idea was chosen by (ADR 0028).
+    assert cards["Arcane Signet"]["pool"] == {"count": 2, "total": 4, "share": 0.5}
+    assert cards["Ancient Tomb"]["pool"] == {"count": 3, "total": 4, "share": 0.75}
+    assert cards["Ancient Tomb"]["originTag"] == "Landfall"
+    assert cards["Lightning Bolt"]["pool"] is None
 
 
 def test_preview_and_commit_save_the_queued_cards(desk: Desk, fake: FakeArchidekt) -> None:
