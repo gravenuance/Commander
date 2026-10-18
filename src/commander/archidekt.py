@@ -42,6 +42,10 @@ TOP_BRACKET = 5
 VIEW_FLOORS = (1000, 750, 500)
 MIN_DECKS = 10
 MAX_DECK_READS = 60
+# A deck-tag search spans every commander, so it is kept small: this many pages per bracket, and a quarter
+# of a commander's deck reads (rounded up).
+TAG_SEARCH_PAGES_PER_BRACKET = 3
+TAG_READ_DIVISOR = 4
 
 
 class ArchidektError(Exception):
@@ -113,24 +117,26 @@ class ArchidektSearch:
         self._base_url = base_url.rstrip("/")
 
     def recent_decks(
-        self, commander: str, *, brackets: Sequence[int | None], since: datetime, tag: str | None = None
+        self,
+        commander: str | None,
+        *,
+        brackets: Sequence[int | None],
+        since: datetime,
+        tag: str | None = None,
+        max_pages: int = MAX_SEARCH_PAGES,
     ) -> list[PeerDeck]:
-        """Commander decks led by `commander` (full name) and updated at or after `since`, newest first per
-        bracket, optionally only those with the deck tag.
+        """Commander decks led by `commander` (full name; None for any commander) and updated at or after
+        `since`, newest first per bracket, optionally only those with the deck tag.
 
-        One search per bracket (None searches every bracket), all sharing MAX_SEARCH_PAGES pages.
+        One search per bracket (None searches every bracket), all sharing max_pages pages.
         """
         found: dict[int, PeerDeck] = {}
-        pages_left = MAX_SEARCH_PAGES
+        pages_left = max_pages
         for bracket in brackets:
             url: str | None = f"{self._base_url}/decks/v3/"
             params: Mapping[str, str | int] | None = (
-                {
-                    "commanderName": commander,
-                    "formats": COMMANDER_FORMAT,
-                    "orderBy": "-updatedAt",
-                    "pageSize": PAGE_SIZE,
-                }
+                {"formats": COMMANDER_FORMAT, "orderBy": "-updatedAt", "pageSize": PAGE_SIZE}
+                | ({"commanderName": commander} if commander is not None else {})
                 | ({"edhBracket": bracket} if bracket is not None else {})
                 | ({"deckTagName": tag} if tag is not None else {})
             )

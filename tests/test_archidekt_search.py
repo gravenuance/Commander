@@ -223,6 +223,25 @@ def test_the_deck_tag_filter_is_sent_as_deck_tag_name() -> None:
     assert "deckTagName" not in fake.requests[1].url.params
 
 
+def test_a_tag_search_without_a_commander_sends_no_commander_name() -> None:
+    fake = FakeSearch([search_page()])
+    search_for(fake).recent_decks(None, brackets=(3,), since=SINCE, tag="Landfall")
+    params = fake.requests[0].url.params
+    assert params["deckTagName"] == "Landfall"
+    assert "commanderName" not in params
+
+
+def test_a_search_takes_a_page_limit_of_its_own() -> None:
+    def full_page() -> Json:
+        page = search_page()
+        page["results"] = page["results"][:2]
+        return page
+
+    fake = FakeSearch([full_page() for _ in range(10)])
+    search_for(fake).recent_decks(None, brackets=(3, 4), since=SINCE, tag="Landfall", max_pages=3)
+    assert len(fake.requests) == 3
+
+
 class Limited:
     """Answers each request with the next scripted response, then clock time passes only by sleeping."""
 
