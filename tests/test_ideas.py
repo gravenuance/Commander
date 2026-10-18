@@ -8,7 +8,7 @@ import pytest
 from commander import ideas as ideas_module
 from commander.board import Actor, BoardService, Origin, Status, read_board
 from commander.carddb import CardDb
-from commander.ideas import Idea, compile_ideas, ideas_summary, staple_ideas
+from commander.ideas import Idea, adjacent_ideas, compile_ideas, ideas_summary, staple_ideas, tagged_ideas
 from commander.meta import Basis, CardShare, Staples
 from commander.metadata import PeerList, TaggedDecks
 from commander.models import Deck
@@ -309,3 +309,55 @@ def test_tagged_ideas_have_a_cap_of_their_own(
         StoredDeck(folder, deck), meta_data([], []), db, now=lambda: NOW, adjacent=adjacent, tagged=[pool]
     )
     assert (len(added[Origin.ADJACENT]), len(added[Origin.TAGGED])) == (1, 1)
+
+
+def test_staples_are_ideas_in_score_order_a_favoured_one_beating_a_slightly_more_played_neutral_one(
+    deck: Deck,
+) -> None:
+    rows = (
+        share("Mind Stone", 3, 5, 0, 4),
+        replace(share("Jeska's Will", 5, 10, 0, 4), multiplier=1.25),
+        replace(share("Chaos Warp", 5, 5, 0, 4), multiplier=0.8),
+    )
+    found = staple_ideas(deck, Staples(rows, 5, Basis.TOP_CUT, 4), SINCE)
+    # 0.6, 0.5 x 1.25 = 0.625 and 1.0 x 0.8 = 0.8.
+    assert [(i.name, round(i.score, 3)) for i in found] == [
+        ("Chaos Warp", 0.8),
+        ("Jeska's Will", 0.625),
+        ("Mind Stone", 0.6),
+    ]
+
+
+def test_the_cap_takes_a_favoured_idea_before_a_more_played_neutral_one(
+    deck: Deck, db: CardDb, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ideas_module, "MAX_PER_SOURCE", 1)
+    # Arcane Signet (ramp, favoured by Turbo) is in 12 of 20 recent decks, the neutral Hoverbike in 13.
+    peers = [
+        peer(i, [*(["High-Speed Hoverbike"] if i <= 13 else []), *(["Arcane Signet"] if i <= 12 else [])])
+        for i in range(1, 21)
+    ]
+    added = compile_ideas(
+        StoredDeck(tmp_path, replace(deck, tags=("Turbo",))), meta_data([], peers), db, now=lambda: NOW
+    )
+    assert [card.name for card in added[Origin.DECKS]] == ["Arcane Signet"]
+
+    neutral = tmp_path / "neutral"
+    neutral.mkdir()
+    added = compile_ideas(StoredDeck(neutral, deck), meta_data([], peers), db, now=lambda: NOW)
+    assert [card.name for card in added[Origin.DECKS]] == ["High-Speed Hoverbike"]
+
+
+def test_adjacent_and_tagged_ideas_are_in_score_order_too(deck: Deck, db: CardDb) -> None:
+    turbo = replace(deck, tags=("Turbo",))
+    decks = [peer(i, ["Arcane Signet", "High-Speed Hoverbike"]) for i in range(1, 7)]
+    decks += [peer(7, ["High-Speed Hoverbike"]), peer(8, [])]
+    # Signet 6 of 8, 0.75 x 1.25; Hoverbike 7 of 8, 0.875.
+    groups = [("Gitrog",)]
+    favoured_first = ["Arcane Signet", "High-Speed Hoverbike"]
+    assert [i.name for i in adjacent_ideas(turbo, decks, groups, db)] == favoured_first
+    assert [
+        i.name for i in tagged_ideas(turbo, [TaggedDecks("Landfall", tuple(decks))], db)
+    ] == favoured_first
+    most_played_first = ["High-Speed Hoverbike", "Arcane Signet"]
+    assert [i.name for i in adjacent_ideas(deck, decks, groups, db)] == most_played_first

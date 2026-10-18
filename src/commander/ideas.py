@@ -4,7 +4,8 @@ Decks at brackets 4 and 5 get the staples of their commander's EDHTop16 lists ("
 recent Archidekt decks for the commander ("archidekt decks"); lower brackets get the Archidekt ones only.
 Those decks are at the deck's own bracket and the one above. A card is an idea when the lower bound of its
 weighted share, over every list read, reaches IDEA_LOWER_BOUND; it belongs to the source that plays it more.
-Each source puts at most MAX_PER_SOURCE ideas on the board, most played first. An idea with no deck card to
+An idea's score is that share times its weight for the deck's play style (ADR 0022). Each source puts at most
+MAX_PER_SOURCE ideas on the board, highest score first. An idea with no deck card to
 replace is still put on the board, where the app lists it as "No cut yet". A deck whose profile names
 commanders that play alike also gets the staples of their pooled recent Archidekt decks ("adjacent decks",
 ADR 0015). So does one whose Archidekt theme tags find recent decks of other commanders ("tagged decks"),
@@ -42,10 +43,21 @@ class Idea:
     name: str
     origin: Origin
     reason: str
-    # The share of the source's lists or decks playing the card: most played first.
+    # The share of the source's lists or decks playing the card.
     share: float
     # For a tagged idea: the deck tag whose decks play it.
     tag: str | None = None
+    # What the deck's play style makes of the card (`playstyle.Weight`): the share's factor in the score.
+    multiplier: float = 1.0
+
+    @property
+    def score(self) -> float:
+        """What ideas are taken in the order of: the share weighted by the deck's play style."""
+        return self.share * self.multiplier
+
+
+def _best_first(ideas: list[Idea]) -> list[Idea]:
+    return sorted(ideas, key=lambda idea: (-idea.score, idea.name))
 
 
 def staple_ideas(deck: Deck, staples: Staples, since: date) -> list[Idea]:
@@ -63,17 +75,16 @@ def staple_ideas(deck: Deck, staples: Staples, since: date) -> list[Idea]:
             parts.append(f"in {row.peer_lists} of {staples.peers} most-viewed recent Archidekt decks")
         reason = "; ".join(parts)
         if staples.lists and (not staples.peers or row.share >= row.peer_share):
-            ideas.append(Idea(row.name, Origin.META, reason, row.share))
+            ideas.append(Idea(row.name, Origin.META, reason, row.share, multiplier=row.multiplier))
         else:
-            ideas.append(Idea(row.name, Origin.DECKS, reason, row.peer_share))
-    ideas.sort(key=lambda idea: (-idea.share, idea.name))
-    return ideas
+            ideas.append(Idea(row.name, Origin.DECKS, reason, row.peer_share, multiplier=row.multiplier))
+    return _best_first(ideas)
 
 
 def adjacent_ideas(
     deck: Deck, pool: Sequence[PeerList], groups: Sequence[tuple[str, ...]], db: CardDb
 ) -> list[Idea]:
-    """The staples of the adjacent commanders' pooled decks the deck misses, most played first."""
+    """The staples of the adjacent commanders' pooled decks the deck misses, highest score first."""
     if not groups or len(pool) < MIN_PEER_LISTS:
         return []
     names = [" + ".join(short_commander_name(name) for name in group) for group in groups]
@@ -84,17 +95,17 @@ def adjacent_ideas(
             Origin.ADJACENT,
             f"in {row.peer_lists} of {len(pool)} recent {who} decks",
             row.peer_share,
+            multiplier=row.multiplier,
         )
         for row in pool_staples(deck, pool, db)
         if row.fit is not Fit.OFF_PLAN
     ]
-    ideas.sort(key=lambda idea: (-idea.share, idea.name))
-    return ideas
+    return _best_first(ideas)
 
 
 def tagged_ideas(deck: Deck, pools: Sequence[TaggedDecks], db: CardDb) -> list[Idea]:
     """The staples of each tag's decks the deck misses; a card several tags' decks play belongs to the tag
-    playing it most (the first on a tie). Most played first."""
+    playing it most (the first on a tie). Highest score first."""
     best: dict[str, Idea] = {}
     for pool in pools:
         if len(pool.decks) < MIN_PEER_LISTS:
@@ -108,11 +119,12 @@ def tagged_ideas(deck: Deck, pools: Sequence[TaggedDecks], db: CardDb) -> list[I
                 f"in {row.peer_lists} of {len(pool.decks)} recent decks tagged {pool.tag}",
                 row.peer_share,
                 pool.tag,
+                row.multiplier,
             )
             seen = best.get(row.name.casefold())
-            if seen is None or idea.share > seen.share:
+            if seen is None or idea.score > seen.score:
                 best[row.name.casefold()] = idea
-    return sorted(best.values(), key=lambda idea: (-idea.share, idea.name))
+    return _best_first(list(best.values()))
 
 
 def compile_ideas(
@@ -124,7 +136,7 @@ def compile_ideas(
     adjacent: Sequence[PeerList] = (),
     tagged: Sequence[TaggedDecks] = (),
 ) -> dict[Origin, list[BoardCard]]:
-    """Put each source's most-played ideas on the deck's board; what each added.
+    """Put each source's highest-scoring ideas on the deck's board; what each added.
 
     adjacent holds the pooled decks of the commanders the deck's profile names as alike (ADR 0015); tagged
     the decks of other commanders found by each of the deck's theme tags.
@@ -158,7 +170,7 @@ def compile_ideas(
         info = infos.get(idea.name.casefold())
         return budget.within(info.cheapest_cents if info else None)
 
-    # Within the deck's working budget first, most played first within each half (ADR 0025).
+    # Within the deck's working budget first, highest score first within each half (ADR 0025).
     ideas.sort(key=lambda idea: not within(idea))
     service = BoardService(stored.folder, deck, db, now=now)
     added: dict[Origin, list[BoardCard]] = {}
