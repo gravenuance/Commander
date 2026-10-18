@@ -280,6 +280,21 @@ def test_searching_decks_by_tag_is_off_in_the_settings_until_saved_on(
     assert desk.settings(DECK)["tagSearch"] is False
 
 
+def test_the_settings_dialog_has_a_labelled_tag_search_switch_saved_with_the_rest() -> None:
+    dialog = page_html().split('<dialog id="settings-dialog"', 1)[1].split("</dialog>", 1)[0]
+    switch = re.search(r'<input[^>]*id="settings-tag-search"[^>]*>', dialog)
+    assert switch is not None
+    assert 'type="checkbox"' in switch.group(0)
+    assert re.search(
+        r'<label[^>]*>[^<]*<input[^>]*id="settings-tag-search"[^>]*>\s*Search decks by tag', dialog
+    )
+    script = (WEB / "settings.js").read_text(encoding="utf-8")
+    assert "tagSearch: answer.tagSearch" in script
+    assert '$("settings-tag-search").checked = s.tagSearch;' in script
+    assert "settingsState.tagSearch = event.target.checked;" in script
+    assert 'api("save_settings", s.deck, s.adjacent, s.ignore, s.tagSearch)' in script
+
+
 def test_the_mana_tab_reports_lands_and_colour_sources(desk: Desk) -> None:
     mana = desk.mana(DECK)
     lands = cast("Json", mana["lands"])

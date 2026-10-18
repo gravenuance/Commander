@@ -1,15 +1,15 @@
 "use strict";
 
-/* Settings: the profile's commanders that play alike and themes to ignore */
+/* Settings: the profile's commanders that play alike, the tag search and themes to ignore */
 
-const settingsState = { deck: null, adjacent: [], ignore: [], themes: [], leanings: [], max: 8, pairWith: null };
+const settingsState = { deck: null, adjacent: [], tagSearch: false, ignore: [], themes: [], leanings: [], max: 8, pairWith: null };
 
 async function openSettings() {
   const deck = state.current;
   try {
     const answer = await api("settings", deck);
     Object.assign(settingsState, {
-      deck, adjacent: answer.adjacent, ignore: answer.ignore, themes: answer.themes,
+      deck, adjacent: answer.adjacent, tagSearch: answer.tagSearch, ignore: answer.ignore, themes: answer.themes,
       leanings: answer.leanings, max: answer.maxAdjacent, pairWith: null,
     });
     $("settings-deck").textContent = $("deck-short").textContent;
@@ -37,6 +37,7 @@ function renderSettings() {
       $("settings-adjacent-input").focus();
     },
   }) : null)));
+  $("settings-tag-search").checked = s.tagSearch;
   const input = $("settings-adjacent-input");
   const full = s.adjacent.length >= s.max && s.pairWith === null;
   input.disabled = full;
@@ -89,7 +90,7 @@ async function saveSettings() {
   const problem = $("settings-error");
   problem.hidden = true;
   try {
-    await api("save_settings", s.deck, s.adjacent, s.ignore);
+    await api("save_settings", s.deck, s.adjacent, s.ignore, s.tagSearch);
     $("settings-dialog").close();
     showStatus("Settings saved to the deck's profile.toml");
     await refresh();
@@ -104,6 +105,7 @@ function setupSettings() {
   $("settings").addEventListener("click", openSettings);
   $("settings-cancel").addEventListener("click", () => $("settings-dialog").close());
   $("settings-save").addEventListener("click", saveSettings);
+  $("settings-tag-search").addEventListener("change", (event) => { settingsState.tagSearch = event.target.checked; });
   const adjacent = $("settings-adjacent-input");
   // A partner pair is typed "First + Second": matches are for the name after the last +.
   combobox(adjacent, $("settings-adjacent-results"), async (text) => {

@@ -1025,6 +1025,8 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .chip-remove { font-size: 1rem; line-height: 1; }
 .chip-remove:hover, .chip-pair:hover, .chip-pair[aria-pressed="true"] { background: var(--accent-soft); color: inherit; }
 .setting-input input { width: 100%; }
+.setting-switch { display: flex; align-items: center; gap: var(--space-2); min-height: 24px; font-weight: 600; cursor: pointer; }
+.setting-switch input { width: 1.1rem; height: 1.1rem; margin: 0; accent-color: var(--accent); cursor: pointer; }
 .setting-offers { margin-top: var(--space-3); }
 .setting-offers ul { list-style: none; margin: 0; padding: 0; }
 .deck-chip.offer { cursor: pointer; font: inherit; font-size: var(--text-s); color: inherit; }
