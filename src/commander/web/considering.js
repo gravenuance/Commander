@@ -164,8 +164,7 @@ function buildTile(card) {
         onclick: () => decide(card, "reopen") })) : null,
     targets,
     card.text ? el("details", { class: "fold" }, el("summary", { text: "Rules text" }), el("p", { text: card.text })) : null,
-    reasoning ? el("details", { class: "fold" }, el("summary", { text: "Reasoning" }), el("p", { text: reasoning })) : null,
-    card.dropping ? el("p", { class: "note", text: "Leaves the Maybeboard when you save" }) : null);
+    reasoning ? el("details", { class: "fold" }, el("summary", { text: "Reasoning" }), el("p", { text: reasoning })) : null);
 
   const why = rejectForm(card);
   body.append(why);
