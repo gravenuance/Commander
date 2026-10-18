@@ -2,19 +2,12 @@
 
 ## Unreleased
 
-### Changed
-- While a deck's tag search is off, each sync tests its open tagged ideas, and its alike ideas once the
-  profile lists no commander, by the commander's own lists (the idea test, ADR 0028) instead of the pool's
-  half: a card that fails is turned down as "no longer makes the cut", one that passes is relabelled to the
-  source that plays it more, with a compiled idea's reason. Nothing is judged without a list read, and a card
-  you reopened is left alone. With the search on, a pool still judges its own ideas.
-
 ### Added
 - One weighted share per card (ADR 0026): the share of the commander's EDHTop16 lists and recent Archidekt
   decks that play it, each list weighing more the more recent and, for a tournament entry, the better placed
-  and the bigger the event. It shows as a pill on every grid card but the commander and on each Considering
-  card, with the raw count and each source's part in the tooltip. Cut targets, the order within Considering and
-  the return of turned-down cards use it.
+  and the bigger the event. It shows as a pill on every grid card but the commander, with the raw count and
+  each source's part in the tooltip, and on each Considering card, where it opens a breakdown (see *Changed*).
+  Cut targets, the order within Considering and the return of turned-down cards use it.
 - Ideas from tagged decks (ADR 0028), for decks that turn on *Search decks by tag*: each of a deck's theme tags
   is searched on Archidekt for recent decks of other commanders, and the cards at least half of a tag's decks
   play become ideas, named "Archidekt: tagged *tag*" in the breakdown. Considering also names the other sources by where they come from: "Tournament
@@ -23,18 +16,21 @@
   in `profile.toml`, shown by `cmdr profile`). While it is off, `cmdr sync`, `cmdr meta --to-board` and the
   app's update make no tag search for the deck, because tag pools added almost nothing beyond the commander's
   own decks and each tag costs about 1.5 to 2 minutes on a first sync. Tagged ideas already on a board stay
-  until the next sync tests them by the commander's own lists (see *Changed*).
+  until the next sync tests them by the commander's own lists (the re-judging entry under *Changed*).
 - Ideas with no deck card to replace are put on the board as well and listed under *No cut yet* in the app,
   where clicking one offers every deck card but the commander.
 - Cuts of another role or theme (ADR 0029): when like for like leaves a slot free, a deck card of another role
   or theme may be offered while the deck keeps what other players of the commander run (the 25th percentile
-  of each role, the median of each theme; an other-theme cut also needs the idea 20 points more played). The
-  reason says what allows it.
+  of each role, the median of each theme; an other-theme cut also needs the idea 20 points more played). Roles
+  are counted by Tagger tag alone, as the peers' are. A cut of another role scores 3 points per card a role it
+  fills runs over the peers' median, so an over-stocked role gives up cards first. The reason says what allows
+  it.
 - Every suggested cut is less played than the idea, a card no list plays counting as 0; without list data
   there is no such gate. An idea left with no cut goes to the *No cut yet* panel. A cut you pick yourself is
   never removed.
-- A swap that takes a land out or puts one in is offered only while the land count stays within one of
-  Karsten's or inside the other lists' range and every colour keeps the sources its spells need (ADR 0030).
+- A swap that takes a land out or puts one in is offered only while the land count ends within one of
+  Karsten's, closer to it than before, or inside the range of three or more other lists, and every colour
+  keeps the sources its spells need (ADR 0030).
 - Tempo, Midrange, Aggro and Combo deck tags weigh the meta's staples beside Turbo, Stax and Control, as
   multipliers on the share (ADR 0031): 1.25 for a clear fit, 1.1 for a borderline one, 0.8 for off-plan.
 - Sync fetches ideas for the deck open in the app first, then for the rest by how often you open them (ADR 0034):
@@ -42,6 +38,8 @@
   `%LOCALAPPDATA%\Commander`, on this machine only. A deck opened during a sync goes next, once the commander
   being fetched is done. `cmdr sync` goes by the same scores. While a sync runs, each deck in the list shows
   its step: waiting, fetching, fetched, or incomplete when a source failed.
+- A save that could not read the account's labels and used Archidekt's default colours says so in the app,
+  and after a sign-in the focus moves to the first deck, or to Sync.
 
 ### Changed
 - The Sideboard and Maybeboard are retired as a second home for ideas (ADR 0035). `sync` no longer puts their
@@ -53,8 +51,12 @@
   commanders or tagged decks), and the open cards an earlier version took from the Maybeboard, are tested
   again like new ideas (ADR 0028). Those that fail are turned down as "no longer makes the cut" (activity
   line by `cmdr`) and return only if their share rises 20 points; the rest stay. An alike or tagged idea is
-  judged by its pool only when that pool was read in the sync. Nothing is judged without share data, and
-  cards by you or Claude and queued, applied or turned-down cards are not touched.
+  judged by its pool only when that pool was read in the sync. One whose source is gone is tested by the
+  commander's own lists instead: an alike idea once the profile lists no commander, a tagged one while the
+  deck's tag search is off or after its tag left the deck. A card that fails is turned down, one that passes
+  is relabelled to the source that plays it more, with a compiled idea's reason. Nothing is judged without
+  share data, and cards by you or Claude, queued, applied or turned-down cards, and cards you reopened are
+  not touched.
 - Reconsider on a turned-down card from the old Maybeboard pick-up (or one `cmdr` compiled) labels it again from
   today's cached lists: the source that plays it more, the meta on a tie, and a compiled idea's wording, so it
   takes that source's colour and group in Considering. A card no list plays keeps its neutral label and the
@@ -64,9 +66,10 @@
 - A Considering card shows its combined share as a pill coloured by the source the idea is credited to
   (tournament lists, the commander's Archidekt decks, alike commanders, tagged decks), in place of the source
   badge and the plain count. Clicking the pill opens a breakdown: the combined share with its count, then each
-  source's share and count. For an alike or tagged idea the pill shows the share of
-  the pool of decks it was found in ("60% of Landfall-tagged decks") and those two groups are ordered by it;
-  the board card keeps the pool's numbers (`originPool`) and the next sync adds them to ideas already there.
+  source's share and count. For an alike or tagged idea the pill shows the share of the pool of decks it was
+  found in, and those two groups are ordered by it. The pill reads only the percentage ("60%"); its label and
+  tooltip say what it is of ("60% of Landfall-tagged decks"). The board card keeps the pool's numbers
+  (`originPool`) and the next sync adds them to ideas already there.
 - *No cut yet* is a side panel of its own between Considering and Meta, shown only while it holds ideas, in
   place of the fold inside Considering.
 - The app no longer opens the first deck by itself: the main area is blank until you pick one.
@@ -76,19 +79,24 @@
   account name, and Sync off. The config, the saved login and the CLI are untouched. So Sync is off on a
   signed-out page even when a username is set.
 - The app's **Update from Archidekt** button is **Sync**. While it runs it shows a spinner and the step it is
-  on, and an open Meta panel shows it is updating and rereads its report when the sync ends. Without an
-  account the button stays visible, off, with "Sign in to sync" beside it.
+  on. The Meta panel shows the deck's cached answers during a sync, says it is updating only while that deck
+  is queued or being fetched, and rereads them when that fetch ends. Without an account the button stays
+  visible, off, with "Sign in to sync" beside it.
 - Other players' Archidekt decks are read more widely and more carefully (ADR 0027). The search covers the
   deck's own bracket and the one above, up to 20 pages, and keeps the decks with 1000 views, stepping down to
   750, 500 and then every deck until ten pass. `peer_decks` is now the cap on decks read per commander:
   default 60, 0 to 60 (was 10, 0 to 25). Searches and deck reads are five seconds apart (was two), and a 429
-  holds every request for three minutes or the `Retry-After`. Each deck read is cached until its owner edits
-  it, and a fetching run deletes cached decks unused for 30 days or last updated before the window.
+  holds every request for three minutes or the `Retry-After`; a second one ends Archidekt for the rest of the
+  run, which uses its cached answers. A deck that answers 403, 404 or 410 (made private or deleted) is skipped,
+  not counted as a failed source. Each deck read is cached until its owner edits it, and a fetching run
+  deletes cached decks unused for 30 days or last updated before the window.
 - Decks at bracket 4 read their commander's EDHTop16 lists too, and a report uses the top-cut lists whenever
   one list made the cut (was five).
 - Ideas (ADR 0028): a card from the commander's lists or decks is an idea when the Wilson lower bound of its
-  weighted share reaches 0.30 (was 40% of the lists or half the decks), and each source adds up to 50,
-  taking its ideas by the source's weighted share times the play-style weight.
+  weighted share reaches 0.30 (was 40% of the lists or half the decks), judged over every list read, not
+  only the top cuts (the reason reads "in N of M lists"). Each source takes its ideas
+  by the source's weighted share times the play-style weight, and only cmdr's own ideas of that source count
+  towards its cap of 50; cards by you or Claude take no place.
 - `cmdr meta --to-board` compiles the deck's ideas from all four sources as `sync` does, not the meta's
   staples alone.
 - Play-style weights replace the three bands of ADR 0022: staples sort by share times weight, and the report
@@ -98,6 +106,8 @@
   and a version 1 file is copied to `board.v1.bak` before its first save.
 - A turned-down card returns once its weighted share has risen 20 points, at every bracket (was the share of
   the top-cut lists at bracket 5 only).
+- Reconsider applies to turned-down cards only: undoing a queued swap is a plain reopen, and the sync never
+  turns down a card you reopened or one by you or Claude.
 - Cut targets are ranked by the weighted share, then by EDHREC rank.
 - The Mana tab works out how often a check or reveal land enters tapped from the deck's own lands: the
   chance that none of the nine cards seen by turn three has a basic land type the land asks for (ADR 0033).
@@ -106,12 +116,16 @@
 - `cmdr profile` says whether a broad deck tag is a play style, a role or a card type ("a role, not a theme").
 - The account's labels are read once more after three seconds when a save cannot read them, then
   Archidekt's default colours are used.
+- The app page's behaviour is tested by running its scripts under Node against a fake DOM; the tests skip when
+  `node` is not on the PATH, and Node stays a test-time tool.
 
 ### Removed
 - The Meta panel's **Refresh meta** button: Sync refreshes the meta answers, as `cmdr sync` does.
 - `cmdr board add --suggested` and `board research --move`: there is one list.
 - Plan files' `maybeboard = true` and `drop = [...]`, and the Meta report's mark on staples that sit on the
   Sideboard or Maybeboard (`onSideboard` in `meta --json`). Old boards and logs with source `archidekt` still read.
+- Adding a card to the Maybeboard or Sideboard from a plan (`add` with either category is refused), and
+  `--by archidekt` on the board commands.
 
 ### Fixed
 - Fellwar Stone counts as half a source, as ADR 0019 says; the code gave it three quarters.
