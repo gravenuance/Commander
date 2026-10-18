@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.0 - 2026-10-18
+
 ### Added
 - One weighted share per card (ADR 0026): the share of the commander's EDHTop16 lists and recent Archidekt
   decks that play it, each list weighing more the more recent and, for a tournament entry, the better placed
