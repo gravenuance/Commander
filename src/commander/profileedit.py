@@ -22,9 +22,10 @@ from commander.models import Deck
 
 
 def save_settings(
-    folder: Path, deck: Deck, *, adjacent: Sequence[Sequence[str]], ignore: Sequence[str]
+    folder: Path, deck: Deck, *, adjacent: Sequence[Sequence[str]], ignore: Sequence[str], tag_search: bool
 ) -> Profile:
-    """Set the adjacent commanders ([ideas] commanders) and the ignored themes ([themes] ignore).
+    """Set the adjacent commanders ([ideas] commanders), the tag search ([ideas] tag_search) and the ignored
+    themes ([themes] ignore).
 
     A deck without a profile gets the commented template first. Everything else in the file, comments
     included, stays as it was. The result is checked as `read_profile` would before it is written, so a bad
@@ -46,6 +47,7 @@ def save_settings(
     _table(doc, "ideas")["commanders"] = _array(
         [group[0] if len(group) == 1 else group for group in groups.values() if group]
     )
+    _table(doc, "ideas")["tag_search"] = tag_search
     _table(doc, "themes")["ignore"] = _array(_once(name.strip() for name in ignore if name.strip()))
     profile = parse_profile(cast("dict[str, object]", doc.unwrap()), str(path))
     write_text_atomic(path, tomlkit.dumps(doc))

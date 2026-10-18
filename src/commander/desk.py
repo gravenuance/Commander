@@ -509,7 +509,7 @@ class Desk:
 
     @_guarded
     def settings(self, deck_id: int) -> Json:
-        """The profile's adjacent commanders and ignored themes, with the deck's own themes to pick from."""
+        """The profile's adjacent commanders, tag search, ignored themes and the deck's themes."""
         stored = self._stored(deck_id)
         profile = read_profile(stored.folder)
         with self._db() as db:
@@ -519,6 +519,7 @@ class Desk:
         return {
             "adjacent": [list(group) for group in profile.adjacent],
             "ignore": list(profile.ignore_themes),
+            "tagSearch": profile.tag_search,
             "themes": [{"name": t.name, "kind": t.source.value} for t in derived.themes],
             "leanings": [leaning.tag for leaning in leanings],
             "maxAdjacent": MAX_ADJACENT,
@@ -541,8 +542,14 @@ class Desk:
         return {"tags": [{"name": tag.slug, "cards": tag.cards} for tag in found]}
 
     @_guarded
-    def save_settings(self, deck_id: int, adjacent: list[list[str]], ignore: list[str]) -> Json:
-        """Write the adjacent commanders and ignored themes into profile.toml, keeping its comments."""
+    def save_settings(
+        self,
+        deck_id: int,
+        adjacent: list[list[str]],
+        ignore: list[str],
+        tag_search: bool,  # noqa: FBT001 — the page's bridge passes positionals
+    ) -> Json:
+        """Write the adjacent commanders, tag search and ignored themes into profile.toml, comments kept."""
         with self._writing("settings save", "save the settings") as busy:
             if busy:
                 return busy
@@ -553,7 +560,7 @@ class Desk:
                         found = {info.name.casefold() for info in db.search_commanders(name)}
                         if name.strip().casefold() not in found:
                             return {"error": f"{name!r} is not a commander the card data knows"}
-            save_settings(stored.folder, stored.deck, adjacent=adjacent, ignore=ignore)
+            save_settings(stored.folder, stored.deck, adjacent=adjacent, ignore=ignore, tag_search=tag_search)
         return self.settings(deck_id)
 
     @_guarded

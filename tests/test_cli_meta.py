@@ -375,6 +375,13 @@ def put_ygra_decks(fake: FakeArchidekt) -> None:
     fake.peer_pages[YGRA] = deck_page([peer_row(d, "someone", 50) for d in ygra])
 
 
+TAG_PROFILE = "version = 1\n[ideas]\ntag_search = true\n"
+
+
+def search_by_tag(home: Path) -> None:
+    (home / "decks" / FOLDER / "profile.toml").write_text(TAG_PROFILE, encoding="utf-8")
+
+
 def put_tag_decks(fake: FakeArchidekt, tag: str, commander: str, *, first_id: int) -> list[int]:
     """Three recent decks of the commander found by the deck tag, two of them playing Arcane Signet."""
     ids = [first_id, first_id + 1, first_id + 2]
@@ -394,6 +401,7 @@ def put_tag_decks(fake: FakeArchidekt, tag: str, commander: str, *, first_id: in
 def test_sync_learns_from_other_commanders_decks_carrying_the_decks_theme_tag(
     home: Path, fake: FakeArchidekt
 ) -> None:
+    search_by_tag(home)
     put_tag_decks(fake, "Dwarves", YGRA, first_id=PEER_ID + 20)
     result = sync(home, fake)
     assert result.code == 0, result.err
@@ -410,6 +418,7 @@ def test_sync_ignores_the_play_style_role_and_card_type_deck_tags(home: Path, fa
         {"id": i, "tag": i, "deck": DECK_ID, "name": name, "position": f"M-{i}"}
         for i, name in enumerate(("cEDH", "Combo", "Casual", "Ramp", "Creatures", "Spaghetti"), 1)
     ]
+    search_by_tag(home)
     for tag in ("cEDH", "Combo", "Casual", "Ramp", "Creatures", "Spaghetti"):
         put_tag_decks(fake, tag, YGRA, first_id=PEER_ID + 20)
     result = sync(home, fake)
@@ -423,19 +432,62 @@ def test_sync_makes_no_tag_search_for_a_deck_without_tags_or_with_its_themes_ign
 ) -> None:
     put_tag_decks(fake, "Dwarves", YGRA, first_id=PEER_ID + 20)
     (home / "decks" / FOLDER / "profile.toml").write_text(
-        'version = 1\n[themes]\nignore = ["Dwarves", "Vehicles"]\n', encoding="utf-8"
+        TAG_PROFILE + '[themes]\nignore = ["Dwarves", "Vehicles"]\n', encoding="utf-8"
     )
     assert sync(home, fake).code == 0
     assert fake.tag_searches == []
     fake.decks[DECK_ID]["deckTags"] = []
-    (home / "decks" / FOLDER / "profile.toml").unlink()
+    search_by_tag(home)
     assert sync(home, fake).code == 0
     assert fake.tag_searches == []
+
+
+def test_sync_makes_no_tag_search_unless_the_profile_turns_it_on(home: Path, fake: FakeArchidekt) -> None:
+    put_tag_decks(fake, "Dwarves", YGRA, first_id=PEER_ID + 20)
+    result = sync(home, fake)
+    assert result.code == 0, result.err
+    assert fake.tag_searches == []
+    assert "tagged decks" not in result.out
+    assert read_board(home / "decks" / FOLDER).find("Arcane Signet") is None
+    (home / "decks" / FOLDER / "profile.toml").write_text(
+        "version = 1\n[ideas]\ntag_search = false\n", encoding="utf-8"
+    )
+    assert sync(home, fake).code == 0
+    assert fake.tag_searches == []
+
+
+def test_to_board_follows_the_tag_search_setting(home: Path, fake: FakeArchidekt) -> None:
+    put_tag_decks(fake, "Dwarves", YGRA, first_id=PEER_ID + 20)
+    off = meta(home, fake, "magda", "--to-board")
+    assert off.code == 0, off.err
+    assert fake.tag_searches == []
+    search_by_tag(home)
+    on = meta(home, fake, "magda", "--to-board")
+    assert on.code == 0, on.err
+    assert "Dwarves" in fake.tag_searches
+    assert "+1 from tagged decks" in on.err
+
+
+def test_turning_the_tag_search_off_leaves_the_tagged_ideas_on_the_board(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    search_by_tag(home)
+    put_tag_decks(fake, "Dwarves", YGRA, first_id=PEER_ID + 20)
+    assert sync(home, fake).code == 0
+    before = read_board(home / "decks" / FOLDER).find("Arcane Signet")
+    assert before is not None
+    assert before.origin is Origin.TAGGED
+    (home / "decks" / FOLDER / "profile.toml").write_text("version = 1\n", encoding="utf-8")
+    fake.tag_searches.clear()
+    assert sync(home, fake).code == 0
+    assert fake.tag_searches == []
+    assert read_board(home / "decks" / FOLDER).find("Arcane Signet") == before
 
 
 def test_sync_leaves_the_decks_own_commanders_decks_out_of_the_tag_search(
     home: Path, fake: FakeArchidekt
 ) -> None:
+    search_by_tag(home)
     put_tag_decks(fake, "Dwarves", MAGDA, first_id=PEER_ID + 20)
     result = sync(home, fake)
     assert result.code == 0, result.err
@@ -445,6 +497,7 @@ def test_sync_leaves_the_decks_own_commanders_decks_out_of_the_tag_search(
 
 
 def test_a_tag_search_that_fails_is_named_and_the_sync_carries_on(home: Path, fake: FakeArchidekt) -> None:
+    search_by_tag(home)
     fake.tag_pages["dwarves"] = {"unexpected": True}
     result = sync(home, fake)
     assert result.code == 0, result.err

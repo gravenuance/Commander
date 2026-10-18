@@ -43,7 +43,7 @@ _THEME_KEYS = frozenset({"types", "keywords", "tags"})
 _THEMES_KEYS = _THEME_KEYS | {"ignore"}
 _EXCLUDE_KEYS = _THEME_KEYS | {"cards"}
 _KEEP_KEYS = frozenset({"cards", "categories"})
-_IDEAS_KEYS = frozenset({"commanders"})
+_IDEAS_KEYS = frozenset({"commanders", "tag_search"})
 _KEY_CARDS_KEYS = frozenset({"ignore"})
 
 
@@ -85,6 +85,8 @@ class Profile:
     ignore_keys: tuple[str, ...] = ()
     # Other commanders, alone or with a partner, whose recent Archidekt decks also give ideas (ADR 0028).
     adjacent: tuple[tuple[str, ...], ...] = ()
+    # Whether sync also reads recent decks of other commanders carrying the deck's theme tags (ADR 0028).
+    tag_search: bool = False
 
     def __post_init__(self) -> None:
         if self.bracket_ceiling is not None and not 1 <= self.bracket_ceiling <= 5:  # noqa: PLR2004 — brackets 1..5
@@ -167,6 +169,7 @@ def parse_profile(raw: Mapping[str, object], where: str) -> Profile:
         ignore_themes=_strings(themes, "ignore", "themes", where),
         ignore_keys=_strings(key_cards, "ignore", "key_cards", where),
         adjacent=_commander_groups(ideas.get("commanders"), where),
+        tag_search=_flag(ideas.get("tag_search"), "ideas.tag_search", where),
     )
 
 
@@ -237,8 +240,10 @@ ignore = []
 # Commanders that play like this one: their recent Archidekt decks at this deck's bracket give `sync`
 # ideas too. A partner pair goes in its own list:
 # commanders = ["The Gitrog Monster", ["Tevesh Szat, Doom of Fools", "Kodama of the East Tree"]]
+# tag_search: also read recent decks of other commanders carrying this deck's theme tags (slow at first).
 [ideas]
 commanders = []
+# tag_search = true
 """
 
 
@@ -322,6 +327,14 @@ def _commander_groups(value: object, where: str) -> tuple[tuple[str, ...], ...]:
             raise ProfileError(f"{where}: {key}[{index}] must be a commander or a list of two partners")
         groups.append(group)
     return tuple(groups)
+
+
+def _flag(value: object, key: str, where: str) -> bool:
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise ProfileError(f"{where}: {key} must be true or false")
+    return value
 
 
 def _text(value: object, key: str, where: str) -> str | None:

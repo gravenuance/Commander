@@ -81,6 +81,10 @@ def fetch_meta(settings: DeskSettings, fake: FakeArchidekt) -> None:
     assert result.code == 0, result.err
 
 
+def save(desk: Desk, adjacent: list[list[str]], ignore: list[str], *, tag_search: bool) -> Json:
+    return desk.save_settings(DECK, adjacent, ignore, tag_search)
+
+
 def items(answer: Json, key: str) -> list[Json]:
     return cast("list[Json]", answer[key])
 
@@ -256,12 +260,24 @@ def test_settings_offer_commanders_and_tags_and_save_to_the_profile(desk: Desk) 
     # Arcane Signet is no commander.
     assert desk.find_commanders("arcane")["names"] == []
     assert desk.find_tags("r")["tags"] == []
-    saved = desk.save_settings(DECK, [["Tempestra, Dame of Games"]], ["Stax"])
+    saved = save(desk, [["Tempestra, Dame of Games"]], ["Stax"], tag_search=False)
     assert (saved["adjacent"], saved["ignore"]) == ([["Tempestra, Dame of Games"]], ["Stax"])
     assert desk.settings(DECK)["adjacent"] == [["Tempestra, Dame of Games"]]
-    refused = desk.save_settings(DECK, [["Arcane Signet"]], [])
+    refused = save(desk, [["Arcane Signet"]], [], tag_search=False)
     assert refused == {"error": "'Arcane Signet' is not a commander the card data knows"}
     assert desk.settings(DECK)["adjacent"] == [["Tempestra, Dame of Games"]]
+
+
+def test_searching_decks_by_tag_is_off_in_the_settings_until_saved_on(
+    desk: Desk, settings: DeskSettings
+) -> None:
+    assert desk.settings(DECK)["tagSearch"] is False
+    assert save(desk, [], [], tag_search=True)["tagSearch"] is True
+    assert desk.settings(DECK)["tagSearch"] is True
+    profile = settings.workspace / "10004639-honestly-though" / "profile.toml"
+    assert "tag_search = true" in profile.read_text(encoding="utf-8")
+    assert save(desk, [], [], tag_search=False)["tagSearch"] is False
+    assert desk.settings(DECK)["tagSearch"] is False
 
 
 def test_the_mana_tab_reports_lands_and_colour_sources(desk: Desk) -> None:
@@ -654,7 +670,7 @@ def _remove(desk: Desk) -> Json:
 
 
 def _save_settings(desk: Desk) -> Json:
-    return desk.save_settings(DECK, [["Tempestra, Dame of Games"]], ["Stax"])
+    return save(desk, [["Tempestra, Dame of Games"]], ["Stax"], tag_search=True)
 
 
 @pytest.mark.parametrize(

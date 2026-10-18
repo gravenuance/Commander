@@ -237,11 +237,15 @@ def compile_ideas_with_adjacent(
     on_progress: Progress | None = None,
 ) -> dict[Origin, list[BoardCard]]:
     """`compile_ideas` with the recent decks of the commanders the deck's profile names as alike, and of other
-    commanders carrying its theme tags, gathered first (ADR 0028); a commander or tag whose decks cannot be
-    read is named to warn, and the rest carry on."""
+    commanders carrying its theme tags (only when the profile turns the tag search on), gathered first
+    (ADR 0028); a commander or tag whose decks cannot be read is named to warn, and the rest carry on."""
     profile = read_profile(stored.folder)
     # Theme tags only: the play style, role and card type tags are too broad to pick decks by (ADR 0009).
-    tags = [t.name for t in merge_themes(stored.deck, profile, db).used if t.source is ThemeSource.DECK_TAG]
+    tags = (
+        [t.name for t in merge_themes(stored.deck, profile, db).used if t.source is ThemeSource.DECK_TAG]
+        if profile.tag_search
+        else []
+    )
     adjacent = gather_adjacent(
         stored.deck,
         profile.adjacent,

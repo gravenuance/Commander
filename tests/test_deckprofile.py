@@ -46,6 +46,7 @@ categories = ["Stax"]
 
 [ideas]
 commanders = ["The Gitrog Monster", ["Tevesh Szat, Doom of Fools", "Kodama of the East Tree"]]
+tag_search = true
 """
 
 
@@ -75,6 +76,7 @@ def test_full_profile_is_read(tmp_path: Path) -> None:
         keep_categories=("Stax",),
         ignore_themes=("Vehicles",),
         adjacent=(("The Gitrog Monster",), ("Tevesh Szat, Doom of Fools", "Kodama of the East Tree")),
+        tag_search=True,
     )
 
 
@@ -89,6 +91,24 @@ def test_a_profile_keeps_cards_by_either_face_of_a_name_or_by_category() -> None
     assert not profile.keeps("Mind Stone", ["Ramp"])
     assert not profile.keeps("Ice")
     assert not Profile().keeps("Sol Ring", ["Stax"])
+
+
+@pytest.mark.parametrize(
+    ("text", "searching"),
+    [
+        ("version = 1\n", False),
+        ("[ideas]\ncommanders = ['Ygra, Eater of All']\n", False),
+        ("[ideas]\ntag_search = false\n", False),
+        ("[ideas]\ntag_search = true\n", True),
+    ],
+)
+def test_searching_decks_by_tag_is_off_unless_the_profile_turns_it_on(
+    tmp_path: Path,
+    text: str,
+    searching: bool,  # noqa: FBT001 — a parametrized expectation
+) -> None:
+    write(tmp_path, text)
+    assert read_profile(tmp_path).tag_search is searching
 
 
 def test_missing_profile_is_empty(tmp_path: Path) -> None:
@@ -130,6 +150,8 @@ def test_byte_order_mark_is_accepted(tmp_path: Path) -> None:
         ("[ideas]\ncommanders = [3]", "ideas.commanders[0] must be text"),
         ("[ideas]\ncommanders = [['A', 3]]", "ideas.commanders[0].pair[1] must be text"),
         ("[ideas]\ntags = []", "unknown key 'tags' in [ideas]"),
+        ("[ideas]\ntag_search = 'yes'", "ideas.tag_search must be true or false"),
+        ("[ideas]\ntag_search = 1", "ideas.tag_search must be true or false"),
     ],
 )
 def test_invalid_profiles_name_the_problem(tmp_path: Path, text: str, message: str) -> None:

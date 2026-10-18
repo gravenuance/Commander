@@ -20,6 +20,7 @@ cards = ["Chaos Warp"]
 categories = ["Maybeboard"]
 [ideas]
 commanders = ["The Gitrog Monster", ["Tevesh Szat, Doom of Fools", "Kodama of the East Tree"]]
+tag_search = true
 """
 
 
@@ -72,12 +73,25 @@ def test_profile_is_shown_and_unknown_tags_are_warned(
         "exclude: Chaos Warp",
         "keep: categories Maybeboard",
         "ideas also from: The Gitrog Monster; Tevesh Szat, Doom of Fools + Kodama of the East Tree",
+        "search decks by tag: on",
         "from Archidekt:",
         "  Dwarves (deck tag): types Dwarf",
         "  Vehicles (deck tag): types Vehicle",
         "  cEDH (deck tag): how the deck plays, not a theme",
     ]
     assert "tag 'no-such-tag' is not a Tagger tag" in err
+
+
+def test_profile_says_the_tag_search_is_off_by_default(
+    tmp_path: Path, raw_deck: Json, own_cache: Path
+) -> None:
+    synced(tmp_path, raw_deck)
+    (deck_folder(tmp_path) / PROFILE_FILE).write_text(
+        PROFILE.replace("tag_search = true", ""), encoding="utf-8"
+    )
+    assert "search decks by tag: off" in profile(["magda"], tmp_path, own_cache)[1].splitlines()
+    data = json.loads(profile(["magda", "--json"], tmp_path, own_cache)[1])
+    assert data["ideas"]["tagSearch"] is False
 
 
 def test_profile_shows_the_derived_themes_it_leaves_out(
@@ -130,6 +144,7 @@ def test_profile_json(tmp_path: Path, raw_deck: Json, own_cache: Path) -> None:
     }
     assert (data["broadTags"], data["unmatchedDeckTags"], data["vagueCategories"]) == (["cEDH"], [], [])
     assert (data["themes"]["ignore"], data["unknownIgnores"]) == ([], [])
+    assert data["ideas"]["tagSearch"] is True
 
 
 def test_invalid_profile_is_a_usage_error(tmp_path: Path, raw_deck: Json, own_cache: Path) -> None:
