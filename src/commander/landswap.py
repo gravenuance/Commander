@@ -1,8 +1,8 @@
 """Whether a swap that takes a land out or puts one in leaves the mana base sound.
 
-A cut target or an idea that is a land is allowed only while the land count stays within LAND_TOLERANCE of
-Karsten's count for the deck or inside the range of the lists compared with, and every colour keeps the
-sources its spells need (ADR 0030).
+A cut target or an idea that is a land is allowed only while the land count ends within LAND_TOLERANCE of
+Karsten's count for the deck, closer to it than before, or inside the range of three or more lists compared
+with, and every colour keeps the sources its spells need (ADR 0030).
 """
 
 import logging
@@ -12,7 +12,7 @@ from dataclasses import dataclass, replace
 from commander.carddb import CardDb, CardMana
 from commander.manabase import ALTERNATIVE_COST_TAGS, LandCount, ManaBase, analyse_mana, info_is_land
 from commander.manaplan import LAND_TOLERANCE, deck_with_counts
-from commander.meta import performing_entries
+from commander.meta import MIN_PEER_LISTS, performing_entries
 from commander.metadata import CEDH_BRACKET, MetaData
 from commander.models import Deck
 
@@ -57,6 +57,8 @@ class ManaGuard:
     land_range: tuple[float, float] | None
     # The sources each card short of them has now, by colour: a swap may not add to these nor lower them.
     short: Mapping[_Need, float]
+    # How far the deck's land count is from Karsten's now.
+    lands_off: float
 
     @staticmethod
     def of(
@@ -68,7 +70,7 @@ class ManaGuard:
     ) -> "ManaGuard":
         alternative = frozenset(name.casefold() for name in alternative_cost)
         report = analyse_mana(deck, cards, alternative_cost=alternative)
-        return ManaGuard(deck, cards, alternative, land_range, _shortfalls(report))
+        return ManaGuard(deck, cards, alternative, land_range, _shortfalls(report), _lands_off(report.lands))
 
     def with_cards(self, cards: Mapping[str, CardMana]) -> "ManaGuard":
         """The guard knowing these cards too, such as the ideas a swap may bring in."""
@@ -90,7 +92,8 @@ class ManaGuard:
         return (not moves_count or self._count_holds(after.lands)) and self._sources_hold(after)
 
     def _count_holds(self, lands: LandCount) -> bool:
-        if abs(round(lands.suggested - lands.lands, 2)) <= LAND_TOLERANCE:
+        off = _lands_off(lands)
+        if off <= LAND_TOLERANCE or off < self.lands_off:
             return True
         return self.land_range is not None and self.land_range[0] <= lands.lands <= self.land_range[1]
 
@@ -119,10 +122,24 @@ def mana_guard(deck: Deck, db: CardDb, data: MetaData | None) -> ManaGuard:
         deck, cards, alternative_cost=alternative, comparison=(label, lists) if lists else None
     )
     compared = report.comparison
-    land_range = (compared.lands_low, compared.lands_high) if compared is not None else None
-    return ManaGuard(
-        deck, cards, frozenset(name.casefold() for name in alternative), land_range, _shortfalls(report)
+    # A range of fewer than MIN_PEER_LISTS lists is too narrow to go by; Karsten's count stands instead.
+    land_range = (
+        (compared.lands_low, compared.lands_high)
+        if compared is not None and compared.lists >= MIN_PEER_LISTS
+        else None
     )
+    return ManaGuard(
+        deck,
+        cards,
+        frozenset(name.casefold() for name in alternative),
+        land_range,
+        _shortfalls(report),
+        _lands_off(report.lands),
+    )
+
+
+def _lands_off(lands: LandCount) -> float:
+    return abs(round(lands.suggested - lands.lands, 2))
 
 
 def _shortfalls(report: ManaBase) -> dict[_Need, float]:

@@ -54,6 +54,18 @@ def test_a_swap_outside_one_land_of_karstens_count_and_the_peer_range_is_refused
     assert not guard(19, 19, 61, land_range=(34, 38)).allows("Plains", "Filler")
 
 
+def test_a_swap_that_moves_the_land_count_closer_to_karstens_is_allowed_even_when_far_off() -> None:
+    # 41 lands is 3.3 over Karsten's 37.7: a land for a spell makes 40, 2.3 over, which is closer.
+    over = guard(21, 20, 59)
+    assert over.allows("Filler", "Plains")
+    # A spell for a land makes 42, further off.
+    assert not over.allows("Plains", "Filler")
+    # 34 lands is 3.7 under: a spell for a land makes 35, closer; a land for a spell makes 33, further.
+    under = guard(17, 17, 66)
+    assert under.allows("Plains", "Filler")
+    assert not under.allows("Filler", "Plains")
+
+
 def test_a_land_swapped_for_a_spell_is_refused_when_a_colour_would_lose_the_sources_it_needs() -> None:
     # Eighteen Islands meet the commander's 17.7 at 38 lands; seventeen, with 37 lands, miss 17.2.
     assert not guard(20, 18, 61).allows("Filler", "Island")
@@ -110,12 +122,19 @@ def test_other_brackets_compare_with_the_recent_decks_that_say_how_many_basics_t
     assert comparison_lists(deck, None) == ("", [])
 
 
-def test_the_guard_of_a_deck_takes_its_land_range_from_the_lists_compared(deck: Deck, db: CardDb) -> None:
-    four = replace(peer(1, ["Battered Golem", "Mountain"]), multiples=(("Mountain", 36),))
-    five = replace(peer(2, ["Battered Golem", "Mountain"]), multiples=(("Mountain", 38),))
-    ranged = mana_guard(replace(deck, bracket=3), db, meta_data([], [four, five]))
-    assert ranged.land_range == (36.0, 38.0)
+def test_the_guard_of_a_deck_takes_its_land_range_from_at_least_three_lists_compared(
+    deck: Deck, db: CardDb
+) -> None:
+    runs = [replace(peer(n, ["Battered Golem", "Mountain"]), multiples=(("Mountain", m),)) for n, m in LANDS]
+    below_five = replace(deck, bracket=3)
+    assert mana_guard(below_five, db, meta_data([], runs)).land_range == (36.0, 38.0)
+    # A range of one or two lists is no range to go by.
+    assert mana_guard(below_five, db, meta_data([], runs[:2])).land_range is None
+    assert mana_guard(below_five, db, meta_data([], runs[:1])).land_range is None
     assert mana_guard(deck, db, None).land_range is None
+
+
+LANDS = [(1, 36), (2, 38), (3, 37)]
 
 
 def target_rules(mana: ManaGuard) -> CutRules:
