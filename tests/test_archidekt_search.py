@@ -295,14 +295,26 @@ def test_a_retry_after_under_180_seconds_still_waits_180() -> None:
     assert limited.at == [0.0, 180.0]
 
 
-def test_a_second_429_gives_up_and_the_next_request_still_waits() -> None:
+def test_a_second_429_gives_up_for_the_rest_of_the_run_without_another_request_or_wait() -> None:
     limited = Limited(httpx.Response(429), httpx.Response(429), deck_answer())
     search = limited.search()
     with pytest.raises(RateLimitedError):
         search.deck(DECK_ID)
     assert limited.at == [0.0, 180.0]
-    assert search.deck(DECK_ID).id == DECK_ID
-    assert limited.at == [0.0, 180.0, 360.0]
+    slept = list(limited.sleeps)
+    with pytest.raises(RateLimitedError):
+        search.deck(DECK_ID)
+    with pytest.raises(RateLimitedError):
+        search.recent_decks(ELLIVERE, brackets=(5,), since=SINCE)
+    assert limited.at == [0.0, 180.0]
+    assert limited.sleeps == slept
+
+
+def test_a_new_search_after_a_give_up_starts_fresh() -> None:
+    limited = Limited(httpx.Response(429), httpx.Response(429), deck_answer())
+    with pytest.raises(RateLimitedError):
+        limited.search().deck(DECK_ID)
+    assert limited.search().deck(DECK_ID).id == DECK_ID
 
 
 def test_a_search_page_is_retried_after_a_429_too() -> None:

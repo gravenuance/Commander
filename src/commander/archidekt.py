@@ -115,6 +115,8 @@ class ArchidektSearch:
         self._fetcher = fetcher
         self._pacer = pacer
         self._base_url = base_url.rstrip("/")
+        # Set when a request was limited twice: the rest of this run's requests then fail at once.
+        self._gave_up: RateLimitedError | None = None
 
     def recent_decks(
         self,
@@ -158,17 +160,23 @@ class ArchidektSearch:
 
     def _get(self, url: str, params: Mapping[str, str | int] | None) -> object:
         """One paced request. After a 429 nothing goes out for RATE_LIMIT_PAUSE_SECONDS or the Retry-After if
-        longer, which holds the next request of any caller; the limited one is tried again after it."""
+        longer, which holds the next request of any caller; the limited one is tried again after it. A request
+        limited again gives up: every later request of this object fails at once, so callers fall back to
+        their cache without more waiting."""
+        if self._gave_up is not None:
+            raise RateLimitedError(str(self._gave_up), self._gave_up.retry_after)
         for attempt in range(RATE_LIMIT_RETRIES + 1):
             self._pacer.wait()
             try:
                 return self._fetcher.get_json(url, params, surface_rate_limit=True)
             except RateLimitedError as error:
+                if attempt == RATE_LIMIT_RETRIES:
+                    log.warning("Archidekt is still limiting requests; no more are sent this run")
+                    self._gave_up = error
+                    raise
                 pause = max(RATE_LIMIT_PAUSE_SECONDS, error.retry_after or 0.0)
                 log.warning("Archidekt asked for quiet; waiting %.0fs before the next request", pause)
                 self._pacer.cool_down(pause)
-                if attempt == RATE_LIMIT_RETRIES:
-                    raise
         raise AssertionError("unreachable: the last attempt raises")  # pragma: no cover
 
 

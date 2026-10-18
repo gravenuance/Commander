@@ -376,6 +376,21 @@ def test_after_a_rate_limit_the_next_run_reads_only_the_decks_still_missing(rig:
     assert resumed.peers.source is AnswerSource.FETCHED
 
 
+def test_after_archidekt_gives_up_on_a_rate_limit_later_gathers_of_the_run_send_and_wait_for_nothing(
+    rig: Rig,
+) -> None:
+    rig.archidekt.limit_reads = 0
+    sources = rig.sources()
+    first = gather(ellivere_deck(), sources, rig.cache, now=lambda: rig.now, refresh=False)
+    assert first.peers.source is AnswerSource.UNAVAILABLE
+    sent, slept = len(rig.archidekt.requests), list(rig.sleeps)
+
+    second = gather(ellivere_deck(), sources, rig.cache, now=lambda: rig.now, refresh=False)
+
+    assert second.peers.source is AnswerSource.UNAVAILABLE
+    assert (len(rig.archidekt.requests), rig.sleeps) == (sent, slept)
+
+
 def test_a_search_that_finds_no_decks_gives_an_empty_answer_not_an_error(rig: Rig) -> None:
     rig.archidekt.page = {"count": 0, "next": None, "results": []}
     peers = rig.gather().peers
