@@ -126,6 +126,8 @@ def with_ideas(rules: CutRules, cards: Iterable[CardInfo], db: CardDb) -> CutRul
         return rules
     nonland = [key for key, info in infos.items() if not info.is_land]
     themes = {key: set(names) for key, names in rules.themes.items()}
+    # A card matching no theme is kept with none, so a later call does not match it again.
+    themes.update((key, set()) for key in infos)
     for matcher in rules.matchers:
         for oracle_id in db.matching(matcher.theme, nonland if matcher.nonland_only else list(infos)):
             themes.setdefault(oracle_id, set()).add(matcher.name)

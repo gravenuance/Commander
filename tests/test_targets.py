@@ -1,12 +1,17 @@
 """Which deck cards a board card could replace: hand-picked ones, else the weakest in its role."""
 
+from collections.abc import Iterable
+
 import pytest
 
 from commander.board import Actor, BoardCard, ReplaceOption, Status
-from commander.carddb import CardInfo, ResolvedCard, Role
+from commander.carddb import CardDb, CardInfo, ResolvedCard, Role, Theme
 from commander.models import DeckCard
-from commander.targets import CutRules, Target, TargetSource, targets_for
+from commander.targets import CutRules, Matcher, Target, TargetSource, targets_for, with_ideas
 from commander.weightedshare import NO_SHARES, ShareTable, SourceShare, WeightedShare
+from test_meta import db
+
+__all__ = ["db"]  # fixture shared with test_meta
 
 
 def info(
@@ -266,3 +271,24 @@ def test_an_idea_the_user_proposed_gets_only_computed_cuts_less_played_than_it()
         "Sylvan Library",
         "Archivist of Oghma",
     ]
+
+
+def test_a_card_matching_no_theme_is_remembered_so_it_is_not_matched_again(
+    db: CardDb, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rules = CutRules(matchers=(Matcher("Dwarves", Theme(types=("Dwarf",))),))
+    signet = info("Arcane Signet", (Role.RAMP,))
+
+    known = with_ideas(rules, [signet], db)
+
+    assert known.themes == {signet.oracle_id: frozenset()}
+    asked: list[Theme] = []
+    matching = db.matching
+
+    def counting(theme: Theme, oracle_ids: Iterable[str]) -> frozenset[str]:
+        asked.append(theme)
+        return matching(theme, oracle_ids)
+
+    monkeypatch.setattr(db, "matching", counting)
+    assert with_ideas(known, [signet], db) is known
+    assert asked == []
