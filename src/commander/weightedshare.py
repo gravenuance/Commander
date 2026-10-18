@@ -115,7 +115,8 @@ def size_factor(players: int) -> float:
 
 
 def placement_weight(entry: Entry) -> float:
-    """The share of the field the entry beat, times the event's size factor."""
+    """(N - s + 1) / N for standing s in an event of N players, so 1.0 for the winner and 1/N for last (a
+    standing of 0, unknown, gets UNKNOWN_PERCENTILE), times the event's size factor."""
     players = max(entry.tournament.size, 1)
     if entry.standing < 1:
         percentile = UNKNOWN_PERCENTILE
