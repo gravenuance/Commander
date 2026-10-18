@@ -138,8 +138,11 @@ def test_no_preview_for_a_plan_with_problems(deck: Deck, db: CardDb, tmp_path: P
 
 def test_no_preview_when_no_counted_card_changes(deck: Deck, db: CardDb, tmp_path: Path) -> None:
     fake = FakeSpellbook()
-    resolution = resolve_plan(deck, Plan("magda", (AddCard("Arcane Signet", category="Maybeboard"),), ()), db)
+    resolution = resolve_plan(
+        deck, Plan("magda", (AddCard("Arcane Signet", category="Burn"),), ()), db, categories={"Burn": False}
+    )
     assert resolution.changes
+    assert not resolution.changes[0].in_deck
     assert preview(resolution, fake, tmp_path) is None
     assert fake.bodies == []
 
