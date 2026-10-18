@@ -46,6 +46,8 @@ class FakeArchidektSearch:
         self.commander = ELLIVERE
         # Decks served with Kodama of the East Tree as the commander's partner.
         self.partnered: set[int] = set()
+        # Decks led by another commander than `commander`.
+        self.led_by: dict[int, str] = {}
         self.status = 200
         # The search answer; the trimmed real page when None.
         self.page: Json | None = None
@@ -73,13 +75,15 @@ class FakeArchidektSearch:
         deck = load_fixture(f"deck_{DECK_ID}.json")
         for entry in deck["cards"]:
             if entry["card"]["oracleCard"]["name"] == MAGDA:
-                entry["card"]["oracleCard"]["name"] = self.commander
+                entry["card"]["oracleCard"]["name"] = self.led_by.get(deck_id, self.commander)
         if deck_id in self.partnered:
             deck["cards"].append(card_entry(9_200, KODAMA, ["Commander"]))
         return httpx.Response(200, json=deck)
 
 
-def ellivere_deck() -> Deck:
+def ellivere_deck(*commanders: str) -> Deck:
+    """The deck led by Ellivere, or by the commanders named instead."""
+
     def card(entry_id: int, name: str, categories: tuple[str, ...]) -> DeckCard:
         return DeckCard(name, 1, categories, True, f"id-{entry_id}", entry_id, entry_id, "tst", "1", "Normal")  # noqa: FBT003 — positional like the model
 
@@ -89,7 +93,10 @@ def ellivere_deck() -> Deck:
         "MAKKIS",
         5,
         "2026-10-15T20:22:13Z",
-        (card(1, ELLIVERE, ("Commander",)), card(2, "Containment Priest", ("Stax",))),
+        (
+            *(card(n, name, ("Commander",)) for n, name in enumerate(commanders or (ELLIVERE,), 1)),
+            card(10, "Containment Priest", ("Stax",)),
+        ),
     )
 
 
@@ -584,6 +591,176 @@ def test_adjacent_groups_pool_their_decks_once_each(rig: Rig) -> None:
     # The fake search answers every commander with the same decks, so the second group adds none.
     found = adjacent(rig, (ELLIVERE,), (ELLIVERE,))
     assert [p.deck.id for p in found.decks] == [5553433, 13668856, 7432856]
+
+
+def tagged(
+    rig: Rig, *tags: str, groups: tuple[tuple[str, ...], ...] = (), offline: bool = False
+) -> AdjacentDecks:
+    return gather_adjacent(
+        ellivere_deck(),
+        groups,
+        rig.sources(),
+        rig.cache,
+        now=lambda: rig.now,
+        refresh=False,
+        offline=offline,
+        tags=tags,
+    )
+
+
+def tag_searches(rig: Rig) -> list[dict[str, str]]:
+    return [q for q in rig.archidekt.searches if "deckTagName" in q]
+
+
+def test_a_theme_tag_searches_recent_decks_of_any_commander_at_the_decks_brackets(rig: Rig) -> None:
+    # A quarter of peer_decks (12) is read per tag: the 3 most viewed.
+    rig.settings = replace(SETTINGS, peer_decks=12)
+    rig.archidekt.commander = MAGDA
+    found = tagged(rig, "Landfall")
+    assert [(q["deckTagName"], q["edhBracket"], "commanderName" in q) for q in tag_searches(rig)] == [
+        ("Landfall", "5", False)
+    ]
+    assert [(t.tag, [p.deck.id for p in t.decks]) for t in found.tagged] == [
+        ("Landfall", [5553433, 13668856, 7432856])
+    ]
+    assert found.decks == ()
+    assert found.errors == ()
+
+
+def test_a_tag_search_at_bracket_3_reads_brackets_3_and_4_with_a_page_budget_of_its_own(rig: Rig) -> None:
+    rig.settings = replace(SETTINGS, peer_decks=12)
+    rig.archidekt.commander = MAGDA
+    gather_adjacent(
+        replace(ellivere_deck(), bracket=3),
+        [],
+        rig.sources(),
+        rig.cache,
+        now=lambda: rig.now,
+        refresh=False,
+        tags=("Landfall",),
+    )
+    assert [q["edhBracket"] for q in tag_searches(rig)] == ["3", "4"]
+
+
+@pytest.mark.parametrize(("peer_decks", "reads"), [(3, 1), (4, 1), (5, 2), (12, 3)])
+def test_a_tag_search_reads_a_quarter_of_the_commander_reads_rounded_up(
+    rig: Rig, peer_decks: int, reads: int
+) -> None:
+    rig.settings = replace(SETTINGS, peer_decks=peer_decks)
+    rig.archidekt.commander = MAGDA
+    tagged(rig, "Landfall")
+    assert len(rig.archidekt.deck_reads) == reads
+
+
+def test_decks_of_the_decks_own_commander_are_left_out_of_a_tag_search(rig: Rig) -> None:
+    rig.settings = replace(SETTINGS, peer_decks=12)
+    rig.archidekt.commander = MAGDA
+    rig.archidekt.led_by = {13668856: ELLIVERE}
+    rig.archidekt.partnered = {7432856}
+    found = tagged(rig, "Landfall")
+    # Partnered with Kodama, Magda's deck stays: only Ellivere's own commander is the deck's.
+    assert [p.deck.id for p in found.tagged[0].decks] == [5553433, 7432856]
+
+
+def test_a_partner_decks_tag_search_leaves_out_decks_with_either_partner(rig: Rig) -> None:
+    rig.settings = replace(SETTINGS, peer_decks=12)
+    # Ellivere decks, one of them with Kodama as partner, and one led by Kodama alone.
+    rig.archidekt.partnered = {5553433}
+    rig.archidekt.led_by = {7432856: KODAMA}
+    found = gather_adjacent(
+        ellivere_deck(MAGDA, KODAMA),
+        [],
+        rig.sources(),
+        rig.cache,
+        now=lambda: rig.now,
+        refresh=False,
+        tags=("Landfall",),
+    )
+    assert [p.deck.id for p in found.tagged[0].decks] == [13668856]
+
+
+def test_without_theme_tags_no_tag_search_is_made(rig: Rig) -> None:
+    tagged(rig, groups=((MAGDA,),))
+    assert rig.archidekt.searches
+    assert tag_searches(rig) == []
+    assert tagged(rig).tagged == ()
+
+
+def test_each_tag_is_searched_once_whatever_its_case(rig: Rig) -> None:
+    found = tagged(rig, "Landfall", "landfall", "Tokens")
+    assert [q["deckTagName"] for q in tag_searches(rig)] == ["Landfall", "Tokens"]
+    assert [t.tag for t in found.tagged] == ["Landfall", "Tokens"]
+
+
+def test_tag_decks_sit_beside_the_commander_groups_decks(rig: Rig) -> None:
+    rig.archidekt.commander = MAGDA
+    found = tagged(rig, "Landfall", groups=((MAGDA,),))
+    assert [p.deck.id for p in found.decks] == [5553433, 13668856, 7432856]
+    assert [t.tag for t in found.tagged] == ["Landfall"]
+
+
+def test_a_deck_read_for_a_commander_search_is_not_read_again_for_a_tag(rig: Rig) -> None:
+    rig.archidekt.commander = MAGDA
+    tagged(rig, "Landfall", groups=((MAGDA,),))
+    assert sorted(rig.archidekt.deck_reads) == [5553433, 7432856, 13668856]
+
+
+def test_a_tag_answer_is_cached_for_the_day_and_shared_by_decks_of_other_commanders(rig: Rig) -> None:
+    rig.settings = replace(SETTINGS, peer_decks=12)
+    rig.archidekt.commander = MAGDA
+    tagged(rig, "Landfall")
+    searches = len(rig.archidekt.searches)
+    again = tagged(rig, "Landfall")
+    assert len(rig.archidekt.searches) == searches
+    assert len(again.tagged[0].decks) == 3
+    # A deck of another commander asks the same question, so the same cached answer serves it.
+    other = gather_adjacent(
+        ellivere_deck("Kinnan, Bonder Prodigy"),
+        [],
+        rig.sources(),
+        rig.cache,
+        now=lambda: rig.now,
+        refresh=False,
+        tags=("landfall",),
+    )
+    assert len(rig.archidekt.searches) == searches
+    assert len(other.tagged[0].decks) == 3
+    # The cached decks still say who leads them, so Magda's own deck finds none of them.
+    magda = gather_adjacent(
+        ellivere_deck(MAGDA),
+        [],
+        rig.sources(),
+        rig.cache,
+        now=lambda: rig.now,
+        refresh=False,
+        tags=("landfall",),
+    )
+    assert magda.tagged[0].decks == ()
+
+
+def test_offline_a_tag_search_reads_only_the_cache(rig: Rig) -> None:
+    rig.settings = replace(SETTINGS, peer_decks=12)
+    rig.archidekt.commander = MAGDA
+    empty = tagged(rig, "Landfall", offline=True)
+    assert rig.archidekt.requests == []
+    assert empty.tagged == ()
+    [(name, why)] = empty.errors
+    assert (name, why) == ("Landfall-tagged", "not fetched yet")
+    tagged(rig, "Landfall")
+    asked = len(rig.archidekt.requests)
+    rig.now = NOW + timedelta(days=3)
+    old = tagged(rig, "Landfall", offline=True)
+    assert len(rig.archidekt.requests) == asked
+    assert [p.deck.id for p in old.tagged[0].decks] == [5553433, 13668856, 7432856]
+
+
+def test_a_tag_whose_search_fails_is_named_and_the_rest_carry_on(rig: Rig) -> None:
+    rig.archidekt.status = 500
+    found = tagged(rig, "Landfall")
+    assert found.tagged == ()
+    [(name, why)] = found.errors
+    assert name == "Landfall-tagged"
+    assert "HTTP 500" in why
 
 
 def test_an_adjacent_group_that_cannot_be_read_is_named(rig: Rig) -> None:

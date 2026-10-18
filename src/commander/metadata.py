@@ -26,6 +26,8 @@ from commander.archidekt import (
     MAX_SEARCH_PAGES,
     MIN_DECKS,
     SEARCH_INTERVAL_SECONDS,
+    TAG_READ_DIVISOR,
+    TAG_SEARCH_PAGES_PER_BRACKET,
     VIEW_FLOORS,
     ArchidektError,
     ArchidektSearch,
@@ -123,6 +125,8 @@ class PeerList:
     # Cards played more than once (basic lands mostly), with their count; None in caches from before
     # ADR 0019, which can't say how many lands a deck runs.
     multiples: tuple[tuple[str, int], ...] | None = ()
+    # The deck's commanders; empty in caches from before tag searches, which never needed them.
+    commanders: tuple[str, ...] = ()
 
 
 @dataclass(slots=True, frozen=True)
@@ -383,12 +387,22 @@ def gather_for(
 
 
 @dataclass(slots=True, frozen=True)
+class TaggedDecks:
+    """The recent Archidekt decks of other commanders that carry one of the deck's theme tags."""
+
+    tag: str
+    decks: tuple[PeerList, ...]
+
+
+@dataclass(slots=True, frozen=True)
 class AdjacentDecks:
-    """The recent Archidekt decks of the commanders a profile names as playing alike, pooled (ADR 0015)."""
+    """The recent Archidekt decks of the commanders a profile names as playing alike, pooled (ADR 0015), and
+    those of other commanders sharing the deck's theme tags, a pool per tag."""
 
     decks: tuple[PeerList, ...]
-    # Each commander group that could not be read, by name, with why.
+    # Each commander group or tag that could not be read, by name, with why.
     errors: tuple[tuple[str, str], ...]
+    tagged: tuple[TaggedDecks, ...] = ()
 
 
 def gather_adjacent(
@@ -400,9 +414,11 @@ def gather_adjacent(
     now: Clock,
     refresh: bool,
     offline: bool = False,
+    tags: Sequence[str] = (),
     on_progress: Progress | None = None,
 ) -> AdjacentDecks:
-    """Each group's recent Archidekt decks at the deck's bracket, cached as a deck's own peers are."""
+    """Each group's recent Archidekt decks at the deck's bracket, cached as a deck's own peers are; and for
+    each deck tag, those of any other commander than the deck's own."""
     since = window_start(now(), sources.settings)
     folder = cache_root / CACHE_FOLDER
     decks: dict[int, PeerList] = {}
@@ -427,8 +443,21 @@ def gather_adjacent(
             continue
         for peer in answer.data.decks:
             decks.setdefault(peer.deck.id, peer)
+    own = {name.casefold() for name in deck.commanders}
+    tagged: list[TaggedDecks] = []
+    for tag in _distinct_tags(tags):
+        if on_progress is not None:
+            on_progress(f"Archidekt: recent decks tagged {tag}")
+        answer = _tag_peers(
+            tag, deck.bracket, sources, folder, since, now=now, refresh=refresh, offline=offline
+        )
+        if answer.data is None:
+            errors.append((f"{tag}-tagged", answer.error or "unavailable"))
+            continue
+        others = tuple(p for p in answer.data.decks if own.isdisjoint(c.casefold() for c in p.commanders))
+        tagged.append(TaggedDecks(tag, others))
     _prune_reads(folder, since, now=now, offline=offline)
-    return AdjacentDecks(tuple(decks.values()), tuple(errors))
+    return AdjacentDecks(tuple(decks.values()), tuple(errors), tuple(tagged))
 
 
 def _prune_reads(folder: Path, since: date, *, now: Clock, offline: bool) -> None:
@@ -498,6 +527,64 @@ def _group_peers(
             ),
         ),
         _cache(folder, "Archidekt decks", _encode_peers, _decode_peers),
+        now=now,
+        refresh=refresh,
+        fresh_for=FRESH_FOR,
+        errors=_ERRORS,
+    )
+
+
+def _distinct_tags(tags: Sequence[str]) -> list[str]:
+    """Each tag once, in order, compared without case: Archidekt matches tags that way."""
+    first: dict[str, str] = {}
+    for tag in tags:
+        first.setdefault(tag.casefold(), tag)
+    return list(first.values())
+
+
+def tag_reads(peer_decks: int) -> int:
+    """How many decks a tag search reads: a quarter of a commander's, rounded up."""
+    return -(-peer_decks // TAG_READ_DIVISOR)
+
+
+def _tag_peers(
+    tag: str,
+    bracket: int | None,
+    sources: MetaSources,
+    folder: Path,
+    since: date,
+    *,
+    now: Clock,
+    refresh: bool,
+    offline: bool,
+) -> Answer[PeerLists]:
+    """Recent Archidekt decks of any commander carrying the deck tag, at the bracket and the one above.
+
+    Cached by tag and bracket alone, so every deck wanting the tag shares it; the caller leaves out its own
+    commander's decks.
+    """
+    settings = sources.settings
+    key = tag.casefold()
+    request: Mapping[str, object] = {
+        "tag": key,
+        "brackets": list(brackets_to_read(bracket)),
+        "pages": TAG_SEARCH_PAGES_PER_BRACKET,
+        "decks": tag_reads(settings.peer_decks),
+        "viewFloors": list(VIEW_FLOORS),
+        "minDecks": MIN_DECKS,
+        "windowDays": settings.window_days,
+        "user": sources.user.casefold(),
+    }
+    return cached_answer(
+        cache_item("archidekt-tag", key, str(bracket)),
+        request,
+        _live(
+            offline,
+            lambda: _tag_peer_lists(
+                sources, DeckReads(folder / DECK_READS_FOLDER), tag, bracket, since=since, now=now
+            ),
+        ),
+        _cache(folder, "Archidekt tagged decks", _encode_peers, _decode_peers),
         now=now,
         refresh=refresh,
         fresh_for=FRESH_FOR,
@@ -631,16 +718,63 @@ def _peer_lists(
     settings = sources.settings
     if settings.peer_decks == 0:
         return PeerLists((), 0)
-    start = datetime(since.year, since.month, since.day, tzinfo=UTC)
-    user = sources.user.casefold()
-    found = sources.archidekt.recent_decks(group[0], brackets=brackets_to_read(bracket), since=start)
-    others = [d for d in found if d.owner.casefold() != user and d.id != own_id]
+    found = sources.archidekt.recent_decks(
+        group[0], brackets=brackets_to_read(bracket), since=_start_of(since)
+    )
     wanted = {name.casefold() for name in group}
     # The search finds one commander: decks pairing it with a partner or Background are read and dropped, and
     # so are decks led by only one of a pair.
+    return _read_peers(
+        sources,
+        reads,
+        found,
+        settings.peer_decks,
+        own_id=own_id,
+        now=now,
+        keep=lambda read: wanted == {name.casefold() for name in read.commanders},
+    )
+
+
+def _tag_peer_lists(
+    sources: MetaSources, reads: DeckReads, tag: str, bracket: int | None, *, since: date, now: Clock
+) -> PeerLists:
+    limit = tag_reads(sources.settings.peer_decks)
+    if limit == 0:
+        return PeerLists((), 0)
+    found: dict[int, PeerDeck] = {}
+    # One search per bracket, so a busy tag at the first cannot use up the pages of the next.
+    for each in brackets_to_read(bracket):
+        for peer in sources.archidekt.recent_decks(
+            None,
+            brackets=(each,),
+            since=_start_of(since),
+            tag=tag,
+            max_pages=TAG_SEARCH_PAGES_PER_BRACKET,
+        ):
+            found.setdefault(peer.id, peer)
+    return _read_peers(sources, reads, list(found.values()), limit, own_id=None, now=now, keep=lambda _: True)
+
+
+def _start_of(day: date) -> datetime:
+    return datetime(day.year, day.month, day.day, tzinfo=UTC)
+
+
+def _read_peers(
+    sources: MetaSources,
+    reads: DeckReads,
+    found: Sequence[PeerDeck],
+    limit: int,
+    *,
+    own_id: int | None,
+    now: Clock,
+    keep: Callable[[DeckRead], bool],
+) -> PeerLists:
+    """The most-viewed other players' decks of a search, read or cached, and filtered by keep."""
+    user = sources.user.casefold()
+    others = [d for d in found if d.owner.casefold() != user and d.id != own_id]
     lists: list[PeerList] = []
     skipped = 0
-    for peer in most_viewed(others, limit=settings.peer_decks):
+    for peer in most_viewed(others, limit=limit):
         read = reads.load(peer, now())
         if read is None:
             try:
@@ -651,9 +785,8 @@ def _peer_lists(
                 skipped += 1
                 continue
             _keep(reads, peer, read, now())
-        if wanted != {name.casefold() for name in read.commanders}:
-            continue
-        lists.append(PeerList(peer, read.cards, read.planned, read.multiples))
+        if keep(read):
+            lists.append(PeerList(peer, read.cards, read.planned, read.multiples, read.commanders))
     return PeerLists(tuple(lists), skipped)
 
 
@@ -782,6 +915,7 @@ def _encode_peers(peers: PeerLists) -> object:
                 "cards": list(p.cards),
                 "planned": list(p.planned),
                 "multiples": None if p.multiples is None else [[name, count] for name, count in p.multiples],
+                "commanders": list(p.commanders),
             }
             for p in peers.decks
         ],
@@ -813,6 +947,7 @@ def _decode_peers(raw: object) -> PeerLists:
                 tuple(str(card) for card in cards),
                 tuple(str(card) for card in planned),
                 _multiples(d, where),
+                str_list(d, "commanders", where) if "commanders" in d else (),
             )
         )
     return PeerLists(tuple(decks), req_int(obj, "skipped", "answer"))
