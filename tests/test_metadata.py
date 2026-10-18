@@ -266,7 +266,7 @@ def test_a_corrupt_deck_cache_file_is_a_miss_that_is_logged_and_repaired(
     assert data.peers.data is not None
     assert len(data.peers.data.decks) == 3
     assert "ignoring unreadable cached Archidekt deck" in caplog.text
-    assert json.loads(broken.read_text(encoding="utf-8"))["version"] == 1
+    assert json.loads(broken.read_text(encoding="utf-8"))["version"] == 2
     reads = len(rig.archidekt.deck_reads)
     rig.gather(refresh=True)
     assert len(rig.archidekt.deck_reads) == reads

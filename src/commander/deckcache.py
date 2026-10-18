@@ -3,6 +3,7 @@
 import hashlib
 import json
 import logging
+import os
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -97,6 +98,14 @@ class DeckCache[T]:
             "answer": self._encode(data),
         }
         write_text_atomic(self._path(item), json.dumps(document, ensure_ascii=False, indent=1) + "\n")
+
+    def touch(self, item: int | str, at: datetime) -> None:
+        """Set the entry's file time to `at`, which is when it was last used."""
+        stamp = at.timestamp()
+        try:
+            os.utime(self._path(item), (stamp, stamp))
+        except OSError as error:
+            log.warning("could not mark the cached %s %s as used: %s", self.what, _label(item), error)
 
     def _path(self, item: int | str) -> Path:
         if isinstance(item, str) and not _SAFE_ITEM.fullmatch(item):

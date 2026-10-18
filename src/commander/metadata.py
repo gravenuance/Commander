@@ -627,7 +627,7 @@ def _peer_lists(
     lists: list[PeerList] = []
     skipped = 0
     for peer in most_viewed(others, limit=settings.peer_decks):
-        read = reads.load(peer)
+        read = reads.load(peer, now())
         if read is None:
             try:
                 read = read_of(sources.archidekt.deck(peer.id))
