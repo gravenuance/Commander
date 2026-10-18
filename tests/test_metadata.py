@@ -7,10 +7,11 @@ from pathlib import Path
 import httpx
 import pytest
 
-from commander.archidekt import ArchidektSearch
+from commander.archidekt import ArchidektSearch, PeerDeck
 from commander.config import MetaSettings
 from commander.deckcache import AnswerSource, request_key
 from commander.deckreads import FOLDER as DECK_READS_FOLDER
+from commander.deckreads import DeckRead, DeckReads
 from commander.edhtop16 import Edhtop16Client
 from commander.metadata import (
     CACHE_FOLDER,
@@ -223,6 +224,67 @@ def test_a_bracket_5_deck_reads_only_bracket_5_of_archidekt(rig: Rig) -> None:
 
 def deck_files(rig: Rig) -> list[Path]:
     return sorted((rig.cache / CACHE_FOLDER / DECK_READS_FOLDER).glob("*.json"))
+
+
+def plant(rig: Rig, deck_id: int, *, updated_days_ago: int, unused_days: int) -> Path:
+    """A cached deck read of some other deck, listed as updated and last used that many days before NOW."""
+    peer = PeerDeck(deck_id, "x", "someone", 900, NOW - timedelta(days=updated_days_ago), 5)
+    folder = rig.cache / CACHE_FOLDER / DECK_READS_FOLDER
+    DeckReads(folder).save(peer, DeckRead((ELLIVERE,), ("Mind Stone",), (), ()), NOW)
+    path = folder / f"{deck_id}.json"
+    stamp = (NOW - timedelta(days=unused_days)).timestamp()
+    os.utime(path, (stamp, stamp))
+    return path
+
+
+def test_a_gather_prunes_decks_unused_for_a_month_or_out_of_the_window_and_keeps_the_rest(rig: Rig) -> None:
+    unused = plant(rig, 101, updated_days_ago=5, unused_days=31)
+    out_of_window = plant(rig, 102, updated_days_ago=61, unused_days=2)
+    recent = plant(rig, 103, updated_days_ago=5, unused_days=29)
+    rig.gather()
+    assert (unused.exists(), out_of_window.exists(), recent.exists()) == (False, False, True)
+    # The decks the run itself read or hit are used, whatever their file time was.
+    assert {p.name for p in deck_files(rig)} == {"103.json", "13668856.json", "5553433.json", "7432856.json"}
+
+
+def test_a_peers_only_gather_prunes_too(rig: Rig) -> None:
+    unused = plant(rig, 101, updated_days_ago=5, unused_days=31)
+    bracketed(rig, 3)
+    assert not unused.exists()
+
+
+def test_an_adjacent_gather_prunes_too(rig: Rig) -> None:
+    unused = plant(rig, 101, updated_days_ago=5, unused_days=31)
+    adjacent(rig, (ELLIVERE,))
+    assert not unused.exists()
+
+
+def test_a_deck_hit_by_a_run_is_not_pruned_for_having_sat_unused(rig: Rig) -> None:
+    rig.gather()
+    for path in deck_files(rig):
+        stamp = (NOW - timedelta(days=40)).timestamp()
+        os.utime(path, (stamp, stamp))
+    rig.gather(refresh=True)
+    assert len(deck_files(rig)) == 3
+    assert len(rig.archidekt.deck_reads) == 3
+
+
+def test_an_offline_gather_never_prunes(rig: Rig) -> None:
+    unused = plant(rig, 101, updated_days_ago=5, unused_days=31)
+    out_of_window = plant(rig, 102, updated_days_ago=61, unused_days=2)
+    gather(ellivere_deck(), rig.sources(), rig.cache, now=lambda: NOW, refresh=False, offline=True)
+    gather_for(
+        replace(ellivere_deck(), bracket=3),
+        rig.sources(),
+        rig.cache,
+        now=lambda: NOW,
+        refresh=False,
+        offline=True,
+    )
+    gather_adjacent(
+        ellivere_deck(), [(ELLIVERE,)], rig.sources(), rig.cache, now=lambda: NOW, refresh=False, offline=True
+    )
+    assert (unused.exists(), out_of_window.exists()) == (True, True)
 
 
 def test_a_deck_unchanged_since_it_was_read_is_never_read_again(rig: Rig) -> None:

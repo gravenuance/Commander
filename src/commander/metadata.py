@@ -283,7 +283,9 @@ def gather(
     meta = in_background(field_and_combos, name="meta-field")
     peer = in_background(peers, name="meta-peers")
     field_answer, combos, deck_combos = meta.result()
-    return MetaData(name, since, own.result(), field_answer, peer.result(), combos, deck_combos)
+    data = MetaData(name, since, own.result(), field_answer, peer.result(), combos, deck_combos)
+    _prune_reads(folder, since, now=now, offline=offline)
+    return data
 
 
 def _commander_lists(
@@ -361,6 +363,7 @@ def gather_peers(
     field: Answer[tuple[MetaCommander, ...]] = Answer(None, AnswerSource.UNAVAILABLE, None, why)
     combos: Answer[tuple[CommanderCombos, ...]] = Answer(None, AnswerSource.UNAVAILABLE, None, why)
     own_combos: Answer[tuple[ComboDetail, ...]] = Answer(None, AnswerSource.UNAVAILABLE, None, why)
+    _prune_reads(folder, since, now=now, offline=offline)
     return MetaData(name, since, lists, field, peers, combos, own_combos)
 
 
@@ -424,7 +427,18 @@ def gather_adjacent(
             continue
         for peer in answer.data.decks:
             decks.setdefault(peer.deck.id, peer)
+    _prune_reads(folder, since, now=now, offline=offline)
     return AdjacentDecks(tuple(decks.values()), tuple(errors))
+
+
+def _prune_reads(folder: Path, since: date, *, now: Clock, offline: bool) -> None:
+    """Drop cached deck reads no run can use again; a cache-only run leaves the cache as it found it."""
+    if offline:
+        return
+    window_start = datetime(since.year, since.month, since.day, tzinfo=UTC)
+    removed = DeckReads(folder / DECK_READS_FOLDER).prune(now=now(), window_start=window_start)
+    if removed:
+        log.info("dropped %d cached Archidekt decks nothing will read again", removed)
 
 
 def _peers(
