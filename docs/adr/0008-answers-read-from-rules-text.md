@@ -35,8 +35,10 @@ Option 2. `commander.answers` reads each sentence of a removal or counter card i
 "if it's blue", "nonblack"), and conditions (mana value, power or toughness N or less, no mana spent, no
 flying). A mode is checked against a piece's type, colours, toughness, flying and mana value from the card
 database. Combat-only targets, cards in graveyards and exile-then-return flickers answer nothing. A fact the
-data lacks rules nothing out. A card with no sentence the reader follows (an edict, say) keeps its tags'
-reach, so nothing silently drops out.
+data lacks rules nothing out. A card with no sentence the reader follows keeps its tags' reach,
+so nothing silently drops out. An edict is read from its text and carries the catch that the opponent
+chooses what to sacrifice; an upkeep tax such as Kataki's answers nothing, since it is paid before the
+combo.
 
 Stax matching reads the steps more closely: an enter-trigger lock needs a "When X enters" step (or Spellbook's
 "X enters the battlefield, causing …") on a card of the type the lock names; a "can't enter" lock covers
@@ -50,7 +52,6 @@ face's, else the coloured symbols of the mana cost.
 
 - Answer lists are shorter and closer to what each card can do; Etali's lack of stax and counters
   against Breach loops shows up instead of hiding behind wrong removal.
-- The reader is phrase-based. New wording can slip through it, and such a card falls back to its tags
-  (Kataki, War's Wage still "removes" Lotus Petal that way). Add a test with the card's real text when one
-  turns up.
+- The reader is phrase-based. New wording can slip through it, and such a card falls back to its tags'
+  reach, which can be too wide. Add a test with the card's real text when one turns up.
 - The next `sync` rebuilds the card database.

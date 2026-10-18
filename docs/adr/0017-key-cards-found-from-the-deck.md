@@ -34,7 +34,7 @@ is a reason shown with it:
 - At least 2 of the recent Archidekt decks with the commander file it under such a category. The peer
   read keeps those cards in its cache. Gogo: 3 of 10 Magda decks.
 - It costs at least 5 and at least two standard deviations above the mean mana value of the deck's
-  nonland cards. Cards Tagger tags as cast for less (alternative-cost, cheaper-than-mv, manaless-value)
+  nonland cards other than the commander (the deviation is the population's, not a sample's). Cards Tagger tags as cast for less (alternative-cost, cheaper-than-mv, manaless-value)
   are left out, so pitch spells and split cards don't count. Hulk costs 7 against Glarb's 1.8 average.
 - The profile keeps it under `[keep]`.
 

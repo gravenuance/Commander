@@ -6,7 +6,7 @@
 
 `analyze` and `price` need facts about every card in eleven 100-card decks: mana value, type line, mana
 cost, colour identity, Commander legality, the game changer flag, and the EUR price of each printing.
-Step 5 (`suggest`) will look up hundreds more cards by name. The user chose EUR (Cardmarket) prices.
+`suggest` looks up hundreds more cards by name. The user chose EUR (Cardmarket) prices.
 
 Scryfall's rules, read on 2026-10-15 (`scryfall.com/docs/api/rate-limits` and `/bulk-data`):
 
@@ -49,7 +49,7 @@ excluded from the tutor role.
 - The database schema is versioned with `PRAGMA user_version`. It is a cache, so a version change rebuilds
   it rather than migrating.
 - Role counts depend on community tags, which change daily and count broadly (ramp includes mana lands).
-  If a role tag disappears, that role shows as unknown rather than zero. Revisit the role list in step 4,
-  when `bracket` starts relying on tutors, extra turns and mass land denial.
+  If a role tag disappears, that role shows as unknown rather than zero. Revisit the role list if `bracket`
+  misjudges a deck because of a tag; it relies on them for tutors, extra turns and mass land denial.
 - Digital-only printings and tokens are left out of the database. A deck card whose printing is missing is
   matched by name and priced at its cheapest printing.

@@ -1,6 +1,6 @@
 # 0015: Ideas from commanders that play alike
 
-**Status:** Accepted · **Date:** 2026-10-16
+**Status:** Superseded by [ADR 0028](0028-ideas-from-four-sources.md) · **Date:** 2026-10-16
 
 ## Context
 

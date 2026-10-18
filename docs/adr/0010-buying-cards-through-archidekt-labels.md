@@ -34,8 +34,8 @@ Option 3, in `commander.labels`, used by the app (`Desk.mark`) and `cmdr toget`.
   Archidekt offers.
 - **Saves:** `apply` and board saves send added cards with Don't Have. A card moved in from the
   Maybeboard gets it too, unless it already carries a label (Proxy, Getting), which is kept.
-- **Marks:** each mark reads the deck from Archidekt, changes the label of the card's deck entries only,
-  reads the deck back, rewrites the local copy and logs the mark in the deck's activity. No snapshot is
+- **Marks:** each mark reads the account's labels (ADR 0012) and the deck from Archidekt, changes the label
+  of the card's deck entries only, reads the deck back, rewrites the local copy and logs the mark in the deck's activity. No snapshot is
   taken first: a label never changes which cards are in the deck, and the activity log says what to set
   back. A mark that would change nothing is refused before any write.
 - **Snapshots** keep each card's label name (snapshot version 3). Older snapshots read labels as unknown,
@@ -47,5 +47,5 @@ Option 3, in `commander.labels`, used by the app (`Desk.mark`) and `cmdr toget`.
   come back with the next `sync`.
 - Every card saved into a deck is labelled, owned or not; an owned one needs one `arrived` mark. The
   owner chose this over asking per card.
-- Each mark is two reads and one write; marking many cards at once is slow but rare.
+- Each mark is three reads (the account's labels, the deck, the deck again) and one write; marking many cards at once is slow but rare.
 - Only Don't Have and Getting drive the workflow; other labels pass through untouched.

@@ -1,6 +1,7 @@
 # 0006: Deck boards in the repo, a pywebview desktop app over them
 
-**Status:** Accepted · **Date:** 2026-10-15
+**Status:** Accepted · **Date:** 2026-10-15 · Superseded in part by
+[ADR 0032](0032-one-considering-list-and-one-sync.md) (the board's two lists)
 
 ## Context
 
@@ -40,7 +41,7 @@ in the commander's colours, not already in the deck; a cut must be in the deck),
 (`.board.lock`, created exclusively, stale after 60 s) around the read-modify-write, writes `board.json`
 atomically and appends one line to `activity.jsonl` naming who acted (`you`, `claude`, `cmdr`,
 `archidekt`). `cmdr board log --since` is how Claude catches up. A board save builds a plan and goes
-through `apply.apply_plan`, the same path as `cmdr apply`, so snapshots, checks and read-back verification
+through `apply.apply_to_live`, the path `cmdr apply` takes too, so snapshots, checks and read-back verification
 are shared; cards are marked applied only when the read-back shows them.
 
 The app is a pywebview window. Its page is `commander/web` (HTML, CSS, vanilla JavaScript, no build step)

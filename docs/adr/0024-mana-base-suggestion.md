@@ -1,6 +1,8 @@
 # 0024: Suggesting how the mana base should change
 
-**Status:** Accepted · **Date:** 2026-10-17
+**Status:** Accepted · **Date:** 2026-10-17 · Superseded in part by
+[ADR 0033](0033-check-and-reveal-lands-by-the-decks-own-lands.md) (how often check and reveal lands enter
+tapped)
 
 ## Context
 
@@ -45,6 +47,7 @@ The owner set it (2026-10-17): casual decks have budgets, and a deck shows its b
 runs. A shock land in an Ashling list whose dearest card is €7.16 makes no sense.
 
 - **Working budget:** the deck's average card price, weighted by copies, basics and unpriced cards left out.
+  An option up to 25% over it still counts as within budget (the line of ADR 0025).
 - **Ceiling:** 25% above the deck's dearest card, so a few options beyond the working budget remain.
 - **Order:** a land within the working budget comes before a more played one over it; one over it is named
   only where none within fits. The tab shows the swaps in two groups, within budget and over budget.

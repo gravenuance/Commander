@@ -1,6 +1,6 @@
 # 0014: Considered compiled from the meta and recent Archidekt decks on every sync
 
-**Status:** Accepted · **Date:** 2026-10-16
+**Status:** Superseded by [ADR 0028](0028-ideas-from-four-sources.md) · **Date:** 2026-10-16
 
 ## Context
 

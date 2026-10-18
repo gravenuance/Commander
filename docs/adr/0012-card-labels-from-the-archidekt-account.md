@@ -39,7 +39,8 @@ Option 3.
   them (the API returns creation order). Don't Have and Getting follow if the account lacks them, and
   last any other label a deck already uses.
 - Writes use the account's colour for a label's name. A save labels incoming cards Don't Have in that
-  colour, with one more signed-in read per save. Archidekt's default colours remain the fallback.
+  colour, with one more signed-in read per save. Archidekt's default colours remain the fallback, after the read has been tried once more three seconds
+  later; a refused login still stops the save.
 - The grid shows a card's label in the account's colour when the account has a label of that name.
   Archidekt matches labels by name, so cards labelled earlier in another colour are left as they are.
 

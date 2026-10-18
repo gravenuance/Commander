@@ -40,7 +40,8 @@ Where it applies:
   marks the others. Cards the owner or Claude proposed are marked, never refused, and no card is ever taken
   off a board for its price (owner, 2026-10-17). The owner set the order: their own cards, Claude's, the
   meta's, the Archidekt decks', then the rest; within each group, over-budget cards last, the rest by
-  inclusion (the share of the top-cut lists for a meta idea, of the recent Archidekt decks otherwise).
+  weighted share (ADR 0026; at first by inclusion, the share of the top-cut lists for a meta idea and of
+  the recent Archidekt decks otherwise).
 - **The Mana tab (ADR 0024):** named lands follow the same budget.
 
 ## Consequences

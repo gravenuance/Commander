@@ -27,7 +27,7 @@ The owner chose the following.
   ideas) move into `syncrun.run_sync`. It returns its warnings rather than printing them, and the CLI and the
   app both call it. The app runs one sync at a time on its own thread, with progress under the account at
   the foot of the deck list and a one-line summary when it ends. A first sign-in, with an empty folder,
-  syncs at once. Signing in or out waits for a running sync.
+  syncs at once. Signing in or out is refused with a message while a sync runs (ADR 0032).
 - **Sign out** removes the saved login and the config's `user`, keeps every remembered folder, and reopens
   the sign-in screen.
 - **No deck folder** no longer stops the app: it opens with an empty list until someone signs in.

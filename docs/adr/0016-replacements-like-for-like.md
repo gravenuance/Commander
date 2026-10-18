@@ -1,6 +1,7 @@
 # 0016: Replacements like for like, and what a list leans into
 
-**Status:** Accepted · **Date:** 2026-10-16
+**Status:** Accepted · **Date:** 2026-10-16 · Superseded in part by
+[ADR 0029](0029-replacement-targets-and-wider-cuts.md) (the targets; the leanings stand)
 
 ## Context
 

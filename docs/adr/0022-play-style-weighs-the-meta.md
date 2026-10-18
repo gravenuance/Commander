@@ -1,6 +1,6 @@
 # 0022: A deck's play style weighs what the meta says it misses
 
-**Status:** Accepted · **Date:** 2026-10-17
+**Status:** Superseded by [ADR 0031](0031-play-styles-as-score-multipliers.md) · **Date:** 2026-10-17
 
 ## Context
 
@@ -24,7 +24,7 @@ The owner chose the rules and their reach.
   - *interaction*: the removal, counterspell or board wipe role;
   - *cheap interaction*: interaction at mana value 2 or less, or free to cast (the Mana tab's alternative-cost
     tags);
-  - *stax piece*: what the Meta panel counts as one (`metacombos.pool_answers`: Tagger's lock tags and rules
+  - *stax piece*: what the Meta panel counts as one (`metacombos.pool_stops`: Tagger's lock tags and rules
     text), or Tagger's `hatebear` tag. Tagger has no general stax tag.
 - **Fit:** a staple is *favoured* when a style wants it (Turbo speed, Stax stax pieces and cheap
   interaction, Control interaction). It is *off-plan* when the deck races, meaning Turbo without Control, and

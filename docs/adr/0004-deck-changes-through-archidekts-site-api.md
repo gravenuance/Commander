@@ -72,8 +72,9 @@ Option 1, chosen by the user on 2026-10-15, kept small and careful:
   before any write if one is missing; then saves a snapshot named `before cmdr apply <UTC time>`; then
   sends all changes in one `modifyCards` request; then reads the deck back and reports any change that
   did not land. A deck in the deck folder gets its local copy rewritten.
-- **Few requests, never repeated.** A save costs one token refresh, one card lookup per new card, one
-  snapshot, one change request and two deck reads. Writes go out once and are never retried; a timeout
+- **Few requests, never repeated.** A save costs one token refresh, one card lookup per new card, one read
+  of the account's labels (repeated once after three seconds if it fails, ADR 0012), one snapshot, one
+  change request and two deck reads. Writes go out once and are never retried; a timeout
   says the write may or may not have landed. 401 and 403 ask the user to sign in again, 400 shows the
   first 300 bytes of Archidekt's answer (its reason for rejecting the request), and 429 says to wait. If
   the read-back fails, the message says the changes were accepted. The User-Agent names the tool, as for
@@ -84,7 +85,8 @@ Option 1, chosen by the user on 2026-10-15, kept small and careful:
 ## Consequences
 
 - Each modify and remove sends back the entry's own label, modifier, companion and custom mana value, so a
-  change of copies keeps them; new cards get the editor's default grey label (`,#656565`).
+  change of copies keeps them; new cards get the label Don't Have in the account's colour (ADR 0010, ADR 0012),
+  where the first saves used the editor's default grey label (`,#656565`).
 - A card that sits in several entries can be removed whole, but not trimmed with `keep`; that is left to
   the deck editor.
 - Archidekt can change these calls without notice. Every answer is shape-checked, and the read-back after
