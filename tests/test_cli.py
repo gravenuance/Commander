@@ -248,13 +248,8 @@ def test_maybeboard_only_edit_is_unchanged_but_saved(
 def test_sync_downloads_card_data_then_reports_it_current(tmp_path: Path, archidekt: FakeArchidekt) -> None:
     first = sync(tmp_path, archidekt, cards=True)
     assert first.code == 0
-    assert first.out.endswith(
-        "card data: updated, Scryfall data of 2026-10-15, 10,028 printings\n"
-        "Magda board: considering High-Speed Hoverbike, Tempestra, Dame of Games"
-        " (from the Sideboard or Maybeboard)\n"
-    )
+    assert first.out.endswith("card data: updated, Scryfall data of 2026-10-15, 10,028 printings\n")
     assert (tmp_path / "localappdata" / "Commander" / "cards.sqlite").is_file()
-    # The Maybeboard cards are on the board now, so a second sync has nothing new to put there.
     second = sync(tmp_path, archidekt, cards=True)
     assert second.out == "1 unchanged\ncard data: current, Scryfall data of 2026-10-15\n"
 

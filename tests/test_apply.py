@@ -21,7 +21,7 @@ from commander.apply import (
 from commander.archidekt import parse_deck
 from commander.archidekt_edit import ArchidektEditor, AuthError, EditKind, LiveDeck, parse_entry_states
 from commander.carddb import CardDb, CardInfo
-from commander.changetext import change_text
+from commander.changetext import clear_groups
 from commander.models import Deck
 from commander.net import MAX_ATTEMPTS, Fetcher
 from commander.plan import AddCard, Plan, RemoveCard
@@ -281,16 +281,10 @@ def test_keep_counts_every_entry_of_the_card(deck: Deck, db: CardDb) -> None:
 
 
 def test_a_commander_is_never_removed(deck: Deck, db: CardDb) -> None:
-    for wanted in (
-        RemoveCard("Magda, Brazen Outlaw"),
-        RemoveCard("Magda, Brazen Outlaw", maybeboard=True),
-    ):
-        resolution = resolve_plan(deck, plan(remove=[wanted]), db)
+    resolution = resolve_plan(deck, plan(remove=[RemoveCard("Magda, Brazen Outlaw")]), db)
 
-        assert resolution.changes == ()
-        assert resolution.problems == (
-            "remove Magda, Brazen Outlaw: it is a commander and stays in the deck",
-        )
+    assert resolution.changes == ()
+    assert resolution.problems == ("remove Magda, Brazen Outlaw: it is a commander and stays in the deck",)
 
 
 def test_a_full_deck_has_no_size_warning(deck: Deck, db: CardDb) -> None:
@@ -537,7 +531,9 @@ def test_a_failed_label_read_is_tried_once_more_after_a_wait_and_the_accounts_co
     result = save(editor, live, resolution, now=lambda: NOW, on_progress=progress.append)
 
     assert result.mismatches == ()
-    assert {w["modifications"]["label"] for w in fake.card_writes()} == {"Don't Have,#fa0d11"}
+    assert {w["modifications"]["label"] for w in fake.card_writes() if w["action"] == "add"} == {
+        "Don't Have,#fa0d11"
+    }
     assert (label_reads(fake), label_waits) == (MAX_ATTEMPTS + 1, [2.5])
     assert not any("default colours" in line for line in progress)
 
@@ -556,7 +552,9 @@ def test_a_save_whose_label_read_fails_twice_labels_incoming_cards_in_the_defaul
     assert result.mismatches == ()
     assert (label_reads(fake), label_waits) == (2 * MAX_ATTEMPTS, [2.5])
     # Archidekt's default colour for Don't Have (ADR 0012), not the account's #fa0d11.
-    assert {w["modifications"]["label"] for w in fake.card_writes()} == {"Don't Have,#f47373"}
+    assert {w["modifications"]["label"] for w in fake.card_writes() if w["action"] == "add"} == {
+        "Don't Have,#f47373"
+    }
     assert any("labels" in line and "default colours" in line for line in progress)
 
 
@@ -717,139 +715,104 @@ HOVERBIKE_ENTRY = 3096264032
 TEMPESTRA_ENTRY = 3115861444
 
 
-def test_a_cut_to_the_maybeboard_keeps_the_entry_and_its_categories(deck: Deck, db: CardDb) -> None:
-    resolution = resolve_plan(deck, plan(remove=[RemoveCard("Battered Golem", maybeboard=True)]), db)
-    [moved] = resolution.changes
-    assert (moved.kind, moved.entry_id, moved.before, moved.after) == (
-        ChangeKind.SET_ASIDE,
-        GOLEM_ENTRY,
-        1,
-        1,
-    )
-    # Maybeboard first, so the card leaves the deck; its own categories stay for moving it back.
-    assert (moved.category, moved.categories, moved.in_deck) == (
-        "Maybeboard",
-        ("Maybeboard", "Combo Pieces", "Ramp"),
-        False,
-    )
+def test_a_cut_removes_the_entry_outright(deck: Deck, db: CardDb) -> None:
+    resolution = resolve_plan(deck, plan(remove=[RemoveCard("Battered Golem")]), db)
+
+    assert kinds(resolution) == [(ChangeKind.REMOVE, "Battered Golem", 1, 0)]
     assert (resolution.main_before, resolution.main_after) == (MAIN_CARDS, MAIN_CARDS - 1)
 
 
-def test_adding_a_maybeboard_card_moves_its_entry_into_the_deck(deck: Deck, db: CardDb) -> None:
+def test_a_save_clears_the_maybeboard_and_sideboard_beside_the_planned_changes(
+    deck: Deck, db: CardDb
+) -> None:
+    sideboard = card_with(deck, "Chaos Warp", "Sideboard", entry_id=7_000_000_001)
+    resolution = resolve_plan(sideboard, plan(remove=[RemoveCard("Battered Golem")]), db)
+
+    # The clears sit beside the changes, so the change count and the deck size are the plan's own.
+    assert kinds(resolution) == [(ChangeKind.REMOVE, "Battered Golem", 1, 0)]
+    assert [(c.kind, c.name, c.category) for c in resolution.clears] == [
+        (ChangeKind.CLEAR, "High-Speed Hoverbike", "Maybeboard"),
+        (ChangeKind.CLEAR, "Tempestra, Dame of Games", "Maybeboard"),
+        (ChangeKind.CLEAR, "Chaos Warp", "Sideboard"),
+    ]
+    assert resolution.main_after == MAIN_CARDS - 1
+
+
+def test_a_plan_that_changes_nothing_clears_nothing(deck: Deck, db: CardDb) -> None:
+    resolution = resolve_plan(deck, plan(remove=[RemoveCard("Not In The Deck")]), db)
+
+    assert (resolution.changes, resolution.clears) == ((), ())
+
+
+def test_adding_a_maybeboard_card_adds_a_new_entry_and_clears_the_old_one(deck: Deck, db: CardDb) -> None:
     resolution = resolve_plan(deck, plan([AddCard("High-Speed Hoverbike")]), db)
-    [moved] = resolution.changes
-    assert (moved.kind, moved.entry_id, moved.after) == (ChangeKind.MOVE_IN, HOVERBIKE_ENTRY, 1)
-    # Its printing stays; with no category of its own besides Maybeboard it is filed by type.
-    assert (moved.category, moved.categories, moved.in_deck) == ("Artifact", ("Artifact",), True)
-    assert moved.set_code == next(c for c in deck.cards if c.name == "High-Speed Hoverbike").set_code
+
+    [added] = resolution.changes
+    assert (added.kind, added.entry_id, added.category) == (ChangeKind.ADD, None, "Artifact")
+    assert HOVERBIKE_ENTRY in {c.entry_id for c in resolution.clears}
     assert resolution.main_after == MAIN_CARDS + 1
 
 
-def test_moving_in_a_maybeboard_card_brings_the_copies_the_plan_asks_for(deck: Deck, db: CardDb) -> None:
-    resolution = resolve_plan(deck, plan([AddCard("High-Speed Hoverbike", 3)]), db)
+def test_the_preview_words_each_cleared_board_with_its_cards(deck: Deck, db: CardDb) -> None:
+    both = card_with(deck, "Chaos Warp", "Sideboard", entry_id=7_000_000_001, quantity=2)
+    resolution = resolve_plan(both, plan(remove=[RemoveCard("Battered Golem")]), db)
 
-    [moved] = resolution.changes
-    assert (moved.kind, moved.before, moved.after) == (ChangeKind.MOVE_IN, 1, 3)
-    assert resolution.main_after == MAIN_CARDS + 3
-    bike = next(c for c in deck.cards if c.name == "High-Speed Hoverbike")
-    moved_in = replace(bike, quantity=3, categories=("Artifact",), in_deck=True)
-    shown = replace(deck, cards=tuple(moved_in if c is bike else c for c in deck.cards))
-    assert verify(resolution.changes, deck, shown) == []
-    assert verify(resolution.changes, deck, deck) == ["High-Speed Hoverbike: expected 3, Archidekt shows 1"]
-
-
-def test_a_move_in_of_several_copies_says_how_many(deck: Deck, db: CardDb) -> None:
-    [one] = resolve_plan(deck, plan([AddCard("High-Speed Hoverbike")]), db).changes
-    [three] = resolve_plan(deck, plan([AddCard("High-Speed Hoverbike", 3)]), db).changes
-    assert change_text(one) == "+ High-Speed Hoverbike into the deck from the maybeboard, in Artifact"
-    assert change_text(three) == "+ 3 High-Speed Hoverbike into the deck from the maybeboard, in Artifact"
+    assert [(g.text, g.cards) for g in clear_groups(resolution.clears)] == [
+        ("Clears the Maybeboard: 2 cards", ("High-Speed Hoverbike", "Tempestra, Dame of Games")),
+        ("Clears the Sideboard: 2 cards", ("2 Chaos Warp",)),
+    ]
+    one = resolve_plan(deck, plan(remove=[RemoveCard("Battered Golem")]), db).clears[:1]
+    assert [g.text for g in clear_groups(one)] == ["Clears the Maybeboard: 1 card"]
 
 
-def test_moving_in_keeps_a_maybeboard_stack_larger_than_the_plan_asks(deck: Deck, db: CardDb) -> None:
-    bike = next(c for c in deck.cards if c.name == "High-Speed Hoverbike")
-    stack = replace(deck, cards=tuple(replace(c, quantity=2) if c is bike else c for c in deck.cards))
+def test_clears_are_sent_as_removes_of_their_own_entries(raw_deck: Json, deck: Deck, db: CardDb) -> None:
+    resolution = resolve_plan(deck, plan(remove=[RemoveCard("Battered Golem")]), db)
 
-    resolution = resolve_plan(stack, plan([AddCard("High-Speed Hoverbike")]), db)
+    edits = card_edits([*resolution.changes, *resolution.clears], parse_entry_states(raw_deck), {})
 
-    [moved] = resolution.changes
-    assert (moved.before, moved.after) == (2, 2)
-    assert resolution.main_after == MAIN_CARDS + 2
-
-
-def test_moving_in_warns_when_the_plan_names_another_printing(deck: Deck, db: CardDb) -> None:
-    resolution = resolve_plan(deck, plan([AddCard("High-Speed Hoverbike", set_code="sld")]), db)
-
-    assert resolution.problems == ()
-    assert resolution.warnings[0] == (
-        "High-Speed Hoverbike: it comes from the Maybeboard in its own printing (NEO), not SLD"
-    )
-
-
-def test_moving_back_restores_the_categories_kept_behind_the_maybeboard(deck: Deck, db: CardDb) -> None:
-    golem = next(c for c in deck.cards if c.name == "Battered Golem")
-    aside = replace(golem, categories=("Maybeboard", "Combo Pieces", "Ramp"), in_deck=False)
-    cards = tuple(aside if c is golem else c for c in deck.cards)
-    resolution = resolve_plan(replace(deck, cards=cards), plan([AddCard("Battered Golem")]), db)
-    [moved] = resolution.changes
-    assert (moved.kind, moved.categories) == (ChangeKind.MOVE_IN, ("Combo Pieces", "Ramp"))
-
-
-def test_drop_takes_a_card_off_the_maybeboard_only(deck: Deck, db: CardDb) -> None:
-    dropping = Plan("magda", (), (), ("Tempestra, Dame of Games", "Battered Golem"))
-    resolution = resolve_plan(deck, dropping, db)
-    assert kinds(resolution) == [(ChangeKind.DROP, "Tempestra, Dame of Games", 1, 0)]
-    assert resolution.skipped == ("drop Battered Golem: not on the Sideboard or Maybeboard",)
-    assert resolution.main_after == MAIN_CARDS
-
-
-def test_a_swap_both_ways_keeps_the_deck_size(deck: Deck, db: CardDb) -> None:
-    swap = plan([AddCard("High-Speed Hoverbike")], [RemoveCard("Battered Golem", maybeboard=True)])
-    resolution = resolve_plan(deck, swap, db)
-    assert [c.kind for c in resolution.changes] == [ChangeKind.SET_ASIDE, ChangeKind.MOVE_IN]
-    assert resolution.main_after == MAIN_CARDS
-
-
-def test_moves_are_sent_as_modifies_with_the_new_categories(raw_deck: Json, deck: Deck, db: CardDb) -> None:
-    swap = plan([AddCard("High-Speed Hoverbike")], [RemoveCard("Battered Golem", maybeboard=True)])
-    dropping = Plan("magda", (), (), ("Tempestra, Dame of Games",))
-    changes = [*resolve_plan(deck, swap, db).changes, *resolve_plan(deck, dropping, db).changes]
-    edits = card_edits(changes, parse_entry_states(raw_deck), {})
-    assert [(e.kind, e.entry_id, e.state.categories) for e in edits] == [
-        (EditKind.MODIFY, GOLEM_ENTRY, ("Maybeboard", "Combo Pieces", "Ramp")),
-        (EditKind.MODIFY, HOVERBIKE_ENTRY, ("Artifact",)),
-        (EditKind.REMOVE, TEMPESTRA_ENTRY, ("Maybeboard",)),
+    assert [(e.kind, e.entry_id) for e in edits] == [
+        (EditKind.REMOVE, GOLEM_ENTRY),
+        (EditKind.REMOVE, HOVERBIKE_ENTRY),
+        (EditKind.REMOVE, TEMPESTRA_ENTRY),
     ]
 
 
-def test_a_card_moved_into_the_deck_is_still_to_buy_unless_it_has_a_label(
-    raw_deck: Json, deck: Deck, db: CardDb
-) -> None:
-    swap = plan([AddCard("High-Speed Hoverbike")], [RemoveCard("Battered Golem", maybeboard=True)])
-    changes = resolve_plan(deck, swap, db).changes
-    entries = parse_entry_states(raw_deck)
-    # The cut keeps its label; the card coming in from the Maybeboard is one to buy.
-    assert [e.state.label for e in card_edits(changes, entries, {})] == [",#656565", "Don't Have,#f47373"]
-    proxied = {**entries, HOVERBIKE_ENTRY: replace(entries[HOVERBIKE_ENTRY], label="Proxy,#f445f4")}
-    assert card_edits(changes, proxied, {})[1].state.label == "Proxy,#f445f4"
-
-
-def test_verify_reports_a_move_archidekt_did_not_make(deck: Deck, db: CardDb) -> None:
-    resolution = resolve_plan(deck, plan(remove=[RemoveCard("Battered Golem", maybeboard=True)]), db)
-    assert verify(resolution.changes, deck, deck) == [
-        "Battered Golem: expected it in Maybeboard, Archidekt shows Combo Pieces"
-    ]
-
-
-def test_save_moves_cards_both_ways_on_archidekt(
+def test_save_removes_the_cut_and_the_maybeboard_on_archidekt(
     fake: FakeArchidekt, editor: ArchidektEditor, db: CardDb
 ) -> None:
     live = editor.get_deck(DECK_ID)
-    swap = plan([AddCard("High-Speed Hoverbike")], [RemoveCard("Battered Golem", maybeboard=True)])
-    result = save(
-        editor, live, resolve_plan(live.deck, swap, db, categories=live.categories), now=lambda: NOW
-    )
+    resolution = resolve_plan(live.deck, plan(remove=[RemoveCard("Battered Golem")]), db)
+
+    result = save(editor, live, resolution, now=lambda: NOW)
+
     assert result.mismatches == ()
-    by_name = {c.name: c for c in result.deck.cards}
-    assert (by_name["Battered Golem"].aside, by_name["High-Speed Hoverbike"].in_deck) == (True, True)
-    # Moves need no card lookup: the entries are already in the deck.
+    assert sorted(c.name for c in result.deck.cards) == [
+        "Disruptor Flute",
+        "Magda, Brazen Outlaw",
+        "Mountain",
+    ]
+    # Removing needs no card lookup.
     assert "/api/cards/v2/" not in fake.requests
+
+
+def test_verify_reports_a_clear_archidekt_did_not_make(deck: Deck, db: CardDb) -> None:
+    resolution = resolve_plan(deck, plan(remove=[RemoveCard("Battered Golem")]), db)
+    assert verify(resolution.clears, deck, deck) == [
+        "High-Speed Hoverbike: expected 0, Archidekt shows 1",
+        "Tempestra, Dame of Games: expected 0, Archidekt shows 1",
+    ]
+
+
+def card_with(deck: Deck, name: str, category: str, *, entry_id: int, quantity: int = 1) -> Deck:
+    """The deck with one more card filed under category, outside the deck."""
+    template = next(c for c in deck.cards if c.name == "High-Speed Hoverbike")
+    added = replace(
+        template,
+        name=name,
+        entry_id=entry_id,
+        categories=(category,),
+        quantity=quantity,
+        in_deck=False,
+        scryfall_id=f"{entry_id}",
+    )
+    return replace(deck, cards=(*deck.cards, added))

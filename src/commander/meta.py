@@ -70,7 +70,7 @@ class CardShare:
     peer_share: float
     # The highest spice EDHTop16 gave the card in a performing list; None when none plays it.
     spice: int | None
-    # On the deck's Sideboard or Maybeboard (for missing cards) or kept by the profile (for the deck's own).
+    # Kept by the profile (for the deck's own cards); never set for a missing card.
     flagged: bool
     # For a missing card: how it sits with the deck's play style (ADR 0031), and the weight its shares are
     # multiplied by to rank it.
@@ -238,7 +238,6 @@ def missing_staples(
     A card is a staple by the share thresholds, or by is_staple(name) when the caller judges it.
     """
     in_deck = {card_key(card.name) for card in deck.main_cards}
-    aside = {card_key(card.name) for card in deck.aside_cards}
     counts = _list_counts(performing)
     peer_counts = _peer_counts(peers)
     spice = _top_spice(performing)
@@ -257,7 +256,13 @@ def missing_staples(
         if wanted:
             rows.append(
                 CardShare(
-                    names[key], counts[key], share, peer_counts[key], peer_share, spice.get(key), key in aside
+                    names[key],
+                    counts[key],
+                    share,
+                    peer_counts[key],
+                    peer_share,
+                    spice.get(key),
+                    flagged=False,
                 )
             )
     rows = _playable(rows, deck, db)

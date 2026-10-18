@@ -15,7 +15,6 @@ from commander.board import (
     NothingQueuedError,
     already_added,
     board_plan,
-    import_aside,
     read_board,
 )
 from commander.carddb import CardDb
@@ -67,8 +66,7 @@ def save_board(
     plan = live_plan(live, board)
     if plan is None:
         resolution = _nothing_to_change(live, board)
-        folder = workspace.save(live.deck)
-        pick_up_aside(StoredDeck(folder, live.deck), db, now=now)
+        workspace.save(live.deck)
         service.mark_applied([card.id for card in board.queued], actor, None)
         return BoardSave(resolution, None, tuple(card.name for card in board.queued))
     try:
@@ -80,8 +78,7 @@ def save_board(
     result = outcome.result
     if result is None:
         return BoardSave(outcome.resolution, None, ())
-    folder = workspace.save(result.deck)
-    pick_up_aside(StoredDeck(folder, result.deck), db, now=now)
+    workspace.save(result.deck)
     failed = {
         card_key(c.name)
         for c in outcome.resolution.changes
@@ -123,9 +120,3 @@ def live_plan(live: LiveDeck, board: Board) -> Plan | None:
     if plan is None and not board.queued:
         raise NothingQueuedError("nothing is queued to add")
     return plan
-
-
-def pick_up_aside(stored: StoredDeck, db: CardDb, *, now: Callable[[], datetime]) -> list[BoardCard]:
-    """Put the deck's Sideboard and Maybeboard cards on its board under considering; returns the new ones."""
-    service = BoardService(stored.folder, stored.deck, db, now=now)
-    return import_aside(service, stored.deck, read_board(stored.folder))

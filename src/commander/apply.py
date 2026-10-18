@@ -10,7 +10,6 @@ from enum import Enum
 from commander.analysis import game_changers
 from commander.archidekt import ArchidektError
 from commander.archidekt_edit import (
-    DEFAULT_LABEL,
     ArchidektEditor,
     AuthError,
     CardEdit,
@@ -22,14 +21,7 @@ from commander.archidekt_edit import (
     new_entry_state,
 )
 from commander.carddb import CardDb, CardInfo, Printing
-from commander.models import (
-    ASIDE_CATEGORIES,
-    COMMANDER_CATEGORY,
-    DONT_HAVE_LABEL,
-    MAYBEBOARD_CATEGORY,
-    Deck,
-    DeckCard,
-)
+from commander.models import COMMANDER_CATEGORY, DONT_HAVE_LABEL, Deck, DeckCard
 from commander.net import NetworkError
 from commander.plan import AddCard, Plan, RemoveCard
 from commander.suggest import BracketRaise, card_raise, deck_identity
@@ -61,15 +53,8 @@ class ChangeKind(Enum):
     MORE = "more copies"
     FEWER = "fewer copies"
     REMOVE = "remove"
-    # An entry from the Sideboard or Maybeboard, moved into the deck with its own printing.
-    MOVE_IN = "into the deck"
-    # A deck entry moved to the Maybeboard, so it stays under consideration.
-    SET_ASIDE = "to the maybeboard"
-    # An entry taken off the Sideboard or Maybeboard: no longer under consideration.
-    DROP = "off the maybeboard"
-
-
-_MOVES = frozenset({ChangeKind.MOVE_IN, ChangeKind.SET_ASIDE})
+    # An entry taken off the Sideboard or Maybeboard by a save (ADR 0035).
+    CLEAR = "cleared"
 
 
 @dataclass(slots=True, frozen=True)
@@ -89,15 +74,10 @@ class Change:
     # Known for cards already in the deck; looked up on Archidekt for adds when saving.
     card_id: int | None = None
     entry_id: int | None = None
-    # A move's categories after it, the first one deciding where the card counts.
-    categories: tuple[str, ...] = ()
-    # Whether the entry counted in the deck before the change; None means as in_deck.
-    was_in_deck: bool | None = None
 
     @property
     def counted_before(self) -> int:
-        counted = self.in_deck if self.was_in_deck is None else self.was_in_deck
-        return self.before if counted else 0
+        return self.before if self.in_deck else 0
 
     @property
     def counted_after(self) -> int:
@@ -112,6 +92,8 @@ class Resolution:
     warnings: tuple[str, ...]
     # Lines of the plan the deck already meets.
     skipped: tuple[str, ...] = ()
+    # The Sideboard and Maybeboard entries the save also removes; none when the plan changes nothing.
+    clears: tuple[Change, ...] = ()
 
     @property
     def main_before(self) -> int:
@@ -138,7 +120,7 @@ class _Resolver:
     removed_entries: set[int] = field(default_factory=set[int])
 
     def remove(self, wanted: RemoveCard) -> None:
-        # Only cards counted in the deck; a maybeboard copy stays.
+        # Only cards counted in the deck; a Maybeboard copy is cleared by the save anyway.
         entries = [e for e in _entries_named(self.deck, wanted.name) if e.in_deck]
         if any(COMMANDER_CATEGORY in e.categories for e in entries):
             self.problems.append(f"remove {wanted.name}: it is a commander and stays in the deck")
@@ -151,9 +133,6 @@ class _Resolver:
         if held <= wanted.keep:
             what = "not in the deck" if not entries else f"already {held}"
             self.skipped.append(f"remove {wanted.name}: {what}")
-            return
-        if wanted.maybeboard:
-            self.changes.extend(self._set_aside(entry) for entry in entries)
             return
         self.changes.extend(_cut_to(entries, held - wanted.keep))
 
@@ -181,15 +160,6 @@ class _Resolver:
                 self.changes.append(_change(ChangeKind.MORE, entry, entry.quantity + wanted.quantity - have))
             return changers
         raises = card_raise(info, self.deck.bracket, changers)
-        aside = [
-            e
-            for e in _entries_named(self.deck, info.name)
-            if e.aside and e.entry_id not in self.removed_entries
-        ]
-        if aside:
-            self.removed_entries.add(aside[0].entry_id)
-            self.changes.append(self._move_in(aside[0], info, wanted, raises))
-            return changers + 1 if info.game_changer else changers
         printing = self._printing(info, wanted)
         if printing is None:
             return changers
@@ -215,55 +185,6 @@ class _Resolver:
             )
         )
         return changers + 1 if info.game_changer else changers
-
-    def drop(self, name: str) -> None:
-        entries = [e for e in _entries_named(self.deck, name) if e.aside]
-        if not entries:
-            self.skipped.append(f"drop {name}: not on the Sideboard or Maybeboard")
-            return
-        if any(e.entry_id in self.removed_entries for e in entries):
-            self.problems.append(f"drop {name}: the plan also moves this card")
-            return
-        self.removed_entries.update(e.entry_id for e in entries)
-        self.changes.extend(_change(ChangeKind.DROP, entry, 0) for entry in entries)
-
-    def _set_aside(self, entry: DeckCard) -> Change:
-        aside = self._maybeboard_name()
-        rest = tuple(c for c in entry.categories if c.casefold() != aside.casefold())
-        # The deck's own categories stay behind the Maybeboard, so moving the card back restores them.
-        return replace(
-            _change(ChangeKind.SET_ASIDE, entry, entry.quantity),
-            category=aside,
-            categories=(aside, *rest),
-            in_deck=counts_in_deck(aside, self.categories),
-            was_in_deck=True,
-        )
-
-    def _move_in(
-        self, entry: DeckCard, info: CardInfo, wanted: AddCard, raises: BracketRaise | None
-    ) -> Change:
-        rest = [c for c in entry.categories if c.casefold() not in ASIDE_CATEGORIES]
-        category = wanted.category or (rest[0] if rest else default_category(info))
-        # The entry keeps its own printing and copies, raised to the count the plan wants.
-        if wanted.set_code is not None and wanted.set_code != entry.set_code:
-            self.warnings.append(
-                f"{info.name}: it comes from the Maybeboard in its own printing "
-                f"({entry.set_code.upper()}), not {wanted.set_code.upper()}"
-            )
-        return replace(
-            _change(ChangeKind.MOVE_IN, entry, max(entry.quantity, wanted.quantity)),
-            name=info.name,
-            category=category,
-            categories=(category, *(c for c in rest if c != category)),
-            in_deck=counts_in_deck(category, self.categories),
-            was_in_deck=False,
-            raises=raises,
-        )
-
-    def _maybeboard_name(self) -> str:
-        """The deck's own spelling of its Maybeboard category, or the usual one for Archidekt to create."""
-        known = (name for name in self.categories if name.casefold() == MAYBEBOARD_CATEGORY.casefold())
-        return next(known, MAYBEBOARD_CATEGORY)
 
     def _add_problem(self, info: CardInfo, identity: str | None, held: Sequence[DeckCard]) -> str | None:
         if info.oracle_id in self.added:
@@ -313,14 +234,13 @@ def resolve_plan(
     changers = len(game_changers(main))
     for wanted in plan.add:
         changers = resolver.add(wanted, identity, changers)
-    for name in plan.drop:
-        resolver.drop(name)
     resolution = Resolution(
         live,
         tuple(resolver.changes),
         tuple(resolver.problems),
         tuple(resolver.warnings),
         tuple(resolver.skipped),
+        clears=tuple(_change(ChangeKind.CLEAR, e, 0) for e in live.aside_cards) if resolver.changes else (),
     )
     if resolution.changes and not resolution.problems and resolution.main_after != COMMANDER_DECK_SIZE:
         size = f"the deck will have {resolution.main_after} cards, not {COMMANDER_DECK_SIZE}"
@@ -382,7 +302,7 @@ def save(
                 )
             card_ids[change.scryfall_id] = card_id
     dont_have = label_value(DONT_HAVE_LABEL, _account_colours(editor, on_progress))
-    edits = card_edits(resolution.changes, live.entries, card_ids, dont_have)
+    edits = card_edits([*resolution.changes, *resolution.clears], live.entries, card_ids, dont_have)
     # Seconds keep two saves in one minute apart; Archidekt accepts snapshots with equal names.
     snapshot = f"before cmdr apply {now().strftime('%Y-%m-%d %H:%M:%S')} UTC"
     on_progress(f"saving snapshot '{snapshot}' on Archidekt")
@@ -403,7 +323,7 @@ def save(
             f"Archidekt accepted the changes, but reading the deck back failed ({error}); "
             "the local copy may be behind"
         ) from error
-    return SaveResult(after, snapshot, tuple(verify(resolution.changes, deck, after)))
+    return SaveResult(after, snapshot, tuple(verify([*resolution.changes, *resolution.clears], deck, after)))
 
 
 def _account_colours(editor: ArchidektEditor, on_progress: Callable[[str], None]) -> dict[str, str]:
@@ -432,7 +352,7 @@ def card_edits(
     dont_have: str = label_value(DONT_HAVE_LABEL),
 ) -> list[CardEdit]:
     """The modifyCards edits for the changes; a card coming into the deck is labelled dont_have, still to buy
-    (ADR 0010), unless it already carries a label (Proxy)."""
+    (ADR 0010)."""
     edits: list[CardEdit] = []
     for change in changes:
         if change.kind is ChangeKind.ADD:
@@ -446,22 +366,16 @@ def card_edits(
         state = entries.get(change.entry_id)
         if state is None:
             raise ArchidektError(f"{change.name}: entry {change.entry_id} is no longer in the deck")
-        if change.kind in {ChangeKind.REMOVE, ChangeKind.DROP}:
+        if change.kind in {ChangeKind.REMOVE, ChangeKind.CLEAR}:
             edits.append(CardEdit(EditKind.REMOVE, change.card_id, change.before, state, change.entry_id))
             continue
-        if change.kind in _MOVES:
-            # A move is a modify that sends the entry's new categories.
-            state = replace(state, categories=change.categories)
-        if change.kind is ChangeKind.MOVE_IN and state.label == DEFAULT_LABEL:
-            # Into the deck from the Maybeboard: still to buy, unless it already carries a label (Proxy).
-            state = replace(state, label=dont_have)
         edits.append(CardEdit(EditKind.MODIFY, change.card_id, change.after, state, change.entry_id))
     return edits
 
 
 def verify(changes: Sequence[Change], before: Deck, after: Deck) -> list[str]:
     """Every change that the deck read back from Archidekt does not show."""
-    # An add shows as a new entry; a copy already elsewhere, such as on the maybeboard, must not count.
+    # An add shows as a new entry; a copy already elsewhere, such as on the Maybeboard, must not count.
     old_entries = {c.entry_id for c in before.cards}
     mismatches: list[str] = []
     for change in changes:
@@ -478,10 +392,6 @@ def verify(changes: Sequence[Change], before: Deck, after: Deck) -> list[str]:
         found = entry.quantity if entry else 0
         if found != change.after:
             mismatches.append(f"{change.name}: expected {change.after}, Archidekt shows {found}")
-        elif entry is not None and change.kind in _MOVES and entry.primary_category != change.category:
-            mismatches.append(
-                f"{change.name}: expected it in {change.category}, Archidekt shows {entry.primary_category}"
-            )
     return mismatches
 
 

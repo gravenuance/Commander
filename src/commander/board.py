@@ -80,7 +80,7 @@ class Actor(Enum):
     YOU = "you"
     CLAUDE = "claude"
     CMDR = "cmdr"
-    # Put on the deck's Sideboard or Maybeboard on archidekt.com, and picked up by a sync.
+    # Old boards hold cards picked up from the Sideboard or Maybeboard (ADR 0006); nothing makes more now.
     ARCHIDEKT = "archidekt"
 
 
@@ -193,15 +193,6 @@ class Board:
     @property
     def rejected_names(self) -> tuple[str, ...]:
         return tuple(card.name for card in self.cards if card.status is Status.REJECTED)
-
-    def to_drop(self, deck: Deck) -> tuple[str, ...]:
-        """Turned-down cards still on the deck's Sideboard or Maybeboard: the next save takes them off."""
-        aside = {key for card in deck.aside_cards for key in name_keys(card.name)}
-        return tuple(c.name for c in self.cards if c.status is Status.REJECTED and name_keys(c.name) & aside)
-
-    def pending(self, deck: Deck) -> int:
-        """Changes the next save would make: cards to add and cards to take off the Maybeboard."""
-        return len(self.queued) + len(self.to_drop(deck))
 
 
 def board_stamp(folder: Path) -> str:
@@ -361,9 +352,8 @@ def activity_json(entry: Activity) -> dict[str, object]:
 def board_plan(deck: Deck, board: Board) -> Plan | None:
     """The plan for the next save; None when it would change nothing.
 
-    It adds every queued card and moves its chosen cut to the Maybeboard, so the swap can be weighed the
-    other way round later, and takes turned-down cards off the Sideboard or Maybeboard. A cut the deck holds
-    more copies of, such as a basic land, loses one copy for each copy a card adds (most add one) instead.
+    It adds every queued card and removes its chosen cut. A cut the deck holds more copies of, such as a
+    basic land, loses one copy for each copy a card adds (most add one) instead.
 
     The counts come from deck, so it should be the deck as it is on Archidekt now: a queued card that deck
     already holds (other than a basic land) is done, and neither adds nor cuts.
@@ -371,11 +361,10 @@ def board_plan(deck: Deck, board: Board) -> Plan | None:
     held = _held(deck)
     done = already_added(deck, board)
     queued = tuple(card for card in board.queued if card not in done)
-    drop = board.to_drop(deck)
-    if not queued and not drop:
+    if not queued:
         return None
     adds = tuple(AddCard(card.name, _add_target(held, card)) for card in queued)
-    return Plan(str(deck.id), adds, _cuts(held, queued), drop)
+    return Plan(str(deck.id), adds, _cuts(held, queued))
 
 
 def already_added(deck: Deck, board: Board) -> tuple[BoardCard, ...]:
@@ -413,9 +402,7 @@ def _cuts(held: Counter[str], queued: Sequence[BoardCard]) -> tuple[RemoveCard, 
     for card in queued:
         if card.choice and (key := card_key(card.choice)) not in cuts:
             left = held[key] - named[key]
-            cuts[key] = (
-                RemoveCard(card.choice, keep=left) if left > 0 else RemoveCard(card.choice, maybeboard=True)
-            )
+            cuts[key] = RemoveCard(card.choice, keep=max(left, 0))
     return tuple(cuts.values())
 
 
@@ -595,6 +582,21 @@ class BoardService:
             else:
                 entry = Activity(stamp, actor, "saved to Archidekt", None, f"{names}; snapshot '{snapshot}'")
             save(Board(cards), entry)
+
+    def turn_down_open(self, key: str, note: str, share: float) -> BoardCard | None:
+        """Turn down a card as cmdr, but only while it is still open: None when it was decided or removed
+        meanwhile. share is its weighted share of the lists read now, the baseline for its return."""
+        with self._editing() as (board, save):
+            card = board.find(key)
+            if card is None or card.status is not Status.OPEN:
+                return None
+            stamp = self._stamp()
+            updated = replace(card, status=Status.REJECTED, note=note, updated_at=stamp, rejected_share=share)
+            save(
+                _swap(board, updated),
+                Activity(stamp, Actor.CMDR, _DECISIONS[Status.REJECTED], card.name, note),
+            )
+            return updated
 
     def remember_share(self, key: str, share: float) -> None:
         """Give a turned-down card that has none its share now, as the baseline for its return."""
@@ -883,7 +885,7 @@ def feed_ideas(
 
     Cards already on the board are left alone, but with the weighted shares of the lists read (by `card_key`)
     a turned-down one comes back once its share has risen by RETURN_RISE since; one turned down without a
-    known share gets today's as its baseline.
+    known share gets today's as its baseline. An applied card the deck no longer holds comes back at once.
     """
     added: list[BoardCard] = []
     for name, idea in ideas.items():
@@ -913,6 +915,8 @@ def feed_ideas(
 
 def _returning(service: BoardService, card: BoardCard, shares: Mapping[str, float] | None) -> str | None:
     """Why a turned-down card comes back to the board now, or None to leave it alone."""
+    if card.status is Status.APPLIED:
+        return "back: no longer in the deck"
     if card.status is not Status.REJECTED or shares is None:
         return None
     now = shares.get(card_key(card.name), 0.0)
@@ -922,22 +926,3 @@ def _returning(service: BoardService, card: BoardCard, shares: Mapping[str, floa
     if now < card.rejected_share + RETURN_RISE:
         return None
     return f"back: in {now:.0%} of the lists read, up from {card.rejected_share:.0%} when turned down"
-
-
-def import_aside(service: BoardService, deck: Deck, board: Board) -> list[BoardCard]:
-    """Put the deck's Sideboard and Maybeboard cards on the board under Considering, as picked on Archidekt.
-
-    A card already on the board stays as it is, unless it was applied: one cut back to the Maybeboard since
-    is reopened, so a swap can be weighed the other way round.
-    """
-    added: list[BoardCard] = []
-    for card in deck.aside_cards:
-        existing = board.find(card.name)
-        if existing is not None and existing.status is not Status.APPLIED:
-            continue
-        where = card.primary_category
-        try:
-            added.append(service.propose(card.name, Actor.ARCHIDEKT, reason=f"on the {where} on Archidekt"))
-        except BoardError as error:
-            log.info("not putting %s from the %s on the board: %s", card.name, where, error)
-    return added

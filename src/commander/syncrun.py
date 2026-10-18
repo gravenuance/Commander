@@ -17,14 +17,13 @@ from commander.archidekt import ArchidektClient, ArchidektError
 from commander.archidekt_edit import ArchidektAuth, ArchidektEditor, AuthError
 from commander.background import in_background
 from commander.board import BoardCard, BoardError, Origin
-from commander.boardsave import pick_up_aside
 from commander.carddb import CARD_DB_FILE, CardDataError, CardDb
 from commander.config import MetaSettings
 from commander.credentials import CredentialError, TokenStore
 from commander.deckcache import Clock
 from commander.deckprofile import ProfileError
 from commander.fetchpriority import FetchPriority
-from commander.ideas import compile_ideas_with_adjacent
+from commander.ideas import compile_ideas_with_adjacent, rejudge_archidekt_ideas
 from commander.metadata import Progress, gather_for, meta_sources
 from commander.net import Fetcher, NetworkError, Pacer
 from commander.scryfall import CardRefresh, RefreshStatus, ScryfallClient, ScryfallError, refresh_card_db
@@ -88,8 +87,8 @@ class SyncOutcome:
     cards: CardStatus
     # The account's card labels, None when not signed in, on a dry run or when the read failed.
     labels: list[tuple[str, str]] | None
-    # Per deck, by short name: Sideboard and Maybeboard cards put on its board, and the ideas compiled.
-    picked: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
+    # Per deck, by short name: the old Maybeboard and Sideboard ideas turned down, and the ideas compiled.
+    turned_down: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
     ideas: dict[str, dict[Origin, list[BoardCard]]] = field(
         default_factory=dict[str, dict[Origin, list[BoardCard]]]
     )
@@ -146,8 +145,7 @@ def run_sync(
         cards = _card_status(cards_job, options)
     if options.dry_run:
         return SyncOutcome(results, cards, labels, warnings=warnings)
-    picked = _pick_up_aside(workspace, services, warnings)
-    ideas = (
+    ideas, turned_down = (
         _compile_ideas(
             workspace,
             user,
@@ -159,9 +157,9 @@ def run_sync(
             on_deck=on_deck or _ignore_deck,
         )
         if options.ideas
-        else {}
+        else ({}, {})
     )
-    return SyncOutcome(results, cards, labels, picked, ideas, warnings)
+    return SyncOutcome(results, cards, labels, turned_down, ideas, warnings)
 
 
 def _sync_labels(
@@ -198,26 +196,6 @@ def _card_status(job: Future[CardRefresh] | None, options: SyncOptions) -> CardS
     return CardStatus(CardState.UPDATED, f"{source}, {refresh.printings or 0:,} printings")
 
 
-def _pick_up_aside(workspace: Workspace, services: SyncServices, warnings: list[str]) -> dict[str, list[str]]:
-    """Each deck's Sideboard and Maybeboard cards new to its board, put there under considering."""
-    try:
-        db = CardDb(services.cache / CARD_DB_FILE)
-    except CardDataError as error:
-        warnings.append(f"boards not updated from the Sideboards and Maybeboards: {error}")
-        return {}
-    picked: dict[str, list[str]] = {}
-    with db:
-        for stored in workspace.load_all():
-            try:
-                added = pick_up_aside(stored, db, now=services.now)
-            except BoardError as error:
-                warnings.append(f"{stored.deck.short_name} board not updated: {error}")
-                continue
-            if added:
-                picked[stored.deck.short_name] = [card.name for card in added]
-    return picked
-
-
 def _compile_ideas(
     workspace: Workspace,
     user: str,
@@ -228,8 +206,9 @@ def _compile_ideas(
     progress: Progress,
     priority: FetchPriority | None,
     on_deck: DeckProgress,
-) -> dict[str, dict[Origin, list[BoardCard]]]:
-    """Each deck's new ideas from the meta and recent Archidekt decks (ADR 0028), by short name.
+) -> tuple[dict[str, dict[Origin, list[BoardCard]]], dict[str, list[str]]]:
+    """Each deck's new ideas from the meta and recent Archidekt decks (ADR 0028), by short name, and the old
+    Maybeboard and Sideboard ideas turned down on the way (ADR 0035).
 
     Answers under a day old come from the cache. A deck whose sources fail keeps its board as it was.
     The decks go in the order of how often the user opens them, and the one the priority names goes
@@ -239,8 +218,9 @@ def _compile_ideas(
         db = CardDb(services.cache / CARD_DB_FILE)
     except CardDataError as error:
         warnings.append(f"ideas not compiled: {error}")
-        return {}
+        return {}, {}
     found: dict[str, dict[Origin, list[BoardCard]]] = {}
+    turned_down: dict[str, list[str]] = {}
     with db, services.client_factory() as http:
         sources = meta_sources(http, services.pacer_factory, user, settings)
         waiting = _most_viewed_first(workspace.load_all(), services)
@@ -257,6 +237,8 @@ def _compile_ideas(
                 data = gather_for(
                     deck, sources, services.cache, now=services.now, refresh=False, on_progress=progress
                 )
+                if dropped := rejudge_archidekt_ideas(stored, data, db, now=services.now):
+                    turned_down[deck.short_name] = [card.name for card in dropped]
                 found[deck.short_name] = compile_ideas_with_adjacent(
                     stored,
                     data,
@@ -277,7 +259,7 @@ def _compile_ideas(
                 warnings.append(f"{deck.short_name}: no meta or Archidekt decks to learn from ({why})")
             incomplete = len(warnings) > warned or data.peers.data is None
             on_deck(deck.id, FetchState.INCOMPLETE if incomplete else FetchState.DONE)
-    return found
+    return found, turned_down
 
 
 def _most_viewed_first(decks: list[StoredDeck], services: SyncServices) -> list[StoredDeck]:

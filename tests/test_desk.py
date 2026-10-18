@@ -53,9 +53,6 @@ def settings(tmp_path: Path, card_db_file: Path, fake: FakeArchidekt) -> DeskSet
         == 0
     )
     fake.requests.clear()
-    # Start from an empty board: the sync put the fixture's two Maybeboard cards on it.
-    for name in ("board.json", "activity.jsonl"):
-        (tmp_path / "decks" / "10004639-honestly-though" / name).unlink()
     return DeskSettings(tmp_path / "decks", cache / CARD_DB_FILE, "MAKKIS")
 
 
@@ -345,14 +342,14 @@ def test_below_bracket_5_considering_marks_cards_over_the_decks_budget(
         run(["sync", "--no-cards", "--no-ideas", "--workspace", str(settings.workspace)], tmp_path, fake).code
         == 0
     )
-    desk.propose(DECK, "Splinter Twin")
-    desk.propose(DECK, "Arcane Signet")
+    for card in ("High-Speed Hoverbike", "Tempestra, Dame of Games", "Splinter Twin", "Arcane Signet"):
+        desk.propose(DECK, card)
     view = desk.deck(DECK)
     # Magda 6.79, Disruptor Flute 2.17, Battered Golem 0.35: average 3.10, within budget to 25% over it
     # (3.88), ceiling 25% over Magda. Splinter Twin (6.68) is over budget.
     assert view["budget"] == {"working": 310, "within": 388, "ceiling": 849}
     within = {str(card["name"]): card["withinBudget"] for card in items(view, "cards")}
-    # The sync put the Maybeboard's Hoverbike (0.14) and Tempestra (0.24) on the board too.
+    # The Hoverbike costs 0.14 and Tempestra 0.24.
     assert within == {
         "High-Speed Hoverbike": True,
         "Tempestra, Dame of Games": True,
@@ -599,6 +596,13 @@ def test_preview_and_commit_save_the_queued_cards(desk: Desk, fake: FakeArchidek
         ("+", "Arcane Signet"),
     ]
     assert (preview["before"], preview["after"], preview["problems"]) == (9, 9, [])
+    # The review lists what the save also clears, so the user sees it before saving.
+    assert preview["clears"] == [
+        {
+            "text": "Clears the Maybeboard: 2 cards",
+            "cards": ["High-Speed Hoverbike", "Tempestra, Dame of Games"],
+        }
+    ]
     # The fake Spellbook answers Ruthless for any list; the deck's bracket 5 allows it.
     bracket = cast("Json", preview["bracket"])
     assert (bracket["after"], bracket["afterLabel"], bracket["check"]) == (
@@ -613,6 +617,7 @@ def test_preview_and_commit_save_the_queued_cards(desk: Desk, fake: FakeArchidek
     assert saved["applied"] == ["Arcane Signet"]
     assert saved["snapshot"] == "before cmdr apply 2026-10-15 12:00:00 UTC"
     assert items(desk.deck(DECK), "cards")[0]["status"] == "applied"
+    assert {c["categories"][0] for c in fake.decks[DECK]["cards"]}.isdisjoint({"Maybeboard", "Sideboard"})
 
 
 def test_commit_without_a_login_says_how_to_sign_in_in_the_apps_words(

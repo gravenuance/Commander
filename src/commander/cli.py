@@ -32,6 +32,7 @@ from commander.board import (
 )
 from commander.bracketpreview import preview_json, spellbook_preview
 from commander.carddb import CardDataError
+from commander.changetext import clear_groups
 from commander.cli_analysis import add_analysis_commands
 from commander.cli_app import add_app_command
 from commander.cli_board import add_board_commands
@@ -80,7 +81,7 @@ from commander.credentials import CredentialError, KeyringTokenStore, TokenStore
 from commander.deckprofile import read_profile
 from commander.diff import DeckDiff
 from commander.edhtop16 import Edhtop16Error
-from commander.ideas import ideas_summary
+from commander.ideas import NO_LONGER_MAKES_THE_CUT, ideas_summary
 from commander.labels import LabelError
 from commander.net import Fetcher, NetworkError, Pacer, make_client
 from commander.plan import EXAMPLE as PLAN_EXAMPLE
@@ -363,11 +364,8 @@ def _cmd_sync(args: argparse.Namespace, ctx: Context) -> int:
         if outcome.labels is not None:
             names = ", ".join(n for n, _ in outcome.labels) or "none"
             print(f"card labels: {names} (from your Archidekt account)", file=ctx.out)
-        for short, names in outcome.picked.items():
-            print(
-                f"{short} board: considering {', '.join(names)} (from the Sideboard or Maybeboard)",
-                file=ctx.out,
-            )
+        for short, names in outcome.turned_down.items():
+            print(f"{short} board: turned down {', '.join(names)} ({NO_LONGER_MAKES_THE_CUT})", file=ctx.out)
         for short, added in outcome.ideas.items():
             if any(added.values()):
                 print(f"{short} ideas: {ideas_summary(added)}", file=ctx.out)
@@ -519,6 +517,10 @@ def _apply_json(resolution: Resolution, result: SaveResult | None) -> dict[str, 
                 "raises": raise_json(c.raises),
             }
             for c in resolution.changes
+        ],
+        "clears": [
+            {"board": g.board, "count": g.count, "cards": list(g.cards)}
+            for g in clear_groups(resolution.clears)
         ],
         "skipped": list(resolution.skipped),
         "warnings": list(resolution.warnings),

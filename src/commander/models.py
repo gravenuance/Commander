@@ -3,8 +3,7 @@
 from dataclasses import dataclass
 
 COMMANDER_CATEGORY = "Commander"
-MAYBEBOARD_CATEGORY = "Maybeboard"
-# Casefolded names of the categories that hold cards under consideration, outside the deck.
+# Casefolded names of the categories a save clears when they are outside the deck (ADR 0035).
 ASIDE_CATEGORIES = frozenset({"sideboard", "maybeboard"})
 # Words in an Archidekt category that file its cards as part of the deck's plan: "Combo Pieces", "WinCons".
 PLAN_WORDS = ("combo", "wincon", "finisher", "payoff", "keycard", "keypiece")
@@ -45,7 +44,7 @@ class DeckCard:
 
     @property
     def aside(self) -> bool:
-        """On the Sideboard or Maybeboard: kept with the deck, under consideration, not played."""
+        """On the Sideboard or Maybeboard, outside the deck: a save clears it (ADR 0035)."""
         return not self.in_deck and self.primary_category.casefold() in ASIDE_CATEGORIES
 
 

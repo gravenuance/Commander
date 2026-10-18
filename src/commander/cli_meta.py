@@ -230,7 +230,7 @@ def _print_missing(report: MetaReport, out: TextIO) -> None:
     if not report.missing:
         print("  none", file=out)
     for card in report.missing:
-        note = "  [on your Sideboard or Maybeboard]" if card.flagged else ""
+        note = ""
         if card.fit is Fit.FAVOURED:
             note += f"  [fits {style}]"
         elif card.fit is Fit.OFF_PLAN:

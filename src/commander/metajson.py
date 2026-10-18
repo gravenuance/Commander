@@ -21,7 +21,7 @@ def report_json(report: MetaReport) -> dict[str, object]:
         },
         "playStyle": [style.value for style in report.style.styles],
         "racing": report.style.races,
-        "missing": [{**_share_json(c, "onSideboard"), "fit": c.fit.value or None} for c in report.missing],
+        "missing": [{**_share_json(c), "fit": c.fit.value or None} for c in report.missing],
         "spicy": [
             {
                 "name": p.name,
@@ -123,13 +123,15 @@ def report_json(report: MetaReport) -> dict[str, object]:
     }
 
 
-def _share_json(card: CardShare, flag: str) -> dict[str, object]:
-    return {
+def _share_json(card: CardShare, flag: str | None = None) -> dict[str, object]:
+    row: dict[str, object] = {
         "name": card.name,
         "lists": card.lists,
         "share": round(card.share, 4),
         "peerLists": card.peer_lists,
         "peerShare": round(card.peer_share, 4),
         "spice": card.spice,
-        flag: card.flagged,
     }
+    if flag is not None:
+        row[flag] = card.flagged
+    return row

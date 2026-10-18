@@ -4,7 +4,7 @@ import logging
 import shutil
 import threading
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -12,10 +12,21 @@ from typing import cast
 import pytest
 
 from commander import syncrun
-from commander.board import BoardCard, BoardError, Origin
-from commander.carddb import CARD_DB_FILE, CardDataMeta
+from commander.archidekt import parse_deck
+from commander.board import (
+    Actor,
+    BoardCard,
+    BoardError,
+    BoardService,
+    Origin,
+    Status,
+    read_activity,
+    read_board,
+)
+from commander.carddb import CARD_DB_FILE, CardDataMeta, CardDb
 from commander.config import MetaSettings
 from commander.fetchpriority import FetchPriority
+from commander.ideas import rejudge_archidekt_ideas
 from commander.metadata import MetaData
 from commander.models import Deck
 from commander.net import NetworkError
@@ -23,8 +34,9 @@ from commander.scryfall import CardRefresh, RefreshStatus
 from commander.store import LABELS_FILE, StoredDeck, Workspace
 from commander.sync import SyncResult
 from commander.syncrun import CardState, SyncOptions, SyncServices, run_sync
-from conftest import REFRESH_TOKEN, FakeArchidekt, Json, MemoryTokenStore
+from conftest import REFRESH_TOKEN, FakeArchidekt, Json, MemoryTokenStore, put_on_sideboard
 from test_cli_apply import run
+from test_meta import entry, meta_data
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 DOWNLOADED = CardRefresh(RefreshStatus.UPDATED, CardDataMeta("2026-10-15T09:00:00Z", "t", "b"), 12_345)
@@ -109,6 +121,10 @@ def three_decks(tmp_path: Path, raw_deck: Json, card_db_file: Path) -> FakeArchi
     return fake
 
 
+def judge_nothing(*_: object, **__: object) -> list[BoardCard]:
+    return []
+
+
 def stub_meta(
     monkeypatch: pytest.MonkeyPatch, after_gather: Callable[[int], None] = lambda _: None
 ) -> list[int]:
@@ -129,6 +145,7 @@ def stub_meta(
     monkeypatch.setattr(syncrun, "meta_sources", sources)
     monkeypatch.setattr(syncrun, "gather_for", gather)
     monkeypatch.setattr(syncrun, "compile_ideas_with_adjacent", compile_nothing)
+    monkeypatch.setattr(syncrun, "rejudge_archidekt_ideas", judge_nothing)
     return gathered
 
 
@@ -299,3 +316,152 @@ def test_a_deck_whose_ideas_fail_is_incomplete_and_the_others_carry_on(
     monkeypatch.setattr(syncrun, "compile_ideas_with_adjacent", compile_ideas)
     final = dict(sync_states(tmp_path, fake))
     assert final == {101: "incomplete", 102: "incomplete", 103: "done"}
+
+
+def populated(tmp_path: Path, raw_deck: Json, card_db_file: Path) -> tuple[FakeArchidekt, StoredDeck]:
+    """A fake Archidekt holding the fixture deck, its Maybeboard and one Sideboard card, and the workspace
+    with that deck saved but no sync run yet."""
+    put_on_sideboard(raw_deck, 7_000_000_001, "Chaos Warp")
+    fake = FakeArchidekt()
+    fake.put(raw_deck)
+    (tmp_path / "cache").mkdir(exist_ok=True)
+    shutil.copy(card_db_file, tmp_path / "cache" / CARD_DB_FILE)
+    deck = parse_deck(raw_deck)
+    return fake, StoredDeck(Workspace(tmp_path / "decks").save(deck), deck)
+
+
+def sync_with_lists(
+    tmp_path: Path, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch, data: MetaData | None
+) -> None:
+    """A sync whose ideas phase reads `data` (no read at all for None) and compiles no new ideas."""
+    stub_meta(monkeypatch)
+
+    def gather(*_: object, **__: object) -> MetaData | None:
+        return data
+
+    monkeypatch.setattr(syncrun, "gather_for", gather)
+    monkeypatch.setattr(syncrun, "rejudge_archidekt_ideas", rejudge_archidekt_ideas)
+    sync_ideas(tmp_path, fake)
+
+
+def lists_with(card: str, playing: int, of: int = 10) -> MetaData:
+    """`of` recent top-cut lists, `playing` of which run `card`; all run a Mountain."""
+    return meta_data(
+        [
+            entry(i, 40, 16, [("Mountain", 0), *([(card, 0)] if i <= playing else [])], date(2026, 10, 10))
+            for i in range(1, of + 1)
+        ]
+    )
+
+
+def test_a_sync_ignores_the_maybeboard_and_sideboard_and_writes_nothing_to_archidekt(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path
+) -> None:
+    fake, stored = populated(tmp_path, raw_deck, card_db_file)
+
+    outcome = run_sync(
+        services(tmp_path, fake),
+        Workspace(tmp_path / "decks"),
+        "MAKKIS",
+        MetaSettings(),
+        SyncOptions(cards=False, ideas=False),
+        on_progress=lambda _: None,
+    )
+
+    assert not outcome.warnings
+    assert read_board(stored.folder).cards == ()
+    assert read_activity(stored.folder) == []
+    assert fake.writes == []
+    # The deck copy still mirrors Archidekt, Maybeboard included.
+    saved = Workspace(tmp_path / "decks").load_all()[0].deck
+    assert sorted(c.name for c in saved.aside_cards) == [
+        "Chaos Warp",
+        "High-Speed Hoverbike",
+        "Tempestra, Dame of Games",
+    ]
+
+
+def seed_board(stored: StoredDeck, card_db_file: Path) -> dict[str, str]:
+    """A board with two open cards from the old Maybeboard pick-up and one of each kind that must stay as it
+    is; the ids by card name."""
+    ids: dict[str, str] = {}
+    with CardDb(card_db_file) as db:
+        service = BoardService(stored.folder, stored.deck, db, now=lambda: NOW)
+        for name, source in (
+            ("High-Speed Hoverbike", Actor.ARCHIDEKT),
+            ("Tempestra, Dame of Games", Actor.ARCHIDEKT),
+            ("Lightning Bolt", Actor.YOU),
+            ("Arcane Signet", Actor.ARCHIDEKT),
+            ("Chaos Warp", Actor.ARCHIDEKT),
+        ):
+            ids[name] = service.propose(name, source, reason="seeded").id
+        service.decide(ids["Arcane Signet"], Status.ADD, Actor.YOU, choice="Disruptor Flute")
+        service.decide(ids["Chaos Warp"], Status.REJECTED, Actor.YOU, note="no thanks")
+    return ids
+
+
+def test_an_idea_from_the_old_pick_up_that_fails_the_idea_test_is_turned_down_and_a_passing_one_stays(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake, stored = populated(tmp_path, raw_deck, card_db_file)
+    ids = seed_board(stored, card_db_file)
+
+    # The Hoverbike is in 9 of 10 recent lists, Tempestra in none.
+    sync_with_lists(tmp_path, fake, monkeypatch, lists_with("High-Speed Hoverbike", 9))
+
+    board = read_board(stored.folder)
+    hoverbike, tempestra = (
+        board.find(ids["High-Speed Hoverbike"]),
+        board.find(ids["Tempestra, Dame of Games"]),
+    )
+    assert hoverbike is not None
+    assert tempestra is not None
+    assert hoverbike.status is Status.OPEN
+    assert (tempestra.status, tempestra.note, tempestra.rejected_share) == (
+        Status.REJECTED,
+        "no longer makes the cut",
+        0.0,
+    )
+    turned_down = [
+        a for a in read_activity(stored.folder) if a.action == "turned down" and a.actor is Actor.CMDR
+    ]
+    assert [(a.card, a.detail) for a in turned_down] == [
+        ("Tempestra, Dame of Games", "no longer makes the cut")
+    ]
+    assert fake.writes == []
+
+
+def test_the_old_ideas_are_left_alone_when_no_list_was_read(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake, stored = populated(tmp_path, raw_deck, card_db_file)
+    seed_board(stored, card_db_file)
+    before = (stored.folder / "board.json").read_text(encoding="utf-8")
+
+    sync_with_lists(tmp_path, fake, monkeypatch, meta_data([]))
+
+    assert (stored.folder / "board.json").read_text(encoding="utf-8") == before
+
+
+def test_only_open_cards_from_the_old_pick_up_are_judged(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake, stored = populated(tmp_path, raw_deck, card_db_file)
+    ids = seed_board(stored, card_db_file)
+
+    # Nothing in the lists but Mountains, so every card fails the test.
+    sync_with_lists(tmp_path, fake, monkeypatch, lists_with("Mountain", 10))
+
+    board = read_board(stored.folder)
+    states = {name: (c.status, c.source) for name, id_ in ids.items() if (c := board.find(id_)) is not None}
+    assert states == {
+        "High-Speed Hoverbike": (Status.REJECTED, Actor.ARCHIDEKT),
+        "Tempestra, Dame of Games": (Status.REJECTED, Actor.ARCHIDEKT),
+        # Another source, a card queued to add, and a card already turned down: as they were.
+        "Lightning Bolt": (Status.OPEN, Actor.YOU),
+        "Arcane Signet": (Status.ADD, Actor.ARCHIDEKT),
+        "Chaos Warp": (Status.REJECTED, Actor.ARCHIDEKT),
+    }
+    chaos_warp = board.find(ids["Chaos Warp"])
+    assert chaos_warp is not None
+    assert chaos_warp.note == "no thanks"

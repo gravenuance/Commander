@@ -50,7 +50,7 @@ from commander.bracketcheck import check_bracket, check_json
 from commander.bracketpreview import preview_json, spellbook_preview
 from commander.budget import resolved_budget
 from commander.carddb import CardDataError, CardDb, CardInfo, ResolvedCard
-from commander.changetext import change_mark, change_text
+from commander.changetext import change_mark, change_text, clear_groups
 from commander.config import ConfigError, MetaSettings, forget_account, switch_account, validate_user
 from commander.credentials import CredentialError, TokenStore
 from commander.deckexport import cardmarket_wants_text, topdeck_text
@@ -427,7 +427,7 @@ class Desk:
                 log.warning("deck %s: %s", stored.deck.id, error)
                 row["error"] = str(error)
             else:
-                row["queued"] = board.pending(stored.deck)
+                row["queued"] = len(board.queued)
                 row["open"] = sum(1 for c in board.cards if c.status is Status.OPEN)
             rows.append(row)
         rows.sort(key=lambda row: str(row["short"]).casefold())
@@ -446,7 +446,6 @@ class Desk:
         stored = self._stored(deck_id)
         board = read_board(stored.folder)
         profile = read_profile(stored.folder)
-        drop = set(board.to_drop(stored.deck))
         with self._db() as db:
             main = db.resolve(stored.deck.main_cards)
             identity = deck_identity(main)
@@ -462,7 +461,6 @@ class Desk:
                     if budget.working is None
                     else budget.within(info.cheapest_cents if (info := infos.get(card.oracle_id)) else None),
                     "share": _share_json(shares.of(card.name)),
-                    "dropping": card.name in drop,
                     "targets": [
                         _target_json(t) for t in targets_for(card, infos.get(card.oracle_id), main, rules)
                     ],
@@ -484,7 +482,7 @@ class Desk:
             "identity": identity,
             "stamp": board_stamp(stored.folder),
             "budget": budget.json(),
-            "pending": board.pending(stored.deck),
+            "pending": len(board.queued),
             "cards": cards,
             "deckCards": sorted({c.name for c in stored.deck.main_cards if "Commander" not in c.categories}),
             "labels": [{"name": n, "colour": c} for n, c in label_options(stored.deck, account)],
@@ -977,6 +975,7 @@ def _resolution_json(resolution: Resolution) -> Json:
             {"kind": c.kind.value, "mark": change_mark(c), "name": c.name, "text": change_text(c)}
             for c in resolution.changes
         ],
+        "clears": [{"text": g.text, "cards": list(g.cards)} for g in clear_groups(resolution.clears)],
         "problems": list(resolution.problems),
         "warnings": list(resolution.warnings),
         "skipped": list(resolution.skipped),

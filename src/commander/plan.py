@@ -12,14 +12,13 @@ MAX_NAME_LENGTH = 200
 MAX_QUANTITY = 99
 MAX_CATEGORY_LENGTH = 100
 _ADD_KEYS = frozenset({"name", "quantity", "set", "category"})
-_REMOVE_KEYS = frozenset({"name", "keep", "maybeboard"})
-_TOP_KEYS = frozenset({"deck", "add", "remove", "drop"})
+_REMOVE_KEYS = frozenset({"name", "keep"})
+_TOP_KEYS = frozenset({"deck", "add", "remove"})
 
 EXAMPLE = """\
 deck = "magda"   # deck id, or part of its name as in other commands
 add = ["Arcane Signet", {name = "Sol Ring", set = "c21", category = "Ramp"}]
-remove = ["Wild Growth", {name = "Mountain", keep = 10}, {name = "Swords to Plowshares", maybeboard = true}]
-drop = ["Path to Exile"]   # take off the Sideboard or Maybeboard"""
+remove = ["Wild Growth", {name = "Mountain", keep = 10}]"""
 
 
 class PlanError(Exception):
@@ -41,12 +40,6 @@ class RemoveCard:
     name: str
     # The deck ends with at most this many copies; 0 removes the card.
     keep: int = 0
-    # Move the card to the Maybeboard instead of deleting it, so it stays under consideration.
-    maybeboard: bool = False
-
-    def __post_init__(self) -> None:
-        if self.maybeboard and self.keep:
-            raise ValueError(f"{self.name}: a card moved to the Maybeboard moves whole, so keep must be 0")
 
 
 @dataclass(slots=True, frozen=True)
@@ -54,8 +47,6 @@ class Plan:
     deck: str
     add: tuple[AddCard, ...]
     remove: tuple[RemoveCard, ...]
-    # Cards to take off the Sideboard or Maybeboard: no longer under consideration.
-    drop: tuple[str, ...] = ()
 
 
 def read_plan(source: Path | BinaryIO) -> Plan:
@@ -83,7 +74,7 @@ def read_plan(source: Path | BinaryIO) -> Plan:
 def parse_plan(raw: dict[str, object]) -> Plan:
     unknown = sorted(set(raw) - _TOP_KEYS)
     if unknown:
-        raise PlanError(f"unknown key {unknown[0]!r}; a plan has deck, add, remove and drop")
+        raise PlanError(f"unknown key {unknown[0]!r}; a plan has deck, add and remove")
     deck = raw.get("deck")
     if isinstance(deck, int) and not isinstance(deck, bool):
         deck = str(deck)
@@ -91,22 +82,16 @@ def parse_plan(raw: dict[str, object]) -> Plan:
         raise PlanError("'deck' must name the deck, by id or part of its name")
     add = tuple(_add(item, f"add[{i}]") for i, item in enumerate(_items(raw, "add")))
     remove = tuple(_remove(item, f"remove[{i}]") for i, item in enumerate(_items(raw, "remove")))
-    drop = tuple(_name(item, f"drop[{i}]") for i, item in enumerate(_items(raw, "drop")))
-    if not add and not remove and not drop:
-        raise PlanError("the plan has nothing to add, remove or drop")
-    if len(add) + len(remove) + len(drop) > MAX_CHANGES:
-        raise PlanError(f"{len(add) + len(remove) + len(drop)} changes; a plan holds at most {MAX_CHANGES}")
+    if not add and not remove:
+        raise PlanError("the plan has nothing to add or remove")
+    if len(add) + len(remove) > MAX_CHANGES:
+        raise PlanError(f"{len(add) + len(remove)} changes; a plan holds at most {MAX_CHANGES}")
     _check_unique([c.name for c in add], "add")
     _check_unique([c.name for c in remove], "remove")
-    _check_unique(drop, "drop")
-    for first, second, names in (
-        ("add", "remove", ({c.name.casefold() for c in add}, {c.name.casefold() for c in remove})),
-        ("add", "drop", ({c.name.casefold() for c in add}, {n.casefold() for n in drop})),
-    ):
-        both = names[0] & names[1]
-        if both:
-            raise PlanError(f"{min(both)!r} is in both {first} and {second}")
-    return Plan(deck.strip(), add, remove, drop)
+    both = {c.name.casefold() for c in add} & {c.name.casefold() for c in remove}
+    if both:
+        raise PlanError(f"{min(both)!r} is in both add and remove")
+    return Plan(deck.strip(), add, remove)
 
 
 def _items(raw: dict[str, object], key: str) -> Sequence[object]:
@@ -133,13 +118,7 @@ def _remove(item: object, where: str) -> RemoveCard:
     if isinstance(item, str):
         return RemoveCard(_name(item, where))
     table = _table(item, where, _REMOVE_KEYS)
-    keep = _whole(table, "keep", where, 0) or 0
-    maybeboard = table.get("maybeboard", False)
-    if not isinstance(maybeboard, bool):
-        raise PlanError(f"{where}: maybeboard must be true or false")
-    if maybeboard and keep:
-        raise PlanError(f"{where}: a card moved to the Maybeboard moves whole; leave out keep")
-    return RemoveCard(_name(table.get("name"), where), keep, maybeboard)
+    return RemoveCard(_name(table.get("name"), where), _whole(table, "keep", where, 0) or 0)
 
 
 def _table(item: object, where: str, keys: frozenset[str]) -> dict[str, object]:

@@ -329,13 +329,7 @@ def plan_toml(plan: Plan) -> str:
     if plan.add:
         lines.append("add = [" + ", ".join(_toml(a.name) for a in plan.add) + "]")
     if plan.remove:
-        removes = (
-            f"{{name = {_toml(r.name)}, maybeboard = true}}" if r.maybeboard else _toml(r.name)
-            for r in plan.remove
-        )
-        lines.append("remove = [" + ", ".join(removes) + "]")
-    if plan.drop:
-        lines.append("drop = [" + ", ".join(_toml(name) for name in plan.drop) + "]")
+        lines.append("remove = [" + ", ".join(_toml(r.name) for r in plan.remove) + "]")
     return "\n".join(lines) + "\n"
 
 

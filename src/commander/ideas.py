@@ -22,7 +22,8 @@ from datetime import date
 from pathlib import Path
 
 from commander.analysis import game_changers
-from commander.board import BoardCard, BoardService, Origin, OriginPool, Status, feed_ideas, read_board
+from commander.answers import card_key
+from commander.board import Actor, BoardCard, BoardService, Origin, OriginPool, Status, feed_ideas, read_board
 from commander.budget import resolved_budget
 from commander.carddb import CardDb
 from commander.deckcache import Clock
@@ -37,6 +38,8 @@ from commander.suggest import IdeaFilter, name_keys_of
 from commander.weightedshare import NO_SHARES, ShareTable, SourceShare, weighted_shares
 
 MAX_PER_SOURCE = 50
+# Why an idea picked up from the Maybeboard or Sideboard (ADR 0006) is turned down on a later sync (ADR 0035).
+NO_LONGER_MAKES_THE_CUT = "no longer makes the cut"
 
 
 @dataclass(slots=True, frozen=True)
@@ -160,7 +163,7 @@ def compile_ideas(
     the decks of other commanders found by each of the deck's theme tags.
     Ideas already on the board count towards a source's MAX_PER_SOURCE, so repeated syncs settle on the
     current top ideas rather than piling up. A turned-down idea takes no place unless the meta brings it
-    back (`feed_ideas`).
+    back, and an applied card the deck no longer holds is an idea like any other (`feed_ideas`).
     """
     deck = stored.deck
     profile = read_profile(stored.folder)
@@ -202,7 +205,7 @@ def compile_ideas(
             if info is None or screen.admit(info, banned) is None:
                 continue
             existing = board.find(idea.name)
-            if existing is not None and existing.status is not Status.REJECTED:
+            if existing is not None and existing.status not in {Status.REJECTED, Status.APPLIED}:
                 if idea.pool is not None and existing.origin is origin and existing.origin_pool is None:
                     service.remember_pool(existing.id, idea.pool)
                 placed += 1
@@ -222,6 +225,30 @@ def compile_ideas(
             added[origin].extend(new)
             placed += len(new)
     return added
+
+
+def rejudge_archidekt_ideas(stored: StoredDeck, data: MetaData, db: CardDb, *, now: Clock) -> list[BoardCard]:
+    """Turn down the open ideas that were picked up from the Maybeboard or Sideboard and fail the idea test
+    the other ideas pass (`ShareTable.is_idea`); what it turned down, with the reason on the activity line.
+
+    Nothing is judged when no list was read, and cards of other sources or statuses are never touched, so
+    a card the user queued stays (ADR 0035).
+    """
+    table = weighted_shares(data, now=now)
+    if not table:
+        return []
+    service = BoardService(stored.folder, stored.deck, db, now=now)
+    shares = table.fractions()
+    failing = [
+        card
+        for card in read_board(stored.folder).cards
+        if card.source is Actor.ARCHIDEKT and card.status is Status.OPEN and not table.is_idea(card.name)
+    ]
+    turned_down = (
+        service.turn_down_open(card.id, NO_LONGER_MAKES_THE_CUT, shares.get(card_key(card.name), 0.0))
+        for card in failing
+    )
+    return [card for card in turned_down if card is not None]
 
 
 def compile_ideas_with_adjacent(

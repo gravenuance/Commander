@@ -41,8 +41,7 @@ def swaps() -> Plan:
     return Plan(
         "magda",
         (AddCard("Arcane Signet"), AddCard("High-Speed Hoverbike")),
-        (RemoveCard("Disruptor Flute", maybeboard=True), RemoveCard("Mountain", keep=5)),
-        ("Tempestra, Dame of Games",),
+        (RemoveCard("Disruptor Flute"), RemoveCard("Mountain", keep=5)),
     )
 
 
@@ -139,7 +138,7 @@ def test_no_preview_for_a_plan_with_problems(deck: Deck, db: CardDb, tmp_path: P
 
 def test_no_preview_when_no_counted_card_changes(deck: Deck, db: CardDb, tmp_path: Path) -> None:
     fake = FakeSpellbook()
-    resolution = resolve_plan(deck, Plan("magda", (), (), ("Tempestra, Dame of Games",)), db)
+    resolution = resolve_plan(deck, Plan("magda", (AddCard("Arcane Signet", category="Maybeboard"),), ()), db)
     assert resolution.changes
     assert preview(resolution, fake, tmp_path) is None
     assert fake.bodies == []

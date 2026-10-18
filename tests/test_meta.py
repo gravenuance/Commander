@@ -175,9 +175,9 @@ def test_missing_staples_come_from_performing_and_archidekt_lists(deck: Deck, db
     report = analyse(deck, meta_data(TOP_CUT_LISTS, peers), Profile(), db)
     assert [(c.name, c.lists, c.peer_lists, c.spice, c.flagged) for c in report.missing] == [
         ("Mind Stone", 3, 1, 1, False),
-        # Two of five is the 40% line; the deck has the Hoverbike on its Maybeboard.
+        # Two of five is the 40% line; the Hoverbike on the deck's Maybeboard counts as missing.
         ("Arcane Signet", 2, 0, 0, False),
-        ("High-Speed Hoverbike", 2, 0, 3, True),
+        ("High-Speed Hoverbike", 2, 0, 3, False),
         ("Jeska's Will", 2, 0, 4, False),
         ("Chaos Warp", 0, 2, None, False),
     ]

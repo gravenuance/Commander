@@ -24,9 +24,7 @@ def test_the_help_example_is_a_valid_plan() -> None:
     assert plan.remove == (
         RemoveCard("Wild Growth"),
         RemoveCard("Mountain", keep=10),
-        RemoveCard("Swords to Plowshares", maybeboard=True),
     )
-    assert plan.drop == ("Path to Exile",)
 
 
 def test_deck_may_be_a_number_and_names_are_trimmed() -> None:
@@ -49,8 +47,8 @@ def test_set_codes_are_matched_in_lower_case() -> None:
         ({"add": ["Sol Ring"]}, "'deck' must name the deck"),
         ({"deck": " ", "add": ["Sol Ring"]}, "'deck' must name the deck"),
         ({"deck": True, "add": ["Sol Ring"]}, "'deck' must name the deck"),
-        ({"deck": "x"}, "nothing to add, remove or drop"),
-        ({"deck": "x", "add": []}, "nothing to add, remove or drop"),
+        ({"deck": "x"}, "nothing to add or remove"),
+        ({"deck": "x", "add": []}, "nothing to add or remove"),
         ({"deck": "x", "adds": ["Sol Ring"]}, "unknown key 'adds'"),
         ({"deck": "x", "add": "Sol Ring"}, "'add' must be a list"),
         ({"deck": "x", "add": [3]}, "add[0] must be a card name or a table"),
@@ -121,24 +119,13 @@ def test_read_plan_refuses_a_huge_stream_without_reading_it_all() -> None:
     assert stream.tell() == MAX_PLAN_BYTES + 1
 
 
-def test_a_plan_may_only_drop_cards_off_the_maybeboard() -> None:
-    plan = parse_plan({"deck": "x", "drop": [" Path to Exile "]})
-    assert (plan.add, plan.remove, plan.drop) == ((), (), ("Path to Exile",))
-
-
 @pytest.mark.parametrize(
     ("raw", "message"),
     [
-        (
-            {"deck": "x", "remove": [{"name": "Shock", "maybeboard": "yes"}]},
-            "maybeboard must be true or false",
-        ),
-        ({"deck": "x", "remove": [{"name": "Shock", "maybeboard": True, "keep": 1}]}, "moves whole"),
-        ({"deck": "x", "drop": ["Shock", "shock"]}, "listed twice in drop"),
-        ({"deck": "x", "add": ["Shock"], "drop": ["Shock"]}, "'shock' is in both add and drop"),
-        ({"deck": "x", "drop": "Shock"}, "'drop' must be a list"),
+        ({"deck": "x", "drop": ["Shock"]}, "unknown key 'drop'; a plan has deck, add and remove"),
+        ({"deck": "x", "remove": [{"name": "Shock", "maybeboard": True}]}, "unknown key 'maybeboard'"),
     ],
 )
-def test_bad_maybeboard_lines_are_refused(raw: dict[str, object], message: str) -> None:
+def test_the_old_maybeboard_lines_are_refused_by_name(raw: dict[str, object], message: str) -> None:
     with pytest.raises(PlanError, match=message):
         parse_plan(raw)

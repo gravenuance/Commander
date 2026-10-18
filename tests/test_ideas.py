@@ -159,6 +159,23 @@ def test_a_turned_down_idea_with_no_share_noted_gets_the_decks_as_its_baseline(
     assert turned_down.rejected_share == pytest.approx(1.0)
 
 
+def test_an_applied_card_the_deck_no_longer_holds_is_an_idea_again_like_any_other(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    stored = StoredDeck(tmp_path, deck)
+    service = BoardService(tmp_path, deck, db, now=lambda: NOW)
+    peers = [peer(i, ["Arcane Signet"]) for i in range(1, 4)]
+    [signet] = compile_ideas(stored, meta_data([], peers), db, now=lambda: NOW)[Origin.DECKS]
+    service.decide(signet.id, Status.ADD, Actor.YOU)
+    service.mark_applied([signet.id], Actor.YOU, "snapshot")
+
+    # The deck of the sync lacks the card: it was cut since, and the peers still play it.
+    [back] = compile_ideas(stored, meta_data([], peers), db, now=lambda: NOW)[Origin.DECKS]
+
+    assert (back.id, back.status) == (signet.id, Status.OPEN)
+    assert back.reason.startswith("back: no longer in the deck")
+
+
 def compiled_names(folder: Path, deck: Deck, db: CardDb, profile: str) -> dict[Origin, list[str]]:
     """What one compile adds with this profile.toml, from ten lists playing Mind Stone and Jeska's Will (four
     also Arcane Signet) and ten Archidekt decks playing all three, so Arcane Signet is the decks' idea."""

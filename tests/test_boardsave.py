@@ -9,12 +9,12 @@ import pytest
 from commander.apply import ApplyOutcome, NotYourDeckError
 from commander.archidekt import parse_deck
 from commander.archidekt_edit import ArchidektEditor
-from commander.board import Actor, BoardError, BoardService, Status, import_aside, read_activity, read_board
+from commander.board import Actor, BoardError, BoardService, Status, read_activity, read_board
 from commander.boardsave import BoardSave, preview_board, save_board
 from commander.carddb import CardDb
 from commander.net import Fetcher
 from commander.store import StoredDeck, Workspace
-from conftest import ACCESS_TOKEN, DECK_ID, FakeArchidekt, Json, card_entry
+from conftest import ACCESS_TOKEN, DECK_ID, FakeArchidekt, Json, card_entry, put_on_sideboard
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 
@@ -137,11 +137,9 @@ def test_a_card_already_added_on_archidekt_does_not_cut_its_swap_again(
     saved = commit()
 
     golem = live_entry(fake, "Battered Golem")
-    flute = live_entry(fake, "Disruptor Flute")
     assert golem is not None
-    assert flute is not None
     assert golem["categories"] == ["Combo Pieces", "Ramp"]
-    assert flute["categories"][0] == "Maybeboard"
+    assert live_entry(fake, "Disruptor Flute") is None
     assert (live_quantity(fake, "Lightning Bolt"), live_quantity(fake, "Arcane Signet")) == (1, 1)
     assert saved.applied == ("Lightning Bolt", "Arcane Signet")
 
@@ -209,15 +207,50 @@ def test_saving_cards_all_already_in_the_live_deck_marks_them_applied_without_wr
     assert "Lightning Bolt" in {c.name for c in local.cards}
 
 
-def test_turned_down_maybeboard_cards_alone_still_make_a_save(
-    service: BoardService, stored: StoredDeck, preview: Callable[..., ApplyOutcome]
-) -> None:
-    import_aside(service, stored.deck, read_board(stored.folder))
-    service.decide("Tempestra, Dame of Games", Status.REJECTED, Actor.YOU)
+def live_categories(fake: FakeArchidekt) -> dict[str, list[str]]:
+    return {c["card"]["oracleCard"]["name"]: c["categories"] for c in fake.decks[DECK_ID]["cards"]}
 
-    assert [(c.kind.value, c.name) for c in preview().resolution.changes] == [
-        ("off the maybeboard", "Tempestra, Dame of Games")
+
+def test_a_cut_removes_the_card_and_adds_nothing_to_the_maybeboard(
+    fake: FakeArchidekt, service: BoardService, commit: Callable[[], BoardSave]
+) -> None:
+    queue(service, "Lightning Bolt", cut="Battered Golem")
+    golem = live_entry(fake, "Battered Golem")
+    assert golem is not None
+
+    commit()
+
+    cut = [e for e in fake.card_writes() if e.get("deckRelationId") == golem["id"]]
+    assert [e["action"] for e in cut] == ["remove"]
+    assert "Battered Golem" not in live_categories(fake)
+
+
+def test_a_save_clears_the_maybeboard_and_the_sideboard_too(
+    fake: FakeArchidekt, service: BoardService, commit: Callable[[], BoardSave]
+) -> None:
+    put_on_sideboard(fake.decks[DECK_ID], 7_000_000_001, "Chaos Warp")
+    queue(service, "Lightning Bolt", cut="Battered Golem")
+
+    commit()
+
+    assert sorted(live_categories(fake)) == [
+        "Disruptor Flute",
+        "Lightning Bolt",
+        "Magda, Brazen Outlaw",
+        "Mountain",
     ]
+
+
+def test_a_save_that_writes_nothing_clears_nothing(
+    fake: FakeArchidekt, service: BoardService, commit: Callable[[], BoardSave]
+) -> None:
+    queue(service, "Lightning Bolt", cut="Battered Golem")
+    fake.decks[DECK_ID]["cards"].append(card_entry(7_000_000_001, "Lightning Bolt", ["Burn"]))
+
+    commit()
+
+    assert fake.writes == []
+    assert {"High-Speed Hoverbike", "Tempestra, Dame of Games"} <= set(live_categories(fake))
 
 
 def test_an_empty_board_is_still_an_error_to_preview_or_save(
@@ -270,9 +303,7 @@ def test_a_swap_whose_cut_did_not_land_stays_queued(
     saved = commit()
 
     assert saved.result is not None
-    assert saved.result.mismatches == (
-        "Battered Golem: expected it in Maybeboard, Archidekt shows Combo Pieces",
-    )
+    assert saved.result.mismatches == ("Battered Golem: expected 0, Archidekt shows 1",)
     assert saved.applied == ("Arcane Signet",)
     board = read_board(stored.folder)
     statuses = {c.name: c.status for c in board.cards}

@@ -32,9 +32,6 @@ def home(tmp_path: Path, card_db_file: Path, fake: FakeArchidekt) -> Path:
         == 0
     )
     fake.requests.clear()
-    # Start from an empty board: the sync put the fixture's two Maybeboard cards on it.
-    for name in ("board.json", "activity.jsonl"):
-        (tmp_path / "decks" / "10004639-honestly-though" / name).unlink()
     return tmp_path
 
 
@@ -176,10 +173,7 @@ def test_plan_prints_the_queued_cards_for_apply(home: Path, fake: FakeArchidekt)
     board(home, fake, "add", "magda", "Arcane Signet", "--replace", "Disruptor Flute")
     board(home, fake, "decide", "magda", "Arcane Signet", "add", "--cut", "Disruptor Flute")
     result = board(home, fake, "plan", "magda")
-    assert result.out == (
-        'deck = "10004639"\nadd = ["Arcane Signet"]\n'
-        'remove = [{name = "Disruptor Flute", maybeboard = true}]\n'
-    )
+    assert result.out == ('deck = "10004639"\nadd = ["Arcane Signet"]\nremove = ["Disruptor Flute"]\n')
 
 
 def test_plan_leaves_out_cards_the_deck_on_archidekt_already_holds(home: Path, fake: FakeArchidekt) -> None:
@@ -211,29 +205,28 @@ def test_commit_previews_then_saves_and_marks_the_cards_applied(
 
     preview = board(home, fake, "commit", "magda")
     assert preview.code == 0, preview.err
-    assert "  - Disruptor Flute to the Maybeboard\n" in preview.out
+    assert "  - Disruptor Flute\n" in preview.out
     assert "  + Arcane Signet (FRC 20, €0.30) in Artifact\n" in preview.out
+    assert (
+        "  Clears the Maybeboard: 2 cards\n    High-Speed Hoverbike, Tempestra, Dame of Games\n"
+        in preview.out
+    )
     assert "  bracket after these changes: 4+ (Ruthless)\n" in preview.out
     assert not fake.card_writes()
 
     saved = board(home, fake, "commit", "magda", "--save")
     assert saved.code == 0, saved.err
     assert f"saved 2 change(s); snapshot '{SNAPSHOT}' is on Archidekt\n" in saved.out
+    assert "  cleared the Maybeboard: 2 cards\n" in saved.out
     cards = {c["name"]: c for c in saved_deck(home / "decks")["cards"]}
-    assert "Arcane Signet" in cards
-    # The cut card waits on the Maybeboard, so the swap can be tried the other way round.
-    assert cards["Disruptor Flute"]["categories"] == ["Maybeboard", "Stax"]
+    # The cut card is gone, not moved to the Maybeboard, and the Maybeboard is empty.
+    assert sorted(cards) == ["Arcane Signet", "Battered Golem", "Magda, Brazen Outlaw", "Mountain"]
     after = read_board(folder(home))
-    signet, flute = after.find("Arcane Signet"), after.find("Disruptor Flute")
+    signet = after.find("Arcane Signet")
     assert signet is not None
-    assert flute is not None
     assert signet.status.value == "applied"
-    # The card swapped out comes back under considering, to weigh the swap the other way round.
-    assert (flute.status.value, flute.source.value) == ("open", "archidekt")
-    assert [e.action for e in read_activity(folder(home))][-2:] == [
-        "proposed (considering)",
-        "saved to Archidekt",
-    ]
+    assert after.find("Disruptor Flute") is None
+    assert [e.action for e in read_activity(folder(home))][-2:] == ["queued to add", "saved to Archidekt"]
     nothing = board(home, fake, "commit", "magda")
     assert (nothing.code, nothing.err) == (1, "cmdr: nothing is queued to add\n")
 

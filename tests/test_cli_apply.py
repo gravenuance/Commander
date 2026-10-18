@@ -29,6 +29,8 @@ Honestly, though.. ({DECK_ID}), bracket 5: {DECK_URL}
   - Disruptor Flute
   - Mountain: 6 -> 5 copies
   + Arcane Signet (FRC 20, €0.30) in Artifact
+  Clears the Maybeboard: 2 cards
+    High-Speed Hoverbike, Tempestra, Dame of Games
   warning: the deck will have 8 cards, not 100
 """
 
@@ -210,6 +212,7 @@ def test_apply_save_changes_the_deck_and_the_local_copy_and_is_safe_to_repeat(
     assert result.out == (
         PREVIEW
         + f"saved 3 change(s); snapshot '{SNAPSHOT}' is on Archidekt\n"
+        + "  cleared the Maybeboard: 2 cards\n"
         + f"local copy updated: {decks / '10004639-honestly-though'}\n"
     )
     assert [(m, p) for m, p, _, _ in archidekt.writes] == [
@@ -221,11 +224,15 @@ def test_apply_save_changes_the_deck_and_the_local_copy_and_is_safe_to_repeat(
         ("remove", 1),
         ("modify", 5),
         ("add", 1),
+        ("remove", 1),
+        ("remove", 1),
     ]
     names = {c["name"]: c["quantity"] for c in saved_deck(decks)["cards"]}
     assert names["Mountain"] == 5
     assert "Arcane Signet" in names
     assert "Disruptor Flute" not in names
+    assert "High-Speed Hoverbike" not in names
+    assert "Tempestra, Dame of Games" not in names
 
     again = apply(home, archidekt, decks, "--save")
 
@@ -311,7 +318,7 @@ def test_apply_json(home: Path, archidekt: FakeArchidekt, decks: Path) -> None:
 @pytest.mark.parametrize(
     ("plan", "message"),
     [
-        ('deck = "magda"\n', "nothing to add, remove or drop"),
+        ('deck = "magda"\n', "nothing to add or remove"),
         ('deck = "nomatch"\nadd = ["Sol Ring"]\n', "no deck matches 'nomatch'"),
         ("deck = ", "cannot read plan"),
     ],

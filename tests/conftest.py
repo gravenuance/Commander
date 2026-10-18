@@ -54,6 +54,14 @@ def card_entry(
     }
 
 
+def put_on_sideboard(raw: Json, entry_id: int, name: str) -> None:
+    """Add a card to the deck's Sideboard, un-ticking its category (the fixture counts it in the deck)."""
+    for category in raw["categories"]:
+        if category["name"] == "Sideboard":
+            category["includedInDeck"] = False
+    raw["cards"].append(card_entry(entry_id, name, ["Sideboard"]))
+
+
 def deck_page(decks: list[Json], next_url: str | None = None) -> Json:
     return {"count": len(decks), "next": next_url, "results": decks}
 

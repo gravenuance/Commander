@@ -89,8 +89,6 @@ def home(tmp_path: Path, card_db_file: Path, fake: FakeArchidekt, raw_deck: Json
     peer["id"] = PEER_ID
     peer["owner"] = {"id": 5, "username": "someone"}
     fake.put(peer)
-    for name in ("board.json", "activity.jsonl"):
-        (tmp_path / "decks" / FOLDER / name).unlink()
     fake.requests.clear()
     return tmp_path
 
