@@ -53,6 +53,21 @@ How a card qualifies and where it ranks:
   bracket 5, the deck's budget. An idea with no deck card to replace is put on the board all the same and
   shows under *No cut yet* in the app.
 
+Re-judging, in `ideas.rejudge_ideas`, before each sync compiles a deck's new ideas:
+
+- Every open board card whose source is `cmdr`, or `archidekt` (the old Maybeboard pick-up, ADR 0035), is
+  tested again. A card by `you` or `claude`, and any card queued, applied or turned down, is never touched.
+- **meta and archidekt decks:** a card whose origin is `meta` or `archidekt decks`, and an `archidekt` card
+  with no origin, must still pass `ShareTable.is_idea`, the test new ideas pass. A meta idea is judged only
+  when the EDHTop16 lists were read in this sync, a decks idea only when the Archidekt decks were, and nothing
+  when no list was read at all (a failed source must not lower the shares and turn cards down).
+- **adjacent and tagged decks:** the card must still be played by at least half of its pool of at least three
+  decks. An alike idea is judged only when every commander group's decks were read, a tagged idea only when
+  its own tag's pool was read; otherwise it is left alone.
+- A card that fails is turned down as `cmdr` with the reason "no longer makes the cut", remembering its
+  weighted share now (0 for a card no list plays), so it comes back only if the share rises 20 points
+  (ADR 0026). The turn-down checks under the board lock that the card is still open.
+
 Tag search, in `commander.metadata`:
 
 - Only theme tags count: deck tags that became a theme (ADR 0009), not play styles, roles or card types, and
@@ -79,7 +94,7 @@ ideas).
 ## Tag search is opt-in per deck
 
 The tagged source is off unless the deck's profile sets `[ideas] tag_search = true`, the Settings switch
-"Search decks by tag" in the app; a missing key means off. While it is off, `compile_ideas_with_adjacent`
+"Search decks by tag" in the app; a missing key means off. While it is off, `gather_idea_pools`
 passes no tags to `gather_adjacent`, so no tag request goes out, whether from `sync`, `meta --to-board` or
 the app. Alike-commander search is unchanged: it runs for the commanders the profile lists. Tagged ideas
 already on a board stay; turning the search off never removes them.

@@ -350,11 +350,11 @@ uv run cmdr board commit ellivere --save   # make them
 Saving a board works like `apply --save`, with a snapshot first. A card you cut is removed from the deck;
 if it passes the idea test on a later `sync` it shows up in Considering again like any other idea.
 A cut the deck runs several copies of, such as a basic land, loses one copy instead.
-A save also empties the deck's Sideboard and Maybeboard on Archidekt (those outside the deck): the Review
-dialog and `board commit` list them first ("Clears the Maybeboard: 7 cards"), and `sync` never touches them
-([ADR 0035](docs/adr/0035-retire-the-maybeboard-and-sideboard.md)). `sync` no longer reads those lists; an
-idea an earlier version took from them is turned down on a sync when it no longer passes the idea test below
-("no longer makes the cut"). `suggest --to-board` and `meta --to-board` put their ideas on the board,
+A save leaves the deck's Sideboard and Maybeboard on Archidekt as they are, and so does `sync`, which no
+longer reads them ([ADR 0035](docs/adr/0035-retire-the-maybeboard-and-sideboard.md)). Each `sync` tests the
+open ideas `cmdr` compiled earlier again, and those taken from the Maybeboard by an earlier version too; one
+that no longer passes the idea test below is turned down ("no longer makes the cut") and comes back only if
+its share rises 20 points. `suggest --to-board` and `meta --to-board` put their ideas on the board,
 and a card turned down there is not suggested again by `suggest`.
 
 Each `sync` also compiles ideas from other players into Considering
@@ -525,8 +525,7 @@ A plan says how the deck should end up. `add` means the deck ends with at least 
 (`quantity`, default 1); `remove` means it ends with none, or with `keep` copies. Lines the deck already meets are skipped, so running a plan twice is safe. A new card
 gets its cheapest EUR printing, leaving out gold-bordered and other non-tournament printings, unless `set`
 names one; it goes under its card type (Land, Creature, Instant and so on) unless `category` names another.
-Saving a plan that changes the deck also removes every card on the deck's Sideboard and Maybeboard (outside
-the deck), and the preview says so ("Clears the Maybeboard: 7 cards"). The old `maybeboard = true` and
+Saving a plan leaves the deck's Sideboard and Maybeboard alone. The old `maybeboard = true` and
 `drop` keys are gone; a plan that still has them is refused.
 
 Whether an added card counts in the deck follows the category's "in deck" setting on Archidekt,

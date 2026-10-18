@@ -38,13 +38,15 @@
 ### Changed
 - The Sideboard and Maybeboard are retired as a second home for ideas (ADR 0035). `sync` no longer puts their
   cards on a board and writes nothing to them; a cut removes the card from the deck instead of moving it to
-  the Maybeboard; the user's next save of a deck (Review, `board commit --save`, `apply --save`) also removes
-  every card outside the deck on that deck's Sideboard and Maybeboard, and the preview lists them first
-  ("Clears the Maybeboard: 7 cards"). A cut card returns as an idea like any card not in the deck, an applied
+  the Maybeboard. A save (Review, `board commit --save`, `apply --save`) leaves the cards on the deck's
+  Sideboard and Maybeboard alone. A cut card returns as an idea like any card not in the deck, an applied
   board card the deck no longer holds included.
-- On a sync, open board ideas that an earlier version took from the Maybeboard or Sideboard are tested like
-  the other ideas; those that fail are turned down as "no longer makes the cut" (activity line by `cmdr`), and
-  the rest stay. Nothing is judged when no list was read. Queued, applied and other sources' cards are not touched.
+- On every sync, the open ideas `cmdr` compiled earlier (from the meta, the commander's Archidekt decks, alike
+  commanders or tagged decks), and the open cards an earlier version took from the Maybeboard, are tested
+  again like new ideas (ADR 0028). Those that fail are turned down as "no longer makes the cut" (activity
+  line by `cmdr`) and return only if their share rises 20 points; the rest stay. An alike or tagged idea is
+  judged by its pool only when that pool was read in the sync. Nothing is judged without share data, and
+  cards by you or Claude and queued, applied or turned-down cards are not touched.
 - A Considering card shows its combined share as a pill coloured by the source the idea is credited to
   (tournament lists, the commander's Archidekt decks, alike commanders, tagged decks), in place of the source
   badge and the plain count. Clicking the pill opens a breakdown: the combined share with its count, then each
