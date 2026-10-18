@@ -92,8 +92,8 @@ def _cmd_meta(args: argparse.Namespace, ctx: Context) -> int:
         for deck in stored:
             if deck.deck.bracket != CEDH_BRACKET:
                 print(
-                    f"cmdr: {deck.deck.short_name} is not bracket 5; "
-                    "only its commander's lists and Archidekt decks are read",
+                    f"cmdr: {deck.deck.short_name} is bracket {deck.deck.bracket}; "
+                    "the EDHTop16 lists in this report are cEDH",
                     file=ctx.err,
                 )
             data = gather(
