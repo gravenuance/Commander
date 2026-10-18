@@ -771,6 +771,7 @@ class Desk:
         view["saved"] = result is not None
         view["snapshot"] = result.snapshot if result else None
         view["mismatches"] = list(result.mismatches) if result else []
+        view["warnings"] = list(result.warnings) if result else []
         view["applied"] = list(saved.applied)
         return view
 

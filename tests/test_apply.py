@@ -535,6 +535,7 @@ def test_a_failed_label_read_is_tried_once_more_after_a_wait_and_the_accounts_co
     }
     assert (label_reads(fake), label_waits) == (MAX_ATTEMPTS + 1, [2.5])
     assert not any("default colours" in line for line in progress)
+    assert result.warnings == ()
 
 
 def test_a_save_whose_label_read_fails_twice_labels_incoming_cards_in_the_default_colour(
@@ -555,6 +556,9 @@ def test_a_save_whose_label_read_fails_twice_labels_incoming_cards_in_the_defaul
         "Don't Have,#f47373"
     }
     assert any("labels" in line and "default colours" in line for line in progress)
+    [warning] = result.warnings
+    assert warning.startswith("could not read your card labels (")
+    assert warning.endswith("); labelling in Archidekt's default colours")
 
 
 def test_a_save_stops_before_any_write_when_the_label_read_is_refused(

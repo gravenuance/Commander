@@ -12,6 +12,7 @@ from typing import cast
 
 import pytest
 
+from commander import apply as apply_module
 from commander import desk as desk_module
 from commander import syncrun
 from commander.app import desk_settings, page_html
@@ -629,6 +630,30 @@ def test_an_idea_card_without_stored_pool_numbers_sends_no_pool_whatever_its_rea
     cards = {c["name"]: c for c in items(desk.deck(DECK), "cards")}
     assert cards["Arcane Signet"]["pool"] is None
     assert cards["Ancient Tomb"]["pool"] == {"count": 1, "total": 3, "share": 0.3333}
+
+
+def test_a_commit_whose_label_read_failed_says_so_in_its_answer(
+    desk: Desk, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    waits: list[float] = []
+    monkeypatch.setattr(apply_module.time, "sleep", waits.append)
+    fake.labels_status = 500
+    desk.propose(DECK, "Arcane Signet")
+    desk.decide(DECK, first_card_id(desk), "add", "Disruptor Flute", "")
+
+    saved = desk.commit(DECK, reviewed(desk))
+
+    assert saved["saved"] is True
+    [warning] = names(saved, "warnings")
+    assert warning.startswith("could not read your card labels (")
+    assert warning.endswith("labelling in Archidekt's default colours")
+
+
+def test_a_commit_that_read_the_labels_has_no_warnings(desk: Desk) -> None:
+    desk.propose(DECK, "Arcane Signet")
+    desk.decide(DECK, first_card_id(desk), "add", "Disruptor Flute", "")
+
+    assert desk.commit(DECK, reviewed(desk))["warnings"] == []
 
 
 def test_preview_and_commit_save_the_queued_cards(desk: Desk, fake: FakeArchidekt) -> None:

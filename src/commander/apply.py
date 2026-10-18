@@ -268,6 +268,7 @@ class SaveResult:
     deck: Deck
     snapshot: str
     mismatches: tuple[str, ...]
+    warnings: tuple[str, ...] = ()
 
 
 def save(
@@ -296,7 +297,8 @@ def save(
                     " Nothing was changed"
                 )
             card_ids[change.scryfall_id] = card_id
-    dont_have = label_value(DONT_HAVE_LABEL, _account_colours(editor, on_progress))
+    colours, warnings = _account_colours(editor, on_progress)
+    dont_have = label_value(DONT_HAVE_LABEL, colours)
     edits = card_edits(resolution.changes, live.entries, card_ids, dont_have)
     # Seconds keep two saves in one minute apart; Archidekt accepts snapshots with equal names.
     snapshot = f"before cmdr apply {now().strftime('%Y-%m-%d %H:%M:%S')} UTC"
@@ -318,26 +320,29 @@ def save(
             f"Archidekt accepted the changes, but reading the deck back failed ({error}); "
             "the local copy may be behind"
         ) from error
-    return SaveResult(after, snapshot, tuple(verify(resolution.changes, deck, after)))
+    return SaveResult(after, snapshot, tuple(verify(resolution.changes, deck, after)), warnings)
 
 
-def _account_colours(editor: ArchidektEditor, on_progress: Callable[[str], None]) -> dict[str, str]:
-    """The account's label colours, which Don't Have goes on in (ADR 0012). A failed read is tried once more
-    after a wait, then falls back to Archidekt's default colours; a refused login still stops the save, as
-    its writes would be refused."""
+def _account_colours(
+    editor: ArchidektEditor, on_progress: Callable[[str], None]
+) -> tuple[dict[str, str], tuple[str, ...]]:
+    """The account's label colours, which Don't Have goes on in (ADR 0012), with a warning when they could
+    not be read. A failed read is tried once more after a wait, then falls back to Archidekt's default
+    colours; a refused login still stops the save, as its writes would be refused."""
     try:
-        return dict(editor.account_labels())
+        return dict(editor.account_labels()), ()
     except (NetworkError, ArchidektError) as error:
         log.info(
             "could not read the account's card labels, trying again in %.0fs: %s", LABEL_RETRY_SECONDS, error
         )
     time.sleep(LABEL_RETRY_SECONDS)
     try:
-        return dict(editor.account_labels())
+        return dict(editor.account_labels()), ()
     except (NetworkError, ArchidektError) as error:
         log.warning("could not read the account's card labels: %s", error)
-        on_progress(f"could not read your card labels ({error}); labelling in Archidekt's default colours")
-        return {}
+        warning = f"could not read your card labels ({error}); labelling in Archidekt's default colours"
+        on_progress(warning)
+        return {}, (warning,)
 
 
 def card_edits(

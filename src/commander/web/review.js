@@ -99,7 +99,10 @@ async function saveChanges() {
     $("review-dialog").close();
     const count = result.changes.length;
     const saved = `Saved ${count} change${count === 1 ? "" : "s"} to Archidekt`;
-    if (result.mismatches.length) showStatus(`${saved}, but Archidekt differs: ${result.mismatches.join("; ")}`, true);
+    // A warning (the label read fell back) stays on screen like a difference does.
+    const problems = [...result.warnings];
+    if (result.mismatches.length) problems.unshift(`Archidekt differs: ${result.mismatches.join("; ")}`);
+    if (problems.length) showStatus(`${saved}, but ${problems.join("; ")}`, true);
     else showStatus(`${saved}. Restore point in Activity.`, false, SAVED_MS);
     await refresh();
   } catch (error) {
