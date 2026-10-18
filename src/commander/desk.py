@@ -58,10 +58,11 @@ from commander.deckprofile import MAX_ADJACENT, Profile, read_profile
 from commander.deckthemes import merge_themes
 from commander.edhtop16 import Edhtop16Error
 from commander.labels import LabelError, label_options, set_label
+from commander.landswap import comparison_lists
 from commander.leanings import leaning_json
 from commander.manabase import ALTERNATIVE_COST_TAGS, analyse_mana, mana_json
 from commander.manaplan import BASIC_NAMES, LandOption, ManaPlan, plan_json, suggest_mana
-from commander.meta import analyse, performing_entries
+from commander.meta import analyse
 from commander.metadata import (
     CEDH_BRACKET,
     MetaData,
@@ -561,7 +562,7 @@ class Desk:
     def _mana(self, deck_id: int) -> tuple[Json, ManaPlan | None]:
         stored = self._stored(deck_id)
         deck = stored.deck
-        label, lists = self._mana_lists(deck)
+        label, lists = comparison_lists(deck, self._pool(deck))
         cedh = deck.bracket == CEDH_BRACKET
         with self._db() as db:
             names = {card.name for card in deck.main_cards} | {name for listed in lists for name in listed}
@@ -585,25 +586,6 @@ class Desk:
             deck, cards, report, alternative_cost=alternative, options=options, budget_cents=budget
         )
         return view, plan
-
-    def _mana_lists(self, deck: Deck) -> tuple[str, list[dict[str, int]]]:
-        """Bracket 5: the commander's top-cut tournament lists; else its recent Archidekt decks (ADR 0019)."""
-        data = self._pool(deck)
-        if data is None:
-            return "", []
-        if deck.bracket == CEDH_BRACKET:
-            return "top-cut lists", [
-                {c.name: c.count for c in entry.cards} for entry in performing_entries(data)
-            ]
-        lists: list[dict[str, int]] = []
-        for peer in data.peers.data.decks if data.peers.data else ():
-            # Peer caches from before ADR 0019 don't say how many of each basic land a deck runs.
-            if peer.multiples is None:
-                continue
-            counts = dict.fromkeys(peer.cards, 1)
-            counts.update(peer.multiples)
-            lists.append(counts)
-        return "recent decks", lists
 
     @_guarded
     def bracket(self, deck_id: int) -> Json:
