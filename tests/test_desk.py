@@ -505,6 +505,20 @@ def _mana_to_board(desk: Desk) -> Json:
     return desk.mana_to_board(DECK)
 
 
+def deferred_desk(settings: DeskSettings, fake: FakeArchidekt) -> tuple[Desk, list[Callable[[], None]]]:
+    """A desk whose sync waits in the returned list, as if still running until the test runs it."""
+    pending: list[Callable[[], None]] = []
+    desk = Desk(
+        settings,
+        client_factory=fake.client,
+        token_store=MemoryTokenStore({"makkis": REFRESH_TOKEN}),
+        now=lambda: NOW,
+        pacer_factory=lambda _: Pacer(0),
+        background=pending.append,
+    )
+    return desk, pending
+
+
 @pytest.mark.parametrize(
     ("call", "then"),
     [
@@ -516,20 +530,88 @@ def _mana_to_board(desk: Desk) -> Json:
 def test_nothing_changes_the_deck_or_board_while_an_update_runs(
     settings: DeskSettings, fake: FakeArchidekt, call: Callable[[Desk], Json], then: str
 ) -> None:
-    pending: list[Callable[[], None]] = []
-    desk = Desk(
-        settings,
-        client_factory=fake.client,
-        token_store=MemoryTokenStore({"makkis": REFRESH_TOKEN}),
-        now=lambda: NOW,
-        pacer_factory=lambda _: Pacer(0),
-        background=pending.append,
-    )
+    desk, pending = deferred_desk(settings, fake)
     desk.sync()
     assert len(pending) == 1
     assert call(desk) == {"error": f"Wait for the sync to finish, then {then}."}
     assert not fake.card_writes()
     assert not (settings.workspace / "10004639-honestly-though" / "board.json").exists()
+
+
+def probing[**P, R](real: Callable[P, R], probe: Callable[[], None]) -> Callable[P, R]:
+    """`real`, run after `probe` has run at the point a write is under way."""
+
+    def call(*args: P.args, **kwargs: P.kwargs) -> R:
+        probe()
+        return real(*args, **kwargs)
+
+    return call
+
+
+SYNC_REFUSAL = {"error": "Wait for the save to finish, then sync."}
+
+
+def queued_save(desk: Desk) -> str:
+    desk.propose(DECK, "Arcane Signet")
+    desk.decide(DECK, first_card_id(desk), "add", None, "")
+    return reviewed(desk)
+
+
+def test_a_sync_asked_for_during_a_save_is_refused_and_works_once_the_save_ends(
+    settings: DeskSettings, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    desk, pending = deferred_desk(settings, fake)
+    stamp = queued_save(desk)
+    during: list[Json] = []
+    monkeypatch.setattr(
+        desk_module, "save_board", probing(desk_module.save_board, lambda: during.append(desk.sync()))
+    )
+    assert desk.commit(DECK, stamp)["saved"] is True
+    assert during == [SYNC_REFUSAL]
+    assert pending == []
+    assert desk.sync()["running"] is True
+    assert len(pending) == 1
+
+
+def test_a_save_that_fails_still_lets_the_next_sync_start(
+    settings: DeskSettings, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    desk, pending = deferred_desk(settings, fake)
+    stamp = queued_save(desk)
+
+    def broken() -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(desk_module, "save_board", probing(desk_module.save_board, broken))
+    assert desk.commit(DECK, stamp) == {"error": "Something went wrong; the details are in the log."}
+    assert desk.sync()["running"] is True
+    assert len(pending) == 1
+
+
+def test_a_sync_asked_for_during_a_label_change_is_refused(
+    settings: DeskSettings, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    desk, pending = deferred_desk(settings, fake)
+    during: list[Json] = []
+    monkeypatch.setattr(
+        desk_module, "set_label", probing(desk_module.set_label, lambda: during.append(desk.sync()))
+    )
+    _set_label(desk)
+    assert during == [{"error": "Wait for the label change to finish, then sync."}]
+    assert pending == []
+
+
+def test_a_sync_asked_for_while_the_swaps_are_added_is_refused(
+    settings: DeskSettings, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    desk, pending = deferred_desk(settings, fake)
+    during: list[Json] = []
+    monkeypatch.setattr(
+        desk_module, "mana_json", probing(desk_module.mana_json, lambda: during.append(desk.sync()))
+    )
+    _mana_to_board(desk)
+    assert during == [{"error": "Wait for the swaps to finish, then sync."}]
+    assert pending == []
 
 
 def test_commit_refuses_a_board_that_changed_since_the_preview(desk: Desk, fake: FakeArchidekt) -> None:

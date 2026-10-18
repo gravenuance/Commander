@@ -2,11 +2,13 @@
 
 import logging
 import shutil
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from commander import desk as desk_module
 from commander.carddb import CARD_DB_FILE
 from commander.config import read_config
 from commander.desk import Desk, DeskSettings, sync_summary
@@ -14,7 +16,7 @@ from commander.net import Pacer
 from commander.sync import SyncResult, SyncStatus
 from commander.syncrun import CardState, CardStatus, SyncOutcome
 from conftest import PASSWORD, REFRESH_TOKEN, FakeArchidekt, Json, MemoryTokenStore
-from test_desk import NOW
+from test_desk import NOW, probing
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -138,6 +140,28 @@ def test_no_second_sync_and_no_account_change_while_one_runs(env: Env) -> None:
     assert desk.sign_out() == {"error": "Wait for the sync to finish, then sign out."}
     env.pending.pop()()
     assert sync_of(desk.account())["running"] is False
+
+
+def test_a_sync_asked_for_while_signing_in_or_out_is_refused_and_the_first_sign_in_still_syncs(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env.settings = replace(env.settings, user="MAKKIS")
+    desk = env.desk(inline=False)
+    during: list[Json] = []
+    monkeypatch.setattr(
+        desk_module, "switch_account", probing(desk_module.switch_account, lambda: during.append(desk.sync()))
+    )
+    monkeypatch.setattr(
+        desk_module, "forget_account", probing(desk_module.forget_account, lambda: during.append(desk.sync()))
+    )
+    assert sync_of(desk.sign_in("MAKKIS", PASSWORD))["running"] is True
+    env.pending.pop()()
+    desk.sign_out()
+    assert during == [
+        {"error": "Wait for the sign-in to finish, then sync."},
+        {"error": "Wait for the sign-out to finish, then sync."},
+    ]
+    assert env.pending == []
 
 
 def _outcome(statuses: list[SyncStatus], cards: CardStatus) -> SyncOutcome:

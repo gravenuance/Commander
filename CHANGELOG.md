@@ -7,6 +7,11 @@
   on, and an open Meta panel shows it is updating and rereads its report when the sync ends. Without an
   account the button stays visible, off, with "Sign in to sync" beside it.
 
+### Fixed
+- The app's Sync refuses while a save, a label change, the swaps or a sign-in or sign-out is running ("Wait for the
+  save to finish, then sync."), as those already refuse while a sync runs, so the two can no longer touch the same
+  deck files at once.
+
 ### Removed
 - The Meta panel's **Refresh meta** button: Sync refreshes the meta answers, as `cmdr sync` does.
 
