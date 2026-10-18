@@ -8,12 +8,13 @@ from typing import Any
 import pytest
 
 from commander.archidekt import PeerDeck
-from commander.carddb import CardDb, ResolvedCard
+from commander.carddb import CardDb, ResolvedCard, Role
 from commander.deckcache import Answer, AnswerSource
 from commander.deckprofile import Profile, ThemeSpec
 from commander.leanings import Leaning, find_leanings
 from commander.metadata import MetaData, PeerList, PeerLists
 from commander.models import Deck, DeckCard
+from commander.peercounts import RoleBand
 from commander.targets import deck_cut_rules, role_targets, with_ideas
 from conftest import ANCIENT_TOMB, build_card_db
 
@@ -145,6 +146,20 @@ def test_cards_in_a_leaning_are_cut_only_for_ideas_in_it_and_lands_never_join_it
     )
     tomb = db.cards_named(["Ancient Tomb"])["ancient tomb"]
     assert "extra-combat" not in with_ideas(rules, [tomb], db).themes.get(tomb.oracle_id, frozenset())
+
+
+def test_the_rules_hold_the_peer_decks_role_and_theme_counts_only_with_enough_decks(db: CardDb) -> None:
+    cards = deck_cards(1, 2, 3, 4, 50, 51)
+    deck = Deck(1, "test", "me", 3, "2026-10-16", tuple(cards))
+    main = resolved(db, cards)
+    counts = deck_cut_rules(deck, main, Profile(), db, pool(50, 51), now=lambda: NOW).peers
+    assert counts is not None
+    # Every peer deck plays Ancient Tomb, the only ramp card, and none of the leaning's nonland cards.
+    assert counts.roles[Role.RAMP] == RoleBand(1.0, 1.0)
+    assert counts.themes == {"extra-combat": 0.0}
+    few = deck_cut_rules(deck, main, Profile(), db, pool_of(peers(2, 50)), now=lambda: NOW)
+    assert few.peers is None
+    assert deck_cut_rules(deck, main, Profile(), db, None, now=lambda: NOW).peers is None
 
 
 def test_the_profiles_themes_are_named_by_their_words(db: CardDb) -> None:
