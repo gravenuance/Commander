@@ -321,9 +321,17 @@ def pool_staple_keys(pool: Sequence[PeerList]) -> frozenset[str] | None:
 def all_staples(
     deck: Deck, data: MetaData, db: CardDb, *, is_staple: Callable[[str], bool] | None = None
 ) -> Staples:
-    """The staples the deck misses, uncapped: what the commander's lists or recent Archidekt decks play."""
-    lists = _window(data.lists.data.entries if data.lists.data else (), data.since)
-    performing, basis = performing_lists(lists)
+    """The staples the deck misses, uncapped: what the commander's lists or recent Archidekt decks play.
+
+    A caller that judges with is_staple judges over every list read (ADR 0026), so the lists are all the
+    window's lists then, not just the top cuts."""
+    if is_staple is None:
+        performing, basis = performing_lists(
+            _window(data.lists.data.entries if data.lists.data else (), data.since)
+        )
+    else:
+        performing = listed_entries(data)
+        basis = Basis.TOP_CUT if performing and all(e.made_top_cut for e in performing) else Basis.ALL
     peers = data.peers.data.decks if data.peers.data else ()
     names = _display_names(performing, peers, deck)
     rows = missing_staples(

@@ -909,3 +909,20 @@ def test_a_turned_down_compiled_idea_comes_back_once_its_share_rises_20_points(
     assert card_state(tmp_path, jeska)[0] is Status.REJECTED
     compile_ideas(stored, meta_data(same_weight_lists("Jeska's Will", 8)), db, now=lambda: NOW)
     assert card_state(tmp_path, jeska)[0] is Status.OPEN
+
+
+def test_a_card_only_lower_lists_play_is_an_idea_with_the_counts_of_every_list_read(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    # Two top-cut lists lack Mind Stone, 24 lower ones play it: the idea test counts every list (ADR 0026).
+    top = [entry(i, 40, 8, [("Jeska's Will", 0)]) for i in (1, 2)]
+    lower = [entry(10 + i, 40, 8, [("Mind Stone", 0)]) for i in range(24)]
+    data = meta_data([*top, *lower])
+    reason = "in 24 of 26 Magda lists on EDHTop16 since 2026-08-16"
+
+    [stone] = compile_ideas(StoredDeck(tmp_path, deck), data, db, now=lambda: NOW)[Origin.META]
+
+    assert (stone.name, stone.reason) == ("Mind Stone", reason)
+    (tmp_path / "old").mkdir()
+    labels = labels_of(tmp_path / "old", deck, db, data, ("Mind Stone", Actor.ARCHIDEKT, None))
+    assert labels == {"Mind Stone": Relabel(Origin.META, reason)}

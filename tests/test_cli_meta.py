@@ -219,8 +219,7 @@ def test_to_board_suggests_the_missing_staples_once(home: Path, fake: FakeArchid
     assert card is not None
     assert card.origin is Origin.META
     assert card.reason == (
-        "in 5 of 5 top-cut Magda lists on EDHTop16 since 2026-08-16;"
-        " in 0 of 1 most-viewed recent Archidekt decks"
+        "in 5 of 6 Magda lists on EDHTop16 since 2026-08-16; in 0 of 1 most-viewed recent Archidekt decks"
     )
     # Replacement targets come from the card's role in the app, not from one cut list for every idea.
     assert card.replace == ()

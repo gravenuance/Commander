@@ -279,7 +279,7 @@ def test_reconsidering_a_turned_down_maybeboard_card_relabels_it_from_the_cached
 
     stone = next(c for c in items(desk.deck(DECK), "cards") if c["id"] == card_id)
     assert (stone["status"], stone["source"], stone["origin"]) == ("open", "cmdr", "meta")
-    assert stone["reason"] == "in 5 of 5 top-cut Magda lists on EDHTop16 since 2026-08-16"
+    assert stone["reason"] == "in 5 of 6 Magda lists on EDHTop16 since 2026-08-16"
     # Newest first: the reopen stays on the activity line, by the user.
     latest = items(desk.deck(DECK), "activity")[0]
     assert (latest["action"], latest["actor"], latest["card"]) == ("reopened", "you", "Mind Stone")
