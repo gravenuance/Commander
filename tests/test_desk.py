@@ -125,6 +125,15 @@ def test_every_sync_button_has_a_note_that_says_why_it_is_off_and_the_meta_has_n
     assert "Update from Archidekt" not in html
 
 
+def test_the_review_dialog_has_an_alert_line_that_a_refusal_fills_as_text() -> None:
+    review = page_html().split('<dialog id="review-dialog"', 1)[1].split("</dialog>", 1)[0]
+    assert '<p id="review-error" class="field-error" role="alert" hidden></p>' in review
+    script = (WEB / "review.js").read_text(encoding="utf-8")
+    assert 'const problem = $("review-error");' in script
+    assert "problem.textContent = error instanceof Error ? error.message : String(error);" in script
+    assert "problem.hidden = false;" in script
+
+
 @pytest.mark.parametrize("script", sorted(WEB.glob("*.js")), ids=lambda path: path.name)
 def test_no_script_writes_markup(script: Path) -> None:
     text = script.read_text(encoding="utf-8")

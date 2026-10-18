@@ -22,6 +22,13 @@ function busy(text) {
   $("review-cancel").disabled = state.busy;
 }
 
+// The modal dialog covers the status line, so a refusal is repeated inside it.
+function showReviewError(error) {
+  const problem = $("review-error");
+  problem.textContent = error instanceof Error ? error.message : String(error);
+  problem.hidden = false;
+}
+
 function showResolution(result) {
   $("review-size").textContent = result.before === result.after
     ? `${result.after} cards in the deck`
@@ -59,6 +66,7 @@ async function openReview() {
   $("review-size").textContent = "";
   const save = $("review-save");
   save.textContent = "Save to Archidekt";
+  $("review-error").hidden = true;
   dialog.showModal();
   busy("Checking the deck on Archidekt…");
   try {
@@ -70,13 +78,15 @@ async function openReview() {
     save.textContent = `Save ${count} change${count === 1 ? "" : "s"} to Archidekt`;
     save.disabled = count === 0 || result.problems.length > 0;
     (save.disabled ? $("review-cancel") : save).focus();
-  } catch {
+  } catch (error) {
     busy("");
     save.disabled = true;
+    showReviewError(error);
   }
 }
 
 async function saveChanges() {
+  $("review-error").hidden = true;
   busy("Saving to Archidekt…");
   try {
     const result = await api("commit", state.current, $("review-save").dataset.stamp);
@@ -92,7 +102,8 @@ async function saveChanges() {
     if (result.mismatches.length) showStatus(`${saved}, but Archidekt differs: ${result.mismatches.join("; ")}`, true);
     else showStatus(`${saved}. Restore point in Activity.`, false, SAVED_MS);
     await refresh();
-  } catch {
+  } catch (error) {
     busy("");
+    showReviewError(error);
   }
 }
