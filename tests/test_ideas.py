@@ -146,9 +146,14 @@ def test_cards_the_profile_excludes_by_name_or_tag_are_no_ideas(
     by_name = compiled_names(
         tmp_path / "name", deck, db, 'version = 1\n[exclude]\ncards = ["Jeska\'s Will"]\n'
     )
-    assert by_name == {Origin.META: ["Mind Stone"], Origin.DECKS: ["Arcane Signet"], Origin.ADJACENT: []}
+    assert by_name == {
+        Origin.META: ["Mind Stone"],
+        Origin.DECKS: ["Arcane Signet"],
+        Origin.ADJACENT: [],
+        Origin.TAGGED: [],
+    }
     by_tag = compiled_names(tmp_path / "tag", deck, db, 'version = 1\n[exclude]\ntags = ["ramp"]\n')
-    assert by_tag == {Origin.META: [], Origin.DECKS: [], Origin.ADJACENT: []}
+    assert by_tag == {Origin.META: [], Origin.DECKS: [], Origin.ADJACENT: [], Origin.TAGGED: []}
 
 
 def test_ideas_over_the_profiles_ceiling_or_price_cap_are_left_out(
@@ -159,10 +164,15 @@ def test_ideas_over_the_profiles_ceiling_or_price_cap_are_left_out(
         tmp_path / "ceiling", replace(deck, bracket=2), db, "version = 1\nbracket_ceiling = 2\n"
     )
     # Below bracket 5 the deck's budget (ADR 0025) also leaves out Mind Stone, which has no price.
-    assert capped == {Origin.META: [], Origin.DECKS: ["Arcane Signet"], Origin.ADJACENT: []}
+    assert capped == {
+        Origin.META: [],
+        Origin.DECKS: ["Arcane Signet"],
+        Origin.ADJACENT: [],
+        Origin.TAGGED: [],
+    }
     # Jeska's Will costs EUR 33.80 and Mind Stone has no price; Arcane Signet costs EUR 0.30.
     cheap = compiled_names(tmp_path / "price", deck, db, "version = 1\nmax_card_eur = 1\n")
-    assert cheap == {Origin.META: [], Origin.DECKS: ["Arcane Signet"], Origin.ADJACENT: []}
+    assert cheap == {Origin.META: [], Origin.DECKS: ["Arcane Signet"], Origin.ADJACENT: [], Origin.TAGGED: []}
 
 
 ALIKE = (

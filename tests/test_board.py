@@ -441,7 +441,7 @@ def test_a_card_without_an_origin_tag_saves_none_and_a_board_from_before_it_read
     assert (card.origin, card.origin_tag) == (Origin.DECKS, None)
 
 
-def test_a_reopened_idea_takes_the_new_origin_and_tag(tmp_path: Path, service: BoardService) -> None:
+def test_a_reopened_idea_takes_the_new_origin_and_tag(service: BoardService) -> None:
     card = service.propose("Lightning Bolt", Actor.CMDR, origin=Origin.TAGGED, origin_tag="Landfall")
     service.decide(card.id, Status.REJECTED, Actor.YOU)
     assert service.propose("Lightning Bolt", Actor.CMDR).origin_tag == "Landfall"
