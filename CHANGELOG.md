@@ -2,18 +2,75 @@
 
 ## Unreleased
 
+### Added
+- One weighted share per card (ADR 0026): the share of the commander's EDHTop16 lists and recent Archidekt
+  decks that play it, each list weighing more the more recent and, for a tournament entry, the better placed
+  and the bigger the event. It shows as a pill on every grid card but the commander and on each Considering
+  card, with the raw count and each source's part in the tooltip. Cut targets, the order within Considering and
+  the return of turned-down cards use it.
+- Ideas from tagged decks (ADR 0028): each of a deck's theme tags is searched on Archidekt for recent decks of
+  other commanders, and the cards at least half of a tag's decks play become ideas, badged "Archidekt: tagged
+  *tag*". Considering also names the other sources by where they come from: "Tournament lists", "Archidekt:
+  *commander* decks" and "Archidekt: alike commanders".
+- Ideas with no deck card to replace are put on the board as well and listed under *No cut yet* in the app,
+  where clicking one offers every deck card but the commander.
+- Cuts of another role or theme (ADR 0029): when like for like leaves a slot free, a deck card of another role
+  or theme may be offered while the deck keeps what other players of the commander run (the 25th percentile
+  of each role, the median of each theme; an other-theme cut also needs the idea 20 points more played). The
+  reason says what allows it.
+- A swap that takes a land out or puts one in is offered only while the land count stays within one of
+  Karsten's or inside the other lists' range and every colour keeps the sources its spells need (ADR 0030).
+- Tempo, Midrange, Aggro and Combo deck tags weigh the meta's staples beside Turbo, Stax and Control, as
+  multipliers on the share (ADR 0031): 1.25 for a clear fit, 1.1 for a borderline one, 0.8 for off-plan.
+
 ### Changed
 - The app's **Update from Archidekt** button is **Sync**. While it runs it shows a spinner and the step it is
   on, and an open Meta panel shows it is updating and rereads its report when the sync ends. Without an
   account the button stays visible, off, with "Sign in to sync" beside it.
-
-### Fixed
-- The app's Sync refuses while a save, a label change, the swaps or a sign-in or sign-out is running ("Wait for the
-  save to finish, then sync."), as those already refuse while a sync runs, so the two can no longer touch the same
-  deck files at once.
+- Other players' Archidekt decks are read more widely and more carefully (ADR 0027). The search covers the
+  deck's own bracket and the one above, up to 20 pages, and keeps the decks with 1000 views, stepping down to
+  750, 500 and then every deck until ten pass. `peer_decks` is now the cap on decks read per commander:
+  default 60, 0 to 60 (was 10, 0 to 25). Searches and deck reads are five seconds apart (was two), and a 429
+  holds every request for three minutes or the `Retry-After`. Each deck read is cached until its owner edits
+  it, and a fetching run deletes cached decks unused for 30 days or last updated before the window.
+- Decks at bracket 4 read their commander's EDHTop16 lists too, and a report uses the top-cut lists whenever
+  one list made the cut (was five).
+- Ideas (ADR 0028): a card from the commander's lists or decks is an idea when the Wilson lower bound of its
+  weighted share reaches 0.32 (was 40% of the lists or half the decks), and each source adds up to 50,
+  taking its ideas by share times the play-style weight.
+- `cmdr meta --to-board` compiles the deck's ideas from all four sources as `sync` does, not the meta's
+  staples alone.
+- Play-style weights replace the three bands of ADR 0022: staples sort by share times weight, and the report
+  says "weighed for turbo" where it said "turbo plan first". Stax now favours removal and bounce, where it
+  favoured cheap interaction. A report with no top-cut list says "no top cuts" where it said "few".
+- A deck has one board list, **Considering**, in place of Considered and Suggested; `board.json` is version 2
+  and a version 1 file is copied to `board.v1.bak` before its first save.
+- A turned-down card returns once its weighted share has risen 20 points, at every bracket (was the share of
+  the top-cut lists at bracket 5 only).
+- Cut targets are ranked by the weighted share, then by EDHREC rank.
+- The Mana tab works out how often a check or reveal land enters tapped from the deck's own lands: the
+  chance that none of the nine cards seen by turn three has a basic land type the land asks for (ADR 0033).
+  Fast lands and Fabled Passage stay at a quarter. The mana plan counts a land as untapped when it enters
+  tapped a quarter of the time or less.
+- `cmdr profile` says whether a broad deck tag is a play style, a role or a card type ("a role, not a theme").
+- The account's labels are read once more after three seconds when a save cannot read them, then
+  Archidekt's default colours are used.
 
 ### Removed
 - The Meta panel's **Refresh meta** button: Sync refreshes the meta answers, as `cmdr sync` does.
+- `cmdr board add --suggested` and `board research --move`: there is one list.
+
+### Fixed
+- Fellwar Stone counts as half a source, as ADR 0019 says; the code gave it three quarters.
+- The app's Sync refuses while a save, a label change, the swaps or a sign-in or sign-out is running ("Wait for the
+  save to finish, then sync."), as those already refuse while a sync runs, so the two can no longer touch the same
+  deck files at once.
+- One malformed EDHTop16 entry, or a test event dated in the future, no longer fails a commander's whole read:
+  the entry is logged and skipped, and later-dated events are left out.
+- `cmdr board log --since` compares a UTC time like `2026-10-15T18:00` as the time it is, and refuses any other
+  format; it used to compare raw text.
+- The Meta panel counts a sweeper as reaching creatures only when it is a board wipe, as ADR 0020 says.
+- The sign-in password field is cleared however the call ends, not only when it returns.
 
 ## 0.5.0 - 2026-10-17
 

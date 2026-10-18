@@ -225,7 +225,7 @@ the unanswered combos stay gaps.
 When at least one list made the top cut, the report uses the top-cut lists; when none did, it reads every list
 in the window and says so. With fewer than ten lists it says the data is thin: read its shares as hints.
 Answers are read from Scryfall Tagger tags and rules text, so check them before acting on one.
-`--card <name>` shows how lists use one card, `--to-board` puts the missing staples on the deck's board, and
+`--card <name>` shows how lists use one card, `--to-board` compiles the deck's ideas onto its board as `sync` does, and
 the app's Meta panel shows the same report by meta card: under *What stops you*, each card the meta plays
 against your combos or key cards appears once, grouped as stax, removal or counters, with chips for what of
 yours it stops and the decks that play it ([ADR 0018](docs/adr/0018-meta-panel-by-meta-card.md)).
