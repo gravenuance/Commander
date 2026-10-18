@@ -42,8 +42,15 @@ Option 2 each time.
   next among those not yet done. Each deck is fetched once; decks that share a commander share the cached
   answers.
 - **What counts as an open:** the page's `open_deck` call, made when the user picks a deck, not when the page
-  reloads the deck after a save or a changed board. The deck the page opens by itself when it shows the
-  list is selected but adds no view.
+  reloads the deck after a save or a changed board. The page opens no deck by itself: after start, a
+  sign-in or an account switch the main area stays blank until the user picks one, so every open is a
+  choice. With no deck picked when Sync starts, the order is by score alone.
+- **Per-deck step:** while a sync runs, `sync_status` carries each deck's step in the ideas phase, which the
+  sync loop sets under the desk's lock: queued, fetching, done, or incomplete when its sources failed, a
+  warning was raised for it or no Archidekt decks could be read. The page paints an icon beside each deck
+  in place when the state changed (an ellipsis, a spinner, a check, a warning sign), each with a label and a
+  tooltip, so colour is not the only cue. Nothing is shown outside a sync, and the last sync's warnings stay
+  in the sync summary and the log; keeping icons after the sync would need a second state to expire.
 - The step text beside Sync keeps naming what is being fetched.
 
 ## Consequences

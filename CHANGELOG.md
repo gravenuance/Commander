@@ -26,9 +26,11 @@
 - Sync fetches ideas for the deck open in the app first, then for the rest by how often you open them (ADR 0034):
   each open adds 1 to the deck's score, which halves every 30 days and is kept in `views.json` in
   `%LOCALAPPDATA%\Commander`, on this machine only. A deck opened during a sync goes next, once the commander
-  being fetched is done. `cmdr sync` goes by the same scores.
+  being fetched is done. `cmdr sync` goes by the same scores. While a sync runs, each deck in the list shows
+  its step: waiting, fetching, fetched, or incomplete when a source failed.
 
 ### Changed
+- The app no longer opens the first deck by itself: the main area is blank until you pick one.
 - The app's page shows no one until a sign-in succeeds: at start without a signed-in account, after **Sign out**,
   and after leaving the sign-in dialog any other way (Not now, Escape). The dialog blurs and dims the app
   behind it, and the page shows "Sign in to see your decks" with a **Sign in** button, no deck list and no
