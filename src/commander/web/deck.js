@@ -115,6 +115,7 @@ async function openDeck(id) {
     renderDecks();
     metaPanel.render(id, null);
     $("meta-empty").hidden = true;
+    syncMetaUpdating();
   }
   await loadDeck();
   metaPanel.load();

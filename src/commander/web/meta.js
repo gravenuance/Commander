@@ -7,7 +7,9 @@ const ANSWERS_SHOWN = 6;
 
 /* Meta (bracket 5): what in the meta stops the deck's key cards, and what stops the meta's combos */
 
-const metaState = { busy: false };
+// The open deck, and whether its own fetch in a running sync was pending at the last look.
+const metaState = { deck: null, updating: false };
+const PENDING_STEPS = ["queued", "fetching"];
 
 function metaWanted() {
   return state.view && state.view.id === state.current && state.view.bracket === META_BRACKET
@@ -16,14 +18,19 @@ function metaWanted() {
 
 // An answer without a report reads the same as none.
 const metaPanel = panel((deck) => api("meta", deck), renderMeta, {
-  wanted: () => metaWanted() && !metaState.busy,
+  wanted: metaWanted,
   keyOf: (answer) => JSON.stringify(answer && answer.report ? answer : null),
 });
 
-// The sync refreshes the meta answers: the panel shows it is updating and rereads them when the sync ends.
-function setMetaUpdating(on) {
-  metaState.busy = on;
-  $("meta-busy").hidden = !on;
+// The panel reads the cache at any time. It says it is updating only while the sync has this deck queued or
+// fetching, and rereads the cache once that fetch ends.
+function syncMetaUpdating() {
+  const deck = state.current;
+  const updating = PENDING_STEPS.includes(fetchStates[String(deck)]);
+  const finished = metaState.updating && metaState.deck === deck && !updating;
+  Object.assign(metaState, { deck, updating });
+  $("meta-busy").hidden = !updating;
+  if (finished) metaPanel.load();
 }
 
 function renderMeta(deck, answer) {
