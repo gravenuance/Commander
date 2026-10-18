@@ -23,12 +23,14 @@ from commander.config import MetaSettings
 from commander.credentials import CredentialError, TokenStore
 from commander.deckcache import Clock
 from commander.deckprofile import ProfileError
+from commander.fetchpriority import FetchPriority
 from commander.ideas import compile_ideas_with_adjacent
 from commander.metadata import Progress, gather_for, meta_sources
 from commander.net import Fetcher, NetworkError, Pacer
 from commander.scryfall import CardRefresh, RefreshStatus, ScryfallClient, ScryfallError, refresh_card_db
-from commander.store import Workspace
+from commander.store import StoredDeck, Workspace
 from commander.sync import SyncResult, SyncStatus, sync_decks
+from commander.viewscore import VIEWS_FILE, ViewScores
 
 log = logging.getLogger(__name__)
 
@@ -94,6 +96,7 @@ def run_sync(
     settings: MetaSettings,
     options: SyncOptions = SyncOptions(),  # noqa: B008 — frozen, so one shared default is safe
     *,
+    priority: FetchPriority | None = None,
     on_progress: Progress,
 ) -> SyncOutcome:
     warnings: list[str] = []
@@ -130,7 +133,9 @@ def run_sync(
         return SyncOutcome(results, cards, labels, warnings=warnings)
     picked = _pick_up_aside(workspace, services, warnings)
     ideas = (
-        _compile_ideas(workspace, user, settings, services, warnings=warnings, progress=on_progress)
+        _compile_ideas(
+            workspace, user, settings, services, warnings=warnings, progress=on_progress, priority=priority
+        )
         if options.ideas
         else {}
     )
@@ -199,10 +204,13 @@ def _compile_ideas(
     *,
     warnings: list[str],
     progress: Progress,
+    priority: FetchPriority | None,
 ) -> dict[str, dict[Origin, list[BoardCard]]]:
     """Each deck's new ideas from the meta and recent Archidekt decks (ADR 0028), by short name.
 
     Answers under a day old come from the cache. A deck whose sources fail keeps its board as it was.
+    The decks go in the order of how often the user opens them, and the one the priority names goes
+    ahead of those (ADR 0034).
     """
     try:
         db = CardDb(services.cache / CARD_DB_FILE)
@@ -212,10 +220,12 @@ def _compile_ideas(
     found: dict[str, dict[Origin, list[BoardCard]]] = {}
     with db, services.client_factory() as http:
         sources = meta_sources(http, services.pacer_factory, user, settings)
-        for stored in workspace.load_all():
+        waiting = _most_viewed_first(workspace.load_all(), services)
+        next_up = priority or FetchPriority()
+        while waiting:
+            stored = next_up.pick(waiting, lambda s: s.deck.id)
+            waiting.remove(stored)
             deck = stored.deck
-            if not deck.commanders:
-                continue
             try:
                 data = gather_for(
                     deck, sources, services.cache, now=services.now, refresh=False, on_progress=progress
@@ -238,3 +248,9 @@ def _compile_ideas(
                 why = data.peers.error or data.lists.error
                 warnings.append(f"{deck.short_name}: no meta or Archidekt decks to learn from ({why})")
     return found
+
+
+def _most_viewed_first(decks: list[StoredDeck], services: SyncServices) -> list[StoredDeck]:
+    """The decks with a commander, by view score and then in the workspace's order."""
+    scores = ViewScores(services.cache / VIEWS_FILE, services.now).scores()
+    return sorted((s for s in decks if s.deck.commanders), key=lambda s: -scores.get(s.deck.id, 0.0))
