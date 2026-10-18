@@ -168,7 +168,11 @@ def test_leaving_the_sign_in_dialog_without_signing_in_empties_the_page() -> Non
     assert "paintSync(false, true, NO_ACCOUNT_NOTE);" in account
     # Startup, sign-out and a deck answer that outlives its account all go through the same gate.
     main = (WEB / "main.js").read_text(encoding="utf-8")
-    assert "if (account && !account.signedIn) {" in main
+    assert "} else if (!account.signedIn) {" in main
+    # An account that can't be read empties the page too, and the note says why.
+    unread = main.split("if (!account) {", 1)[1].split("} else if", 1)[0]
+    assert "showSignedOut();" in unread
+    assert "paintSync(false, true, ACCOUNT_FAILED_NOTE);" in unread
     assert "if (pageUserGone(epoch)) return;" in (WEB / "deck.js").read_text(encoding="utf-8")
     sign_out = account.split("async function signOut() {", 1)[1].split("async function startSync", 1)[0]
     assert sign_out.index("showSignedOut();") < sign_out.index("openSignIn();")
