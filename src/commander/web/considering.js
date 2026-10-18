@@ -140,7 +140,7 @@ function buildTile(card) {
   const meta = el("div", { class: "card-meta" },
     el("span", { class: "type", text: card.typeLine, title: card.typeLine }),
     card.priceCents !== null ? el("span", { text: euro(card.priceCents) }) : null,
-    card.share ? sharePill(card) : sourceBadge(card),
+    card.share || card.pool ? sharePill(card) : sourceBadge(card),
     card.gameChanger ? el("span", { class: "badge status gc", text: "Game changer" }) : null,
     card.withinBudget === false
       ? el("span", { class: "badge status over", text: "Over budget", title: "Over 25% above the deck's average card" })
