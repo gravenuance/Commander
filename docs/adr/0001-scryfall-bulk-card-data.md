@@ -1,6 +1,7 @@
 # 0001: Card data from Scryfall bulk files in a local SQLite database
 
 **Status:** Accepted · **Date:** 2026-10-15
+Corrected in place on 2026-10-18 for accuracy (see git history); an exception to never editing accepted records.
 
 ## Context
 

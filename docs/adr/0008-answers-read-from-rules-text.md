@@ -1,6 +1,7 @@
 # 0008: Combo and threat answers read from rules text, not only tags
 
 **Status:** Accepted · **Date:** 2026-10-16
+Corrected in place on 2026-10-18 for accuracy (see git history); an exception to never editing accepted records.
 
 ## Context
 

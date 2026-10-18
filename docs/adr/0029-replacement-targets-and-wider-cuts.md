@@ -1,7 +1,7 @@
 # 0029: Replacement targets: like for like first, then cuts of another role or theme
 
-**Status:** Accepted · **Date:** 2026-10-18 · Replaces the targets and the return of turned-down cards in
-[ADR 0011](0011-app-deck-grid-and-replacement-targets.md), and the targets of
+**Status:** Accepted · **Date:** 2026-10-18 · Replaces the targets in
+[ADR 0011](0011-app-deck-grid-and-replacement-targets.md) and the targets of
 [ADR 0016](0016-replacements-like-for-like.md)
 
 ## Context
@@ -13,8 +13,8 @@ peers' ramp. An idea of a theme the deck lacks has only cards of no theme to rep
 ideas altogether. ADR 0011 also said unranked cards on EDHREC come before ranked
 ones; the code has had them last.
 
-Like-for-like cuts were the weakest of the role or theme however strong: an idea played in 39% of the
-lists was offered three cards in 83% of them. A cut should never be the more played card.
+Like-for-like cuts were the weakest of the role or theme however strong, so a widely played idea could be
+offered cards that far more lists play than play the idea. A cut should never be the more played card.
 
 ## Options
 
@@ -47,7 +47,9 @@ Targets come in this order, at most three:
 3. **Wider cuts,** only for the slots left and only when at least three recent decks of the commander were
    read. The peers' counts come from `peercounts`: per role the 25th percentile (the floor) and the median,
    per theme the median. A card of another role or theme may go when:
-   - each role it fills that the idea does not still has at least the floor after the cut;
+   - each role it fills that the idea does not still has at least the floor after the cut. Roles are those
+     of Scryfall Tagger's tags alone, for the deck as for the peers; the deck's own categories do not
+     count towards a floor or the bonus below;
    - if it is of a theme the idea does not serve, the idea's share is at least 20 points above the card's,
      and each of the card's themes still has at least the peers' median count after the cut. A theme with no
      peer count, one of the profile's own words, may lose one card.

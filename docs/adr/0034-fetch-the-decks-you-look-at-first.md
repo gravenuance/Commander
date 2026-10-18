@@ -51,6 +51,9 @@ Option 2 each time.
   in place when the state changed (an ellipsis, a spinner, a check, a warning sign), each with a label and a
   tooltip, so colour is not the only cue. Nothing is shown outside a sync, and the last sync's warnings stay
   in the sync summary and the log; keeping icons after the sync would need a second state to expire.
+- **The Meta panel** reads the cache at any time. It says it is updating only while the open deck's step is
+  queued or fetching, and reads the cache again once that fetch ends, so a deck whose ideas are done shows
+  its fresh answers before the sync finishes.
 - The step text beside Sync keeps naming what is being fetched.
 
 ## Consequences

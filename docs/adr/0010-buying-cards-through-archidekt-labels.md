@@ -1,6 +1,9 @@
 # 0010: Buying cards tracked through Archidekt card labels
 
-**Status:** Accepted · **Date:** 2026-10-16
+**Status:** Accepted · **Date:** 2026-10-16 · Superseded in part by
+[ADR 0012](0012-card-labels-from-the-archidekt-account.md) (the label colours and label choices) and
+[ADR 0035](0035-retire-the-maybeboard-and-sideboard.md) (moves from the Maybeboard)
+Corrected in place on 2026-10-18 for accuracy (see git history); an exception to never editing accepted records.
 
 ## Context
 

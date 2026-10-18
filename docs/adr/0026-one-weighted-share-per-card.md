@@ -28,7 +28,8 @@ and a third of the decks was an idea in neither.
 Option 3, in `commander.weightedshare`.
 
 - **Which lists:** every EDHTop16 list with a decklist in the window (not only the top cuts) and every
-  Archidekt deck read for the commander (ADR 0027). A card counts once per list.
+  Archidekt deck read for the commander (ADR 0027). A card counts once per list. The cards an idea can be
+  picked from are those of every one of these lists too, so a card only the weighted share can see is found.
 - **A list's weight:**
   - *Recency:* it halves for every 30 days since the tournament, or since the Archidekt deck was last
     updated.
@@ -47,7 +48,7 @@ Option 3, in `commander.weightedshare`.
 - **Where it is used:** the idea test (ADR 0028), the ranking of cut targets and the cuts across roles and
   themes (ADR 0029), the return of a turned-down card once its share has risen 20 points (`RETURN_RISE`, at
   every bracket now), the order within a group of Considering, the order each source's ideas are taken in (the source's part of
-  it, times the play-style weight), and the share pill on each grid and board card
+  it, times the play-style weight; alike and tagged ideas use their pool's share, ADR 0028), and the share pill on each grid and board card
   with the sources in its tooltip. The commander carries none.
 - **Where it is not:** `cmdr meta` keeps the raw shares and the 40% and half-of-the-decks thresholds it
   reports, and the pools of ADR 0028's adjacent and tagged decks keep their half-of-the-pool rule.

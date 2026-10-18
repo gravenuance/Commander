@@ -41,24 +41,25 @@ and was changed before release.
 - **Sync reads neither list and writes nothing.** Their cards stay in `deck.json` and `list.md` as the deck's
   mirror, nothing more.
 - **A cut removes the entry outright.** Plan files lose `maybeboard = true` and `drop = [...]`; a plan that
-  still has them is refused as an unknown key. An add of a card that sits on the Maybeboard adds a new entry
-  and leaves the old one.
+  still has them is refused as an unknown key. An `add` whose category is Maybeboard or Sideboard is refused ("name a
+  category in the deck"), since nothing reads those lists any more. An add of a card that sits on the
+  Maybeboard adds a new entry and leaves the old one.
 - **A save never touches cards outside the deck.** The user's Review → Save, `board commit --save` and
   `apply --save` send edits only for the plan's own changes; whatever sits on the Sideboard or Maybeboard is
   not in the `modifyCards` payload and stays as the user left it. The first version had the save empty both
-  lists, previewed as "Clears the Maybeboard: 7 cards". It was removed: other users may keep cards there on
-  purpose, and a tool others run should not delete cards it was not asked to change. The owner emptied their
-  own lists by hand.
+  lists. It was removed: other users may keep cards there on purpose, and a tool others run should not
+  delete cards it was not asked to change.
 - **The old ideas are re-judged with all the compiled ones.** From the first sync on, an open card with source
   `archidekt` is tested like any idea `cmdr` compiled, with `ShareTable.is_idea` (the Wilson lower bound of the
   commander's weighted share, ADR 0026), and turned down as `cmdr` with "no longer makes the cut" when it
   fails ([ADR 0028](0028-ideas-from-four-sources.md) has the rule).
-- **Old cards are labelled like compiled ones.** A Reconsider on a card whose source is `archidekt` or `cmdr`
+- **Old cards are labelled like compiled ones.** A Reconsider on a turned-down card whose source is `archidekt` or `cmdr`
   (not an alike or tagged idea) recomputes its label from the cached lists, as compile would: the source with
   the larger weighted share, the meta on a tie, becomes its origin, its source becomes `cmdr` and its reason
   is worded as a compiled idea's. If no list plays it, or none is cached, only the reason changes
   ("reconsidered; no list plays it") and the card stays neutral. The reopened card carries `reconsidered:
-  true` on the board (optional, absent in old boards) so the re-judge leaves it until the user decides it. Each
+  true` on the board (optional, absent in old boards) so the re-judge leaves it until the user decides it.
+  Undoing a queued swap is a plain reopen: it neither sets the mark nor relabels. Each
   sync also relabels the open `archidekt` cards that pass the re-judge, so no neutral Maybeboard leftover
   stays in Considering. Cuts are computed on read and need no change.
 - **A cut card is no special case.** It comes back through the ideas like any card not in the deck. An

@@ -23,9 +23,10 @@ target was picked or computed, is analysed on the deck as it would stand after t
 rebuild-from-counts that the mana plan uses (`manaplan.deck_with_counts`) makes that deck. The swap is
 refused when:
 
-- **The land count leaves the range,** for a swap that adds or removes a land: the deck's lands after the
-  swap must be within one of Karsten's count for the deck (`LAND_TOLERANCE`, ADR 0024) or inside the fewest
-  and most lands of the lists compared with. Those are the commander's top-cut lists at bracket 5 and, below
+- **The land count ends out of bounds,** for a swap that adds or removes a land: the deck's lands after the
+  swap must be within one of Karsten's count for the deck (`LAND_TOLERANCE`, ADR 0024), or closer to it than
+  the deck's count is now (so a deck short of lands may swap towards the target), or inside the fewest and
+  most lands of the lists compared with, when there are at least three of them. Those are the commander's top-cut lists at bracket 5 and, below
   it, the recent Archidekt decks that say how many of each basic land they run (ADR 0019). A swap of one
   land for another keeps the count.
 - **A colour loses sources:** a card that was short of sources in a colour before the swap must not be
@@ -45,6 +46,6 @@ ideas added as they come (`with_ideas`). The app's Mana tab reads its comparison
 - A deck already short in a colour is not frozen: a swap may leave the shortfall as it is but not deepen it,
   so a tap-land can still be traded for an untapped one.
 - At bracket 5 Karsten's count does not fit (ADR 0019), so the count rule there rests on the top-cut range.
-  With no lists to compare, only Karsten's count is left to pass.
+  With fewer than three lists to compare, only Karsten's count is left to pass, or a move towards it.
 - The analysis runs only for the swaps that involve a land and would otherwise be offered, which are the
   few cards that rank first for each idea.

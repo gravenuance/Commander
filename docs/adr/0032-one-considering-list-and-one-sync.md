@@ -2,8 +2,10 @@
 
 **Status:** Accepted · **Date:** 2026-10-18 · Replaces the two board lists of
 [ADR 0006](0006-deck-boards-and-desktop-app.md), the Meta panel's refresh in
+[ADR 0007](0007-meta-from-edhtop16-archidekt-and-spellbook.md) and
 [ADR 0011](0011-app-deck-grid-and-replacement-targets.md) and the waiting of
-[ADR 0023](0023-accounts-and-sync-in-the-app.md)
+[ADR 0023](0023-accounts-and-sync-in-the-app.md) · Extended by
+[ADR 0034](0034-fetch-the-decks-you-look-at-first.md) (the order a sync fetches in)
 
 ## Context
 
@@ -50,15 +52,17 @@ Option 2 each time.
   The page counts as signed out until a sign-in succeeds (at start, after Sign out, after dismissing the
   dialog), so a username in the config no longer keeps Sync on there; only the page changes, not the config or
   the bridge.
-  The Meta panel opens from cache only; while a sync runs it says it is updating, and when it ends it reads
-  the report again. The panel's Refresh meta button is removed.
+  The Meta panel reads the cache, during a sync too. It says it is updating only while the open deck is
+  queued or being fetched (ADR 0034), and reads the cache again when that fetch ends. The panel's Refresh
+  meta button is removed.
 - **No overlap:** one lock covers the check and the mark. A sync is refused while a save, a label change,
   the mana swaps, a board edit (proposing, deciding or removing a card), saving the profile settings or a
   sign-in or sign-out runs ("Wait for the save to finish, then sync."), and each of those is refused while a
   sync runs ("Wait for the sync to finish, then save."). Neither can start inside the
   other.
 - **Labels in a save:** the read of the account's labels is tried once more after three seconds, then falls
-  back to Archidekt's default colours with a message. A refused login still stops the save, as its writes
+  back to Archidekt's default colours, with a warning on the save result that the app shows beside the saved
+  message. A refused login still stops the save, as its writes
   would be refused (ADR 0012).
 
 ## Consequences

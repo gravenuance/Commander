@@ -46,8 +46,11 @@ Option 3 for the sample and option 2 for the cache, in `commander.archidekt`, `c
   bad entry no longer fails a commander's read.
 - **Pace:** searches and deck reads share one pacer, five seconds apart. A 429 holds every request for 180
   seconds, or the `Retry-After` if longer, and the limited request is tried once more after that. A second
-  429 fails the source, whose last good answer stands in with a warning. A deck found in the cache costs no
-  request and no wait. The other services keep their pace (EDHTop16 1.5 s, Spellbook 1 s).
+  429 fails the source, whose last good answer stands in with a warning, and ends Archidekt for the rest
+  of the run: every later request fails at once, so the other commanders fall back to their caches
+  without more waiting. A deck found in the cache costs no request and no wait. A deck read that answers
+  403, 404 or 410 (the deck went private or was deleted) is skipped with a log line and is not a failed
+  source. The other services keep their pace (EDHTop16 1.5 s, Spellbook 1 s).
 - **The per-deck cache:** `peer-decks` in the meta cache folder holds each deck's commanders, cards, plan
   categories and card counts above one, under its id and the `updatedAt` it was listed with (cache version
   2). A changed `updatedAt` is a miss. The search results stay cached for a day, as the other answers do.

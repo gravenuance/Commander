@@ -3,6 +3,7 @@
 **Status:** Accepted · **Date:** 2026-10-15 · Superseded in part by
 [ADR 0032](0032-one-considering-list-and-one-sync.md) (the board's two lists) and
 [ADR 0035](0035-retire-the-maybeboard-and-sideboard.md) (the Sideboard and Maybeboard)
+Corrected in place on 2026-10-18 for accuracy (see git history); an exception to never editing accepted records.
 
 ## Context
 

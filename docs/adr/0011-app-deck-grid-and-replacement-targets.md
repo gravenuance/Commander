@@ -1,6 +1,7 @@
 # 0011: The app as a deck grid with replacement targets, label flags and a meta panel
 
 **Status:** Accepted · **Date:** 2026-10-16 · Superseded in part by
+[ADR 0012](0012-card-labels-from-the-archidekt-account.md) (the label colours and label choices),
 [ADR 0029](0029-replacement-targets-and-wider-cuts.md) (the targets and an idea without one),
 [ADR 0026](0026-one-weighted-share-per-card.md) (the share behind the order and the return of turned-down
 cards) and [ADR 0032](0032-one-considering-list-and-one-sync.md) (the one list and the Meta panel's refresh)

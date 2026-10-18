@@ -1,6 +1,7 @@
 # 0004: Deck changes through the API archidekt.com's own pages use
 
 **Status:** Accepted · **Date:** 2026-10-15
+Corrected in place on 2026-10-18 for accuracy (see git history); an exception to never editing accepted records.
 
 ## Context
 

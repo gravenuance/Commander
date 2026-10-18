@@ -1,6 +1,9 @@
 # 0023: Accounts and sync in the app
 
-**Status:** Accepted · **Date:** 2026-10-17
+**Status:** Accepted · **Date:** 2026-10-17 · Superseded in part by
+[ADR 0032](0032-one-considering-list-and-one-sync.md) (refusal instead of waiting) and
+[ADR 0035](0035-retire-the-maybeboard-and-sideboard.md) (the Sideboard and Maybeboard step)
+Corrected in place on 2026-10-18 for accuracy (see git history); an exception to never editing accepted records.
 
 ## Context
 

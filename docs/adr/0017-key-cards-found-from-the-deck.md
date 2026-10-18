@@ -1,6 +1,7 @@
 # 0017: Key cards found from the deck
 
 **Status:** Accepted · **Date:** 2026-10-16
+Corrected in place on 2026-10-18 for accuracy (see git history); an exception to never editing accepted records.
 
 ## Context
 

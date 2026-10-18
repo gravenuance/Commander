@@ -2,6 +2,7 @@
 
 **Status:** Accepted · **Date:** 2026-10-16 · Replaces the label colours and label choices of
 [ADR 0010](0010-buying-cards-through-archidekt-labels.md) and [ADR 0011](0011-app-deck-grid-and-replacement-targets.md)
+Corrected in place on 2026-10-18 for accuracy (see git history); an exception to never editing accepted records.
 
 ## Context
 

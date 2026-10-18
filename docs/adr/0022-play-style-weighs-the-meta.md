@@ -1,6 +1,7 @@
 # 0022: A deck's play style weighs what the meta says it misses
 
 **Status:** Superseded by [ADR 0031](0031-play-styles-as-score-multipliers.md) · **Date:** 2026-10-17
+Corrected in place on 2026-10-18 for accuracy (see git history); an exception to never editing accepted records.
 
 ## Context
 

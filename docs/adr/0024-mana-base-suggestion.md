@@ -3,6 +3,7 @@
 **Status:** Accepted · **Date:** 2026-10-17 · Superseded in part by
 [ADR 0033](0033-check-and-reveal-lands-by-the-decks-own-lands.md) (how often check and reveal lands enter
 tapped)
+Corrected in place on 2026-10-18 for accuracy (see git history); an exception to never editing accepted records.
 
 ## Context
 
@@ -82,7 +83,7 @@ commander's top-cut lists (ADR 0007) instead:
   runs against those lists (each one a list runs that the deck doesn't argues for a land, and the reverse).
 - **The land base itself:** the lands the top cuts run most, by share, that the deck lacks (fetches, duals,
   shocks, Ancient Tomb, City of Brass), with the least shared lands in the deck as cuts. This is the same
-  idea feed as Considered (ADR 0014) narrowed to lands.
+  idea feed as Considering's ideas (ADR 0028) narrowed to lands.
 - **Fetchability:** each fetch's targets in the deck (typed duals and basics), and the colours a fetch can't
   find for lack of them.
 - **Untapped on turn one:** every land should enter untapped; any tap-land at all is flagged.
