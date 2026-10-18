@@ -3,6 +3,9 @@
 Each style favours some kinds of card and may find others off-plan. A staple's weight is the product of
 what each of the deck's styles makes of it, and it multiplies the card's share into its score: the order
 the missing staples and each source's ideas are taken in.
+
+Only Turbo finds anything off-plan (interaction, board wipes included). Tempo is neutral on board wipes:
+Tempo decks play slightly more of them than the average deck.
 """
 
 from collections.abc import Iterable, Mapping
@@ -97,8 +100,7 @@ _PLANS: Mapping[Style, _Plan] = {
         }
     ),
     Style.TEMPO: _Plan(
-        {Trait.REMOVAL: CLEAR_FIT, Trait.CHEAP_INTERACTION: CLEAR_FIT, Trait.BOUNCE: BORDERLINE_FIT},
-        off_plan=frozenset({Trait.WIPE}),
+        {Trait.REMOVAL: CLEAR_FIT, Trait.CHEAP_INTERACTION: CLEAR_FIT, Trait.BOUNCE: BORDERLINE_FIT}
     ),
     Style.MIDRANGE: _Plan(
         {Trait.COUNTERSPELL: CLEAR_FIT, Trait.CHEAP_INTERACTION: CLEAR_FIT, Trait.TUTOR: CLEAR_FIT}
