@@ -3,6 +3,7 @@
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import Enum
+from itertools import islice
 
 from commander.analysis import ANALYZED_ROLES
 from commander.board import Actor, BoardCard
@@ -10,6 +11,7 @@ from commander.carddb import CardDb, CardInfo, ResolvedCard, Role, Theme
 from commander.deckcache import Clock
 from commander.deckprofile import PROFILE_THEME, Profile, ThemeSpec
 from commander.deckthemes import merge_themes
+from commander.landswap import ManaGuard, mana_guard
 from commander.leanings import Leaning, find_leanings
 from commander.metadata import MetaData
 from commander.models import COMMANDER_CATEGORY, Deck
@@ -57,6 +59,8 @@ class CutRules:
     themes: Mapping[str, frozenset[str]] = field(default_factory=dict[str, frozenset[str]])
     leanings: tuple[Leaning, ...] = ()
     matchers: tuple[Matcher, ...] = ()
+    # Judges a swap that takes a land out or brings one in; None skips the check.
+    mana: ManaGuard | None = None
 
 
 def deck_cut_rules(
@@ -68,7 +72,8 @@ def deck_cut_rules(
     *,
     now: Clock,
 ) -> CutRules:
-    """The deck's kept cards, the meta's and recent decks' shares, its leanings, and the themes of its cards.
+    """The deck's kept cards, the meta's and recent decks' shares, its leanings, the themes of its cards, and
+    its mana base for judging swaps of lands.
 
     The profile's own themes go by their words ("Dinosaur", "Discover"). data is what other players do
     with the commander (`gather_for`), None when nothing was read.
@@ -93,12 +98,14 @@ def deck_cut_rules(
             if leaning.tag in tag_ids
         ),
     )
-    rules = CutRules(protected_cards(main, profile), shares or None, {}, leanings, matchers)
+    mana = mana_guard(deck, db, data)
+    rules = CutRules(protected_cards(main, profile), shares or None, {}, leanings, matchers, mana)
     return with_ideas(rules, [r.info for r in main if r.info is not None], db)
 
 
 def with_ideas(rules: CutRules, cards: Iterable[CardInfo], db: CardDb) -> CutRules:
-    """The rules with the themes and leanings of these cards added: the ideas to match against the deck."""
+    """The rules with the themes, leanings and mana data of these cards added: the ideas to match against the
+    deck."""
     infos = {info.oracle_id: info for info in cards if info.oracle_id not in rules.themes}
     if not infos:
         return rules
@@ -107,7 +114,8 @@ def with_ideas(rules: CutRules, cards: Iterable[CardInfo], db: CardDb) -> CutRul
     for matcher in rules.matchers:
         for oracle_id in db.matching(matcher.theme, nonland if matcher.nonland_only else list(infos)):
             themes.setdefault(oracle_id, set()).add(matcher.name)
-    return replace(rules, themes={key: frozenset(names) for key, names in themes.items()})
+    mana = rules.mana.with_cards(db.card_mana(info.name for info in infos.values())) if rules.mana else None
+    return replace(rules, themes={key: frozenset(names) for key, names in themes.items()}, mana=mana)
 
 
 def targets_for(
@@ -117,11 +125,13 @@ def targets_for(
 
     See `role_targets` for the second.
     """
-    in_deck = {r.card.name.casefold() for r in main}
+    in_deck = {r.card.name.casefold(): r for r in main}
     # Tools attach one generic cut list to all their ideas; only a person's or Claude's options are picks.
     options = card.replace if card.source in _PICKERS else ()
     picked = tuple(
-        Target(o.name, o.reason, TargetSource.PICKED) for o in options if o.name.casefold() in in_deck
+        Target(o.name, o.reason, TargetSource.PICKED)
+        for o in options
+        if (r := in_deck.get(o.name.casefold())) is not None and _sound(info, r, rules)
     )
     if picked or info is None:
         return picked
@@ -145,9 +155,18 @@ def role_targets(info: CardInfo, main: Sequence[ResolvedCard], rules: CutRules) 
         if _eligible(r, info, rules.protected) and _same_role(r, roles) and _swappable(r, own, rules)
     ]
     ranked = sorted(pool, key=lambda r: (not _shared(r, own, rules), *_weakness(r, rules.shares)))
+    sound = (r for r in ranked if _sound(info, r, rules))
     return tuple(
-        Target(r.card.name, _reason(r, roles, own, rules), TargetSource.ROLE) for r in ranked[:MAX_TARGETS]
+        Target(r.card.name, _reason(r, roles, own, rules), TargetSource.ROLE)
+        for r in islice(sound, MAX_TARGETS)
     )
+
+
+def _sound(info: CardInfo | None, cut: ResolvedCard, rules: CutRules) -> bool:
+    """Whether the deck card may be cut for the idea: a swap of a land is judged by the mana base."""
+    if rules.mana is None or info is None or cut.info is None or not (info.is_land or cut.info.is_land):
+        return True
+    return rules.mana.allows(info.name, cut.card.name)
 
 
 def _by_word(spec: ThemeSpec, tag_ids: Mapping[str, str]) -> list[tuple[str, Theme]]:
