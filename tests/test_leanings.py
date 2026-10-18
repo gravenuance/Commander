@@ -117,6 +117,18 @@ def test_ignoring_a_narrower_leaning_keeps_the_wider_one_folded_into_it_hidden(d
     assert find_leanings(main, peers(5), db, ignore={"reanimate-creature"}) == ()
 
 
+def peers_each(*plays: tuple[int, ...]) -> list[PeerList]:
+    """One recent peer deck per tuple, playing those fillers."""
+    when = datetime(2026, 10, 1, tzinfo=UTC)
+    return [
+        PeerList(
+            PeerDeck(i, f"peer {i}", "someone", 10, when, 3),
+            (f"Filler Card {COMMANDER}", "Ancient Tomb", *(f"Filler Card {n}" for n in played)),
+        )
+        for i, played in enumerate(plays)
+    ]
+
+
 def pool(*fillers: int) -> MetaData:
     return pool_of(peers(5, *fillers))
 
@@ -133,16 +145,19 @@ def test_cards_in_a_leaning_are_cut_only_for_ideas_in_it_and_lands_never_join_it
     cards = deck_cards(1, 2, 3, 4, 50, 51)
     deck = Deck(1, "test", "me", 3, "2026-10-16", tuple(cards))
     main = resolved(db, cards)
-    rules = deck_cut_rules(deck, main, Profile(), db, pool(50, 51), now=lambda: NOW)
+    # One peer deck in ten plays the two ideas: 10 points more than the deck's cards, short of the 20 that
+    # cuts a card of another theme.
+    peer_decks = peers_each((60, 5), *[()] * 9)
+    rules = deck_cut_rules(deck, main, Profile(), db, pool_of(peer_decks), now=lambda: NOW)
     assert [leaning.tag for leaning in rules.leanings] == ["extra-combat"]
     themed, plain = db.cards_named(["Filler Card 5", "Filler Card 60"]).values()
     rules = with_ideas(rules, [themed, plain], db)
-    # Filler Card 50 and 51 are in every peer deck; the leaning's cards in none.
+    # The leaning's cards are in no peer deck, and an idea of no theme does not take them.
     assert [t.name for t in role_targets(plain, main, rules)] == ["Filler Card 50", "Filler Card 51"]
     swap = role_targets(themed, main, rules)
     assert [t.name for t in swap][:3] == ["Filler Card 1", "Filler Card 2", "Filler Card 3"]
     assert swap[0].reason.startswith(
-        "same theme (extra-combat); fills no role either; in 0% of recent decks (0/5);"
+        "same theme (extra-combat); fills no role either; in 0% of recent decks (0/10);"
     )
     tomb = db.cards_named(["Ancient Tomb"])["ancient tomb"]
     assert "extra-combat" not in with_ideas(rules, [tomb], db).themes.get(tomb.oracle_id, frozenset())
@@ -191,7 +206,7 @@ def test_below_bracket_5_the_cuts_rank_by_the_share_of_recent_decks_weighted_by_
     held = (f"Filler Card {COMMANDER}", "Ancient Tomb")
     fresh, stale = NOW, datetime(2026, 3, 30, 12, 0, tzinfo=UTC)
     decks = [
-        PeerList(PeerDeck(i, f"peer {i}", "someone", 10, when, 3), (*held, played))
+        PeerList(PeerDeck(i, f"peer {i}", "someone", 10, when, 3), (*held, played, "Filler Card 60"))
         for i, (when, played) in enumerate(
             [
                 (fresh, "Filler Card 50"),
@@ -204,7 +219,8 @@ def test_below_bracket_5_the_cuts_rank_by_the_share_of_recent_decks_weighted_by_
     rules = deck_cut_rules(deck, main, Profile(), db, pool_of(decks), now=lambda: NOW)
     idea = db.cards_named(["Filler Card 60"])["filler card 60"]
     cuts = role_targets(idea, main, with_ideas(rules, [idea], db))
-    # Two of four decks play each, but the 200-day-old ones count for almost nothing; unweighted it is a tie.
+    # All four decks play the idea. Two of four play each card, but the 200-day-old ones count for almost
+    # nothing; unweighted it is a tie.
     assert [t.name for t in cuts] == ["Filler Card 51", "Filler Card 50"]
     assert cuts[0].reason.startswith("fills no role either; in 1% of recent decks (2/4);")
     assert cuts[1].reason.startswith("fills no role either; in 99% of recent decks (2/4);")

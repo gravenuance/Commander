@@ -13,6 +13,9 @@ peers' ramp. An idea of a theme the deck lacks has only cards of no theme to rep
 ideas altogether. ADR 0011 also said unranked cards on EDHREC come before ranked
 ones; the code has had them last.
 
+Like-for-like cuts were the weakest of the role or theme however strong: an idea played in 39% of the
+lists was offered three cards in 83% of them. A cut should never be the more played card.
+
 ## Options
 
 1. **Keep like for like,** and show an idea with no target under a heading of its own. Safe, but the owner
@@ -23,10 +26,19 @@ ones; the code has had them last.
 
 ## Decision
 
-Option 3, in `commander.targets` and `commander.peercounts`, with option 1's heading as well. Targets come
-in this order, at most three:
+Option 3, in `commander.targets` and `commander.peercounts`, with option 1's heading as well.
 
-1. **Picked:** the cuts you or Claude wrote on the card, while still in the deck.
+**Every cut is less played than the idea:** its weighted share (ADR 0026) must be higher than the deck
+card's. A card no list plays counts as 0, so it can always go; a card as played as the idea cannot. This holds
+for each kind of cut below, land swaps included, except the cuts you wrote on a card yourself. Without any
+shares (no list was read) there is no gate. A deck card that was offered once but is more played than the
+idea now is simply not offered, and an idea left with none is listed under *No cut yet*.
+
+Targets come in this order, at most three:
+
+1. **Picked:** the cuts you or Claude wrote on the card, while still in the deck. Claude's must pass the gate
+   above and give way to the computed ones when they do not; yours stay however played they are, as does the
+   cut you chose when queueing the idea (`BoardCard.choice`, which is stored, never computed).
 2. **Like for like:** deck cards of the idea's role (an idea with none matches cards with none, a land only
    lands), and a card serving a theme or leaning only for an idea serving one of the same (ADR 0016). Cards
    sharing a theme come first, then the least played: the smallest weighted share (ADR 0026), then the
@@ -35,7 +47,6 @@ in this order, at most three:
 3. **Wider cuts,** only for the slots left and only when at least three recent decks of the commander were
    read. The peers' counts come from `peercounts`: per role the 25th percentile (the floor) and the median,
    per theme the median. A card of another role or theme may go when:
-   - the idea is more played than the card (its weighted share is higher);
    - each role it fills that the idea does not still has at least the floor after the cut;
    - if it is of a theme the idea does not serve, the idea's share is at least 20 points above the card's,
      and each of the card's themes still has at least the peers' median count after the cut. A theme with no
@@ -54,6 +65,8 @@ every deck card but the commander. A turned-down card returns by the rule of ADR
 ## Consequences
 
 - More ideas have a cut to start from, and the cut says why it is allowed. The owner still decides each swap.
+- An idea no list plays (one you proposed by hand) has no card less played than it, so it is listed under
+  *No cut yet* until some list plays it; clicking it still offers every deck card.
 - With three peer decks the floors and medians are rough. They only widen the cuts, never narrow the
   like-for-like ones, and nothing wider appears below three decks.
 - A theme the roles do not capture (a stax piece, a lock) can still get odd like-for-like targets; Claude or

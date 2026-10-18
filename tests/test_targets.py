@@ -1,10 +1,12 @@
 """Which deck cards a board card could replace: hand-picked ones, else the weakest in its role."""
 
+import pytest
+
 from commander.board import Actor, BoardCard, ReplaceOption, Status
 from commander.carddb import CardInfo, ResolvedCard, Role
 from commander.models import DeckCard
 from commander.targets import CutRules, Target, TargetSource, targets_for
-from commander.weightedshare import ShareTable, SourceShare, WeightedShare
+from commander.weightedshare import NO_SHARES, ShareTable, SourceShare, WeightedShare
 
 
 def info(
@@ -97,7 +99,10 @@ def test_without_picks_the_weakest_cards_in_the_same_role_least_played_first_unr
 
 
 def test_meta_share_ranks_before_popularity_and_shows_in_the_reason() -> None:
-    shares = table({"compost": 0.6, "archivist of oghma": 0.0, "esper sentinel": 0.1, "sylvan library": 0.05})
+    shares = table(
+        {"mystic remora": 0.7, "compost": 0.6, "archivist of oghma": 0.0}
+        | {"esper sentinel": 0.1, "sylvan library": 0.05}
+    )
     targets = targets_for(
         board_card("Mystic Remora"), info("Mystic Remora", (Role.DRAW,)), DECK, CutRules((), shares)
     )
@@ -153,9 +158,13 @@ def test_a_card_serving_a_theme_is_cut_only_for_an_idea_serving_the_same_and_tho
 
 def test_shares_name_the_sources_they_are_of() -> None:
     thalia = board_card("Thalia")
-    decks = targets_for(thalia, info("Thalia"), DECK, CutRules((), table({"kataki": 0.3}, meta=False)))
+    decks = targets_for(
+        thalia, info("Thalia"), DECK, CutRules((), table({"thalia": 0.5, "kataki": 0.3}, meta=False))
+    )
     assert decks[0].reason == "fills no role either; in 0% of recent decks (0/20); EDHREC rank 800"
-    pooled = targets_for(thalia, info("Thalia"), DECK, CutRules((), table({"kataki": 0.3}, both=True)))
+    pooled = targets_for(
+        thalia, info("Thalia"), DECK, CutRules((), table({"thalia": 0.5, "kataki": 0.3}, both=True))
+    )
     assert (
         pooled[1].reason
         == "fills no role either; in 30% of meta lists and recent decks (6/20); EDHREC rank 4,000"
@@ -164,9 +173,96 @@ def test_shares_name_the_sources_they_are_of() -> None:
 
 def test_a_card_in_both_sources_ranks_by_the_one_pooled_share() -> None:
     shares = table(
-        {"compost": 0.3, "archivist of oghma": 0.25, "esper sentinel": 0.9, "sylvan library": 0.6}, both=True
+        {"mystic remora": 0.95, "compost": 0.3, "archivist of oghma": 0.25, "esper sentinel": 0.9}
+        | {"sylvan library": 0.6},
+        both=True,
     )
     targets = targets_for(
         board_card("Mystic Remora"), info("Mystic Remora", (Role.DRAW,)), DECK, CutRules((), shares)
     )
     assert names(targets) == ["Archivist of Oghma", "Compost", "Sylvan Library"]
+
+
+REMORA = info("Mystic Remora", (Role.DRAW,))
+
+
+def test_a_same_role_card_more_played_than_the_idea_is_not_offered_and_a_less_played_one_is() -> None:
+    shares = table(
+        {
+            "mystic remora": 0.4,
+            "esper sentinel": 0.9,
+            "compost": 0.5,
+            "archivist of oghma": 0.2,
+            "sylvan library": 0.1,
+        }
+    )
+    targets = targets_for(board_card("Mystic Remora"), REMORA, DECK, CutRules((), shares))
+    assert names(targets) == ["Sylvan Library", "Archivist of Oghma"]
+
+
+def test_a_deck_card_no_list_plays_counts_as_zero_and_is_always_cuttable() -> None:
+    shares = table({"mystic remora": 0.05, "esper sentinel": 0.9, "compost": 0.9, "archivist of oghma": 0.9})
+    targets = targets_for(board_card("Mystic Remora"), REMORA, DECK, CutRules((), shares))
+    assert names(targets) == ["Sylvan Library"]
+    assert "in 0% of meta lists" in targets[0].reason
+
+
+def test_a_card_as_played_as_the_idea_is_not_offered() -> None:
+    shares = table({"mystic remora": 0.3, "compost": 0.3, "archivist of oghma": 0.1, "esper sentinel": 0.5})
+    targets = targets_for(board_card("Mystic Remora"), REMORA, DECK, CutRules((), shares))
+    assert names(targets) == ["Sylvan Library", "Archivist of Oghma"]
+    flat = table({"mystic remora": 0.3, "compost": 0.3, "archivist of oghma": 0.3, "esper sentinel": 0.3})
+    assert names(targets_for(board_card("Mystic Remora"), REMORA, DECK, CutRules((), flat))) == [
+        "Sylvan Library"
+    ]
+
+
+def test_an_idea_with_only_stronger_cards_to_cut_gets_no_target() -> None:
+    shares = table(
+        {
+            "mystic remora": 0.1,
+            "esper sentinel": 0.8,
+            "compost": 0.7,
+            "archivist of oghma": 0.6,
+            "sylvan library": 0.5,
+        }
+    )
+    assert targets_for(board_card("Mystic Remora"), REMORA, DECK, CutRules((), shares)) == ()
+
+
+def test_a_same_theme_card_more_played_than_the_idea_is_not_offered() -> None:
+    themes = {key: frozenset({"Stax"}) for key in ("kataki", "thalia", "hushbringer")}
+    shares = table({"thalia": 0.3, "kataki": 0.5, "hushbringer": 0.1})
+    targets = targets_for(board_card("Thalia"), info("Thalia"), DECK, CutRules((), shares, themes=themes))
+    assert names(targets) == ["Hushbringer"]
+
+
+@pytest.mark.parametrize("shares", [None, NO_SHARES])
+def test_without_shares_every_card_in_the_role_stays_a_target(shares: ShareTable | None) -> None:
+    targets = targets_for(board_card("Mystic Remora"), REMORA, DECK, CutRules((), shares))
+    assert names(targets) == ["Compost", "Archivist of Oghma", "Esper Sentinel"]
+
+
+def test_claudes_picked_cut_more_played_than_the_idea_gives_way_to_the_roles_weaker_cards() -> None:
+    shares = table({"mystic remora": 0.4, "compost": 0.9, "archivist of oghma": 0.1, "esper sentinel": 0.9})
+    picked = board_card("Mystic Remora", (ReplaceOption("Compost", "not stax"),))
+    targets = targets_for(picked, REMORA, DECK, CutRules((), shares))
+    assert names(targets) == ["Sylvan Library", "Archivist of Oghma"]
+    assert {t.source for t in targets} == {TargetSource.ROLE}
+
+
+def test_a_cut_the_user_picked_stays_however_played_it_is() -> None:
+    shares = table({"mystic remora": 0.1, "compost": 0.9})
+    mine = board_card("Mystic Remora", (ReplaceOption("Compost", "my pick"),), Actor.YOU)
+    assert targets_for(mine, REMORA, DECK, CutRules((), shares)) == (
+        Target("Compost", "my pick", TargetSource.PICKED),
+    )
+
+
+def test_an_idea_the_user_proposed_gets_only_computed_cuts_less_played_than_it() -> None:
+    shares = table({"mystic remora": 0.4, "compost": 0.9, "archivist of oghma": 0.1, "esper sentinel": 0.9})
+    mine = board_card("Mystic Remora", source=Actor.YOU)
+    assert names(targets_for(mine, REMORA, DECK, CutRules((), shares))) == [
+        "Sylvan Library",
+        "Archivist of Oghma",
+    ]
