@@ -2,7 +2,8 @@
 
 Every public method answers with a JSON-ready dict, {"error": "..."} on an expected failure, so nothing
 raises into the web page. Each call opens its own card database connection: the window calls in from
-several threads, and a SQLite connection belongs to one.
+several threads, and a SQLite connection belongs to one. Every write to a deck's board, profile or Archidekt
+refuses while a sync runs, and a sync refuses while one of them runs.
 """
 
 import logging
@@ -507,14 +508,17 @@ class Desk:
     @_guarded
     def save_settings(self, deck_id: int, adjacent: list[list[str]], ignore: list[str]) -> Json:
         """Write the adjacent commanders and ignored themes into profile.toml, keeping its comments."""
-        stored = self._stored(deck_id)
-        with self._db() as db:
-            for group in adjacent:
-                for name in group:
-                    found = {info.name.casefold() for info in db.search_commanders(name)}
-                    if name.strip().casefold() not in found:
-                        return {"error": f"{name!r} is not a commander the card data knows"}
-        save_settings(stored.folder, stored.deck, adjacent=adjacent, ignore=ignore)
+        with self._writing("settings save", "save the settings") as busy:
+            if busy:
+                return busy
+            stored = self._stored(deck_id)
+            with self._db() as db:
+                for group in adjacent:
+                    for name in group:
+                        found = {info.name.casefold() for info in db.search_commanders(name)}
+                        if name.strip().casefold() not in found:
+                            return {"error": f"{name!r} is not a commander the card data knows"}
+            save_settings(stored.folder, stored.deck, adjacent=adjacent, ignore=ignore)
         return self.settings(deck_id)
 
     @_guarded
@@ -638,8 +642,11 @@ class Desk:
 
     @_guarded
     def propose(self, deck_id: int, name: str) -> Json:
-        with self._service(deck_id) as service:
-            card = service.propose(name, Actor.YOU)
+        with self._writing("proposal", "propose the card") as busy:
+            if busy:
+                return busy
+            with self._service(deck_id) as service:
+                card = service.propose(name, Actor.YOU)
         return {"card": card_json(card)}
 
     @_guarded
@@ -649,22 +656,30 @@ class Desk:
         status = _DECISIONS.get(decision)
         if status is None:
             return {"error": f"unknown decision {decision!r}"}
-        stored = self._stored(deck_id)
-        board_card = read_board(stored.folder).find(card_id)
-        found = (
-            self._shares(stored.deck).of(board_card.name)
-            if status is Status.REJECTED and board_card
-            else None
-        )
-        share = found.share if found is not None else None
-        with self._service(deck_id) as service:
-            card = service.decide(card_id, status, Actor.YOU, choice=choice or None, note=note, share=share)
+        with self._writing("decision", "decide") as busy:
+            if busy:
+                return busy
+            stored = self._stored(deck_id)
+            board_card = read_board(stored.folder).find(card_id)
+            found = (
+                self._shares(stored.deck).of(board_card.name)
+                if status is Status.REJECTED and board_card
+                else None
+            )
+            share = found.share if found is not None else None
+            with self._service(deck_id) as service:
+                card = service.decide(
+                    card_id, status, Actor.YOU, choice=choice or None, note=note, share=share
+                )
         return {"card": card_json(card)}
 
     @_guarded
     def remove(self, deck_id: int, card_id: str) -> Json:
-        with self._service(deck_id) as service:
-            service.remove(card_id, Actor.YOU)
+        with self._writing("removal", "remove the card") as busy:
+            if busy:
+                return busy
+            with self._service(deck_id) as service:
+                service.remove(card_id, Actor.YOU)
         return {"ok": True}
 
     @_guarded

@@ -538,6 +538,44 @@ def test_nothing_changes_the_deck_or_board_while_an_update_runs(
     assert not (settings.workspace / "10004639-honestly-though" / "board.json").exists()
 
 
+def _propose(desk: Desk) -> Json:
+    return desk.propose(DECK, "Arcane Signet")
+
+
+def _decide(desk: Desk) -> Json:
+    return desk.decide(DECK, "any", "reject", None, "")
+
+
+def _remove(desk: Desk) -> Json:
+    return desk.remove(DECK, "any")
+
+
+def _save_settings(desk: Desk) -> Json:
+    return desk.save_settings(DECK, [["Tempestra, Dame of Games"]], ["Stax"])
+
+
+@pytest.mark.parametrize(
+    ("call", "then"),
+    [
+        (_propose, "propose the card"),
+        (_decide, "decide"),
+        (_remove, "remove the card"),
+        (_save_settings, "save the settings"),
+    ],
+)
+def test_board_edits_and_settings_wait_while_an_update_runs(
+    settings: DeskSettings, fake: FakeArchidekt, call: Callable[[Desk], Json], then: str
+) -> None:
+    desk, pending = deferred_desk(settings, fake)
+    folder = settings.workspace / "10004639-honestly-though"
+    desk.sync()
+    assert len(pending) == 1
+    assert call(desk) == {"error": f"Wait for the sync to finish, then {then}."}
+    assert not (folder / "board.json").exists()
+    assert not (folder / "activity.jsonl").exists()
+    assert not (folder / "profile.toml").exists()
+
+
 def probing[**P, R](real: Callable[P, R], probe: Callable[[], None]) -> Callable[P, R]:
     """`real`, run after `probe` has run at the point a write is under way."""
 
@@ -671,3 +709,31 @@ def test_meta_reads_only_the_cache_and_a_sync_fills_it(
     assert share["share"] == pytest.approx(4.75 / 5.275, abs=1e-4)
     desk.meta(DECK)
     assert len(items(desk.deck(DECK), "cards")) == len(board)
+
+
+def test_a_sync_asked_for_during_a_board_edit_or_settings_save_is_refused(
+    settings: DeskSettings, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    desk, pending = deferred_desk(settings, fake)
+    desk.propose(DECK, "Arcane Signet")
+    card_id = first_card_id(desk)
+    during: list[Json] = []
+
+    def probe() -> None:
+        during.append(desk.sync())
+
+    board_service = desk_module.BoardService
+    for method in ("propose", "decide", "remove"):
+        monkeypatch.setattr(board_service, method, probing(getattr(board_service, method), probe))
+    monkeypatch.setattr(desk_module, "save_settings", probing(desk_module.save_settings, probe))
+    desk.propose(DECK, "Chaos Warp")
+    desk.decide(DECK, card_id, "reject", None, "")
+    desk.remove(DECK, card_id)
+    _save_settings(desk)
+    assert during == [
+        {"error": "Wait for the proposal to finish, then sync."},
+        {"error": "Wait for the decision to finish, then sync."},
+        {"error": "Wait for the removal to finish, then sync."},
+        {"error": "Wait for the settings save to finish, then sync."},
+    ]
+    assert pending == []

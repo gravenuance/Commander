@@ -11,6 +11,7 @@ from commander.weightedshare import ShareTable
 from test_targets import card, info, names, table
 
 IDEA_SHARE = 0.5
+DECK_SHARE = 0.3
 LEADER = card("Leader", (Role.RAMP,), categories=("Commander",))
 
 
@@ -44,8 +45,10 @@ def ramp(count: int) -> list[ResolvedCard]:
 
 
 def shares_of(deck: list[ResolvedCard], over: Mapping[str, float] | None = None) -> ShareTable:
-    """Everything the deck plays at 90%, the idea at 50%, and the named cards as given."""
-    return table({**{r.card.name.casefold(): 0.9 for r in deck}, "mystic remora": IDEA_SHARE, **(over or {})})
+    """Everything the deck plays at 30%, the idea at 50%, and the named cards as given."""
+    return table(
+        {**{r.card.name.casefold(): DECK_SHARE for r in deck}, "mystic remora": IDEA_SHARE, **(over or {})}
+    )
 
 
 @pytest.mark.parametrize(
@@ -110,7 +113,7 @@ def test_a_cut_of_another_role_says_how_far_the_deck_over_runs_it() -> None:
     found = for_draw_idea(deck, rules(roles={Role.RAMP: band(1.0, 6.0)}, shares=shares_of(deck)))
     assert found[0].reason == (
         "other role (ramp, over-run: 9 against a median of 6 in recent decks);"
-        " in 90% of meta lists (18/20); EDHREC rank 1,000"
+        " in 30% of meta lists (6/20); EDHREC rank 1,000"
     )
 
 
@@ -191,3 +194,19 @@ def test_the_decks_kept_cards_are_never_cut_for_another_role_or_theme() -> None:
     found = for_draw_idea(deck, rules(roles={Role.RAMP: band(0.0)}, shares=shares, protected=["ramp 1"]))
     assert "Ramp 1" not in names(found)
     assert len(found) == 3
+
+
+def test_a_card_of_another_role_is_cut_only_for_an_idea_more_played_than_it() -> None:
+    deck = [
+        card("Played Ramp", (Role.RAMP,)),
+        card("Level Ramp", (Role.RAMP,)),
+        card("Rare Ramp", (Role.RAMP,)),
+    ]
+    shares = table({"mystic remora": IDEA_SHARE, "played ramp": 0.9, "level ramp": 0.5, "rare ramp": 0.2})
+    assert names(for_draw_idea(deck, rules(roles={Role.RAMP: band(0.0)}, shares=shares))) == ["Rare Ramp"]
+
+
+def test_the_played_gap_does_not_limit_a_cut_of_the_ideas_own_role() -> None:
+    deck = [card("Busy Draw", (Role.DRAW,))]
+    shares = table({"mystic remora": IDEA_SHARE, "busy draw": 0.9})
+    assert names(for_draw_idea(deck, rules(shares=shares))) == ["Busy Draw"]

@@ -265,7 +265,7 @@ def test_control_favours_one_for_one_removal_cheap_draw_and_counterspells_and_le
     assert (found["Test Big Draw"], found["Test Wipe"]) == (1.0, 1.0)
 
 
-def test_tempo_favours_removal_and_cheap_interaction_bounce_less_and_finds_wipes_off_plan(
+def test_tempo_favours_removal_and_cheap_interaction_bounce_less_and_is_neutral_on_wipes(
     made_up_db: CardDb,
 ) -> None:
     found = weights(Style.TEMPO, db=made_up_db)
@@ -279,12 +279,11 @@ def test_tempo_favours_removal_and_cheap_interaction_bounce_less_and_finds_wipes
                 "Test Cheap Counter": CLEAR,
                 "Test Free Counter": CLEAR,  # free to cast counts as cheap
                 "Test Bounce": BORDERLINE,  # not cheap
-                "Test Wipe": OFF_PLAN,
             },
         )
     )
-    # A counterspell above mana value 2 is no tempo play.
-    assert found["Test Counter"] == 1.0
+    # A counterspell above mana value 2 is no tempo play, and Tempo decks play wipes a little more.
+    assert (found["Test Counter"], found["Test Wipe"]) == (1.0, 1.0)
 
 
 def test_midrange_favours_counterspells_cheap_interaction_and_tutors_and_is_neutral_on_speed(
@@ -336,7 +335,7 @@ def test_several_styles_multiply_per_card_and_each_counts_once(made_up_db: CardD
     assert midrange_combo["Test Tutor"] == pytest.approx(CLEAR * BORDERLINE)
     tempo_midrange = weights(Style.TEMPO, Style.MIDRANGE, db=made_up_db)
     assert tempo_midrange["Test Cheap Counter"] == pytest.approx(CLEAR * CLEAR)
-    assert tempo_midrange["Test Wipe"] == pytest.approx(OFF_PLAN)
+    assert tempo_midrange["Test Wipe"] == pytest.approx(1.0)
 
 
 def test_off_plan_stands_unless_another_style_favours_the_role(made_up_db: CardDb) -> None:
@@ -350,7 +349,7 @@ def test_off_plan_stands_unless_another_style_favours_the_role(made_up_db: CardD
     # Stax favours removal at any mana value, so Turbo and Stax keep it; counterspells stay off-plan.
     turbo_stax = weights(Style.TURBO, Style.STAX, db=made_up_db)
     assert (turbo_stax["Test Kill"], turbo_stax["Test Counter"]) == pytest.approx((CLEAR, OFF_PLAN))
-    # Tempo's wipes and Turbo's counterspells are off-plan whatever else is favoured.
+    # Turbo's wipes and counterspells are off-plan whatever else is favoured: Tempo is neutral on wipes.
     tempo_turbo = weights(Style.TEMPO, Style.TURBO, db=made_up_db)
     assert (tempo_turbo["Test Wipe"], tempo_turbo["Test Counter"]) == pytest.approx((OFF_PLAN, OFF_PLAN))
 

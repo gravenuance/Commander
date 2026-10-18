@@ -13,6 +13,7 @@ async function openSettings() {
       leanings: answer.leanings, max: answer.maxAdjacent, pairWith: null,
     });
     $("settings-deck").textContent = $("deck-short").textContent;
+    $("settings-error").hidden = true;
     renderSettings();
     $("settings-dialog").showModal();
     $("settings-adjacent-input").focus();
@@ -85,12 +86,18 @@ function addIgnore(name) {
 
 async function saveSettings() {
   const s = settingsState;
+  const problem = $("settings-error");
+  problem.hidden = true;
   try {
     await api("save_settings", s.deck, s.adjacent, s.ignore);
     $("settings-dialog").close();
     showStatus("Settings saved to the deck's profile.toml");
     await refresh();
-  } catch { /* shown in the status line */ }
+  } catch (error) {
+    // The modal dialog covers the status line, so the refusal is repeated inside it.
+    problem.textContent = error instanceof Error ? error.message : String(error);
+    problem.hidden = false;
+  }
 }
 
 function setupSettings() {

@@ -161,8 +161,8 @@ def role_targets(info: CardInfo, main: Sequence[ResolvedCard], rules: CutRules) 
     lists and recent decks (when known), then the least played on EDHREC, unranked cards last. Commanders and
     protected oracle ids are never offered.
 
-    With the recent decks' counts read, cards of another role or theme fill the slots like for like leaves
-    (`_wider_cuts`).
+    With the recent decks' counts read, cards of another role or theme, less played than the idea, fill the
+    slots like for like leaves (`_wider_cuts`).
     """
     roles = [role for role in ANALYZED_ROLES if role in info.roles]
     own = rules.themes.get(info.oracle_id, frozenset())
@@ -201,12 +201,12 @@ def _wider_cuts(
 ) -> list[_Wider]:
     """Deck cards of another role or theme that may go for the idea, the best first.
 
-    None without the recent decks' counts or the shares. A card may go while each role it fills and the idea
-    does not keeps the peers' 25th percentile of cards, and, when its themes are not the idea's, while the
-    idea is MIN_THEME_GAP more played and each of its themes keeps the peers' median count (a theme with no
-    peer count, the profile's own, may lose one card). Cards of the idea's themes come first, then by score:
-    the idea's share less the card's, plus OVERRUN_BONUS for each card a role it fills runs over the
-    peers' median (a cut of another role only).
+    None without the recent decks' counts or the shares. A card of another role may go only while the idea
+    is more played than it and each role it fills and the idea does not keeps the peers' 25th percentile of
+    cards. A card of another theme may go only while the idea is MIN_THEME_GAP more played and each of its
+    themes keeps the peers' median count (a theme with no peer count, the profile's own, may lose one card).
+    Cards of the idea's themes come first, then by score: the idea's share less the card's, plus
+    OVERRUN_BONUS for each card a role it fills runs over the peers' median (a cut of another role only).
     """
     peers, shares = rules.peers, rules.shares
     if peers is None or shares is None:
@@ -225,6 +225,8 @@ def _wider_cuts(
         if any(role in peers.roles and held_roles[role] - 1 < peers.roles[role].floor for role in lost):
             continue
         gap = gain - _share(r.card.name, shares)
+        if other_role and gap <= _SHARE_NOISE:
+            continue
         if other_theme and (
             gap < MIN_THEME_GAP - _SHARE_NOISE or not _themes_hold(r, held_themes, rules, peers)
         ):
