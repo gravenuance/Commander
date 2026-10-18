@@ -93,6 +93,16 @@ def test_research_and_decisions_show_on_the_board(home: Path, fake: FakeArchidek
     ]
 
 
+@pytest.mark.parametrize("actor", ["archidekt", "cmdr"])
+def test_only_you_and_claude_can_make_a_change_from_the_command_line(
+    home: Path, fake: FakeArchidekt, actor: str
+) -> None:
+    result = board(home, fake, "add", "magda", "Lightning Bolt", "--by", actor)
+
+    assert result.code == 2
+    assert board(home, fake, "show", "magda").out.count("Lightning Bolt") == 0
+
+
 def test_board_refusals_are_usage_errors(home: Path, fake: FakeArchidekt) -> None:
     result = board(home, fake, "add", "magda", "Rhystic Study")
     assert result.code == 2

@@ -51,7 +51,8 @@ from commander.plan import Plan
 from commander.store import StoredDeck
 
 _TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(Z|\+00:00)?")
-_ACTORS = {actor.value: actor for actor in Actor if actor is not Actor.CMDR}
+# cmdr and the retired Maybeboard pick-up are authors of cards, never of a command-line change.
+_ACTORS = {actor.value: actor for actor in (Actor.YOU, Actor.CLAUDE)}
 _DECISIONS = {"add": Status.ADD, "reject": Status.REJECTED, "reopen": Status.OPEN}
 _STATUS_TEXT = {Status.OPEN: "open", Status.ADD: "add", Status.REJECTED: "no", Status.APPLIED: "in deck"}
 _DESCRIPTION = """\
