@@ -493,6 +493,33 @@ def test_undoing_a_queued_swap_does_not_relabel_an_old_pick_up(service: BoardSer
     )
 
 
+def test_cmdr_turns_down_an_open_idea_of_its_own_but_not_one_the_user_just_reopened(
+    tmp_path: Path, service: BoardService
+) -> None:
+    fresh = service.propose("Lightning Bolt", Actor.CMDR)
+    reopened = service.propose("Chaos Warp", Actor.CMDR)
+    service.decide(reopened.id, Status.REJECTED, Actor.YOU)
+    service.decide(reopened.id, Status.OPEN, Actor.YOU)
+
+    assert service.turn_down_open(reopened.id, "no longer", 0.1) is None
+    kept = read_board(tmp_path).find(reopened.id)
+    assert kept is not None
+    assert (kept.status, kept.reconsidered) == (Status.OPEN, True)
+    turned = service.turn_down_open(fresh.id, "no longer", 0.1)
+    assert turned is not None
+    assert (turned.status, turned.rejected_share) == (Status.REJECTED, pytest.approx(0.1))
+
+
+@pytest.mark.parametrize("source", [Actor.YOU, Actor.CLAUDE])
+def test_cmdr_never_turns_down_another_authors_open_card(
+    tmp_path: Path, service: BoardService, source: Actor
+) -> None:
+    card = service.propose("Lightning Bolt", source)
+
+    assert service.turn_down_open(card.id, "no longer", 0.1) is None
+    assert read_board(tmp_path).cards[0].status is Status.OPEN
+
+
 def test_a_board_from_before_the_mark_reads_and_a_set_mark_round_trips(
     tmp_path: Path, service: BoardService
 ) -> None:

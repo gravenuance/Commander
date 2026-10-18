@@ -619,11 +619,17 @@ class BoardService:
             save(Board(cards), entry)
 
     def turn_down_open(self, key: str, note: str, share: float) -> BoardCard | None:
-        """Turn down a card as cmdr, but only while it is still open: None when it was decided or removed
-        meanwhile. share is its weighted share of the lists read now, the baseline for its return."""
+        """Turn down a card as cmdr, but only while it is still open and its own: None when it was decided,
+        reopened by the user or removed meanwhile, or is by you or Claude. share is its weighted share of
+        the lists read now, the baseline for its return."""
         with self._editing() as (board, save):
             card = board.find(key)
-            if card is None or card.status is not Status.OPEN:
+            if (
+                card is None
+                or card.status is not Status.OPEN
+                or card.reconsidered
+                or card.source not in {Actor.CMDR, Actor.ARCHIDEKT}
+            ):
                 return None
             stamp = self._stamp()
             updated = replace(
