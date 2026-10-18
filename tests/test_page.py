@@ -243,3 +243,25 @@ def test_no_cut_yet_ideas_fill_their_own_panel_and_hide_it_when_there_are_none()
     """)
     assert shown["withIdeas"] == {"panel": False, "count": "(1)", "uncut": 1, "considering": 1}
     assert shown["none"] == {"panel": True, "count": ""}
+
+
+def test_a_pooled_idea_with_no_combined_share_still_renders_its_tile() -> None:
+    """A commander without cached lists has no share; an alike idea still carries its pool."""
+    tile = run("""
+    const idea = card({ origin: "adjacent decks", share: null, pool: { share: 0.5, count: 2, total: 4 } });
+    const tile = buildTile(idea);
+    const pop = tile.querySelector(".share-pop");
+    return { pill: tile.querySelector(".share-pill").textContent, total: texts(pop, ".share-total"),
+      rows: texts(pop, ".share-row .share-numbers") };
+    """)
+    assert tile == {"pill": "50%", "total": [], "rows": ["50% · 2 of 4 decks"]}
+
+
+def test_a_deck_view_renders_when_a_pooled_idea_has_no_combined_share() -> None:
+    shown = run("""
+    renderConsidering([card({ origin: "tagged decks", originTag: "Storm", share: null,
+      pool: { share: 0.25, count: 1, total: 4 } })]);
+    return { tiles: $("list-considering").children.length + $("list-uncut").children.length,
+      empty: $("empty-considering").hidden };
+    """)
+    assert shown == {"tiles": 1, "empty": True}
