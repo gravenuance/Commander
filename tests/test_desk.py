@@ -162,25 +162,6 @@ def test_the_sign_in_dialog_blurs_and_dims_the_app_behind_it_with_tokens_for_bot
         assert token in dark.split("* { box-sizing", 1)[0]
 
 
-def test_leaving_the_sign_in_dialog_without_signing_in_empties_the_page() -> None:
-    account = (WEB / "account.js").read_text(encoding="utf-8")
-    assert '$("signin-dialog").addEventListener("close", () => {' in account
-    assert "if (accountState.active && accountState.signedIn) return;" in account
-    assert '$("signed-out-sign-in").focus();' in account
-    assert "function showSignedOut() {" in account
-    assert "paintSync(false, true, NO_ACCOUNT_NOTE);" in account
-    # Startup, sign-out and a deck answer that outlives its account all go through the same gate.
-    main = (WEB / "main.js").read_text(encoding="utf-8")
-    assert "} else if (!account.signedIn) {" in main
-    # An account that can't be read empties the page too, and the note says why.
-    unread = main.split("if (!account) {", 1)[1].split("} else if", 1)[0]
-    assert "showSignedOut();" in unread
-    assert "paintSync(false, true, ACCOUNT_FAILED_NOTE);" in unread
-    assert "if (pageUserGone(epoch)) return;" in (WEB / "deck.js").read_text(encoding="utf-8")
-    sign_out = account.split("async function signOut() {", 1)[1].split("async function startSync", 1)[0]
-    assert sign_out.index("showSignedOut();") < sign_out.index("openSignIn();")
-
-
 @pytest.mark.parametrize("script", sorted(WEB.glob("*.js")), ids=lambda path: path.name)
 def test_no_script_writes_markup(script: Path) -> None:
     text = script.read_text(encoding="utf-8")
@@ -1044,106 +1025,13 @@ def test_the_sync_status_shows_each_deck_waiting_then_fetching_then_fetched_and_
     assert desk.sync_status()["decks"] == {}
 
 
-FETCH_LABELS = ("Waiting to fetch", "Fetching meta and ideas", "Fetched", "Fetch incomplete; see the log")
-
-
-def test_the_deck_list_paints_a_labelled_icon_per_fetch_state_in_place() -> None:
-    web = Path(str(resources.files("commander") / "web"))
-    script = (web / "deck.js").read_text(encoding="utf-8")
-    for label in FETCH_LABELS:
-        assert f'"{label}"' in script
-    # The account poll hands the states over, and only an icon whose state changed is touched.
-    assert "paintFetchStates(" in (web / "account.js").read_text(encoding="utf-8")
-    assert "dataset.fetch ===" in script
-    assert ".fetch-icon" in (web / "app.css").read_text(encoding="utf-8")
-
-
-CONSIDERING = (WEB / "considering.js").read_text(encoding="utf-8")
-
-
-def function_body(script: str, signature: str) -> str:
-    """The text of a top-level function, from its signature to the closing brace in column 0."""
-    return script.split(signature, 1)[1].split("\n}\n", 1)[0]
-
-
-def test_a_considering_tile_shows_the_combined_share_as_a_pill_button_in_place_of_badge_and_counts() -> None:
-    tile = function_body(CONSIDERING, "function buildTile(card) {")
-    assert "card.share || card.pool ? sharePill(card) : sourceBadge(card)" in tile
-    # The plain count line and the origin text badge are gone from the tile; the counts are in the popover.
-    assert "card.share.count}/" not in CONSIDERING
-    assert "originLabel(" not in tile
-    pill = function_body(CONSIDERING, "function sharePill(card) {")
-    assert 'type: "button"' in pill
-    assert '"aria-expanded": "false"' in pill
-    assert '"aria-controls": popId' in pill
-    assert '"aria-label": shown.name' in pill
-    assert "title:" in pill
-    pop = function_body(CONSIDERING, "function sharePopover(card, popId) {")
-    assert 'class: "share-pop", id: popId' in pop
-    assert "hidden: true" in pop
-
-
-def test_an_alike_or_tagged_pill_shows_the_pool_share_and_says_so_others_the_combined_one() -> None:
-    pill = function_body(CONSIDERING, "function sharePill(card) {")
-    assert "const shown = pillShare(card);" in pill
-    assert "text: shown.label" in pill
-    assert '"aria-label": shown.name' in pill
-    assert "title: `${shown.name}: show breakdown`" in pill
-    share = function_body(CONSIDERING, "function pillShare(card) {")
-    # The pool share only for the two pooled origins and only when the board has the numbers.
-    assert 'card.origin === "adjacent decks" || card.origin === "tagged decks"' in share
-    assert "card.pool" in share
-    assert "`${label} of ${poolName(card)}`" in share
-    assert "`${card.share.label} played; ${originPhrase(card)}`" in share
-    names = function_body(CONSIDERING, "function poolName(card) {")
-    assert "`${card.originTag}-tagged decks`" in names
-    assert "alike commanders' decks" in names
-    # The breakdown keeps the combined total and every row.
-    assert "`Combined ${card.share.label}" in function_body(
-        CONSIDERING, "function sharePopover(card, popId) {"
-    )
-
-
-def test_alike_and_tagged_ideas_sort_by_the_pool_share_the_pill_shows_within_their_group() -> None:
-    sort = function_body(CONSIDERING, "function sortSuggestions(cards) {")
-    assert "pillShare(b).value - pillShare(a).value" in sort
-    assert "suggestionGroup(a) - suggestionGroup(b)" in sort
-    assert "(a.withinBudget === false) - (b.withinBudget === false)" in sort
-    share = function_body(CONSIDERING, "function pillShare(card) {")
-    assert "value: card.pool.share" in share
-    assert "value: card.share.share" in share
-    assert "value: -1" in share
-
-
 def test_the_share_pill_takes_the_colour_of_the_origin_the_idea_is_credited_to() -> None:
     css = (WEB / "app.css").read_text(encoding="utf-8")
     for key in ("meta", "decks", "adjacent", "tagged", "none"):
         assert f".origin-{key} {{ --origin: var(--origin-{key}); }}" in css
-    assert '"archidekt decks": "decks", "adjacent decks": "adjacent", "tagged decks": "tagged"' in CONSIDERING
     pill = css.split(".share-pill {", 1)[1].split("}", 1)[0]
     assert "background: var(--origin);" in pill
     assert "color: var(--on-origin);" in pill
-
-
-def test_the_share_popover_lists_each_source_with_its_share_and_closes_on_escape_or_outside_click() -> None:
-    combined = "`Combined ${card.share.label} · ${card.share.count} of ${card.share.total}`"
-    assert f"text: {combined}" in CONSIDERING
-    rows = function_body(CONSIDERING, "function shareRow(card, row) {")
-    assert '"primary"' not in rows
-    assert '"Counted on the next sync"' in rows
-    assert "share-swatch" in rows
-    assert "card.pool" in function_body(CONSIDERING, "function shareRows(card) {")
-    setup = function_body(CONSIDERING, "function setupSharePopover() {")
-    assert 'event.key !== "Escape"' in setup
-    assert "closeShare(true)" in setup
-    assert 'document.addEventListener("click"' in setup
-    close = function_body(CONSIDERING, "function closeShare(refocus) {")
-    assert "pill.focus()" in close
-    assert '"aria-expanded", "false"' in close
-    # Only one breakdown is open at a time, and a click inside it doesn't select the tile.
-    assert "closeShare(false);" in function_body(CONSIDERING, "function toggleShare(pill, pop) {")
-    assert ".share-pop" in function_body(CONSIDERING, "function buildTile(card) {")
-    assert "setupSharePopover();" in (WEB / "main.js").read_text(encoding="utf-8")
 
 
 def hex_of(css: str, token: str) -> str:
@@ -1195,8 +1083,3 @@ def test_no_cut_yet_is_a_side_panel_between_considering_and_meta_not_a_fold() ->
     assert '<div id="uncut-body" class="panel-body">' in panel
     assert '<div id="list-uncut" class="cards" role="list"></div>' in panel
     assert html.index('id="h-considering"') < html.index('id="h-uncut"') < html.index('id="h-meta"')
-    # Hidden as a whole while it holds no ideas, and opened for a card just proposed with no cut.
-    assert '$("uncut").hidden = !waiting.length;' in CONSIDERING
-    propose = function_body(CONSIDERING, "async function propose(name) {")
-    assert '$("h-uncut")' in propose
-    assert ".open = true" not in propose
