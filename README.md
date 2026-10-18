@@ -445,9 +445,12 @@ base against Frank Karsten's published numbers
 
 - **Considering**, on the right, lists every idea for the deck in this order: yours, Claude's, the meta's,
   the Archidekt decks' for the deck's commander, alike commanders', tagged decks', then the rest. Within each
-  group ideas over the deck's budget come last, and the others by weighted share, which each card shows as a
-  pill ("34%"). The pill's colour says which source the idea is credited to: tournament lists, the
-  commander's Archidekt decks, alike commanders' or tagged decks' (grey for yours and Claude's). Click it for
+  group ideas over the deck's budget come last, and the others by the share their pill shows ("34%"), the
+  combined weighted share. The pill's colour says which source the idea is credited to: tournament lists, the
+  commander's Archidekt decks, alike commanders' or tagged decks' (grey for yours and Claude's). For an alike
+  or tagged idea the pill shows the share of the decks it was found in instead ("60% of Landfall-tagged
+  decks"), the figure the idea was picked by, and those two groups are ordered by it; an idea synced before
+  the board kept those numbers shows the combined share until the next sync. Click the pill for
   the breakdown: the combined share with its count ("Combined 34% · 12 of 35"), then each source's share
   and count ("Archidekt: alike commanders", "Archidekt: tagged *tag*" and so on), the primary one marked.
   Hover over an idea or click it to light the deck cards it could replace. Click one of them to queue the
@@ -460,7 +463,10 @@ base against Frank Karsten's published numbers
   The suggested targets are the cards you or Claude picked, or else the weakest cards like the idea
   ([ADR 0029](docs/adr/0029-replacement-targets-and-wider-cuts.md)). Like for like comes first: cards in the
   same role, and a card serving one of the deck's themes or leanings only for an idea serving the same, the
-  least played first and unranked cards last. Slots left over go to cards of another role or theme that are less played than the idea, but only
+  least played first and unranked cards last. Every cut suggested is less played than the idea, a card no
+  list plays counting as 0; without list data there is no such gate. An idea left with no cut goes to the
+  *No cut yet* panel, and a cut you pick yourself is never removed. Slots left over go to cards of another
+  role or theme, but only
   while the deck keeps what other players of the commander run (the peers' 25th percentile of each role, the
   median of each theme), and an other-theme cut needs the idea to be 20 points more played. The reason names
   what makes each cut allowed. A swap that takes a land out or puts one in is offered only if the land count

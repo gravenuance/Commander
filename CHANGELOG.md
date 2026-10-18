@@ -15,10 +15,12 @@
 - Ideas with no deck card to replace are put on the board as well and listed under *No cut yet* in the app,
   where clicking one offers every deck card but the commander.
 - Cuts of another role or theme (ADR 0029): when like for like leaves a slot free, a deck card of another role
-  or theme that is less played than the idea may be offered while the deck keeps what other players of the
-  commander run (the 25th percentile
+  or theme may be offered while the deck keeps what other players of the commander run (the 25th percentile
   of each role, the median of each theme; an other-theme cut also needs the idea 20 points more played). The
   reason says what allows it.
+- Every suggested cut is less played than the idea, a card no list plays counting as 0; without list data
+  there is no such gate. An idea left with no cut goes to the *No cut yet* panel. A cut you pick yourself is
+  never removed.
 - A swap that takes a land out or puts one in is offered only while the land count stays within one of
   Karsten's or inside the other lists' range and every colour keeps the sources its spells need (ADR 0030).
 - Tempo, Midrange, Aggro and Combo deck tags weigh the meta's staples beside Turbo, Stax and Control, as
@@ -33,7 +35,9 @@
 - A Considering card shows its combined share as a pill coloured by the source the idea is credited to
   (tournament lists, the commander's Archidekt decks, alike commanders, tagged decks), in place of the source
   badge and the plain count. Clicking the pill opens a breakdown: the combined share with its count, then each
-  source's share and count, the primary source marked.
+  source's share and count, the primary source marked. For an alike or tagged idea the pill shows the share of
+  the pool of decks it was found in ("60% of Landfall-tagged decks") and those two groups are ordered by it;
+  the board card keeps the pool's numbers (`originPool`) and the next sync adds them to ideas already there.
 - *No cut yet* is a side panel of its own between Considering and Meta, shown only while it holds ideas, in
   place of the fold inside Considering.
 - The app no longer opens the first deck by itself: the main area is blank until you pick one.

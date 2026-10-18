@@ -62,13 +62,18 @@ Tag search, in `commander.metadata`:
   are left out. The answer is cached by tag and bracket, so every deck with the tag shares it.
 - Each tag is a pool of its own. A card several pools play belongs to the pool playing it most, the first on
   a tie, and its reason says so ("in 7 of 15 recent decks tagged Landfall"); the board card keeps the tag
-  (`originTag`).
+  (`originTag`) and, for tagged and alike ideas, the pool's numbers (`originPool`: `count` and `total`), an
+  optional field that a sync adds to ideas already on the board.
 - A commander or tag whose decks cannot be read is named on stderr, and the deck's other ideas still come.
 
 The app names an idea's source in the breakdown behind its share pill, which is coloured by that source:
 "Tournament lists", "Archidekt: <commander> decks", "Archidekt: alike commanders" and "Archidekt: tagged
-<tag>". The breakdown of an alike or tagged idea gives its pool's share and size, read from the idea's reason. Considering lists the owner's cards first, then Claude's, then the
-four sources in that order and the rest; within a group, over-budget cards last, then by weighted share.
+<tag>". The breakdown of an alike or tagged idea gives its pool's share and size, from the board card's `originPool`.
+The pill of an alike or tagged idea shows that pool share ("60% of Landfall-tagged decks"), the figure the idea
+was picked by, and the combined share stays in the breakdown; the other sources' pills show the combined share.
+Considering lists the owner's cards first, then Claude's, then the four sources in that order and the rest;
+within a group, over-budget cards last, then by the share the pill shows (the pool share for alike and tagged
+ideas).
 
 ## Consequences
 
