@@ -794,7 +794,7 @@ class Desk:
 
     def _relabel(self, stored: StoredDeck, card: BoardCard | None) -> Relabel | None:
         """What the cached lists make of a card the user reconsiders; None when it is not one to label."""
-        if card is None:
+        if card is None or card.status is not Status.REJECTED or not card.relabellable:
             return None
         with self._db() as db:
             labels = idea_labels(stored.deck, self._pool(stored.deck), db, self._shares(stored.deck), [card])

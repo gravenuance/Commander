@@ -457,8 +457,40 @@ def test_only_the_user_reopening_a_card_marks_it_reconsidered_and_deciding_it_cl
     assert read_board(tmp_path).cards[0].reconsidered is True
 
     assert service.decide(card.id, Status.ADD, Actor.YOU, choice="Battered Golem").reconsidered is False
-    service.decide(card.id, Status.OPEN, Actor.YOU)
     assert service.decide(card.id, Status.REJECTED, Actor.YOU).reconsidered is False
+
+
+def test_undoing_a_queued_swap_is_not_reconsidering_the_card(service: BoardService) -> None:
+    card = service.propose("Lightning Bolt", Actor.CMDR)
+    service.decide(card.id, Status.ADD, Actor.YOU, choice="Battered Golem")
+
+    undone = service.decide(card.id, Status.OPEN, Actor.YOU)
+
+    assert (undone.status, undone.reconsidered) == (Status.OPEN, False)
+
+
+def test_reopening_an_open_card_keeps_its_reconsidered_mark(service: BoardService) -> None:
+    card = service.propose("Lightning Bolt", Actor.CMDR)
+    service.decide(card.id, Status.REJECTED, Actor.YOU)
+    service.decide(card.id, Status.OPEN, Actor.YOU)
+
+    assert service.decide(card.id, Status.OPEN, Actor.YOU).reconsidered is True
+    assert service.decide(card.id, Status.REJECTED, Actor.YOU).reconsidered is False
+
+
+def test_undoing_a_queued_swap_does_not_relabel_an_old_pick_up(service: BoardService) -> None:
+    card = service.propose("Lightning Bolt", Actor.ARCHIDEKT, reason="on the Maybeboard on Archidekt")
+    service.decide(card.id, Status.ADD, Actor.YOU, choice="Battered Golem")
+
+    undone = service.decide(
+        card.id, Status.OPEN, Actor.YOU, relabel=Relabel(Origin.DECKS, "in 3 of 4 Archidekt decks")
+    )
+
+    assert (undone.source, undone.origin, undone.reason) == (
+        Actor.ARCHIDEKT,
+        None,
+        "on the Maybeboard on Archidekt",
+    )
 
 
 def test_a_board_from_before_the_mark_reads_and_a_set_mark_round_trips(

@@ -278,6 +278,26 @@ def test_reconsidering_a_card_no_cached_list_plays_keeps_it_neutral_and_says_so(
     assert stone["reason"] == "reconsidered; no list plays it"
 
 
+def test_undoing_a_queued_swap_leaves_an_old_pick_up_as_it_was(
+    desk: Desk, settings: DeskSettings, fake: FakeArchidekt
+) -> None:
+    fake.edhtop16.pages[MAGDA] = [magda_page()]
+    fetch_meta(settings, fake)
+    card_id = legacy_card(settings, "Mind Stone")
+    desk.decide(DECK, card_id, "add", "Disruptor Flute", "")
+
+    desk.decide(DECK, card_id, "reopen", None, "")
+
+    stone = next(c for c in items(desk.deck(DECK), "cards") if c["id"] == card_id)
+    assert (stone["status"], stone["source"], stone["origin"], stone["reconsidered"]) == (
+        "open",
+        "archidekt",
+        None,
+        False,
+    )
+    assert stone["reason"] == "on the Maybeboard on Archidekt"
+
+
 def test_settings_offer_commanders_and_tags_and_save_to_the_profile(desk: Desk) -> None:
     assert cast("list[str]", desk.find_commanders("tempes")["names"]) == ["Tempestra, Dame of Games"]
     # Arcane Signet is no commander.
