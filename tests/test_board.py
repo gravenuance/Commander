@@ -21,6 +21,7 @@ from commander.board import (
     BoardService,
     Origin,
     OriginPool,
+    Relabel,
     ReplaceOption,
     Status,
     board_plan,
@@ -442,6 +443,79 @@ def test_a_turned_down_card_keeps_its_share_until_reopened(tmp_path: Path, servi
     assert service.propose("Lightning Bolt", Actor.YOU).rejected_share is None
     # Only a turned-down card keeps one.
     assert service.decide(card.id, Status.ADD, Actor.YOU, share=0.5).rejected_share is None
+
+
+def test_only_the_user_reopening_a_card_marks_it_reconsidered_and_deciding_it_clears_the_mark(
+    tmp_path: Path, service: BoardService
+) -> None:
+    card = service.propose("Lightning Bolt", Actor.CMDR)
+    service.decide(card.id, Status.REJECTED, Actor.YOU)
+    assert service.decide(card.id, Status.OPEN, Actor.CLAUDE).reconsidered is False
+
+    service.decide(card.id, Status.REJECTED, Actor.YOU)
+    assert service.decide(card.id, Status.OPEN, Actor.YOU).reconsidered is True
+    assert read_board(tmp_path).cards[0].reconsidered is True
+
+    assert service.decide(card.id, Status.ADD, Actor.YOU, choice="Battered Golem").reconsidered is False
+    service.decide(card.id, Status.OPEN, Actor.YOU)
+    assert service.decide(card.id, Status.REJECTED, Actor.YOU).reconsidered is False
+
+
+def test_a_board_from_before_the_mark_reads_and_a_set_mark_round_trips(
+    tmp_path: Path, service: BoardService
+) -> None:
+    card = service.propose("Lightning Bolt", Actor.CMDR)
+    service.decide(card.id, Status.REJECTED, Actor.YOU)
+    service.decide(card.id, Status.OPEN, Actor.YOU)
+    path = tmp_path / BOARD_FILE
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    assert raw["cards"][0]["reconsidered"] is True
+    del raw["cards"][0]["reconsidered"]
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    assert read_board(tmp_path).cards[0].reconsidered is False
+
+
+def test_reopening_an_old_pick_up_with_a_label_makes_it_a_compiled_idea_and_logs_the_reopen(
+    tmp_path: Path, service: BoardService
+) -> None:
+    card = service.propose("Lightning Bolt", Actor.ARCHIDEKT, reason="on the Maybeboard on Archidekt")
+    service.decide(card.id, Status.REJECTED, Actor.YOU)
+    label = Relabel(Origin.DECKS, "in 3 of 4 most-viewed recent Archidekt decks")
+
+    reopened = service.decide(card.id, Status.OPEN, Actor.YOU, relabel=label)
+
+    assert (reopened.source, reopened.origin, reopened.reason) == (Actor.CMDR, Origin.DECKS, label.reason)
+    assert (read_activity(tmp_path)[-1].action, read_activity(tmp_path)[-1].actor) == ("reopened", Actor.YOU)
+
+
+def test_a_label_without_a_source_changes_only_the_reason(service: BoardService) -> None:
+    card = service.propose("Lightning Bolt", Actor.ARCHIDEKT, reason="on the Maybeboard on Archidekt")
+    service.decide(card.id, Status.REJECTED, Actor.YOU)
+
+    reopened = service.decide(
+        card.id, Status.OPEN, Actor.YOU, relabel=Relabel(None, "reconsidered; no list plays it")
+    )
+
+    assert (reopened.source, reopened.origin, reopened.reason) == (
+        Actor.ARCHIDEKT,
+        None,
+        "reconsidered; no list plays it",
+    )
+
+
+def test_a_label_leaves_alike_and_tagged_ideas_and_other_peoples_cards_alone(service: BoardService) -> None:
+    alike = service.propose("Lightning Bolt", Actor.CMDR, reason="in 2 of 4", origin=Origin.ADJACENT)
+    mine = service.propose("Chaos Warp", Actor.YOU, reason="my idea")
+    for card in (alike, mine):
+        service.decide(card.id, Status.REJECTED, Actor.YOU)
+
+    label = Relabel(Origin.META, "in 5 of 5 lists")
+    kept = [service.decide(card.id, Status.OPEN, Actor.YOU, relabel=label) for card in (alike, mine)]
+
+    assert [(c.source, c.origin, c.reason) for c in kept] == [
+        (Actor.CMDR, Origin.ADJACENT, "in 2 of 4"),
+        (Actor.YOU, None, "my idea"),
+    ]
 
 
 def test_a_turned_down_card_comes_back_once_its_share_rises_by_20_points(

@@ -151,6 +151,17 @@ class BoardCard:
     origin_pool: OriginPool | None = None
     # Copies to add, each taking a copy of the chosen cut: a basic land swap moves several at once.
     copies: int = 1
+    # Set when the user reopened a turned-down card: the automatic re-judge leaves it until they decide it.
+    reconsidered: bool = False
+
+    @property
+    def relabellable(self) -> bool:
+        """Whether lists may name where the card comes from: a compiled idea or an old Maybeboard pick-up,
+        not one that already has a pool of decks behind it."""
+        return self.source in {Actor.CMDR, Actor.ARCHIDEKT} and self.origin not in {
+            Origin.ADJACENT,
+            Origin.TAGGED,
+        }
 
     def __post_init__(self) -> None:
         if not 1 <= self.copies <= MAX_COPIES:
@@ -163,6 +174,19 @@ class BoardCard:
             raise ValueError(f"{self.name}: only a tagged idea names a tag")
         if self.origin_pool is not None and self.origin not in {Origin.ADJACENT, Origin.TAGGED}:
             raise ValueError(f"{self.name}: only an alike or tagged idea has a pool")
+        if self.reconsidered and self.status is not Status.OPEN:
+            raise ValueError(f"{self.name}: only an open card can be reconsidered")
+
+
+@dataclass(slots=True, frozen=True)
+class Relabel:
+    """What today's lists make of an idea's label: the source it comes from, if any list plays it, and why.
+
+    Without an origin only the reason changes.
+    """
+
+    origin: Origin | None
+    reason: str
 
 
 @dataclass(slots=True, frozen=True)
@@ -294,6 +318,7 @@ def parse_board(raw: Mapping[str, object]) -> Board:
                 origin_tag=opt_str(card, "originTag", where),
                 origin_pool=_pool(card, where),
                 copies=opt_int(card, "copies", where) or 1,
+                reconsidered=card.get("reconsidered") is True,
             )
         )
     return Board(tuple(cards))
@@ -336,6 +361,7 @@ def card_json(card: BoardCard) -> dict[str, object]:
         if card.origin_pool
         else None,
         "copies": card.copies,
+        "reconsidered": card.reconsidered,
     }
 
 
@@ -526,11 +552,14 @@ class BoardService:
         choice: str | None = None,
         note: str = "",
         share: float | None = None,
+        relabel: Relabel | None = None,
     ) -> BoardCard:
         """Mark a card to add (with the deck card to cut), turn it down, or reopen it.
 
         share is the card's weighted share of the lists read now; a turned-down card keeps it, so lists that
-        have since taken to the card can offer it again (`feed_ideas`).
+        have since taken to the card can offer it again (`feed_ideas`). A card the user reopens is marked
+        reconsidered, which keeps the automatic re-judge off it until they decide it; relabel, for a
+        reopened relabellable card, gives it the label today's lists make of it.
         """
         if status is Status.APPLIED:
             raise BoardError("a card counts as applied only once it is saved to Archidekt")
@@ -550,7 +579,10 @@ class BoardService:
                 note=note,
                 updated_at=self._stamp(),
                 rejected_share=kept_share,
+                reconsidered=status is Status.OPEN and actor is Actor.YOU,
             )
+            if status is Status.OPEN and relabel is not None and card.relabellable:
+                updated = _relabelled(updated, relabel)
             detail = "; ".join(filter(None, [f"cut {cut}" if cut else "", note]))
             save(
                 _swap(board, updated),
@@ -591,10 +623,39 @@ class BoardService:
             if card is None or card.status is not Status.OPEN:
                 return None
             stamp = self._stamp()
-            updated = replace(card, status=Status.REJECTED, note=note, updated_at=stamp, rejected_share=share)
+            updated = replace(
+                card,
+                status=Status.REJECTED,
+                note=note,
+                updated_at=stamp,
+                rejected_share=share,
+                reconsidered=False,
+            )
             save(
                 _swap(board, updated),
                 Activity(stamp, Actor.CMDR, _DECISIONS[Status.REJECTED], card.name, note),
+            )
+            return updated
+
+    def relabel_open(self, key: str, label: Relabel) -> BoardCard | None:
+        """Give an open idea from the old Maybeboard pick-up the label today's lists make of it, as an idea
+        cmdr compiled: None when the card was decided or removed meanwhile, or no list names a source."""
+        with self._editing() as (board, save):
+            card = board.find(key)
+            if (
+                card is None
+                or card.status is not Status.OPEN
+                or card.source is not Actor.ARCHIDEKT
+                or not card.relabellable
+                or label.origin is None
+            ):
+                return None
+            updated = replace(_relabelled(card, label), updated_at=self._stamp())
+            save(
+                _swap(board, updated),
+                Activity(
+                    updated.updated_at, Actor.CMDR, "relabelled", card.name, f"from {label.origin.value}"
+                ),
             )
             return updated
 
@@ -723,6 +784,20 @@ def _require(board: Board, key: str) -> BoardCard:
     if card is None:
         raise BoardError(f"{key.strip()!r} is not on the board")
     return card
+
+
+def _relabelled(card: BoardCard, label: Relabel) -> BoardCard:
+    """The card with the reason of the label, and, when the label names a source, as an idea cmdr compiled."""
+    if label.origin is None:
+        return replace(card, reason=label.reason)
+    return replace(
+        card,
+        source=Actor.CMDR,
+        reason=label.reason,
+        origin=label.origin,
+        origin_tag=None,
+        origin_pool=None,
+    )
 
 
 def _swap(board: Board, card: BoardCard) -> Board:

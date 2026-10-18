@@ -23,7 +23,7 @@ from commander.credentials import CredentialError, TokenStore
 from commander.deckcache import Clock
 from commander.deckprofile import ProfileError
 from commander.fetchpriority import FetchPriority
-from commander.ideas import compile_ideas, gather_idea_pools, rejudge_ideas
+from commander.ideas import compile_ideas, gather_idea_pools, rejudge_ideas, relabel_legacy_ideas
 from commander.metadata import Progress, gather_for, meta_sources
 from commander.net import Fetcher, NetworkError, Pacer
 from commander.scryfall import CardRefresh, RefreshStatus, ScryfallClient, ScryfallError, refresh_card_db
@@ -257,6 +257,7 @@ def _compile_ideas(
                 )
                 if dropped:
                     turned_down[deck.short_name] = [card.name for card in dropped]
+                relabel_legacy_ideas(stored, data, db, now=services.now)
                 found[deck.short_name] = compile_ideas(
                     stored, data, db, now=services.now, adjacent=pools.decks, tagged=pools.tagged
                 )

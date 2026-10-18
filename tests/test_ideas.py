@@ -8,7 +8,16 @@ import pytest
 
 from commander import ideas as ideas_module
 from commander.answers import card_key
-from commander.board import Actor, BoardService, Origin, OriginPool, Status, read_activity, read_board
+from commander.board import (
+    Actor,
+    BoardService,
+    Origin,
+    OriginPool,
+    Relabel,
+    Status,
+    read_activity,
+    read_board,
+)
 from commander.carddb import CardDb
 from commander.deckcache import Answer, AnswerSource
 from commander.edhtop16 import Entry
@@ -16,6 +25,7 @@ from commander.ideas import (
     Idea,
     adjacent_ideas,
     compile_ideas,
+    idea_labels,
     ideas_summary,
     rejudge_ideas,
     staple_ideas,
@@ -25,7 +35,7 @@ from commander.meta import Basis, CardShare, Staples
 from commander.metadata import MetaData, PeerList, TaggedDecks
 from commander.models import Deck
 from commander.store import StoredDeck
-from commander.weightedshare import ShareTable, SourceShare, WeightedShare
+from commander.weightedshare import ShareTable, SourceShare, WeightedShare, weighted_shares
 from test_meta import NOW, SINCE, db, deck, entry, meta_data, peer
 
 __all__ = ["db", "deck"]  # fixtures shared with test_meta
@@ -580,6 +590,100 @@ def test_an_origin_less_card_of_the_old_pick_up_is_judged_and_one_of_cmdr_is_not
 
     assert card_state(tmp_path, old) == (Status.REJECTED, "no longer makes the cut")
     assert card_state(tmp_path, unknown)[0] is Status.OPEN
+
+
+def test_a_card_the_user_reconsidered_is_not_turned_down_again_until_decided(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    old = seed(tmp_path, deck, db, "Jeska's Will", Actor.ARCHIDEKT, status=Status.REJECTED)
+    cmdr = seed(tmp_path, deck, db, "Arcane Signet", Actor.CMDR, origin=Origin.META, status=Status.REJECTED)
+    service = BoardService(tmp_path, deck, db, now=lambda: NOW)
+    for card_id in (old, cmdr):
+        service.decide(card_id, Status.OPEN, Actor.YOU)
+    # A Mind Stone is all the lists play, so both cards fail the test.
+    data = meta_data(same_weight_lists("Mind Stone", 10))
+
+    assert judge(tmp_path, deck, db, data) == []
+    assert [card_state(tmp_path, card_id)[0] for card_id in (old, cmdr)] == [Status.OPEN, Status.OPEN]
+
+    # Once the user decides a card, a later reopen by Claude leaves it as any other card.
+    service.decide(cmdr, Status.REJECTED, Actor.YOU, note="no")
+    service.decide(cmdr, Status.OPEN, Actor.CLAUDE)
+    assert judge(tmp_path, deck, db, data) == ["Arcane Signet"]
+    assert card_state(tmp_path, old)[0] is Status.OPEN
+
+
+def labels_of(
+    folder: Path, deck: Deck, db: CardDb, data: MetaData | None, *cards: tuple[str, Actor, Origin | None]
+) -> dict[str, Relabel]:
+    """The labels `idea_labels` gives the seeded cards, by card name; cards without one are left out."""
+    for name, source, origin in cards:
+        seed(folder, deck, db, name, source, origin=origin)
+    board = read_board(folder)
+    labels = idea_labels(deck, data, db, weighted_shares(data, now=lambda: NOW), board.cards)
+    return {c.name: labels[c.id] for c in board.cards if c.id in labels}
+
+
+LISTS_AND_DECKS = (
+    "in {lists} of 10 top-cut Magda lists on EDHTop16 since 2026-08-16;"
+    " in {decks} of 10 most-viewed recent Archidekt decks"
+)
+
+
+@pytest.mark.parametrize(
+    ("split", "origin"),
+    [((2, 8), Origin.DECKS), ((8, 2), Origin.META), ((5, 5), Origin.META)],
+    ids=["decks play it more", "lists play it more", "a tie goes to the meta"],
+)
+def test_an_old_pick_up_is_labelled_by_the_source_that_plays_it_more_in_the_compiled_words(
+    deck: Deck, db: CardDb, tmp_path: Path, split: tuple[int, int], origin: Origin
+) -> None:
+    in_lists, in_decks = split
+    data = meta_data(same_weight_lists("Arcane Signet", in_lists), decks_playing(in_decks, 10))
+
+    labels = labels_of(tmp_path, deck, db, data, ("Arcane Signet", Actor.ARCHIDEKT, None))
+
+    assert labels == {
+        "Arcane Signet": Relabel(origin, LISTS_AND_DECKS.format(lists=in_lists, decks=in_decks))
+    }
+
+
+def test_a_compiled_idea_is_labelled_again_from_todays_lists(deck: Deck, db: CardDb, tmp_path: Path) -> None:
+    data = meta_data(same_weight_lists("Arcane Signet", 1), decks_playing(9, 10))
+
+    labels = labels_of(tmp_path, deck, db, data, ("Arcane Signet", Actor.CMDR, Origin.META))
+
+    assert labels == {"Arcane Signet": Relabel(Origin.DECKS, LISTS_AND_DECKS.format(lists=1, decks=9))}
+
+
+@pytest.mark.parametrize(
+    "data", [meta_data(same_weight_lists("Mind Stone", 10)), None], ids=["lists", "none"]
+)
+def test_a_card_no_list_plays_or_no_data_gives_the_plain_reason_and_no_source(
+    deck: Deck, db: CardDb, tmp_path: Path, data: MetaData | None
+) -> None:
+    labels = labels_of(tmp_path, deck, db, data, ("Arcane Signet", Actor.ARCHIDEKT, None))
+
+    assert labels == {"Arcane Signet": Relabel(None, "reconsidered; no list plays it")}
+
+
+def test_alike_and_tagged_ideas_and_cards_by_you_or_claude_are_not_relabelled(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    data = meta_data(same_weight_lists("Arcane Signet", 9))
+
+    labels = labels_of(
+        tmp_path,
+        deck,
+        db,
+        data,
+        ("Arcane Signet", Actor.CMDR, Origin.ADJACENT),
+        ("Jeska's Will", Actor.CMDR, Origin.TAGGED),
+        ("Lightning Bolt", Actor.YOU, None),
+        ("Chaos Warp", Actor.CLAUDE, None),
+    )
+
+    assert labels == {}
 
 
 def test_nothing_is_judged_without_share_data_or_when_the_ideas_source_was_not_read(

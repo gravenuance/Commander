@@ -26,7 +26,7 @@ from commander.board import (
 from commander.carddb import CARD_DB_FILE, CardDataMeta, CardDb
 from commander.config import MetaSettings
 from commander.fetchpriority import FetchPriority
-from commander.ideas import rejudge_ideas
+from commander.ideas import rejudge_ideas, relabel_legacy_ideas
 from commander.metadata import AdjacentDecks, MetaData
 from commander.models import Deck
 from commander.net import NetworkError
@@ -150,6 +150,7 @@ def stub_meta(
     monkeypatch.setattr(syncrun, "gather_idea_pools", no_pools)
     monkeypatch.setattr(syncrun, "compile_ideas", compile_nothing)
     monkeypatch.setattr(syncrun, "rejudge_ideas", judge_nothing)
+    monkeypatch.setattr(syncrun, "relabel_legacy_ideas", judge_nothing)
     return gathered
 
 
@@ -349,6 +350,7 @@ def sync_with_lists(
 
     monkeypatch.setattr(syncrun, "gather_for", gather)
     monkeypatch.setattr(syncrun, "rejudge_ideas", rejudge_ideas)
+    monkeypatch.setattr(syncrun, "relabel_legacy_ideas", relabel_legacy_ideas)
     sync_ideas(tmp_path, fake)
 
 
@@ -439,6 +441,35 @@ def test_an_idea_from_the_old_pick_up_that_fails_the_idea_test_is_turned_down_an
     assert fake.writes == []
 
 
+def test_a_passing_idea_of_the_old_pick_up_is_relabelled_as_a_compiled_one(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake, stored = populated(tmp_path, raw_deck, card_db_file)
+    ids = seed_board(stored, card_db_file)
+
+    sync_with_lists(tmp_path, fake, monkeypatch, lists_with("High-Speed Hoverbike", 9))
+
+    board = read_board(stored.folder)
+    hoverbike = board.find(ids["High-Speed Hoverbike"])
+    assert hoverbike is not None
+    assert (hoverbike.status, hoverbike.source, hoverbike.origin) == (Status.OPEN, Actor.CMDR, Origin.META)
+    assert hoverbike.reason == (
+        f"in 9 of 10 top-cut {stored.deck.short_name} lists on EDHTop16 since 2026-08-16"
+    )
+    # The cards that were turned down, queued, or by someone else keep their source and reason.
+    kept = {
+        name: (c.source, c.origin, c.reason)
+        for name in ("Tempestra, Dame of Games", "Lightning Bolt", "Arcane Signet", "Chaos Warp")
+        if (c := board.find(ids[name])) is not None
+    }
+    assert kept == {
+        "Tempestra, Dame of Games": (Actor.ARCHIDEKT, None, "seeded"),
+        "Lightning Bolt": (Actor.YOU, None, "seeded"),
+        "Arcane Signet": (Actor.ARCHIDEKT, None, "seeded"),
+        "Chaos Warp": (Actor.ARCHIDEKT, None, "seeded"),
+    }
+
+
 def test_the_old_ideas_are_left_alone_when_no_list_was_read(
     tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -494,6 +525,7 @@ def sync_outcome(
     monkeypatch.setattr(syncrun, "gather_for", read_data)
     monkeypatch.setattr(syncrun, "gather_idea_pools", read_pools)
     monkeypatch.setattr(syncrun, "rejudge_ideas", rejudge_ideas)
+    monkeypatch.setattr(syncrun, "relabel_legacy_ideas", relabel_legacy_ideas)
     return run_sync(
         services(tmp_path, fake),
         Workspace(tmp_path / "decks"),

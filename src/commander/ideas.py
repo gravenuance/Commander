@@ -24,13 +24,31 @@ from pathlib import Path
 
 from commander.analysis import game_changers
 from commander.answers import card_key
-from commander.board import Actor, BoardCard, BoardService, Origin, OriginPool, Status, feed_ideas, read_board
+from commander.board import (
+    Actor,
+    BoardCard,
+    BoardService,
+    Origin,
+    OriginPool,
+    Relabel,
+    Status,
+    feed_ideas,
+    read_board,
+)
 from commander.budget import resolved_budget
 from commander.carddb import CardDb
 from commander.deckcache import Clock
 from commander.deckprofile import read_profile, resolve_themes
 from commander.deckthemes import ThemeSource, merge_themes
-from commander.meta import MIN_PEER_LISTS, Basis, Staples, all_staples, pool_staple_keys, pool_staples
+from commander.meta import (
+    MIN_PEER_LISTS,
+    Basis,
+    CardShare,
+    Staples,
+    all_staples,
+    pool_staple_keys,
+    pool_staples,
+)
 from commander.metadata import (
     AdjacentDecks,
     MetaData,
@@ -49,6 +67,8 @@ from commander.weightedshare import NO_SHARES, ShareTable, SourceShare, weighted
 MAX_PER_SOURCE = 50
 # Why an idea that no longer passes the idea test is turned down on a sync (ADR 0028).
 NO_LONGER_MAKES_THE_CUT = "no longer makes the cut"
+# The reason of a reconsidered card that none of the lists read plays.
+NO_LIST_PLAYS_IT = "reconsidered; no list plays it"
 
 
 @dataclass(slots=True, frozen=True)
@@ -90,23 +110,26 @@ def staple_ideas(deck: Deck, staples: Staples, since: date, table: ShareTable = 
     share when `table` holds none): "meta" for the EDHTop16 lists (also on a tie), else "archidekt decks".
     The rows are staples already: `compile_ideas` picks them by the weighted share's lower bound, and an idea
     carries the chosen source's weighted share from `table`."""
-    lists = f"{deck.short_name} lists" if staples.basis is Basis.ALL else f"top-cut {deck.short_name} lists"
-    ideas: list[Idea] = []
     # What the deck's play style doesn't need (a Turbo deck's interaction) is no idea for it (ADR 0031).
-    for row in (r for r in staples.rows if r.fit is not Fit.OFF_PLAN):
-        parts: list[str] = []
-        if staples.lists:
-            parts.append(f"in {row.lists} of {staples.lists} {lists} on EDHTop16 since {since}")
-        if staples.peers:
-            parts.append(f"in {row.peer_lists} of {staples.peers} most-viewed recent Archidekt decks")
-        reason = "; ".join(parts)
-        meta = _source_share(table, row.name, Origin.META, row.share)
-        decks = _source_share(table, row.name, Origin.DECKS, row.peer_share)
-        if staples.lists and (not staples.peers or meta >= decks):
-            ideas.append(Idea(row.name, Origin.META, reason, meta, multiplier=row.multiplier))
-        else:
-            ideas.append(Idea(row.name, Origin.DECKS, reason, decks, multiplier=row.multiplier))
+    ideas = [
+        _staple_idea(deck, row, staples, since, table) for row in staples.rows if row.fit is not Fit.OFF_PLAN
+    ]
     return _best_first(ideas)
+
+
+def _staple_idea(deck: Deck, row: CardShare, staples: Staples, since: date, table: ShareTable) -> Idea:
+    lists = f"{deck.short_name} lists" if staples.basis is Basis.ALL else f"top-cut {deck.short_name} lists"
+    parts: list[str] = []
+    if staples.lists:
+        parts.append(f"in {row.lists} of {staples.lists} {lists} on EDHTop16 since {since}")
+    if staples.peers:
+        parts.append(f"in {row.peer_lists} of {staples.peers} most-viewed recent Archidekt decks")
+    reason = "; ".join(parts)
+    meta = _source_share(table, row.name, Origin.META, row.share)
+    decks = _source_share(table, row.name, Origin.DECKS, row.peer_share)
+    if staples.lists and (not staples.peers or meta >= decks):
+        return Idea(row.name, Origin.META, reason, meta, multiplier=row.multiplier)
+    return Idea(row.name, Origin.DECKS, reason, decks, multiplier=row.multiplier)
 
 
 def adjacent_ideas(
@@ -253,7 +276,8 @@ def rejudge_ideas(
     deck idea without the Archidekt decks. An alike idea is tested by the half of the pooled decks that
     plays it, a tagged one by its own tag's pool; `adjacent` is None when a group's decks could not be
     read, and a pool too small to name staples judges nothing. Cards by you or Claude, and queued,
-    applied or turned-down ones, are never touched (`turn_down_open` checks the card is still open).
+    applied or turned-down ones, are never touched (`turn_down_open` checks the card is still open), nor is
+    one the user reopened until they decide it.
     """
     table = weighted_shares(data, now=now)
     adjacent_keys = None if adjacent is None else pool_staple_keys(adjacent)
@@ -280,6 +304,7 @@ def rejudge_ideas(
         for card in read_board(stored.folder).cards
         if card.source in {Actor.CMDR, Actor.ARCHIDEKT}
         and card.status is Status.OPEN
+        and not card.reconsidered
         and not still_an_idea(card)
     ]
     if not failing:
@@ -291,6 +316,51 @@ def rejudge_ideas(
         for card in failing
     )
     return [card for card in turned_down if card is not None]
+
+
+def idea_labels(
+    deck: Deck, data: MetaData | None, db: CardDb, table: ShareTable, cards: Sequence[BoardCard]
+) -> dict[str, Relabel]:
+    """What the lists read make of each relabellable card, by board id: the source that plays it more (the
+    meta on a tie) with the reason a compiled idea of it has, as `staple_ideas` words it. A card no list
+    plays, or no data at all, gets only the plain reason (`NO_LIST_PLAYS_IT`). Cards that are not
+    relabellable are left out. A play style that finds the card off plan does not stop the label: the user
+    chose the card."""
+    chosen = [card for card in cards if card.relabellable]
+    if not chosen:
+        return {}
+    wanted = {card_key(card.name) for card in chosen}
+    found: dict[str, Idea] = {}
+    if data is not None:
+        staples = all_staples(deck, data, db, is_staple=lambda name: card_key(name) in wanted)
+        for row in staples.rows:
+            found[card_key(row.name)] = _staple_idea(deck, row, staples, data.since, table)
+    labels: dict[str, Relabel] = {}
+    for card in chosen:
+        idea = found.get(card_key(card.name))
+        labels[card.id] = Relabel(idea.origin, idea.reason) if idea else Relabel(None, NO_LIST_PLAYS_IT)
+    return labels
+
+
+def relabel_legacy_ideas(stored: StoredDeck, data: MetaData, db: CardDb, *, now: Clock) -> list[BoardCard]:
+    """Label the open ideas of the old Maybeboard pick-up that pass the idea test as ideas cmdr compiled,
+    from the source that plays them more, so none stays neutral in Considering; what it relabelled. Nothing
+    without a list read (`rejudge_ideas` judges none then either)."""
+    table = weighted_shares(data, now=now)
+    if not table:
+        return []
+    legacy = [
+        card
+        for card in read_board(stored.folder).cards
+        if card.source is Actor.ARCHIDEKT
+        and card.status is Status.OPEN
+        and card.relabellable
+        and table.is_idea(card.name)
+    ]
+    labels = idea_labels(stored.deck, data, db, table, legacy)
+    service = BoardService(stored.folder, stored.deck, db, now=now)
+    relabelled = (service.relabel_open(card.id, labels[card.id]) for card in legacy)
+    return [card for card in relabelled if card is not None]
 
 
 def gather_idea_pools(

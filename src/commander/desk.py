@@ -33,6 +33,7 @@ from commander.board import (
     BoardCard,
     BoardError,
     BoardService,
+    Relabel,
     ReplaceOption,
     Status,
     activity_json,
@@ -59,6 +60,7 @@ from commander.deckprofile import MAX_ADJACENT, Profile, read_profile
 from commander.deckthemes import merge_themes
 from commander.edhtop16 import Edhtop16Error
 from commander.fetchpriority import FetchPriority
+from commander.ideas import idea_labels
 from commander.labels import LabelError, label_options, set_label
 from commander.landswap import comparison_lists
 from commander.leanings import leaning_json
@@ -709,7 +711,13 @@ class Desk:
             share = found.share if found is not None else None
             with self._service(deck_id) as service:
                 card = service.decide(
-                    card_id, status, Actor.YOU, choice=choice or None, note=note, share=share
+                    card_id,
+                    status,
+                    Actor.YOU,
+                    choice=choice or None,
+                    note=note,
+                    share=share,
+                    relabel=self._relabel(stored, board_card) if status is Status.OPEN else None,
                 )
         return {"card": card_json(card)}
 
@@ -783,6 +791,14 @@ class Desk:
             "combos": combo_rows(report.combos),
             "racing": report.style.races,
         }
+
+    def _relabel(self, stored: StoredDeck, card: BoardCard | None) -> Relabel | None:
+        """What the cached lists make of a card the user reconsiders; None when it is not one to label."""
+        if card is None:
+            return None
+        with self._db() as db:
+            labels = idea_labels(stored.deck, self._pool(stored.deck), db, self._shares(stored.deck), [card])
+        return labels.get(card.id)
 
     def _shares(self, deck: Deck) -> ShareTable:
         """Each card's weighted share of the lists other players run with the deck's commander, from cached

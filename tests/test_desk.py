@@ -15,7 +15,7 @@ import pytest
 from commander import desk as desk_module
 from commander import syncrun
 from commander.app import desk_settings, page_html
-from commander.board import Actor, BoardService, Origin, OriginPool
+from commander.board import Actor, BoardService, Origin, OriginPool, Status, read_board
 from commander.carddb import CARD_DB_FILE, CardDb
 from commander.desk import Desk, DeskSettings
 from commander.ideas import compile_ideas
@@ -250,6 +250,51 @@ def test_a_card_turned_down_keeps_its_reason_for_the_rejected_list(desk: Desk) -
     assert (card["status"], card["note"]) == ("rejected", "rejected in design: no rocks")
     desk.decide(DECK, card_id, "reopen", None, "")
     assert items(desk.deck(DECK), "cards")[0]["status"] == "open"
+
+
+def legacy_card(settings: DeskSettings, name: str) -> str:
+    """The card on the board as the retired Maybeboard pick-up left it, turned down by the user."""
+    deck = Workspace(settings.workspace).load(DECK)
+    folder = Workspace(settings.workspace).folder_for(DECK)
+    assert deck is not None
+    assert folder is not None
+    with CardDb(settings.card_db) as db:
+        service = BoardService(folder, deck, db, now=lambda: NOW)
+        existing = read_board(folder).find(name)
+        if existing is not None:
+            service.remove(existing.id, Actor.YOU)
+        card = service.propose(name, Actor.ARCHIDEKT, reason="on the Maybeboard on Archidekt")
+        service.decide(card.id, Status.REJECTED, Actor.YOU, note="not now")
+    return card.id
+
+
+def test_reconsidering_a_turned_down_maybeboard_card_relabels_it_from_the_cached_lists(
+    desk: Desk, settings: DeskSettings, fake: FakeArchidekt
+) -> None:
+    fake.edhtop16.pages[MAGDA] = [magda_page()]
+    fetch_meta(settings, fake)
+    card_id = legacy_card(settings, "Mind Stone")
+
+    desk.decide(DECK, card_id, "reopen", None, "")
+
+    stone = next(c for c in items(desk.deck(DECK), "cards") if c["id"] == card_id)
+    assert (stone["status"], stone["source"], stone["origin"]) == ("open", "cmdr", "meta")
+    assert stone["reason"] == "in 5 of 5 top-cut Magda lists on EDHTop16 since 2026-08-16"
+    # Newest first: the reopen stays on the activity line, by the user.
+    latest = items(desk.deck(DECK), "activity")[0]
+    assert (latest["action"], latest["actor"], latest["card"]) == ("reopened", "you", "Mind Stone")
+
+
+def test_reconsidering_a_card_no_cached_list_plays_keeps_it_neutral_and_says_so(
+    desk: Desk, settings: DeskSettings
+) -> None:
+    card_id = legacy_card(settings, "Mind Stone")
+
+    desk.decide(DECK, card_id, "reopen", None, "")
+
+    stone = items(desk.deck(DECK), "cards")[0]
+    assert (stone["status"], stone["source"], stone["origin"]) == ("open", "archidekt", None)
+    assert stone["reason"] == "reconsidered; no list plays it"
 
 
 def test_settings_offer_commanders_and_tags_and_save_to_the_profile(desk: Desk) -> None:
