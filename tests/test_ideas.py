@@ -8,7 +8,7 @@ import pytest
 
 from commander import ideas as ideas_module
 from commander.answers import card_key
-from commander.board import Actor, BoardService, Origin, Status, read_board
+from commander.board import Actor, BoardService, Origin, OriginPool, Status, read_board
 from commander.carddb import CardDb
 from commander.ideas import Idea, adjacent_ideas, compile_ideas, ideas_summary, staple_ideas, tagged_ideas
 from commander.meta import Basis, CardShare, Staples
@@ -394,3 +394,51 @@ def test_adjacent_and_tagged_ideas_are_in_score_order_too(deck: Deck, db: CardDb
     ] == favoured_first
     most_played_first = ["High-Speed Hoverbike", "Arcane Signet"]
     assert [i.name for i in adjacent_ideas(deck, decks, groups, db)] == most_played_first
+
+
+def pool_on_board(folder: Path, name: str) -> OriginPool | None:
+    card = read_board(folder).find(name)
+    assert card is not None
+    return card.origin_pool
+
+
+def test_an_adjacent_idea_stores_how_many_of_its_pools_decks_play_it(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    (tmp_path / "profile.toml").write_text(ALIKE, encoding="utf-8")
+    pool = [peer(1, ["Arcane Signet"]), peer(2, ["Arcane Signet"]), peer(3, []), peer(4, [])]
+    [idea] = adjacent_ideas(deck, pool, [("The Gitrog Monster",)], db)
+    assert idea.pool == OriginPool(2, 4)
+    compile_ideas(StoredDeck(tmp_path, deck), meta_data([], []), db, now=lambda: NOW, adjacent=pool)
+    assert pool_on_board(tmp_path, "Arcane Signet") == OriginPool(2, 4)
+
+
+def test_a_tagged_idea_stores_the_pool_of_the_tag_that_found_it(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    half = tag_pool("Tokens", ["Arcane Signet"], ["Arcane Signet"], [], [])
+    most = tag_pool("Landfall", ["Arcane Signet"], ["Arcane Signet"], ["Arcane Signet"], [])
+    [idea] = tagged_ideas(deck, [half, most], db)
+    assert (idea.tag, idea.pool) == ("Landfall", OriginPool(3, 4))
+    compile_ideas(StoredDeck(tmp_path, deck), meta_data([], []), db, now=lambda: NOW, tagged=[half, most])
+    assert pool_on_board(tmp_path, "Arcane Signet") == OriginPool(3, 4)
+
+
+def test_meta_and_deck_ideas_have_no_pool(deck: Deck, db: CardDb, tmp_path: Path) -> None:
+    compile_ideas(StoredDeck(tmp_path, deck), meta_data([], decks_playing(4, 4)), db, now=lambda: NOW)
+    cards = read_board(tmp_path).cards
+    assert cards
+    assert all(card.origin_pool is None for card in cards)
+
+
+def test_a_sync_gives_an_idea_already_on_the_board_without_a_pool_its_pool(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    (tmp_path / "profile.toml").write_text(ALIKE, encoding="utf-8")
+    pool = [peer(1, ["Arcane Signet"]), peer(2, ["Arcane Signet"]), peer(3, []), peer(4, [])]
+    service = BoardService(tmp_path, deck, db, now=lambda: NOW)
+    service.propose("Arcane Signet", Actor.CMDR, reason="in 2 of 4 recent decks", origin=Origin.ADJACENT)
+    assert read_board(tmp_path).cards[0].origin_pool is None
+    compile_ideas(StoredDeck(tmp_path, deck), meta_data([], []), db, now=lambda: NOW, adjacent=pool)
+    [card] = read_board(tmp_path).cards
+    assert (card.reason, card.origin_pool) == ("in 2 of 4 recent decks", OriginPool(2, 4))

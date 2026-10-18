@@ -24,7 +24,17 @@ from pathlib import Path
 from commander.answers import card_key
 from commander.carddb import CardDb, CardInfo
 from commander.fsutil import write_text_atomic
-from commander.jsonshape import ShapeError, as_object, opt_float, opt_int, opt_str, req_int, req_list, req_str
+from commander.jsonshape import (
+    ShapeError,
+    as_object,
+    opt_float,
+    opt_int,
+    opt_str,
+    req_int,
+    req_list,
+    req_object,
+    req_str,
+)
 from commander.models import COMMANDER_CATEGORY, Deck
 from commander.plan import AddCard, Plan, RemoveCard
 from commander.suggest import Suggestions, deck_identity, name_keys
@@ -103,6 +113,22 @@ class Origin(Enum):
 
 
 @dataclass(slots=True, frozen=True)
+class OriginPool:
+    """The pool of decks an alike or tagged idea was found in: how many of its `total` decks play the card."""
+
+    count: int
+    total: int
+
+    def __post_init__(self) -> None:
+        if not 0 <= self.count <= self.total or self.total < 1:
+            raise ValueError(f"pool: {self.count} of {self.total} decks is not a share")
+
+    @property
+    def share(self) -> float:
+        return self.count / self.total
+
+
+@dataclass(slots=True, frozen=True)
 class BoardCard:
     id: str
     name: str
@@ -121,6 +147,8 @@ class BoardCard:
     origin: Origin | None = None
     # For a tagged idea: the deck tag whose decks play the card.
     origin_tag: str | None = None
+    # For an alike or tagged idea: how many of the decks it was found in play it; None on a board from before.
+    origin_pool: OriginPool | None = None
     # Copies to add, each taking a copy of the chosen cut: a basic land swap moves several at once.
     copies: int = 1
 
@@ -133,6 +161,8 @@ class BoardCard:
             raise ValueError(f"{self.name}: only a turned-down card keeps its share")
         if self.origin_tag is not None and self.origin is not Origin.TAGGED:
             raise ValueError(f"{self.name}: only a tagged idea names a tag")
+        if self.origin_pool is not None and self.origin not in {Origin.ADJACENT, Origin.TAGGED}:
+            raise ValueError(f"{self.name}: only an alike or tagged idea has a pool")
 
 
 @dataclass(slots=True, frozen=True)
@@ -271,6 +301,7 @@ def parse_board(raw: Mapping[str, object]) -> Board:
                 rejected_share=opt_float(card, "rejectedShare", where),
                 origin=_origin(opt_str(card, "origin", where)),
                 origin_tag=opt_str(card, "originTag", where),
+                origin_pool=_pool(card, where),
                 copies=opt_int(card, "copies", where) or 1,
             )
         )
@@ -279,6 +310,15 @@ def parse_board(raw: Mapping[str, object]) -> Board:
 
 def _origin(value: str | None) -> Origin | None:
     return Origin(value) if value else None
+
+
+def _pool(card: Mapping[str, object], where: str) -> OriginPool | None:
+    if card.get("originPool") is None:
+        return None
+    found = req_object(card, "originPool", where)
+    return OriginPool(
+        req_int(found, "count", f"{where}.originPool"), req_int(found, "total", f"{where}.originPool")
+    )
 
 
 def board_json(board: Board) -> dict[str, object]:
@@ -301,6 +341,9 @@ def card_json(card: BoardCard) -> dict[str, object]:
         "rejectedShare": card.rejected_share,
         "origin": card.origin.value if card.origin else None,
         "originTag": card.origin_tag,
+        "originPool": {"count": card.origin_pool.count, "total": card.origin_pool.total}
+        if card.origin_pool
+        else None,
         "copies": card.copies,
     }
 
@@ -394,6 +437,7 @@ class BoardService:
         replace_options: Sequence[ReplaceOption] = (),
         origin: Origin | None = None,
         origin_tag: str | None = None,
+        origin_pool: OriginPool | None = None,
         copies: int = 1,
     ) -> BoardCard:
         """Put a card on the board; a card turned down or applied before is reopened, not listed twice."""
@@ -417,6 +461,7 @@ class BoardService:
                     rejected_share=None,
                     origin=origin or existing.origin,
                     origin_tag=origin_tag if origin else existing.origin_tag,
+                    origin_pool=origin_pool if origin else existing.origin_pool,
                     copies=copies,
                 )
                 save(_swap(board, card), Activity(stamp, actor, "reopened", card.name, reason))
@@ -437,6 +482,7 @@ class BoardService:
                 updated_at=stamp,
                 origin=origin,
                 origin_tag=origin_tag,
+                origin_pool=origin_pool,
                 copies=copies,
             )
             save(
@@ -560,6 +606,20 @@ class BoardService:
             save(
                 _swap(board, replace(card, rejected_share=share, updated_at=stamp)),
                 Activity(stamp, Actor.CMDR, "share noted", card.name, f"in {share:.0%} of the lists read"),
+            )
+
+    def remember_pool(self, key: str, pool: OriginPool) -> None:
+        """Give an alike or tagged idea on the board that has no pool the numbers it was found by."""
+        with self._editing() as (board, save):
+            card = _require(board, key)
+            if card.origin_pool is not None or card.origin not in {Origin.ADJACENT, Origin.TAGGED}:
+                return
+            stamp = self._stamp()
+            save(
+                _swap(board, replace(card, origin_pool=pool, updated_at=stamp)),
+                Activity(
+                    stamp, Actor.CMDR, "pool noted", card.name, f"in {pool.count} of {pool.total} decks"
+                ),
             )
 
     def note(self, actor: Actor, action: str, detail: str, card: str | None = None) -> None:
@@ -815,9 +875,11 @@ def feed_ideas(
     shares: Mapping[str, float] | None = None,
     origin: Origin | None = None,
     origin_tag: str | None = None,
+    origin_pool: OriginPool | None = None,
 ) -> list[BoardCard]:
     """Put each idea (card name to reason) on the board under Considering, with cuts as cards to replace
-    and where the ideas came from (origin_tag: the deck tag, for tagged decks).
+    and where the ideas came from (origin_tag: the deck tag, for tagged decks; origin_pool: the decks it
+    was found in, for alike and tagged ones).
 
     Cards already on the board are left alone, but with the weighted shares of the lists read (by `card_key`)
     a turned-down one comes back once its share has risen by RETURN_RISE since; one turned down without a
@@ -840,6 +902,7 @@ def feed_ideas(
                 replace_options=cuts,
                 origin=origin,
                 origin_tag=origin_tag,
+                origin_pool=origin_pool,
             )
         except BoardError as error:
             log.info("not putting %s on the board: %s", name, error)

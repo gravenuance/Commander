@@ -20,6 +20,7 @@ from commander.board import (
     BoardError,
     BoardService,
     Origin,
+    OriginPool,
     ReplaceOption,
     Status,
     board_plan,
@@ -576,3 +577,62 @@ def test_a_commander_cannot_make_room(service: BoardService) -> None:
         service.research(card.id, Actor.CLAUDE, replace_options=[ReplaceOption("magda, brazen outlaw")])
     with pytest.raises(BoardError, match="Magda, Brazen Outlaw is a commander, so it cannot make room"):
         service.decide(card.id, Status.ADD, Actor.YOU, choice="Magda, Brazen Outlaw")
+
+
+def test_an_ideas_pool_goes_through_the_board_file_as_origin_pool(
+    tmp_path: Path, service: BoardService
+) -> None:
+    pool = OriginPool(7, 15)
+    card = service.propose(
+        "Lightning Bolt", Actor.CMDR, origin=Origin.TAGGED, origin_tag="Landfall", origin_pool=pool
+    )
+    assert read_board(tmp_path).cards == (card,)
+    assert read_board(tmp_path).cards[0].origin_pool == OriginPool(7, 15)
+    saved = json.loads((tmp_path / BOARD_FILE).read_text(encoding="utf-8"))
+    assert saved["version"] == 2
+    assert saved["cards"][0]["originPool"] == {"count": 7, "total": 15}
+
+
+def test_a_card_without_a_pool_saves_none_and_a_board_from_before_it_reads(
+    tmp_path: Path, service: BoardService
+) -> None:
+    service.propose("Lightning Bolt", Actor.CMDR, origin=Origin.ADJACENT)
+    path = tmp_path / BOARD_FILE
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["cards"][0]["originPool"] is None
+    del saved["cards"][0]["originPool"]
+    path.write_text(json.dumps(saved), encoding="utf-8")
+    [card] = read_board(tmp_path).cards
+    assert (card.origin, card.origin_pool) == (Origin.ADJACENT, None)
+
+
+def test_a_reopened_idea_takes_the_new_pool_and_keeps_the_old_one_when_given_none(
+    service: BoardService,
+) -> None:
+    card = service.propose("Lightning Bolt", Actor.CMDR, origin=Origin.ADJACENT, origin_pool=OriginPool(2, 4))
+    service.decide(card.id, Status.REJECTED, Actor.YOU)
+    assert service.propose("Lightning Bolt", Actor.CMDR).origin_pool == OriginPool(2, 4)
+    service.decide(card.id, Status.REJECTED, Actor.YOU)
+    again = service.propose(
+        "Lightning Bolt", Actor.CMDR, origin=Origin.ADJACENT, origin_pool=OriginPool(3, 5)
+    )
+    assert again.origin_pool == OriginPool(3, 5)
+    service.decide(card.id, Status.REJECTED, Actor.YOU)
+    assert service.propose("Lightning Bolt", Actor.CMDR, origin=Origin.DECKS).origin_pool is None
+
+
+def test_a_pool_needs_an_alike_or_tagged_idea_and_a_count_within_a_non_empty_total() -> None:
+    def card(origin: Origin | None, pool: OriginPool | None) -> BoardCard:
+        return BoardCard(
+            "a1", "Lightning Bolt", "x", Actor.CMDR, "", (), Status.OPEN, None, "", "t", "t",
+            origin=origin, origin_pool=pool,
+        )  # fmt: skip
+
+    assert card(Origin.ADJACENT, OriginPool(0, 3)).origin_pool == OriginPool(0, 3)
+    assert card(Origin.TAGGED, OriginPool(3, 3)).origin_pool == OriginPool(3, 3)
+    with pytest.raises(ValueError, match="only an alike or tagged"):
+        card(Origin.META, OriginPool(1, 3))
+    with pytest.raises(ValueError, match="pool"):
+        OriginPool(4, 3)
+    with pytest.raises(ValueError, match="pool"):
+        OriginPool(0, 0)

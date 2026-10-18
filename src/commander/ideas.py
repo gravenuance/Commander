@@ -22,7 +22,7 @@ from datetime import date
 from pathlib import Path
 
 from commander.analysis import game_changers
-from commander.board import BoardCard, BoardService, Origin, Status, feed_ideas, read_board
+from commander.board import BoardCard, BoardService, Origin, OriginPool, Status, feed_ideas, read_board
 from commander.budget import resolved_budget
 from commander.carddb import CardDb
 from commander.deckcache import Clock
@@ -51,6 +51,8 @@ class Idea:
     tag: str | None = None
     # What the deck's play style makes of the card (`playstyle.Weight`): the share's factor in the score.
     multiplier: float = 1.0
+    # For an adjacent or tagged idea: how many of the pooled decks play it.
+    pool: OriginPool | None = None
 
     @property
     def score(self) -> float:
@@ -110,6 +112,7 @@ def adjacent_ideas(
             f"in {row.peer_lists} of {len(pool)} recent {who} decks",
             row.peer_share,
             multiplier=row.multiplier,
+            pool=OriginPool(row.peer_lists, len(pool)),
         )
         for row in pool_staples(deck, pool, db)
         if row.fit is not Fit.OFF_PLAN
@@ -134,6 +137,7 @@ def tagged_ideas(deck: Deck, pools: Sequence[TaggedDecks], db: CardDb) -> list[I
                 row.peer_share,
                 pool.tag,
                 row.multiplier,
+                OriginPool(row.peer_lists, len(pool.decks)),
             )
             seen = best.get(row.name.casefold())
             if seen is None or idea.score > seen.score:
@@ -199,6 +203,8 @@ def compile_ideas(
                 continue
             existing = board.find(idea.name)
             if existing is not None and existing.status is not Status.REJECTED:
+                if idea.pool is not None and existing.origin is origin and existing.origin_pool is None:
+                    service.remember_pool(existing.id, idea.pool)
                 placed += 1
                 continue
             # One at a time: a card the board refuses (banned, off colour) or a turned-down one the meta
@@ -211,6 +217,7 @@ def compile_ideas(
                 shares=shares,
                 origin=origin,
                 origin_tag=idea.tag,
+                origin_pool=idea.pool,
             )
             added[origin].extend(new)
             placed += len(new)

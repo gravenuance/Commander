@@ -7,7 +7,6 @@ refuses while a sync runs, and a sync refuses while one of them runs.
 """
 
 import logging
-import re
 import threading
 from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
@@ -34,7 +33,6 @@ from commander.board import (
     BoardCard,
     BoardError,
     BoardService,
-    Origin,
     ReplaceOption,
     Status,
     activity_json,
@@ -883,20 +881,13 @@ class Desk:
         return view
 
 
-# How ideas.py words the pool an alike or tagged idea was found in: "in 7 of 15 recent decks tagged Landfall".
-_POOL_REASON = re.compile(r"^in (\d+) of (\d+) recent ")
-
-
 def _pool_json(card: BoardCard) -> Json | None:
-    """For an alike or tagged idea, how many of its pool's decks play it, the pool's size and the plain share.
-    The board keeps only the reason, so they are read from it; None for any other card."""
-    if card.origin not in (Origin.ADJACENT, Origin.TAGGED):
+    """For an alike or tagged idea, how many of its pool's decks play it, the pool's size and the plain share;
+    None for any other card and for one the board holds no pool numbers for (the next sync adds them)."""
+    if card.origin_pool is None:
         return None
-    found = _POOL_REASON.match(card.reason)
-    if found is None or not int(found[2]):
-        return None
-    count, total = int(found[1]), int(found[2])
-    return {"count": count, "total": total, "share": round(count / total, 4)}
+    pool = card.origin_pool
+    return {"count": pool.count, "total": pool.total, "share": round(pool.share, 4)}
 
 
 def _land_options(db: CardDb, deck: Deck, folder: Path) -> tuple[list[LandOption], int | None]:

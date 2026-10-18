@@ -15,6 +15,7 @@ import pytest
 from commander import desk as desk_module
 from commander import syncrun
 from commander.app import desk_settings, page_html
+from commander.board import Actor, BoardService, Origin, OriginPool
 from commander.carddb import CARD_DB_FILE, CardDb
 from commander.desk import Desk, DeskSettings
 from commander.ideas import compile_ideas
@@ -537,6 +538,25 @@ def test_an_alike_or_tagged_idea_carries_its_pools_count_total_and_share(
     assert cards["Lightning Bolt"]["pool"] is None
 
 
+def test_an_idea_card_without_stored_pool_numbers_sends_no_pool_whatever_its_reason_says(
+    settings: DeskSettings, desk: Desk
+) -> None:
+    store = Workspace(settings.workspace)
+    deck = store.load(DECK)
+    folder = store.folder_for(DECK)
+    assert deck is not None
+    assert folder is not None
+    with CardDb(settings.card_db) as db:
+        service = BoardService(folder, deck, db, now=lambda: NOW)
+        service.propose(
+            "Arcane Signet", Actor.CMDR, reason="in 2 of 4 recent decks tagged Landfall", origin=Origin.TAGGED
+        )
+        service.propose("Ancient Tomb", Actor.CMDR, origin=Origin.ADJACENT, origin_pool=OriginPool(1, 3))
+    cards = {c["name"]: c for c in items(desk.deck(DECK), "cards")}
+    assert cards["Arcane Signet"]["pool"] is None
+    assert cards["Ancient Tomb"]["pool"] == {"count": 1, "total": 3, "share": 0.3333}
+
+
 def test_preview_and_commit_save_the_queued_cards(desk: Desk, fake: FakeArchidekt) -> None:
     desk.propose(DECK, "Arcane Signet")
     card_id = first_card_id(desk)
@@ -979,7 +999,7 @@ def test_a_considering_tile_shows_the_combined_share_as_a_pill_button_in_place_o
     assert 'type: "button"' in pill
     assert '"aria-expanded": "false"' in pill
     assert '"aria-controls": popId' in pill
-    assert '"aria-label": `${card.share.label} played; ${originPhrase(card)}`' in pill
+    assert '"aria-label": shown.name' in pill
     assert "title:" in pill
     pop = function_body(CONSIDERING, "function sharePopover(card, popId) {")
     assert 'class: "share-pop", id: popId' in pop
