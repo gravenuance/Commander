@@ -23,6 +23,10 @@
   Karsten's or inside the other lists' range and every colour keeps the sources its spells need (ADR 0030).
 - Tempo, Midrange, Aggro and Combo deck tags weigh the meta's staples beside Turbo, Stax and Control, as
   multipliers on the share (ADR 0031): 1.25 for a clear fit, 1.1 for a borderline one, 0.8 for off-plan.
+- Sync fetches ideas for the deck open in the app first, then for the rest by how often you open them (ADR 0034):
+  each open adds 1 to the deck's score, which halves every 30 days and is kept in `views.json` in
+  `%LOCALAPPDATA%\Commander`, on this machine only. A deck opened during a sync goes next, once the commander
+  being fetched is done. `cmdr sync` goes by the same scores.
 
 ### Changed
 - The app's page shows no one until a sign-in succeeds: at start without a signed-in account, after **Sign out**,

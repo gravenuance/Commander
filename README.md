@@ -384,6 +384,12 @@ day takes a few minutes and the rest are quick. If a commander's or tag's decks 
 and carries on; if every source for a deck fails, its board stays as it was and the sync still succeeds.
 `sync --no-ideas` skips this step.
 
+The ideas come deck by deck, the deck open in the app first and the rest by how often you open them: each
+open adds 1 to a deck's score, and a score halves every 30 days. The scores are kept in `views.json` in
+`%LOCALAPPDATA%\Commander`, on your machine only; delete the file to start again from the folder order. A deck
+you open while a sync runs goes next, once the commander being fetched is done
+([ADR 0034](docs/adr/0034-fetch-the-decks-you-look-at-first.md)).
+
 Every change lands in the deck's activity log with who made it (you, Claude, cmdr or Archidekt).
 `cmdr board log` shows every deck's log, oldest first; `--since` keeps what is newer than a UTC time like
 `2026-10-15T18:00` and refuses any other format. The log is how
