@@ -12,7 +12,7 @@ from typing import cast
 import pytest
 
 from commander import syncrun
-from commander.board import BoardCard, Origin
+from commander.board import BoardCard, BoardError, Origin
 from commander.carddb import CARD_DB_FILE, CardDataMeta
 from commander.config import MetaSettings
 from commander.fetchpriority import FetchPriority
@@ -20,7 +20,7 @@ from commander.metadata import MetaData
 from commander.models import Deck
 from commander.net import NetworkError
 from commander.scryfall import CardRefresh, RefreshStatus
-from commander.store import LABELS_FILE, Workspace
+from commander.store import LABELS_FILE, StoredDeck, Workspace
 from commander.sync import SyncResult
 from commander.syncrun import CardState, SyncOptions, SyncServices, run_sync
 from conftest import REFRESH_TOKEN, FakeArchidekt, Json, MemoryTokenStore
@@ -248,3 +248,54 @@ def test_cmdr_sync_fetches_ideas_in_view_order_without_a_selected_deck(
     gathered = stub_meta(monkeypatch)
     assert run(["sync", "--no-cards", "--workspace", str(tmp_path / "decks")], tmp_path, fake).code == 0
     assert gathered == [103, 101, 102]
+
+
+def sync_states(tmp_path: Path, fake: FakeArchidekt) -> list[tuple[int, str]]:
+    events: list[tuple[int, str]] = []
+    run_sync(
+        services(tmp_path, fake),
+        Workspace(tmp_path / "decks"),
+        "MAKKIS",
+        MetaSettings(),
+        SyncOptions(cards=False),
+        on_deck=lambda deck_id, state: events.append((deck_id, state.value)),
+        on_progress=lambda _: None,
+    )
+    return events
+
+
+def test_each_deck_is_queued_then_fetching_then_done_in_the_order_it_is_fetched(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = three_decks(tmp_path, raw_deck, card_db_file)
+    write_views(tmp_path, VIEWS)
+    stub_meta(monkeypatch)
+    assert sync_states(tmp_path, fake) == [
+        (103, "queued"),
+        (101, "queued"),
+        (102, "queued"),
+        (103, "fetching"),
+        (103, "done"),
+        (101, "fetching"),
+        (101, "done"),
+        (102, "fetching"),
+        (102, "done"),
+    ]
+
+
+def test_a_deck_whose_ideas_fail_is_incomplete_and_the_others_carry_on(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = three_decks(tmp_path, raw_deck, card_db_file)
+    stub_meta(monkeypatch)
+
+    def compile_ideas(stored: StoredDeck, *_: object, warn: Callable[[str], None], **__: object) -> object:
+        if stored.deck.id == 101:
+            raise BoardError("board.json is damaged")
+        if stored.deck.id == 102:
+            warn("a source was unavailable")
+        return {}
+
+    monkeypatch.setattr(syncrun, "compile_ideas_with_adjacent", compile_ideas)
+    final = dict(sync_states(tmp_path, fake))
+    assert final == {101: "incomplete", 102: "incomplete", 103: "done"}

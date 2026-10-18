@@ -46,6 +46,7 @@ function renderAccount(a) {
   const wasSyncing = accountState.syncing;
   Object.assign(accountState, { user: a.user, signedIn: a.signedIn, syncing: a.sync.running });
   setMetaUpdating(a.sync.running);
+  paintFetchStates(a.sync.running ? a.sync.decks : {});
   if (!accountState.active) {
     paintSignedOut();
     return;

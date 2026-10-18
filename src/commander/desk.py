@@ -83,7 +83,7 @@ from commander.spellbook import SpellbookClient
 from commander.store import StoredDeck, Workspace, WorkspaceError
 from commander.suggest import deck_identity
 from commander.sync import SyncStatus
-from commander.syncrun import CardState, SyncOutcome, SyncServices, run_sync
+from commander.syncrun import CardState, FetchState, SyncOutcome, SyncServices, run_sync
 from commander.targets import CutRules, Target, deck_cut_rules, targets_for, with_ideas
 from commander.viewscore import VIEWS_FILE, ViewScores
 from commander.weightedshare import (
@@ -169,6 +169,8 @@ class _SyncState:
     summary: str | None = None
     failed: bool = False
     warnings: list[str] = field(default_factory=list[str])
+    # Each deck's step in the ideas phase while the sync runs; nothing is kept once it ends.
+    decks: dict[int, FetchState] = field(default_factory=dict[int, FetchState])
 
 
 def sync_summary(outcome: SyncOutcome) -> str:
@@ -356,6 +358,7 @@ class Desk:
                 user,
                 self._settings.meta,
                 priority=priority,
+                on_deck=self._sync_deck,
                 on_progress=self._sync_progress,
             )
         except _EXPECTED as error:
@@ -374,6 +377,10 @@ class Desk:
         with self._sync_lock:
             self._sync.progress = message
 
+    def _sync_deck(self, deck_id: int, state: FetchState) -> None:
+        with self._sync_lock:
+            self._sync.decks[deck_id] = state
+
     def _finish_sync(self, summary: str, *, failed: bool, warnings: Sequence[str] = ()) -> None:
         with self._sync_lock:
             self._sync = _SyncState(summary=summary, failed=failed, warnings=list(warnings))
@@ -388,6 +395,7 @@ class Desk:
                 "summary": state.summary,
                 "failed": state.failed,
                 "warnings": list(state.warnings),
+                "decks": {str(deck_id): fetch.value for deck_id, fetch in state.decks.items()},
             }
 
     @_guarded

@@ -212,7 +212,7 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   width: 100%;
   min-height: 44px;
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr 16px auto;
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
@@ -236,6 +236,11 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A deck's step in a running sync: waiting, fetching (a small spinner), fetched or incomplete. */
+.fetch-icon { width: 16px; height: 16px; line-height: 16px; text-align: center; font-size: var(--text-s); color: var(--muted); }
+.fetch-icon[data-fetch="done"] { color: var(--accent); }
+.fetch-icon[data-fetch="incomplete"] { color: var(--warn); }
+.fetch-icon.spinner { width: 12px; height: 12px; justify-self: center; }
 .pill {
   min-width: 24px;
   padding: 0 var(--space-2);

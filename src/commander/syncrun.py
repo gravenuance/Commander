@@ -55,6 +55,20 @@ class SyncOptions:
     ideas: bool = True
 
 
+class FetchState(Enum):
+    """Where a deck stands in the ideas phase; the app shows it beside the deck."""
+
+    QUEUED = "queued"
+    FETCHING = "fetching"
+    DONE = "done"
+    # Finished with a warning, or without the sources it needed.
+    INCOMPLETE = "incomplete"
+
+
+# Told as each deck's state changes: the deck id and its new state.
+DeckProgress = Callable[[int, FetchState], None]
+
+
 class CardState(Enum):
     SKIPPED = "skipped"
     CURRENT = "current"
@@ -97,6 +111,7 @@ def run_sync(
     options: SyncOptions = SyncOptions(),  # noqa: B008 — frozen, so one shared default is safe
     *,
     priority: FetchPriority | None = None,
+    on_deck: DeckProgress | None = None,
     on_progress: Progress,
 ) -> SyncOutcome:
     warnings: list[str] = []
@@ -134,7 +149,14 @@ def run_sync(
     picked = _pick_up_aside(workspace, services, warnings)
     ideas = (
         _compile_ideas(
-            workspace, user, settings, services, warnings=warnings, progress=on_progress, priority=priority
+            workspace,
+            user,
+            settings,
+            services,
+            warnings=warnings,
+            progress=on_progress,
+            priority=priority,
+            on_deck=on_deck or _ignore_deck,
         )
         if options.ideas
         else {}
@@ -205,6 +227,7 @@ def _compile_ideas(
     warnings: list[str],
     progress: Progress,
     priority: FetchPriority | None,
+    on_deck: DeckProgress,
 ) -> dict[str, dict[Origin, list[BoardCard]]]:
     """Each deck's new ideas from the meta and recent Archidekt decks (ADR 0028), by short name.
 
@@ -222,10 +245,14 @@ def _compile_ideas(
         sources = meta_sources(http, services.pacer_factory, user, settings)
         waiting = _most_viewed_first(workspace.load_all(), services)
         next_up = priority or FetchPriority()
+        for queued in waiting:
+            on_deck(queued.deck.id, FetchState.QUEUED)
         while waiting:
             stored = next_up.pick(waiting, lambda s: s.deck.id)
             waiting.remove(stored)
             deck = stored.deck
+            warned = len(warnings)
+            on_deck(deck.id, FetchState.FETCHING)
             try:
                 data = gather_for(
                     deck, sources, services.cache, now=services.now, refresh=False, on_progress=progress
@@ -243,10 +270,13 @@ def _compile_ideas(
                 )
             except (BoardError, ProfileError) as error:
                 warnings.append(f"{deck.short_name} ideas not compiled: {error}")
+                on_deck(deck.id, FetchState.INCOMPLETE)
                 continue
             if data.lists.data is None and data.peers.data is None:
                 why = data.peers.error or data.lists.error
                 warnings.append(f"{deck.short_name}: no meta or Archidekt decks to learn from ({why})")
+            incomplete = len(warnings) > warned or data.peers.data is None
+            on_deck(deck.id, FetchState.INCOMPLETE if incomplete else FetchState.DONE)
     return found
 
 
@@ -254,3 +284,7 @@ def _most_viewed_first(decks: list[StoredDeck], services: SyncServices) -> list[
     """The decks with a commander, by view score and then in the workspace's order."""
     scores = ViewScores(services.cache / VIEWS_FILE, services.now).scores()
     return sorted((s for s in decks if s.deck.commanders), key=lambda s: -scores.get(s.deck.id, 0.0))
+
+
+def _ignore_deck(_deck_id: int, _state: FetchState) -> None:
+    return

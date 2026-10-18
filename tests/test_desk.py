@@ -885,3 +885,39 @@ def test_a_deck_opened_during_the_sync_is_fetched_after_the_one_in_progress(
     gathered = sync_with_stubs(desk, pending, monkeypatch, open_another_during_the_first_fetch)
     assert gathered == [20001, 20003, DECK, 20002]
     assert view_scores(settings) == {20001: 1.0, 20003: 1.0}
+
+
+def test_the_sync_status_shows_each_deck_waiting_then_fetching_then_fetched_and_nothing_after(
+    settings: DeskSettings, fake: FakeArchidekt, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_extra_decks(settings, fake, raw_deck)
+    desk, pending = deferred_desk(settings, fake)
+    desk.open_deck(20002)
+    seen: list[object] = []
+
+    def snapshot(_: int) -> None:
+        seen.append(desk.sync_status()["decks"])
+
+    sync_with_stubs(desk, pending, monkeypatch, snapshot)
+    first = str(DECK)
+    assert seen == [
+        {"20002": "fetching", first: "queued", "20001": "queued", "20003": "queued"},
+        {"20002": "done", first: "fetching", "20001": "queued", "20003": "queued"},
+        {"20002": "done", first: "done", "20001": "fetching", "20003": "queued"},
+        {"20002": "done", first: "done", "20001": "done", "20003": "fetching"},
+    ]
+    assert desk.sync_status()["decks"] == {}
+
+
+FETCH_LABELS = ("Waiting to fetch", "Fetching meta and ideas", "Fetched", "Fetch incomplete; see the log")
+
+
+def test_the_deck_list_paints_a_labelled_icon_per_fetch_state_in_place() -> None:
+    web = Path(str(resources.files("commander") / "web"))
+    script = (web / "deck.js").read_text(encoding="utf-8")
+    for label in FETCH_LABELS:
+        assert f'"{label}"' in script
+    # The account poll hands the states over, and only an icon whose state changed is touched.
+    assert "paintFetchStates(" in (web / "account.js").read_text(encoding="utf-8")
+    assert "dataset.fetch ===" in script
+    assert ".fetch-icon" in (web / "app.css").read_text(encoding="utf-8")

@@ -4,6 +4,57 @@
 
 /* Decks */
 
+// What each deck's step in a running sync shows beside it; the icon's label says it in words, not by colour alone.
+const FETCH_ICONS = {
+  queued: { text: "…", label: "Waiting to fetch" },
+  fetching: { text: "", label: "Fetching meta and ideas" },
+  done: { text: "✓", label: "Fetched" },
+  incomplete: { text: "⚠", label: "Fetch incomplete; see the log" },
+};
+// The sync's step per deck id while one runs, as the last poll of the account gave it.
+let fetchStates = {};
+
+// Shows `kind` (a key of FETCH_ICONS, or none) on the icon; true when that changed anything.
+function paintFetchIcon(icon, kind) {
+  const info = FETCH_ICONS[kind];
+  const key = info ? kind : "";
+  if (icon.dataset.fetch === key) return false;
+  icon.dataset.fetch = key;
+  icon.classList.toggle("spinner", key === "fetching");
+  icon.textContent = info ? info.text : "";
+  if (info) {
+    icon.setAttribute("role", "img");
+    icon.setAttribute("aria-label", info.label);
+    icon.title = info.label;
+  } else {
+    icon.removeAttribute("role");
+    icon.removeAttribute("aria-label");
+    icon.removeAttribute("title");
+  }
+  return true;
+}
+
+function deckLabel(deck) {
+  const fetch = FETCH_ICONS[fetchStates[String(deck.id)]];
+  const parts = [`${deck.short}, ${deck.name}`];
+  if (deck.error) parts.push(deck.error);
+  else if (deck.queued) parts.push(`${deck.queued} queued`);
+  if (fetch) parts.push(fetch.label);
+  return parts.join(", ");
+}
+
+// Called with the sync's states on every poll; only the icons whose state changed are touched.
+function paintFetchStates(states) {
+  fetchStates = states;
+  for (const deck of state.decks) {
+    const item = $("deck-list").querySelector(`li[data-id="${deck.id}"]`);
+    if (!item) continue;
+    if (paintFetchIcon(item.querySelector(".fetch-icon"), states[String(deck.id)])) {
+      item.firstChild.setAttribute("aria-label", deckLabel(deck));
+    }
+  }
+}
+
 function renderDecks() {
   const list = $("deck-list");
   const seen = new Set();
@@ -17,13 +68,16 @@ function renderDecks() {
       list.append(item);
     }
     const button = item.firstChild;
+    const icon = el("span", { class: "fetch-icon" });
+    paintFetchIcon(icon, fetchStates[String(deck.id)]);
     button.replaceChildren(
       el("span", { class: "short", text: deck.short, title: deck.short }),
+      icon,
       deck.error ? el("span", { class: "pill error", text: "!", title: deck.error }) : deck.queued ? el("span", { class: "pill", text: String(deck.queued), title: `${deck.queued} queued` }) : el("span"),
       el("span", { class: "full", text: deck.name, title: deck.name }),
     );
     button.setAttribute("aria-current", state.current === deck.id ? "true" : "false");
-    button.setAttribute("aria-label", `${deck.short}, ${deck.name}${deck.error ? `, ${deck.error}` : deck.queued ? `, ${deck.queued} queued` : ""}`);
+    button.setAttribute("aria-label", deckLabel(deck));
     place(list, item, index);
   }
   for (const item of [...list.children]) if (!seen.has(item.dataset.id)) item.remove();
