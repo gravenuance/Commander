@@ -2,6 +2,7 @@
 
 import json
 import logging
+import math
 import random
 import threading
 import time
@@ -23,6 +24,7 @@ MAX_DELAY_SECONDS = 30.0
 SLOW_CALL_SECONDS = 5.0
 ERROR_DETAIL_BYTES = 300
 HTTP_OK = 200
+HTTP_TOO_MANY_REQUESTS = 429
 _SUCCESS = range(200, 300)
 _RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 
@@ -43,6 +45,18 @@ class HttpStatusError(NetworkError):
         super().__init__(message)
         self.status = status
         self.detail = detail
+
+
+class RateLimitedError(HttpStatusError):
+    """The server answered 429 to a request that asked to see it (`get_json(surface_rate_limit=True)`); the
+    caller decides how long to stay away.
+
+    retry_after is the server's Retry-After in seconds, if it sent one.
+    """
+
+    def __init__(self, message: str, retry_after: float | None) -> None:
+        super().__init__(message, HTTP_TOO_MANY_REQUESTS)
+        self.retry_after = retry_after
 
 
 def make_client() -> httpx.Client:
@@ -82,10 +96,21 @@ class Fetcher:
         params: Mapping[str, str | int] | None = None,
         *,
         headers: Mapping[str, str] | None = None,
+        surface_rate_limit: bool = False,
     ) -> object:
-        """GET a JSON document, retrying only transient failures."""
+        """GET a JSON document, retrying only transient failures.
+
+        With surface_rate_limit a 429 is not retried here but raised as RateLimitedError, for a caller that
+        paces its requests for a service with its own rules about how long to wait.
+        """
         body = self._send(
-            "GET", url, params, None, lambda r: _read_capped(r, url, MAX_RESPONSE_BYTES), headers=headers
+            "GET",
+            url,
+            params,
+            None,
+            lambda r: _read_capped(r, url, MAX_RESPONSE_BYTES),
+            headers=headers,
+            surface_rate_limit=surface_rate_limit,
         )
         return _decode_json(url, body)
 
@@ -157,6 +182,7 @@ class Fetcher:
         read: Callable[[httpx.Response], T],
         *,
         headers: Mapping[str, str] | None = None,
+        surface_rate_limit: bool = False,
     ) -> T:
         for attempt in range(1, self._max_attempts + 1):
             started = self._monotonic()
@@ -181,6 +207,11 @@ class Fetcher:
                 log.warning("slow request: %s took %.1fs", url, elapsed)
             if value is not None:
                 return value
+            if status == HTTP_TOO_MANY_REQUESTS and surface_rate_limit:
+                log.info("rate limited: %s", url)
+                raise RateLimitedError(
+                    f"{url} returned HTTP {status}", _retry_after_seconds(retry_after, self._wall_clock())
+                )
             if status in _RETRY_STATUSES:
                 self._give_up_or_wait(attempt, url, f"HTTP {status}", retry_after)
                 continue
@@ -228,6 +259,7 @@ class Pacer:
         self._sleep = sleep
         self._monotonic = monotonic
         self._last: float | None = None
+        self._not_before = -math.inf
         self._lock = threading.Lock()
 
     def wait(self) -> None:
@@ -235,12 +267,19 @@ class Pacer:
         # Sleeping under the lock queues the other threads behind this call, each its interval later.
         with self._lock:
             now = self._monotonic()
+            ready = self._not_before
             if self._last is not None:
-                remaining = self._last + self._interval - now
-                if remaining > 0:
-                    self._sleep(remaining)
-                    now += remaining
+                ready = max(ready, self._last + self._interval)
+            remaining = ready - now
+            if remaining > 0:
+                self._sleep(remaining)
+                now += remaining
             self._last = now
+
+    def cool_down(self, seconds: float) -> None:
+        """Hold every call from now until `seconds` have passed, for a service that asked for quiet."""
+        with self._lock:
+            self._not_before = max(self._not_before, self._monotonic() + max(seconds, 0.0))
 
 
 def _retry_after_seconds(value: str | None, now: float) -> float | None:

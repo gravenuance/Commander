@@ -1,5 +1,6 @@
 """Read access to Archidekt's undocumented JSON API; every response is shape-checked before use."""
 
+import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -17,7 +18,9 @@ from commander.jsonshape import (
     str_list,
 )
 from commander.models import ARCHIDEKT_DECK_URL, Deck, DeckCard, DeckSummary
-from commander.net import Fetcher, Pacer
+from commander.net import Fetcher, Pacer, RateLimitedError
+
+log = logging.getLogger(__name__)
 
 API_BASE = "https://archidekt.com/api"
 _PLAIN_API_BASE = "http://archidekt.com/api"
@@ -28,6 +31,10 @@ MAX_PAGES = 20
 # five seconds.
 MAX_SEARCH_PAGES = 20
 SEARCH_INTERVAL_SECONDS = 5.0
+# After a 429 Archidekt gets this long without a request, or the Retry-After if that is longer.
+RATE_LIMIT_PAUSE_SECONDS = 180.0
+# A request that was rate limited is tried again this many times after the pause.
+RATE_LIMIT_RETRIES = 1
 # The top of Archidekt's bracket scale.
 TOP_BRACKET = 5
 # Which decks are read: every one with at least the first view count of VIEW_FLOORS that gives MIN_DECKS
@@ -67,11 +74,14 @@ class ArchidektClient:
         raise ArchidektError(f"deck list for {user} is longer than {MAX_PAGES} pages")
 
     def get_deck(self, deck_id: int) -> Deck:
-        raw = self._fetcher.get_json(f"{self._base_url}/decks/{deck_id}/")
-        try:
-            return parse_deck(raw)
-        except (ShapeError, ValueError) as error:
-            raise ArchidektError(f"unexpected data for deck {deck_id}: {error}") from error
+        return _read_deck(self._fetcher.get_json(f"{self._base_url}/decks/{deck_id}/"), deck_id)
+
+
+def _read_deck(raw: object, deck_id: int) -> Deck:
+    try:
+        return parse_deck(raw)
+    except (ShapeError, ValueError) as error:
+        raise ArchidektError(f"unexpected data for deck {deck_id}: {error}") from error
 
 
 @dataclass(slots=True, frozen=True)
@@ -101,7 +111,6 @@ class ArchidektSearch:
         self._fetcher = fetcher
         self._pacer = pacer
         self._base_url = base_url.rstrip("/")
-        self._decks = ArchidektClient(fetcher, base_url)
 
     def recent_decks(
         self, commander: str, *, brackets: Sequence[int | None], since: datetime, tag: str | None = None
@@ -127,8 +136,7 @@ class ArchidektSearch:
             )
             while url is not None and pages_left > 0:
                 pages_left -= 1
-                self._pacer.wait()
-                raw = self._fetcher.get_json(url, params)
+                raw = self._get(url, params)
                 try:
                     page, url = parse_search_page(raw)
                 except (ShapeError, ValueError) as error:
@@ -140,8 +148,22 @@ class ArchidektSearch:
         return list(found.values())
 
     def deck(self, deck_id: int) -> Deck:
-        self._pacer.wait()
-        return self._decks.get_deck(deck_id)
+        return _read_deck(self._get(f"{self._base_url}/decks/{deck_id}/", None), deck_id)
+
+    def _get(self, url: str, params: Mapping[str, str | int] | None) -> object:
+        """One paced request. After a 429 nothing goes out for RATE_LIMIT_PAUSE_SECONDS or the Retry-After if
+        longer, which holds the next request of any caller; the limited one is tried again after it."""
+        for attempt in range(RATE_LIMIT_RETRIES + 1):
+            self._pacer.wait()
+            try:
+                return self._fetcher.get_json(url, params, surface_rate_limit=True)
+            except RateLimitedError as error:
+                pause = max(RATE_LIMIT_PAUSE_SECONDS, error.retry_after or 0.0)
+                log.warning("Archidekt asked for quiet; waiting %.0fs before the next request", pause)
+                self._pacer.cool_down(pause)
+                if attempt == RATE_LIMIT_RETRIES:
+                    raise
+        raise AssertionError("unreachable: the last attempt raises")  # pragma: no cover
 
 
 def brackets_to_read(bracket: int | None) -> tuple[int | None, ...]:

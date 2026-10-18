@@ -12,6 +12,7 @@ from commander.net import (
     HttpStatusError,
     NetworkError,
     Pacer,
+    RateLimitedError,
 )
 
 URL = "https://archidekt.com/api/decks/1/"
@@ -84,6 +85,26 @@ def test_caps_retry_after() -> None:
     sleeps: list[float] = []
     fetcher(script, sleeps).get_json(URL)
     assert sleeps == [30.0]
+
+
+def test_a_caller_that_asks_sees_the_429_and_its_retry_after_unretried() -> None:
+    sleeps: list[float] = []
+    script = Script(httpx.Response(429, headers={"Retry-After": "300"}))
+    with pytest.raises(RateLimitedError) as caught:
+        fetcher(script, sleeps).get_json(URL, surface_rate_limit=True)
+    assert (caught.value.status, caught.value.retry_after) == (429, 300.0)
+    assert (script.calls, sleeps) == (1, [])
+    bare = Script(httpx.Response(429))
+    with pytest.raises(RateLimitedError) as unsaid:
+        fetcher(bare, sleeps).get_json(URL, surface_rate_limit=True)
+    assert unsaid.value.retry_after is None
+
+
+def test_a_caller_that_asks_for_the_429_still_gets_other_failures_retried() -> None:
+    script = Script(httpx.Response(503), httpx.Response(200, json=[]))
+    sleeps: list[float] = []
+    assert fetcher(script, sleeps).get_json(URL, surface_rate_limit=True) == []
+    assert (script.calls, len(sleeps)) == (2, 1)
 
 
 def test_gives_up_after_max_attempts() -> None:
@@ -315,6 +336,30 @@ def test_pacer_spaces_calls_apart() -> None:
     now[0] += 5.0
     pacer.wait()
     assert sleeps == [2.0, 1.5]
+
+
+def test_pacer_cool_down_holds_the_next_call_for_the_longer_of_it_and_the_interval() -> None:
+    now = [0.0]
+    sleeps: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    pacer = Pacer(2.0, sleep=sleep, monotonic=lambda: now[0])
+    pacer.wait()
+    pacer.cool_down(180.0)
+    # A shorter cool-down never shortens a longer one.
+    pacer.cool_down(30.0)
+    pacer.wait()
+    assert sleeps == [180.0]
+    # Once it is over, the interval alone spaces the calls.
+    pacer.wait()
+    assert sleeps == [180.0, 2.0]
+    # A cool-down shorter than the interval leaves the interval in charge.
+    pacer.cool_down(0.5)
+    pacer.wait()
+    assert sleeps == [180.0, 2.0, 2.0]
 
 
 def test_pacer_refuses_a_negative_interval() -> None:
