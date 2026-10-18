@@ -193,8 +193,9 @@ def compile_ideas(
 
     adjacent holds the pooled decks of the commanders the deck's profile names as alike (ADR 0028); tagged
     the decks of other commanders found by each of the deck's theme tags.
-    Ideas already on the board count towards a source's MAX_PER_SOURCE, so repeated syncs settle on the
-    current top ideas rather than piling up. A turned-down idea takes no place unless the meta brings it
+    Ideas cmdr already put on the board for a source count towards its MAX_PER_SOURCE, so repeated syncs
+    settle on the current top ideas rather than piling up; cards by you or Claude, or from another source,
+    take no place. A turned-down idea takes no place unless the meta brings it
     back, and an applied card the deck no longer holds is an idea like any other (`feed_ideas`).
     """
     deck = stored.deck
@@ -238,9 +239,10 @@ def compile_ideas(
                 continue
             existing = board.find(idea.name)
             if existing is not None and existing.status not in {Status.REJECTED, Status.APPLIED}:
-                if idea.pool is not None and existing.origin is origin and existing.origin_pool is None:
-                    service.remember_pool(existing.id, idea.pool)
-                placed += 1
+                if existing.origin is origin and existing.source is Actor.CMDR:
+                    if idea.pool is not None and existing.origin_pool is None:
+                        service.remember_pool(existing.id, idea.pool)
+                    placed += 1
                 continue
             # One at a time: a card the board refuses (banned, off colour) or a turned-down one the meta
             # does not bring back takes no place.

@@ -932,3 +932,32 @@ def test_a_card_only_lower_lists_play_is_an_idea_with_the_counts_of_every_list_r
     (tmp_path / "old").mkdir()
     labels = labels_of(tmp_path / "old", deck, db, data, ("Mind Stone", Actor.ARCHIDEKT, None))
     assert labels == {"Mind Stone": Relabel(Origin.META, reason)}
+
+
+@pytest.mark.parametrize(
+    ("source", "origin", "added"),
+    [
+        (Actor.YOU, None, ["Jeska's Will"]),
+        (Actor.CLAUDE, None, ["Jeska's Will"]),
+        (Actor.CMDR, Origin.DECKS, ["Jeska's Will"]),
+        (Actor.CMDR, Origin.META, []),
+    ],
+    ids=["yours", "claudes", "another source's", "cmdr's from the same source"],
+)
+def test_only_the_ideas_cmdr_compiled_from_a_source_fill_its_places(
+    deck: Deck,
+    db: CardDb,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    source: Actor,
+    origin: Origin | None,
+    added: list[str],
+) -> None:
+    monkeypatch.setattr(ideas_module, "MAX_PER_SOURCE", 1)
+    seed(tmp_path, deck, db, "Mind Stone", source, origin=origin)
+    data = meta_data(same_weight_lists("Jeska's Will", 8))
+
+    found = compile_ideas(StoredDeck(tmp_path, deck), data, db, now=lambda: NOW)
+
+    assert [c.name for c in found[Origin.META]] == added
