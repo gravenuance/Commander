@@ -35,7 +35,7 @@ and Combo, by casefolded name. Every other tag is neutral.
   | Turbo | ramp, tutors, draw ×1.25 | removal, bounce, counterspells, board wipes |
   | Stax | stax pieces, removal, bounce ×1.25 | |
   | Control | removal, bounce, cheap draw, counterspells ×1.25 | |
-  | Tempo | removal, cheap interaction ×1.25; bounce ×1.1 | board wipes |
+  | Tempo | removal, cheap interaction ×1.25; bounce ×1.1 | |
   | Midrange | counterspells, cheap interaction, tutors ×1.25 | |
   | Aggro | creatures ×1.1; haste creatures ×1.21 | |
   | Combo | tutors, protection ×1.1 | |

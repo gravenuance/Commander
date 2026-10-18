@@ -35,14 +35,16 @@ in this order, at most three:
 3. **Wider cuts,** only for the slots left and only when at least three recent decks of the commander were
    read. The peers' counts come from `peercounts`: per role the 25th percentile (the floor) and the median,
    per theme the median. A card of another role or theme may go when:
+   - the idea is more played than the card (its weighted share is higher);
    - each role it fills that the idea does not still has at least the floor after the cut;
    - if it is of a theme the idea does not serve, the idea's share is at least 20 points above the card's,
      and each of the card's themes still has at least the peers' median count after the cut. A theme with no
      peer count, one of the profile's own words, may lose one card.
 
    Cuts of another role come before cuts of another theme, cards sharing a theme with the idea first. They
-   rank by the idea's share less the card's, plus 0.05 for each card by which the role the cut empties runs
-   over the peers' median, then by weakness. The reason says "other role" or "other theme" and gives the
+   rank by the idea's share less the card's, plus a bonus for each card by which the role the cut empties runs
+   over the peers' median (0.05 at present, to be set once data shows how often it decides), then by
+   weakness. The reason says "other role" or "other theme" and gives the
    over-run or the gap in points.
 4. **Land swaps** of all three kinds pass the mana base guard (ADR 0030).
 
@@ -56,5 +58,6 @@ every deck card but the commander. A turned-down card returns by the rule of ADR
   like-for-like ones, and nothing wider appears below three decks.
 - A theme the roles do not capture (a stax piece, a lock) can still get odd like-for-like targets; Claude or
   the owner can pick the cut.
-- The thresholds (`MIN_THEME_GAP`, `OVERRUN_BONUS`, the percentile) are named constants, to retune once more
+- The thresholds (`MIN_THEME_GAP`, `OVERRUN_BONUS`, the percentile) are named constants and the over-run
+  bonus is provisional, to retune once more
   data shows how often a wider cut is taken.

@@ -211,7 +211,7 @@ The shares shown stay as they are; only the order and the marks change, and the 
 | Turbo | ramp, tutors, draw (1.25) | removal, bounce, counterspells, board wipes |
 | Stax | stax pieces (found as the Meta panel finds them, or Tagger's hatebear tag), removal, bounce (1.25) | |
 | Control | removal, bounce, cheap draw, counterspells (1.25) | |
-| Tempo | removal, cheap interaction (1.25); bounce (1.1) | board wipes |
+| Tempo | removal, cheap interaction (1.25); bounce (1.1) | |
 | Midrange | counterspells, cheap interaction, tutors (1.25) | |
 | Aggro | creatures (1.1); haste creatures (1.21) | |
 | Combo | tutors, protection (1.1) | |
@@ -402,7 +402,8 @@ who is signed in, with **Sync** (the same as `cmdr sync`, card data and ideas in
 step it is on beneath) and **Sign out**, which removes the saved login. Without an account the button stays,
 off, with "Sign in to sync" beside it. Signing in again finds the same folder.
 
-A sync and a save, a label change, the Mana tab's swaps, a sign-in or a sign-out never run together: the one
+A sync and a save, a label change, the Mana tab's swaps, a board edit (proposing, deciding or removing a
+card), saving the Settings or a sign-in or sign-out never run together: the one
 that starts second is refused with a message ("Wait for the save to finish, then sync.") and can be tried
 again when the first ends. The app only reads the cache of other players' data; Sync is the one way to
 refresh it ([ADR 0032](docs/adr/0032-one-considering-list-and-one-sync.md)).
@@ -446,7 +447,7 @@ base against Frank Karsten's published numbers
   The suggested targets are the cards you or Claude picked, or else the weakest cards like the idea
   ([ADR 0029](docs/adr/0029-replacement-targets-and-wider-cuts.md)). Like for like comes first: cards in the
   same role, and a card serving one of the deck's themes or leanings only for an idea serving the same, the
-  least played first and unranked cards last. Slots left over go to cards of another role or theme, but only
+  least played first and unranked cards last. Slots left over go to cards of another role or theme that are less played than the idea, but only
   while the deck keeps what other players of the commander run (the peers' 25th percentile of each role, the
   median of each theme), and an other-theme cut needs the idea to be 20 points more played. The reason names
   what makes each cut allowed. A swap that takes a land out or puts one in is offered only if the land count

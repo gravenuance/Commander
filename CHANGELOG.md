@@ -15,7 +15,8 @@
 - Ideas with no deck card to replace are put on the board as well and listed under *No cut yet* in the app,
   where clicking one offers every deck card but the commander.
 - Cuts of another role or theme (ADR 0029): when like for like leaves a slot free, a deck card of another role
-  or theme may be offered while the deck keeps what other players of the commander run (the 25th percentile
+  or theme that is less played than the idea may be offered while the deck keeps what other players of the
+  commander run (the 25th percentile
   of each role, the median of each theme; an other-theme cut also needs the idea 20 points more played). The
   reason says what allows it.
 - A swap that takes a land out or puts one in is offered only while the land count stays within one of
@@ -62,8 +63,8 @@
 
 ### Fixed
 - Fellwar Stone counts as half a source, as ADR 0019 says; the code gave it three quarters.
-- The app's Sync refuses while a save, a label change, the swaps or a sign-in or sign-out is running ("Wait for the
-  save to finish, then sync."), as those already refuse while a sync runs, so the two can no longer touch the same
+- The app's Sync refuses while a save, a label change, the swaps, a board edit, saving the Settings or a sign-in
+  or sign-out is running ("Wait for the save to finish, then sync."), as those already refuse while a sync runs, so the two can no longer touch the same
   deck files at once.
 - One malformed EDHTop16 entry, or a test event dated in the future, no longer fails a commander's whole read:
   the entry is logged and skipped, and later-dated events are left out.

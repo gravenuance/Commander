@@ -50,8 +50,9 @@ Option 2 each time.
   The Meta panel opens from cache only; while a sync runs it says it is updating, and when it ends it reads
   the report again. The panel's Refresh meta button is removed.
 - **No overlap:** one lock covers the check and the mark. A sync is refused while a save, a label change,
-  the mana swaps or a sign-in or sign-out runs ("Wait for the save to finish, then sync."), and each of those
-  is refused while a sync runs ("Wait for the sync to finish, then save."). Neither can start inside the
+  the mana swaps, a board edit (proposing, deciding or removing a card), saving the profile settings or a
+  sign-in or sign-out runs ("Wait for the save to finish, then sync."), and each of those is refused while a
+  sync runs ("Wait for the sync to finish, then save."). Neither can start inside the
   other.
 - **Labels in a save:** the read of the account's labels is tried once more after three seconds, then falls
   back to Archidekt's default colours with a message. A refused login still stops the save, as its writes
