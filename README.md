@@ -354,7 +354,10 @@ A save leaves the deck's Sideboard and Maybeboard on Archidekt as they are, and 
 longer reads them ([ADR 0035](docs/adr/0035-retire-the-maybeboard-and-sideboard.md)). Each `sync` tests the
 open ideas `cmdr` compiled earlier again, and those taken from the Maybeboard by an earlier version too; one
 that no longer passes the idea test below is turned down ("no longer makes the cut") and comes back only if
-its share rises 20 points. `suggest --to-board` and `meta --to-board` put their ideas on the board,
+its share rises 20 points, unless you reopened it with Reconsider: that card is left alone until you decide
+it. Reconsider also labels a card from the Maybeboard pick-up like a compiled idea, from the cached lists (the
+source that plays it more, the meta on a tie; with no list playing it, only the reason says so), and each
+`sync` does the same for the open ones that pass the test. `suggest --to-board` and `meta --to-board` put their ideas on the board,
 and a card turned down there is not suggested again by `suggest`.
 
 Each `sync` also compiles ideas from other players into Considering

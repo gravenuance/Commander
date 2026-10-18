@@ -47,6 +47,12 @@
   line by `cmdr`) and return only if their share rises 20 points; the rest stay. An alike or tagged idea is
   judged by its pool only when that pool was read in the sync. Nothing is judged without share data, and
   cards by you or Claude and queued, applied or turned-down cards are not touched.
+- Reconsider on a turned-down card from the old Maybeboard pick-up (or one `cmdr` compiled) labels it again from
+  today's cached lists: the source that plays it more, the meta on a tie, and a compiled idea's wording, so it
+  takes that source's colour and group in Considering. A card no list plays keeps its neutral label and the
+  reason "reconsidered; no list plays it". A reconsidered card is not turned down again by the sync's re-judge
+  until you decide it (`reconsidered` on the board card, optional), and each sync labels the open cards from the
+  Maybeboard pick-up that pass the test the same way (ADR 0035).
 - A Considering card shows its combined share as a pill coloured by the source the idea is credited to
   (tournament lists, the commander's Archidekt decks, alike commanders, tagged decks), in place of the source
   badge and the plain count. Clicking the pill opens a breakdown: the combined share with its count, then each

@@ -67,6 +67,8 @@ Re-judging, in `ideas.rejudge_ideas`, before each sync compiles a deck's new ide
 - A card that fails is turned down as `cmdr` with the reason "no longer makes the cut", remembering its
   weighted share now (0 for a card no list plays), so it comes back only if the share rises 20 points
   (ADR 0026). The turn-down checks under the board lock that the card is still open.
+- A card the user reopened (`reconsidered` on the board card) is never re-judged until they decide it
+  (ADR 0035).
 
 Tag search, in `commander.metadata`:
 
