@@ -34,6 +34,8 @@
   (tournament lists, the commander's Archidekt decks, alike commanders, tagged decks), in place of the source
   badge and the plain count. Clicking the pill opens a breakdown: the combined share with its count, then each
   source's share and count, the primary source marked.
+- *No cut yet* is a side panel of its own between Considering and Meta, shown only while it holds ideas, in
+  place of the fold inside Considering.
 - The app no longer opens the first deck by itself: the main area is blank until you pick one.
 - The app's page shows no one until a sign-in succeeds: at start without a signed-in account, after **Sign out**,
   and after leaving the sign-in dialog any other way (Not now, Escape). The dialog blurs and dims the app

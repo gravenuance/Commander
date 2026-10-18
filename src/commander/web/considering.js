@@ -394,7 +394,9 @@ async function propose(name) {
       await refresh();
       const cards = state.view ? state.view.cards : [];
       if (uncut(cards).some((c) => c.id === answer.card.id)) {
-        $("uncut").open = true;
+        // The panel may be folded away, and its tile is only on show while it is open.
+        const toggle = $("h-uncut");
+        if (toggle.getAttribute("aria-expanded") !== "true") toggle.click();
         select(answer.card.id);
         showStatus(`${answer.card.name}: pick the deck card it replaces`);
         return;

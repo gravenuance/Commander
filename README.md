@@ -452,7 +452,8 @@ base against Frank Karsten's published numbers
   and count ("Archidekt: alike commanders", "Archidekt: tagged *tag*" and so on), the primary one marked.
   Hover over an idea or click it to light the deck cards it could replace. Click one of them to queue the
   swap; once an idea is clicked, any other deck card but the commander can be clicked too. Ideas that name
-  no card to replace wait under *No cut yet*: click one, then the deck card it replaces.
+  no card to replace wait in their own *No cut yet* panel below Considering, shown only while there are any:
+  click one, then the deck card it replaces.
   × turns the idea down, with a reason if you like: turned-down cards wait under *Turned down* (closed until
   opened) with their reasons, and Reconsider brings one back. Considering, Meta and each Meta section
   fold, and stay as you left them.

@@ -1053,3 +1053,21 @@ def test_every_origin_colour_has_light_and_dark_values_that_pass_contrast_on_the
             assert all(contrast(fill, tile) >= 3.0 for tile in tiles), token
     assert len({hex_of(light, t) for t in ORIGIN_TOKENS}) == len(ORIGIN_TOKENS)
     assert len({hex_of(dark, t) for t in ORIGIN_TOKENS}) == len(ORIGIN_TOKENS)
+
+
+def test_no_cut_yet_is_a_side_panel_between_considering_and_meta_not_a_fold() -> None:
+    html = page_html()
+    assert '<details id="uncut"' not in html
+    panel = html.split('<section id="uncut" class="panel" aria-labelledby="h-uncut" hidden>', 1)[1]
+    panel = panel.split("</section>", 1)[0]
+    toggle = 'id="h-uncut" class="panel-toggle" type="button" aria-expanded="true" aria-controls="uncut-body"'
+    assert toggle in panel
+    assert 'No cut yet <span class="count" id="count-uncut"></span>' in panel
+    assert '<div id="uncut-body" class="panel-body">' in panel
+    assert '<div id="list-uncut" class="cards" role="list"></div>' in panel
+    assert html.index('id="h-considering"') < html.index('id="h-uncut"') < html.index('id="h-meta"')
+    # Hidden as a whole while it holds no ideas, and opened for a card just proposed with no cut.
+    assert '$("uncut").hidden = !waiting.length;' in CONSIDERING
+    propose = function_body(CONSIDERING, "async function propose(name) {")
+    assert '$("h-uncut")' in propose
+    assert ".open = true" not in propose
