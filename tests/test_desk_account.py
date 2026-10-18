@@ -69,7 +69,14 @@ def test_a_first_sign_in_saves_the_account_gives_it_a_folder_and_syncs(env: Env)
     assert desk.account() == {
         "user": None,
         "signedIn": False,
-        "sync": {"running": False, "progress": "", "summary": None, "failed": False, "warnings": []},
+        "sync": {
+            "running": False,
+            "progress": "",
+            "summary": None,
+            "failed": False,
+            "warnings": [],
+            "decks": {},
+        },
     }
     answer = desk.sign_in(" MAKKIS ", PASSWORD)
     assert (answer["user"], answer["signedIn"]) == ("MAKKIS", True)

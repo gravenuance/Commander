@@ -803,9 +803,13 @@ def test_opening_a_deck_adds_one_to_its_view_score_and_reloading_it_adds_nothing
     assert view_scores(settings) == {DECK: 2.0}
 
 
-def test_a_deck_the_page_opens_by_itself_is_no_view(desk: Desk, settings: DeskSettings) -> None:
-    assert desk.open_deck(DECK, viewed=False) == {}
-    assert view_scores(settings) == {}
+def test_the_page_picks_no_deck_for_the_user() -> None:
+    web = Path(str(resources.files("commander") / "web"))
+    script = (web / "deck.js").read_text(encoding="utf-8")
+    assert "openDeck(state.decks[0]" not in script
+    assert "pick-deck" not in page_html()
+    # Only a click opens a deck, and each opening is reported to the bridge as a view.
+    assert script.count('api("open_deck", id)') == 1
 
 
 def test_opening_a_deck_that_is_not_there_scores_nothing(desk: Desk, settings: DeskSettings) -> None:

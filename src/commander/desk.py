@@ -399,14 +399,10 @@ class Desk:
             }
 
     @_guarded
-    def open_deck(self, deck_id: int, viewed: bool = True) -> Json:  # noqa: FBT001, FBT002 — the page's call
-        """The page opened a deck: it is the one a running or coming sync fetches first (ADR 0034).
-
-        A deck the user chose counts as a view; one the page opened by itself (`viewed` false) does not.
-        """
+    def open_deck(self, deck_id: int) -> Json:
+        """The user picked a deck: a view, and the deck a running or coming sync fetches first (ADR 0034)."""
         stored = self._stored(deck_id)
-        if viewed:
-            self._views.record_open(stored.deck.id)
+        self._views.record_open(stored.deck.id)
         with self._sync_lock:
             self._open_deck = stored.deck.id
             if self._priority:

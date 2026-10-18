@@ -92,15 +92,14 @@ async function loadDecks() {
   $("no-decks").hidden = state.decks.length > 0;
   $("copy-to-buy").hidden = state.decks.length === 0;
   renderDecks();
-  if (state.current === null && state.decks.length) await openDeck(state.decks[0].id, false);
 }
 
-// `viewed` is false when the page opens a deck by itself, which is not the user's choice and so no view.
-async function openDeck(id, viewed = true) {
+// Only the user opens a deck, so each opening is a view; the main area stays blank until they pick one.
+async function openDeck(id) {
   if (state.current !== id) {
     state.current = id;
     // Tells the sync which deck to fetch first; the answer is not waited for, and api() shows a failure.
-    api("open_deck", id, viewed).catch(() => {});
+    api("open_deck", id).catch(() => {});
     state.view = null;
     state.selected = null;
     state.hovered = null;
