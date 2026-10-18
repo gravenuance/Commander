@@ -1,4 +1,5 @@
-"""How many cards of each role and theme recent decks with the commander hold, to judge a cut against.
+"""How many cards of each role and theme recent decks with the commander hold, to judge a cut against
+(ADR 0029).
 
 A cut that changes the deck's roles or themes is only fair when the deck stays within what other players of
 the commander run: the 25th percentile of a role's count is the least a deck may fall to, the median what it

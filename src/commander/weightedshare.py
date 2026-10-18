@@ -1,4 +1,5 @@
-"""One share per card from every list read about a commander: its EDHTop16 lists and recent Archidekt decks.
+"""One share per card from every list read about a commander: its EDHTop16 lists and recent Archidekt decks
+(ADR 0026).
 
 Each list or deck gets a weight, recent and well placed ones more. A source's weights are scaled to a mean
 of one, so each list still counts as about one vote and the weights only reorder within a source; the two
@@ -108,7 +109,7 @@ def recency_weight(age_days: float) -> float:
 
 
 def size_factor(players: int) -> float:
-    # A backtest is settling this form: one doubling of the field over the base counts one more.
+    # One doubling of the field over EVENT_SIZE_BASE counts one more.
     return max(1 + math.log2(max(players, 1) / EVENT_SIZE_BASE), MIN_SIZE_FACTOR)
 
 

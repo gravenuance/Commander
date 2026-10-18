@@ -72,7 +72,7 @@ class CardShare:
     spice: int | None
     # On the deck's Sideboard or Maybeboard (for missing cards) or kept by the profile (for the deck's own).
     flagged: bool
-    # For a missing card: how it sits with the deck's play style (ADR 0022), and the weight its shares are
+    # For a missing card: how it sits with the deck's play style (ADR 0031), and the weight its shares are
     # multiplied by to rank it.
     fit: Fit = Fit.NEUTRAL
     multiplier: float = 1.0

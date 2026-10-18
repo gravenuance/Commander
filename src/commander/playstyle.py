@@ -1,4 +1,4 @@
-"""How a deck's play-style deck tags weigh what the meta says it misses (ADR 0022).
+"""How a deck's play-style deck tags weigh what the meta says it misses (ADR 0031).
 
 Each style favours some kinds of card and may find others off-plan. A staple's weight is the product of
 what each of the deck's styles makes of it, and it multiplies the card's share into its score: the order

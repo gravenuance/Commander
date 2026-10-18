@@ -1,15 +1,15 @@
-"""Ideas for Considering, compiled on every sync (ADR 0014).
+"""Ideas for Considering, compiled on every sync (ADR 0028).
 
-Decks at brackets 4 and 5 get the staples of their commander's EDHTop16 lists ("meta") and of the most-viewed
-recent Archidekt decks for the commander ("archidekt decks"); lower brackets get the Archidekt ones only.
-Those decks are at the deck's own bracket and the one above. A card is an idea when the lower bound of its
-weighted share, over every list read, reaches IDEA_LOWER_BOUND; it belongs to the source that plays it more.
-An idea's score is that share times its weight for the deck's play style (ADR 0022). Each source puts at most
-MAX_PER_SOURCE ideas on the board, highest score first. An idea with no deck card to
-replace is still put on the board, where the app lists it as "No cut yet". A deck whose profile names
-commanders that play alike also gets the staples of their pooled recent Archidekt decks ("adjacent decks",
-ADR 0015). So does one whose Archidekt theme tags find recent decks of other commanders ("tagged decks"),
-each tag's decks a pool of their own. Ideas pass the profile's exclusions, bracket ceiling and
+Decks at brackets 4 and 5 get the staples of their commander's EDHTop16 lists ("meta") and of its most-viewed
+recent Archidekt decks ("archidekt decks"), the latter at the deck's own bracket and the one above; lower
+brackets get the Archidekt ones only. A card is one of these ideas when the lower bound of its weighted
+share, over every list read, reaches IDEA_LOWER_BOUND (ADR 0026); it belongs to the source that plays it
+more. An idea's score is that source's plain share times its weight for the deck's play style (ADR 0031).
+Each source puts at most MAX_PER_SOURCE ideas on the board, highest score first. An idea with no deck card
+to replace is still put on the board, where the app lists it as "No cut yet". A deck whose profile names
+commanders that play alike also gets the cards at least half of their pooled recent Archidekt decks play
+("adjacent decks"). So does one whose Archidekt theme tags find recent decks of other commanders ("tagged
+decks"), each tag's decks a pool of their own. Ideas pass the profile's exclusions, bracket ceiling and
 price cap; below bracket 5 also the deck's budget (ADR 0025), those within its working budget first.
 EDHREC is never asked (ADR 0003): its rank, from Scryfall's data, only orders the cards an idea could
 replace.
@@ -66,7 +66,7 @@ def staple_ideas(deck: Deck, staples: Staples, since: date) -> list[Idea]:
     weighted share's lower bound."""
     lists = f"{deck.short_name} lists" if staples.basis is Basis.ALL else f"top-cut {deck.short_name} lists"
     ideas: list[Idea] = []
-    # What the deck's play style doesn't need (a Turbo deck's interaction) is no idea for it (ADR 0022).
+    # What the deck's play style doesn't need (a Turbo deck's interaction) is no idea for it (ADR 0031).
     for row in (r for r in staples.rows if r.fit is not Fit.OFF_PLAN):
         parts: list[str] = []
         if staples.lists:
@@ -138,7 +138,7 @@ def compile_ideas(
 ) -> dict[Origin, list[BoardCard]]:
     """Put each source's highest-scoring ideas on the deck's board; what each added.
 
-    adjacent holds the pooled decks of the commanders the deck's profile names as alike (ADR 0015); tagged
+    adjacent holds the pooled decks of the commanders the deck's profile names as alike (ADR 0028); tagged
     the decks of other commanders found by each of the deck's theme tags.
     Ideas already on the board count towards a source's MAX_PER_SOURCE, so repeated syncs settle on the
     current top ideas rather than piling up. A turned-down idea takes no place unless the meta brings it
@@ -216,7 +216,7 @@ def compile_ideas_with_adjacent(
     on_progress: Progress | None = None,
 ) -> dict[Origin, list[BoardCard]]:
     """`compile_ideas` with the recent decks of the commanders the deck's profile names as alike, and of other
-    commanders carrying its theme tags, gathered first (ADR 0015); a commander or tag whose decks cannot be
+    commanders carrying its theme tags, gathered first (ADR 0028); a commander or tag whose decks cannot be
     read is named to warn, and the rest carry on."""
     profile = read_profile(stored.folder)
     # Theme tags only: the play style, role and card type tags are too broad to pick decks by (ADR 0009).

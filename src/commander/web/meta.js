@@ -132,7 +132,7 @@ function metaCombos(combos, racing) {
 }
 
 function comboAnswers(answers, racing) {
-  // A Turbo deck races the meta's combos rather than answering them (ADR 0022).
+  // A Turbo deck races the meta's combos rather than answering them (ADR 0031).
   if (!answers.length && racing) return el("p", { class: "answers" }, el("span", { class: "badge status racing", text: "Racing", title: "Turbo: racing, not answering" }));
   if (!answers.length) return el("p", { class: "answers" }, el("span", { class: "badge status rejected", text: "No answer" }));
   // Stax answers say how they stop the combo; removal and counters only need the card and any catch.

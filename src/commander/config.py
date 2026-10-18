@@ -35,7 +35,7 @@ class MetaSettings:
     window_days: int = 60
     # Smaller events say little about a list; EDHTop16 itself defaults to 16 players.
     min_event_size: int = 16
-    # Most the most-viewed recent Archidekt decks read in full per commander; 0 reads none.
+    # The most-viewed recent Archidekt decks read in full per commander, at most; 0 reads none.
     peer_decks: int = 60
     # Most-played commanders whose lists are searched for answers to the deck's key cards.
     meta_commanders: int = 10

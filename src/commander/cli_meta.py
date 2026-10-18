@@ -48,8 +48,8 @@ Compares a deck with its commander's EDHTop16 lists (top cuts first, else every 
 most-viewed recent Archidekt decks, and lists the cards the most-played commanders answer its key
 cards with: the commander, its combos, the cards filed under a combo or win category (by you or by
 other players), cards costing far above the deck's curve, and what profile.toml keeps. Answers are
-cached for a day;
-the window and sample sizes are set in the config's [meta] table.
+cached for a day (Spellbook's combos for a week); the window and sample sizes are set in the config's
+[meta] table.
 """
 
 
@@ -405,7 +405,7 @@ def _print_table(reports: Sequence[MetaReport], out: TextIO) -> None:
     print("deck        lists  top cuts  read  missing  threats  unanswered combos", file=out)
     for r in reports:
         thin = " thin" if r.sample.thin else ""
-        # A deck that races counts no unanswered combo as a gap (ADR 0022).
+        # A deck that races counts no unanswered combo as a gap (ADR 0031).
         open_combos = "racing" if r.style.races else str(sum(1 for c in r.combos if not c.answers))
         print(
             f"{r.deck[:10]:<10}  {r.sample.with_lists:>5}  {r.sample.top_cuts:>8}  {r.sample.performing:>4}"

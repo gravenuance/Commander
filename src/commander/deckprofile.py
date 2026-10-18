@@ -1,4 +1,6 @@
-"""Deck profiles: what one deck wants from suggestions, kept by hand as profile.toml (ADR 0005)."""
+"""Deck profiles: what one deck wants from suggestions and from the ideas sync compiles, kept by hand as
+profile.toml (ADR 0005): role targets, themes, exclusions, kept cards, key cards to leave out and the
+commanders that play alike."""
 
 import tomllib
 from collections.abc import Iterable, Mapping, Sequence
@@ -19,7 +21,7 @@ MAX_PROFILE_BYTES = 64 * 1024
 MAX_LIST = 100
 MAX_TEXT = 200
 MAX_CARD_EUR = 100_000
-# Each adjacent commander costs an Archidekt search and a few deck reads per day (ADR 0015).
+# Each adjacent commander costs an Archidekt search and a few deck reads per day (ADR 0028).
 MAX_ADJACENT = 8
 # A commander and its partner.
 MAX_GROUP = 2
@@ -81,7 +83,7 @@ class Profile:
     ignore_themes: tuple[str, ...] = ()
     # Cards found as key cards (ADR 0017) that are not, by name.
     ignore_keys: tuple[str, ...] = ()
-    # Other commanders, alone or with a partner, whose recent Archidekt decks also give ideas (ADR 0015).
+    # Other commanders, alone or with a partner, whose recent Archidekt decks also give ideas (ADR 0028).
     adjacent: tuple[tuple[str, ...], ...] = ()
 
     def __post_init__(self) -> None:

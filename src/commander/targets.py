@@ -1,4 +1,4 @@
-"""The deck cards a board card could replace: picked by hand, else the weakest like it (ADR 0016)."""
+"""The deck cards a board card could replace: picked by hand, else the weakest like it (ADR 0029)."""
 
 from collections import Counter
 from collections.abc import Collection, Iterable, Mapping, Sequence

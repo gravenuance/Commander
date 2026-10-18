@@ -200,7 +200,7 @@ def _compile_ideas(
     warnings: list[str],
     progress: Progress,
 ) -> dict[str, dict[Origin, list[BoardCard]]]:
-    """Each deck's new ideas from the meta and recent Archidekt decks (ADR 0014), by short name.
+    """Each deck's new ideas from the meta and recent Archidekt decks (ADR 0028), by short name.
 
     Answers under a day old come from the cache. A deck whose sources fail keeps its board as it was.
     """

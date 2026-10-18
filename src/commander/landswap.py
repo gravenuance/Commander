@@ -2,7 +2,7 @@
 
 A cut target or an idea that is a land is allowed only while the land count stays within LAND_TOLERANCE of
 Karsten's count for the deck or inside the range of the lists compared with, and every colour keeps the
-sources its spells need (ADR 0019).
+sources its spells need (ADR 0030).
 """
 
 import logging

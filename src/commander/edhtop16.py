@@ -32,7 +32,7 @@ SITE_URL = "https://edhtop16.com"
 MAX_WINDOW_DAYS = 90
 PAGE_SIZE = 50
 MAX_PAGES = 8
-# The terms forbid excessive requests; one every 1.5 seconds keeps a full run under a minute.
+# The terms forbid excessive requests: one every 1.5 seconds, besides the 5 to 7 a decklist query takes.
 REQUEST_INTERVAL_SECONDS = 1.5
 MAX_SPICE = 4
 # Its decklist queries routinely take five to seven seconds; slower than this is worth a warning.

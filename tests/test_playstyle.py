@@ -1,4 +1,4 @@
-"""A deck's play-style deck tags weigh the staples the meta says it misses (ADR 0022)."""
+"""A deck's play-style deck tags weigh the staples the meta says it misses (ADR 0031)."""
 
 import json
 from collections.abc import Iterator

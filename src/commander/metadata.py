@@ -1,14 +1,16 @@
-"""What other players run with a commander, gathered for `cmdr meta`.
+"""What other players run with a commander, gathered for `cmdr meta` and for the ideas `cmdr sync` compiles.
 
-Three sources, each cached for a day in the cache folder (never the repo, as EDHTop16's terms forbid
-redistributing its statistics) and fetched in parallel, each at its own service's pace:
+Each answer is cached in the cache folder (never the repo, as EDHTop16's terms forbid redistributing its
+statistics), for a day unless stated, and the sources are fetched in parallel, each at its own service's pace:
 
-- the commander's EDHTop16 entries with decklists,
-- the most-played commanders and their best-placed EDHTop16 lists,
+- the commander's EDHTop16 entries with decklists, for decks at bracket 4 and 5,
+- the most-played commanders and their best-placed EDHTop16 lists (bracket 5 only),
 - the most-viewed recent Archidekt decks for the commander at the deck's bracket and the one above, other
-  players' only,
-- the combos inside each top commander's core cards, from Commander Spellbook (cached for a week);
-- the deck's own combos, from Commander Spellbook (cached for a week, until the list changes).
+  players' only, each deck read kept until its owner edits it (ADR 0027),
+- the combos inside each top commander's core cards, from Commander Spellbook (a week; bracket 5 only),
+- the deck's own combos, from Commander Spellbook (a week, until the list changes; bracket 5 only),
+- for `sync`, the decks of the commanders the profile names as alike and of other commanders carrying one of
+  the deck's theme tags (ADR 0028), beside the above rather than inside `MetaData`.
 """
 
 import logging
@@ -396,7 +398,7 @@ class TaggedDecks:
 
 @dataclass(slots=True, frozen=True)
 class AdjacentDecks:
-    """The recent Archidekt decks of the commanders a profile names as playing alike, pooled (ADR 0015), and
+    """The recent Archidekt decks of the commanders a profile names as playing alike, pooled (ADR 0028), and
     those of other commanders sharing the deck's theme tags, a pool per tag."""
 
     decks: tuple[PeerList, ...]
