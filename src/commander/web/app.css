@@ -26,6 +26,13 @@
   --claude: #b4531a;
   --cmdr: #3d5f8a;
   --archidekt: #8a4a12;
+  /* The share pill and breakdown swatch of each idea origin: 3:1 or more on the tile, --on-origin 4.5:1 on each. */
+  --origin-meta: #1f5fa6;
+  --origin-decks: #9a4a0c;
+  --origin-adjacent: #6f3fa5;
+  --origin-tagged: #2c6b2f;
+  --origin-none: #5c574f;
+  --on-origin: #ffffff;
   --flag: rgb(20 18 16 / 70%);
   --flag-text: #ffffff;
   --on-label: #000000;
@@ -108,6 +115,12 @@
     --claude: #f0a46c;
     --cmdr: #93b4dc;
     --archidekt: #e6b07a;
+    --origin-meta: #8ab8f0;
+    --origin-decks: #f0b070;
+    --origin-adjacent: #c9a8f0;
+    --origin-tagged: #8fd49a;
+    --origin-none: #b8b2a8;
+    --on-origin: #14110e;
     --signin-dim: rgb(0 0 0 / 55%);
     --signin-dim-solid: rgb(0 0 0 / 82%);
     --shadow: 0 1px 2px rgb(0 0 0 / 40%);
@@ -646,7 +659,7 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .card.selected { background: var(--selected); border-color: var(--accent); }
 .card.queued { border-left-color: var(--queued); }
 .art { width: var(--art-width); aspect-ratio: 488 / 680; align-self: start; }
-.card-body { display: grid; gap: var(--space-1); min-width: 0; align-content: start; }
+.card-body { position: relative; display: grid; gap: var(--space-1); min-width: 0; align-content: start; }
 .card-title { display: flex; gap: var(--space-2); align-items: center; justify-content: space-between; min-width: 0; }
 .pick {
   min-width: 0;
@@ -687,6 +700,53 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   font-size: var(--text-xs);
   font-weight: 600;
   border: 1px solid currentcolor;
+}
+.origin-meta { --origin: var(--origin-meta); }
+.origin-decks { --origin: var(--origin-decks); }
+.origin-adjacent { --origin: var(--origin-adjacent); }
+.origin-tagged { --origin: var(--origin-tagged); }
+.origin-none { --origin: var(--origin-none); }
+.share-pill {
+  min-height: 24px;
+  border-color: transparent;
+  background: var(--origin);
+  color: var(--on-origin);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.share-pill:hover, .share-pill[aria-expanded="true"] { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--origin); }
+/* Under the pill, across the tile's body; the page sets its top so the tile's layout never moves. */
+.share-pop {
+  position: absolute;
+  z-index: 10;
+  left: 0;
+  right: 0;
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font-size: var(--text-s);
+  cursor: default;
+}
+.share-pop p { margin: 0; }
+.share-total { font-weight: 600; }
+.share-rows { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
+.share-row { display: flex; flex-wrap: wrap; gap: 0 var(--space-2); align-items: center; }
+.share-swatch { flex: none; width: 12px; height: 12px; border-radius: var(--radius-xs); background: var(--origin); }
+.share-numbers { color: var(--muted); font-variant-numeric: tabular-nums; }
+.share-primary {
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-xs);
+  font-weight: 600;
 }
 .badge.you { color: var(--you); }
 .badge.claude { color: var(--claude); }

@@ -959,3 +959,97 @@ def test_the_deck_list_paints_a_labelled_icon_per_fetch_state_in_place() -> None
     assert "paintFetchStates(" in (web / "account.js").read_text(encoding="utf-8")
     assert "dataset.fetch ===" in script
     assert ".fetch-icon" in (web / "app.css").read_text(encoding="utf-8")
+
+
+CONSIDERING = (WEB / "considering.js").read_text(encoding="utf-8")
+
+
+def function_body(script: str, signature: str) -> str:
+    """The text of a top-level function, from its signature to the closing brace in column 0."""
+    return script.split(signature, 1)[1].split("\n}\n", 1)[0]
+
+
+def test_a_considering_tile_shows_the_combined_share_as_a_pill_button_in_place_of_badge_and_counts() -> None:
+    tile = function_body(CONSIDERING, "function buildTile(card) {")
+    assert "card.share ? sharePill(card) : sourceBadge(card)" in tile
+    # The plain count line and the origin text badge are gone from the tile; the counts are in the popover.
+    assert "card.share.count}/" not in CONSIDERING
+    assert "originLabel(" not in tile
+    pill = function_body(CONSIDERING, "function sharePill(card) {")
+    assert 'type: "button"' in pill
+    assert '"aria-expanded": "false"' in pill
+    assert '"aria-controls": popId' in pill
+    assert '"aria-label": `${card.share.label} played; ${originPhrase(card)}`' in pill
+    assert "title:" in pill
+    pop = function_body(CONSIDERING, "function sharePopover(card, popId) {")
+    assert 'class: "share-pop", id: popId' in pop
+    assert "hidden: true" in pop
+
+
+def test_the_share_pill_takes_the_colour_of_the_origin_the_idea_is_credited_to() -> None:
+    css = (WEB / "app.css").read_text(encoding="utf-8")
+    for key in ("meta", "decks", "adjacent", "tagged", "none"):
+        assert f".origin-{key} {{ --origin: var(--origin-{key}); }}" in css
+    assert '"archidekt decks": "decks", "adjacent decks": "adjacent", "tagged decks": "tagged"' in CONSIDERING
+    pill = css.split(".share-pill {", 1)[1].split("}", 1)[0]
+    assert "background: var(--origin);" in pill
+    assert "color: var(--on-origin);" in pill
+
+
+def test_the_share_popover_lists_sources_marks_the_primary_and_closes_on_escape_or_outside_click() -> None:
+    combined = "`Combined ${card.share.label} · ${card.share.count} of ${card.share.total}`"
+    assert f"text: {combined}" in CONSIDERING
+    rows = function_body(CONSIDERING, "function shareRow(card, row) {")
+    assert 'text: "primary"' in rows
+    assert "row.origin === card.origin" in rows
+    assert "share-swatch" in rows
+    assert "card.pool" in function_body(CONSIDERING, "function shareRows(card) {")
+    setup = function_body(CONSIDERING, "function setupSharePopover() {")
+    assert 'event.key !== "Escape"' in setup
+    assert "closeShare(true)" in setup
+    assert 'document.addEventListener("click"' in setup
+    close = function_body(CONSIDERING, "function closeShare(refocus) {")
+    assert "pill.focus()" in close
+    assert '"aria-expanded", "false"' in close
+    # Only one breakdown is open at a time, and a click inside it doesn't select the tile.
+    assert "closeShare(false);" in function_body(CONSIDERING, "function toggleShare(pill, pop) {")
+    assert ".share-pop" in function_body(CONSIDERING, "function buildTile(card) {")
+    assert "setupSharePopover();" in (WEB / "main.js").read_text(encoding="utf-8")
+
+
+def hex_of(css: str, token: str) -> str:
+    found = re.search(rf"{re.escape(token)}:\s*(#[0-9a-fA-F]{{6}})\s*;", css)
+    assert found is not None, token
+    return found.group(1)
+
+
+def luminance(colour: str) -> float:
+    def channel(index: int) -> float:
+        value = int(colour[1 + 2 * index : 3 + 2 * index], 16) / 255
+        return value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4
+
+    return 0.2126 * channel(0) + 0.7152 * channel(1) + 0.0722 * channel(2)
+
+
+def contrast(a: str, b: str) -> float:
+    high, low = sorted((luminance(a), luminance(b)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+ORIGIN_TOKENS = ("--origin-meta", "--origin-decks", "--origin-adjacent", "--origin-tagged", "--origin-none")
+
+
+def test_every_origin_colour_has_light_and_dark_values_that_pass_contrast_on_the_tile_and_text() -> None:
+    css = (WEB / "app.css").read_text(encoding="utf-8")
+    light, dark = css.split("@media (prefers-color-scheme: dark)", 1)
+    dark = dark.split("* { box-sizing", 1)[0]
+    for theme in (light, dark):
+        # The tile is on --surface, or on --selected while open.
+        tiles = [hex_of(theme, "--surface"), hex_of(theme, "--selected")]
+        ink = hex_of(theme, "--on-origin")
+        for token in ORIGIN_TOKENS:
+            fill = hex_of(theme, token)
+            assert contrast(fill, ink) >= 4.5, token
+            assert all(contrast(fill, tile) >= 3.0 for tile in tiles), token
+    assert len({hex_of(light, t) for t in ORIGIN_TOKENS}) == len(ORIGIN_TOKENS)
+    assert len({hex_of(dark, t) for t in ORIGIN_TOKENS}) == len(ORIGIN_TOKENS)

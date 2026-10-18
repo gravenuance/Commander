@@ -41,6 +41,29 @@ function originTitle(card) {
   return from ? `compiled by ${card.source} from ${from}` : `added by ${card.source}`;
 }
 
+// Without a share (no list was read) the badge still says where the idea came from.
+function sourceBadge(card) {
+  return el("span", { class: `badge ${card.source}`, text: originLabel(card), title: originTitle(card) });
+}
+
+// The colour key of each origin, as app.css names its --origin-* tokens; ideas of no origin are neutral.
+const ORIGIN_KEY = { "meta": "meta", "archidekt decks": "decks", "adjacent decks": "adjacent", "tagged decks": "tagged" };
+
+function originKey(origin) {
+  return ORIGIN_KEY[origin] ?? "none";
+}
+
+// The primary source in words, for the pill's accessible name.
+function originPhrase(card) {
+  switch (card.origin) {
+    case "meta": return "mostly tournament lists";
+    case "archidekt decks": return `mostly ${state.view?.short ?? "this commander"} Archidekt decks`;
+    case "adjacent decks": return "mostly alike commanders' decks";
+    case "tagged decks": return card.originTag ? `mostly decks tagged ${card.originTag}` : "mostly tagged decks";
+    default: return `added by ${card.source}`;
+  }
+}
+
 function sortSuggestions(cards) {
   return [...cards].sort((a, b) =>
     suggestionGroup(a) - suggestionGroup(b)
@@ -117,12 +140,7 @@ function buildTile(card) {
   const meta = el("div", { class: "card-meta" },
     el("span", { class: "type", text: card.typeLine, title: card.typeLine }),
     card.priceCents !== null ? el("span", { text: euro(card.priceCents) }) : null,
-    card.share ? el("span", { class: "share", text: `${card.share.label} · ${card.share.count}/${card.share.total}`, title: card.share.tip }) : null,
-    el("span", {
-      class: `badge ${card.source}`,
-      text: originLabel(card),
-      title: originTitle(card),
-    }),
+    card.share ? sharePill(card) : sourceBadge(card),
     card.gameChanger ? el("span", { class: "badge status gc", text: "Game changer" }) : null,
     card.withinBudget === false
       ? el("span", { class: "badge status over", text: "Over budget", title: "Over 25% above the deck's average card" })
@@ -163,9 +181,91 @@ function buildTile(card) {
   tile.addEventListener("mouseenter", () => hover(card.id));
   tile.addEventListener("mouseleave", () => hover(null));
   tile.addEventListener("click", (event) => {
-    if (!event.target.closest("button, a, summary, details, form")) select(card.id);
+    if (!event.target.closest("button, a, summary, details, form, .share-pop")) select(card.id);
   });
   return tile;
+}
+
+/* The share pill and its breakdown */
+
+// The combined share, coloured by the origin the idea is credited to; it opens the breakdown beside it.
+function sharePill(card) {
+  const popId = `share-pop-${card.id}`;
+  const pill = el("button", {
+    class: `badge share-pill origin-${originKey(card.origin)}`, type: "button", text: card.share.label,
+    "aria-expanded": "false", "aria-controls": popId,
+    "aria-label": `${card.share.label} played; ${originPhrase(card)}`,
+    title: `${originLabel(card)}: show breakdown`,
+  });
+  const pop = sharePopover(card, popId);
+  pill.addEventListener("click", () => toggleShare(pill, pop));
+  return el("span", { class: "share-wrap" }, pill, pop);
+}
+
+function sharePopover(card, popId) {
+  const rows = shareRows(card);
+  return el("div", { class: "share-pop", id: popId, role: "group", "aria-label": `${card.name}: share breakdown`, hidden: true },
+    el("p", { class: "share-total", text: `Combined ${card.share.label} · ${card.share.count} of ${card.share.total}` }),
+    card.origin ? null : el("p", { class: "muted", text: `Added by ${card.source}` }),
+    rows.length ? el("ul", { class: "share-rows" }, ...rows.map((row) => shareRow(card, row))) : null);
+}
+
+// One row per source that plays the card, in the order the tile groups sources; the primary one always shows.
+function shareRows(card) {
+  const { meta, archidekt } = card.share;
+  const rows = [];
+  if (meta && (meta.count || card.origin === "meta")) rows.push({ origin: "meta", part: meta, unit: "lists" });
+  if (archidekt && (archidekt.count || card.origin === "archidekt decks")) {
+    rows.push({ origin: "archidekt decks", part: archidekt, unit: "decks" });
+  }
+  // An alike or tagged idea was found in a pool of its own; the bridge sends the pool's numbers.
+  if (card.origin === "adjacent decks" || card.origin === "tagged decks") {
+    rows.push({ origin: card.origin, part: card.pool, unit: "decks" });
+  }
+  return rows;
+}
+
+function shareRow(card, row) {
+  const numbers = row.part ? `${pct(row.part.share)} · ${row.part.count} of ${row.part.total} ${row.unit}` : "";
+  return el("li", { class: "share-row" },
+    el("span", { class: `share-swatch origin-${originKey(row.origin)}`, "aria-hidden": "true" }),
+    el("span", { class: "share-source", text: originLabel({ origin: row.origin, originTag: card.originTag }) }),
+    el("span", { class: "share-numbers", text: numbers }),
+    row.origin === card.origin ? el("span", { class: "share-primary", text: "primary" }) : null);
+}
+
+// The pill and breakdown showing now; one at a time.
+let openShare = null;
+
+function toggleShare(pill, pop) {
+  const again = openShare !== null && openShare.pill === pill;
+  closeShare(false);
+  if (again) return;
+  pop.style.top = `${pill.offsetTop + pill.offsetHeight + 4}px`;
+  pop.hidden = false;
+  pill.setAttribute("aria-expanded", "true");
+  openShare = { pill, pop };
+}
+
+function closeShare(refocus) {
+  if (openShare === null) return;
+  const { pill, pop } = openShare;
+  openShare = null;
+  pill.setAttribute("aria-expanded", "false");
+  pop.hidden = true;
+  if (refocus) pill.focus();
+}
+
+function setupSharePopover() {
+  // Captured, so Escape closes the breakdown before deck.js lets go of the selected tile.
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || openShare === null || !openShare.pill.isConnected) return;
+    event.stopPropagation();
+    closeShare(true);
+  }, true);
+  document.addEventListener("click", (event) => {
+    if (openShare !== null && !openShare.pill.contains(event.target) && !openShare.pop.contains(event.target)) closeShare(false);
+  });
 }
 
 function hover(id) {

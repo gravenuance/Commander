@@ -9,9 +9,9 @@
   card, with the raw count and each source's part in the tooltip. Cut targets, the order within Considering and
   the return of turned-down cards use it.
 - Ideas from tagged decks (ADR 0028): each of a deck's theme tags is searched on Archidekt for recent decks of
-  other commanders, and the cards at least half of a tag's decks play become ideas, badged "Archidekt: tagged
-  *tag*". Considering also names the other sources by where they come from: "Tournament lists", "Archidekt:
-  *commander* decks" and "Archidekt: alike commanders".
+  other commanders, and the cards at least half of a tag's decks play become ideas, named "Archidekt: tagged
+  *tag*" in the breakdown. Considering also names the other sources by where they come from: "Tournament
+  lists", "Archidekt: *commander* decks" and "Archidekt: alike commanders".
 - Ideas with no deck card to replace are put on the board as well and listed under *No cut yet* in the app,
   where clicking one offers every deck card but the commander.
 - Cuts of another role or theme (ADR 0029): when like for like leaves a slot free, a deck card of another role
@@ -30,6 +30,10 @@
   its step: waiting, fetching, fetched, or incomplete when a source failed.
 
 ### Changed
+- A Considering card shows its combined share as a pill coloured by the source the idea is credited to
+  (tournament lists, the commander's Archidekt decks, alike commanders, tagged decks), in place of the source
+  badge and the plain count. Clicking the pill opens a breakdown: the combined share with its count, then each
+  source's share and count, the primary source marked.
 - The app no longer opens the first deck by itself: the main area is blank until you pick one.
 - The app's page shows no one until a sign-in succeeds: at start without a signed-in account, after **Sign out**,
   and after leaving the sign-in dialog any other way (Not now, Escape). The dialog blurs and dims the app

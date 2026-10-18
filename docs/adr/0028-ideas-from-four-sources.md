@@ -65,8 +65,9 @@ Tag search, in `commander.metadata`:
   (`originTag`).
 - A commander or tag whose decks cannot be read is named on stderr, and the deck's other ideas still come.
 
-The app labels an idea by its source: "Tournament lists", "Archidekt: <commander> decks", "Archidekt: alike
-commanders" and "Archidekt: tagged <tag>". Considering lists the owner's cards first, then Claude's, then the
+The app names an idea's source in the breakdown behind its share pill, which is coloured by that source:
+"Tournament lists", "Archidekt: <commander> decks", "Archidekt: alike commanders" and "Archidekt: tagged
+<tag>". The breakdown of an alike or tagged idea gives its pool's share and size, read from the idea's reason. Considering lists the owner's cards first, then Claude's, then the
 four sources in that order and the rest; within a group, over-budget cards last, then by weighted share.
 
 ## Consequences
@@ -75,7 +76,7 @@ four sources in that order and the rest; within a group, over-budget cards last,
   searches of three pages and 15 deck reads, paced as in ADR 0027 and cached for a day; decks sharing a tag
   share the answer.
 - The tagged source is the loosest. It sorts after the others, and its pools are only as good as the tags;
-  the badge names the tag so a bad pool can be spotted and the tag ignored under `[themes] ignore`.
+  the breakdown names the tag so a bad pool can be spotted and the tag ignored under `[themes] ignore`.
 - Raising the cap from 10 to 50 puts more on the board; the share pill and the order keep the best first.
 - `sync --no-ideas` skips the step, `--dry-run` never runs it, and a deck whose sources all fail keeps its
   board as it was.

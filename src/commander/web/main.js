@@ -29,6 +29,7 @@ async function poll() {
 
 window.addEventListener("pywebviewready", async () => {
   setupPropose();
+  setupSharePopover();
   setupReview();
   setupPanels();
   setupCardSize();

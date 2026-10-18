@@ -446,9 +446,10 @@ base against Frank Karsten's published numbers
 - **Considering**, on the right, lists every idea for the deck in this order: yours, Claude's, the meta's,
   the Archidekt decks' for the deck's commander, alike commanders', tagged decks', then the rest. Within each
   group ideas over the deck's budget come last, and the others by weighted share, which each card shows as a
-  pill ("34% · 12/35") with its sources in the tooltip. A badge says who added an idea, or for a compiled one
-  where it came from: "Tournament lists", "Archidekt: *commander* decks", "Archidekt: alike commanders" or
-  "Archidekt: tagged *tag*".
+  pill ("34%"). The pill's colour says which source the idea is credited to: tournament lists, the
+  commander's Archidekt decks, alike commanders' or tagged decks' (grey for yours and Claude's). Click it for
+  the breakdown: the combined share with its count ("Combined 34% · 12 of 35"), then each source's share
+  and count ("Archidekt: alike commanders", "Archidekt: tagged *tag*" and so on), the primary one marked.
   Hover over an idea or click it to light the deck cards it could replace. Click one of them to queue the
   swap; once an idea is clicked, any other deck card but the commander can be clicked too. Ideas that name
   no card to replace wait under *No cut yet*: click one, then the deck card it replaces.
