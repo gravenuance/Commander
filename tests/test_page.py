@@ -265,3 +265,28 @@ def test_a_deck_view_renders_when_a_pooled_idea_has_no_combined_share() -> None:
       empty: $("empty-considering").hidden };
     """)
     assert shown == {"tiles": 1, "empty": True}
+
+
+def test_proposing_a_card_with_no_cut_opens_its_folded_panel_without_saving_that_choice() -> None:
+    seen = run("""
+    storage["commander.panelOpen.h-uncut"] = "0";
+    setupPanels();
+    const folded = { expanded: $("h-uncut").getAttribute("aria-expanded"),
+      bodyHidden: $("uncut-body").hidden };
+    const waiting = card({ id: "n", name: "New", targets: [] });
+    state.view = { cards: [waiting] };
+    renderConsidering(state.view.cards);
+    stub.propose = async () => ({ card: waiting });
+    stub.decks = async () => ({ decks: [] });
+    await propose("New");
+    return { folded, expanded: $("h-uncut").getAttribute("aria-expanded"), bodyHidden: $("uncut-body").hidden,
+      stored: storage["commander.panelOpen.h-uncut"], selected: state.selected,
+      status: $("status-text").textContent };
+    """)
+    assert seen["folded"] == {"expanded": "false", "bodyHidden": True}
+    assert seen["expanded"] == "true"
+    assert seen["bodyHidden"] is False
+    # Folding it again next time stays the user's call: the stored choice is untouched.
+    assert seen["stored"] == "0"
+    assert seen["selected"] == "n"
+    assert seen["status"] == "New: pick the deck card it replaces"
