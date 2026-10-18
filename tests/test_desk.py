@@ -1079,12 +1079,12 @@ def test_the_share_pill_takes_the_colour_of_the_origin_the_idea_is_credited_to()
     assert "color: var(--on-origin);" in pill
 
 
-def test_the_share_popover_lists_sources_marks_the_primary_and_closes_on_escape_or_outside_click() -> None:
+def test_the_share_popover_lists_each_source_with_its_share_and_closes_on_escape_or_outside_click() -> None:
     combined = "`Combined ${card.share.label} · ${card.share.count} of ${card.share.total}`"
     assert f"text: {combined}" in CONSIDERING
     rows = function_body(CONSIDERING, "function shareRow(card, row) {")
-    assert 'text: "primary"' in rows
-    assert "row.origin === card.origin" in rows
+    assert '"primary"' not in rows
+    assert '"Counted on the next sync"' in rows
     assert "share-swatch" in rows
     assert "card.pool" in function_body(CONSIDERING, "function shareRows(card) {")
     setup = function_body(CONSIDERING, "function setupSharePopover() {")

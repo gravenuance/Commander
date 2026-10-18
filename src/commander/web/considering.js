@@ -243,12 +243,14 @@ function shareRows(card) {
 }
 
 function shareRow(card, row) {
-  const numbers = row.part ? `${pct(row.part.share)} · ${row.part.count} of ${row.part.total} ${row.unit}` : "";
+  // A pool idea from before its numbers were stored gets them on the next sync.
+  const numbers = row.part
+    ? `${pct(row.part.share)} · ${row.part.count} of ${row.part.total} ${row.unit}`
+    : "Counted on the next sync";
   return el("li", { class: "share-row" },
     el("span", { class: `share-swatch origin-${originKey(row.origin)}`, "aria-hidden": "true" }),
     el("span", { class: "share-source", text: originLabel({ origin: row.origin, originTag: card.originTag }) }),
-    el("span", { class: "share-numbers", text: numbers }),
-    row.origin === card.origin ? el("span", { class: "share-primary", text: "primary" }) : null);
+    el("span", { class: "share-numbers", text: numbers }));
 }
 
 // The pill and breakdown showing now; one at a time.

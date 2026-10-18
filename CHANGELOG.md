@@ -39,7 +39,7 @@
 - A Considering card shows its combined share as a pill coloured by the source the idea is credited to
   (tournament lists, the commander's Archidekt decks, alike commanders, tagged decks), in place of the source
   badge and the plain count. Clicking the pill opens a breakdown: the combined share with its count, then each
-  source's share and count, the primary source marked. For an alike or tagged idea the pill shows the share of
+  source's share and count. For an alike or tagged idea the pill shows the share of
   the pool of decks it was found in ("60% of Landfall-tagged decks") and those two groups are ordered by it;
   the board card keeps the pool's numbers (`originPool`) and the next sync adds them to ideas already there.
 - *No cut yet* is a side panel of its own between Considering and Meta, shown only while it holds ideas, in

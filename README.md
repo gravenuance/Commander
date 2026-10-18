@@ -458,7 +458,7 @@ base against Frank Karsten's published numbers
   decks"), the figure the idea was picked by, and those two groups are ordered by it; an idea synced before
   the board kept those numbers shows the combined share until the next sync. Click the pill for
   the breakdown: the combined share with its count ("Combined 34% · 12 of 35"), then each source's share
-  and count ("Archidekt: alike commanders", "Archidekt: tagged *tag*" and so on), the primary one marked.
+  and count ("Archidekt: alike commanders", "Archidekt: tagged *tag*" and so on).
   Hover over an idea or click it to light the deck cards it could replace. Click one of them to queue the
   swap; once an idea is clicked, any other deck card but the commander can be clicked too. Ideas that name
   no card to replace wait in their own *No cut yet* panel below Considering, shown only while there are any:
