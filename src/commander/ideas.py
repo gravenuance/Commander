@@ -13,7 +13,8 @@ commanders that play alike also gets the cards at least half of their pooled rec
 decks"), each tag's decks a pool of their own. Ideas pass the profile's exclusions, bracket ceiling and
 price cap; below bracket 5 also the deck's budget (ADR 0025), those within its working budget first.
 EDHREC is never asked (ADR 0003): its rank, from Scryfall's data, only orders the cards an idea could
-replace.
+replace. Every sync also re-judges the open ideas by cmdr: one that no longer passes its source's test is
+turned down (`rejudge_ideas`).
 """
 
 from collections.abc import Callable, Sequence
@@ -29,8 +30,16 @@ from commander.carddb import CardDb
 from commander.deckcache import Clock
 from commander.deckprofile import read_profile, resolve_themes
 from commander.deckthemes import ThemeSource, merge_themes
-from commander.meta import MIN_PEER_LISTS, Basis, Staples, all_staples, pool_staples
-from commander.metadata import MetaData, MetaSources, PeerList, Progress, TaggedDecks, gather_adjacent
+from commander.meta import MIN_PEER_LISTS, Basis, Staples, all_staples, pool_staple_keys, pool_staples
+from commander.metadata import (
+    AdjacentDecks,
+    MetaData,
+    MetaSources,
+    PeerList,
+    Progress,
+    TaggedDecks,
+    gather_adjacent,
+)
 from commander.models import Deck, short_commander_name
 from commander.playstyle import Fit
 from commander.store import StoredDeck
@@ -38,7 +47,7 @@ from commander.suggest import IdeaFilter, name_keys_of
 from commander.weightedshare import NO_SHARES, ShareTable, SourceShare, weighted_shares
 
 MAX_PER_SOURCE = 50
-# Why an idea picked up from the Maybeboard or Sideboard (ADR 0006) is turned down on a later sync (ADR 0035).
+# Why an idea that no longer passes the idea test is turned down on a sync (ADR 0028).
 NO_LONGER_MAKES_THE_CUT = "no longer makes the cut"
 
 
@@ -227,28 +236,97 @@ def compile_ideas(
     return added
 
 
-def rejudge_archidekt_ideas(stored: StoredDeck, data: MetaData, db: CardDb, *, now: Clock) -> list[BoardCard]:
-    """Turn down the open ideas that were picked up from the Maybeboard or Sideboard and fail the idea test
-    the other ideas pass (`ShareTable.is_idea`); what it turned down, with the reason on the activity line.
+def rejudge_ideas(
+    stored: StoredDeck,
+    data: MetaData,
+    db: CardDb,
+    *,
+    now: Clock,
+    adjacent: Sequence[PeerList] | None = None,
+    tagged: Sequence[TaggedDecks] = (),
+) -> list[BoardCard]:
+    """Turn down the open ideas by cmdr or from the old Maybeboard pick-up that no longer pass the test new
+    ideas pass; what it turned down, with the reason on the activity line (ADR 0028).
 
-    Nothing is judged when no list was read, and cards of other sources or statuses are never touched, so
-    a card the user queued stays (ADR 0035).
+    Meta and Archidekt-deck ideas, and old pick-ups with no origin, are tested with `ShareTable.is_idea`,
+    but only against sources read now: none without a list, no meta idea without the EDHTop16 lists and no
+    deck idea without the Archidekt decks. An alike idea is tested by the half of the pooled decks that
+    plays it, a tagged one by its own tag's pool; `adjacent` is None when a group's decks could not be
+    read, and a pool too small to name staples judges nothing. Cards by you or Claude, and queued,
+    applied or turned-down ones, are never touched (`turn_down_open` checks the card is still open).
     """
     table = weighted_shares(data, now=now)
-    if not table:
-        return []
-    service = BoardService(stored.folder, stored.deck, db, now=now)
-    shares = table.fractions()
+    adjacent_keys = None if adjacent is None else pool_staple_keys(adjacent)
+    tag_keys = {pool.tag: pool_staple_keys(pool.decks) for pool in tagged}
+
+    def still_an_idea(card: BoardCard) -> bool:
+        match card.origin:
+            case Origin.ADJACENT:
+                keys = adjacent_keys
+            case Origin.TAGGED:
+                keys = tag_keys.get(card.origin_tag or "")
+            case Origin.META if data.lists.data is not None and table:
+                return table.is_idea(card.name)
+            case Origin.DECKS if data.peers.data is not None and table:
+                return table.is_idea(card.name)
+            case None if card.source is Actor.ARCHIDEKT and table:
+                return table.is_idea(card.name)
+            case _:
+                return True
+        return keys is None or card_key(card.name) in keys
+
     failing = [
         card
         for card in read_board(stored.folder).cards
-        if card.source is Actor.ARCHIDEKT and card.status is Status.OPEN and not table.is_idea(card.name)
+        if card.source in {Actor.CMDR, Actor.ARCHIDEKT}
+        and card.status is Status.OPEN
+        and not still_an_idea(card)
     ]
+    if not failing:
+        return []
+    service = BoardService(stored.folder, stored.deck, db, now=now)
+    shares = table.fractions()
     turned_down = (
         service.turn_down_open(card.id, NO_LONGER_MAKES_THE_CUT, shares.get(card_key(card.name), 0.0))
         for card in failing
     )
     return [card for card in turned_down if card is not None]
+
+
+def gather_idea_pools(
+    stored: StoredDeck,
+    db: CardDb,
+    sources: MetaSources,
+    cache_root: Path,
+    *,
+    now: Clock,
+    refresh: bool,
+    warn: Callable[[str], None],
+    on_progress: Progress | None = None,
+) -> AdjacentDecks:
+    """The recent decks of the commanders the deck's profile names as alike, and of other commanders carrying
+    its theme tags (only when the profile turns the tag search on), gathered first (ADR 0028); a commander or
+    tag whose decks cannot be read is named to warn, and the rest carry on."""
+    profile = read_profile(stored.folder)
+    # Theme tags only: the play style, role and card type tags are too broad to pick decks by (ADR 0009).
+    tags = (
+        [t.name for t in merge_themes(stored.deck, profile, db).used if t.source is ThemeSource.DECK_TAG]
+        if profile.tag_search
+        else []
+    )
+    pools = gather_adjacent(
+        stored.deck,
+        profile.adjacent,
+        sources,
+        cache_root,
+        now=now,
+        refresh=refresh,
+        tags=tags,
+        on_progress=on_progress,
+    )
+    for name, why in pools.errors:
+        warn(f"{stored.deck.short_name}: no recent {name} decks to learn from ({why})")
+    return pools
 
 
 def compile_ideas_with_adjacent(
@@ -263,29 +341,11 @@ def compile_ideas_with_adjacent(
     warn: Callable[[str], None],
     on_progress: Progress | None = None,
 ) -> dict[Origin, list[BoardCard]]:
-    """`compile_ideas` with the recent decks of the commanders the deck's profile names as alike, and of other
-    commanders carrying its theme tags (only when the profile turns the tag search on), gathered first
-    (ADR 0028); a commander or tag whose decks cannot be read is named to warn, and the rest carry on."""
-    profile = read_profile(stored.folder)
-    # Theme tags only: the play style, role and card type tags are too broad to pick decks by (ADR 0009).
-    tags = (
-        [t.name for t in merge_themes(stored.deck, profile, db).used if t.source is ThemeSource.DECK_TAG]
-        if profile.tag_search
-        else []
+    """`compile_ideas` with the pools `gather_idea_pools` reads."""
+    pools = gather_idea_pools(
+        stored, db, sources, cache_root, now=now, refresh=refresh, warn=warn, on_progress=on_progress
     )
-    adjacent = gather_adjacent(
-        stored.deck,
-        profile.adjacent,
-        sources,
-        cache_root,
-        now=now,
-        refresh=refresh,
-        tags=tags,
-        on_progress=on_progress,
-    )
-    for name, why in adjacent.errors:
-        warn(f"{stored.deck.short_name}: no recent {name} decks to learn from ({why})")
-    return compile_ideas(stored, data, db, now=now, adjacent=adjacent.decks, tagged=adjacent.tagged)
+    return compile_ideas(stored, data, db, now=now, adjacent=pools.decks, tagged=pools.tagged)
 
 
 def ideas_summary(added: dict[Origin, list[BoardCard]]) -> str:

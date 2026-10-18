@@ -309,6 +309,15 @@ def pool_staples(deck: Deck, pool: Sequence[PeerList], db: CardDb) -> tuple[Card
     return missing_staples(deck, (), pool, names, db, limit=None, style=deck_play_style(deck))
 
 
+def pool_staple_keys(pool: Sequence[PeerList]) -> frozenset[str] | None:
+    """The `card_key`s at least half of a pool of Archidekt decks play; None when the pool is too small to
+    name staples, the same bar `pool_staples` uses."""
+    if len(pool) < MIN_PEER_LISTS:
+        return None
+    counts = _peer_counts(pool)
+    return frozenset(key for key, count in counts.items() if count / len(pool) >= PEER_STAPLE_SHARE)
+
+
 def all_staples(
     deck: Deck, data: MetaData, db: CardDb, *, is_staple: Callable[[str], bool] | None = None
 ) -> Staples:

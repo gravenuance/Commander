@@ -26,17 +26,17 @@ from commander.board import (
 from commander.carddb import CARD_DB_FILE, CardDataMeta, CardDb
 from commander.config import MetaSettings
 from commander.fetchpriority import FetchPriority
-from commander.ideas import rejudge_archidekt_ideas
-from commander.metadata import MetaData
+from commander.ideas import rejudge_ideas
+from commander.metadata import AdjacentDecks, MetaData
 from commander.models import Deck
 from commander.net import NetworkError
 from commander.scryfall import CardRefresh, RefreshStatus
 from commander.store import LABELS_FILE, StoredDeck, Workspace
 from commander.sync import SyncResult
-from commander.syncrun import CardState, SyncOptions, SyncServices, run_sync
+from commander.syncrun import CardState, SyncOptions, SyncOutcome, SyncServices, run_sync
 from conftest import REFRESH_TOKEN, FakeArchidekt, Json, MemoryTokenStore, put_on_sideboard
 from test_cli_apply import run
-from test_meta import entry, meta_data
+from test_meta import entry, meta_data, peer
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 DOWNLOADED = CardRefresh(RefreshStatus.UPDATED, CardDataMeta("2026-10-15T09:00:00Z", "t", "b"), 12_345)
@@ -142,10 +142,14 @@ def stub_meta(
     def compile_nothing(*_: object, **__: object) -> dict[Origin, list[BoardCard]]:
         return {}
 
+    def no_pools(*_: object, **__: object) -> AdjacentDecks:
+        return AdjacentDecks((), ())
+
     monkeypatch.setattr(syncrun, "meta_sources", sources)
     monkeypatch.setattr(syncrun, "gather_for", gather)
-    monkeypatch.setattr(syncrun, "compile_ideas_with_adjacent", compile_nothing)
-    monkeypatch.setattr(syncrun, "rejudge_archidekt_ideas", judge_nothing)
+    monkeypatch.setattr(syncrun, "gather_idea_pools", no_pools)
+    monkeypatch.setattr(syncrun, "compile_ideas", compile_nothing)
+    monkeypatch.setattr(syncrun, "rejudge_ideas", judge_nothing)
     return gathered
 
 
@@ -306,14 +310,18 @@ def test_a_deck_whose_ideas_fail_is_incomplete_and_the_others_carry_on(
     fake = three_decks(tmp_path, raw_deck, card_db_file)
     stub_meta(monkeypatch)
 
-    def compile_ideas(stored: StoredDeck, *_: object, warn: Callable[[str], None], **__: object) -> object:
-        if stored.deck.id == 101:
-            raise BoardError("board.json is damaged")
+    def gather_pools(stored: StoredDeck, *_: object, warn: Callable[[str], None], **__: object) -> object:
         if stored.deck.id == 102:
             warn("a source was unavailable")
+        return AdjacentDecks((), ())
+
+    def compile_ideas(stored: StoredDeck, *_: object, **__: object) -> object:
+        if stored.deck.id == 101:
+            raise BoardError("board.json is damaged")
         return {}
 
-    monkeypatch.setattr(syncrun, "compile_ideas_with_adjacent", compile_ideas)
+    monkeypatch.setattr(syncrun, "gather_idea_pools", gather_pools)
+    monkeypatch.setattr(syncrun, "compile_ideas", compile_ideas)
     final = dict(sync_states(tmp_path, fake))
     assert final == {101: "incomplete", 102: "incomplete", 103: "done"}
 
@@ -340,7 +348,7 @@ def sync_with_lists(
         return data
 
     monkeypatch.setattr(syncrun, "gather_for", gather)
-    monkeypatch.setattr(syncrun, "rejudge_archidekt_ideas", rejudge_archidekt_ideas)
+    monkeypatch.setattr(syncrun, "rejudge_ideas", rejudge_ideas)
     sync_ideas(tmp_path, fake)
 
 
@@ -465,3 +473,75 @@ def test_only_open_cards_from_the_old_pick_up_are_judged(
     chaos_warp = board.find(ids["Chaos Warp"])
     assert chaos_warp is not None
     assert chaos_warp.note == "no thanks"
+
+
+def sync_outcome(
+    tmp_path: Path,
+    fake: FakeArchidekt,
+    monkeypatch: pytest.MonkeyPatch,
+    data: MetaData,
+    pools: AdjacentDecks | None = None,
+) -> SyncOutcome:
+    """A sync whose ideas phase reads `data` and `pools` and compiles no new ideas."""
+    stub_meta(monkeypatch)
+
+    def read_data(*_: object, **__: object) -> MetaData:
+        return data
+
+    def read_pools(*_: object, **__: object) -> AdjacentDecks:
+        return pools or AdjacentDecks((), ())
+
+    monkeypatch.setattr(syncrun, "gather_for", read_data)
+    monkeypatch.setattr(syncrun, "gather_idea_pools", read_pools)
+    monkeypatch.setattr(syncrun, "rejudge_ideas", rejudge_ideas)
+    return run_sync(
+        services(tmp_path, fake),
+        Workspace(tmp_path / "decks"),
+        "MAKKIS",
+        MetaSettings(),
+        SyncOptions(cards=False),
+        on_progress=lambda _: None,
+    )
+
+
+def status_of(folder: Path, card_id: str) -> Status:
+    card = read_board(folder).find(card_id)
+    assert card is not None
+    return card.status
+
+
+def test_a_sync_turns_down_a_compiled_idea_that_no_longer_passes_and_reports_it(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake, stored = populated(tmp_path, raw_deck, card_db_file)
+    with CardDb(card_db_file) as db:
+        service = BoardService(stored.folder, stored.deck, db, now=lambda: NOW)
+        weak = service.propose("Tempestra, Dame of Games", Actor.CMDR, origin=Origin.META)
+        strong = service.propose("High-Speed Hoverbike", Actor.CMDR, origin=Origin.META)
+
+    outcome = sync_outcome(tmp_path, fake, monkeypatch, lists_with("High-Speed Hoverbike", 9))
+
+    assert outcome.turned_down == {stored.deck.short_name: ["Tempestra, Dame of Games"]}
+    assert (status_of(stored.folder, weak.id), status_of(stored.folder, strong.id)) == (
+        Status.REJECTED,
+        Status.OPEN,
+    )
+
+
+def test_a_sync_judges_an_alike_idea_only_when_every_commander_group_was_read(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake, stored = populated(tmp_path, raw_deck, card_db_file)
+    with CardDb(card_db_file) as db:
+        signet = BoardService(stored.folder, stored.deck, db, now=lambda: NOW).propose(
+            "Arcane Signet", Actor.CMDR, origin=Origin.ADJACENT
+        )
+    # Arcane Signet is in 1 of 4 pooled decks, under the half a staple needs.
+    pool = tuple(peer(i, ["Arcane Signet"] if i == 1 else []) for i in range(1, 5))
+    data = lists_with("High-Speed Hoverbike", 9)
+
+    partial = sync_outcome(tmp_path, fake, monkeypatch, data, AdjacentDecks(pool, (), (), groups_failed=True))
+    assert (partial.turned_down, status_of(stored.folder, signet.id)) == ({}, Status.OPEN)
+
+    whole = sync_outcome(tmp_path, fake, monkeypatch, data, AdjacentDecks(pool, ()))
+    assert whole.turned_down == {stored.deck.short_name: ["Arcane Signet"]}

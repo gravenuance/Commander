@@ -405,6 +405,8 @@ class AdjacentDecks:
     # Each commander group or tag that could not be read, by name, with why.
     errors: tuple[tuple[str, str], ...]
     tagged: tuple[TaggedDecks, ...] = ()
+    # Whether a commander group's decks could not be read, so `decks` pools only part of the groups.
+    groups_failed: bool = False
 
 
 def gather_adjacent(
@@ -425,6 +427,7 @@ def gather_adjacent(
     folder = cache_root / CACHE_FOLDER
     decks: dict[int, PeerList] = {}
     errors: list[tuple[str, str]] = []
+    groups_failed = False
     for group in groups:
         name = commander_name(group)
         if on_progress is not None:
@@ -442,6 +445,7 @@ def gather_adjacent(
         )
         if answer.data is None:
             errors.append((name, answer.error or "unavailable"))
+            groups_failed = True
             continue
         for peer in answer.data.decks:
             decks.setdefault(peer.deck.id, peer)
@@ -459,7 +463,7 @@ def gather_adjacent(
         others = tuple(p for p in answer.data.decks if own.isdisjoint(c.casefold() for c in p.commanders))
         tagged.append(TaggedDecks(tag, others))
     _prune_reads(folder, since, now=now, offline=offline)
-    return AdjacentDecks(tuple(decks.values()), tuple(errors), tuple(tagged))
+    return AdjacentDecks(tuple(decks.values()), tuple(errors), tuple(tagged), groups_failed)
 
 
 def _prune_reads(folder: Path, since: date, *, now: Clock, offline: bool) -> None:

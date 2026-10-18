@@ -23,7 +23,7 @@ from commander.credentials import CredentialError, TokenStore
 from commander.deckcache import Clock
 from commander.deckprofile import ProfileError
 from commander.fetchpriority import FetchPriority
-from commander.ideas import compile_ideas_with_adjacent, rejudge_archidekt_ideas
+from commander.ideas import compile_ideas, gather_idea_pools, rejudge_ideas
 from commander.metadata import Progress, gather_for, meta_sources
 from commander.net import Fetcher, NetworkError, Pacer
 from commander.scryfall import CardRefresh, RefreshStatus, ScryfallClient, ScryfallError, refresh_card_db
@@ -87,7 +87,7 @@ class SyncOutcome:
     cards: CardStatus
     # The account's card labels, None when not signed in, on a dry run or when the read failed.
     labels: list[tuple[str, str]] | None
-    # Per deck, by short name: the old Maybeboard and Sideboard ideas turned down, and the ideas compiled.
+    # Per deck, by short name: the ideas turned down for no longer passing the idea test, and those compiled.
     turned_down: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
     ideas: dict[str, dict[Origin, list[BoardCard]]] = field(
         default_factory=dict[str, dict[Origin, list[BoardCard]]]
@@ -207,8 +207,8 @@ def _compile_ideas(
     priority: FetchPriority | None,
     on_deck: DeckProgress,
 ) -> tuple[dict[str, dict[Origin, list[BoardCard]]], dict[str, list[str]]]:
-    """Each deck's new ideas from the meta and recent Archidekt decks (ADR 0028), by short name, and the old
-    Maybeboard and Sideboard ideas turned down on the way (ADR 0035).
+    """Each deck's new ideas from the meta and recent Archidekt decks (ADR 0028), by short name, and the open
+    ideas turned down on the way for no longer passing the idea test.
 
     Answers under a day old come from the cache. A deck whose sources fail keeps its board as it was.
     The decks go in the order of how often the user opens them, and the one the priority names goes
@@ -237,11 +237,8 @@ def _compile_ideas(
                 data = gather_for(
                     deck, sources, services.cache, now=services.now, refresh=False, on_progress=progress
                 )
-                if dropped := rejudge_archidekt_ideas(stored, data, db, now=services.now):
-                    turned_down[deck.short_name] = [card.name for card in dropped]
-                found[deck.short_name] = compile_ideas_with_adjacent(
+                pools = gather_idea_pools(
                     stored,
-                    data,
                     db,
                     sources,
                     services.cache,
@@ -249,6 +246,19 @@ def _compile_ideas(
                     refresh=False,
                     warn=warnings.append,
                     on_progress=progress,
+                )
+                dropped = rejudge_ideas(
+                    stored,
+                    data,
+                    db,
+                    now=services.now,
+                    adjacent=None if pools.groups_failed else pools.decks,
+                    tagged=pools.tagged,
+                )
+                if dropped:
+                    turned_down[deck.short_name] = [card.name for card in dropped]
+                found[deck.short_name] = compile_ideas(
+                    stored, data, db, now=services.now, adjacent=pools.decks, tagged=pools.tagged
                 )
             except (BoardError, ProfileError) as error:
                 warnings.append(f"{deck.short_name} ideas not compiled: {error}")

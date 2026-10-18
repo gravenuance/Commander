@@ -8,11 +8,21 @@ import pytest
 
 from commander import ideas as ideas_module
 from commander.answers import card_key
-from commander.board import Actor, BoardService, Origin, OriginPool, Status, read_board
+from commander.board import Actor, BoardService, Origin, OriginPool, Status, read_activity, read_board
 from commander.carddb import CardDb
-from commander.ideas import Idea, adjacent_ideas, compile_ideas, ideas_summary, staple_ideas, tagged_ideas
+from commander.deckcache import Answer, AnswerSource
+from commander.edhtop16 import Entry
+from commander.ideas import (
+    Idea,
+    adjacent_ideas,
+    compile_ideas,
+    ideas_summary,
+    rejudge_ideas,
+    staple_ideas,
+    tagged_ideas,
+)
 from commander.meta import Basis, CardShare, Staples
-from commander.metadata import PeerList, TaggedDecks
+from commander.metadata import MetaData, PeerList, TaggedDecks
 from commander.models import Deck
 from commander.store import StoredDeck
 from commander.weightedshare import ShareTable, SourceShare, WeightedShare
@@ -459,3 +469,197 @@ def test_a_sync_gives_an_idea_already_on_the_board_without_a_pool_its_pool(
     compile_ideas(StoredDeck(tmp_path, deck), meta_data([], []), db, now=lambda: NOW, adjacent=pool)
     [card] = read_board(tmp_path).cards
     assert (card.reason, card.origin_pool) == ("in 2 of 4 recent decks", OriginPool(2, 4))
+
+
+def same_weight_lists(card: str, playing: int, of: int = 10) -> list[Entry]:
+    """`of` equally weighted lists, `playing` of which run `card`; all run a Mind Stone."""
+    return [entry(1, 40, 16, [("Mind Stone", 0), *([(card, 0)] if i < playing else [])]) for i in range(of)]
+
+
+def seed(
+    folder: Path,
+    deck: Deck,
+    db: CardDb,
+    name: str,
+    source: Actor,
+    *,
+    origin: Origin | None = None,
+    tag: str | None = None,
+    status: Status = Status.OPEN,
+) -> str:
+    service = BoardService(folder, deck, db, now=lambda: NOW)
+    card = service.propose(name, source, reason="seeded", origin=origin, origin_tag=tag)
+    if status is Status.ADD:
+        service.decide(card.id, Status.ADD, Actor.YOU, choice="Disruptor Flute")
+    if status is Status.REJECTED:
+        service.decide(card.id, Status.REJECTED, Actor.YOU, note="no thanks")
+    return card.id
+
+
+def card_state(folder: Path, card_id: str) -> tuple[Status, str]:
+    card = read_board(folder).find(card_id)
+    assert card is not None
+    return card.status, card.note
+
+
+def judge(
+    folder: Path,
+    deck: Deck,
+    db: CardDb,
+    data: MetaData,
+    *,
+    adjacent: list[PeerList] | None = None,
+    tagged: list[TaggedDecks] | None = None,
+) -> list[str]:
+    turned_down = rejudge_ideas(
+        StoredDeck(folder, deck), data, db, now=lambda: NOW, adjacent=adjacent, tagged=tagged or ()
+    )
+    return [card.name for card in turned_down]
+
+
+def unavailable_lists(data: MetaData) -> MetaData:
+    """The data with the EDHTop16 lists not read."""
+    return replace(data, lists=Answer(None, AnswerSource.UNAVAILABLE, None, "offline"))
+
+
+@pytest.mark.parametrize("origin", [Origin.META, Origin.DECKS])
+def test_a_compiled_idea_that_fails_the_idea_test_is_turned_down_and_a_passing_one_stays(
+    deck: Deck, db: CardDb, tmp_path: Path, origin: Origin
+) -> None:
+    weak = seed(tmp_path, deck, db, "Jeska's Will", Actor.CMDR, origin=origin)
+    strong = seed(tmp_path, deck, db, "Arcane Signet", Actor.CMDR, origin=origin)
+    # Of ten equally weighted lists, one plays the Jeska's Will and nine the Signet.
+    lists = [entry(1, 40, 16, [("Jeska's Will" if i < 1 else "Arcane Signet", 0)]) for i in range(10)]
+    peers = [peer(i, ["Jeska's Will" if i < 1 else "Arcane Signet"]) for i in range(10)]
+    data = meta_data(lists) if origin is Origin.META else meta_data([], peers)
+
+    assert judge(tmp_path, deck, db, data) == ["Jeska's Will"]
+
+    assert card_state(tmp_path, weak) == (Status.REJECTED, "no longer makes the cut")
+    assert card_state(tmp_path, strong)[0] is Status.OPEN
+    turned = read_board(tmp_path).find(weak)
+    assert turned is not None
+    # Its share now is what it has to rise 20 points above to come back (ADR 0028).
+    assert turned.rejected_share == pytest.approx(0.1)
+    [activity] = [a for a in read_activity(tmp_path) if a.action == "turned down"]
+    assert (activity.actor, activity.card, activity.detail) == (
+        Actor.CMDR,
+        "Jeska's Will",
+        "no longer makes the cut",
+    )
+
+
+def test_cards_by_you_or_claude_and_cards_in_other_states_are_never_judged(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    ids = {
+        "you": seed(tmp_path, deck, db, "Lightning Bolt", Actor.YOU, origin=Origin.META),
+        "claude": seed(tmp_path, deck, db, "Chaos Warp", Actor.CLAUDE, origin=Origin.DECKS),
+        "queued": seed(tmp_path, deck, db, "Jeska's Will", Actor.CMDR, origin=Origin.META, status=Status.ADD),
+        "rejected": seed(
+            tmp_path, deck, db, "Arcane Signet", Actor.CMDR, origin=Origin.META, status=Status.REJECTED
+        ),
+    }
+    before = (tmp_path / "board.json").read_text(encoding="utf-8")
+
+    # A Mind Stone is all the lists play, so every seeded card fails the test.
+    data = meta_data(same_weight_lists("Mind Stone", 10), [peer(1, ["Mind Stone"])])
+    assert judge(tmp_path, deck, db, data) == []
+
+    assert (tmp_path / "board.json").read_text(encoding="utf-8") == before
+    assert card_state(tmp_path, ids["rejected"]) == (Status.REJECTED, "no thanks")
+
+
+def test_an_origin_less_card_of_the_old_pick_up_is_judged_and_one_of_cmdr_is_not(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    old = seed(tmp_path, deck, db, "Jeska's Will", Actor.ARCHIDEKT)
+    unknown = seed(tmp_path, deck, db, "Arcane Signet", Actor.CMDR)
+
+    assert judge(tmp_path, deck, db, meta_data(same_weight_lists("Mind Stone", 10))) == ["Jeska's Will"]
+
+    assert card_state(tmp_path, old) == (Status.REJECTED, "no longer makes the cut")
+    assert card_state(tmp_path, unknown)[0] is Status.OPEN
+
+
+def test_nothing_is_judged_without_share_data_or_when_the_ideas_source_was_not_read(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    old = seed(tmp_path, deck, db, "Jeska's Will", Actor.ARCHIDEKT)
+    meta = seed(tmp_path, deck, db, "Arcane Signet", Actor.CMDR, origin=Origin.META)
+    decks = seed(tmp_path, deck, db, "Chaos Warp", Actor.CMDR, origin=Origin.DECKS)
+    before = (tmp_path / "board.json").read_text(encoding="utf-8")
+
+    # No list at all.
+    assert judge(tmp_path, deck, db, meta_data([])) == []
+    assert (tmp_path / "board.json").read_text(encoding="utf-8") == before
+    # Only the Archidekt decks were read: the meta idea waits, the others are judged.
+    only_decks = unavailable_lists(meta_data([], [peer(1, ["Mind Stone"])]))
+    assert judge(tmp_path, deck, db, only_decks) == ["Jeska's Will", "Chaos Warp"]
+
+    assert [card_state(tmp_path, i)[0] for i in (old, meta, decks)] == [
+        Status.REJECTED,
+        Status.OPEN,
+        Status.REJECTED,
+    ]
+
+
+def test_a_tagged_idea_is_judged_by_its_tags_pool_only_when_that_pool_was_read(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    weak = seed(tmp_path, deck, db, "Arcane Signet", Actor.CMDR, origin=Origin.TAGGED, tag="Landfall")
+    strong = seed(tmp_path, deck, db, "Jeska's Will", Actor.CMDR, origin=Origin.TAGGED, tag="Landfall")
+    other = seed(tmp_path, deck, db, "Chaos Warp", Actor.CMDR, origin=Origin.TAGGED, tag="Tokens")
+    data = meta_data([], [peer(1, ["Mind Stone"])])
+    landfall = tag_pool("Landfall", ["Jeska's Will"], ["Jeska's Will", "Arcane Signet"], ["Jeska's Will"], [])
+
+    # Landfall's pool was read, the Tokens pool was not: a card in 1 of 4 decks fails, one in 3 of 4 stays.
+    assert judge(tmp_path, deck, db, data, tagged=[landfall]) == ["Arcane Signet"]
+
+    assert card_state(tmp_path, weak) == (Status.REJECTED, "no longer makes the cut")
+    assert card_state(tmp_path, strong)[0] is Status.OPEN
+    assert card_state(tmp_path, other)[0] is Status.OPEN
+
+
+def test_a_tagged_idea_waits_when_its_pool_is_missing_or_too_small(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    signet = seed(tmp_path, deck, db, "Arcane Signet", Actor.CMDR, origin=Origin.TAGGED, tag="Landfall")
+    data = meta_data([], [peer(1, ["Mind Stone"])])
+
+    assert judge(tmp_path, deck, db, data) == []
+    assert judge(tmp_path, deck, db, data, tagged=[tag_pool("Landfall", [], [])]) == []
+
+    assert card_state(tmp_path, signet)[0] is Status.OPEN
+
+
+def test_an_alike_idea_is_judged_by_the_pooled_decks_only_when_they_were_read(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    weak = seed(tmp_path, deck, db, "Arcane Signet", Actor.CMDR, origin=Origin.ADJACENT)
+    strong = seed(tmp_path, deck, db, "Jeska's Will", Actor.CMDR, origin=Origin.ADJACENT)
+    data = meta_data([], [peer(1, ["Mind Stone"])])
+    pool = [peer(1, ["Jeska's Will", "Arcane Signet"]), peer(2, ["Jeska's Will"]), peer(3, []), peer(4, [])]
+
+    # Not read, or a pool too small to judge by: nothing is judged.
+    assert judge(tmp_path, deck, db, data, adjacent=None) == []
+    assert judge(tmp_path, deck, db, data, adjacent=pool[:2]) == []
+    # Half of 4 stays, a quarter fails.
+    assert judge(tmp_path, deck, db, data, adjacent=pool) == ["Arcane Signet"]
+
+    assert card_state(tmp_path, weak) == (Status.REJECTED, "no longer makes the cut")
+    assert card_state(tmp_path, strong)[0] is Status.OPEN
+
+
+def test_a_turned_down_compiled_idea_comes_back_once_its_share_rises_20_points(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    stored = StoredDeck(tmp_path, deck)
+    jeska = seed(tmp_path, deck, db, "Jeska's Will", Actor.CMDR, origin=Origin.META)
+    assert judge(tmp_path, deck, db, meta_data(same_weight_lists("Jeska's Will", 1))) == ["Jeska's Will"]
+
+    # 2 of 10 is up 10 points on the 1 of 10 it was turned down at; 8 of 10 is up 70 and passes the test.
+    compile_ideas(stored, meta_data(same_weight_lists("Jeska's Will", 2)), db, now=lambda: NOW)
+    assert card_state(tmp_path, jeska)[0] is Status.REJECTED
+    compile_ideas(stored, meta_data(same_weight_lists("Jeska's Will", 8)), db, now=lambda: NOW)
+    assert card_state(tmp_path, jeska)[0] is Status.OPEN
