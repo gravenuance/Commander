@@ -8,14 +8,37 @@ function considering(cards) {
   return sortSuggestions(cards.filter((c) => c.status === "add" || (c.status === "open" && c.targets.length)));
 }
 
-// Your cards, then Claude's, then meta ideas, then Archidekt deck ideas, then everything else. Within
-// each group, cards over the deck's budget (ADR 0025) go last; then the largest weighted share first.
+// Your cards, then Claude's, then meta ideas, then the deck's own commander's Archidekt decks, then alike
+// commanders', then tagged decks', then everything else. Within each group, cards over the deck's budget
+// (ADR 0025) go last; then the largest weighted share first.
+const ORIGIN_RANK = ["meta", "archidekt decks", "adjacent decks", "tagged decks"];
+
 function suggestionGroup(card) {
   if (card.source === "you") return 0;
   if (card.source === "claude") return 1;
-  if (card.origin === "meta") return 2;
-  if (card.origin === "archidekt decks") return 3;
-  return 4;
+  const rank = ORIGIN_RANK.indexOf(card.origin);
+  return rank < 0 ? 2 + ORIGIN_RANK.length : 2 + rank;
+}
+
+// Where an idea came from, as the badge says it and as its tooltip spells it out.
+function originLabel(card) {
+  switch (card.origin) {
+    case "meta": return "Tournament lists";
+    case "archidekt decks": return `Archidekt: ${state.view?.short ?? "this commander"} decks`;
+    case "adjacent decks": return "Archidekt: alike commanders";
+    case "tagged decks": return card.originTag ? `Archidekt: tagged ${card.originTag}` : "Archidekt: tagged decks";
+    default: return card.origin ?? card.source;
+  }
+}
+
+function originTitle(card) {
+  const from = {
+    "meta": "EDHTop16 tournament lists",
+    "archidekt decks": "recent Archidekt decks of this commander",
+    "adjacent decks": "recent Archidekt decks of commanders that play alike",
+    "tagged decks": card.originTag ? `recent Archidekt decks tagged ${card.originTag}` : "recent Archidekt decks with a theme tag of the deck",
+  }[card.origin];
+  return from ? `compiled by ${card.source} from ${from}` : `added by ${card.source}`;
 }
 
 function sortSuggestions(cards) {
@@ -97,8 +120,8 @@ function buildTile(card) {
     card.share ? el("span", { class: "share", text: `${card.share.label} · ${card.share.count}/${card.share.total}`, title: card.share.tip }) : null,
     el("span", {
       class: `badge ${card.source}`,
-      text: card.origin ?? card.source,
-      title: card.origin ? `compiled by ${card.source} from the ${card.origin}` : `added by ${card.source}`,
+      text: originLabel(card),
+      title: originTitle(card),
     }),
     card.gameChanger ? el("span", { class: "badge status gc", text: "Game changer" }) : null,
     card.withinBudget === false
