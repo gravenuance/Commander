@@ -229,3 +229,16 @@ def test_a_card_is_an_idea_when_the_wilson_lower_bound_of_its_share_reaches_32_p
             StoredDeck(folder, deck), meta_data([], decks_playing(playing, 10)), db, now=lambda: NOW
         )
         assert [c.name for c in added[Origin.DECKS]] == expected
+
+
+def test_one_deck_is_too_little_to_judge_but_two_agreeing_ones_are_enough(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    # One deck playing it: lower bound 0.2065. Two of two: 0.3424.
+    for total, expected in ((1, []), (2, ["Arcane Signet"])):
+        folder = tmp_path / f"decks-{total}"
+        folder.mkdir()
+        added = compile_ideas(
+            StoredDeck(folder, deck), meta_data([], decks_playing(total, total)), db, now=lambda: NOW
+        )
+        assert [c.name for c in added[Origin.DECKS]] == expected

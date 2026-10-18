@@ -21,7 +21,15 @@ from pathlib import Path
 
 import httpx
 
-from commander.archidekt import SEARCH_INTERVAL_SECONDS, ArchidektError, ArchidektSearch, PeerDeck
+from commander.archidekt import (
+    MIN_DECKS,
+    SEARCH_INTERVAL_SECONDS,
+    VIEW_FLOORS,
+    ArchidektError,
+    ArchidektSearch,
+    PeerDeck,
+    most_viewed,
+)
 from commander.background import in_background
 from commander.config import MetaSettings
 from commander.deckcache import Answer, AnswerSource, Clock, DeckCache, cache_item, cached_answer
@@ -70,8 +78,6 @@ CACHE_VERSION = 1
 CACHE_FOLDER = "meta"
 # The cEDH bracket: the only one EDHTop16 tournaments cover.
 CEDH_BRACKET = 5
-# Search hits read per wanted deck when looking for a partner pair, most of which pair another partner.
-PARTNER_READS = 3
 # Enough for the busiest commanders' two months; the client stops at its page cap before this anyway.
 MAX_OWN_ENTRIES = 400
 
@@ -410,6 +416,8 @@ def _group_peers(
         "commander": name,
         "bracket": bracket,
         "decks": settings.peer_decks,
+        "viewFloors": list(VIEW_FLOORS),
+        "minDecks": MIN_DECKS,
         "windowDays": settings.window_days,
         "user": sources.user.casefold(),
     }
@@ -556,16 +564,12 @@ def _peer_lists(
     user = sources.user.casefold()
     found = sources.archidekt.recent_decks(group[0], bracket=bracket, since=start)
     others = [d for d in found if d.owner.casefold() != user and d.id != own_id]
-    others.sort(key=lambda d: (-d.views, d.id))
     wanted = {name.casefold() for name in group}
     # The search finds one commander: decks pairing it with a partner or Background are read and dropped, and
     # so are decks led by only one of a pair.
-    reads = settings.peer_decks * (PARTNER_READS if len(group) > 1 else 1)
     lists: list[PeerList] = []
     skipped = 0
-    for peer in others[:reads]:
-        if len(lists) == settings.peer_decks:
-            break
+    for peer in most_viewed(others, limit=settings.peer_decks):
         try:
             full = sources.archidekt.deck(peer.id)
         except ArchidektError as error:

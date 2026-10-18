@@ -35,8 +35,8 @@ class MetaSettings:
     window_days: int = 60
     # Smaller events say little about a list; EDHTop16 itself defaults to 16 players.
     min_event_size: int = 16
-    # Most-viewed recent Archidekt decks read in full per commander.
-    peer_decks: int = 10
+    # Most the most-viewed recent Archidekt decks read in full per commander; 0 reads none.
+    peer_decks: int = 60
     # Most-played commanders whose lists are searched for answers to the deck's key cards.
     meta_commanders: int = 10
     # Best-placed lists read per meta commander.
@@ -47,7 +47,7 @@ class MetaSettings:
 META_LIMITS: Mapping[str, tuple[int, int]] = {
     "window_days": (7, 90),
     "min_event_size": (0, 1000),
-    "peer_decks": (0, 25),
+    "peer_decks": (0, 60),
     "meta_commanders": (0, 25),
     "meta_lists": (1, 50),
 }

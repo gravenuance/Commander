@@ -9,13 +9,14 @@ import pytest
 
 from commander.archidekt import ArchidektSearch
 from commander.config import MetaSettings
-from commander.deckcache import AnswerSource
+from commander.deckcache import AnswerSource, request_key
 from commander.edhtop16 import Edhtop16Client
 from commander.metadata import (
     CACHE_FOLDER,
     AdjacentDecks,
     MetaData,
     MetaSources,
+    PeerLists,
     cache_stamp,
     gather,
     gather_adjacent,
@@ -24,7 +25,7 @@ from commander.metadata import (
 from commander.models import Deck, DeckCard
 from commander.net import HTTP_OK, Fetcher, Pacer
 from commander.spellbook import SpellbookClient
-from conftest import DECK_ID, FakeEdhtop16, FakeSpellbook, card_entry, load_fixture
+from conftest import DECK_ID, FakeEdhtop16, FakeSpellbook, Json, card_entry, load_fixture
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 ELLIVERE = "Ellivere of the Wild Court"
@@ -43,6 +44,8 @@ class FakeArchidektSearch:
         # Decks served with Kodama of the East Tree as the commander's partner.
         self.partnered: set[int] = set()
         self.status = 200
+        # The search answer; the trimmed real page when None.
+        self.page: Json | None = None
         self.requests: list[str] = []
 
     def handler(self, request: httpx.Request) -> httpx.Response:
@@ -50,7 +53,7 @@ class FakeArchidektSearch:
         if self.status != HTTP_OK:
             return httpx.Response(self.status)
         if request.url.path == "/api/decks/v3/":
-            return httpx.Response(200, json=load_fixture("archidekt_search_ellivere.json"))
+            return httpx.Response(200, json=self.page or load_fixture("archidekt_search_ellivere.json"))
         deck_id = int(request.url.path.strip("/").split("/")[-1])
         if deck_id in self.broken:
             return httpx.Response(200, json={"id": deck_id})
@@ -151,6 +154,36 @@ def test_gathers_the_commander_lists_the_meta_and_archidekt_decks(rig: Rig) -> N
     assert all(count > 1 for _, count in multiples)
     assert peers.skipped == 0
     assert {data.lists.source, data.field.source, data.peers.source} == {AnswerSource.FETCHED}
+
+
+def test_the_decks_read_step_down_the_view_bar_until_enough_pass(rig: Rig) -> None:
+    rig.settings = replace(SETTINGS, peer_decks=60)
+    peers = rig.gather().peers.data
+    assert peers is not None
+    # Three decks have 1000 views and five 500: under ten each time, so all twelve are read.
+    assert len(peers.decks) == 12
+    assert [p.deck.views for p in peers.decks][:3] == [2131, 1847, 1782]
+    assert min(p.deck.views for p in peers.decks) == 20
+
+
+def test_a_search_that_finds_no_decks_gives_an_empty_answer_not_an_error(rig: Rig) -> None:
+    rig.archidekt.page = {"count": 0, "next": None, "results": []}
+    peers = rig.gather().peers
+    assert peers.source is AnswerSource.FETCHED
+    assert peers.data == PeerLists((), 0)
+
+
+def test_a_cache_from_before_the_view_bars_reads_as_not_fetched(rig: Rig) -> None:
+    rig.gather()
+    path = min((rig.cache / CACHE_FOLDER).glob("archidekt-*"))
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["key"] = request_key(
+        {"commander": ELLIVERE, "bracket": 5, "decks": 3, "windowDays": 60, "user": "makkis"}
+    )
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    old = gather(ellivere_deck(), rig.sources(), rig.cache, now=lambda: NOW, refresh=False, offline=True)
+    assert old.peers.source is AnswerSource.UNAVAILABLE
+    assert old.peers.error == "not fetched yet"
 
 
 def test_a_second_run_the_same_day_reads_the_cache(rig: Rig) -> None:
@@ -327,11 +360,12 @@ def adjacent(rig: Rig, *groups: tuple[str, ...]) -> AdjacentDecks:
 
 
 def test_a_partner_pair_keeps_only_decks_led_by_both(rig: Rig) -> None:
-    # The 3rd, 5th and 11th most viewed pair Magda with Kodama; nine hits are read for three decks.
+    # The 3rd, 5th and 11th most viewed pair Magda with Kodama; all twelve hits are read to find them.
     rig.archidekt.commander = MAGDA
     rig.archidekt.partnered = {7432856, 23074747, 26605393}
+    rig.settings = replace(SETTINGS, peer_decks=12)
     found = adjacent(rig, (MAGDA, KODAMA))
-    assert [p.deck.id for p in found.decks] == [7432856, 23074747]
+    assert [p.deck.id for p in found.decks] == [7432856, 23074747, 26605393]
     assert found.errors == ()
 
 

@@ -129,7 +129,7 @@ def test_meta_settings_default_and_read_from_the_file(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
     path.write_text("version = 1\n[meta]\nwindow_days = 30\npeer_decks = 0\n", encoding="utf-8")
     assert read_config(path).meta == MetaSettings(window_days=30, peer_decks=0)
-    assert MetaSettings() == MetaSettings(60, 16, 10, 10, 30)
+    assert MetaSettings() == MetaSettings(60, 16, 60, 10, 30)
 
 
 @pytest.mark.parametrize(
@@ -139,7 +139,7 @@ def test_meta_settings_default_and_read_from_the_file(tmp_path: Path) -> None:
         ("[meta]\nwindow = 30", r"unknown key 'window' in \[meta\]"),
         ("[meta]\nwindow_days = 91", "meta.window_days must be a whole number from 7 to 90"),
         ("[meta]\nmeta_lists = 0", "meta.meta_lists must be a whole number from 1 to 50"),
-        ("[meta]\npeer_decks = true", "meta.peer_decks must be a whole number from 0 to 25"),
+        ("[meta]\npeer_decks = true", "meta.peer_decks must be a whole number from 0 to 60"),
     ],
 )
 def test_bad_meta_settings_are_refused(tmp_path: Path, body: str, message: str) -> None:

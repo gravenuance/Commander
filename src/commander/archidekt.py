@@ -1,6 +1,6 @@
 """Read access to Archidekt's undocumented JSON API; every response is shape-checked before use."""
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -27,6 +27,11 @@ MAX_PAGES = 20
 # Reading other players' decks: newest first, at most this many pages, one request every two seconds.
 SEARCH_PAGES = 5
 SEARCH_INTERVAL_SECONDS = 2.0
+# Which decks are read: every one with at least the first view count of VIEW_FLOORS that gives MIN_DECKS
+# decks, else every deck found; at most MAX_DECK_READS of them, most viewed first.
+VIEW_FLOORS = (1000, 750, 500)
+MIN_DECKS = 10
+MAX_DECK_READS = 60
 
 
 class ArchidektError(Exception):
@@ -123,6 +128,17 @@ class ArchidektSearch:
     def deck(self, deck_id: int) -> Deck:
         self._pacer.wait()
         return self._decks.get_deck(deck_id)
+
+
+def most_viewed(decks: Sequence[PeerDeck], *, limit: int = MAX_DECK_READS) -> list[PeerDeck]:
+    """The decks worth reading, most viewed first: those with at least 1000 views, or 750, or 500 when fewer
+    than MIN_DECKS reach the bar, or all of them; with any deck found there is always something to read."""
+    ranked = sorted(decks, key=lambda deck: (-deck.views, deck.id))
+    for floor in VIEW_FLOORS:
+        chosen = [deck for deck in ranked if deck.views >= floor]
+        if len(chosen) >= MIN_DECKS:
+            return chosen[:limit]
+    return ranked[:limit]
 
 
 def parse_search_page(raw: object) -> tuple[list[PeerDeck], str | None]:

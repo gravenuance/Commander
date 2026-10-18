@@ -16,7 +16,7 @@ from datetime import UTC, datetime, timedelta
 from commander.answers import card_key
 from commander.deckcache import Clock
 from commander.edhtop16 import Entry
-from commander.meta import MIN_PEER_LISTS, listed_entries
+from commander.meta import listed_entries
 from commander.metadata import MetaData, PeerList
 
 # A list or deck weighs half as much for every 30 days since its tournament or last update.
@@ -124,17 +124,16 @@ def placement_weight(entry: Entry) -> float:
 
 def weighted_shares(data: MetaData | None, *, now: Clock) -> ShareTable:
     """Each card's weighted share of the commander's lists with a decklist in the window and of its recent
-    Archidekt decks (when at least MIN_PEER_LISTS were read); NO_SHARES when there are none."""
+    Archidekt decks; NO_SHARES when there are none."""
     if data is None:
         return NO_SHARES
     moment = now()
     lists = listed_entries(data)
     peers = data.peers.data.decks if data.peers.data else ()
-    decks = peers if len(peers) >= MIN_PEER_LISTS else ()
     meta = _Source.of(
         [_keys(c.name for c in e.cards) for e in lists], [_list_weight(e, moment) for e in lists]
     )
-    archidekt = _Source.of([_keys(p.cards) for p in decks], [_deck_weight(p, moment) for p in decks])
+    archidekt = _Source.of([_keys(p.cards) for p in peers], [_deck_weight(p, moment) for p in peers])
     total = meta.total + archidekt.total
     if not total:
         return NO_SHARES

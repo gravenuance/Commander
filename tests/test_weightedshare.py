@@ -134,11 +134,15 @@ def test_a_card_counts_once_per_list_and_a_list_without_cards_or_outside_the_win
     assert (stone.count, stone.total, stone.share) == (1, 1, pytest.approx(1.0))
 
 
-def test_fewer_than_three_archidekt_decks_make_no_source() -> None:
-    two = meta_data([], [peer_at(1, ["Mind Stone"]), peer_at(2, ["Mind Stone"])])
-    table = weighted_shares(two, now=lambda: NOW)
-    assert not table
-    assert table.of("Mind Stone") is None
+def test_a_single_archidekt_deck_is_a_source() -> None:
+    one = meta_data([], [peer_at(1, ["Mind Stone"])])
+    table = weighted_shares(one, now=lambda: NOW)
+    assert table
+    stone = table.of("Mind Stone")
+    assert stone is not None
+    assert (stone.count, stone.total, stone.share) == (1, 1, pytest.approx(1.0))
+    assert stone.meta is None
+    assert stone.archidekt == SourceShare(1.0, 1, 1)
 
 
 def test_no_data_gives_no_share() -> None:

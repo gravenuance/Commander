@@ -4,7 +4,14 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
-from commander.archidekt import ArchidektError, ArchidektSearch, parse_search_page
+from commander.archidekt import (
+    MAX_DECK_READS,
+    ArchidektError,
+    ArchidektSearch,
+    PeerDeck,
+    most_viewed,
+    parse_search_page,
+)
 from commander.net import Fetcher, Pacer
 from conftest import DECK_ID, Json, load_fixture
 
@@ -113,3 +120,54 @@ def test_a_next_link_off_archidekt_is_refused() -> None:
     page["next"] = "https://evil.example/api/decks/v3/?page=2"
     with pytest.raises(ArchidektError, match="outside the Archidekt API"):
         search_for(FakeSearch([page])).recent_decks(ELLIVERE, bracket=5, since=SINCE)
+
+
+def viewed(*views: int) -> list[PeerDeck]:
+    """Decks numbered from 1 with these view counts, none the user's own."""
+    return [PeerDeck(i, f"deck {i}", "someone", v, SINCE, 5) for i, v in enumerate(views, start=1)]
+
+
+def view_counts(decks: list[PeerDeck]) -> list[int]:
+    return [d.views for d in decks]
+
+
+def test_no_decks_found_gives_no_decks() -> None:
+    assert most_viewed([]) == []
+
+
+def test_ten_decks_at_1000_views_are_all_that_is_read_most_viewed_first() -> None:
+    decks = viewed(1000, 5000, 1200, 1000, 1999, 1000, 1000, 1000, 1000, 1000, 999, 750, 3)
+    assert view_counts(most_viewed(decks)) == [5000, 1999, 1200, 1000, 1000, 1000, 1000, 1000, 1000, 1000]
+
+
+def test_under_ten_at_1000_views_the_bar_steps_down_to_750_then_500() -> None:
+    # Nine at 1000 and one at 750: the 750 step reaches ten and stops there.
+    at_750 = viewed(*[1000] * 9, 750, 749, 500)
+    assert view_counts(most_viewed(at_750)) == [1000] * 9 + [750]
+    # Nine at 1000, none between, one at 500: only the 500 step reaches ten.
+    at_500 = viewed(*[1000] * 9, 500, 499, 10)
+    assert view_counts(most_viewed(at_500)) == [1000] * 9 + [500]
+
+
+def test_under_ten_at_500_views_every_deck_is_read_most_viewed_first() -> None:
+    assert view_counts(most_viewed(viewed(120, 40, 560, 300))) == [560, 300, 120, 40]
+    assert view_counts(most_viewed(viewed(0, 7))) == [7, 0]
+
+
+def test_all_decks_below_500_views_still_give_data() -> None:
+    assert view_counts(most_viewed(viewed(499, 12, 3))) == [499, 12, 3]
+
+
+def test_at_most_sixty_decks_are_read_most_viewed_first() -> None:
+    decks = viewed(*range(1000, 1070))
+    chosen = most_viewed(decks)
+    assert MAX_DECK_READS == 60
+    assert len(chosen) == 60
+    assert view_counts(chosen) == list(range(1069, 1009, -1))
+    # The stepped-down and the all-decks cases are capped alike.
+    assert len(most_viewed(viewed(*range(70)))) == 60
+    assert len(most_viewed(viewed(*range(70)), limit=5)) == 5
+
+
+def test_decks_with_the_same_views_come_in_id_order() -> None:
+    assert [d.id for d in most_viewed(viewed(5, 5, 5))] == [1, 2, 3]
