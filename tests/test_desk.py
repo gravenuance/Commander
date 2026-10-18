@@ -596,13 +596,7 @@ def test_preview_and_commit_save_the_queued_cards(desk: Desk, fake: FakeArchidek
         ("+", "Arcane Signet"),
     ]
     assert (preview["before"], preview["after"], preview["problems"]) == (9, 9, [])
-    # The review lists what the save also clears, so the user sees it before saving.
-    assert preview["clears"] == [
-        {
-            "text": "Clears the Maybeboard: 2 cards",
-            "cards": ["High-Speed Hoverbike", "Tempestra, Dame of Games"],
-        }
-    ]
+    assert "clears" not in preview
     # The fake Spellbook answers Ruthless for any list; the deck's bracket 5 allows it.
     bracket = cast("Json", preview["bracket"])
     assert (bracket["after"], bracket["afterLabel"], bracket["check"]) == (
@@ -617,7 +611,9 @@ def test_preview_and_commit_save_the_queued_cards(desk: Desk, fake: FakeArchidek
     assert saved["applied"] == ["Arcane Signet"]
     assert saved["snapshot"] == "before cmdr apply 2026-10-15 12:00:00 UTC"
     assert items(desk.deck(DECK), "cards")[0]["status"] == "applied"
-    assert {c["categories"][0] for c in fake.decks[DECK]["cards"]}.isdisjoint({"Maybeboard", "Sideboard"})
+    # The save leaves the Maybeboard cards on Archidekt as they were.
+    assert {c["categories"][0] for c in fake.decks[DECK]["cards"]} >= {"Maybeboard"}
+    assert [w["action"] for w in fake.card_writes()] == ["remove", "add"]
 
 
 def test_commit_without_a_login_says_how_to_sign_in_in_the_apps_words(

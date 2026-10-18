@@ -32,7 +32,6 @@ from commander.board import (
 )
 from commander.bracketpreview import preview_json, spellbook_preview
 from commander.carddb import CardDataError
-from commander.changetext import clear_groups
 from commander.cli_analysis import add_analysis_commands
 from commander.cli_app import add_app_command
 from commander.cli_board import add_board_commands
@@ -517,10 +516,6 @@ def _apply_json(resolution: Resolution, result: SaveResult | None) -> dict[str, 
                 "raises": raise_json(c.raises),
             }
             for c in resolution.changes
-        ],
-        "clears": [
-            {"board": g.board, "count": g.count, "cards": list(g.cards)}
-            for g in clear_groups(resolution.clears)
         ],
         "skipped": list(resolution.skipped),
         "warnings": list(resolution.warnings),

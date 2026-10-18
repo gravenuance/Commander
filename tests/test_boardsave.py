@@ -225,23 +225,32 @@ def test_a_cut_removes_the_card_and_adds_nothing_to_the_maybeboard(
     assert "Battered Golem" not in live_categories(fake)
 
 
-def test_a_save_clears_the_maybeboard_and_the_sideboard_too(
+def test_a_save_leaves_the_maybeboard_and_the_sideboard_untouched(
     fake: FakeArchidekt, service: BoardService, commit: Callable[[], BoardSave]
 ) -> None:
     put_on_sideboard(fake.decks[DECK_ID], 7_000_000_001, "Chaos Warp")
     queue(service, "Lightning Bolt", cut="Battered Golem")
+    aside = {"High-Speed Hoverbike", "Tempestra, Dame of Games", "Chaos Warp"}
+    outside = {e["id"] for e in fake.decks[DECK_ID]["cards"] if e["card"]["oracleCard"]["name"] in aside}
+    assert len(outside) == 3
 
     commit()
 
+    # The modifyCards payload holds the cut and the add and nothing for the cards outside the deck.
+    assert sorted(e["action"] for e in fake.card_writes()) == ["add", "remove"]
+    assert outside.isdisjoint(e.get("deckRelationId") for e in fake.card_writes())
     assert sorted(live_categories(fake)) == [
+        "Chaos Warp",
         "Disruptor Flute",
+        "High-Speed Hoverbike",
         "Lightning Bolt",
         "Magda, Brazen Outlaw",
         "Mountain",
+        "Tempestra, Dame of Games",
     ]
 
 
-def test_a_save_that_writes_nothing_clears_nothing(
+def test_a_save_whose_queued_card_is_in_the_deck_already_writes_nothing(
     fake: FakeArchidekt, service: BoardService, commit: Callable[[], BoardSave]
 ) -> None:
     queue(service, "Lightning Bolt", cut="Battered Golem")

@@ -50,7 +50,7 @@ from commander.bracketcheck import check_bracket, check_json
 from commander.bracketpreview import preview_json, spellbook_preview
 from commander.budget import resolved_budget
 from commander.carddb import CardDataError, CardDb, CardInfo, ResolvedCard
-from commander.changetext import change_mark, change_text, clear_groups
+from commander.changetext import change_mark, change_text
 from commander.config import ConfigError, MetaSettings, forget_account, switch_account, validate_user
 from commander.credentials import CredentialError, TokenStore
 from commander.deckexport import cardmarket_wants_text, topdeck_text
@@ -975,7 +975,6 @@ def _resolution_json(resolution: Resolution) -> Json:
             {"kind": c.kind.value, "mark": change_mark(c), "name": c.name, "text": change_text(c)}
             for c in resolution.changes
         ],
-        "clears": [{"text": g.text, "cards": list(g.cards)} for g in clear_groups(resolution.clears)],
         "problems": list(resolution.problems),
         "warnings": list(resolution.warnings),
         "skipped": list(resolution.skipped),

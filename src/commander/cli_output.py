@@ -9,7 +9,7 @@ from commander.apply import Resolution, SaveResult
 from commander.bracketcheck import BracketCheck
 from commander.bracketpreview import BracketPreview
 from commander.carddb import Role
-from commander.changetext import change_text, clear_groups
+from commander.changetext import change_text
 from commander.deckcache import Answer, AnswerSource
 from commander.models import Deck
 from commander.pricing import format_eur
@@ -25,9 +25,6 @@ def print_resolution(resolution: Resolution, out: TextIO) -> None:
         print(f"  cards in deck: {resolution.main_before} -> {resolution.main_after}", file=out)
     for change in resolution.changes:
         print(f"  {change_text(change)}", file=out)
-    for group in clear_groups(resolution.clears):
-        print(f"  {group.text}", file=out)
-        print(f"    {', '.join(group.cards)}", file=out)
     for line in resolution.skipped:
         print(f"  skipped, {line}", file=out)
     for line in resolution.warnings:
@@ -76,8 +73,6 @@ def print_apply_outcome(
             f"saved {len(resolution.changes)} change(s); snapshot '{result.snapshot}' is on Archidekt",
             file=out,
         )
-        for group in clear_groups(resolution.clears):
-            print(f"  cleared the {group.board}: {group.amount}", file=out)
         for line in result.mismatches:
             print(f"  not as planned: {line}", file=out)
         if folder is not None:

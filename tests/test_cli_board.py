@@ -207,20 +207,24 @@ def test_commit_previews_then_saves_and_marks_the_cards_applied(
     assert preview.code == 0, preview.err
     assert "  - Disruptor Flute\n" in preview.out
     assert "  + Arcane Signet (FRC 20, €0.30) in Artifact\n" in preview.out
-    assert (
-        "  Clears the Maybeboard: 2 cards\n    High-Speed Hoverbike, Tempestra, Dame of Games\n"
-        in preview.out
-    )
+    assert "Maybeboard" not in preview.out
     assert "  bracket after these changes: 4+ (Ruthless)\n" in preview.out
     assert not fake.card_writes()
 
     saved = board(home, fake, "commit", "magda", "--save")
     assert saved.code == 0, saved.err
     assert f"saved 2 change(s); snapshot '{SNAPSHOT}' is on Archidekt\n" in saved.out
-    assert "  cleared the Maybeboard: 2 cards\n" in saved.out
+    assert "Maybeboard" not in saved.out
     cards = {c["name"]: c for c in saved_deck(home / "decks")["cards"]}
-    # The cut card is gone, not moved to the Maybeboard, and the Maybeboard is empty.
-    assert sorted(cards) == ["Arcane Signet", "Battered Golem", "Magda, Brazen Outlaw", "Mountain"]
+    # The cut card is gone, not moved to the Maybeboard, and the Maybeboard cards stay where they were.
+    assert sorted(cards) == [
+        "Arcane Signet",
+        "Battered Golem",
+        "High-Speed Hoverbike",
+        "Magda, Brazen Outlaw",
+        "Mountain",
+        "Tempestra, Dame of Games",
+    ]
     after = read_board(folder(home))
     signet = after.find("Arcane Signet")
     assert signet is not None

@@ -33,11 +33,7 @@ function showResolution(result) {
   $("review-size").textContent = result.before === result.after
     ? `${result.after} cards in the deck`
     : `${result.before} → ${result.after} cards in the deck`;
-  const changes = result.changes.map((c) => el("li", { class: c.mark === "+" ? "add" : "cut", text: c.text.replace(/^[+-] /, "") }));
-  // A save also empties the deck's Maybeboard and Sideboard on Archidekt (ADR 0035).
-  const clears = (result.clears || []).map((group) => el("li", { class: "cut" },
-    el("span", { text: group.text }), el("span", { class: "note", text: ` (${group.cards.join(", ")})` })));
-  $("review-changes").replaceChildren(...changes, ...clears);
+  $("review-changes").replaceChildren(...result.changes.map((c) => el("li", { class: c.mark === "+" ? "add" : "cut", text: c.text.replace(/^[+-] /, "") })));
   $("review-problems").replaceChildren(...result.problems.map((text) => el("li", { text })));
   const warnings = [...result.warnings, ...bracketWarnings(result.bracket)];
   $("review-warnings").replaceChildren(...warnings.map((text) => el("li", { text })));

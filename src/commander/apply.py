@@ -53,8 +53,6 @@ class ChangeKind(Enum):
     MORE = "more copies"
     FEWER = "fewer copies"
     REMOVE = "remove"
-    # An entry taken off the Sideboard or Maybeboard by a save (ADR 0035).
-    CLEAR = "cleared"
 
 
 @dataclass(slots=True, frozen=True)
@@ -92,8 +90,6 @@ class Resolution:
     warnings: tuple[str, ...]
     # Lines of the plan the deck already meets.
     skipped: tuple[str, ...] = ()
-    # The Sideboard and Maybeboard entries the save also removes; none when the plan changes nothing.
-    clears: tuple[Change, ...] = ()
 
     @property
     def main_before(self) -> int:
@@ -120,7 +116,7 @@ class _Resolver:
     removed_entries: set[int] = field(default_factory=set[int])
 
     def remove(self, wanted: RemoveCard) -> None:
-        # Only cards counted in the deck; a Maybeboard copy is cleared by the save anyway.
+        # Only cards counted in the deck; a Maybeboard copy stays.
         entries = [e for e in _entries_named(self.deck, wanted.name) if e.in_deck]
         if any(COMMANDER_CATEGORY in e.categories for e in entries):
             self.problems.append(f"remove {wanted.name}: it is a commander and stays in the deck")
@@ -240,7 +236,6 @@ def resolve_plan(
         tuple(resolver.problems),
         tuple(resolver.warnings),
         tuple(resolver.skipped),
-        clears=tuple(_change(ChangeKind.CLEAR, e, 0) for e in live.aside_cards) if resolver.changes else (),
     )
     if resolution.changes and not resolution.problems and resolution.main_after != COMMANDER_DECK_SIZE:
         size = f"the deck will have {resolution.main_after} cards, not {COMMANDER_DECK_SIZE}"
@@ -302,7 +297,7 @@ def save(
                 )
             card_ids[change.scryfall_id] = card_id
     dont_have = label_value(DONT_HAVE_LABEL, _account_colours(editor, on_progress))
-    edits = card_edits([*resolution.changes, *resolution.clears], live.entries, card_ids, dont_have)
+    edits = card_edits(resolution.changes, live.entries, card_ids, dont_have)
     # Seconds keep two saves in one minute apart; Archidekt accepts snapshots with equal names.
     snapshot = f"before cmdr apply {now().strftime('%Y-%m-%d %H:%M:%S')} UTC"
     on_progress(f"saving snapshot '{snapshot}' on Archidekt")
@@ -323,7 +318,7 @@ def save(
             f"Archidekt accepted the changes, but reading the deck back failed ({error}); "
             "the local copy may be behind"
         ) from error
-    return SaveResult(after, snapshot, tuple(verify([*resolution.changes, *resolution.clears], deck, after)))
+    return SaveResult(after, snapshot, tuple(verify(resolution.changes, deck, after)))
 
 
 def _account_colours(editor: ArchidektEditor, on_progress: Callable[[str], None]) -> dict[str, str]:
@@ -366,7 +361,7 @@ def card_edits(
         state = entries.get(change.entry_id)
         if state is None:
             raise ArchidektError(f"{change.name}: entry {change.entry_id} is no longer in the deck")
-        if change.kind in {ChangeKind.REMOVE, ChangeKind.CLEAR}:
+        if change.kind is ChangeKind.REMOVE:
             edits.append(CardEdit(EditKind.REMOVE, change.card_id, change.before, state, change.entry_id))
             continue
         edits.append(CardEdit(EditKind.MODIFY, change.card_id, change.after, state, change.entry_id))

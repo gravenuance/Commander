@@ -3,8 +3,6 @@
 from dataclasses import dataclass
 
 COMMANDER_CATEGORY = "Commander"
-# Casefolded names of the categories a save clears when they are outside the deck (ADR 0035).
-ASIDE_CATEGORIES = frozenset({"sideboard", "maybeboard"})
 # Words in an Archidekt category that file its cards as part of the deck's plan: "Combo Pieces", "WinCons".
 PLAN_WORDS = ("combo", "wincon", "finisher", "payoff", "keycard", "keypiece")
 ARCHIDEKT_DECK_URL = "https://archidekt.com/decks/{id}"
@@ -42,11 +40,6 @@ class DeckCard:
     def primary_category(self) -> str:
         return self.categories[0] if self.categories else "Uncategorized"
 
-    @property
-    def aside(self) -> bool:
-        """On the Sideboard or Maybeboard, outside the deck: a save clears it (ADR 0035)."""
-        return not self.in_deck and self.primary_category.casefold() in ASIDE_CATEGORIES
-
 
 @dataclass(slots=True, frozen=True)
 class Deck:
@@ -72,10 +65,6 @@ class Deck:
     @property
     def main_cards(self) -> tuple[DeckCard, ...]:
         return tuple(card for card in self.cards if card.in_deck)
-
-    @property
-    def aside_cards(self) -> tuple[DeckCard, ...]:
-        return tuple(card for card in self.cards if card.aside)
 
     @property
     def labels_known(self) -> bool:

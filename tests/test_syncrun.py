@@ -374,7 +374,7 @@ def test_a_sync_ignores_the_maybeboard_and_sideboard_and_writes_nothing_to_archi
     assert fake.writes == []
     # The deck copy still mirrors Archidekt, Maybeboard included.
     saved = Workspace(tmp_path / "decks").load_all()[0].deck
-    assert sorted(c.name for c in saved.aside_cards) == [
+    assert sorted(c.name for c in saved.cards if not c.in_deck) == [
         "Chaos Warp",
         "High-Speed Hoverbike",
         "Tempestra, Dame of Games",
