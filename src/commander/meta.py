@@ -18,7 +18,7 @@ from commander.keycards import KeyCard, key_cards
 from commander.metacombos import AnswerRole, DeckAnswers, MetaCombo, combo_answers, infos_answers, meta_combos
 from commander.metadata import MetaCommander, MetaData, PeerList
 from commander.models import COMMANDER_CATEGORY, Deck
-from commander.playstyle import NEUTRAL, Fit, PlayStyle, deck_play_style, fit_order, staple_fits
+from commander.playstyle import NEUTRAL, Fit, PlayStyle, Weight, deck_play_style, staple_weights
 from commander.spellbook import ComboDetail
 from commander.suggest import deck_identity
 
@@ -72,8 +72,10 @@ class CardShare:
     spice: int | None
     # On the deck's Sideboard or Maybeboard (for missing cards) or kept by the profile (for the deck's own).
     flagged: bool
-    # For a missing card: how it sits with the deck's play style (ADR 0022).
+    # For a missing card: how it sits with the deck's play style (ADR 0022), and the weight its shares are
+    # multiplied by to rank it.
     fit: Fit = Fit.NEUTRAL
+    multiplier: float = 1.0
 
 
 @dataclass(slots=True, frozen=True)
@@ -259,10 +261,14 @@ def missing_staples(
                 )
             )
     rows = _playable(rows, deck, db)
-    fits = staple_fits((r.name for r in rows), style, db)
-    rows = [replace(r, fit=fits.get(r.name.casefold(), Fit.NEUTRAL)) for r in rows]
-    rows.sort(key=lambda r: (fit_order(r.fit), -r.share, -r.peer_share, r.name))
+    weights = staple_weights((r.name for r in rows), style, db)
+    rows = [_weighed(r, weights.get(r.name.casefold())) for r in rows]
+    rows.sort(key=lambda r: (-r.share * r.multiplier, -r.peer_share * r.multiplier, r.name))
     return tuple(rows if limit is None else rows[:limit])
+
+
+def _weighed(row: CardShare, weight: Weight | None) -> CardShare:
+    return row if weight is None else replace(row, fit=weight.fit, multiplier=weight.multiplier)
 
 
 def _playable(rows: Sequence[CardShare], deck: Deck, db: CardDb) -> list[CardShare]:
