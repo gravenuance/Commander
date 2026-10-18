@@ -269,12 +269,17 @@ class _IdeaJudge:
     # The keys at least half of the alike decks' pool plays; None when a group's decks could not be read or
     # the pool is too small to name staples. The same for each tag's pool.
     adjacent_keys: frozenset[str] | None
+    # A tag with no entry here had its pool read wrongly or not at all.
     tag_keys: Mapping[str, frozenset[str] | None]
+    # The casefolded theme tags the deck carries now; a tagged idea's tag that is not among them is gone.
+    deck_tags: frozenset[str]
 
     def source_gone(self, card: BoardCard) -> bool:
-        """An alike idea with no profile commander group left, or a tagged one with the tag search off."""
+        """An alike idea with no profile commander group left, or a tagged one with the tag search off or
+        its tag no longer among the deck's."""
         return (card.origin is Origin.ADJACENT and not self.profile.adjacent) or (
-            card.origin is Origin.TAGGED and not self.profile.tag_search
+            card.origin is Origin.TAGGED
+            and (not self.profile.tag_search or (card.origin_tag or "").casefold() not in self.deck_tags)
         )
 
     def commanders_test(self, card: BoardCard) -> bool | None:
@@ -324,12 +329,14 @@ def rejudge_ideas(
     (`turn_down_open` checks the card is still open), nor is one the user reopened until they decide it.
     """
     table = weighted_shares(data, now=now)
+    profile = read_profile(stored.folder)
     judge = _IdeaJudge(
         data,
         table,
-        read_profile(stored.folder),
+        profile,
         None if adjacent is None else pool_staple_keys(adjacent),
         {pool.tag: pool_staple_keys(pool.decks) for pool in tagged},
+        frozenset(tag.casefold() for tag in _search_tags(stored.deck, profile, db)),
     )
 
     open_cards = [
@@ -405,6 +412,14 @@ def relabel_legacy_ideas(stored: StoredDeck, data: MetaData, db: CardDb, *, now:
     return [card for card in relabelled if card is not None]
 
 
+def _search_tags(deck: Deck, profile: Profile, db: CardDb) -> list[str]:
+    """The deck tags whose decks are searched: none while the profile's tag search is off."""
+    if not profile.tag_search:
+        return []
+    # Theme tags only: the play style, role and card type tags are too broad to pick decks by (ADR 0009).
+    return [t.name for t in merge_themes(deck, profile, db).used if t.source is ThemeSource.DECK_TAG]
+
+
 def gather_idea_pools(
     stored: StoredDeck,
     db: CardDb,
@@ -420,12 +435,7 @@ def gather_idea_pools(
     its theme tags (only when the profile turns the tag search on), gathered first (ADR 0028); a commander or
     tag whose decks cannot be read is named to warn, and the rest carry on."""
     profile = read_profile(stored.folder)
-    # Theme tags only: the play style, role and card type tags are too broad to pick decks by (ADR 0009).
-    tags = (
-        [t.name for t in merge_themes(stored.deck, profile, db).used if t.source is ThemeSource.DECK_TAG]
-        if profile.tag_search
-        else []
-    )
+    tags = _search_tags(stored.deck, profile, db)
     pools = gather_adjacent(
         stored.deck,
         profile.adjacent,

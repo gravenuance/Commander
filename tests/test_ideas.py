@@ -714,14 +714,14 @@ def test_a_tagged_idea_is_judged_by_its_tags_pool_only_when_that_pool_was_read(
     deck: Deck, db: CardDb, tmp_path: Path
 ) -> None:
     (tmp_path / "profile.toml").write_text(TAG_SEARCH, encoding="utf-8")
-    weak = seed(tmp_path, deck, db, "Arcane Signet", Actor.CMDR, origin=Origin.TAGGED, tag="Landfall")
-    strong = seed(tmp_path, deck, db, "Jeska's Will", Actor.CMDR, origin=Origin.TAGGED, tag="Landfall")
-    other = seed(tmp_path, deck, db, "Chaos Warp", Actor.CMDR, origin=Origin.TAGGED, tag="Tokens")
+    weak = seed(tmp_path, deck, db, "Arcane Signet", Actor.CMDR, origin=Origin.TAGGED, tag="Dwarves")
+    strong = seed(tmp_path, deck, db, "Jeska's Will", Actor.CMDR, origin=Origin.TAGGED, tag="Dwarves")
+    other = seed(tmp_path, deck, db, "Chaos Warp", Actor.CMDR, origin=Origin.TAGGED, tag="Vehicles")
     data = meta_data([], [peer(1, ["Mind Stone"])])
-    landfall = tag_pool("Landfall", ["Jeska's Will"], ["Jeska's Will", "Arcane Signet"], ["Jeska's Will"], [])
+    dwarves = tag_pool("Dwarves", ["Jeska's Will"], ["Jeska's Will", "Arcane Signet"], ["Jeska's Will"], [])
 
-    # Landfall's pool was read, the Tokens pool was not: a card in 1 of 4 decks fails, one in 3 of 4 stays.
-    assert judge(tmp_path, deck, db, data, tagged=[landfall]) == ["Arcane Signet"]
+    # Dwarves's pool was read, the Vehicles pool was not: a card in 1 of 4 decks fails, one in 3 of 4 stays.
+    assert judge(tmp_path, deck, db, data, tagged=[dwarves]) == ["Arcane Signet"]
 
     assert card_state(tmp_path, weak) == (Status.REJECTED, "no longer makes the cut")
     assert card_state(tmp_path, strong)[0] is Status.OPEN
@@ -732,11 +732,11 @@ def test_a_tagged_idea_waits_when_its_pool_is_missing_or_too_small(
     deck: Deck, db: CardDb, tmp_path: Path
 ) -> None:
     (tmp_path / "profile.toml").write_text(TAG_SEARCH, encoding="utf-8")
-    signet = seed(tmp_path, deck, db, "Arcane Signet", Actor.CMDR, origin=Origin.TAGGED, tag="Landfall")
+    signet = seed(tmp_path, deck, db, "Arcane Signet", Actor.CMDR, origin=Origin.TAGGED, tag="Dwarves")
     data = meta_data([], [peer(1, ["Mind Stone"])])
 
     assert judge(tmp_path, deck, db, data) == []
-    assert judge(tmp_path, deck, db, data, tagged=[tag_pool("Landfall", [], [])]) == []
+    assert judge(tmp_path, deck, db, data, tagged=[tag_pool("Dwarves", [], [])]) == []
 
     assert card_state(tmp_path, signet)[0] is Status.OPEN
 
@@ -785,8 +785,14 @@ def commander_data() -> MetaData:
         ((Origin.TAGGED, "Enchantments"), "version = 1\n"),
         ((Origin.TAGGED, "Enchantments"), "version = 1\n[ideas]\ntag_search = false\n"),
         ((Origin.ADJACENT, None), TAG_SEARCH),
+        ((Origin.TAGGED, "Enchantments"), TAG_SEARCH),
     ],
-    ids=["tag search off by default", "tag search switched off", "no alike commander listed"],
+    ids=[
+        "tag search off by default",
+        "tag search switched off",
+        "no alike commander listed",
+        "tag no longer on the deck",
+    ],
 )
 def test_a_pooled_idea_whose_source_is_gone_is_judged_by_the_commanders_test_and_relabelled_when_it_passes(
     deck: Deck, db: CardDb, tmp_path: Path, pooled: tuple[Origin, str | None], profile: str
@@ -838,15 +844,15 @@ def test_tagged_ideas_stay_with_the_pool_rule_while_the_tag_search_is_on(
 ) -> None:
     (tmp_path / "profile.toml").write_text(TAG_SEARCH, encoding="utf-8")
     # The pool plays the Will in 3 of 4 decks although few lists do; the Signet only in 1 of 4.
-    will = seed(tmp_path, deck, db, "Jeska's Will", Actor.CMDR, origin=Origin.TAGGED, tag="Landfall")
-    signet = seed(tmp_path, deck, db, "Arcane Signet", Actor.CMDR, origin=Origin.TAGGED, tag="Landfall")
-    landfall = tag_pool("Landfall", ["Jeska's Will", "Arcane Signet"], ["Jeska's Will"], ["Jeska's Will"], [])
+    will = seed(tmp_path, deck, db, "Jeska's Will", Actor.CMDR, origin=Origin.TAGGED, tag="Dwarves")
+    signet = seed(tmp_path, deck, db, "Arcane Signet", Actor.CMDR, origin=Origin.TAGGED, tag="Dwarves")
+    dwarves = tag_pool("Dwarves", ["Jeska's Will", "Arcane Signet"], ["Jeska's Will"], ["Jeska's Will"], [])
 
-    assert judge(tmp_path, deck, db, commander_data(), tagged=[landfall]) == ["Arcane Signet"]
+    assert judge(tmp_path, deck, db, commander_data(), tagged=[dwarves]) == ["Arcane Signet"]
 
     kept = read_board(tmp_path).find(will)
     assert kept is not None
-    assert (kept.status, kept.origin, kept.origin_tag) == (Status.OPEN, Origin.TAGGED, "Landfall")
+    assert (kept.status, kept.origin, kept.origin_tag) == (Status.OPEN, Origin.TAGGED, "Dwarves")
     assert card_state(tmp_path, signet)[0] is Status.REJECTED
 
 
