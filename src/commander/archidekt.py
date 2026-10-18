@@ -104,10 +104,10 @@ class ArchidektSearch:
         self._decks = ArchidektClient(fetcher, base_url)
 
     def recent_decks(
-        self, commander: str, *, brackets: Sequence[int | None], since: datetime
+        self, commander: str, *, brackets: Sequence[int | None], since: datetime, tag: str | None = None
     ) -> list[PeerDeck]:
         """Commander decks led by `commander` (full name) and updated at or after `since`, newest first per
-        bracket.
+        bracket, optionally only those with the deck tag.
 
         One search per bracket (None searches every bracket), all sharing MAX_SEARCH_PAGES pages.
         """
@@ -115,12 +115,16 @@ class ArchidektSearch:
         pages_left = MAX_SEARCH_PAGES
         for bracket in brackets:
             url: str | None = f"{self._base_url}/decks/v3/"
-            params: Mapping[str, str | int] | None = {
-                "commanderName": commander,
-                "formats": COMMANDER_FORMAT,
-                "orderBy": "-updatedAt",
-                "pageSize": PAGE_SIZE,
-            } | ({"edhBracket": bracket} if bracket is not None else {})
+            params: Mapping[str, str | int] | None = (
+                {
+                    "commanderName": commander,
+                    "formats": COMMANDER_FORMAT,
+                    "orderBy": "-updatedAt",
+                    "pageSize": PAGE_SIZE,
+                }
+                | ({"edhBracket": bracket} if bracket is not None else {})
+                | ({"deckTagName": tag} if tag is not None else {})
+            )
             while url is not None and pages_left > 0:
                 pages_left -= 1
                 self._pacer.wait()

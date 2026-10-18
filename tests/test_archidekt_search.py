@@ -211,3 +211,12 @@ def test_a_commander_is_searched_at_most_20_pages_across_its_brackets() -> None:
     assert fake.requests[0].url.params["edhBracket"] == "3"
     assert {r.url.params.get("page") for r in fake.requests[1:]} == {"2"}
     assert len(decks) == 2
+
+
+def test_the_deck_tag_filter_is_sent_as_deck_tag_name() -> None:
+    fake = FakeSearch([search_page(), search_page()])
+    search = search_for(fake)
+    search.recent_decks(ELLIVERE, brackets=(5,), since=SINCE, tag="Stax")
+    search.recent_decks(ELLIVERE, brackets=(5,), since=SINCE)
+    assert fake.requests[0].url.params["deckTagName"] == "Stax"
+    assert "deckTagName" not in fake.requests[1].url.params
