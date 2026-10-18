@@ -77,7 +77,7 @@ def test_a_first_sign_in_saves_the_account_gives_it_a_folder_and_syncs(env: Env)
     assert env.tokens.get("makkis") == REFRESH_TOKEN
     status = sync_of(answer)
     assert status["running"] is False
-    assert str(status["summary"]).startswith("Updated 1 deck from Archidekt, 1 changed")
+    assert str(status["summary"]).startswith("Synced 1 deck, 1 changed")
     assert (folder / "10004639-honestly-though" / "deck.json").is_file()
     assert [d["short"] for d in cast("list[Json]", desk.decks()["decks"])] == ["Magda"]
 
@@ -131,10 +131,11 @@ def test_no_second_sync_and_no_account_change_while_one_runs(env: Env) -> None:
     desk = env.desk(inline=False)
     answer = desk.sign_in("MAKKIS", PASSWORD)
     assert sync_of(answer)["running"] is True
+    assert sync_of(answer)["progress"] == "Starting the sync"
     desk.sync()
     assert len(env.pending) == 1
-    assert desk.sign_in("MAKKIS", PASSWORD) == {"error": "Wait for the update to finish, then sign in."}
-    assert desk.sign_out() == {"error": "Wait for the update to finish, then sign out."}
+    assert desk.sign_in("MAKKIS", PASSWORD) == {"error": "Wait for the sync to finish, then sign in."}
+    assert desk.sign_out() == {"error": "Wait for the sync to finish, then sign out."}
     env.pending.pop()()
     assert sync_of(desk.account())["running"] is False
 
@@ -148,30 +149,28 @@ SKIPPED = CardStatus(CardState.SKIPPED, "")
 
 
 def test_the_summary_counts_decks_in_the_singular_and_the_plural() -> None:
-    assert (
-        sync_summary(_outcome([SyncStatus.UPDATED], SKIPPED)) == "Updated 1 deck from Archidekt, 1 changed."
-    )
+    assert sync_summary(_outcome([SyncStatus.UPDATED], SKIPPED)) == "Synced 1 deck, 1 changed."
     assert (
         sync_summary(_outcome([SyncStatus.UPDATED, SyncStatus.UNCHANGED], SKIPPED))
-        == "Updated 2 decks from Archidekt, 1 changed."
+        == "Synced 2 decks, 1 changed."
     )
     one = sync_summary(_outcome([SyncStatus.FAILED, SyncStatus.UNCHANGED], SKIPPED))
-    assert one == "Update finished with problems: 1 deck failed; see the log."
+    assert one == "Sync finished with problems: 1 deck failed; see the log."
     two = sync_summary(_outcome([SyncStatus.FAILED, SyncStatus.FAILED], SKIPPED))
-    assert two == "Update finished with problems: 2 decks failed; see the log."
+    assert two == "Sync finished with problems: 2 decks failed; see the log."
 
 
 def test_the_summary_names_a_card_data_failure() -> None:
     failed = CardStatus(CardState.FAILED, "Scryfall is down; the previous card data is kept")
     card_only = sync_summary(_outcome([SyncStatus.UNCHANGED], failed))
     assert card_only == (
-        "Update finished with problems: card data failed (Scryfall is down; the previous card data is kept);"
+        "Sync finished with problems: card data failed (Scryfall is down; the previous card data is kept);"
         " see the log."
     )
     both = sync_summary(_outcome([SyncStatus.FAILED], failed))
-    assert both.startswith("Update finished with problems: 1 deck failed, card data failed (")
+    assert both.startswith("Sync finished with problems: 1 deck failed, card data failed (")
 
 
 def test_a_deck_the_app_does_not_have_says_to_press_the_update_button(env: Env) -> None:
     answer = env.desk().deck(1)
-    assert answer == {"error": f"deck 1 is not in {env.settings.workspace}; press Update from Archidekt"}
+    assert answer == {"error": f"deck 1 is not in {env.settings.workspace}; press Sync"}

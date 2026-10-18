@@ -159,6 +159,8 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 }
 .account-name, .sync-status { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .account-name { font-weight: 600; }
+/* The step the sync is on wraps instead of cutting off: it is the only sign of progress. */
+.sync-status { white-space: normal; overflow-wrap: anywhere; }
 .account-name:empty, .sync-status:empty { display: none; }
 /* Full width, so both buttons share the name's left edge and the column's right edge. */
 .account-actions { display: grid; gap: var(--space-2); }
@@ -267,6 +269,10 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   border-radius: 50%;
   animation: spin 800ms linear infinite;
 }
+/* In a button the spinner takes the button's text colour, which the accent ring would vanish into. */
+.button.sync { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); }
+.button .spinner { width: 14px; height: 14px; border-color: currentColor; border-top-color: transparent; }
+#meta-busy:not([hidden]) ~ #meta-empty { display: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } * { transition: none !important; } }
 

@@ -57,7 +57,6 @@ from commander.deckgrid import GridGroup, deck_grid, image_url
 from commander.deckprofile import MAX_ADJACENT, Profile, read_profile
 from commander.deckthemes import merge_themes
 from commander.edhtop16 import Edhtop16Error
-from commander.ideas import compile_ideas_with_adjacent
 from commander.labels import LabelError, label_options, set_label
 from commander.leanings import leaning_json
 from commander.manabase import ALTERNATIVE_COST_TAGS, analyse_mana, mana_json
@@ -149,7 +148,7 @@ def _app_text(error: Exception) -> str:
     if isinstance(error, SignInRequiredError):
         return f"{error}. Sign in to Archidekt."
     if isinstance(error, ReadBackError):
-        return f"{error}. Press Update from Archidekt."
+        return f"{error}. Press Sync."
     return str(error)
 
 
@@ -177,9 +176,9 @@ def sync_summary(outcome: SyncOutcome) -> str:
     if outcome.cards.state is CardState.FAILED:
         problems.append(f"card data failed ({outcome.cards.detail})")
     if problems:
-        return f"Update finished with problems: {', '.join(problems)}; see the log."
+        return f"Sync finished with problems: {', '.join(problems)}; see the log."
     changed = counts[SyncStatus.NEW] + counts[SyncStatus.UPDATED]
-    return f"Updated {_decks(len(outcome.results))} from Archidekt, {changed} changed."
+    return f"Synced {_decks(len(outcome.results))}, {changed} changed."
 
 
 def _decks(count: int) -> str:
@@ -190,7 +189,7 @@ def _decks(count: int) -> str:
 class DeskSettings:
     workspace: Path
     card_db: Path
-    # None until `cmdr init` sets a username; previews, saves and meta refreshes need it.
+    # None until `cmdr init` sets a username; previews and saves need it.
     user: str | None
     meta: MetaSettings = field(default_factory=MetaSettings)
     # The config file that sign-in writes the account to, and where a first account's decks go.
@@ -303,16 +302,16 @@ class Desk:
             return self._sync.running
 
     def _updating(self, then: str) -> Json | None:
-        """The refusal for a change that would race the running update, else None."""
+        """The refusal for a change that would race the running sync, else None."""
         if self._syncing():
-            return {"error": f"Wait for the update to finish, then {then}."}
+            return {"error": f"Wait for the sync to finish, then {then}."}
         return None
 
     def _start_sync(self, user: str) -> None:
         with self._sync_lock:
             if self._sync.running:
                 return
-            self._sync = _SyncState(running=True, progress="Starting the update")
+            self._sync = _SyncState(running=True, progress="Starting the sync")
         self._background(lambda: self._run_sync(user))
 
     def _run_sync(self, user: str) -> None:
@@ -325,11 +324,11 @@ class Desk:
             )
         except _EXPECTED as error:
             log.warning("sync failed: %s", error)
-            self._finish_sync(f"Update failed: {error}", failed=True)
+            self._finish_sync(f"Sync failed: {error}", failed=True)
             return
         except Exception:
             log.exception("sync failed unexpectedly")
-            self._finish_sync("Update failed; the details are in the log.", failed=True)
+            self._finish_sync("Sync failed; the details are in the log.", failed=True)
             return
         for warning in outcome.warnings:
             log.warning("sync: %s", warning)
@@ -710,25 +709,13 @@ class Desk:
 
     @_guarded
     def meta(self, deck_id: int) -> Json:
-        """The deck's meta report from cached answers only, so the panel opens at once."""
-        return self._meta(deck_id, offline=True)
-
-    @_guarded
-    def refresh_meta(self, deck_id: int) -> Json:
-        """Fetch the meta answers again (about a minute when nothing is cached), then report."""
-        self._user()
-        return self._meta(deck_id, offline=False)
-
-    def _meta(self, deck_id: int, *, offline: bool) -> Json:
+        """The deck's meta report from cached answers only; a sync refreshes them."""
         stored = self._stored(deck_id)
-        data = self._gather(stored.deck, offline=offline)
+        data = self._gather(stored.deck)
         with self._db() as db:
             report = analyse(stored.deck, data, read_profile(stored.folder), db)
-            if not offline and stored.deck.bracket == CEDH_BRACKET:
-                # A refresh compiles the deck's ideas, as `cmdr sync` does (ADR 0014).
-                self._compile_ideas(stored, data, db)
         if data.lists.data is None and data.field.data is None and data.peers.data is None:
-            return {"report": None, "errors": [] if offline else [s.error for s in report.sources if s.error]}
+            return {"report": None}
         return {
             "report": report_json(report),
             "keys": key_card_rows(report.key_cards),
@@ -772,32 +759,20 @@ class Desk:
         known = self._pools.get(deck.id)
         if known is not None and known[0] == stamp:
             return known[1]
-        data = self._gather(deck, offline=True, read=gather_for)
+        data = self._gather(deck, read=gather_for)
         self._pools[deck.id] = (stamp, data)
         return data
 
-    def _gather(self, deck: Deck, *, offline: bool, read: Callable[..., MetaData] = gather) -> MetaData:
+    def _gather(self, deck: Deck, *, read: Callable[..., MetaData] = gather) -> MetaData:
+        """Cached meta answers only: fetching belongs to the sync."""
         with self._client_factory() as http:
             return read(
                 deck,
                 self._meta_sources(http),
                 self._settings.cache,
                 now=self._now,
-                refresh=not offline,
-                offline=offline,
-            )
-
-    def _compile_ideas(self, stored: StoredDeck, data: MetaData, db: CardDb) -> None:
-        with self._client_factory() as http:
-            compile_ideas_with_adjacent(
-                stored,
-                data,
-                db,
-                self._meta_sources(http),
-                self._settings.cache,
-                now=self._now,
-                refresh=True,
-                warn=log.warning,
+                refresh=False,
+                offline=True,
             )
 
     def _meta_sources(self, http: httpx.Client) -> MetaSources:
@@ -807,9 +782,7 @@ class Desk:
         folder = self._workspace.folder_for(int(deck_id))
         deck = self._workspace.load(int(deck_id)) if folder else None
         if folder is None or deck is None:
-            raise BoardError(
-                f"deck {deck_id} is not in {self._settings.workspace}; press Update from Archidekt"
-            )
+            raise BoardError(f"deck {deck_id} is not in {self._settings.workspace}; press Sync")
         return StoredDeck(folder, deck)
 
     def _user(self) -> str:

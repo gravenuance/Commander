@@ -14,9 +14,11 @@
     <ul id="deck-list" class="deck-list"></ul>
     <div class="account">
       <p id="account-name" class="account-name"></p>
-      <p id="sync-status" class="muted small sync-status" role="status" aria-live="polite"></p>
       <div class="account-actions">
-        <button id="sync-decks" class="button primary small" type="button" hidden>Update from Archidekt</button>
+        <button id="sync-decks" class="button primary small sync" type="button" aria-describedby="sync-status" hidden>
+          <span class="spinner" aria-hidden="true" hidden></span><span>Sync</span>
+        </button>
+        <p id="sync-status" class="muted small sync-status" role="status" aria-live="polite"></p>
         <button id="copy-to-buy" class="button small" type="button" title="Copy Don't Have cards for a Cardmarket wants list" hidden>Copy cards to buy</button>
         <button id="sign-out" class="button small" type="button" hidden>Sign out</button>
         <button id="sign-in" class="button primary small" type="button" hidden>Sign in</button>
@@ -32,7 +34,10 @@
     <div id="no-decks" class="state" hidden>
       <span class="state-icon" aria-hidden="true">🂠</span>
       <span>No decks yet.</span>
-      <button id="no-decks-sync" class="button primary" type="button" hidden>Update from Archidekt</button>
+      <button id="no-decks-sync" class="button primary sync" type="button" aria-describedby="no-decks-note" hidden>
+        <span class="spinner" aria-hidden="true" hidden></span><span>Sync</span>
+      </button>
+      <p id="no-decks-note" class="muted small" role="status" aria-live="polite"></p>
     </div>
 
     <section id="deck" class="deck" hidden aria-labelledby="deck-short">
@@ -104,13 +109,11 @@
               <div class="meta-head">
                 <p id="meta-sample" class="muted"></p>
                 <span id="meta-thin" class="badge status thin" title="Few top cuts or lists: shares are hints" hidden>Thin data</span>
-                <span class="spacer"></span>
-                <button id="meta-refresh" class="button small" type="button">Refresh meta</button>
               </div>
               <div id="meta-busy" class="state inline" role="status" hidden>
-                <span class="spinner" aria-hidden="true"></span><span>Fetching tournament and Archidekt data…</span>
+                <span class="spinner" aria-hidden="true"></span><span>Sync is updating the meta…</span>
               </div>
-              <p id="meta-empty" class="empty" hidden><span aria-hidden="true">📊</span> No meta data yet. Refresh to fetch it.</p>
+              <p id="meta-empty" class="empty" hidden><span aria-hidden="true">📊</span> No meta data yet. Sync to fetch it.</p>
               <div id="meta-body" class="meta-body"></div>
             </div>
           </section>

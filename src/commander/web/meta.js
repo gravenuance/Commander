@@ -14,30 +14,16 @@ function metaWanted() {
     && $("h-meta").getAttribute("aria-expanded") === "true";
 }
 
-function setupMeta() {
-  $("meta-refresh").addEventListener("click", refreshMeta);
-}
-
 // An answer without a report reads the same as none.
 const metaPanel = panel((deck) => api("meta", deck), renderMeta, {
   wanted: () => metaWanted() && !metaState.busy,
   keyOf: (answer) => JSON.stringify(answer && answer.report ? answer : null),
 });
 
-async function refreshMeta() {
-  const deck = state.current;
-  metaState.busy = true;
-  $("meta-busy").hidden = false;
-  $("meta-refresh").disabled = true;
-  try {
-    const answer = await api("refresh_meta", deck);
-    if (deck === state.current) metaPanel.render(deck, answer);
-    if (!answer.report && answer.errors.length) showStatus(answer.errors[0], true);
-    await loadDeck();
-  } catch { /* shown in the status line */ }
-  metaState.busy = false;
-  $("meta-busy").hidden = true;
-  $("meta-refresh").disabled = false;
+// The sync refreshes the meta answers: the panel shows it is updating and rereads them when the sync ends.
+function setMetaUpdating(on) {
+  metaState.busy = on;
+  $("meta-busy").hidden = !on;
 }
 
 function renderMeta(deck, answer) {

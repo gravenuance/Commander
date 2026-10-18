@@ -344,7 +344,7 @@ Without one it opens on **Sign in to Archidekt**: the username and password go t
 and the login token is kept in Windows Credential Manager, as `cmdr login` keeps it. Each account has its
 own deck folder, remembered in the config's `[workspaces]` table. Your own keeps the folder `cmdr init` set,
 and a new account gets a sibling folder named `decks-<username>`. Signing in as a new account syncs its
-decks at once. The foot of the deck list shows who is signed in, with **Update from Archidekt** (the same as
+decks at once. The foot of the deck list shows who is signed in, with **Sync** (the same as
 `cmdr sync`, card data and ideas included, its progress shown beneath) and **Sign out**, which removes the
 saved login. Signing in again finds the same folder.
 
@@ -390,9 +390,9 @@ base against Frank Karsten's published numbers
   ([ADR 0012](docs/adr/0012-card-labels-from-the-archidekt-account.md)). A change is written to
   Archidekt at once.
 - **Meta** (bracket 5 decks) lists each key card with the meta cards that stop it, then the meta's combos
-  with your answers, each tagged with the meta decks that play them. **Refresh meta** fetches new data
-  and puts the meta's staples into Considering. A card you turned down comes back once its meta share
-  rises 20 points.
+  with your answers, each tagged with the meta decks that play them. **Sync** fetches new data (the panel
+  shows it updating) and puts the meta's staples into Considering. A card you turned down comes back once
+  its meta share rises 20 points.
 - **Estimate**, beside the bracket under the deck's name, is Spellbook's estimate. When it, the bracket and
   the profile's ceiling disagree, it turns amber; click it for the notes and causes, each combo linked to
   Spellbook. The cards behind a cause carry the bracket they lift the deck to in an amber badge beside the
