@@ -24,9 +24,12 @@ _PLAIN_API_BASE = "http://archidekt.com/api"
 COMMANDER_FORMAT = 3
 PAGE_SIZE = 50
 MAX_PAGES = 20
-# Reading other players' decks: newest first, at most this many pages, one request every two seconds.
-SEARCH_PAGES = 5
-SEARCH_INTERVAL_SECONDS = 2.0
+# Reading other players' decks: newest first, at most this many search pages per commander, one request every
+# five seconds.
+MAX_SEARCH_PAGES = 20
+SEARCH_INTERVAL_SECONDS = 5.0
+# The top of Archidekt's bracket scale.
+TOP_BRACKET = 5
 # Which decks are read: every one with at least the first view count of VIEW_FLOORS that gives MIN_DECKS
 # decks, else every deck found; at most MAX_DECK_READS of them, most viewed first.
 VIEW_FLOORS = (1000, 750, 500)
@@ -100,34 +103,49 @@ class ArchidektSearch:
         self._base_url = base_url.rstrip("/")
         self._decks = ArchidektClient(fetcher, base_url)
 
-    def recent_decks(self, commander: str, *, bracket: int | None, since: datetime) -> list[PeerDeck]:
-        """Commander decks led by `commander` (full name) and updated at or after `since`, newest first."""
-        url: str | None = f"{self._base_url}/decks/v3/"
-        params: Mapping[str, str | int] | None = {
-            "commanderName": commander,
-            "formats": COMMANDER_FORMAT,
-            "orderBy": "-updatedAt",
-            "pageSize": PAGE_SIZE,
-        } | ({"edhBracket": bracket} if bracket is not None else {})
-        found: list[PeerDeck] = []
-        for _ in range(SEARCH_PAGES):
-            if url is None:
-                break
-            self._pacer.wait()
-            raw = self._fetcher.get_json(url, params)
-            try:
-                page, url = parse_search_page(raw)
-            except (ShapeError, ValueError) as error:
-                raise ArchidektError(f"unexpected search answer from Archidekt: {error}") from error
-            params = None
-            found.extend(deck for deck in page if deck.updated_at >= since)
-            if any(deck.updated_at < since for deck in page):
-                break
-        return found
+    def recent_decks(
+        self, commander: str, *, brackets: Sequence[int | None], since: datetime
+    ) -> list[PeerDeck]:
+        """Commander decks led by `commander` (full name) and updated at or after `since`, newest first per
+        bracket.
+
+        One search per bracket (None searches every bracket), all sharing MAX_SEARCH_PAGES pages.
+        """
+        found: dict[int, PeerDeck] = {}
+        pages_left = MAX_SEARCH_PAGES
+        for bracket in brackets:
+            url: str | None = f"{self._base_url}/decks/v3/"
+            params: Mapping[str, str | int] | None = {
+                "commanderName": commander,
+                "formats": COMMANDER_FORMAT,
+                "orderBy": "-updatedAt",
+                "pageSize": PAGE_SIZE,
+            } | ({"edhBracket": bracket} if bracket is not None else {})
+            while url is not None and pages_left > 0:
+                pages_left -= 1
+                self._pacer.wait()
+                raw = self._fetcher.get_json(url, params)
+                try:
+                    page, url = parse_search_page(raw)
+                except (ShapeError, ValueError) as error:
+                    raise ArchidektError(f"unexpected search answer from Archidekt: {error}") from error
+                params = None
+                found.update((deck.id, deck) for deck in page if deck.updated_at >= since)
+                if any(deck.updated_at < since for deck in page):
+                    break
+        return list(found.values())
 
     def deck(self, deck_id: int) -> Deck:
         self._pacer.wait()
         return self._decks.get_deck(deck_id)
+
+
+def brackets_to_read(bracket: int | None) -> tuple[int | None, ...]:
+    """A deck's own bracket and the one above it, whose decks play what this one could grow into; None (any
+    bracket) stays one search, and the top bracket has none above."""
+    if bracket is None or bracket >= TOP_BRACKET:
+        return (bracket,)
+    return (bracket, bracket + 1)
 
 
 def most_viewed(decks: Sequence[PeerDeck], *, limit: int = MAX_DECK_READS) -> list[PeerDeck]:

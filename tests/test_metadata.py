@@ -20,6 +20,7 @@ from commander.metadata import (
     cache_stamp,
     gather,
     gather_adjacent,
+    gather_for,
     window_start,
 )
 from commander.models import Deck, DeckCard
@@ -47,9 +48,13 @@ class FakeArchidektSearch:
         # The search answer; the trimmed real page when None.
         self.page: Json | None = None
         self.requests: list[str] = []
+        # The query of each search request.
+        self.searches: list[dict[str, str]] = []
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request.url.path)
+        if request.url.path == "/api/decks/v3/":
+            self.searches.append(dict(request.url.params))
         if self.status != HTTP_OK:
             return httpx.Response(self.status)
         if request.url.path == "/api/decks/v3/":
@@ -164,6 +169,47 @@ def test_the_decks_read_step_down_the_view_bar_until_enough_pass(rig: Rig) -> No
     assert len(peers.decks) == 12
     assert [p.deck.views for p in peers.decks][:3] == [2131, 1847, 1782]
     assert min(p.deck.views for p in peers.decks) == 20
+
+
+def bracketed(rig: Rig, bracket: int) -> MetaData:
+    deck = replace(ellivere_deck(), bracket=bracket)
+    return gather_for(deck, rig.sources(), rig.cache, now=lambda: rig.now, refresh=False)
+
+
+def test_a_bracket_3_deck_reads_brackets_3_and_4_of_archidekt_and_no_tournament_lists(rig: Rig) -> None:
+    data = bracketed(rig, 3)
+    assert [q["edhBracket"] for q in rig.archidekt.searches] == ["3", "4"]
+    assert rig.edhtop16.requests == []
+    assert data.lists.source is AnswerSource.UNAVAILABLE
+    assert data.peers.source is AnswerSource.FETCHED
+
+
+def test_a_bracket_4_deck_reads_brackets_4_and_5_of_archidekt_and_the_commanders_tournament_lists(
+    rig: Rig,
+) -> None:
+    data = bracketed(rig, 4)
+    assert [q["edhBracket"] for q in rig.archidekt.searches] == ["4", "5"]
+    # Only the commander's own lists: not the most-played commanders, nor Spellbook.
+    assert len(rig.edhtop16.requests) == 1
+    assert rig.spellbook.combo_bodies == []
+    assert data.lists.source is AnswerSource.FETCHED
+    assert data.lists.data is not None
+    assert len(data.lists.data.entries) == 3
+    assert data.peers.source is AnswerSource.FETCHED
+    assert data.field.source is AnswerSource.UNAVAILABLE
+
+
+def test_a_bracket_4_deck_offline_asks_nothing(rig: Rig) -> None:
+    deck = replace(ellivere_deck(), bracket=4)
+    data = gather_for(deck, rig.sources(), rig.cache, now=lambda: NOW, refresh=False, offline=True)
+    assert (rig.edhtop16.requests, rig.archidekt.requests) == ([], [])
+    assert (data.lists.source, data.peers.source) == (AnswerSource.UNAVAILABLE, AnswerSource.UNAVAILABLE)
+    assert data.lists.error == "not fetched yet"
+
+
+def test_a_bracket_5_deck_reads_only_bracket_5_of_archidekt(rig: Rig) -> None:
+    bracketed(rig, 5)
+    assert [q["edhBracket"] for q in rig.archidekt.searches] == ["5"]
 
 
 def test_a_search_that_finds_no_decks_gives_an_empty_answer_not_an_error(rig: Rig) -> None:

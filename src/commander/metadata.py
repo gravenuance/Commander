@@ -5,7 +5,8 @@ redistributing its statistics) and fetched in parallel, each at its own service'
 
 - the commander's EDHTop16 entries with decklists,
 - the most-played commanders and their best-placed EDHTop16 lists,
-- the most-viewed recent Archidekt decks for the commander, other players' only,
+- the most-viewed recent Archidekt decks for the commander at the deck's bracket and the one above, other
+  players' only,
 - the combos inside each top commander's core cards, from Commander Spellbook (cached for a week);
 - the deck's own combos, from Commander Spellbook (cached for a week, until the list changes).
 """
@@ -22,12 +23,14 @@ from pathlib import Path
 import httpx
 
 from commander.archidekt import (
+    MAX_SEARCH_PAGES,
     MIN_DECKS,
     SEARCH_INTERVAL_SECONDS,
     VIEW_FLOORS,
     ArchidektError,
     ArchidektSearch,
     PeerDeck,
+    brackets_to_read,
     most_viewed,
 )
 from commander.background import in_background
@@ -78,6 +81,8 @@ CACHE_VERSION = 1
 CACHE_FOLDER = "meta"
 # The cEDH bracket: the only one EDHTop16 tournaments cover.
 CEDH_BRACKET = 5
+# Decks at these brackets learn from the commander's EDHTop16 lists too: bracket 4 plays near cEDH.
+EDHTOP16_BRACKETS = frozenset({4, CEDH_BRACKET})
 # Enough for the busiest commanders' two months; the client stops at its page cap before this anyway.
 MAX_OWN_ENTRIES = 400
 
@@ -219,20 +224,8 @@ def gather(
 
     def lists() -> Answer[CommanderEntries]:
         report(f"EDHTop16: {name} lists")
-        request: Mapping[str, object] = {
-            "commander": name,
-            "minEventSize": settings.min_event_size,
-            "windowDays": settings.window_days,
-        }
-        return cached_answer(
-            cache_item("edhtop16", name),
-            request,
-            _live(offline, lambda: _own_entries(sources.edhtop16, name, since, until, settings)),
-            _cache(folder, "EDHTop16 lists", _encode_entries, _decode_entries),
-            now=now,
-            refresh=refresh,
-            fresh_for=FRESH_FOR,
-            errors=_ERRORS,
+        return _commander_lists(
+            name, sources, folder, since, until, now=now, refresh=refresh, offline=offline
         )
 
     def field() -> Answer[tuple[MetaCommander, ...]]:
@@ -291,6 +284,35 @@ def gather(
     return MetaData(name, since, own.result(), field_answer, peer.result(), combos, deck_combos)
 
 
+def _commander_lists(
+    name: str,
+    sources: MetaSources,
+    folder: Path,
+    since: date,
+    until: date,
+    *,
+    now: Clock,
+    refresh: bool,
+    offline: bool,
+) -> Answer[CommanderEntries]:
+    settings = sources.settings
+    request: Mapping[str, object] = {
+        "commander": name,
+        "minEventSize": settings.min_event_size,
+        "windowDays": settings.window_days,
+    }
+    return cached_answer(
+        cache_item("edhtop16", name),
+        request,
+        _live(offline, lambda: _own_entries(sources.edhtop16, name, since, until, settings)),
+        _cache(folder, "EDHTop16 lists", _encode_entries, _decode_entries),
+        now=now,
+        refresh=refresh,
+        fresh_for=FRESH_FOR,
+        errors=_ERRORS,
+    )
+
+
 def gather_peers(
     deck: Deck,
     sources: MetaSources,
@@ -301,21 +323,43 @@ def gather_peers(
     offline: bool = False,
     on_progress: Progress | None = None,
 ) -> MetaData:
-    """Only the recent Archidekt decks for the commander at the deck's bracket, for decks below bracket 5:
-    EDHTop16 covers cEDH alone, so its parts are left unavailable."""
+    """The recent Archidekt decks for the commander at the deck's bracket and the one above, for decks below
+    bracket 5, plus the commander's EDHTop16 lists at bracket 4. The rest of what EDHTop16 covers (the most
+    played commanders and their combos) is left unavailable."""
     if not deck.commanders:
         raise ValueError(f"{deck.name} has no commander")
-    if on_progress is not None:
-        on_progress(f"Archidekt: recent {commander_name(deck.commanders)} decks")
-    since = window_start(now(), sources.settings)
+    name = commander_name(deck.commanders)
+    now_utc = now()
+    since = window_start(now_utc, sources.settings)
+    until = utc_today(now_utc)
     folder = cache_root / CACHE_FOLDER
+    read_lists = deck.bracket in EDHTOP16_BRACKETS
+    if on_progress is not None:
+        on_progress(f"Archidekt: recent {name} decks")
+        if read_lists:
+            on_progress(f"EDHTop16: {name} lists")
+    # Different services, so the two run side by side.
+    own = (
+        in_background(
+            lambda: _commander_lists(
+                name, sources, folder, since, until, now=now, refresh=refresh, offline=offline
+            ),
+            name="meta-lists",
+        )
+        if read_lists
+        else None
+    )
     peers = _peers(deck, sources, folder, since, now=now, refresh=refresh, offline=offline)
     why = "not read below bracket 5"
-    lists: Answer[CommanderEntries] = Answer(None, AnswerSource.UNAVAILABLE, None, why)
+    lists: Answer[CommanderEntries] = (
+        own.result()
+        if own is not None
+        else Answer(None, AnswerSource.UNAVAILABLE, None, "not read below bracket 4")
+    )
     field: Answer[tuple[MetaCommander, ...]] = Answer(None, AnswerSource.UNAVAILABLE, None, why)
     combos: Answer[tuple[CommanderCombos, ...]] = Answer(None, AnswerSource.UNAVAILABLE, None, why)
-    own: Answer[tuple[ComboDetail, ...]] = Answer(None, AnswerSource.UNAVAILABLE, None, why)
-    return MetaData(commander_name(deck.commanders), since, lists, field, peers, combos, own)
+    own_combos: Answer[tuple[ComboDetail, ...]] = Answer(None, AnswerSource.UNAVAILABLE, None, why)
+    return MetaData(name, since, lists, field, peers, combos, own_combos)
 
 
 def gather_for(
@@ -414,7 +458,8 @@ def _group_peers(
     name = commander_name(group)
     request: Mapping[str, object] = {
         "commander": name,
-        "bracket": bracket,
+        "brackets": list(brackets_to_read(bracket)),
+        "pages": MAX_SEARCH_PAGES,
         "decks": settings.peer_decks,
         "viewFloors": list(VIEW_FLOORS),
         "minDecks": MIN_DECKS,
@@ -562,7 +607,7 @@ def _peer_lists(
         return PeerLists((), 0)
     start = datetime(since.year, since.month, since.day, tzinfo=UTC)
     user = sources.user.casefold()
-    found = sources.archidekt.recent_decks(group[0], bracket=bracket, since=start)
+    found = sources.archidekt.recent_decks(group[0], brackets=brackets_to_read(bracket), since=start)
     others = [d for d in found if d.owner.casefold() != user and d.id != own_id]
     wanted = {name.casefold() for name in group}
     # The search finds one commander: decks pairing it with a partner or Background are read and dropped, and

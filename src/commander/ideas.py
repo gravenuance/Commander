@@ -1,11 +1,13 @@
 """Ideas for Considering, compiled on every sync (ADR 0014).
 
-Bracket 5 decks get the staples of their commander's EDHTop16 lists ("meta") and of the most-viewed recent
-Archidekt decks for the commander ("archidekt decks"); decks below bracket 5 get the Archidekt ones only,
-from decks at their own bracket. Each source puts at most MAX_PER_SOURCE ideas on the board, most played
-first. An idea with no deck card to replace is still put on the board, where the app lists it as "No cut
-yet". A deck whose profile names commanders that play alike also gets the staples of their pooled recent
-Archidekt decks ("adjacent decks", ADR 0015). Ideas pass the profile's exclusions, bracket ceiling and
+Decks at brackets 4 and 5 get the staples of their commander's EDHTop16 lists ("meta") and of the most-viewed
+recent Archidekt decks for the commander ("archidekt decks"); lower brackets get the Archidekt ones only.
+Those decks are at the deck's own bracket and the one above. A card is an idea when the lower bound of its
+weighted share, over every list read, reaches IDEA_LOWER_BOUND; it belongs to the source that plays it more.
+Each source puts at most MAX_PER_SOURCE ideas on the board, most played first. An idea with no deck card to
+replace is still put on the board, where the app lists it as "No cut yet". A deck whose profile names
+commanders that play alike also gets the staples of their pooled recent Archidekt decks ("adjacent decks",
+ADR 0015). Ideas pass the profile's exclusions, bracket ceiling and
 price cap; below bracket 5 also the deck's budget (ADR 0025), those within its working budget first.
 EDHREC is never asked (ADR 0003): its rank, from Scryfall's data, only orders the cards an idea could
 replace.

@@ -6,9 +6,11 @@ import pytest
 
 from commander.archidekt import (
     MAX_DECK_READS,
+    MAX_SEARCH_PAGES,
     ArchidektError,
     ArchidektSearch,
     PeerDeck,
+    brackets_to_read,
     most_viewed,
     parse_search_page,
 )
@@ -63,7 +65,7 @@ def test_parses_a_search_page() -> None:
 
 def test_recent_decks_stop_at_the_page_reaching_past_the_window() -> None:
     fake = FakeSearch([search_page()])
-    decks = search_for(fake).recent_decks(ELLIVERE, bracket=5, since=SINCE)
+    decks = search_for(fake).recent_decks(ELLIVERE, brackets=(5,), since=SINCE)
     # The last two on the page were updated in July and June.
     assert [d.id for d in decks][-2:] == [25161352, 23074747]
     assert len(decks) == 13
@@ -81,8 +83,9 @@ def test_recent_decks_follow_the_next_link_over_https() -> None:
     first = search_page()
     first["results"] = first["results"][:5]
     fake = FakeSearch([first, search_page()])
-    decks = search_for(fake).recent_decks(ELLIVERE, bracket=None, since=SINCE)
-    assert len(decks) == 5 + 13
+    decks = search_for(fake).recent_decks(ELLIVERE, brackets=(None,), since=SINCE)
+    # The second page repeats the first five, which count once.
+    assert len(decks) == 13
     assert "edhBracket" not in fake.requests[0].url.params
     assert fake.requests[1].url.scheme == "https"
     assert fake.requests[1].url.params["page"] == "2"
@@ -92,7 +95,7 @@ def test_searches_and_deck_reads_are_paced() -> None:
     fake = FakeSearch([search_page()])
     sleeps: list[float] = []
     search = search_for(fake, sleeps)
-    search.recent_decks(ELLIVERE, bracket=5, since=SINCE)
+    search.recent_decks(ELLIVERE, brackets=(5,), since=SINCE)
     deck = search.deck(DECK_ID)
     assert deck.id == DECK_ID
     assert sleeps == [2.0]
@@ -112,14 +115,14 @@ def test_a_time_without_a_zone_is_refused() -> None:
     page = search_page()
     page["results"][0]["updatedAt"] = "2026-10-15T20:22:13"
     with pytest.raises(ArchidektError, match=r"updatedAt: no time zone"):
-        search_for(FakeSearch([page])).recent_decks(ELLIVERE, bracket=5, since=SINCE)
+        search_for(FakeSearch([page])).recent_decks(ELLIVERE, brackets=(5,), since=SINCE)
 
 
 def test_a_next_link_off_archidekt_is_refused() -> None:
     page = search_page()
     page["next"] = "https://evil.example/api/decks/v3/?page=2"
     with pytest.raises(ArchidektError, match="outside the Archidekt API"):
-        search_for(FakeSearch([page])).recent_decks(ELLIVERE, bracket=5, since=SINCE)
+        search_for(FakeSearch([page])).recent_decks(ELLIVERE, brackets=(5,), since=SINCE)
 
 
 def viewed(*views: int) -> list[PeerDeck]:
@@ -171,3 +174,40 @@ def test_at_most_sixty_decks_are_read_most_viewed_first() -> None:
 
 def test_decks_with_the_same_views_come_in_id_order() -> None:
     assert [d.id for d in most_viewed(viewed(5, 5, 5))] == [1, 2, 3]
+
+
+def test_a_deck_reads_its_own_bracket_and_the_one_above() -> None:
+    assert brackets_to_read(1) == (1, 2)
+    assert brackets_to_read(3) == (3, 4)
+    assert brackets_to_read(4) == (4, 5)
+    # Nothing is above bracket 5, and a deck with no bracket reads every one.
+    assert brackets_to_read(5) == (5,)
+    assert brackets_to_read(None) == (None,)
+
+
+def test_each_bracket_is_searched_once_and_a_deck_found_twice_counts_once() -> None:
+    first = search_page()
+    first["results"] = first["results"][:3]
+    first["next"] = None
+    second = copy.deepcopy(first)
+    second["results"] = [second["results"][1], search_page()["results"][2]]
+    fake = FakeSearch([first, second])
+    decks = search_for(fake).recent_decks(ELLIVERE, brackets=(4, 5), since=SINCE)
+    assert [r.url.params["edhBracket"] for r in fake.requests] == ["4", "5"]
+    assert [d.id for d in decks] == [10078393, 23204858, 7432856]
+
+
+def test_a_commander_is_searched_at_most_20_pages_across_its_brackets() -> None:
+    def full_page() -> Json:
+        page = search_page()
+        page["results"] = page["results"][:2]
+        return page
+
+    fake = FakeSearch([full_page() for _ in range(2 * MAX_SEARCH_PAGES)])
+    decks = search_for(fake).recent_decks(ELLIVERE, brackets=(3, 4), since=SINCE)
+    assert MAX_SEARCH_PAGES == 20
+    # The first bracket takes all twenty, as every page links to a next one still inside the window.
+    assert len(fake.requests) == MAX_SEARCH_PAGES
+    assert fake.requests[0].url.params["edhBracket"] == "3"
+    assert {r.url.params.get("page") for r in fake.requests[1:]} == {"2"}
+    assert len(decks) == 2
