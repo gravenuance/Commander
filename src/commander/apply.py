@@ -42,10 +42,8 @@ _TYPE_CATEGORIES = (
 COMMANDER_DECK_SIZE = 100
 # How long to wait before reading the account's card labels a second time after a failed read.
 LABEL_RETRY_SECONDS = 3.0
-# A save creates a category the deck lacks. Seen live on 2026-10-15: Archidekt creates Maybeboard outside
-# the deck, and every other name, Sideboard included, inside it.
-_ASIDE_WHEN_CREATED = frozenset({"maybeboard"})
-_USUALLY_ASIDE = frozenset({"sideboard"})
+# The Maybeboard and Sideboard are retired (ADR 0035): a plan may not add a card to either.
+_RETIRED_CATEGORIES = frozenset({"maybeboard", "sideboard"})
 
 
 class ChangeKind(Enum):
@@ -138,6 +136,11 @@ class _Resolver:
         if info is None:
             self.problems.append(f"add {wanted.name}: no such card in the card data (check the spelling)")
             return changers
+        if wanted.category is not None and wanted.category.casefold() in _RETIRED_CATEGORIES:
+            self.problems.append(
+                f"add {info.name}: the Maybeboard and Sideboard are retired; name a category in the deck"
+            )
+            return changers
         held = [e for e in _entries_named(self.deck, info.name) if e.in_deck]
         problem = self._add_problem(info, identity, held)
         if problem is not None:
@@ -160,11 +163,6 @@ class _Resolver:
         if printing is None:
             return changers
         category = wanted.category or default_category(info)
-        if category not in self.categories and category.casefold() in _USUALLY_ASIDE:
-            self.warnings.append(
-                f"{info.name}: Archidekt creates the new category {category} counting in the deck; "
-                "untick it on Archidekt to keep it out"
-            )
         self.changes.append(
             Change(
                 kind=ChangeKind.ADD,
@@ -244,10 +242,9 @@ def resolve_plan(
 
 
 def counts_in_deck(category: str, categories: Mapping[str, bool]) -> bool:
-    """Whether a card filed under category counts in the deck, by the deck's setting or else by default."""
-    if category in categories:
-        return categories[category]
-    return category.casefold() not in _ASIDE_WHEN_CREATED
+    """Whether a card filed under category counts in the deck: by the deck's setting, and in a category the
+    save creates, yes."""
+    return categories.get(category, True)
 
 
 def default_category(info: CardInfo) -> str:
@@ -268,6 +265,7 @@ class SaveResult:
     deck: Deck
     snapshot: str
     mismatches: tuple[str, ...]
+    warnings: tuple[str, ...] = ()
 
 
 def save(
@@ -296,7 +294,8 @@ def save(
                     " Nothing was changed"
                 )
             card_ids[change.scryfall_id] = card_id
-    dont_have = label_value(DONT_HAVE_LABEL, _account_colours(editor, on_progress))
+    colours, warnings = _account_colours(editor, on_progress)
+    dont_have = label_value(DONT_HAVE_LABEL, colours)
     edits = card_edits(resolution.changes, live.entries, card_ids, dont_have)
     # Seconds keep two saves in one minute apart; Archidekt accepts snapshots with equal names.
     snapshot = f"before cmdr apply {now().strftime('%Y-%m-%d %H:%M:%S')} UTC"
@@ -318,26 +317,29 @@ def save(
             f"Archidekt accepted the changes, but reading the deck back failed ({error}); "
             "the local copy may be behind"
         ) from error
-    return SaveResult(after, snapshot, tuple(verify(resolution.changes, deck, after)))
+    return SaveResult(after, snapshot, tuple(verify(resolution.changes, deck, after)), warnings)
 
 
-def _account_colours(editor: ArchidektEditor, on_progress: Callable[[str], None]) -> dict[str, str]:
-    """The account's label colours, which Don't Have goes on in (ADR 0012). A failed read is tried once more
-    after a wait, then falls back to Archidekt's default colours; a refused login still stops the save, as
-    its writes would be refused."""
+def _account_colours(
+    editor: ArchidektEditor, on_progress: Callable[[str], None]
+) -> tuple[dict[str, str], tuple[str, ...]]:
+    """The account's label colours, which Don't Have goes on in (ADR 0012), with a warning when they could
+    not be read. A failed read is tried once more after a wait, then falls back to Archidekt's default
+    colours; a refused login still stops the save, as its writes would be refused."""
     try:
-        return dict(editor.account_labels())
+        return dict(editor.account_labels()), ()
     except (NetworkError, ArchidektError) as error:
         log.info(
             "could not read the account's card labels, trying again in %.0fs: %s", LABEL_RETRY_SECONDS, error
         )
     time.sleep(LABEL_RETRY_SECONDS)
     try:
-        return dict(editor.account_labels())
+        return dict(editor.account_labels()), ()
     except (NetworkError, ArchidektError) as error:
         log.warning("could not read the account's card labels: %s", error)
-        on_progress(f"could not read your card labels ({error}); labelling in Archidekt's default colours")
-        return {}
+        warning = f"could not read your card labels ({error}); labelling in Archidekt's default colours"
+        on_progress(warning)
+        return {}, (warning,)
 
 
 def card_edits(

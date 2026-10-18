@@ -11,10 +11,13 @@ import pytest
 from commander import desk as desk_module
 from commander.carddb import CARD_DB_FILE
 from commander.config import read_config
+from commander.deckcache import Clock
 from commander.desk import Desk, DeskSettings, sync_summary
+from commander.metadata import MetaData
 from commander.net import Pacer
 from commander.sync import SyncResult, SyncStatus
 from commander.syncrun import CardState, CardStatus, SyncOutcome
+from commander.weightedshare import ShareTable
 from conftest import PASSWORD, REFRESH_TOKEN, FakeArchidekt, Json, MemoryTokenStore
 from test_desk import NOW, probing
 
@@ -116,6 +119,31 @@ def test_signing_out_removes_the_login_and_forgets_the_account(env: Env) -> None
     assert config.user is None
     # The folder is remembered for the next sign-in.
     assert config.workspaces == {"makkis": env.documents / "Commander" / "decks-MAKKIS"}
+
+
+def test_signing_in_again_drops_the_shares_kept_for_the_last_account(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    computed: list[int] = []
+    real = desk_module.weighted_shares
+
+    def counting(data: MetaData | None, *, now: Clock) -> ShareTable:
+        computed.append(1)
+        return real(data, now=now)
+
+    monkeypatch.setattr(desk_module, "weighted_shares", counting)
+    desk = env.desk()
+    desk.sign_in("MAKKIS", PASSWORD)
+    deck_id = int(cast("list[Json]", desk.decks()["decks"])[0]["id"])
+
+    desk.deck(deck_id)
+    desk.deck(deck_id)
+    assert len(computed) == 1
+
+    desk.sign_out()
+    desk.sign_in("MAKKIS", PASSWORD)
+    desk.deck(deck_id)
+    assert len(computed) == 2
 
 
 def test_signing_in_and_out_is_logged_without_the_password(

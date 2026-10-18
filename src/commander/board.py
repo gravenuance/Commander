@@ -557,9 +557,10 @@ class BoardService:
         """Mark a card to add (with the deck card to cut), turn it down, or reopen it.
 
         share is the card's weighted share of the lists read now; a turned-down card keeps it, so lists that
-        have since taken to the card can offer it again (`feed_ideas`). A card the user reopens is marked
-        reconsidered, which keeps the automatic re-judge off it until they decide it; relabel, for a
-        reopened relabellable card, gives it the label today's lists make of it.
+        have since taken to the card can offer it again (`feed_ideas`). A turned-down card the user reopens is
+        marked reconsidered, which keeps the automatic re-judge off it until they decide it; relabel, for
+        that reopened card when it is relabellable, gives it the label today's lists make of it. Undoing a
+        queued add does neither.
         """
         if status is Status.APPLIED:
             raise BoardError("a card counts as applied only once it is saved to Archidekt")
@@ -572,6 +573,7 @@ class BoardService:
             if cut is not None and (held := self._copies(cut)) < card.copies:
                 raise BoardError(f"{card.name} adds {card.copies} copies; the deck has only {held} {cut}")
             kept_share = share if status is Status.REJECTED else None
+            reconsidering = status is Status.OPEN and card.status is Status.REJECTED
             updated = replace(
                 card,
                 status=status,
@@ -579,9 +581,10 @@ class BoardService:
                 note=note,
                 updated_at=self._stamp(),
                 rejected_share=kept_share,
-                reconsidered=status is Status.OPEN and actor is Actor.YOU,
+                reconsidered=status is Status.OPEN
+                and (card.reconsidered or (reconsidering and actor is Actor.YOU)),
             )
-            if status is Status.OPEN and relabel is not None and card.relabellable:
+            if reconsidering and relabel is not None and card.relabellable:
                 updated = _relabelled(updated, relabel)
             detail = "; ".join(filter(None, [f"cut {cut}" if cut else "", note]))
             save(
@@ -616,11 +619,17 @@ class BoardService:
             save(Board(cards), entry)
 
     def turn_down_open(self, key: str, note: str, share: float) -> BoardCard | None:
-        """Turn down a card as cmdr, but only while it is still open: None when it was decided or removed
-        meanwhile. share is its weighted share of the lists read now, the baseline for its return."""
+        """Turn down a card as cmdr, but only while it is still open and its own: None when it was decided,
+        reopened by the user or removed meanwhile, or is by you or Claude. share is its weighted share of
+        the lists read now, the baseline for its return."""
         with self._editing() as (board, save):
             card = board.find(key)
-            if card is None or card.status is not Status.OPEN:
+            if (
+                card is None
+                or card.status is not Status.OPEN
+                or card.reconsidered
+                or card.source not in {Actor.CMDR, Actor.ARCHIDEKT}
+            ):
                 return None
             stamp = self._stamp()
             updated = replace(

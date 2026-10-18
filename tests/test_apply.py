@@ -535,6 +535,7 @@ def test_a_failed_label_read_is_tried_once_more_after_a_wait_and_the_accounts_co
     }
     assert (label_reads(fake), label_waits) == (MAX_ATTEMPTS + 1, [2.5])
     assert not any("default colours" in line for line in progress)
+    assert result.warnings == ()
 
 
 def test_a_save_whose_label_read_fails_twice_labels_incoming_cards_in_the_default_colour(
@@ -555,6 +556,9 @@ def test_a_save_whose_label_read_fails_twice_labels_incoming_cards_in_the_defaul
         "Don't Have,#f47373"
     }
     assert any("labels" in line and "default colours" in line for line in progress)
+    [warning] = result.warnings
+    assert warning.startswith("could not read your card labels (")
+    assert warning.endswith("); labelling in Archidekt's default colours")
 
 
 def test_a_save_stops_before_any_write_when_the_label_read_is_refused(
@@ -672,13 +676,8 @@ def test_a_failed_read_back_says_the_changes_were_sent(
     ("category", "categories", "counts"),
     [
         # The deck's own setting wins: Archidekt lets each deck choose which categories count.
-        ("Maybeboard", {"Maybeboard": False}, False),
-        ("Sideboard", {"Sideboard": True}, True),
         ("Burn", {"Burn": False}, False),
-        # A category the deck lacks is created by the save; seen live on 2026-10-15, Archidekt creates
-        # Maybeboard outside the deck but Sideboard, like any other name, inside it.
-        ("Sideboard", {}, True),
-        ("maybeboard", {}, False),
+        ("Ramp", {"Ramp": True}, True),
         ("Burn", {}, True),
     ],
 )
@@ -693,13 +692,27 @@ def test_an_add_counts_in_the_deck_as_its_category_says(
     assert resolution.main_after == MAIN_CARDS + (1 if counts else 0)
 
 
-def test_a_new_sideboard_category_warns_that_it_will_count(deck: Deck, db: CardDb) -> None:
-    resolution = resolve_plan(deck, plan([AddCard("Arcane Signet", category="Sideboard")]), db, categories={})
+@pytest.mark.parametrize("category", ["Maybeboard", "Sideboard", "maybeboard", "SIDEBOARD"])
+def test_an_add_to_the_retired_maybeboard_or_sideboard_is_refused(
+    deck: Deck, db: CardDb, category: str
+) -> None:
+    resolution = resolve_plan(deck, plan([AddCard("Arcane Signet", category=category)]), db)
 
-    assert resolution.warnings[0] == (
-        "Arcane Signet: Archidekt creates the new category Sideboard counting in the deck; "
-        "untick it on Archidekt to keep it out"
+    assert resolution.changes == ()
+    assert resolution.problems == (
+        "add Arcane Signet: the Maybeboard and Sideboard are retired; name a category in the deck",
     )
+
+
+def test_a_refused_aside_add_does_not_stop_the_plans_other_adds_from_resolving(
+    deck: Deck, db: CardDb
+) -> None:
+    resolution = resolve_plan(
+        deck, plan([AddCard("Arcane Signet", category="Sideboard"), AddCard("Lightning Bolt")]), db
+    )
+
+    assert [c.name for c in resolution.changes] == ["Lightning Bolt"]
+    assert len(resolution.problems) == 1
 
 
 def test_add_skips_non_regular_printings_unless_the_plan_names_the_set(deck: Deck, db: CardDb) -> None:

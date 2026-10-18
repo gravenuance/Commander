@@ -221,14 +221,17 @@ function sharePill(card) {
 function sharePopover(card, popId) {
   const rows = shareRows(card);
   return el("div", { class: "share-pop", id: popId, role: "group", "aria-label": `${card.name}: share breakdown`, hidden: true },
-    el("p", { class: "share-total", text: `Combined ${card.share.label} · ${card.share.count} of ${card.share.total}` }),
+    card.share
+      ? el("p", { class: "share-total", text: `Combined ${card.share.label} · ${card.share.count} of ${card.share.total}` })
+      : null,
     card.origin ? null : el("p", { class: "muted", text: `Added by ${card.source}` }),
     rows.length ? el("ul", { class: "share-rows" }, ...rows.map((row) => shareRow(card, row))) : null);
 }
 
 // One row per source that plays the card, in the order the tile groups sources; the primary one always shows.
+// A pooled idea has no combined share when no list was read for the commander.
 function shareRows(card) {
-  const { meta, archidekt } = card.share;
+  const { meta, archidekt } = card.share ?? {};
   const rows = [];
   if (meta && (meta.count || card.origin === "meta")) rows.push({ origin: "meta", part: meta, unit: "lists" });
   if (archidekt && (archidekt.count || card.origin === "archidekt decks")) {
@@ -413,8 +416,7 @@ async function propose(name) {
       const cards = state.view ? state.view.cards : [];
       if (uncut(cards).some((c) => c.id === answer.card.id)) {
         // The panel may be folded away, and its tile is only on show while it is open.
-        const toggle = $("h-uncut");
-        if (toggle.getAttribute("aria-expanded") !== "true") toggle.click();
+        showPanel($("h-uncut"), true);
         select(answer.card.id);
         showStatus(`${answer.card.name}: pick the deck card it replaces`);
         return;

@@ -313,6 +313,7 @@ class Desk:
         self._settings = replace(self._settings, user=user, workspace=folder)
         self._workspace = Workspace(folder)
         self._pools.clear()
+        self._tables.clear()
         self._rules.clear()
         with self._sync_lock:
             self._open_deck = None
@@ -771,6 +772,7 @@ class Desk:
         view["saved"] = result is not None
         view["snapshot"] = result.snapshot if result else None
         view["mismatches"] = list(result.mismatches) if result else []
+        view["warnings"] = list(result.warnings) if result else []
         view["applied"] = list(saved.applied)
         return view
 
@@ -794,7 +796,7 @@ class Desk:
 
     def _relabel(self, stored: StoredDeck, card: BoardCard | None) -> Relabel | None:
         """What the cached lists make of a card the user reconsiders; None when it is not one to label."""
-        if card is None:
+        if card is None or card.status is not Status.REJECTED or not card.relabellable:
             return None
         with self._db() as db:
             labels = idea_labels(stored.deck, self._pool(stored.deck), db, self._shares(stored.deck), [card])

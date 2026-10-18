@@ -115,6 +115,7 @@ async function openDeck(id) {
     renderDecks();
     metaPanel.render(id, null);
     $("meta-empty").hidden = true;
+    syncMetaUpdating();
   }
   await loadDeck();
   metaPanel.load();
@@ -231,18 +232,20 @@ async function copyText(text) {
   }
 }
 
+// Opens or folds a panel without touching what the viewer chose to keep.
+function showPanel(toggle, open) {
+  toggle.setAttribute("aria-expanded", String(open));
+  $(toggle.getAttribute("aria-controls")).hidden = !open;
+}
+
 // Each panel remembers whether it was folded, per viewer.
 function setupPanels() {
   for (const toggle of document.querySelectorAll(".panel-toggle")) {
     const key = `${PANEL_KEY}.${toggle.id}`;
-    const show = (open) => {
-      toggle.setAttribute("aria-expanded", String(open));
-      $(toggle.getAttribute("aria-controls")).hidden = !open;
-    };
-    try { if (localStorage.getItem(key) === "0") show(false); } catch { /* storage is a convenience */ }
+    try { if (localStorage.getItem(key) === "0") showPanel(toggle, false); } catch { /* storage is a convenience */ }
     toggle.addEventListener("click", () => {
       const open = toggle.getAttribute("aria-expanded") !== "true";
-      show(open);
+      showPanel(toggle, open);
       try { localStorage.setItem(key, open ? "1" : "0"); } catch { /* as above */ }
       if (open && toggle.id === "h-meta") metaPanel.load();
     });
