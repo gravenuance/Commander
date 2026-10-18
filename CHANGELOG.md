@@ -36,6 +36,15 @@
   its step: waiting, fetching, fetched, or incomplete when a source failed.
 
 ### Changed
+- The Sideboard and Maybeboard are retired as a second home for ideas (ADR 0035). `sync` no longer puts their
+  cards on a board and writes nothing to them; a cut removes the card from the deck instead of moving it to
+  the Maybeboard; the user's next save of a deck (Review, `board commit --save`, `apply --save`) also removes
+  every card outside the deck on that deck's Sideboard and Maybeboard, and the preview lists them first
+  ("Clears the Maybeboard: 7 cards"). A cut card returns as an idea like any card not in the deck, an applied
+  board card the deck no longer holds included.
+- On a sync, open board ideas that an earlier version took from the Maybeboard or Sideboard are tested like
+  the other ideas; those that fail are turned down as "no longer makes the cut" (activity line by `cmdr`), and
+  the rest stay. Nothing is judged when no list was read. Queued, applied and other sources' cards are not touched.
 - A Considering card shows its combined share as a pill coloured by the source the idea is credited to
   (tournament lists, the commander's Archidekt decks, alike commanders, tagged decks), in place of the source
   badge and the plain count. Clicking the pill opens a breakdown: the combined share with its count, then each
@@ -85,6 +94,8 @@
 ### Removed
 - The Meta panel's **Refresh meta** button: Sync refreshes the meta answers, as `cmdr sync` does.
 - `cmdr board add --suggested` and `board research --move`: there is one list.
+- Plan files' `maybeboard = true` and `drop = [...]`, and the Meta report's mark on staples that sit on the
+  Sideboard or Maybeboard (`onSideboard` in `meta --json`). Old boards and logs with source `archidekt` still read.
 
 ### Fixed
 - Fellwar Stone counts as half a source, as ADR 0019 says; the code gave it three quarters.

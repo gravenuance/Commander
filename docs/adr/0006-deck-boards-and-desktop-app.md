@@ -1,7 +1,8 @@
 # 0006: Deck boards in the repo, a pywebview desktop app over them
 
 **Status:** Accepted · **Date:** 2026-10-15 · Superseded in part by
-[ADR 0032](0032-one-considering-list-and-one-sync.md) (the board's two lists)
+[ADR 0032](0032-one-considering-list-and-one-sync.md) (the board's two lists) and
+[ADR 0035](0035-retire-the-maybeboard-and-sideboard.md) (the Sideboard and Maybeboard)
 
 ## Context
 

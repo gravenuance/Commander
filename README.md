@@ -183,7 +183,7 @@ them together.
 decks for that commander updated in the same window (see *Which Archidekt decks are read* below). It lists:
 
 - **Staples you don't play:** cards in at least 40% of the lists read, or in half the Archidekt decks, that
-  the deck lacks. Cards on your Sideboard or Maybeboard are marked.
+  the deck lacks.
 - **Spicy picks:** cards EDHTop16 rates 3 or 4 for spice (new or rarely played) in at least two lists,
   with their best finish.
 - **Your own picks:** deck cards under 10% of the lists play; cards the profile keeps are marked.
@@ -334,8 +334,8 @@ drops one by its tag slug ([ADR 0016](docs/adr/0016-replacements-like-for-like.m
 
 ### Deck boards
 
-A deck's board holds the cards you are weighing for it, in one list, **Considering**. You, Claude, your
-Archidekt Sideboard and Maybeboard, `suggest` and `sync` put cards there. Each card carries why it might fit
+A deck's board holds the cards you are weighing for it, in one list, **Considering**. You, Claude, `suggest`
+and `sync` put cards there. Each card carries why it might fit
 and which deck cards it could replace. You decide each one: add it (choosing the card to cut), turn it down,
 or reopen it later. The board file is `board.json` version 2; opening a version 1 file (which had two lists)
 keeps a copy as `board.v1.bak` before the first save.
@@ -347,13 +347,14 @@ uv run cmdr board commit ellivere          # preview the queued changes against 
 uv run cmdr board commit ellivere --save   # make them
 ```
 
-Saving a board works like `apply --save`, with a snapshot first. A card you cut moves to the deck's
-Maybeboard instead of being deleted, keeping its categories behind the Maybeboard, and comes back on the
-board under Considering: if the new card disappoints, add the old one back and the swap runs the other way.
+Saving a board works like `apply --save`, with a snapshot first. A card you cut is removed from the deck;
+if it passes the idea test on a later `sync` it shows up in Considering again like any other idea.
 A cut the deck runs several copies of, such as a basic land, loses one copy instead.
-Cards you keep on a deck's Sideboard or Maybeboard on Archidekt show up on its board after each `sync`;
-adding one moves that entry into the deck, printing and all, and turning one down takes it off the Sideboard
-or Maybeboard with the next save. `suggest --to-board` and `meta --to-board` put their ideas on the board,
+A save also empties the deck's Sideboard and Maybeboard on Archidekt (those outside the deck): the Review
+dialog and `board commit` list them first ("Clears the Maybeboard: 7 cards"), and `sync` never touches them
+([ADR 0035](docs/adr/0035-retire-the-maybeboard-and-sideboard.md)). `sync` no longer reads those lists; an
+idea an earlier version took from them is turned down on a sync when it no longer passes the idea test below
+("no longer makes the cut"). `suggest --to-board` and `meta --to-board` put their ideas on the board,
 and a card turned down there is not suggested again by `suggest`.
 
 Each `sync` also compiles ideas from other players into Considering
@@ -517,18 +518,16 @@ See [ADR 0006](docs/adr/0006-deck-boards-and-desktop-app.md).
 ```toml
 deck = "magda"   # deck id, or part of its name as in other commands
 add = ["Arcane Signet", {name = "Sol Ring", set = "c21", category = "Ramp"}]
-remove = ["Wild Growth", {name = "Mountain", keep = 10}, {name = "Swords to Plowshares", maybeboard = true}]
-drop = ["Path to Exile"]   # take off the Sideboard or Maybeboard
+remove = ["Wild Growth", {name = "Mountain", keep = 10}]
 ```
 
 A plan says how the deck should end up. `add` means the deck ends with at least that many copies
-(`quantity`, default 1); `remove` means it ends with none, or with `keep` copies, and with
-`maybeboard = true` the card moves to the Maybeboard instead of being deleted. `drop` takes cards off the
-Sideboard or Maybeboard. Lines the deck already meets are skipped, so running a plan twice is safe. Adding
-a card that waits on the Sideboard or Maybeboard moves that entry into the deck. A new card gets its
-cheapest EUR printing, leaving out gold-bordered and other non-tournament printings, unless `set` names
-one; it goes under its card type (Land, Creature, Instant and so on) unless `category` names another.
-`remove` leaves Sideboard and Maybeboard copies alone.
+(`quantity`, default 1); `remove` means it ends with none, or with `keep` copies. Lines the deck already meets are skipped, so running a plan twice is safe. A new card
+gets its cheapest EUR printing, leaving out gold-bordered and other non-tournament printings, unless `set`
+names one; it goes under its card type (Land, Creature, Instant and so on) unless `category` names another.
+Saving a plan that changes the deck also removes every card on the deck's Sideboard and Maybeboard (outside
+the deck), and the preview says so ("Clears the Maybeboard: 7 cards"). The old `maybeboard = true` and
+`drop` keys are gone; a plan that still has them is refused.
 
 Whether an added card counts in the deck follows the category's "in deck" setting on Archidekt,
 which each deck sets for itself. A category the deck doesn't have yet is created by the save: Archidekt
@@ -552,8 +551,7 @@ preview never replaces the deck's. `board commit` and the app's Review dialog sh
 one, and rewrites the local copy if the deck is in your deck folder. To undo a save, restore that snapshot
 on Archidekt. `apply -` reads the plan from stdin, and `--json` prints the result as JSON.
 
-A card a save brings into the deck gets the Archidekt label "Don't Have", unless it comes from the
-Maybeboard with a label already (Proxy, for one); see [Cards to get](#cards-to-get).
+A card a save brings into the deck gets the Archidekt label "Don't Have"; see [Cards to get](#cards-to-get).
 
 `cmdr login` keeps only Archidekt's login token in Windows Credential Manager (under
 `Commander (cmdr) Archidekt`), never your password. When the token expires, `apply --save` asks you to run
