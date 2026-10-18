@@ -245,6 +245,7 @@ def test_ideas_over_the_profiles_ceiling_or_price_cap_are_left_out(
     assert cheap == {Origin.META: [], Origin.DECKS: ["Arcane Signet"], Origin.ADJACENT: [], Origin.TAGGED: []}
 
 
+TAG_SEARCH = "version = 1\n[ideas]\ntag_search = true\n"
 ALIKE = (
     "version = 1\n[ideas]\n"
     'commanders = ["The Gitrog Monster", ["Tevesh Szat, Doom of Fools", "Kodama of the East Tree"]]\n'
@@ -495,10 +496,11 @@ def seed(
     *,
     origin: Origin | None = None,
     tag: str | None = None,
+    pool: OriginPool | None = None,
     status: Status = Status.OPEN,
 ) -> str:
     service = BoardService(folder, deck, db, now=lambda: NOW)
-    card = service.propose(name, source, reason="seeded", origin=origin, origin_tag=tag)
+    card = service.propose(name, source, reason="seeded", origin=origin, origin_tag=tag, origin_pool=pool)
     if status is Status.ADD:
         service.decide(card.id, Status.ADD, Actor.YOU, choice="Disruptor Flute")
     if status is Status.REJECTED:
@@ -711,6 +713,7 @@ def test_nothing_is_judged_without_share_data_or_when_the_ideas_source_was_not_r
 def test_a_tagged_idea_is_judged_by_its_tags_pool_only_when_that_pool_was_read(
     deck: Deck, db: CardDb, tmp_path: Path
 ) -> None:
+    (tmp_path / "profile.toml").write_text(TAG_SEARCH, encoding="utf-8")
     weak = seed(tmp_path, deck, db, "Arcane Signet", Actor.CMDR, origin=Origin.TAGGED, tag="Landfall")
     strong = seed(tmp_path, deck, db, "Jeska's Will", Actor.CMDR, origin=Origin.TAGGED, tag="Landfall")
     other = seed(tmp_path, deck, db, "Chaos Warp", Actor.CMDR, origin=Origin.TAGGED, tag="Tokens")
@@ -728,6 +731,7 @@ def test_a_tagged_idea_is_judged_by_its_tags_pool_only_when_that_pool_was_read(
 def test_a_tagged_idea_waits_when_its_pool_is_missing_or_too_small(
     deck: Deck, db: CardDb, tmp_path: Path
 ) -> None:
+    (tmp_path / "profile.toml").write_text(TAG_SEARCH, encoding="utf-8")
     signet = seed(tmp_path, deck, db, "Arcane Signet", Actor.CMDR, origin=Origin.TAGGED, tag="Landfall")
     data = meta_data([], [peer(1, ["Mind Stone"])])
 
@@ -740,6 +744,7 @@ def test_a_tagged_idea_waits_when_its_pool_is_missing_or_too_small(
 def test_an_alike_idea_is_judged_by_the_pooled_decks_only_when_they_were_read(
     deck: Deck, db: CardDb, tmp_path: Path
 ) -> None:
+    (tmp_path / "profile.toml").write_text(ALIKE, encoding="utf-8")
     weak = seed(tmp_path, deck, db, "Arcane Signet", Actor.CMDR, origin=Origin.ADJACENT)
     strong = seed(tmp_path, deck, db, "Jeska's Will", Actor.CMDR, origin=Origin.ADJACENT)
     data = meta_data([], [peer(1, ["Mind Stone"])])
@@ -753,6 +758,143 @@ def test_an_alike_idea_is_judged_by_the_pooled_decks_only_when_they_were_read(
 
     assert card_state(tmp_path, weak) == (Status.REJECTED, "no longer makes the cut")
     assert card_state(tmp_path, strong)[0] is Status.OPEN
+
+
+# Ten equal lists: the Signet in 9 and Jeska's Will in 1, so with three of ten Archidekt decks playing the
+# Signet it is an idea of the meta and Jeska's Will is none.
+def commander_data() -> MetaData:
+    lists = [
+        entry(
+            1,
+            40,
+            16,
+            [
+                ("Mind Stone", 0),
+                *([("Arcane Signet", 0)] if i < 9 else []),
+                *([("Jeska's Will", 0)] if i < 1 else []),
+            ],
+        )
+        for i in range(10)
+    ]
+    return meta_data(lists, decks_playing(3, 10))
+
+
+@pytest.mark.parametrize(
+    ("pooled", "profile"),
+    [
+        ((Origin.TAGGED, "Enchantments"), "version = 1\n"),
+        ((Origin.TAGGED, "Enchantments"), "version = 1\n[ideas]\ntag_search = false\n"),
+        ((Origin.ADJACENT, None), TAG_SEARCH),
+    ],
+    ids=["tag search off by default", "tag search switched off", "no alike commander listed"],
+)
+def test_a_pooled_idea_whose_source_is_gone_is_judged_by_the_commanders_test_and_relabelled_when_it_passes(
+    deck: Deck, db: CardDb, tmp_path: Path, pooled: tuple[Origin, str | None], profile: str
+) -> None:
+    origin, tag = pooled
+    (tmp_path / "profile.toml").write_text(profile, encoding="utf-8")
+    pool = OriginPool(3, 5)
+    weak = seed(tmp_path, deck, db, "Jeska's Will", Actor.CMDR, origin=origin, tag=tag, pool=pool)
+    strong = seed(tmp_path, deck, db, "Arcane Signet", Actor.CMDR, origin=origin, tag=tag, pool=pool)
+
+    assert judge(tmp_path, deck, db, commander_data()) == ["Jeska's Will"]
+
+    assert card_state(tmp_path, weak) == (Status.REJECTED, "no longer makes the cut")
+    turned = read_board(tmp_path).find(weak)
+    assert turned is not None
+    assert turned.rejected_share is not None
+    assert 0.0 < turned.rejected_share < 0.2
+    kept = read_board(tmp_path).find(strong)
+    assert kept is not None
+    assert (kept.status, kept.source, kept.origin, kept.origin_tag, kept.origin_pool) == (
+        Status.OPEN,
+        Actor.CMDR,
+        Origin.META,
+        None,
+        None,
+    )
+    assert kept.reason == LISTS_AND_DECKS.format(lists=9, decks=3)
+    [activity] = [a for a in read_activity(tmp_path) if a.action == "relabelled"]
+    assert (activity.actor, activity.card, activity.detail) == (Actor.CMDR, "Arcane Signet", "from meta")
+
+
+def test_a_relabelled_pooled_idea_goes_to_the_source_that_plays_it_more(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    (tmp_path / "profile.toml").write_text("version = 1\n", encoding="utf-8")
+    signet = seed(tmp_path, deck, db, "Arcane Signet", Actor.CMDR, origin=Origin.TAGGED, tag="Populate")
+    data = meta_data(same_weight_lists("Arcane Signet", 3), decks_playing(9, 10))
+
+    assert judge(tmp_path, deck, db, data) == []
+
+    card = read_board(tmp_path).find(signet)
+    assert card is not None
+    assert (card.status, card.origin) == (Status.OPEN, Origin.DECKS)
+    assert card.reason == LISTS_AND_DECKS.format(lists=3, decks=9)
+
+
+def test_tagged_ideas_stay_with_the_pool_rule_while_the_tag_search_is_on(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    (tmp_path / "profile.toml").write_text(TAG_SEARCH, encoding="utf-8")
+    # The pool plays the Will in 3 of 4 decks although few lists do; the Signet only in 1 of 4.
+    will = seed(tmp_path, deck, db, "Jeska's Will", Actor.CMDR, origin=Origin.TAGGED, tag="Landfall")
+    signet = seed(tmp_path, deck, db, "Arcane Signet", Actor.CMDR, origin=Origin.TAGGED, tag="Landfall")
+    landfall = tag_pool("Landfall", ["Jeska's Will", "Arcane Signet"], ["Jeska's Will"], ["Jeska's Will"], [])
+
+    assert judge(tmp_path, deck, db, commander_data(), tagged=[landfall]) == ["Arcane Signet"]
+
+    kept = read_board(tmp_path).find(will)
+    assert kept is not None
+    assert (kept.status, kept.origin, kept.origin_tag) == (Status.OPEN, Origin.TAGGED, "Landfall")
+    assert card_state(tmp_path, signet)[0] is Status.REJECTED
+
+
+def test_alike_ideas_stay_with_the_pool_rule_while_their_group_is_listed(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    (tmp_path / "profile.toml").write_text(ALIKE, encoding="utf-8")
+    will = seed(tmp_path, deck, db, "Jeska's Will", Actor.CMDR, origin=Origin.ADJACENT)
+    signet = seed(tmp_path, deck, db, "Arcane Signet", Actor.CMDR, origin=Origin.ADJACENT)
+    pool = [peer(1, ["Jeska's Will", "Arcane Signet"]), peer(2, ["Jeska's Will"]), peer(3, []), peer(4, [])]
+
+    # The commander's lists play the Signet, not the Will; the pool says the opposite and decides.
+    assert judge(tmp_path, deck, db, commander_data(), adjacent=pool) == ["Arcane Signet"]
+
+    kept = read_board(tmp_path).find(will)
+    assert kept is not None
+    assert (kept.status, kept.origin) == (Status.OPEN, Origin.ADJACENT)
+    assert card_state(tmp_path, signet)[0] is Status.REJECTED
+
+
+def test_a_reconsidered_pooled_idea_is_left_alone_when_its_source_is_gone(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    (tmp_path / "profile.toml").write_text("version = 1\n", encoding="utf-8")
+    will = seed(tmp_path, deck, db, "Jeska's Will", Actor.CMDR, origin=Origin.TAGGED, tag="Populate")
+    signet = seed(tmp_path, deck, db, "Arcane Signet", Actor.CMDR, origin=Origin.TAGGED, tag="Populate")
+    service = BoardService(tmp_path, deck, db, now=lambda: NOW)
+    for card_id in (will, signet):
+        service.decide(card_id, Status.REJECTED, Actor.YOU, note="no")
+        service.decide(card_id, Status.OPEN, Actor.YOU)
+    before = (tmp_path / "board.json").read_text(encoding="utf-8")
+
+    assert judge(tmp_path, deck, db, commander_data()) == []
+
+    assert (tmp_path / "board.json").read_text(encoding="utf-8") == before
+
+
+def test_a_pooled_idea_whose_source_is_gone_is_left_alone_without_share_data(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    (tmp_path / "profile.toml").write_text("version = 1\n", encoding="utf-8")
+    seed(tmp_path, deck, db, "Jeska's Will", Actor.CMDR, origin=Origin.TAGGED, tag="Populate")
+    seed(tmp_path, deck, db, "Arcane Signet", Actor.CMDR, origin=Origin.ADJACENT)
+    before = (tmp_path / "board.json").read_text(encoding="utf-8")
+
+    assert judge(tmp_path, deck, db, meta_data([])) == []
+
+    assert (tmp_path / "board.json").read_text(encoding="utf-8") == before
 
 
 def test_a_turned_down_compiled_idea_comes_back_once_its_share_rises_20_points(

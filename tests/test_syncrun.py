@@ -564,6 +564,9 @@ def test_a_sync_judges_an_alike_idea_only_when_every_commander_group_was_read(
     tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake, stored = populated(tmp_path, raw_deck, card_db_file)
+    (stored.folder / "profile.toml").write_text(
+        'version = 1\n[ideas]\ncommanders = ["The Gitrog Monster"]\n', encoding="utf-8"
+    )
     with CardDb(card_db_file) as db:
         signet = BoardService(stored.folder, stored.deck, db, now=lambda: NOW).propose(
             "Arcane Signet", Actor.CMDR, origin=Origin.ADJACENT

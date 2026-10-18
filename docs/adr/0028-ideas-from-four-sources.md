@@ -63,7 +63,13 @@ Re-judging, in `ideas.rejudge_ideas`, before each sync compiles a deck's new ide
   when no list was read at all (a failed source must not lower the shares and turn cards down).
 - **adjacent and tagged decks:** the card must still be played by at least half of its pool of at least three
   decks. An alike idea is judged only when every commander group's decks were read, a tagged idea only when
-  its own tag's pool was read; otherwise it is left alone.
+  its own tag's pool was read; otherwise it is left alone. Once the source is gone for the deck, the commander's
+  own test applies instead: an alike idea when the profile lists no commander group, a tagged one while the
+  deck's tag search is off. It must pass `ShareTable.is_idea` on the combined share like a meta idea (judged
+  only when a list was read); a failing card is turned down, a passing one is relabelled (activity
+  "relabelled") to the source that plays it more, the meta on a tie, with the reason a compiled idea has and
+  its tag and pool cleared. With several groups listed the alike pool stays one pool, so a card of a removed
+  group is judged by the pool rule until the last group goes.
 - A card that fails is turned down as `cmdr` with the reason "no longer makes the cut", remembering its
   weighted share now (0 for a card no list plays), so it comes back only if the share rises 20 points
   (ADR 0026). The turn-down checks under the board lock that the card is still open.
@@ -99,7 +105,7 @@ The tagged source is off unless the deck's profile sets `[ideas] tag_search = tr
 "Search decks by tag" in the app; a missing key means off. While it is off, `gather_idea_pools`
 passes no tags to `gather_adjacent`, so no tag request goes out, whether from `sync`, `meta --to-board` or
 the app. Alike-commander search is unchanged: it runs for the commanders the profile lists. Tagged ideas
-already on a board stay; turning the search off never removes them.
+already on a board stay until the next sync judges them by the commander's own test (see *Re-judging*).
 
 Why: the c2data analysis found that tag pools add almost nothing beyond the commander's own decks, and each
 tag costs about 1.5 to 2 minutes of paced requests on a first sync. The owner opts a deck in when its theme

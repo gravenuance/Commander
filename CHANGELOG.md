@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Changed
+- While a deck's tag search is off, each sync tests its open tagged ideas, and its alike ideas once the
+  profile lists no commander, by the commander's own lists (the idea test, ADR 0028) instead of the pool's
+  half: a card that fails is turned down as "no longer makes the cut", one that passes is relabelled to the
+  source that plays it more, with a compiled idea's reason. Nothing is judged without a list read, and a card
+  you reopened is left alone. With the search on, a pool still judges its own ideas.
+
 ### Added
 - One weighted share per card (ADR 0026): the share of the commander's EDHTop16 lists and recent Archidekt
   decks that play it, each list weighing more the more recent and, for a tournament entry, the better placed
@@ -15,7 +22,8 @@
 - A per-deck setting *Search decks by tag* in the app's Settings, off by default (`[ideas] tag_search = true`
   in `profile.toml`, shown by `cmdr profile`). While it is off, `cmdr sync`, `cmdr meta --to-board` and the
   app's update make no tag search for the deck, because tag pools added almost nothing beyond the commander's
-  own decks and each tag costs about 1.5 to 2 minutes on a first sync. Tagged ideas already on a board stay.
+  own decks and each tag costs about 1.5 to 2 minutes on a first sync. Tagged ideas already on a board stay
+  until the next sync tests them by the commander's own lists (see *Changed*).
 - Ideas with no deck card to replace are put on the board as well and listed under *No cut yet* in the app,
   where clicking one offers every deck card but the commander.
 - Cuts of another role or theme (ADR 0029): when like for like leaves a slot free, a deck card of another role

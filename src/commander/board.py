@@ -640,15 +640,26 @@ class BoardService:
     def relabel_open(self, key: str, label: Relabel) -> BoardCard | None:
         """Give an open idea from the old Maybeboard pick-up the label today's lists make of it, as an idea
         cmdr compiled: None when the card was decided or removed meanwhile, or no list names a source."""
+        return self._relabel(key, label, lambda card: card.source is Actor.ARCHIDEKT and card.relabellable)
+
+    def relabel_pooled_open(self, key: str, label: Relabel) -> BoardCard | None:
+        """Give an open alike or tagged idea of cmdr, whose pool is no longer its source, the label today's
+        lists make of it; None when it was decided, reopened by the user or removed meanwhile, or no list
+        names a source."""
+        return self._relabel(
+            key,
+            label,
+            lambda card: (
+                card.source is Actor.CMDR
+                and card.origin in {Origin.ADJACENT, Origin.TAGGED}
+                and not card.reconsidered
+            ),
+        )
+
+    def _relabel(self, key: str, label: Relabel, eligible: Callable[[BoardCard], bool]) -> BoardCard | None:
         with self._editing() as (board, save):
             card = board.find(key)
-            if (
-                card is None
-                or card.status is not Status.OPEN
-                or card.source is not Actor.ARCHIDEKT
-                or not card.relabellable
-                or label.origin is None
-            ):
+            if card is None or card.status is not Status.OPEN or label.origin is None or not eligible(card):
                 return None
             updated = replace(_relabelled(card, label), updated_at=self._stamp())
             save(

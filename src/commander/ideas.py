@@ -17,7 +17,7 @@ replace. Every sync also re-judges the open ideas by cmdr: one that no longer pa
 turned down (`rejudge_ideas`).
 """
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -38,7 +38,7 @@ from commander.board import (
 from commander.budget import resolved_budget
 from commander.carddb import CardDb
 from commander.deckcache import Clock
-from commander.deckprofile import read_profile, resolve_themes
+from commander.deckprofile import Profile, read_profile, resolve_themes
 from commander.deckthemes import ThemeSource, merge_themes
 from commander.meta import (
     MIN_PEER_LISTS,
@@ -259,6 +259,47 @@ def compile_ideas(
     return added
 
 
+@dataclass(slots=True, frozen=True)
+class _IdeaJudge:
+    """What `rejudge_ideas` tests an open idea against: the lists read and the pools of decks."""
+
+    data: MetaData
+    table: ShareTable
+    profile: Profile
+    # The keys at least half of the alike decks' pool plays; None when a group's decks could not be read or
+    # the pool is too small to name staples. The same for each tag's pool.
+    adjacent_keys: frozenset[str] | None
+    tag_keys: Mapping[str, frozenset[str] | None]
+
+    def source_gone(self, card: BoardCard) -> bool:
+        """An alike idea with no profile commander group left, or a tagged one with the tag search off."""
+        return (card.origin is Origin.ADJACENT and not self.profile.adjacent) or (
+            card.origin is Origin.TAGGED and not self.profile.tag_search
+        )
+
+    def commanders_test(self, card: BoardCard) -> bool | None:
+        """Whether the card passes the test of the commander's own lists; None when none was read."""
+        return self.table.is_idea(card.name) if self.table else None
+
+    def still_an_idea(self, card: BoardCard) -> bool:
+        match card.origin:
+            case Origin.ADJACENT | Origin.TAGGED if self.source_gone(card):
+                return self.commanders_test(card) is not False
+            case Origin.ADJACENT:
+                keys = self.adjacent_keys
+            case Origin.TAGGED:
+                keys = self.tag_keys.get(card.origin_tag or "")
+            case Origin.META if self.data.lists.data is not None and self.table:
+                return self.table.is_idea(card.name)
+            case Origin.DECKS if self.data.peers.data is not None and self.table:
+                return self.table.is_idea(card.name)
+            case None if card.source is Actor.ARCHIDEKT and self.table:
+                return self.table.is_idea(card.name)
+            case _:
+                return True
+        return keys is None or card_key(card.name) in keys
+
+
 def rejudge_ideas(
     stored: StoredDeck,
     data: MetaData,
@@ -275,41 +316,37 @@ def rejudge_ideas(
     but only against sources read now: none without a list, no meta idea without the EDHTop16 lists and no
     deck idea without the Archidekt decks. An alike idea is tested by the half of the pooled decks that
     plays it, a tagged one by its own tag's pool; `adjacent` is None when a group's decks could not be
-    read, and a pool too small to name staples judges nothing. Cards by you or Claude, and queued,
-    applied or turned-down ones, are never touched (`turn_down_open` checks the card is still open), nor is
-    one the user reopened until they decide it.
+    read, and a pool too small to name staples judges nothing. An alike idea whose commander groups the
+    profile no longer lists, and a tagged one while the profile's tag search is off, have lost their source:
+    they face the commander's own test (`ShareTable.is_idea`) like a meta idea, a failing one is turned
+    down and a passing one relabelled to the source that plays it more (`relabel_pooled_open`), nothing
+    without a list read. Cards by you or Claude, and queued, applied or turned-down ones, are never touched
+    (`turn_down_open` checks the card is still open), nor is one the user reopened until they decide it.
     """
     table = weighted_shares(data, now=now)
-    adjacent_keys = None if adjacent is None else pool_staple_keys(adjacent)
-    tag_keys = {pool.tag: pool_staple_keys(pool.decks) for pool in tagged}
+    judge = _IdeaJudge(
+        data,
+        table,
+        read_profile(stored.folder),
+        None if adjacent is None else pool_staple_keys(adjacent),
+        {pool.tag: pool_staple_keys(pool.decks) for pool in tagged},
+    )
 
-    def still_an_idea(card: BoardCard) -> bool:
-        match card.origin:
-            case Origin.ADJACENT:
-                keys = adjacent_keys
-            case Origin.TAGGED:
-                keys = tag_keys.get(card.origin_tag or "")
-            case Origin.META if data.lists.data is not None and table:
-                return table.is_idea(card.name)
-            case Origin.DECKS if data.peers.data is not None and table:
-                return table.is_idea(card.name)
-            case None if card.source is Actor.ARCHIDEKT and table:
-                return table.is_idea(card.name)
-            case _:
-                return True
-        return keys is None or card_key(card.name) in keys
-
-    failing = [
+    open_cards = [
         card
         for card in read_board(stored.folder).cards
         if card.source in {Actor.CMDR, Actor.ARCHIDEKT}
         and card.status is Status.OPEN
         and not card.reconsidered
-        and not still_an_idea(card)
     ]
-    if not failing:
+    failing = [card for card in open_cards if not judge.still_an_idea(card)]
+    passing_orphans = [card for card in open_cards if judge.source_gone(card) and judge.commanders_test(card)]
+    if not failing and not passing_orphans:
         return []
     service = BoardService(stored.folder, stored.deck, db, now=now)
+    labels = _labels(stored.deck, data, db, table, passing_orphans)
+    for card in passing_orphans:
+        service.relabel_pooled_open(card.id, labels[card.id])
     shares = table.fractions()
     turned_down = (
         service.turn_down_open(card.id, NO_LONGER_MAKES_THE_CUT, shares.get(card_key(card.name), 0.0))
@@ -324,9 +361,14 @@ def idea_labels(
     """What the lists read make of each relabellable card, by board id: the source that plays it more (the
     meta on a tie) with the reason a compiled idea of it has, as `staple_ideas` words it. A card no list
     plays, or no data at all, gets only the plain reason (`NO_LIST_PLAYS_IT`). Cards that are not
-    relabellable are left out. A play style that finds the card off plan does not stop the label: the user
-    chose the card."""
-    chosen = [card for card in cards if card.relabellable]
+    relabellable (alike and tagged ideas among them) are left out. A play style that finds the card off
+    plan does not stop the label: the user chose the card."""
+    return _labels(deck, data, db, table, [card for card in cards if card.relabellable])
+
+
+def _labels(
+    deck: Deck, data: MetaData | None, db: CardDb, table: ShareTable, chosen: Sequence[BoardCard]
+) -> dict[str, Relabel]:
     if not chosen:
         return {}
     wanted = {card_key(card.name) for card in chosen}

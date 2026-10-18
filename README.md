@@ -379,8 +379,10 @@ lacks that its profile, bracket ceiling and budget allow:
   bracket and up to a quarter of `peer_decks` decks. Cards at least half a pool plays become ideas, labelled
   with the tag. Write the tag under `[themes] ignore` to stop using it. It is off by default because the
   pools added almost nothing beyond the commander's own decks and each tag costs about 1.5 to 2 minutes on
-  a first sync. Turning it off never removes tagged ideas already on the board. `sync`, `meta --to-board`
-  and the app all follow the setting.
+  a first sync. Tagged ideas already on the board stay, but with the search off each sync tests them by the
+  commander's own lists instead of the pool: one that fails the idea test below is turned down, one that
+  passes is relabelled to the source that plays it more. The same goes for alike ideas once the profile lists
+  no commander. `sync`, `meta --to-board` and the app all follow the setting.
 
 A card is an idea from the first two when the lower bound of its weighted share reaches 0.32
 ([ADR 0026](docs/adr/0026-one-weighted-share-per-card.md)); it goes to the source that plays it more. Each

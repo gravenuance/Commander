@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from commander.board import Origin, read_board
+from commander.board import Origin, Status, read_board
 from commander.carddb import CARD_DB_FILE
 from conftest import DECK_ID, FakeArchidekt, Json, card_entry, deck_page, load_fixture
 from test_cli_apply import Run, run
@@ -466,7 +466,7 @@ def test_to_board_follows_the_tag_search_setting(home: Path, fake: FakeArchidekt
     assert "+1 from tagged decks" in on.err
 
 
-def test_turning_the_tag_search_off_leaves_the_tagged_ideas_on_the_board(
+def test_turning_the_tag_search_off_turns_down_tagged_ideas_the_commanders_lists_do_not_support(
     home: Path, fake: FakeArchidekt
 ) -> None:
     search_by_tag(home)
@@ -479,7 +479,9 @@ def test_turning_the_tag_search_off_leaves_the_tagged_ideas_on_the_board(
     fake.tag_searches.clear()
     assert sync(home, fake).code == 0
     assert fake.tag_searches == []
-    assert read_board(home / "decks" / FOLDER).find("Arcane Signet") == before
+    after = read_board(home / "decks" / FOLDER).find("Arcane Signet")
+    assert after is not None
+    assert (after.status, after.note) == (Status.REJECTED, "no longer makes the cut")
 
 
 def test_sync_leaves_the_decks_own_commanders_decks_out_of_the_tag_search(
