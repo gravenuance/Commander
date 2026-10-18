@@ -34,7 +34,8 @@ Option 2 for both. `sync` compiles up to 50 ideas per source onto each deck's bo
 - **archidekt decks:** the staples of its most-viewed recent decks at the deck's bracket and the one above.
 - **adjacent decks:** the commanders under `[ideas] commanders` in the profile (at most 8; a partner pair as
   one entry), their decks pooled. A pair is searched by its first name and only decks led by both are kept.
-- **tagged decks:** the decks of other commanders carrying one of the deck's theme tags.
+- **tagged decks:** the decks of other commanders carrying one of the deck's theme tags, for decks whose
+  profile sets `[ideas] tag_search = true` (see *Tag search is opt-in* below).
 
 How a card qualifies and where it ranks:
 
@@ -75,9 +76,21 @@ Considering lists the owner's cards first, then Claude's, then the four sources 
 within a group, over-budget cards last, then by the share the pill shows (the pool share for alike and tagged
 ideas).
 
+## Tag search is opt-in per deck
+
+The tagged source is off unless the deck's profile sets `[ideas] tag_search = true`, the Settings switch
+"Search decks by tag" in the app; a missing key means off. While it is off, `compile_ideas_with_adjacent`
+passes no tags to `gather_adjacent`, so no tag request goes out, whether from `sync`, `meta --to-board` or
+the app. Alike-commander search is unchanged: it runs for the commanders the profile lists. Tagged ideas
+already on a board stay; turning the search off never removes them.
+
+Why: the c2data analysis found that tag pools add almost nothing beyond the commander's own decks, and each
+tag costs about 1.5 to 2 minutes of paced requests on a first sync. The owner opts a deck in when its theme
+is broad enough to want the pools.
+
 ## Consequences
 
-- A deck with theme tags learns from every commander that plays alike. Each distinct tag costs up to two
+- A deck that searches by tag learns from every commander that plays alike. Each distinct tag costs up to two
   searches of three pages and 15 deck reads, paced as in ADR 0027 and cached for a day; decks sharing a tag
   share the answer.
 - The tagged source is the loosest. It sorts after the others, and its pools are only as good as the tags;

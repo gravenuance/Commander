@@ -8,10 +8,14 @@
   and the bigger the event. It shows as a pill on every grid card but the commander and on each Considering
   card, with the raw count and each source's part in the tooltip. Cut targets, the order within Considering and
   the return of turned-down cards use it.
-- Ideas from tagged decks (ADR 0028): each of a deck's theme tags is searched on Archidekt for recent decks of
-  other commanders, and the cards at least half of a tag's decks play become ideas, named "Archidekt: tagged
-  *tag*" in the breakdown. Considering also names the other sources by where they come from: "Tournament
+- Ideas from tagged decks (ADR 0028), for decks that turn on *Search decks by tag*: each of a deck's theme tags
+  is searched on Archidekt for recent decks of other commanders, and the cards at least half of a tag's decks
+  play become ideas, named "Archidekt: tagged *tag*" in the breakdown. Considering also names the other sources by where they come from: "Tournament
   lists", "Archidekt: *commander* decks" and "Archidekt: alike commanders".
+- A per-deck setting *Search decks by tag* in the app's Settings, off by default (`[ideas] tag_search = true`
+  in `profile.toml`, shown by `cmdr profile`). While it is off, `cmdr sync`, `cmdr meta --to-board` and the
+  app's update make no tag search for the deck, because tag pools added almost nothing beyond the commander's
+  own decks and each tag costs about 1.5 to 2 minutes on a first sync. Tagged ideas already on a board stay.
 - Ideas with no deck card to replace are put on the board as well and listed under *No cut yet* in the app,
   where clicking one offers every deck card but the commander.
 - Cuts of another role or theme (ADR 0029): when like for like leaves a slot free, a deck card of another role

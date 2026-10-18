@@ -300,6 +300,7 @@ ignore = ["Pyrokinesis"]     # found, but not key
 
 [ideas]                      # commanders that play like this one: `sync` learns from their decks too
 commanders = ["The Gitrog Monster", ["Tevesh Szat, Doom of Fools", "Kodama of the East Tree"]]
+tag_search = true            # also learn from decks carrying the deck's theme tags; off when missing
 ```
 
 Every key is optional. `[exclude]`, `bracket_ceiling` and `max_card_eur` apply to the ideas `sync`
@@ -367,11 +368,15 @@ lacks that its profile, bracket ceiling and budget allow:
   commander. List the commanders that play like it under `[ideas] commanders` in its profile (at most eight,
   a partner pair as its own list). Their recent decks form one pool, and cards at least half the pool plays
   become ideas.
-- **tagged decks** ("Archidekt: tagged *tag*"): the deck's theme tags (the Archidekt deck tags that became
-  themes, not play styles, roles or card types) are searched for recent decks of other commanders. Each tag
-  is a pool, read at the deck's bracket and the one above, three search pages per bracket and up to a
-  quarter of `peer_decks` decks. Cards at least half a pool plays become ideas, labelled with the tag.
-  Write the tag under `[themes] ignore` to stop using it.
+- **tagged decks** ("Archidekt: tagged *tag*"), only for a deck that sets `[ideas] tag_search = true` (the
+  Settings switch *Search decks by tag*; off when missing): the deck's theme tags (the Archidekt deck tags
+  that became themes, not play styles, roles or card types) are searched for recent decks of other
+  commanders. Each tag is a pool, read at the deck's bracket and the one above, three search pages per
+  bracket and up to a quarter of `peer_decks` decks. Cards at least half a pool plays become ideas, labelled
+  with the tag. Write the tag under `[themes] ignore` to stop using it. It is off by default because the
+  pools added almost nothing beyond the commander's own decks and each tag costs about 1.5 to 2 minutes on
+  a first sync. Turning it off never removes tagged ideas already on the board. `sync`, `meta --to-board`
+  and the app all follow the setting.
 
 A card is an idea from the first two when the lower bound of its weighted share reaches 0.32
 ([ADR 0026](docs/adr/0026-one-weighted-share-per-card.md)); it goes to the source that plays it more. Each
@@ -424,8 +429,9 @@ grouped by card type with counts and EUR totals. S, M and L above the grid set t
 the commander carries a pill with its weighted share of the lists other players run with the commander, and
 its sources in the tooltip. Click a card to see it large (× or Esc closes it). Copy decklist, next to the commander's name, copies the saved deck
 in TopDeck.gg's decklist format (`~~Commanders~~`, then `~~Mainboard~~`, one `1 Name` a line).
-Settings, beside it, edits two lists in the deck's `profile.toml` with autocomplete: the commanders
-that play alike (`[ideas] commanders`; "+ partner" on one makes a pair) and the themes to ignore
+Settings, beside it, edits the deck's `profile.toml` with autocomplete: the commanders
+that play alike (`[ideas] commanders`; "+ partner" on one makes a pair), the *Search decks by tag* switch
+(`[ideas] tag_search`) and the themes to ignore
 (`[themes] ignore`: the deck's tags, categories and leanings are one click away, and any Tagger tag
 can be typed). Your comments and everything else in the file stay as they are.
 
@@ -632,6 +638,6 @@ Tests use recorded fixture data and never touch the network.
 | Scryfall (`api.scryfall.com/bulk-data`, files on `data.scryfall.io`; card images from `cards.scryfall.io` in the app) | Card facts, rules text, EUR prices, Tagger tags for roles and profiles, card art | One API call per `sync` for the file list; the files themselves have no rate limit. Scryfall updates prices once a day and asks for bulk files rather than per-card calls for lookups like these. Tag data is community-maintained and can change. See [ADR 0001](docs/adr/0001-scryfall-bulk-card-data.md). |
 | Commander Spellbook (`backend.commanderspellbook.com`: `estimate-bracket`, `find-my-combos`) | Bracket estimates, combos, and combos one card short | One request per deck and command, at most four at a time, and none while a cached answer is under 7 days old. Spellbook asks tools to name themselves in the User-Agent, keep to a few calls per user action, stay under about 80 requests a minute, handle 429, and credit and link back to commanderspellbook.com, which `bracket` and `suggest` do in their output. Only card names and quantities are sent. See [ADR 0002](docs/adr/0002-bracket-estimates-from-commander-spellbook.md) and [ADR 0003](docs/adr/0003-suggestions-from-spellbook-and-scryfall.md). |
 | EDHTop16 (`edhtop16.com/api/graphql`) | Tournament lists, spice and the most-played commanders for `meta` and `sync`'s ideas | Requests 1.5 s apart, none while a cached answer is under a day old; malformed entries are skipped and future-dated events left out. Its terms offer the API as-is and forbid excessive automated requests, implying endorsement and redistributing its statistics; reports credit it and stay local. See [ADR 0007](docs/adr/0007-meta-from-edhtop16-archidekt-and-spellbook.md). |
-| Archidekt deck search (`archidekt.com/api/decks/v3/`) | Other players' recent decks for `meta` and `sync`'s ideas | Searches and deck reads 5 s apart, after a 429 a pause of at least 3 minutes; at most 20 search pages and `peer_decks` (60) deck reads per commander, and a quarter of that per deck tag. Search results are cached for a day, each deck read until its owner edits it. Your own decks are left out. Under the same informal permission as the rest of Archidekt's API (ADR 0004). See [ADR 0027](docs/adr/0027-reading-other-players-archidekt-decks.md). |
+| Archidekt deck search (`archidekt.com/api/decks/v3/`) | Other players' recent decks for `meta` and `sync`'s ideas | Searches and deck reads 5 s apart, after a 429 a pause of at least 3 minutes; at most 20 search pages and `peer_decks` (60) deck reads per commander, and a quarter of that per deck tag, for decks that search by tag. Search results are cached for a day, each deck read until its owner edits it. Your own decks are left out. Under the same informal permission as the rest of Archidekt's API (ADR 0004). See [ADR 0027](docs/adr/0027-reading-other-players-archidekt-decks.md). |
 | Commander Spellbook (`find-my-combos`, for `meta`) | The combos the most-played commanders' lists run | One request per meta commander, 1 s apart, cached for 7 days. |
 | EDHREC (via Scryfall's `edhrec_rank`) | Popularity ranks for `suggest` | Never contacted: the rank comes inside Scryfall's bulk files. EDHREC's terms forbid automated requests to its site. |
