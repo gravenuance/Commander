@@ -1,4 +1,5 @@
-"""A full sync: the decks, the card data, the account's labels, the boards and the ideas (ADR 0023).
+"""A full sync: the decks, the card data, the account's labels, the ideas and the re-judging of the open ones
+(ADR 0023).
 
 `cmdr sync` and the app's Sync button both run it; neither prints from in here, so
 each failure comes back as a warning to show the way the caller shows things.

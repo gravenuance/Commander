@@ -13,8 +13,8 @@ commanders that play alike also gets the cards at least half of their pooled rec
 decks"), each tag's decks a pool of their own. Ideas pass the profile's exclusions, bracket ceiling and
 price cap; below bracket 5 also the deck's budget (ADR 0025), those within its working budget first.
 EDHREC is never asked (ADR 0003): its rank, from Scryfall's data, only orders the cards an idea could
-replace. Every sync also re-judges the open ideas by cmdr: one that no longer passes its source's test is
-turned down (`rejudge_ideas`).
+replace. Every sync also re-judges the open ideas by cmdr or from the old Maybeboard pick-up: one that no
+longer passes its source's test is turned down (`rejudge_ideas`).
 """
 
 from collections.abc import Callable, Mapping, Sequence
@@ -195,8 +195,9 @@ def compile_ideas(
     the decks of other commanders found by each of the deck's theme tags.
     Ideas cmdr already put on the board for a source count towards its MAX_PER_SOURCE, so repeated syncs
     settle on the current top ideas rather than piling up; cards by you or Claude, or from another source,
-    take no place. A turned-down idea takes no place unless the meta brings it
-    back, and an applied card the deck no longer holds is an idea like any other (`feed_ideas`).
+    take no place. A turned-down idea takes no place unless its weighted share has risen by RETURN_RISE
+    since it was turned down, and an applied card the deck no longer holds is an idea like any other
+    (`feed_ideas`).
     """
     deck = stored.deck
     profile = read_profile(stored.folder)
