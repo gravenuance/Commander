@@ -3,7 +3,7 @@ picks, the deck's own outliers, and which cards the most-played commanders answe
 """
 
 from collections import Counter, defaultdict
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import date, datetime
 from enum import Enum
@@ -229,8 +229,12 @@ def missing_staples(
     *,
     limit: int | None = MAX_ROWS,
     style: PlayStyle = NEUTRAL,
+    is_staple: Callable[[str], bool] | None = None,
 ) -> tuple[CardShare, ...]:
-    """The staples the deck misses: what the play style favours first, what it doesn't need last."""
+    """The staples the deck misses: what the play style favours first, what it doesn't need last.
+
+    A card is a staple by the share thresholds, or by is_staple(name) when the caller judges it.
+    """
     in_deck = {card_key(card.name) for card in deck.main_cards}
     aside = {card_key(card.name) for card in deck.aside_cards}
     counts = _list_counts(performing)
@@ -243,9 +247,12 @@ def missing_staples(
             continue
         share = counts[key] / len(performing) if performing else 0.0
         peer_share = peer_counts[key] / len(peers) if peers else 0.0
-        staple = counts[key] >= MIN_STAPLE_LISTS and share >= STAPLE_SHARE
-        peer_staple = len(peers) >= MIN_PEER_LISTS and peer_share >= PEER_STAPLE_SHARE
-        if staple or peer_staple:
+        if is_staple is not None:
+            wanted = is_staple(names[key])
+        else:
+            staple = counts[key] >= MIN_STAPLE_LISTS and share >= STAPLE_SHARE
+            wanted = staple or (len(peers) >= MIN_PEER_LISTS and peer_share >= PEER_STAPLE_SHARE)
+        if wanted:
             rows.append(
                 CardShare(
                     names[key], counts[key], share, peer_counts[key], peer_share, spice.get(key), key in aside
@@ -291,13 +298,17 @@ def pool_staples(deck: Deck, pool: Sequence[PeerList], db: CardDb) -> tuple[Card
     return missing_staples(deck, (), pool, names, db, limit=None, style=deck_play_style(deck))
 
 
-def all_staples(deck: Deck, data: MetaData, db: CardDb) -> Staples:
+def all_staples(
+    deck: Deck, data: MetaData, db: CardDb, *, is_staple: Callable[[str], bool] | None = None
+) -> Staples:
     """The staples the deck misses, uncapped: what the commander's lists or recent Archidekt decks play."""
     lists = _window(data.lists.data.entries if data.lists.data else (), data.since)
     performing, basis = performing_lists(lists)
     peers = data.peers.data.decks if data.peers.data else ()
     names = _display_names(performing, peers, deck)
-    rows = missing_staples(deck, performing, peers, names, db, limit=None, style=deck_play_style(deck))
+    rows = missing_staples(
+        deck, performing, peers, names, db, limit=None, style=deck_play_style(deck), is_staple=is_staple
+    )
     return Staples(rows, len(performing), basis, len(peers))
 
 

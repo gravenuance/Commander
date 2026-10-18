@@ -22,16 +22,7 @@ from commander.budget import resolved_budget
 from commander.carddb import CardDb
 from commander.deckcache import Clock
 from commander.deckprofile import read_profile, resolve_themes
-from commander.meta import (
-    MIN_PEER_LISTS,
-    MIN_STAPLE_LISTS,
-    PEER_STAPLE_SHARE,
-    STAPLE_SHARE,
-    Basis,
-    Staples,
-    all_staples,
-    pool_staples,
-)
+from commander.meta import MIN_PEER_LISTS, Basis, Staples, all_staples, pool_staples
 from commander.metadata import MetaData, MetaSources, PeerList, Progress, gather_adjacent
 from commander.models import Deck, short_commander_name
 from commander.playstyle import Fit
@@ -52,7 +43,9 @@ class Idea:
 
 
 def staple_ideas(deck: Deck, staples: Staples, since: date) -> list[Idea]:
-    """The missing staples as ideas: "meta" when the EDHTop16 lists make it one, else "archidekt decks"."""
+    """The missing staples as ideas, each from the source that plays it more: "meta" for the EDHTop16 lists
+    (also on a tie), else "archidekt decks". The rows are staples already: `compile_ideas` picks them by the
+    weighted share's lower bound."""
     lists = f"{deck.short_name} lists" if staples.basis is Basis.ALL else f"top-cut {deck.short_name} lists"
     ideas: list[Idea] = []
     # What the deck's play style doesn't need (a Turbo deck's interaction) is no idea for it (ADR 0022).
@@ -63,9 +56,9 @@ def staple_ideas(deck: Deck, staples: Staples, since: date) -> list[Idea]:
         if staples.peers:
             parts.append(f"in {row.peer_lists} of {staples.peers} most-viewed recent Archidekt decks")
         reason = "; ".join(parts)
-        if row.lists >= MIN_STAPLE_LISTS and row.share >= STAPLE_SHARE:
+        if staples.lists and (not staples.peers or row.share >= row.peer_share):
             ideas.append(Idea(row.name, Origin.META, reason, row.share))
-        elif staples.peers >= MIN_PEER_LISTS and row.peer_share >= PEER_STAPLE_SHARE:
+        else:
             ideas.append(Idea(row.name, Origin.DECKS, reason, row.peer_share))
     ideas.sort(key=lambda idea: (-idea.share, idea.name))
     return ideas
@@ -105,9 +98,10 @@ def compile_ideas(
     """
     deck = stored.deck
     profile = read_profile(stored.folder)
-    ideas = staple_ideas(deck, all_staples(deck, data, db), data.since)
+    table = weighted_shares(data, now=now)
+    ideas = staple_ideas(deck, all_staples(deck, data, db, is_staple=table.is_idea), data.since)
     ideas += adjacent_ideas(deck, adjacent, profile.adjacent, db)
-    shares = weighted_shares(data, now=now).fractions() or None
+    shares = table.fractions() or None
     board = read_board(stored.folder)
     main = db.resolve(deck.main_cards)
     infos = db.cards_named(idea.name for idea in ideas)

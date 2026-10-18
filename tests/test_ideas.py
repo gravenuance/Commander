@@ -24,13 +24,11 @@ def share(name: str, lists: int, of_lists: int, peers: int, of_peers: int) -> Ca
     )
 
 
-def test_staples_become_meta_ideas_else_archidekt_deck_ideas_most_played_first(deck: Deck) -> None:
+def test_staples_become_ideas_of_the_source_playing_them_more_most_played_first(deck: Deck) -> None:
     rows = (
         share("Mind Stone", 4, 5, 1, 4),
         share("Lotus Petal", 1, 5, 3, 4),
         share("Jeska's Will", 5, 5, 4, 4),
-        # Too few lists and too few decks: no idea.
-        share("Fury", 1, 5, 1, 4),
     )
     found = staple_ideas(deck, Staples(rows, 5, Basis.TOP_CUT, 4), SINCE)
     assert [(i.name, i.origin) for i in found] == [
@@ -54,13 +52,12 @@ def test_each_source_keeps_its_top_ideas_and_settles(
 ) -> None:
     monkeypatch.setattr(ideas_module, "MAX_PER_SOURCE", 1)
     stored = StoredDeck(tmp_path, deck)
-    lists = [entry(i, 40, 8, [("Mind Stone", 0), ("Jeska's Will", 0)]) for i in range(1, 6)]
-    # Mana Crypt is the most played, but banned: the board refuses it, so it takes no place.
-    peers = [
-        peer(1, ["Mana Crypt", "Arcane Signet"]),
-        peer(2, ["Mana Crypt", "Arcane Signet"]),
-        peer(3, ["Mana Crypt"]),
+    lists = [
+        entry(i, 40, 8, [("Mind Stone", 0), ("Jeska's Will", 0), *([("Arcane Signet", 0)] if i <= 4 else [])])
+        for i in range(1, 11)
     ]
+    # Mana Crypt is as played as any, but banned: the board refuses it, so it takes no place.
+    peers = [peer(i, ["Mana Crypt", "Arcane Signet", "Mind Stone", "Jeska's Will"]) for i in range(1, 11)]
     data = meta_data(lists, peers)
 
     first = compile_ideas(stored, data, db, now=lambda: NOW)
@@ -107,16 +104,13 @@ def test_below_bracket_5_a_turned_down_idea_comes_back_when_recent_decks_take_to
     stored = StoredDeck(tmp_path, deck)
     service = BoardService(tmp_path, deck, db, now=lambda: NOW)
 
-    def decks(playing: int) -> list[PeerList]:
-        return [peer(i, ["Arcane Signet"] if i <= playing else ["Unknown Card"]) for i in range(1, 11)]
-
-    [signet] = compile_ideas(stored, meta_data([], decks(5)), db, now=lambda: NOW)[Origin.DECKS]
-    # Turned down at 5 of 10 decks, so it only returns at 70%.
-    service.decide(signet.id, Status.REJECTED, Actor.YOU, share=0.5)
-    assert compile_ideas(stored, meta_data([], decks(6)), db, now=lambda: NOW)[Origin.DECKS] == []
-    [back] = compile_ideas(stored, meta_data([], decks(8)), db, now=lambda: NOW)[Origin.DECKS]
+    [signet] = compile_ideas(stored, meta_data([], decks_playing(7, 10)), db, now=lambda: NOW)[Origin.DECKS]
+    # Turned down at 7 of 10 decks, so it only returns at 90%.
+    service.decide(signet.id, Status.REJECTED, Actor.YOU, share=0.7)
+    assert compile_ideas(stored, meta_data([], decks_playing(8, 10)), db, now=lambda: NOW)[Origin.DECKS] == []
+    [back] = compile_ideas(stored, meta_data([], decks_playing(10, 10)), db, now=lambda: NOW)[Origin.DECKS]
     assert (back.name, back.status) == ("Arcane Signet", Status.OPEN)
-    assert back.reason.startswith("back: in 80% of the lists read, up from 50% when turned down")
+    assert back.reason.startswith("back: in 100% of the lists read, up from 70% when turned down")
 
 
 def test_a_turned_down_idea_with_no_share_noted_gets_the_decks_as_its_baseline(
@@ -133,12 +127,15 @@ def test_a_turned_down_idea_with_no_share_noted_gets_the_decks_as_its_baseline(
 
 
 def compiled_names(folder: Path, deck: Deck, db: CardDb, profile: str) -> dict[Origin, list[str]]:
-    """What one compile adds with this profile.toml, from lists playing Mind Stone and Jeska's Will and
-    Archidekt decks playing Arcane Signet."""
+    """What one compile adds with this profile.toml, from ten lists playing Mind Stone and Jeska's Will (four
+    also Arcane Signet) and ten Archidekt decks playing all three, so Arcane Signet is the decks' idea."""
     folder.mkdir()
     (folder / "profile.toml").write_text(profile, encoding="utf-8")
-    lists = [entry(i, 40, 8, [("Mind Stone", 0), ("Jeska's Will", 0)]) for i in range(1, 6)]
-    peers = [peer(i, ["Arcane Signet"]) for i in range(1, 4)]
+    lists = [
+        entry(i, 40, 8, [("Mind Stone", 0), ("Jeska's Will", 0), *([("Arcane Signet", 0)] if i <= 4 else [])])
+        for i in range(1, 11)
+    ]
+    peers = [peer(i, ["Arcane Signet", "Mind Stone", "Jeska's Will"]) for i in range(1, 11)]
     added = compile_ideas(StoredDeck(folder, deck), meta_data(lists, peers), db, now=lambda: NOW)
     return {origin: sorted(card.name for card in cards) for origin, cards in added.items()}
 
@@ -215,3 +212,20 @@ def test_a_pool_under_three_decks_or_a_profile_naming_none_gives_no_adjacent_ide
     pool.append(peer(3, ["Arcane Signet"]))
     added = compile_ideas(StoredDeck(unnamed, deck), meta_data([], []), db, now=lambda: NOW, adjacent=pool)
     assert added[Origin.ADJACENT] == []
+
+
+def decks_playing(playing: int, total: int) -> list[PeerList]:
+    return [peer(i, ["Arcane Signet"] if i <= playing else ["Unknown Card"]) for i in range(1, total + 1)]
+
+
+def test_a_card_is_an_idea_when_the_wilson_lower_bound_of_its_share_reaches_32_percent(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    # Ten equal decks: 7 playing it have a lower bound of 0.397, 6 of 0.313.
+    for playing, expected in ((7, ["Arcane Signet"]), (6, [])):
+        folder = tmp_path / f"playing-{playing}"
+        folder.mkdir()
+        added = compile_ideas(
+            StoredDeck(folder, deck), meta_data([], decks_playing(playing, 10)), db, now=lambda: NOW
+        )
+        assert [c.name for c in added[Origin.DECKS]] == expected

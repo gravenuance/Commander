@@ -562,19 +562,14 @@ def test_meta_opens_from_cache_and_refreshes_on_demand(desk: Desk, fake: FakeArc
     assert [k["name"] for k in cast("list[Json]", fresh["keys"])][:1] == ["Magda, Brazen Outlaw"]
     # The refresh, and only the refresh, put the meta's staples on the board as cmdr's suggestions.
     board = items(desk.deck(DECK), "cards")
-    assert sorted((c["name"], c["source"], c["origin"]) for c in board) == [
-        ("Jeska's Will", "cmdr", "meta"),
-        ("Mind Stone", "cmdr", "meta"),
-    ]
-    # Their share, for ordering Considering: of the six lists with a decklist, Mind Stone is in the first five
-    # and Jeska's Will in the first two; the sixth, 20th of 40, weighs 0.525 against 1 to 0.9 for the others.
-    shares = {c["name"]: cast("Json", c["share"]) for c in board}
-    assert {name: (s["count"], s["total"]) for name, s in shares.items()} == {
-        "Jeska's Will": (2, 6),
-        "Mind Stone": (5, 6),
-    }
-    assert shares["Mind Stone"]["share"] == pytest.approx(4.75 / 5.275, abs=1e-4)
-    assert shares["Jeska's Will"]["share"] == pytest.approx(1.975 / 5.275, abs=1e-4)
+    # Jeska's Will, in 2 of the 6 lists, is under the Wilson bar.
+    assert sorted((c["name"], c["source"], c["origin"]) for c in board) == [("Mind Stone", "cmdr", "meta")]
+    # Its share, for ordering Considering: of the six lists with a decklist, Mind Stone is in the first five;
+    # the sixth, 20th of 40, weighs 0.525 against 1 to 0.9 for the others.
+    [stone] = board
+    share = cast("Json", stone["share"])
+    assert (share["count"], share["total"]) == (5, 6)
+    assert share["share"] == pytest.approx(4.75 / 5.275, abs=1e-4)
     desk.meta(DECK)
     assert len(items(desk.deck(DECK), "cards")) == len(board)
 
@@ -590,7 +585,6 @@ def test_refreshing_meta_also_learns_from_the_commanders_the_profile_names_as_al
     board = items(desk.deck(DECK), "cards")
     assert sorted((c["name"], c["origin"]) for c in board) == [
         ("Arcane Signet", "adjacent decks"),
-        ("Jeska's Will", "meta"),
         ("Mind Stone", "meta"),
     ]
 

@@ -3,6 +3,9 @@
 Each list or deck gets a weight, recent and well placed ones more. A source's weights are scaled to a mean
 of one, so each list still counts as about one vote and the weights only reorder within a source; the two
 sources then pool by their list counts. A card counts once per list.
+
+A card is only an idea when the lower bound of its share is high enough: the Wilson score interval, taken on
+the Kish effective sample size of the weights, so a few heavy lists count as the few they are.
 """
 
 import math
@@ -24,6 +27,10 @@ EVENT_SIZE_BASE = 16
 MIN_SIZE_FACTOR = 0.25
 # EDHTop16 gives some entries no standing: they weigh as the middle of the field.
 UNKNOWN_PERCENTILE = 0.5
+# 95% confidence, two-sided.
+WILSON_Z = 1.96
+# A card is an idea when the Wilson lower bound of its weighted share reaches this (a backtest's best F1).
+IDEA_LOWER_BOUND = 0.32
 
 
 @dataclass(slots=True, frozen=True)
@@ -54,6 +61,8 @@ class ShareTable:
     cards: Mapping[str, WeightedShare]
     # What a card no list plays gets: none of the lists read.
     absent: WeightedShare
+    # The Kish effective sample size of every list's weight; 0 when no list was read.
+    effective_n: float = 0.0
 
     def __bool__(self) -> bool:
         return self.absent.total > 0
@@ -66,10 +75,32 @@ class ShareTable:
         """Just the weighted shares, by `card_key`."""
         return {key: share.share for key, share in self.cards.items()}
 
+    def is_idea(self, name: str) -> bool:
+        """Whether the Wilson lower bound of the card's weighted share, on the effective sample size, reaches
+        IDEA_LOWER_BOUND."""
+        share = self.cards.get(card_key(name), self.absent)
+        return wilson_lower_bound(share.share, self.effective_n) >= IDEA_LOWER_BOUND
+
 
 # The key of no card, which no list plays.
 _NO_CARD = ""
 NO_SHARES = ShareTable({}, WeightedShare(0.0, 0, 0, None, None))
+
+
+def wilson_lower_bound(share: float, n: float, z: float = WILSON_Z) -> float:
+    """The lower end of the Wilson score interval for a share seen in n trials; 0 without any."""
+    if n <= 0:
+        return 0.0
+    centre = share + z * z / (2 * n)
+    margin = z * math.sqrt(share * (1 - share) / n + z * z / (4 * n * n))
+    return max((centre - margin) / (1 + z * z / n), 0.0)
+
+
+def effective_sample_size(weights: Iterable[float]) -> float:
+    """Kish's n = (sum w)^2 / sum w^2: how many equally weighted lists would carry as much evidence."""
+    held = list(weights)
+    squares = sum(w * w for w in held)
+    return sum(held) ** 2 / squares if squares > 0 else 0.0
 
 
 def recency_weight(age_days: float) -> float:
@@ -118,7 +149,9 @@ def weighted_shares(data: MetaData | None, *, now: Clock) -> ShareTable:
         for key in meta.count.keys() | archidekt.count.keys()
     }
     return ShareTable(
-        cards, WeightedShare(0.0, 0, total, meta.share_of(_NO_CARD), archidekt.share_of(_NO_CARD))
+        cards,
+        WeightedShare(0.0, 0, total, meta.share_of(_NO_CARD), archidekt.share_of(_NO_CARD)),
+        effective_sample_size([*meta.scaled, *archidekt.scaled]),
     )
 
 
@@ -137,6 +170,8 @@ class _Source:
     # Per card, the scaled weights of the lists playing it summed, and how many lists play it.
     weight: Mapping[str, float]
     count: Mapping[str, int]
+    # The list weights scaled to a mean of one.
+    scaled: Sequence[float]
 
     @classmethod
     def of(cls, held: Sequence[frozenset[str]], weights: Sequence[float]) -> "_Source":
@@ -147,7 +182,7 @@ class _Source:
             for key in keys:
                 weight[key] = weight.get(key, 0.0) + w
                 count[key] = count.get(key, 0) + 1
-        return cls(len(held), weight, count)
+        return cls(len(held), weight, count, scaled)
 
     def share_of(self, key: str) -> SourceShare | None:
         if not self.total:

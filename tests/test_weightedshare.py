@@ -8,15 +8,19 @@ import pytest
 from commander.archidekt import PeerDeck
 from commander.metadata import PeerList
 from commander.weightedshare import (
+    IDEA_LOWER_BOUND,
     MIN_SIZE_FACTOR,
+    ShareTable,
     SourceShare,
     WeightedShare,
+    effective_sample_size,
     placement_weight,
     recency_weight,
     share_reason,
     share_tip,
     size_factor,
     weighted_shares,
+    wilson_lower_bound,
 )
 from test_meta import NOW, entry, meta_data
 
@@ -161,3 +165,63 @@ def test_the_wording_names_the_sources_there_are() -> None:
     decks = WeightedShare(0.27, 4, 15, None, SourceShare(0.27, 4, 15))
     assert share_reason(decks) == "in 27% of recent decks (4/15)"
     assert share_tip(decks) == "Archidekt 27% (4/15 decks)"
+
+
+def test_the_wilson_lower_bound_matches_hand_computed_values() -> None:
+    # 50 of 100: the textbook 95% interval is 0.4038 to 0.5962.
+    assert wilson_lower_bound(0.5, 100) == pytest.approx(0.4038, abs=1e-4)
+    # 1 of 1: 1 / (1 + z^2) from the closed form.
+    assert wilson_lower_bound(1.0, 1) == pytest.approx(0.2065, abs=1e-4)
+    assert wilson_lower_bound(1.0, 3) == pytest.approx(0.4385, abs=1e-4)
+    assert wilson_lower_bound(0.6, 10) == pytest.approx(0.3127, abs=1e-4)
+    assert wilson_lower_bound(0.7, 10) == pytest.approx(0.3968, abs=1e-4)
+    # A looser z gives a higher bound: 80% confidence, z = 1.2816.
+    assert wilson_lower_bound(0.5, 100, z=1.2816) == pytest.approx(0.4364, abs=1e-4)
+
+
+def test_the_wilson_lower_bound_of_nothing_seen_or_a_card_no_list_plays_is_zero() -> None:
+    assert wilson_lower_bound(0.5, 0) == 0.0
+    assert wilson_lower_bound(0.5, -1) == 0.0
+    assert wilson_lower_bound(0.0, 20) == pytest.approx(0.0, abs=1e-12)
+
+
+def test_the_kish_effective_sample_size_shrinks_as_the_weights_spread() -> None:
+    assert effective_sample_size([1, 1, 1, 1]) == pytest.approx(4.0)
+    # (2 + 1 + 1)^2 / (4 + 1 + 1) = 16 / 6.
+    assert effective_sample_size([2, 1, 1]) == pytest.approx(8 / 3)
+    # Scaling every weight changes nothing.
+    assert effective_sample_size([0.5, 0.25, 0.25]) == pytest.approx(8 / 3)
+    assert effective_sample_size([]) == 0.0
+    assert effective_sample_size([0.0, 0.0]) == 0.0
+
+
+def test_the_table_takes_its_effective_sample_size_from_every_scaled_weight() -> None:
+    peers = [
+        peer_at(1, ["Mind Stone"], NOW),
+        peer_at(2, ["Fury"], datetime(2026, 9, 15, 12, 0, tzinfo=UTC)),
+        peer_at(3, ["Fury"], datetime(2026, 9, 15, 12, 0, tzinfo=UTC)),
+    ]
+    # Weights 1, 0.5, 0.5 scale to 1.5, 0.75, 0.75: 3^2 / (2.25 + 0.5625 + 0.5625).
+    table = weighted_shares(meta_data([], peers), now=lambda: NOW)
+    assert table.effective_n == pytest.approx(8 / 3)
+    assert weighted_shares(None, now=lambda: NOW).effective_n == 0.0
+
+
+def test_a_card_is_an_idea_from_a_lower_bound_of_32_percent() -> None:
+    assert IDEA_LOWER_BOUND == 0.32
+    seen = WeightedShare(0.0, 0, 10, None, None)
+
+    def table(share: float, n: float) -> ShareTable:
+        card = WeightedShare(share, round(share * 10), 10, None, SourceShare(share, round(share * 10), 10))
+        return ShareTable({"mind stone": card}, seen, n)
+
+    # Lower bounds 0.3968 and 0.3127 at ten lists.
+    assert table(0.7, 10).is_idea("Mind Stone")
+    assert not table(0.6, 10).is_idea("Mind Stone")
+    # The same share on a fifth of the evidence is not enough, and on ten times of it is.
+    assert not table(0.7, 2).is_idea("Mind Stone")
+    assert table(0.42, 100).is_idea("Mind Stone")
+    assert not table(0.4, 100).is_idea("Mind Stone")
+    # A card no list plays, and a table with no lists at all.
+    assert not table(0.7, 10).is_idea("Fury")
+    assert not ShareTable({}, WeightedShare(0.0, 0, 0, None, None)).is_idea("Mind Stone")

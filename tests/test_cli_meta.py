@@ -215,7 +215,7 @@ def test_json_combos_carry_short_commander_names_and_answer_roles(home: Path, fa
 def test_to_board_suggests_the_missing_staples_once(home: Path, fake: FakeArchidekt) -> None:
     first = meta(home, fake, "magda", "--to-board")
     assert first.code == 0, first.err
-    assert "Magda board: +2 from meta\n" in first.err
+    assert "Magda board: +1 from meta\n" in first.err
     board = read_board(home / "decks" / FOLDER)
     card = board.find("Mind Stone")
     assert card is not None
@@ -294,10 +294,12 @@ def sync(home: Path, fake: FakeArchidekt, *args: str) -> Run:
 def test_sync_compiles_the_meta_staples_into_considering_once(home: Path, fake: FakeArchidekt) -> None:
     first = sync(home, fake)
     assert first.code == 0, first.err
-    assert "Magda ideas: +2 from meta\n" in first.out
-    card = read_board(home / "decks" / FOLDER).find("Jeska's Will")
+    assert "Magda ideas: +1 from meta\n" in first.out
+    card = read_board(home / "decks" / FOLDER).find("Mind Stone")
     assert card is not None
     assert card.origin is Origin.META
+    # In 2 of 5 lists, Jeska's Will is under the Wilson bar that 5 of 5 clears.
+    assert read_board(home / "decks" / FOLDER).find("Jeska's Will") is None
     again = sync(home, fake)
     assert again.code == 0, again.err
     assert "ideas:" not in again.out
@@ -308,7 +310,7 @@ def test_sync_json_lists_each_decks_new_ideas_by_source(home: Path, fake: FakeAr
     assert result.code == 0, result.err
     ideas = json.loads(result.out)["ideas"]
     assert ideas.keys() == {"Magda"}
-    assert sorted(ideas["Magda"]["meta"]) == ["Jeska's Will", "Mind Stone"]
+    assert ideas["Magda"]["meta"] == ["Mind Stone"]
     assert ideas["Magda"]["archidekt decks"] == []
 
 
@@ -325,11 +327,11 @@ def test_sync_below_bracket_5_learns_from_recent_archidekt_decks_alone(
 ) -> None:
     fake.decks[DECK_ID]["edhBracket"] = 3
     fake.decks[DECK_ID]["updatedAt"] = "2026-10-14T10:00:00.000000Z"
-    # Three peers, the fewest that make staples; two of them play Arcane Signet.
+    # Three peers, all of which play Arcane Signet: a lower bound of 0.44.
     peers = (PEER_ID, PEER_ID + 1, PEER_ID + 2)
     for peer_id in peers[1:]:
         fake.put({**fake.decks[PEER_ID], "id": peer_id})
-    for peer_id in peers[:2]:
+    for peer_id in peers:
         fake.decks[peer_id]["cards"].append(card_entry(9_100, "Arcane Signet", ["Ramp"]))
     fake.peer_page = deck_page([{**peer_row(p, "someone", 120), "edhBracket": 3} for p in peers])
     result = sync(home, fake)
@@ -377,7 +379,7 @@ def test_sync_learns_from_the_commanders_the_profile_names_as_alike(home: Path, 
     put_ygra_decks(fake)
     result = sync(home, fake)
     assert result.code == 0, result.err
-    assert "Magda ideas: +2 from meta, +1 from adjacent decks\n" in result.out
+    assert "Magda ideas: +1 from meta, +1 from adjacent decks\n" in result.out
     card = read_board(home / "decks" / FOLDER).find("Arcane Signet")
     assert card is not None
     assert (card.origin, card.reason) == (Origin.ADJACENT, "in 2 of 3 recent Ygra decks")
@@ -390,7 +392,7 @@ def test_to_board_learns_from_the_commanders_the_profile_names_as_alike(
     put_ygra_decks(fake)
     result = meta(home, fake, "magda", "--to-board")
     assert result.code == 0, result.err
-    assert "Magda board: +2 from meta, +1 from adjacent decks\n" in result.err
+    assert "Magda board: +1 from meta, +1 from adjacent decks\n" in result.err
     card = read_board(home / "decks" / FOLDER).find("Arcane Signet")
     assert card is not None
     assert (card.origin, card.reason) == (Origin.ADJACENT, "in 2 of 3 recent Ygra decks")
@@ -404,7 +406,7 @@ def test_to_board_names_an_alike_commander_it_cannot_search_and_carries_on(
     result = meta(home, fake, "magda", "--to-board")
     assert result.code == 0, result.err
     assert "cmdr: Magda: no recent Ygra, Eater of All decks to learn from (" in result.err
-    assert "Magda board: +2 from meta\n" in result.err
+    assert "Magda board: +1 from meta\n" in result.err
 
 
 def test_sync_names_an_alike_commander_it_cannot_search_and_carries_on(
@@ -416,4 +418,4 @@ def test_sync_names_an_alike_commander_it_cannot_search_and_carries_on(
     result = sync(home, fake)
     assert result.code == 0, result.err
     assert "cmdr: Magda: no recent Ygra, Eater of All decks to learn from (" in result.err
-    assert "Magda ideas: +2 from meta\n" in result.out
+    assert "Magda ideas: +1 from meta\n" in result.out
