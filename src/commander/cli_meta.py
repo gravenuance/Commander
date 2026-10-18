@@ -225,7 +225,7 @@ def print_report(report: MetaReport, out: TextIO) -> None:
 
 def _print_missing(report: MetaReport, out: TextIO) -> None:
     style = report.style.label
-    weighed = f"; {style} plan first" if style else ""
+    weighed = f"; weighed for {style}" if style else ""
     print(f"\nStaples you don't play (share of lists read · recent Archidekt lists{weighed})", file=out)
     if not report.missing:
         print("  none", file=out)

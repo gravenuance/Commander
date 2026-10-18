@@ -252,7 +252,8 @@ def test_a_turbo_deck_races_the_meta_combos_instead_of_answering_them(
     assert table[1].split()[-2:] == ["racing", "thin"]
     lines = meta(home, fake, "magda").out.splitlines()
     assert any(
-        line.startswith("Staples you don't play (") and line.endswith("; turbo plan first)") for line in lines
+        line.startswith("Staples you don't play (") and line.endswith("; weighed for turbo)")
+        for line in lines
     )
     unanswered = [line.strip() for line in lines if line.strip().startswith("no answer in the deck")]
     assert unanswered

@@ -233,7 +233,7 @@ def missing_staples(
     style: PlayStyle = NEUTRAL,
     is_staple: Callable[[str], bool] | None = None,
 ) -> tuple[CardShare, ...]:
-    """The staples the deck misses: what the play style favours first, what it doesn't need last.
+    """The staples the deck misses, highest share times play-style weight first.
 
     A card is a staple by the share thresholds, or by is_staple(name) when the caller judges it.
     """
