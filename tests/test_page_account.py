@@ -145,6 +145,33 @@ def test_a_sign_in_closes_the_dialog_and_lists_the_accounts_decks() -> None:
     }
 
 
+def test_after_a_sign_in_focus_lands_on_the_first_deck() -> None:
+    focus = run("""
+    setupAccount();
+    stub.sign_in = async () => account();
+    stub.decks = async () => ({ decks });
+    openSignIn();
+    await fire($("signin-form"), "submit");
+    await settle();
+    const on = document.activeElement;
+    return [on.className, on.parentNode.getAttribute("data-id")];
+    """)
+    assert focus == ["deck-button", "1"]
+
+
+def test_after_a_sign_in_to_an_account_without_decks_focus_lands_on_sync() -> None:
+    focus = run("""
+    setupAccount();
+    stub.sign_in = async () => account();
+    stub.decks = async () => ({ decks: [] });
+    openSignIn();
+    await fire($("signin-form"), "submit");
+    await settle();
+    return document.activeElement.id;
+    """)
+    assert focus == "sync-decks"
+
+
 def test_signing_out_empties_the_page_before_the_sign_in_dialog_opens() -> None:
     seen = run("""
     setupAccount();

@@ -152,6 +152,8 @@ async function signIn() {
     enterAccount(answer);
     $("signin-dialog").close();
     await showAccountDecks();
+    // The dialog's opener is hidden by now, so focus would fall to the page body.
+    ($("deck-list").querySelector(".deck-button") ?? $("sync-decks")).focus();
   } catch {
     $("signin-error").textContent = "Signing in failed; the details are in the log.";
     $("signin-error").hidden = false;

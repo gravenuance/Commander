@@ -209,6 +209,8 @@ class FakeElement {
   close() {
     if (!this.open) return;
     this.open = false;
+    // Focus inside a closed dialog is lost, as in the browser when the opener is hidden by then.
+    if (this.contains(this.ownerDocument.activeElement)) this.ownerDocument.activeElement = this.ownerDocument.body;
     this.dispatchEvent(makeEvent("close"));
   }
 }
