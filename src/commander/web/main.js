@@ -7,7 +7,7 @@ const POLL_MS = 2000;
 async function poll() {
   try {
     const answer = await window.pywebview.api.stamps();
-    if (!answer.error) {
+    if (!answer.error && accountState.active) {
       const stamps = answer.stamps;
       const key = String(state.current);
       const changed = JSON.stringify(stamps) !== JSON.stringify(state.stamps);
@@ -43,12 +43,18 @@ window.addEventListener("pywebviewready", async () => {
   $("status-close").addEventListener("click", hideStatus);
   try {
     const account = await loadAccount();
-    if (account && !account.user) openSignIn();
-    await loadDecks();
-    const answer = await window.pywebview.api.stamps();
-    if (!answer.error) {
-      state.stamps = answer.stamps;
-      state.metaStamp = answer.meta;
+    if (account && !account.signedIn) {
+      // No lists until a sign-in succeeds; the dialog opens over the empty page.
+      showSignedOut();
+      openSignIn();
+    } else {
+      enterAccount(account);
+      await loadDecks();
+      const answer = await window.pywebview.api.stamps();
+      if (!answer.error) {
+        state.stamps = answer.stamps;
+        state.metaStamp = answer.meta;
+      }
     }
   } catch {
     $("loading").hidden = true;

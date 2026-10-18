@@ -2,7 +2,10 @@
 
 /* Account: who is signed in, signing in and out, and the app's sync (ADR 0023) */
 
-const accountState = { user: null, signedIn: false, syncing: false };
+// `active` is whether the page shows an account: it is false until a sign-in succeeds, and again after any way
+// out of the sign-in dialog without one. It is the page's own state; the bridge keeps the config's account.
+// `epoch` counts the changes of that, so a deck answer that outlives its account is dropped.
+const accountState = { user: null, signedIn: false, syncing: false, active: false, epoch: 0 };
 
 // Each sync button with the line under it that says why it cannot be pressed, or what the sync is doing.
 const SYNC_ROWS = [["sync-decks", "sync-status"], ["no-decks-sync", "no-decks-note"]];
@@ -16,6 +19,13 @@ function setupAccount() {
   $("sync-decks").addEventListener("click", startSync);
   $("no-decks-sync").addEventListener("click", startSync);
   $("signin-cancel").addEventListener("click", () => $("signin-dialog").close());
+  $("signed-out-sign-in").addEventListener("click", openSignIn);
+  // Not now, Escape and every other way out land here: without a sign-in the page shows no one.
+  $("signin-dialog").addEventListener("close", () => {
+    if (accountState.active && accountState.signedIn) return;
+    showSignedOut();
+    $("signed-out-sign-in").focus();
+  });
   $("signin-form").addEventListener("submit", (event) => {
     event.preventDefault();
     signIn();
@@ -35,17 +45,31 @@ async function loadAccount() {
 function renderAccount(a) {
   const wasSyncing = accountState.syncing;
   Object.assign(accountState, { user: a.user, signedIn: a.signedIn, syncing: a.sync.running });
+  setMetaUpdating(a.sync.running);
+  if (!accountState.active) {
+    paintSignedOut();
+    return;
+  }
   const name = $("account-name");
   name.textContent = a.user || "";
   name.title = !a.user ? "" : a.signedIn ? `Signed in to Archidekt as ${a.user}` : `${a.user}, not signed in`;
   $("sign-in").hidden = Boolean(a.user && a.signedIn);
   $("sign-out").hidden = !a.user;
   paintSync(a.sync.running, !a.user, a.sync.running ? a.sync.progress : a.user ? "" : NO_ACCOUNT_NOTE);
-  setMetaUpdating(a.sync.running);
   if (wasSyncing && !a.sync.running && a.sync.summary) {
     showStatus(a.sync.summary, a.sync.failed);
     reloadAfterSync();
   }
+}
+
+// The foot of the deck list while the page has no account: no name, Sync off with its note, Sign in offered.
+function paintSignedOut() {
+  const name = $("account-name");
+  name.textContent = "";
+  name.title = "";
+  $("sign-in").hidden = false;
+  $("sign-out").hidden = true;
+  paintSync(false, true, NO_ACCOUNT_NOTE);
 }
 
 // A sync button is disabled while a sync runs, and without an account to sync; the note says which.
@@ -70,6 +94,39 @@ async function reloadAfterSync() {
   } catch { /* shown in the status line */ }
 }
 
+// True when an answer asked for under `epoch` belongs to an account the page no longer shows.
+function pageUserGone(epoch) {
+  return epoch !== accountState.epoch || !accountState.active;
+}
+
+// The page shows this account from now on; the caller loads its decks. `answer` is null when it could not be read.
+function enterAccount(answer) {
+  accountState.epoch++;
+  accountState.active = true;
+  $("signed-out").hidden = true;
+  if (answer) renderAccount(answer);
+}
+
+// Empties the page of the account's decks: the list, the deck, the rail panels and the name, then offers Sign in.
+function showSignedOut() {
+  accountState.epoch++;
+  accountState.active = false;
+  state.decks = [];
+  state.current = null;
+  state.view = null;
+  state.stamps = {};
+  renderDecks();
+  renderActivity([]);
+  $("mana").replaceChildren();
+  manaPanel.forget();
+  $("deck").hidden = true;
+  $("loading").hidden = true;
+  $("no-decks").hidden = true;
+  $("copy-to-buy").hidden = true;
+  $("signed-out").hidden = false;
+  paintSignedOut();
+}
+
 function openSignIn() {
   $("signin-user").value = accountState.user || "";
   $("signin-password").value = "";
@@ -91,10 +148,9 @@ async function signIn() {
       password.focus();
       return;
     }
-    const switched = answer.user !== accountState.user;
+    enterAccount(answer);
     $("signin-dialog").close();
-    renderAccount(answer);
-    if (switched) await showAccountDecks();
+    await showAccountDecks();
   } catch {
     $("signin-error").textContent = "Signing in failed; the details are in the log.";
     $("signin-error").hidden = false;
@@ -105,18 +161,25 @@ async function signIn() {
   }
 }
 
-// Another account's decks live in another folder: start the deck list over.
+// The page starts over with the account's decks, which may live in another folder than the last ones.
 async function showAccountDecks() {
   state.current = null;
   state.view = null;
   state.stamps = {};
   $("deck").hidden = true;
-  await loadDecks();
+  $("loading").hidden = false;
+  try {
+    await loadDecks();
+  } finally {
+    $("loading").hidden = true;
+  }
 }
 
 async function signOut() {
   try {
-    renderAccount(await api("sign_out"));
+    const answer = await api("sign_out");
+    showSignedOut();
+    renderAccount(answer);
     openSignIn();
   } catch { /* shown in the status line */ }
 }

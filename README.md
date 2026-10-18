@@ -400,7 +400,10 @@ and a new account gets a sibling folder named `decks-<username>`, or `Documents\
 when no folder was set. Signing in as a new account syncs its decks at once. The foot of the deck list shows
 who is signed in, with **Sync** (the same as `cmdr sync`, card data and ideas included, with a spinner and the
 step it is on beneath) and **Sign out**, which removes the saved login. Without an account the button stays,
-off, with "Sign in to sync" beside it. Signing in again finds the same folder.
+off, with "Sign in to sync" beside it. Signing in again finds the same folder. The page lists no decks until a sign-in succeeds: at start without a
+signed-in account the sign-in dialog opens over a blurred, dimmed page, and leaving it any other way (**Not
+now**, Escape) or signing out leaves "Sign in to see your decks" with a **Sign in** button, while the config
+and `cmdr` keep working on the decks.
 
 A sync and a save, a label change, the Mana tab's swaps, a board edit (proposing, deciding or removing a
 card), saving the Settings or a sign-in or sign-out never run together: the one

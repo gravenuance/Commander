@@ -30,7 +30,9 @@ function renderDecks() {
 }
 
 async function loadDecks() {
+  const epoch = accountState.epoch;
   const answer = await api("decks");
+  if (pageUserGone(epoch)) return;
   state.decks = answer.decks;
   $("loading").hidden = true;
   $("no-decks").hidden = state.decks.length > 0;

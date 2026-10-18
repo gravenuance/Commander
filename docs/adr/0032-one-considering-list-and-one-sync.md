@@ -47,6 +47,9 @@ Option 2 each time.
   lists them under that heading (ADR 0029).
 - **Sync:** the button is **Sync**, `cmdr sync`'s twin, with a spinner and the current step beside it. It is
   disabled with its reason shown: while a sync runs, or when no account is signed in ("Sign in to sync").
+  The page counts as signed out until a sign-in succeeds (at start, after Sign out, after dismissing the
+  dialog), so a username in the config no longer keeps Sync on there; only the page changes, not the config or
+  the bridge.
   The Meta panel opens from cache only; while a sync runs it says it is updating, and when it ends it reads
   the report again. The panel's Refresh meta button is removed.
 - **No overlap:** one lock covers the check and the mark. A sync is refused while a save, a label change,

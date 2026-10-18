@@ -33,6 +33,10 @@
   --backdrop: rgb(0 0 0 / 45%);
   --backdrop-strong: rgb(0 0 0 / 72%);
   --overlay: rgb(0 0 0 / 60%);
+  /* Behind the sign-in dialog the app is dimmed and blurred; without the blur the dim alone is stronger. */
+  --signin-dim: rgb(20 18 16 / 50%);
+  --signin-dim-solid: rgb(20 18 16 / 78%);
+  --signin-blur: 8px;
   --on-overlay: #ffffff;
   /* Mana symbols keep their own colours in both themes, each with its own dark ink. */
   --pip-w: #f8f3d8;
@@ -104,6 +108,8 @@
     --claude: #f0a46c;
     --cmdr: #93b4dc;
     --archidekt: #e6b07a;
+    --signin-dim: rgb(0 0 0 / 55%);
+    --signin-dim-solid: rgb(0 0 0 / 82%);
     --shadow: 0 1px 2px rgb(0 0 0 / 40%);
     --shadow-raised: -4px 0 24px rgb(0 0 0 / 55%);
     --on-danger: #1a0d0a;
@@ -810,6 +816,17 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   box-shadow: var(--shadow);
 }
 .dialog::backdrop { background: var(--backdrop); }
+#signin-dialog::backdrop {
+  background: var(--signin-dim-solid);
+  -webkit-backdrop-filter: blur(var(--signin-blur));
+  backdrop-filter: blur(var(--signin-blur));
+}
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  #signin-dialog::backdrop { background: var(--signin-dim); }
+}
+@media (prefers-reduced-transparency: reduce) {
+  #signin-dialog::backdrop { background: var(--signin-dim-solid); -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
 .dialog h2 { margin: 0 0 var(--space-2); font-size: var(--text-l); }
 .changes, .notes { list-style: none; margin: var(--space-3) 0; padding: 0; display: grid; gap: var(--space-1); }
 .changes li { font-family: "Cascadia Mono", Consolas, monospace; font-size: var(--text-s); overflow-wrap: anywhere; }

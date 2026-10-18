@@ -25,6 +25,11 @@
   multipliers on the share (ADR 0031): 1.25 for a clear fit, 1.1 for a borderline one, 0.8 for off-plan.
 
 ### Changed
+- The app's page shows no one until a sign-in succeeds: at start without a signed-in account, after **Sign out**,
+  and after leaving the sign-in dialog any other way (Not now, Escape). The dialog blurs and dims the app
+  behind it, and the page shows "Sign in to see your decks" with a **Sign in** button, no deck list and no
+  account name, and Sync off. The config, the saved login and the CLI are untouched. So Sync is off on a
+  signed-out page even when a username is set.
 - The app's **Update from Archidekt** button is **Sync**. While it runs it shows a spinner and the step it is
   on, and an open Meta panel shows it is updating and rereads its report when the sync ends. Without an
   account the button stays visible, off, with "Sign in to sync" beside it.

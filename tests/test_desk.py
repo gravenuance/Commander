@@ -134,6 +134,41 @@ def test_the_review_dialog_has_an_alert_line_that_a_refusal_fills_as_text() -> N
     assert "problem.hidden = false;" in script
 
 
+def test_the_signed_out_page_has_an_empty_state_with_a_sign_in_button() -> None:
+    html = page_html()
+    empty = html.split('<div id="signed-out" class="state" hidden>', 1)[1].split("</div>", 1)[0]
+    assert 'class="state-icon" aria-hidden="true"' in empty
+    assert "<span>Sign in to see your decks</span>" in empty
+    assert '<button id="signed-out-sign-in" class="button primary" type="button">Sign in</button>' in empty
+
+
+def test_the_sign_in_dialog_blurs_and_dims_the_app_behind_it_with_tokens_for_both_themes() -> None:
+    css = (WEB / "app.css").read_text(encoding="utf-8")
+    assert "#signin-dialog::backdrop {" in css
+    assert "backdrop-filter: blur(var(--signin-blur));" in css
+    assert "@media (prefers-reduced-transparency: reduce)" in css
+    light, dark = css.split("@media (prefers-color-scheme: dark)", 1)
+    for token in ("--signin-dim:", "--signin-dim-solid:", "--signin-blur:"):
+        assert token in light
+    for token in ("--signin-dim:", "--signin-dim-solid:"):
+        assert token in dark.split("* { box-sizing", 1)[0]
+
+
+def test_leaving_the_sign_in_dialog_without_signing_in_empties_the_page() -> None:
+    account = (WEB / "account.js").read_text(encoding="utf-8")
+    assert '$("signin-dialog").addEventListener("close", () => {' in account
+    assert "if (accountState.active && accountState.signedIn) return;" in account
+    assert '$("signed-out-sign-in").focus();' in account
+    assert "function showSignedOut() {" in account
+    assert "paintSync(false, true, NO_ACCOUNT_NOTE);" in account
+    # Startup, sign-out and a deck answer that outlives its account all go through the same gate.
+    main = (WEB / "main.js").read_text(encoding="utf-8")
+    assert "if (account && !account.signedIn) {" in main
+    assert "if (pageUserGone(epoch)) return;" in (WEB / "deck.js").read_text(encoding="utf-8")
+    sign_out = account.split("async function signOut() {", 1)[1].split("async function startSync", 1)[0]
+    assert sign_out.index("showSignedOut();") < sign_out.index("openSignIn();")
+
+
 @pytest.mark.parametrize("script", sorted(WEB.glob("*.js")), ids=lambda path: path.name)
 def test_no_script_writes_markup(script: Path) -> None:
     text = script.read_text(encoding="utf-8")

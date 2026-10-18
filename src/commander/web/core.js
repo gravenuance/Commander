@@ -118,7 +118,12 @@ function panel(loader, renderer, { wanted = () => true, keyOf = JSON.stringify }
       if (deck === state.current) render(deck, answer);
     } catch { /* shown in the status line */ }
   }
-  return { load, render };
+  // Drops what is shown, so the next answer draws even for the deck that was on show.
+  function forget() {
+    shown.deck = null;
+    shown.key = null;
+  }
+  return { load, render, forget };
 }
 
 // A text box that offers matches as you type, as an ARIA combobox over a listbox: arrows move through the
