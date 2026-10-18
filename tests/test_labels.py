@@ -99,7 +99,7 @@ def test_a_label_whose_read_back_fails_says_to_press_update(desk: Desk, fake: Fa
 
     assert result == {
         "error": "Archidekt took the change, but reading the deck back failed "
-        "(https://archidekt.com/api/decks/10004639/ returned HTTP 404). Press Update from Archidekt."
+        "(https://archidekt.com/api/decks/10004639/ returned HTTP 404). Press Sync."
     }
 
 

@@ -21,7 +21,8 @@ from commander.net import Pacer
 from commander.store import StoredDeck, Workspace
 from conftest import REFRESH_TOKEN, FakeArchidekt, Json, MemoryTokenStore
 from test_cli_apply import run
-from test_cli_meta import ALIKE_PROFILE, MAGDA, magda_page, put_ygra_decks
+from test_cli_meta import MAGDA, magda_page
+from test_cli_meta import meta as cli_meta
 from test_meta import meta_data, peer
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
@@ -67,6 +68,12 @@ def desk(settings: DeskSettings, fake: FakeArchidekt) -> Desk:
     return make_desk(settings, fake)
 
 
+def fetch_meta(settings: DeskSettings, fake: FakeArchidekt) -> None:
+    """Fill the meta cache and the board's ideas as a sync does, which the desk's panel only reads."""
+    result = cli_meta(settings.workspace.parent, fake, "magda", "--to-board")
+    assert result.code == 0, result.err
+
+
 def items(answer: Json, key: str) -> list[Json]:
     return cast("list[Json]", answer[key])
 
@@ -106,6 +113,16 @@ def test_every_script_file_is_inlined_into_the_page() -> None:
     assert len(scripts) > 1
     for script in scripts:
         assert script.read_text(encoding="utf-8") in html, script.name
+
+
+def test_every_sync_button_has_a_note_that_says_why_it_is_off_and_the_meta_has_no_refresh() -> None:
+    html = page_html()
+    for button, note in (("sync-decks", "sync-status"), ("no-decks-sync", "no-decks-note")):
+        assert f'id="{button}"' in html
+        assert f'aria-describedby="{note}"' in html
+        assert f'id="{note}"' in html
+    assert "meta-refresh" not in html
+    assert "Update from Archidekt" not in html
 
 
 @pytest.mark.parametrize("script", sorted(WEB.glob("*.js")), ids=lambda path: path.name)
@@ -385,10 +402,10 @@ def test_without_cached_lists_no_card_carries_a_share(desk: Desk) -> None:
 
 
 def test_the_deck_view_carries_each_cards_combined_share_on_deck_and_board_cards(
-    desk: Desk, fake: FakeArchidekt
+    desk: Desk, settings: DeskSettings, fake: FakeArchidekt
 ) -> None:
     fake.edhtop16.pages[MAGDA] = [magda_page()]
-    desk.refresh_meta(DECK)
+    fetch_meta(settings, fake)
     view = desk.deck(DECK)
     grid = {c["name"]: c for g in items(view, "grid") for c in cast("list[Json]", g["cards"])}
     golem = cast("Json", grid["Battered Golem"]["share"])
@@ -510,7 +527,7 @@ def test_nothing_changes_the_deck_or_board_while_an_update_runs(
     )
     desk.sync()
     assert len(pending) == 1
-    assert call(desk) == {"error": f"Wait for the update to finish, then {then}."}
+    assert call(desk) == {"error": f"Wait for the sync to finish, then {then}."}
     assert not fake.card_writes()
     assert not (settings.workspace / "10004639-honestly-though" / "board.json").exists()
 
@@ -547,20 +564,20 @@ def test_settings_without_a_username_still_open(tmp_path: Path) -> None:
     assert settings.card_db == tmp_path / "Commander" / CARD_DB_FILE
 
 
-def test_meta_opens_from_cache_and_refreshes_on_demand(desk: Desk, fake: FakeArchidekt) -> None:
+def test_meta_reads_only_the_cache_and_a_sync_fills_it(
+    desk: Desk, settings: DeskSettings, fake: FakeArchidekt
+) -> None:
     fake.edhtop16.pages[MAGDA] = [magda_page()]
-    assert desk.meta(DECK) == {"report": None, "errors": []}
+    assert desk.meta(DECK) == {"report": None}
     assert fake.edhtop16.requests == []
-    fresh = desk.refresh_meta(DECK)
+    fetch_meta(settings, fake)
+    asked = len(fake.edhtop16.requests)
+    fresh = desk.meta(DECK)
     report = cast("Json", fresh["report"])
     assert [m["name"] for m in cast("list[Json]", report["missing"])] == ["Mind Stone", "Jeska's Will"]
-    asked = len(fake.edhtop16.requests)
-    cached = cast("Json", desk.meta(DECK)["report"])
-    assert cached["missing"] == report["missing"]
     assert len(fake.edhtop16.requests) == asked
     assert {"keys", "stoppers", "untouched", "combos"} <= set(fresh)
     assert [k["name"] for k in cast("list[Json]", fresh["keys"])][:1] == ["Magda, Brazen Outlaw"]
-    # The refresh, and only the refresh, put the meta's staples on the board as cmdr's suggestions.
     board = items(desk.deck(DECK), "cards")
     # Jeska's Will, in 2 of the 6 lists, is under the Wilson bar.
     assert sorted((c["name"], c["source"], c["origin"]) for c in board) == [("Mind Stone", "cmdr", "meta")]
@@ -572,31 +589,3 @@ def test_meta_opens_from_cache_and_refreshes_on_demand(desk: Desk, fake: FakeArc
     assert share["share"] == pytest.approx(4.75 / 5.275, abs=1e-4)
     desk.meta(DECK)
     assert len(items(desk.deck(DECK), "cards")) == len(board)
-
-
-def test_refreshing_meta_also_learns_from_the_commanders_the_profile_names_as_alike(
-    desk: Desk, fake: FakeArchidekt, settings: DeskSettings
-) -> None:
-    fake.edhtop16.pages[MAGDA] = [magda_page()]
-    profile = settings.workspace / "10004639-honestly-though" / "profile.toml"
-    profile.write_text(ALIKE_PROFILE, encoding="utf-8")
-    put_ygra_decks(fake)
-    desk.refresh_meta(DECK)
-    board = items(desk.deck(DECK), "cards")
-    assert sorted((c["name"], c["origin"]) for c in board) == [
-        ("Arcane Signet", "adjacent decks"),
-        ("Mind Stone", "meta"),
-    ]
-
-
-def test_a_failed_refresh_with_nothing_cached_says_why(desk: Desk, fake: FakeArchidekt) -> None:
-    fake.edhtop16.status = 403
-    fake.peer_page = {"bad": True}
-    answer = desk.refresh_meta(DECK)
-    assert answer["report"] is None
-    assert any("HTTP 403" in str(e) for e in names(answer, "errors"))
-
-
-def test_refreshing_meta_needs_a_username(settings: DeskSettings, fake: FakeArchidekt) -> None:
-    nameless = make_desk(DeskSettings(settings.workspace, settings.card_db, None), fake)
-    assert nameless.refresh_meta(DECK) == {"error": "Sign in to Archidekt first."}

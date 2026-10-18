@@ -4,6 +4,12 @@
 
 const accountState = { user: null, signedIn: false, syncing: false };
 
+// Each sync button with the line under it that says why it cannot be pressed, or what the sync is doing.
+const SYNC_ROWS = [["sync-decks", "sync-status"], ["no-decks-sync", "no-decks-note"]];
+const SYNC_TIP = "Pull your decks, then refresh the meta and ideas";
+const NO_ACCOUNT_NOTE = "Sign in to sync";
+const ACCOUNT_FAILED_NOTE = "Could not read the account; see the log";
+
 function setupAccount() {
   $("sign-in").addEventListener("click", openSignIn);
   $("sign-out").addEventListener("click", signOut);
@@ -18,7 +24,10 @@ function setupAccount() {
 
 async function loadAccount() {
   const answer = await window.pywebview.api.account();
-  if (answer.error) return null;
+  if (answer.error) {
+    paintSync(false, true, ACCOUNT_FAILED_NOTE);
+    return null;
+  }
   renderAccount(answer);
   return answer;
 }
@@ -31,17 +40,34 @@ function renderAccount(a) {
   name.title = !a.user ? "" : a.signedIn ? `Signed in to Archidekt as ${a.user}` : `${a.user}, not signed in`;
   $("sign-in").hidden = Boolean(a.user && a.signedIn);
   $("sign-out").hidden = !a.user;
-  for (const id of ["sync-decks", "no-decks-sync"]) {
-    $(id).hidden = !a.user;
-    $(id).disabled = a.sync.running;
-  }
-  const status = $("sync-status");
-  status.textContent = a.sync.running ? a.sync.progress : "";
-  status.title = status.textContent;
+  paintSync(a.sync.running, !a.user, a.sync.running ? a.sync.progress : a.user ? "" : NO_ACCOUNT_NOTE);
+  setMetaUpdating(a.sync.running);
   if (wasSyncing && !a.sync.running && a.sync.summary) {
     showStatus(a.sync.summary, a.sync.failed);
-    loadDecks();
+    reloadAfterSync();
   }
+}
+
+// A sync button is disabled while a sync runs, and without an account to sync; the note says which.
+function paintSync(running, blocked, note) {
+  for (const [buttonId, noteId] of SYNC_ROWS) {
+    const button = $(buttonId);
+    button.hidden = false;
+    button.disabled = running || blocked;
+    button.title = note || SYNC_TIP;
+    if (running) button.setAttribute("aria-busy", "true");
+    else button.removeAttribute("aria-busy");
+    button.querySelector(".spinner").hidden = !running;
+    $(noteId).textContent = note;
+  }
+}
+
+async function reloadAfterSync() {
+  try {
+    await loadDecks();
+    await loadDeck();
+    await metaPanel.load();
+  } catch { /* shown in the status line */ }
 }
 
 function openSignIn() {

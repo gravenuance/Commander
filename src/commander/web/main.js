@@ -17,7 +17,7 @@ async function poll() {
       state.stamps = deferred ? { ...stamps, [key]: state.stamps[key] } : stamps;
       if (changed) await loadDecks();
       if (currentChanged && !deferred) await loadDeck();
-      // `cmdr meta` fills the same cache; reread the open panel from it. A refresh here renders itself.
+      // `cmdr meta` fills the same cache; reread the open panel from it. A running sync rereads it at its end.
       if (accountState.syncing) await loadAccount();
       const metaChanged = answer.meta !== state.metaStamp;
       state.metaStamp = answer.meta;
@@ -30,7 +30,6 @@ async function poll() {
 window.addEventListener("pywebviewready", async () => {
   setupPropose();
   setupReview();
-  setupMeta();
   setupPanels();
   setupCardSize();
   setupZoom();

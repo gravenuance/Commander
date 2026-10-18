@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Changed
+- The app's **Update from Archidekt** button is **Sync**. While it runs it shows a spinner and the step it is
+  on, and an open Meta panel shows it is updating and rereads its report when the sync ends. Without an
+  account the button stays visible, off, with "Sign in to sync" beside it.
+
+### Removed
+- The Meta panel's **Refresh meta** button: Sync refreshes the meta answers, as `cmdr sync` does.
+
 ## 0.5.0 - 2026-10-17
 
 ### Added
