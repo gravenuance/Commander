@@ -50,8 +50,8 @@ uv run cmdr meta ellivere --card "Sylvan Safekeeper" # how performing lists use 
 uv run cmdr card "Sylvan Safekeeper"                # a card's rules text, price, roles and Tagger tags
 uv run cmdr tags hatebear                           # find Tagger tags by name, for deck profiles
 uv run cmdr profile ellivere --init                 # start a deck profile: themes, exclusions, targets
-uv run cmdr suggest pantlaza --to-board             # put suggest's ideas on the deck's board
-uv run cmdr board show ellivere                     # cards considered and suggested for one deck
+uv run cmdr suggest pantlaza --to-board             # put suggest's ideas on the deck's board (Considering)
+uv run cmdr board show ellivere                     # cards under consideration for one deck
 uv run cmdr board log --since 2026-10-15T18:00      # what changed on the boards since then
 uv run cmdr app                                     # the desktop app over every deck's board
 uv run cmdr login                                   # one-time: sign in so apply can change decks
@@ -60,6 +60,10 @@ uv run cmdr apply plan.toml --save                  # make those changes on Arch
 ```
 
 `cmdr --help` and `cmdr <command> --help` show every option. Every command that reports on decks takes `--json` for scripts.
+A few options worth knowing: `sync --dry-run` shows what would change without writing, `sync --force` refetches
+every deck and rebuilds the card data, `cmdr -v` (or `-vv`) prints more detail on stderr, `--config <file>` uses
+another config file, `--workspace <folder>` another deck folder, `cmdr init --force` replaces an existing config,
+and `cmdr login --as <name or email>` signs in with a name other than the username.
 
 ### Card data
 
@@ -123,7 +127,7 @@ shown with a warning; with none, the estimate shows as unavailable and `bracket`
 
 ### Suggestions
 
-`suggest` gives each deck three lists. Prices are each card's cheapest printing in EUR.
+`suggest` gives each deck four lists. Prices are each card's cheapest printing in EUR.
 
 - **Cards that complete a combo:** Commander Spellbook's combos that the deck is exactly one card short of,
   within its colours. A card that completes several combos comes first. Some combos also need a piece
@@ -176,7 +180,7 @@ them together.
 
 `meta` compares a bracket 5 deck with what performs in cEDH: its commander's tournament lists on
 [EDHTop16](https://edhtop16.com) from the last two months (top cuts first), and the most-viewed Archidekt
-decks for that commander updated in the same window. It lists:
+decks for that commander updated in the same window (see *Which Archidekt decks are read* below). It lists:
 
 - **Staples you don't play:** cards in at least 40% of the lists read, or in half the Archidekt decks, that
   the deck lacks. Cards on your Sideboard or Maybeboard are marked.
@@ -197,23 +201,34 @@ decks for that commander updated in the same window. It lists:
   [Commander Spellbook](https://commanderspellbook.com), each with the deck's answers: stax pieces that stop
   it first, then removal for a piece, then counterspells. "no answer in the deck" flags the gaps.
 
-A deck's play-style deck tags weigh the report ([ADR 0022](docs/adr/0022-play-style-weighs-the-meta.md)):
+A deck's play-style deck tags weigh the report ([ADR 0031](docs/adr/0031-play-styles-as-score-multipliers.md)).
+Each tag favours some kinds of card, and the staples sort by their share times a weight: 1.25 for a clear fit,
+1.1 for a borderline one, 0.8 for a card the plan finds off-plan. A card marked "fits" has a weight above 1.
+The shares shown stay as they are; only the order and the marks change, and the limit applies after the sort.
 
-| Deck tag | Staples first (marked "fits") | Also |
+| Deck tag | Favours (weight) | Off-plan |
 |---|---|---|
-| Turbo | ramp, tutors, draw | Interaction is "off-plan": listed last, never put on the board as an idea. A meta combo without an answer is no gap ("racing, not answering"), and the table shows "racing". |
-| Stax | stax pieces (found as the Meta panel finds them, or Tagger's hatebear tag) and cheap interaction (mana value 2 or less, or free to cast) | |
-| Control | interaction | Unanswered combos stay gaps, even beside Turbo. |
+| Turbo | ramp, tutors, draw (1.25) | removal, bounce, counterspells, board wipes |
+| Stax | stax pieces (found as the Meta panel finds them, or Tagger's hatebear tag), removal, bounce (1.25) | |
+| Control | removal, bounce, cheap draw, counterspells (1.25) | |
+| Tempo | removal, cheap interaction (1.25); bounce (1.1) | board wipes |
+| Midrange | counterspells, cheap interaction, tutors (1.25) | |
+| Aggro | creatures (1.1); haste creatures (1.21) | |
+| Combo | tutors, protection (1.1) | |
 
-Other play styles weigh nothing. The shares stay as they are; only the order and the marks change.
+Cheap interaction is removal, bounce or a counterspell at mana value 2 or less, or free to cast. With several
+tags the weights multiply, and a style that favours a card keeps it from being off-plan for another.
+Off-plan staples are never compiled into Considering. A Turbo deck without the Control tag is racing: a meta
+combo it has no answer to is no gap ("racing, not answering"), and the table shows "racing". Beside Control
+the unanswered combos stay gaps.
 
-With fewer than five top-cut lists every list in the window is read, and with fewer than ten lists the
-report says the data is thin: read its shares as hints. Answers are read from Scryfall Tagger tags and
-rules text, so check them before acting on one. `--card <name>` shows how lists use one card,
-`--to-board` puts the missing staples on the deck's board, and the app's Meta panel shows the same report
-by meta card: under *What stops you*, each card the meta plays against your combos or key cards appears
-once, grouped as stax, removal or counters, with chips for what of yours it stops and the decks that play
-it ([ADR 0018](docs/adr/0018-meta-panel-by-meta-card.md)).
+When at least one list made the top cut, the report uses the top-cut lists; when none did, it reads every list
+in the window and says so. With fewer than ten lists it says the data is thin: read its shares as hints.
+Answers are read from Scryfall Tagger tags and rules text, so check them before acting on one.
+`--card <name>` shows how lists use one card, `--to-board` puts the missing staples on the deck's board, and
+the app's Meta panel shows the same report by meta card: under *What stops you*, each card the meta plays
+against your combos or key cards appears once, grouped as stax, removal or counters, with chips for what of
+yours it stops and the decks that play it ([ADR 0018](docs/adr/0018-meta-panel-by-meta-card.md)).
 
 Answers are cached for a day (Spellbook combos for a week, the deck's own until its list changes); `--refresh` fetches again. A first run takes
 a few minutes, because requests are spaced out. The sample sizes are set in the config file:
@@ -222,13 +237,33 @@ a few minutes, because requests are spaced out. The sample sizes are set in the 
 [meta]
 window_days = 60       # 7 to 90
 min_event_size = 16    # smallest tournament counted
-peer_decks = 10        # Archidekt decks read per commander
+peer_decks = 60        # most Archidekt decks read per commander, 0 to 60 (0 reads none)
 meta_commanders = 10   # most-played commanders searched for answers and combos
 meta_lists = 30        # best-placed lists read per meta commander
 ```
 
 EDHTop16's terms forbid redistributing its statistics, so meta reports stay on your machine. See
 [ADR 0007](docs/adr/0007-meta-from-edhtop16-archidekt-and-spellbook.md).
+
+### Which Archidekt decks are read
+
+The search looks at the deck's own bracket and the one above (bracket 5 has none above), newest update first,
+up to 20 pages per commander. It keeps decks with at least 1000 views, or 750, or 500 when fewer than ten
+reach the bar, or all of them when fewer than ten reach 500, and reads at most `peer_decks` of them, most
+viewed first. Your own decks are never read. A bracket 4 deck also reads its commander's EDHTop16 lists, which
+bracket 5 decks always do.
+
+Searches and deck reads are five seconds apart, and after a 429 nothing goes out for three minutes (or the
+`Retry-After`, if longer) before the request is tried once more. Each deck read is kept until its owner edits
+the deck, so a later run reads only the changes; the search results are cached for a day like the other
+answers. A run that fetches deletes the cached decks unused for 30 days, those last updated before the
+window and those that no longer parse; a read from cache alone (the app) deletes nothing
+([ADR 0027](docs/adr/0027-reading-other-players-archidekt-decks.md)).
+
+The lists feed one weighted share per card, which the app shows on each card: recent lists and well-placed
+tournament entries count for more, and a card is an idea for Considering when the lower bound of its share
+is high enough for the number of lists read
+([ADR 0026](docs/adr/0026-one-weighted-share-per-card.md)). `meta` itself keeps showing plain shares.
 
 ### Deck profiles
 
@@ -280,7 +315,8 @@ A deck's themes also come from what you wrote on Archidekt, so a deck needs no p
 - **Deck tags** (Dwarves, Landfall, Stax...) become type words, keywords and Tagger tags of the same name;
   a few names that match nothing go through a table (Aristocrats, Blink, +1/+1 Counters). Play styles,
   roles and card types (cEDH, Commander Matters, Draw, Creatures) make no theme: they say how the deck
-  plays, which matters when weighing a replacement rather than for picking cards in general.
+  plays. The play styles Turbo, Stax, Control, Tempo, Midrange, Aggro and Combo weigh the meta's staples
+  instead (see *cEDH meta*); `cmdr profile` says which kind each such tag is.
 - **Your own categories** of five cards or more (Leyline, Sac Outlet) become the Tagger tags and
   subtypes most of their cards share but few other cards have. Categories for roles, card types, the
   commander and the Maybeboard are skipped, as is whatever the deck tags already say.
@@ -297,10 +333,11 @@ drops one by its tag slug ([ADR 0016](docs/adr/0016-replacements-like-for-like.m
 
 ### Deck boards
 
-A deck's board holds the cards you are weighing for it, in two lists: **considered** cards are ones you,
-Claude or your Archidekt Sideboard and Maybeboard raised; **suggested** cards come from `suggest` or from
-research. Each card carries why it might fit and which deck cards it could replace. You decide each one:
-add it (choosing the card to cut), turn it down, or reopen it later.
+A deck's board holds the cards you are weighing for it, in one list, **Considering**. You, Claude, your
+Archidekt Sideboard and Maybeboard, `suggest` and `sync` put cards there. Each card carries why it might fit
+and which deck cards it could replace. You decide each one: add it (choosing the card to cut), turn it down,
+or reopen it later. The board file is `board.json` version 2; opening a version 1 file (which had two lists)
+keeps a copy as `board.v1.bak` before the first save.
 
 ```sh
 uv run cmdr board add ellivere "Sylvan Safekeeper" --reason "protects stax pieces" --replace "Compost=not stax"
@@ -311,29 +348,45 @@ uv run cmdr board commit ellivere --save   # make them
 
 Saving a board works like `apply --save`, with a snapshot first. A card you cut moves to the deck's
 Maybeboard instead of being deleted, keeping its categories behind the Maybeboard, and comes back on the
-board as considered: if the new card disappoints, add the old one back and the swap runs the other way.
+board under Considering: if the new card disappoints, add the old one back and the swap runs the other way.
 A cut the deck runs several copies of, such as a basic land, loses one copy instead.
-Cards you keep on a deck's Sideboard or Maybeboard on Archidekt show up on its board as considered after
-each `sync`; adding one moves that entry into the deck, printing and all, and turning one down takes it
-off the Sideboard or Maybeboard with the next save. `suggest --to-board` puts its ideas on the board, and
-a card turned down there is never suggested again.
+Cards you keep on a deck's Sideboard or Maybeboard on Archidekt show up on its board after each `sync`;
+adding one moves that entry into the deck, printing and all, and turning one down takes it off the Sideboard
+or Maybeboard with the next save. `suggest --to-board` and `meta --to-board` put their ideas on the board,
+and a card turned down there is not suggested again by `suggest`.
 
 Each `sync` also compiles ideas from other players into Considering
-([ADR 0014](docs/adr/0014-considered-compiled-on-every-sync.md)). A bracket 5 deck gets the staples it
-misses from its commander's EDHTop16 lists ("meta") and from the most-viewed recent Archidekt decks for
-its commander ("archidekt decks"); other decks get the Archidekt ones, from decks at their own bracket. Each
-source adds at most 50, most played first, and only cards with a deck card to replace. EDHREC is never
-asked. Answers are cached for a day with `meta`'s, so the first sync of the day takes a few minutes and
-the rest are quick. If every source for a deck fails, its board stays as it was and the sync still
-succeeds. `sync --no-ideas` skips this step.
+([ADR 0028](docs/adr/0028-ideas-from-four-sources.md)), up to 50 per source, and only for cards the deck
+lacks that its profile, bracket ceiling and budget allow:
 
-A deck that plays unlike most decks of its commander can learn from commanders that play like it: list
-them under `[ideas] commanders` in its profile, with a partner pair as its own list. Their recent
-Archidekt decks at the deck's bracket form one pool, and cards at least half the pool plays become up to
-10 "adjacent decks" ideas ([ADR 0015](docs/adr/0015-ideas-from-commanders-that-play-alike.md)).
+- **meta** ("Tournament lists" in the app): the staples of the commander's EDHTop16 lists, for decks at
+  bracket 4 and 5.
+- **archidekt decks** ("Archidekt: *commander* decks"): the staples of its most-viewed recent decks, at the
+  deck's bracket and the one above.
+- **adjacent decks** ("Archidekt: alike commanders"): for a deck that plays unlike most decks of its
+  commander. List the commanders that play like it under `[ideas] commanders` in its profile (at most eight,
+  a partner pair as its own list). Their recent decks form one pool, and cards at least half the pool plays
+  become ideas.
+- **tagged decks** ("Archidekt: tagged *tag*"): the deck's theme tags (the Archidekt deck tags that became
+  themes, not play styles, roles or card types) are searched for recent decks of other commanders. Each tag
+  is a pool, read at the deck's bracket and the one above, three search pages per bracket and up to a
+  quarter of `peer_decks` decks. Cards at least half a pool plays become ideas, labelled with the tag.
+  Write the tag under `[themes] ignore` to stop using it.
+
+A card is an idea from the first two when the lower bound of its weighted share reaches 0.32
+([ADR 0026](docs/adr/0026-one-weighted-share-per-card.md)); it goes to the source that plays it more. Each
+source takes its ideas by that share times the play-style weight (see *cEDH meta*), ideas within the deck's
+budget before the rest. An idea with no deck card to replace is still put on the board, under *No cut yet*
+in the app. A turned-down card comes back when its share has risen 20 points. EDHREC is never asked.
+
+Searches and deck reads are paced and cached (see *Which Archidekt decks are read*), so the first sync of the
+day takes a few minutes and the rest are quick. If a commander's or tag's decks cannot be read, sync names it
+and carries on; if every source for a deck fails, its board stays as it was and the sync still succeeds.
+`sync --no-ideas` skips this step.
 
 Every change lands in the deck's activity log with who made it (you, Claude, cmdr or Archidekt).
-`cmdr board log` shows every deck's log, oldest first; `--since` keeps what is newer. The log is how
+`cmdr board log` shows every deck's log, oldest first; `--since` keeps what is newer than a UTC time like
+`2026-10-15T18:00` and refuses any other format. The log is how
 Claude catches up on what you decided in the app. `cmdr board show`, `research`, `remove` and `plan` cover
 the rest; `cmdr board --help` lists them.
 
@@ -343,14 +396,21 @@ The app works for any Archidekt account ([ADR 0023](docs/adr/0023-accounts-and-s
 Without one it opens on **Sign in to Archidekt**: the username and password go to Archidekt's login only,
 and the login token is kept in Windows Credential Manager, as `cmdr login` keeps it. Each account has its
 own deck folder, remembered in the config's `[workspaces]` table. Your own keeps the folder `cmdr init` set,
-and a new account gets a sibling folder named `decks-<username>`. Signing in as a new account syncs its
-decks at once. The foot of the deck list shows who is signed in, with **Sync** (the same as
-`cmdr sync`, card data and ideas included, its progress shown beneath) and **Sign out**, which removes the
-saved login. Signing in again finds the same folder.
+and a new account gets a sibling folder named `decks-<username>`, or `Documents\Commander\decks-<username>`
+when no folder was set. Signing in as a new account syncs its decks at once. The foot of the deck list shows
+who is signed in, with **Sync** (the same as `cmdr sync`, card data and ideas included, with a spinner and the
+step it is on beneath) and **Sign out**, which removes the saved login. Without an account the button stays,
+off, with "Sign in to sync" beside it. Signing in again finds the same folder.
+
+A sync and a save, a label change, the Mana tab's swaps, a sign-in or a sign-out never run together: the one
+that starts second is refused with a message ("Wait for the save to finish, then sync.") and can be tried
+again when the first ends. The app only reads the cache of other players' data; Sync is the one way to
+refresh it ([ADR 0032](docs/adr/0032-one-considering-list-and-one-sync.md)).
 
 `cmdr app` opens a window over every deck's board. Pick a deck on the left to see it as a card grid,
-grouped by card type with counts and EUR totals. S, M and L above the grid set the card size. Click a
-card to see it large (× or Esc closes it). Copy decklist, next to the commander's name, copies the saved deck
+grouped by card type with counts and EUR totals. S, M and L above the grid set the card size. Each card but
+the commander carries a pill with its weighted share of the lists other players run with the commander, and
+its sources in the tooltip. Click a card to see it large (× or Esc closes it). Copy decklist, next to the commander's name, copies the saved deck
 in TopDeck.gg's decklist format (`~~Commanders~~`, then `~~Mainboard~~`, one `1 Name` a line).
 Settings, beside it, edits two lists in the deck's `profile.toml` with autocomplete: the commanders
 that play alike (`[ideas] commanders`; "+ partner" on one makes a pair) and the themes to ignore
@@ -367,32 +427,39 @@ base against Frank Karsten's published numbers
 - **Turn one:** one-drops without enough untapped lands.
 - **Suggested changes** (below bracket 5, [ADR 0024](docs/adr/0024-mana-base-suggestion.md)): how many lands
   to run, how many of each basic, and untapped lands to name where basics can't close a gap, with
-  untapped twins for plain tap-lands. Named lands are split into within budget (the deck's average card)
-  and over budget (up to 25% above its dearest card). **Put swaps on the board** lists them under Considering, each with
-  its cut, for the usual Review and save.
+  untapped twins for plain tap-lands. Named lands are split into within budget (up to 25% over the deck's
+  average card) and over budget (up to 25% above its dearest card). **Put swaps on the board** lists them
+  under Considering, each with its cut, for the usual Review and save.
 
 - **Considering**, on the right, lists every idea for the deck in this order: yours, Claude's, the meta's,
-  the Archidekt decks', then the rest. Within each group ideas over the deck's budget come last, and the
-  others come by how many of the lists play them. Hover over an idea or click it to light the deck cards it could replace. Click one of them to
-  queue the swap; once an idea is clicked, any other deck card but the commander can be clicked too.
-  Ideas that name no card to replace yet wait under *No cut yet*: click one, then the deck card it
-  replaces.
+  the Archidekt decks' for the deck's commander, alike commanders', tagged decks', then the rest. Within each
+  group ideas over the deck's budget come last, and the others by weighted share, which each card shows as a
+  pill ("34% · 12/35") with its sources in the tooltip. A badge says who added an idea, or for a compiled one
+  where it came from: "Tournament lists", "Archidekt: *commander* decks", "Archidekt: alike commanders" or
+  "Archidekt: tagged *tag*".
+  Hover over an idea or click it to light the deck cards it could replace. Click one of them to queue the
+  swap; once an idea is clicked, any other deck card but the commander can be clicked too. Ideas that name
+  no card to replace wait under *No cut yet*: click one, then the deck card it replaces.
   × turns the idea down, with a reason if you like: turned-down cards wait under *Turned down* (closed until
   opened) with their reasons, and Reconsider brings one back. Considering, Meta and each Meta section
-  fold, and stay as you left them. The suggested targets are the cards you or Claude picked, or else the
-  weakest cards in the same role ([ADR 0011](docs/adr/0011-app-deck-grid-and-replacement-targets.md)),
-  like for like: a card serving one of the deck's themes or leanings is offered only for an idea serving
-  the same ([ADR 0016](docs/adr/0016-replacements-like-for-like.md)).
-  An idea with nothing to replace stays on the board but does not show. Each idea's badge says who
-  added it, or for a compiled idea where it came from ("meta", "archidekt decks", "adjacent decks").
+  fold, and stay as you left them.
+  The suggested targets are the cards you or Claude picked, or else the weakest cards like the idea
+  ([ADR 0029](docs/adr/0029-replacement-targets-and-wider-cuts.md)). Like for like comes first: cards in the
+  same role, and a card serving one of the deck's themes or leanings only for an idea serving the same, the
+  least played first and unranked cards last. Slots left over go to cards of another role or theme, but only
+  while the deck keeps what other players of the commander run (the peers' 25th percentile of each role, the
+  median of each theme), and an other-theme cut needs the idea to be 20 points more played. The reason names
+  what makes each cut allowed. A swap that takes a land out or puts one in is offered only if the land count
+  stays within one of Karsten's or inside the other lists' range, and every colour keeps its sources
+  ([ADR 0030](docs/adr/0030-land-swaps-guarded-by-the-mana-base.md)).
 - **Labels**: the flag in a grid card's top-left corner sets its Archidekt label. Every deck offers your
   account's labels in their colours, read on each signed-in `sync` and before each label change
   ([ADR 0012](docs/adr/0012-card-labels-from-the-archidekt-account.md)). A change is written to
   Archidekt at once.
 - **Meta** (bracket 5 decks) lists each key card with the meta cards that stop it, then the meta's combos
-  with your answers, each tagged with the meta decks that play them. **Sync** fetches new data (the panel
-  shows it updating) and puts the meta's staples into Considering. A card you turned down comes back once
-  its meta share rises 20 points.
+  with your answers, each tagged with the meta decks that play them. The panel reads the cache; **Sync** fetches new data (the panel
+  shows it updating, then rereads) and puts the meta's staples into Considering. A card you turned down
+  comes back once its weighted share has risen 20 points.
 - **Estimate**, beside the bracket under the deck's name, is Spellbook's estimate. When it, the bracket and
   the profile's ceiling disagree, it turns amber; click it for the notes and causes, each combo linked to
   Spellbook. The cards behind a cause carry the bracket they lift the deck to in an amber badge beside the
@@ -478,6 +545,7 @@ label. `toget` lists them and marks them; each mark is written to Archidekt at o
 and logged in the deck's activity. In the app, the flag on each grid card sets the same labels.
 `toget --cardmarket` and the app's "Copy cards to buy" button give every deck's Don't Have cards, summed,
 as a Cardmarket wants list to paste into its "Add Decklist" field; cards already Getting are left out.
+`--cardmarket` takes no deck, card, `--json`, `--ordered` or `--arrived`.
 
 ```sh
 uv run cmdr toget                                          # every deck's cards still to get
@@ -500,7 +568,7 @@ Labels set on the Archidekt website come back with the next `sync`. See
 | `list.md` | Readable deck list grouped by category | `sync`, every time |
 | `notes.md` | Your research notes and plans | `sync` creates it once and never overwrites it |
 | `profile.toml` | What the deck wants from `suggest` | You, starting from `cmdr profile <deck> --init` |
-| `board.json` | Cards considered and suggested, their research and your decisions | `cmdr board`, the app, `suggest --to-board`, `sync` |
+| `board.json` | Cards under consideration, their research and your decisions | `cmdr board`, the app, `suggest --to-board`, `meta --to-board`, `sync` |
 | `activity.jsonl` | Every change to the board, who made it and when, oldest first | Whatever changes the board; never rewritten |
 
 `decks/` is gitignored, because it holds your own decks and notes. To keep their history, make it a git
@@ -521,7 +589,7 @@ defaults.
 | Config file | `--config` | `CMDR_CONFIG` | n/a | `%APPDATA%\Commander\config.toml` |
 | Card data and Spellbook answers folder | n/a | `CMDR_CACHE_DIR` | n/a | `%LOCALAPPDATA%\Commander` |
 | Role targets for `suggest` | n/a | n/a | `[targets]` table | ramp 10, draw 10, removal 8, board_wipe 2 |
-| Sample sizes for `meta` | n/a | n/a | `[meta]` table | 60 days, events of 16+, 10 Archidekt decks, 10 commanders, 30 lists each |
+| Sample sizes for `meta` and `sync` | n/a | n/a | `[meta]` table | 60 days, events of 16+, up to 60 Archidekt decks, 10 commanders, 30 lists each |
 | Archidekt login for `apply --save` | `cmdr login` | n/a | n/a | none; the token is kept in Windows Credential Manager |
 | App log detail | n/a | `CMDR_LOG_LEVEL` | n/a | `INFO` |
 
@@ -530,7 +598,7 @@ defaults.
 ```sh
 uv run ruff check
 uv run ruff format --check
-pyright
+npx --yes pyright@1.1.414
 uv run pytest
 ```
 
@@ -543,7 +611,7 @@ Tests use recorded fixture data and never touch the network.
 | Archidekt (`archidekt.com/api`) | Reading decks; changing them with `apply --save` | Public decks need no login; changes need `cmdr login`, whose token lives in Windows Credential Manager and is refreshed on each save. The API is undocumented, so every response's shape is checked and a clear message names what changed. A save makes a handful of requests, never retried. Its written terms forbid automated requests; its co-founder has said on its forum that the API is open to use. See [ADR 0004](docs/adr/0004-deck-changes-through-archidekts-site-api.md). |
 | Scryfall (`api.scryfall.com/bulk-data`, files on `data.scryfall.io`; card images from `cards.scryfall.io` in the app) | Card facts, rules text, EUR prices, Tagger tags for roles and profiles, card art | One API call per `sync` for the file list; the files themselves have no rate limit. Scryfall updates prices once a day and asks for bulk files rather than per-card calls for lookups like these. Tag data is community-maintained and can change. See [ADR 0001](docs/adr/0001-scryfall-bulk-card-data.md). |
 | Commander Spellbook (`backend.commanderspellbook.com`: `estimate-bracket`, `find-my-combos`) | Bracket estimates, combos, and combos one card short | One request per deck and command, at most four at a time, and none while a cached answer is under 7 days old. Spellbook asks tools to name themselves in the User-Agent, keep to a few calls per user action, stay under about 80 requests a minute, handle 429, and credit and link back to commanderspellbook.com, which `bracket` and `suggest` do in their output. Only card names and quantities are sent. See [ADR 0002](docs/adr/0002-bracket-estimates-from-commander-spellbook.md) and [ADR 0003](docs/adr/0003-suggestions-from-spellbook-and-scryfall.md). |
-| EDHTop16 (`edhtop16.com/api/graphql`) | Tournament lists, spice and the most-played commanders for `meta` and `sync`'s ideas | Requests 1.5 s apart, none while a cached answer is under a day old. Its terms offer the API as-is and forbid excessive automated requests, implying endorsement and redistributing its statistics; reports credit it and stay local. See [ADR 0007](docs/adr/0007-meta-from-edhtop16-archidekt-and-spellbook.md). |
-| Archidekt deck search (`archidekt.com/api/decks/v3/`) | Other players' recent decks for `meta` and `sync`'s ideas | Searches 2 s apart and a few deck reads per commander, cached for a day; your own decks are left out. Under the same informal permission as the rest of Archidekt's API (ADR 0004). |
+| EDHTop16 (`edhtop16.com/api/graphql`) | Tournament lists, spice and the most-played commanders for `meta` and `sync`'s ideas | Requests 1.5 s apart, none while a cached answer is under a day old; malformed entries are skipped and future-dated events left out. Its terms offer the API as-is and forbid excessive automated requests, implying endorsement and redistributing its statistics; reports credit it and stay local. See [ADR 0007](docs/adr/0007-meta-from-edhtop16-archidekt-and-spellbook.md). |
+| Archidekt deck search (`archidekt.com/api/decks/v3/`) | Other players' recent decks for `meta` and `sync`'s ideas | Searches and deck reads 5 s apart, after a 429 a pause of at least 3 minutes; at most 20 search pages and `peer_decks` (60) deck reads per commander, and a quarter of that per deck tag. Search results are cached for a day, each deck read until its owner edits it. Your own decks are left out. Under the same informal permission as the rest of Archidekt's API (ADR 0004). See [ADR 0027](docs/adr/0027-reading-other-players-archidekt-decks.md). |
 | Commander Spellbook (`find-my-combos`, for `meta`) | The combos the most-played commanders' lists run | One request per meta commander, 1 s apart, cached for 7 days. |
 | EDHREC (via Scryfall's `edhrec_rank`) | Popularity ranks for `suggest` | Never contacted: the rank comes inside Scryfall's bulk files. EDHREC's terms forbid automated requests to its site. |
