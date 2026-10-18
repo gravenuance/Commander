@@ -525,6 +525,11 @@ def _followed(
             counts[swap.cut] = counts.get(swap.cut, 0) - swap.copies
     for name in cuts:
         counts[name] = counts.get(name, 0) - 1
+    return deck_with_counts(deck, counts)
+
+
+def deck_with_counts(deck: Deck, counts: Mapping[str, int]) -> Deck:
+    """The deck with its main cards but the commanders as counts say; a count of 0 or less drops the card."""
     commanders = [card for card in deck.main_cards if card.name in deck.commanders]
     kept = {card.name for card in commanders}
     others = [card for card in deck.main_cards if card.name not in kept]
