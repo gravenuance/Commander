@@ -1006,6 +1006,38 @@ def test_a_considering_tile_shows_the_combined_share_as_a_pill_button_in_place_o
     assert "hidden: true" in pop
 
 
+def test_an_alike_or_tagged_pill_shows_the_pool_share_and_says_so_others_the_combined_one() -> None:
+    pill = function_body(CONSIDERING, "function sharePill(card) {")
+    assert "const shown = pillShare(card);" in pill
+    assert "text: shown.label" in pill
+    assert '"aria-label": shown.name' in pill
+    assert "title: `${shown.name}: show breakdown`" in pill
+    share = function_body(CONSIDERING, "function pillShare(card) {")
+    # The pool share only for the two pooled origins and only when the board has the numbers.
+    assert 'card.origin === "adjacent decks" || card.origin === "tagged decks"' in share
+    assert "card.pool" in share
+    assert "`${label} of ${poolName(card)}`" in share
+    assert "`${card.share.label} played; ${originPhrase(card)}`" in share
+    names = function_body(CONSIDERING, "function poolName(card) {")
+    assert "`${card.originTag}-tagged decks`" in names
+    assert "alike commanders' decks" in names
+    # The breakdown keeps the combined total and every row.
+    assert "`Combined ${card.share.label}" in function_body(
+        CONSIDERING, "function sharePopover(card, popId) {"
+    )
+
+
+def test_alike_and_tagged_ideas_sort_by_the_pool_share_the_pill_shows_within_their_group() -> None:
+    sort = function_body(CONSIDERING, "function sortSuggestions(cards) {")
+    assert "pillShare(b).value - pillShare(a).value" in sort
+    assert "suggestionGroup(a) - suggestionGroup(b)" in sort
+    assert "(a.withinBudget === false) - (b.withinBudget === false)" in sort
+    share = function_body(CONSIDERING, "function pillShare(card) {")
+    assert "value: card.pool.share" in share
+    assert "value: card.share.share" in share
+    assert "value: -1" in share
+
+
 def test_the_share_pill_takes_the_colour_of_the_origin_the_idea_is_credited_to() -> None:
     css = (WEB / "app.css").read_text(encoding="utf-8")
     for key in ("meta", "decks", "adjacent", "tagged", "none"):

@@ -10,7 +10,7 @@ function considering(cards) {
 
 // Your cards, then Claude's, then meta ideas, then the deck's own commander's Archidekt decks, then alike
 // commanders', then tagged decks', then everything else. Within each group, cards over the deck's budget
-// (ADR 0025) go last; then the largest weighted share first.
+// (ADR 0025) go last; then the largest share the pill shows first.
 const ORIGIN_RANK = ["meta", "archidekt decks", "adjacent decks", "tagged decks"];
 
 function suggestionGroup(card) {
@@ -68,7 +68,7 @@ function sortSuggestions(cards) {
   return [...cards].sort((a, b) =>
     suggestionGroup(a) - suggestionGroup(b)
     || (a.withinBudget === false) - (b.withinBudget === false)
-    || (b.share?.share ?? -1) - (a.share?.share ?? -1));
+    || pillShare(b).value - pillShare(a).value);
 }
 
 // Ideas with no deck card named to replace yet; selecting one offers every deck card as its cut.
@@ -188,14 +188,31 @@ function buildTile(card) {
 
 /* The share pill and its breakdown */
 
-// The combined share, coloured by the origin the idea is credited to; it opens the breakdown beside it.
+// The pool's decks an alike or tagged idea was found in, in words.
+function poolName(card) {
+  return card.origin === "tagged decks" && card.originTag ? `${card.originTag}-tagged decks` : "alike commanders' decks";
+}
+
+// What the pill shows and orders by: an alike or tagged idea's share of its pool (when the board has the
+// numbers), any other idea's combined share.
+function pillShare(card) {
+  if ((card.origin === "adjacent decks" || card.origin === "tagged decks") && card.pool) {
+    const label = pct(card.pool.share);
+    return { value: card.pool.share, label, name: `${label} of ${poolName(card)}` };
+  }
+  if (!card.share) return { value: -1, label: "", name: originPhrase(card) };
+  return { value: card.share.share, label: card.share.label, name: `${card.share.label} played; ${originPhrase(card)}` };
+}
+
+// The share the idea is shown by, coloured by the origin it is credited to; it opens the breakdown beside it.
 function sharePill(card) {
   const popId = `share-pop-${card.id}`;
+  const shown = pillShare(card);
   const pill = el("button", {
-    class: `badge share-pill origin-${originKey(card.origin)}`, type: "button", text: card.share.label,
+    class: `badge share-pill origin-${originKey(card.origin)}`, type: "button", text: shown.label,
     "aria-expanded": "false", "aria-controls": popId,
-    "aria-label": `${card.share.label} played; ${originPhrase(card)}`,
-    title: `${originLabel(card)}: show breakdown`,
+    "aria-label": shown.name,
+    title: `${shown.name}: show breakdown`,
   });
   const pop = sharePopover(card, popId);
   pill.addEventListener("click", () => toggleShare(pill, pop));
