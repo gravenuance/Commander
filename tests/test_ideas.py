@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from commander import ideas as ideas_module
+from commander.answers import card_key
 from commander.board import Actor, BoardService, Origin, Status, read_board
 from commander.carddb import CardDb
 from commander.ideas import Idea, adjacent_ideas, compile_ideas, ideas_summary, staple_ideas, tagged_ideas
@@ -14,6 +15,7 @@ from commander.meta import Basis, CardShare, Staples
 from commander.metadata import PeerList, TaggedDecks
 from commander.models import Deck
 from commander.store import StoredDeck
+from commander.weightedshare import ShareTable, SourceShare, WeightedShare
 from test_meta import NOW, SINCE, db, deck, entry, meta_data, peer
 
 __all__ = ["db", "deck"]  # fixtures shared with test_meta
@@ -62,6 +64,15 @@ def test_staples_become_ideas_of_the_source_playing_them_more_most_played_first(
         "in 1 of 5 top-cut Magda lists on EDHTop16 since 2026-08-16;"
         " in 3 of 4 most-viewed recent Archidekt decks"
     )
+
+
+def test_an_idea_goes_to_the_source_with_the_larger_weighted_share_not_plain_share(deck: Deck) -> None:
+    # Plain: 4 of 5 lists against 3 of 4 decks favours the meta; weighted, the decks play it more.
+    row = share("Mind Stone", 4, 5, 3, 4)
+    weighted = WeightedShare(0.7, 7, 9, SourceShare(0.6, 4, 5), SourceShare(0.9, 3, 4))
+    table = ShareTable({card_key("Mind Stone"): weighted}, WeightedShare(0.0, 0, 9, None, None))
+    found = staple_ideas(deck, Staples((row,), 5, Basis.TOP_CUT, 4), SINCE, table)
+    assert [(i.name, i.origin, i.share) for i in found] == [("Mind Stone", Origin.DECKS, 0.9)]
 
 
 def test_below_bracket_5_only_archidekt_decks_speak(deck: Deck) -> None:

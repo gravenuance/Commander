@@ -72,9 +72,10 @@ def _source_share(table: ShareTable, name: str, origin: Origin, plain: float) ->
 
 
 def staple_ideas(deck: Deck, staples: Staples, since: date, table: ShareTable = NO_SHARES) -> list[Idea]:
-    """The missing staples as ideas, each from the source that plays it more: "meta" for the EDHTop16 lists
-    (also on a tie), else "archidekt decks". The rows are staples already: `compile_ideas` picks them by the
-    weighted share's lower bound, and an idea carries the chosen source's weighted share from `table`."""
+    """The missing staples as ideas, each from the source whose weighted share of it is larger (the plain
+    share when `table` holds none): "meta" for the EDHTop16 lists (also on a tie), else "archidekt decks".
+    The rows are staples already: `compile_ideas` picks them by the weighted share's lower bound, and an idea
+    carries the chosen source's weighted share from `table`."""
     lists = f"{deck.short_name} lists" if staples.basis is Basis.ALL else f"top-cut {deck.short_name} lists"
     ideas: list[Idea] = []
     # What the deck's play style doesn't need (a Turbo deck's interaction) is no idea for it (ADR 0031).
@@ -85,12 +86,12 @@ def staple_ideas(deck: Deck, staples: Staples, since: date, table: ShareTable = 
         if staples.peers:
             parts.append(f"in {row.peer_lists} of {staples.peers} most-viewed recent Archidekt decks")
         reason = "; ".join(parts)
-        if staples.lists and (not staples.peers or row.share >= row.peer_share):
-            share = _source_share(table, row.name, Origin.META, row.share)
-            ideas.append(Idea(row.name, Origin.META, reason, share, multiplier=row.multiplier))
+        meta = _source_share(table, row.name, Origin.META, row.share)
+        decks = _source_share(table, row.name, Origin.DECKS, row.peer_share)
+        if staples.lists and (not staples.peers or meta >= decks):
+            ideas.append(Idea(row.name, Origin.META, reason, meta, multiplier=row.multiplier))
         else:
-            share = _source_share(table, row.name, Origin.DECKS, row.peer_share)
-            ideas.append(Idea(row.name, Origin.DECKS, reason, share, multiplier=row.multiplier))
+            ideas.append(Idea(row.name, Origin.DECKS, reason, decks, multiplier=row.multiplier))
     return _best_first(ideas)
 
 
