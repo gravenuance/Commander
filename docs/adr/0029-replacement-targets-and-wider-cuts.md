@@ -43,7 +43,7 @@ in this order, at most three:
 
    Cuts of another role come before cuts of another theme, cards sharing a theme with the idea first. They
    rank by the idea's share less the card's, plus a bonus for each card by which the role the cut empties runs
-   over the peers' median (0.05 at present, to be set once data shows how often it decides), then by
+   over the peers' median (0.03 per card: among peer decks each card of a role past the median is about 3 points less played), then by
    weakness. The reason says "other role" or "other theme" and gives the
    over-run or the gap in points.
 4. **Land swaps** of all three kinds pass the mana base guard (ADR 0030).

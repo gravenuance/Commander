@@ -24,8 +24,9 @@ from commander.weightedshare import ShareTable, share_reason, weighted_shares
 MAX_TARGETS = 3
 # A card of another theme is cut only for one at least this many points more played (a share of 0.2).
 MIN_THEME_GAP = 0.20
-# Cutting from a role the deck over-runs scores this much per card over the peer decks' median.
-OVERRUN_BONUS = 0.05
+# Cutting from a role the deck over-runs scores this much per card over the peer decks' median: how much less
+# played each extra card of a role is among peer decks (median slope, 95 commander x role cases, 2026-10-18).
+OVERRUN_BONUS = 0.03
 # Weighted shares are fractions; this keeps float noise from deciding the gap.
 _SHARE_NOISE = 1e-9
 _PICKERS = frozenset({Actor.YOU, Actor.CLAUDE})

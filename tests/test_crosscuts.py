@@ -91,7 +91,7 @@ def test_cutting_from_a_role_the_deck_over_runs_scores_a_bonus_by_how_far_over()
         *[card(f"Removal {n}", (Role.REMOVAL,)) for n in range(1, 8)],
     ]
     shares = shares_of(deck, {"ramp 1": 0.10, "removal 1": 0.08})
-    # Ramp is 3 over the peers' median of 6, removal 1 over: 0.5 - 0.10 + 3 * 0.05 beats 0.5 - 0.08 + 0.05.
+    # Ramp is 3 over the peers' median of 6, removal 1 over: 0.5 - 0.10 + 3 * 0.03 beats 0.5 - 0.08 + 0.03.
     over = rules(roles={Role.RAMP: band(1.0, 6.0), Role.REMOVAL: band(1.0, 6.0)}, shares=shares)
     assert names(for_draw_idea(deck, over))[:2] == ["Ramp 1", "Removal 1"]
     # At the median there is no bonus, and the less played removal card leads.
