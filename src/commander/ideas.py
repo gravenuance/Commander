@@ -7,7 +7,8 @@ weighted share, over every list read, reaches IDEA_LOWER_BOUND; it belongs to th
 Each source puts at most MAX_PER_SOURCE ideas on the board, most played first. An idea with no deck card to
 replace is still put on the board, where the app lists it as "No cut yet". A deck whose profile names
 commanders that play alike also gets the staples of their pooled recent Archidekt decks ("adjacent decks",
-ADR 0015). Ideas pass the profile's exclusions, bracket ceiling and
+ADR 0015). So does one whose Archidekt theme tags find recent decks of other commanders ("tagged decks"),
+each tag's decks a pool of their own. Ideas pass the profile's exclusions, bracket ceiling and
 price cap; below bracket 5 also the deck's budget (ADR 0025), those within its working budget first.
 EDHREC is never asked (ADR 0003): its rank, from Scryfall's data, only orders the cards an idea could
 replace.
@@ -24,8 +25,9 @@ from commander.budget import resolved_budget
 from commander.carddb import CardDb
 from commander.deckcache import Clock
 from commander.deckprofile import read_profile, resolve_themes
+from commander.deckthemes import ThemeSource, merge_themes
 from commander.meta import MIN_PEER_LISTS, Basis, Staples, all_staples, pool_staples
-from commander.metadata import MetaData, MetaSources, PeerList, Progress, gather_adjacent
+from commander.metadata import MetaData, MetaSources, PeerList, Progress, TaggedDecks, gather_adjacent
 from commander.models import Deck, short_commander_name
 from commander.playstyle import Fit
 from commander.store import StoredDeck
@@ -42,6 +44,8 @@ class Idea:
     reason: str
     # The share of the source's lists or decks playing the card: most played first.
     share: float
+    # For a tagged idea: the deck tag whose decks play it.
+    tag: str | None = None
 
 
 def staple_ideas(deck: Deck, staples: Staples, since: date) -> list[Idea]:
@@ -88,12 +92,42 @@ def adjacent_ideas(
     return ideas
 
 
+def tagged_ideas(deck: Deck, pools: Sequence[TaggedDecks], db: CardDb) -> list[Idea]:
+    """The staples of each tag's decks the deck misses; a card several tags' decks play belongs to the tag
+    playing it most (the first on a tie). Most played first."""
+    best: dict[str, Idea] = {}
+    for pool in pools:
+        if len(pool.decks) < MIN_PEER_LISTS:
+            continue
+        for row in pool_staples(deck, pool.decks, db):
+            if row.fit is Fit.OFF_PLAN:
+                continue
+            idea = Idea(
+                row.name,
+                Origin.TAGGED,
+                f"in {row.peer_lists} of {len(pool.decks)} recent decks tagged {pool.tag}",
+                row.peer_share,
+                pool.tag,
+            )
+            seen = best.get(row.name.casefold())
+            if seen is None or idea.share > seen.share:
+                best[row.name.casefold()] = idea
+    return sorted(best.values(), key=lambda idea: (-idea.share, idea.name))
+
+
 def compile_ideas(
-    stored: StoredDeck, data: MetaData, db: CardDb, *, now: Clock, adjacent: Sequence[PeerList] = ()
+    stored: StoredDeck,
+    data: MetaData,
+    db: CardDb,
+    *,
+    now: Clock,
+    adjacent: Sequence[PeerList] = (),
+    tagged: Sequence[TaggedDecks] = (),
 ) -> dict[Origin, list[BoardCard]]:
     """Put each source's most-played ideas on the deck's board; what each added.
 
-    adjacent holds the pooled decks of the commanders the deck's profile names as alike (ADR 0015).
+    adjacent holds the pooled decks of the commanders the deck's profile names as alike (ADR 0015); tagged
+    the decks of other commanders found by each of the deck's theme tags.
     Ideas already on the board count towards a source's MAX_PER_SOURCE, so repeated syncs settle on the
     current top ideas rather than piling up. A turned-down idea takes no place unless the meta brings it
     back (`feed_ideas`).
@@ -103,6 +137,7 @@ def compile_ideas(
     table = weighted_shares(data, now=now)
     ideas = staple_ideas(deck, all_staples(deck, data, db, is_staple=table.is_idea), data.since)
     ideas += adjacent_ideas(deck, adjacent, profile.adjacent, db)
+    ideas += tagged_ideas(deck, tagged, db)
     shares = table.fractions() or None
     board = read_board(stored.folder)
     main = db.resolve(deck.main_cards)
@@ -142,7 +177,15 @@ def compile_ideas(
                 continue
             # One at a time: a card the board refuses (banned, off colour) or a turned-down one the meta
             # does not bring back takes no place.
-            new = feed_ideas(service, {idea.name: idea.reason}, (), board, shares=shares, origin=origin)
+            new = feed_ideas(
+                service,
+                {idea.name: idea.reason},
+                (),
+                board,
+                shares=shares,
+                origin=origin,
+                origin_tag=idea.tag,
+            )
             added[origin].extend(new)
             placed += len(new)
     return added
@@ -160,20 +203,25 @@ def compile_ideas_with_adjacent(
     warn: Callable[[str], None],
     on_progress: Progress | None = None,
 ) -> dict[Origin, list[BoardCard]]:
-    """`compile_ideas` with the recent decks of the commanders the deck's profile names as alike gathered
-    first (ADR 0015); a commander whose decks cannot be read is named to warn, and the rest carry on."""
+    """`compile_ideas` with the recent decks of the commanders the deck's profile names as alike, and of other
+    commanders carrying its theme tags, gathered first (ADR 0015); a commander or tag whose decks cannot be
+    read is named to warn, and the rest carry on."""
+    profile = read_profile(stored.folder)
+    # Theme tags only: the play style, role and card type tags are too broad to pick decks by (ADR 0009).
+    tags = [t.name for t in merge_themes(stored.deck, profile, db).used if t.source is ThemeSource.DECK_TAG]
     adjacent = gather_adjacent(
         stored.deck,
-        read_profile(stored.folder).adjacent,
+        profile.adjacent,
         sources,
         cache_root,
         now=now,
         refresh=refresh,
+        tags=tags,
         on_progress=on_progress,
     )
     for name, why in adjacent.errors:
         warn(f"{stored.deck.short_name}: no recent {name} decks to learn from ({why})")
-    return compile_ideas(stored, data, db, now=now, adjacent=adjacent.decks)
+    return compile_ideas(stored, data, db, now=now, adjacent=adjacent.decks, tagged=adjacent.tagged)
 
 
 def ideas_summary(added: dict[Origin, list[BoardCard]]) -> str:

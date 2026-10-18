@@ -392,7 +392,8 @@ class FakeArchidekt:
     It also signs in, looks up cards from the Scryfall fixture, saves snapshots and applies modifyCards
     edits to its decks, recording each write with its JSON body and Authorization header.
     Requests to Scryfall, Commander Spellbook and EDHTop16 go to its fakes of those, so one client covers any
-    command. A deck search by commander answers with its page in `peer_pages`, else `peer_page`.
+    command. A deck search by commander answers with its page in `peer_pages`, else `peer_page`; one by
+    deck tag with its page in `tag_pages`.
     """
 
     def __init__(self, user: str = "MAKKIS") -> None:
@@ -413,6 +414,10 @@ class FakeArchidekt:
         self.peer_page: Json = deck_page([])
         # Search pages for particular commanders; any other commander gets peer_page.
         self.peer_pages: dict[str, Json] = {}
+        # Search pages for particular deck tags, by lower-cased tag (Archidekt ignores case); any other tag
+        # finds no decks. `tag_searches` holds the tag of each such search, as sent.
+        self.tag_pages: dict[str, Json] = {}
+        self.tag_searches: list[str] = []
         # The account's card labels, as /api/decks/colorTags/ lists them; none unless a test sets some.
         self.labels: list[Json] = []
         # The status that read answers with; anything but 200 stands for a failed read.
@@ -451,19 +456,26 @@ class FakeArchidekt:
         path = request.url.path
         if path == "/api/cards/v2/":
             return httpx.Response(200, json=self._card_search(request.url.params))
-        if path == "/api/decks/v3/" and "commanderName" in request.url.params:
-            commander = request.url.params["commanderName"]
-            return httpx.Response(200, json=self.peer_pages.get(commander, self.peer_page))
         if path == "/api/decks/v3/":
-            if request.url.params.get("ownerUsername") != self.user:
-                return httpx.Response(200, json=deck_page([]))
-            rows = [
-                {**summary_row(d["id"], d["name"], d["updatedAt"]), "tags": d.get("deckTags", [])}
-                for d in self.decks.values()
-                if d.get("owner", {}).get("username", self.user) == self.user
-            ]
-            return httpx.Response(200, json=deck_page(rows))
+            return self._deck_search(request.url.params)
         return self._get_deck(request)
+
+    def _deck_search(self, params: httpx.QueryParams) -> httpx.Response:
+        if "deckTagName" in params:
+            self.tag_searches.append(params["deckTagName"])
+            return httpx.Response(
+                200, json=self.tag_pages.get(params["deckTagName"].casefold(), deck_page([]))
+            )
+        if "commanderName" in params:
+            return httpx.Response(200, json=self.peer_pages.get(params["commanderName"], self.peer_page))
+        if params.get("ownerUsername") != self.user:
+            return httpx.Response(200, json=deck_page([]))
+        rows = [
+            {**summary_row(d["id"], d["name"], d["updatedAt"]), "tags": d.get("deckTags", [])}
+            for d in self.decks.values()
+            if d.get("owner", {}).get("username", self.user) == self.user
+        ]
+        return httpx.Response(200, json=deck_page(rows))
 
     def _get_deck(self, request: httpx.Request) -> httpx.Response:
         deck_id = int(request.url.path.removeprefix("/api/decks/").rstrip("/"))

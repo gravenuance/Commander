@@ -374,6 +374,83 @@ def put_ygra_decks(fake: FakeArchidekt) -> None:
     fake.peer_pages[YGRA] = deck_page([peer_row(d, "someone", 50) for d in ygra])
 
 
+def put_tag_decks(fake: FakeArchidekt, tag: str, commander: str, *, first_id: int) -> list[int]:
+    """Three recent decks of the commander found by the deck tag, two of them playing Arcane Signet."""
+    ids = [first_id, first_id + 1, first_id + 2]
+    for deck_id in ids:
+        led = copy.deepcopy(fake.decks[DECK_ID])
+        led["owner"] = {"id": 5, "username": "someone"}
+        for card in led["cards"]:
+            if card["card"]["oracleCard"]["name"] == MAGDA:
+                card["card"]["oracleCard"]["name"] = commander
+        fake.put({**led, "id": deck_id})
+    for deck_id in ids[:2]:
+        fake.decks[deck_id]["cards"].append(card_entry(9_100, "Arcane Signet", ["Ramp"]))
+    fake.tag_pages[tag.casefold()] = deck_page([peer_row(d, "someone", 50) for d in ids])
+    return ids
+
+
+def test_sync_learns_from_other_commanders_decks_carrying_the_decks_theme_tag(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    put_tag_decks(fake, "Dwarves", YGRA, first_id=PEER_ID + 20)
+    result = sync(home, fake)
+    assert result.code == 0, result.err
+    assert "Magda ideas: +1 from meta, +1 from tagged decks\n" in result.out
+    assert "Dwarves" in fake.tag_searches
+    card = read_board(home / "decks" / FOLDER).find("Arcane Signet")
+    assert card is not None
+    assert (card.origin, card.origin_tag) == (Origin.TAGGED, "Dwarves")
+    assert card.reason == "in 2 of 3 recent decks tagged Dwarves"
+
+
+def test_sync_ignores_the_play_style_role_and_card_type_deck_tags(home: Path, fake: FakeArchidekt) -> None:
+    fake.decks[DECK_ID]["deckTags"] = [
+        {"id": i, "tag": i, "deck": DECK_ID, "name": name, "position": f"M-{i}"}
+        for i, name in enumerate(("cEDH", "Combo", "Casual", "Ramp", "Creatures", "Spaghetti"), 1)
+    ]
+    for tag in ("cEDH", "Combo", "Casual", "Ramp", "Creatures", "Spaghetti"):
+        put_tag_decks(fake, tag, YGRA, first_id=PEER_ID + 20)
+    result = sync(home, fake)
+    assert result.code == 0, result.err
+    assert fake.tag_searches == []
+    assert "tagged decks" not in result.out
+
+
+def test_sync_makes_no_tag_search_for_a_deck_without_tags_or_with_its_themes_ignored(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    put_tag_decks(fake, "Dwarves", YGRA, first_id=PEER_ID + 20)
+    (home / "decks" / FOLDER / "profile.toml").write_text(
+        'version = 1\n[themes]\nignore = ["Dwarves", "Vehicles"]\n', encoding="utf-8"
+    )
+    assert sync(home, fake).code == 0
+    assert fake.tag_searches == []
+    fake.decks[DECK_ID]["deckTags"] = []
+    (home / "decks" / FOLDER / "profile.toml").unlink()
+    assert sync(home, fake).code == 0
+    assert fake.tag_searches == []
+
+
+def test_sync_leaves_the_decks_own_commanders_decks_out_of_the_tag_search(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    put_tag_decks(fake, "Dwarves", MAGDA, first_id=PEER_ID + 20)
+    result = sync(home, fake)
+    assert result.code == 0, result.err
+    assert "Dwarves" in fake.tag_searches
+    assert "tagged decks" not in result.out
+    assert read_board(home / "decks" / FOLDER).find("Arcane Signet") is None
+
+
+def test_a_tag_search_that_fails_is_named_and_the_sync_carries_on(home: Path, fake: FakeArchidekt) -> None:
+    fake.tag_pages["dwarves"] = {"unexpected": True}
+    result = sync(home, fake)
+    assert result.code == 0, result.err
+    assert "cmdr: Magda: no recent Dwarves-tagged decks to learn from (" in result.err
+    assert "Magda ideas: +1 from meta\n" in result.out
+
+
 def test_sync_learns_from_the_commanders_the_profile_names_as_alike(home: Path, fake: FakeArchidekt) -> None:
     (home / "decks" / FOLDER / "profile.toml").write_text(ALIKE_PROFILE, encoding="utf-8")
     put_ygra_decks(fake)

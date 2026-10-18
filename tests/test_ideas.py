@@ -10,7 +10,7 @@ from commander.board import Actor, BoardService, Origin, Status, read_board
 from commander.carddb import CardDb
 from commander.ideas import Idea, compile_ideas, ideas_summary, staple_ideas
 from commander.meta import Basis, CardShare, Staples
-from commander.metadata import PeerList
+from commander.metadata import PeerList, TaggedDecks
 from commander.models import Deck
 from commander.store import StoredDeck
 from test_meta import NOW, SINCE, db, deck, entry, meta_data, peer
@@ -252,3 +252,60 @@ def test_one_deck_is_too_little_to_judge_but_two_agreeing_ones_are_enough(
             StoredDeck(folder, deck), meta_data([], decks_playing(total, total)), db, now=lambda: NOW
         )
         assert [c.name for c in added[Origin.DECKS]] == expected
+
+
+def tag_pool(tag: str, *decks: list[str]) -> TaggedDecks:
+    return TaggedDecks(tag, tuple(peer(i, cards) for i, cards in enumerate(decks, 1)))
+
+
+def test_decks_carrying_a_theme_tag_give_ideas_named_after_the_tag(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    pool = tag_pool("Landfall", ["Arcane Signet"], ["Arcane Signet", "Lightning Bolt"], [], [])
+    added = compile_ideas(StoredDeck(tmp_path, deck), meta_data([], []), db, now=lambda: NOW, tagged=[pool])
+    [signet] = added[Origin.TAGGED]
+    assert (signet.name, signet.origin, signet.origin_tag) == ("Arcane Signet", Origin.TAGGED, "Landfall")
+    assert signet.reason == "in 2 of 4 recent decks tagged Landfall"
+    assert added[Origin.ADJACENT] == []
+    assert ideas_summary(added) == "+1 from tagged decks"
+    assert read_board(tmp_path).find("Arcane Signet") == signet
+
+
+def test_a_card_several_tags_decks_play_belongs_to_the_tag_playing_it_most(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    half = tag_pool("Tokens", ["Arcane Signet"], ["Arcane Signet"], [], [])
+    most = tag_pool("Landfall", ["Arcane Signet"], ["Arcane Signet"], ["Arcane Signet"], [])
+    added = compile_ideas(
+        StoredDeck(tmp_path, deck), meta_data([], []), db, now=lambda: NOW, tagged=[half, most]
+    )
+    [signet] = added[Origin.TAGGED]
+    assert (signet.origin_tag, signet.reason) == ("Landfall", "in 3 of 4 recent decks tagged Landfall")
+
+
+def test_a_tag_with_under_three_decks_gives_no_ideas(deck: Deck, db: CardDb, tmp_path: Path) -> None:
+    pool = tag_pool("Landfall", ["Arcane Signet"], ["Arcane Signet"])
+    added = compile_ideas(StoredDeck(tmp_path, deck), meta_data([], []), db, now=lambda: NOW, tagged=[pool])
+    assert added[Origin.TAGGED] == []
+
+
+def test_a_turbo_deck_gets_no_off_plan_tagged_ideas(deck: Deck, db: CardDb, tmp_path: Path) -> None:
+    pool = tag_pool("Landfall", *([["Arcane Signet", "Lightning Bolt"]] * 4))
+    turbo = replace(deck, tags=("Turbo",))
+    added = compile_ideas(StoredDeck(tmp_path, turbo), meta_data([], []), db, now=lambda: NOW, tagged=[pool])
+    assert [card.name for card in added[Origin.TAGGED]] == ["Arcane Signet"]
+
+
+def test_tagged_ideas_have_a_cap_of_their_own(
+    deck: Deck, db: CardDb, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ideas_module, "MAX_PER_SOURCE", 1)
+    pool = tag_pool("Landfall", *([["Arcane Signet", "Lightning Bolt"]] * 4))
+    adjacent = [peer(i, ["Arcane Signet", "Lightning Bolt"]) for i in range(1, 5)]
+    folder = tmp_path / "f"
+    folder.mkdir()
+    (folder / "profile.toml").write_text(ALIKE, encoding="utf-8")
+    added = compile_ideas(
+        StoredDeck(folder, deck), meta_data([], []), db, now=lambda: NOW, adjacent=adjacent, tagged=[pool]
+    )
+    assert (len(added[Origin.ADJACENT]), len(added[Origin.TAGGED])) == (1, 1)
