@@ -117,6 +117,27 @@ def test_a_cut_of_another_role_says_how_far_the_deck_over_runs_it() -> None:
     )
 
 
+def listed_as_ramp(count: int) -> list[ResolvedCard]:
+    """Cards only the deck's own category calls ramp: the peers' counts never see those."""
+    return [card(f"Listed {n}", categories=("Ramp",)) for n in range(1, count + 1)]
+
+
+def test_the_decks_ramp_category_does_not_lift_a_card_over_the_peers_floor() -> None:
+    deck = [*ramp(5), *listed_as_ramp(3)]
+    played = {f"listed {n}": 0.4 for n in range(1, 4)}
+    found = names(for_draw_idea(deck, rules(roles={Role.RAMP: band(5.0)}, shares=shares_of(deck, played))))
+    # Five tagged ramp cards are exactly the floor: none of them may go, the category-only ones can.
+    assert found == ["Listed 1", "Listed 2", "Listed 3"]
+
+
+def test_the_decks_ramp_category_does_not_make_it_over_run() -> None:
+    deck = [*ramp(6), *listed_as_ramp(3)]
+    found = for_draw_idea(deck, rules(roles={Role.RAMP: band(1.0, 6.0)}, shares=shares_of(deck)))
+    # Six tagged ramp cards are the peers' median, not over it.
+    assert found
+    assert [t.name for t in found if "over-run" in t.reason] == []
+
+
 def test_a_card_of_another_theme_is_cut_only_for_an_idea_20_points_more_played() -> None:
     deck = [card("Human A"), card("Human B"), card("Human C")]
     held = {r.card.name.casefold(): frozenset({"Humans"}) for r in deck} | {"thalia": frozenset({"Stax"})}

@@ -209,7 +209,8 @@ def _wider_cuts(
     """Deck cards of another role or theme that may go for the idea, the best first.
 
     None without the recent decks' counts or the shares. A card of another role may go only while each role
-    it fills and the idea does not keeps the peers' 25th percentile of cards. A card of another theme may go
+    it fills and the idea does not keeps the peers' 25th percentile of cards (roles counted by Tagger tag
+    alone, as the peers' are). A card of another theme may go
     only while the idea is MIN_THEME_GAP more played and each of its themes keeps the peers' median count (a
     theme with no peer count, the profile's own, may lose one card).
     Cards of the idea's themes come first, then by score: the idea's share less the card's, plus
@@ -228,7 +229,7 @@ def _wider_cuts(
         other_theme = not _swappable(r, own, rules)
         if not (other_role or other_theme):
             continue
-        lost = [role for role in _roles_of(r) if role not in info.roles]
+        lost = [role for role in _tagged_roles(r) if role not in info.roles]
         if any(role in peers.roles and held_roles[role] - 1 < peers.roles[role].floor for role in lost):
             continue
         gap = gain - _share(r.card.name, shares)
@@ -263,11 +264,12 @@ def _themes_hold(r: ResolvedCard, held: Mapping[str, int], rules: CutRules, peer
 
 
 def _role_counts(main: Sequence[ResolvedCard]) -> Counter[Role]:
-    """How many deck cards fill each role, by tag or by the deck's category; commanders left out."""
+    """How many deck cards the Tagger tags put in each role, as `peercounts` counts the peers'; commanders
+    left out."""
     counts: Counter[Role] = Counter()
     for r in main:
         if COMMANDER_CATEGORY not in r.card.categories:
-            for role in _roles_of(r):
+            for role in _tagged_roles(r):
                 counts[role] += r.card.quantity
     return counts
 
@@ -279,6 +281,10 @@ def _theme_counts(main: Sequence[ResolvedCard], rules: CutRules) -> Counter[str]
             for theme in _themes_of(r, rules):
                 counts[theme] += r.card.quantity
     return counts
+
+
+def _tagged_roles(r: ResolvedCard) -> list[Role]:
+    return [role for role in ANALYZED_ROLES if r.info is not None and role in r.info.roles]
 
 
 def _roles_of(r: ResolvedCard) -> list[Role]:
