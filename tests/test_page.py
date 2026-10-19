@@ -306,6 +306,9 @@ def test_the_breakdown_says_which_grace_cards_weigh_the_lists_and_how_many_hold_
         """
     const idea = card({ share: combined(0.6, 3, 5, { meta: part(0.6, 3, 5) }) });
     const none = buildTile(idea);
+    // An empty [grace] table comes as no cards, and says nothing either.
+    state.view = { grace: { cards: [], holding: 0, lists: 30 } };
+    const empty = buildTile(idea);
     state.view = { grace: """
         + GRACE
         + """ };
@@ -313,12 +316,14 @@ def test_the_breakdown_says_which_grace_cards_weigh_the_lists_and_how_many_hold_
     state.view = { grace: { cards: [{ name: "Basalt Monolith", factor: 2.5 }], holding: 1, lists: 30 } };
     const one = buildTile(idea);
     const unshared = buildTile(card({ origin: null, share: null, pool: part(0.5, 2, 4) }));
-    return { none: texts(none, ".share-grace"), graced: texts(graced, ".share-grace"),
+    return { none: texts(none, ".share-grace"), empty: texts(empty, ".share-grace"),
+      graced: texts(graced, ".share-grace"),
       one: texts(one, ".share-grace"), unshared: texts(unshared, ".share-grace"),
       total: texts(graced, ".share-total") };
     """
     )
     assert seen["none"] == []
+    assert seen["empty"] == []
     assert seen["graced"] == [GRACE_LINE]
     assert seen["one"] == ["Weighted toward lists with Basalt Monolith \u00d72.5: 1 of 30 holds one"]
     # No combined share, nothing weighted to explain.

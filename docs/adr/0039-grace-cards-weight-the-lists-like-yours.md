@@ -31,6 +31,14 @@ Option 4.
 - **Profile only.** `profile.toml` gets a `[grace]` table mapping a card name to a factor. The app never writes
   it: the user edits the file, as for the other keys that are not in the Settings dialog. `cmdr profile` shows
   the grace cards.
+- **An empty table by default.** The template writes a live, empty `[grace]` table with a one-line
+  explanation and a commented example, above `[ideas]`, so the setting is found in the file. Profiles that
+  already exist get the same table from `cmdr sync` (`profileedit.ensure_grace_table`): it inserts the table
+  before `[ideas]`, or at the end, leaves every other byte alone, writes atomically and logs each deck it
+  changes. A profile that does not parse is left as it is. A deck without a profile gets the template from
+  `cmdr sync`, so every deck, new or old, has a profile with the table to edit. Nothing
+  that only reads (the app's deck view, `cmdr profile`) writes it. The table goes above `[ideas]` because the
+  app appends `tag_search` to the end of that table, which must never land under `[grace]`.
 - **A per-card factor, multiplied, capped.** A factor is a number over 1 and at most 10. A list's or deck's
   weight is multiplied by the product of the factors of the grace cards it holds, and the product is capped at
   `MAX_GRACE = 10`, so a list holding every grace card cannot become the whole sample. A factor of 1 or less

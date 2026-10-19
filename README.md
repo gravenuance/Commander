@@ -312,7 +312,8 @@ tag_search = true            # also learn from decks carrying the deck's theme t
 "Rings of Brighthearth" = 2
 ```
 
-Every key is optional. `[exclude]`, `bracket_ceiling` and `max_card_eur` apply to the ideas `sync`
+Every key is optional. `cmdr sync` writes this template for a deck that has no profile yet, and adds an empty
+`[grace]` table, with a commented example, to a profile that has none, so it is there to fill in. `[exclude]`, `bracket_ceiling` and `max_card_eur` apply to the ideas `sync`
 compiles as well as to `suggest`. `cmdr profile <deck>` shows the profile as `suggest` reads it and warns
 about tags Tagger doesn't have. Flags still win over the profile: `--max-price` and `--within-bracket` override
 `max_card_eur` and `bracket_ceiling`. Tagger tags are community-maintained, so a tag can be renamed or

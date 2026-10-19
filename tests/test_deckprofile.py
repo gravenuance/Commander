@@ -188,6 +188,11 @@ def test_grace_factors_run_up_to_10_and_are_looked_up_by_card_key() -> None:
     assert Profile().grace_by_key() == {}
 
 
+def test_an_empty_grace_table_is_the_same_as_none(tmp_path: Path) -> None:
+    write(tmp_path, "[grace]\n")
+    assert read_profile(tmp_path) == Profile()
+
+
 def test_grace_names_are_stripped_and_a_name_repeated_around_spaces_is_a_duplicate() -> None:
     assert parse_profile({"grace": {"  Sol Ring ": 2}}, "p").grace == {"Sol Ring": 2.0}
     with pytest.raises(ProfileError, match="listed twice"):
@@ -217,11 +222,10 @@ def test_template_is_valid_and_empty(deck: Deck) -> None:
 
 def test_the_templates_grace_example_is_valid_once_uncommented(deck: Deck) -> None:
     template = profile_template(deck)
-    assert "# [grace]" in template
-    uncommented = "\n".join(
-        line.removeprefix("# ") if line.startswith(("# [grace]", '# "Basalt Monolith"')) else line
-        for line in template.splitlines()
-    )
+    # A live, empty table before [ideas], so the app's saves into [ideas] never land under it.
+    assert template.index("\n[grace]\n") < template.index("\n[ideas]\n")
+    assert tomllib.loads(template)["grace"] == {}
+    uncommented = template.replace('# "Basalt Monolith"', '"Basalt Monolith"')
     assert parse_profile(tomllib.loads(uncommented), "template").grace == {"Basalt Monolith": 3.0}
 
 

@@ -192,6 +192,14 @@ def resolve_themes(profile: Profile, db: CardDb) -> ResolvedThemes:
     return ResolvedThemes(themes, resolve_spec(profile.exclude, ids), unknown, labelled)
 
 
+# The empty [grace] table every profile carries (ADR 0039), with its one-line explanation and an example.
+GRACE_BLOCK = (
+    f"# Lists holding these cards weigh more in this deck's shares: a factor over 1, up to {MAX_GRACE:g}.\n"
+    "[grace]\n"
+    '# "Basalt Monolith" = 3\n'
+)
+
+
 def write_profile_template(folder: Path, deck: Deck) -> Path:
     """Write a commented, empty profile; refuses to replace one that exists."""
     path = profile_path(folder)
@@ -247,11 +255,7 @@ categories = []
 [key_cards]
 ignore = []
 
-# Cards that mark the lists like yours: a meta list or recent deck holding one counts for more in this
-# deck's percentages and ideas, by the factor (more than 1, at most {MAX_GRACE:g}); factors multiply.
-# [grace]
-# "Basalt Monolith" = 3
-
+{GRACE_BLOCK}
 # Commanders that play like this one: their recent Archidekt decks at this deck's bracket give `sync`
 # ideas too. A partner pair goes in its own list:
 # commanders = ["The Gitrog Monster", ["Tevesh Szat, Doom of Fools", "Kodama of the East Tree"]]

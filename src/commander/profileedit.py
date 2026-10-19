@@ -1,5 +1,8 @@
 """Changes to a deck's profile.toml from the app, keeping the owner's comments and layout."""
 
+import logging
+import re
+import tomllib
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import cast
@@ -9,6 +12,7 @@ from tomlkit.exceptions import ParseError
 from tomlkit.items import Array, Table
 
 from commander.deckprofile import (
+    GRACE_BLOCK,
     Profile,
     ProfileError,
     migrate_profile,
@@ -19,6 +23,8 @@ from commander.deckprofile import (
 )
 from commander.fsutil import write_text_atomic
 from commander.models import Deck
+
+log = logging.getLogger(__name__)
 
 
 def save_settings(
@@ -52,6 +58,59 @@ def save_settings(
     profile = parse_profile(cast("dict[str, object]", doc.unwrap()), str(path))
     write_text_atomic(path, tomlkit.dumps(doc))
     return profile
+
+
+def ensure_grace_table(folder: Path) -> bool:
+    """Add the empty [grace] table (ADR 0039) to the folder's profile.toml when it has none; whether it did.
+
+    The table goes before [ideas], and the comments written directly above that table, or at the end. Every
+    other byte stays as it was, line ends included. A missing profile is not created, and one that does not
+    parse is logged and left alone.
+    """
+    path = profile_path(folder)
+    try:
+        text = read_profile_text(path)
+        if text is None:
+            return False
+        before = parse_profile(migrate_profile(tomllib.loads(text), path), str(path))
+        if "grace" in tomllib.loads(text):
+            return False
+        # The file as it is, with any byte order mark the check above dropped.
+        original = path.read_bytes().decode("utf-8")
+        added = _checked(_with_grace_table(original), before, path)
+    except (ProfileError, tomllib.TOMLDecodeError) as error:
+        log.warning("%s left as it is, without a [grace] table: %s", path, error)
+        return False
+    write_text_atomic(path, added)
+    return True
+
+
+def _checked(added: str, before: Profile, path: Path) -> str:
+    """The text with the table added, once it is seen to read as the same profile."""
+    if parse_profile(migrate_profile(tomllib.loads(added), path), str(path)) != before:
+        raise ProfileError(f"{path}: adding the [grace] table would change the profile")
+    return added
+
+
+_IDEAS_HEADER = re.compile(r"^[ \t]*\[[ \t]*ideas[ \t]*\][ \t]*(?:#.*)?\r?$", re.MULTILINE)
+
+
+def _with_grace_table(text: str) -> str:
+    eol = "\r\n" if "\r\n" in text else "\n"
+    block = GRACE_BLOCK.replace("\n", eol)
+    header = _IDEAS_HEADER.search(text)
+    if header is None:
+        tail = text if text.endswith("\n") or not text else text + eol
+        return tail + (eol if tail.strip() else "") + block
+    start = header.start()
+    # The comments directly above the table belong to it, so the new table goes above them.
+    while start > 0:
+        previous = text.rfind("\n", 0, start - 1) + 1
+        if not text[previous:start].lstrip().startswith("#"):
+            break
+        start = previous
+    gap = "" if start == 0 or text[:start].endswith(eol + eol) else eol
+    return text[:start] + gap + block + eol + text[start:]
 
 
 def _table(doc: tomlkit.TOMLDocument, key: str) -> Table:

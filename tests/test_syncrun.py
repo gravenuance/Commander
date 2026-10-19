@@ -25,6 +25,7 @@ from commander.board import (
 )
 from commander.carddb import CARD_DB_FILE, CardDataMeta, CardDb
 from commander.config import MetaSettings
+from commander.deckprofile import Profile, profile_template, read_profile
 from commander.fetchpriority import FetchPriority
 from commander.ideas import rejudge_ideas, relabel_legacy_ideas
 from commander.metadata import AdjacentDecks, MetaData
@@ -389,6 +390,65 @@ def test_a_sync_ignores_the_maybeboard_and_sideboard_and_writes_nothing_to_archi
         "High-Speed Hoverbike",
         "Tempestra, Dame of Games",
     ]
+
+
+def test_a_sync_adds_the_empty_grace_table_to_each_profile_that_lacks_one(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake, stored = populated(tmp_path, raw_deck, card_db_file)
+    profile = stored.folder / "profile.toml"
+    profile.write_text("version = 1\n\n[ideas]\ncommanders = []\n", encoding="utf-8")
+
+    def sync(options: SyncOptions) -> None:
+        run_sync(
+            services(tmp_path, fake),
+            Workspace(tmp_path / "decks"),
+            "MAKKIS",
+            MetaSettings(),
+            options,
+            on_progress=lambda _: None,
+        )
+
+    # A dry run writes nothing.
+    sync(SyncOptions(cards=False, ideas=False, dry_run=True))
+    assert "[grace]" not in profile.read_text(encoding="utf-8")
+    with caplog.at_level(logging.INFO, logger="commander.syncrun"):
+        sync(SyncOptions(cards=False, ideas=False))
+    text = profile.read_text(encoding="utf-8")
+    assert text.index("\n[grace]\n") < text.index("\n[ideas]\n")
+    assert [r.getMessage() for r in caplog.records if "[grace]" in r.getMessage()] == [
+        f"{stored.folder.name}: added an empty [grace] table to profile.toml"
+    ]
+    # A second sync finds it there.
+    sync(SyncOptions(cards=False, ideas=False))
+    assert profile.read_text(encoding="utf-8") == text
+
+
+def test_a_sync_gives_a_deck_without_a_profile_the_template_with_its_empty_grace_table(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path
+) -> None:
+    fake, stored = populated(tmp_path, raw_deck, card_db_file)
+    profile = stored.folder / "profile.toml"
+
+    def sync(options: SyncOptions) -> None:
+        run_sync(
+            services(tmp_path, fake),
+            Workspace(tmp_path / "decks"),
+            "MAKKIS",
+            MetaSettings(),
+            options,
+            on_progress=lambda _: None,
+        )
+
+    sync(SyncOptions(cards=False, ideas=False, dry_run=True))
+    assert not profile.exists()
+    sync(SyncOptions(cards=False, ideas=False))
+    assert profile.read_text(encoding="utf-8") == profile_template(stored.deck)
+    assert read_profile(stored.folder) == Profile()
+    # A second sync leaves the file as it is.
+    profile.write_text(profile.read_text(encoding="utf-8") + "# mine\n", encoding="utf-8")
+    sync(SyncOptions(cards=False, ideas=False))
+    assert profile.read_text(encoding="utf-8").endswith("# mine\n")
 
 
 def seed_board(stored: StoredDeck, card_db_file: Path) -> dict[str, str]:

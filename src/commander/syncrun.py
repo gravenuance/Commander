@@ -22,11 +22,12 @@ from commander.carddb import CARD_DB_FILE, CardDataError, CardDb
 from commander.config import MetaSettings
 from commander.credentials import CredentialError, TokenStore
 from commander.deckcache import Clock
-from commander.deckprofile import ProfileError
+from commander.deckprofile import ProfileError, profile_path, write_profile_template
 from commander.fetchpriority import FetchPriority
 from commander.ideas import compile_ideas, gather_idea_pools, rejudge_ideas, relabel_legacy_ideas
 from commander.metadata import Progress, gather_for, meta_sources
 from commander.net import Fetcher, NetworkError, Pacer
+from commander.profileedit import ensure_grace_table
 from commander.scryfall import CardRefresh, RefreshStatus, ScryfallClient, ScryfallError, refresh_card_db
 from commander.store import StoredDeck, Workspace
 from commander.sync import SyncResult, SyncStatus, sync_decks
@@ -146,6 +147,7 @@ def run_sync(
         cards = _card_status(cards_job, options)
     if options.dry_run:
         return SyncOutcome(results, cards, labels, warnings=warnings)
+    _add_grace_tables(workspace, warnings)
     ideas, turned_down = (
         _compile_ideas(
             workspace,
@@ -161,6 +163,23 @@ def run_sync(
         else ({}, {})
     )
     return SyncOutcome(results, cards, labels, turned_down, ideas, warnings)
+
+
+def _add_grace_tables(workspace: Workspace, warnings: list[str]) -> None:
+    """Give each deck's profile the empty [grace] table (ADR 0039), writing the template for a deck with no
+    profile yet; a profile that cannot be written is a warning."""
+    for deck_id, folder in workspace.deck_folders():
+        try:
+            if not profile_path(folder).exists():
+                deck = workspace.load(deck_id)
+                if deck is not None:
+                    write_profile_template(folder, deck)
+                    log.info("%s: wrote profile.toml from the template", folder.name)
+            elif ensure_grace_table(folder):
+                log.info("%s: added an empty [grace] table to profile.toml", folder.name)
+        except OSError as error:
+            log.warning("deck %s: could not add the [grace] table: %s", deck_id, error)
+            warnings.append(f"deck {deck_id}: [grace] table not added: {error}")
 
 
 def _sync_labels(

@@ -822,7 +822,11 @@ def test_board_edits_and_settings_wait_while_an_update_runs(
     assert call(desk) == {"error": f"Wait for the sync to finish, then {then}."}
     assert not (folder / "board.json").exists()
     assert not (folder / "activity.jsonl").exists()
-    assert not (folder / "profile.toml").exists()
+    # The sync writes the profile template for a deck without one (ADR 0039); the settings are not in it.
+    profile = folder / "profile.toml"
+    text = profile.read_text(encoding="utf-8") if profile.exists() else ""
+    assert "Tempestra" not in text
+    assert "\ntag_search = true" not in text
 
 
 def probing[**P, R](real: Callable[P, R], probe: Callable[[], None]) -> Callable[P, R]:

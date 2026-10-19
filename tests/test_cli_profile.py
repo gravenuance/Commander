@@ -33,8 +33,14 @@ def profile(args: list[str], tmp_path: Path, cache: Path) -> tuple[int, str, str
     return result.code, result.out, result.err
 
 
+def without_profile(tmp_path: Path) -> None:
+    """Take away the profile sync writes (ADR 0039), as for a deck not synced since it was added."""
+    (deck_folder(tmp_path) / PROFILE_FILE).unlink()
+
+
 def test_init_writes_a_template_once(tmp_path: Path, raw_deck: Json, own_cache: Path) -> None:
     synced(tmp_path, raw_deck)
+    without_profile(tmp_path)
     code, out, _ = profile(["magda", "--init"], tmp_path, own_cache)
     assert code == 0
     assert (deck_folder(tmp_path) / PROFILE_FILE).is_file()
@@ -46,6 +52,7 @@ def test_init_writes_a_template_once(tmp_path: Path, raw_deck: Json, own_cache: 
 
 def test_without_a_profile_says_how_to_start_one(tmp_path: Path, raw_deck: Json, own_cache: Path) -> None:
     synced(tmp_path, raw_deck)
+    without_profile(tmp_path)
     code, out, _ = profile(["magda"], tmp_path, own_cache)
     assert code == 0
     assert out.splitlines()[1:] == [
