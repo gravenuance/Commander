@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.7.0 - 2026-10-19
+
 ### Added
 - Grace cards (ADR 0039): a deck's `profile.toml` can name cards under `[grace]`, each with a factor over 1 and
   at most 10. A meta list or recent Archidekt deck holding them counts for more (the factors multiply, at most
