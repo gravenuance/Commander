@@ -170,8 +170,8 @@ def test_the_decks_grace_cards_weight_the_shares_that_order_its_cut_targets(db: 
     cards = deck_cards(50, 51)
     deck = Deck(1, "test", "me", 3, "2026-10-16", tuple(cards))
     main = resolved(db, cards)
-    # Four equally fresh peer decks: the idea is in three, Filler Card 50 in one and 51 in two.
-    pool = pool_of(peers_each((50, 60), (51, 60), (51, 60), ()))
+    # Four equally fresh peer decks: the idea is in all, Filler Card 50 in one and 51 in two.
+    pool = pool_of(peers_each((50, 60), (51, 60), (51, 60), (60,)))
     [idea] = db.cards_named(["Filler Card 60"]).values()
 
     def rules_for(profile: Profile) -> CutRules:
@@ -183,13 +183,13 @@ def test_the_decks_grace_cards_weight_the_shares_that_order_its_cut_targets(db: 
     # Least played first: 50 at 1/4 goes before 51 at 1/2.
     assert cuts(Profile()) == ["Filler Card 50", "Filler Card 51"]
     # Grace x6 on Filler Card 50 weighs the deck playing it 6, 1, 1, 1 (scaled 8/3, 4/9, 4/9, 4/9 of
-    # four): 50 is 2/3, 51 is 2/9 and the idea 8/9, so now 51 is the less played.
+    # four): 50 is 2/3, 51 is 2/9 and the idea all of them, so now 51 is the less played.
     graced = Profile(grace={"Filler Card 50": 6.0})
     assert cuts(graced) == ["Filler Card 51", "Filler Card 50"]
     shares = rules_for(graced).shares
     assert shares is not None
     fractions = shares.fractions()
-    assert [fractions[f"filler card {n}"] for n in (50, 51, 60)] == pytest.approx([2 / 3, 2 / 9, 8 / 9])
+    assert [fractions[f"filler card {n}"] for n in (50, 51, 60)] == pytest.approx([2 / 3, 2 / 9, 1.0])
 
 
 def test_the_rules_hold_the_peer_decks_role_and_theme_counts_only_with_enough_decks(db: CardDb) -> None:
@@ -268,21 +268,23 @@ def test_below_bracket_5_the_cuts_rank_by_the_share_of_recent_decks_weighted_by_
     held = (f"Filler Card {COMMANDER}", "Ancient Tomb")
     fresh, stale = NOW, datetime(2026, 3, 30, 12, 0, tzinfo=UTC)
     decks = [
-        PeerList(PeerDeck(i, f"peer {i}", "someone", 10, when, 3), (*held, played, "Filler Card 60"))
+        PeerList(PeerDeck(i, f"peer {i}", "someone", 10, when, 3), (*held, *played, "Filler Card 60"))
         for i, (when, played) in enumerate(
             [
-                (fresh, "Filler Card 50"),
-                (fresh, "Filler Card 50"),
-                (stale, "Filler Card 51"),
-                (stale, "Filler Card 51"),
+                (fresh, ("Filler Card 50",)),
+                (fresh, ("Filler Card 50",)),
+                (fresh, ()),
+                (fresh, ()),
+                (stale, ("Filler Card 51",)),
+                (stale, ("Filler Card 51",)),
             ]
         )
     ]
     rules = deck_cut_rules(deck, main, Profile(), db, pool_of(decks), now=lambda: NOW)
     idea = db.cards_named(["Filler Card 60"])["filler card 60"]
     cuts = role_targets(idea, main, with_ideas(rules, [idea], db))
-    # All four decks play the idea. Two of four play each card, but the 200-day-old ones count for almost
-    # nothing; unweighted it is a tie.
+    # All six decks play the idea. Two of six play each card, but the 200-day-old ones count for almost
+    # nothing (2 / (4 + 2 * 0.0098) is 50%, 2 * 0.0098 / 4.02 is 0%); unweighted it is a tie.
     assert [t.name for t in cuts] == ["Filler Card 51", "Filler Card 50"]
-    assert cuts[0].reason.startswith("fills no role either; in 1% of recent decks (2/4);")
-    assert cuts[1].reason.startswith("fills no role either; in 99% of recent decks (2/4);")
+    assert cuts[0].reason.startswith("fills no role either; in 0% of recent decks (2/6);")
+    assert cuts[1].reason.startswith("fills no role either; in 50% of recent decks (2/6);")

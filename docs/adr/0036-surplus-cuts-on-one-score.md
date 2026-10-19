@@ -4,6 +4,8 @@
 (the floor gate on cuts of another role becomes a median gate, one score replaces "like for like first", four
 targets) and [ADR 0030](0030-land-swaps-guarded-by-the-mana-base.md) (a nonland idea may replace a land
 under the guard). [ADR 0016](0016-replacements-like-for-like.md)'s protection of leanings stands.
+Amended in part by [ADR 0041](0041-a-cut-clearly-less-played-than-the-idea.md) (a computed cut must be clearly
+less played than the idea).
 
 ## Context
 

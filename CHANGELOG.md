@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Changed
+- A suggested cut must be clearly less played than the idea (ADR 0041): at least 30 points less, or half the
+  idea's share when that is smaller, so a 90% idea no longer suggests replacing an 80% card. Basic lands and
+  the cuts you or Claude picked are unaffected; an idea left with no cut waits in *No cut yet*.
+
 ## 0.7.0 - 2026-10-19
 
 ### Added

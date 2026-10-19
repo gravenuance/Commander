@@ -12,7 +12,7 @@ from commander.targets import CutRules, Target, role_targets
 from commander.weightedshare import NO_SHARES, ShareTable
 from test_targets import card, info, names, table
 
-IDEA_SHARE = 0.5
+IDEA_SHARE = 0.9
 DECK_SHARE = 0.3
 LEADER = card("Leader", (Role.RAMP,), categories=("Commander",))
 
@@ -49,7 +49,7 @@ def ramp(count: int) -> list[ResolvedCard]:
 
 
 def shares_of(deck: list[ResolvedCard], over: Mapping[str, float] | None = None) -> ShareTable:
-    """Everything the deck plays at 30%, the idea at 50%, and the named cards as given."""
+    """Everything the deck plays at 30%, the idea at 90%, and the named cards as given."""
     return table(
         {**{r.card.name.casefold(): DECK_SHARE for r in deck}, "mystic remora": IDEA_SHARE, **(over or {})}
     )
@@ -132,7 +132,7 @@ def test_a_surplus_cut_scores_a_bonus_by_how_far_over_the_median_the_deck_is() -
         *[card(f"Removal {n}", (Role.REMOVAL,)) for n in range(1, 9)],
     ]
     shares = shares_of(deck, {"ramp 1": 0.10, "removal 1": 0.08})
-    # Ramp is 3 over the median of 6, removal 2 over: 0.5 - 0.10 + 3 * 0.03 beats 0.5 - 0.08 + 2 * 0.03.
+    # Ramp is 3 over the median of 6, removal 2 over: 0.9 - 0.10 + 3 * 0.03 beats 0.9 - 0.08 + 2 * 0.03.
     over = rules(roles={Role.RAMP: band(1.0, 6.0), Role.REMOVAL: band(1.0, 6.0)}, shares=shares)
     assert names(for_draw_idea(deck, over))[:2] == ["Ramp 1", "Removal 1"]
     # Two over for each: the bonus is level and the less played removal card leads.
@@ -153,8 +153,8 @@ def test_a_card_of_two_surplus_roles_scores_by_the_role_it_over_runs_most() -> N
     found = for_draw_idea(
         deck, rules(roles={Role.RAMP: band(1.0, 1.0), Role.REMOVAL: band(1.0, 1.0)}, shares=shares)
     )
-    # 0.24 + 3 * 0.03 = 0.33 for the two-role card against 0.255 + 2 * 0.03 = 0.315; its least over-run role
-    # would have scored 0.30, behind it. The ramp cards follow on 0.20 + 0.09 = 0.29.
+    # 0.64 + 3 * 0.03 = 0.73 for the two-role card against 0.655 + 2 * 0.03 = 0.715; its least over-run role
+    # would have scored 0.70, behind it. The ramp cards follow on 0.60 + 0.09 = 0.69.
     assert names(found) == ["Ramp and Removal", "Removal A", "Ramp A", "Ramp B"]
     assert found[0].reason.startswith("surplus ramp: 4 against a median of 1 in recent decks;")
 
@@ -167,13 +167,13 @@ def test_a_surplus_cut_scoring_higher_than_a_like_for_like_one_comes_first_and_v
         card("Third Ramp", (Role.RAMP,)),
     ]
     peers = {Role.RAMP: band(1.0, 1.0)}
-    # Old Draw 0.10 + (0.5 - 0.45), Low Ramp (0.5 - 0.05) + 2 * 0.03, the others (0.5 - 0.3) + 2 * 0.03.
+    # Old Draw 0.10 + (0.9 - 0.45), Low Ramp (0.9 - 0.05) + 2 * 0.03, the others (0.9 - 0.3) + 2 * 0.03.
     low = shares_of(deck, {"old draw": 0.45, "low ramp": 0.05})
     surplus = for_draw_idea(deck, rules(roles=peers, shares=low))
     assert names(surplus) == ["Low Ramp", "High Ramp", "Third Ramp", "Old Draw"]
     assert surplus[0].reason.startswith("surplus ramp: 3 against a median of 1 in recent decks;")
     assert surplus[3].reason.startswith("same role (draw);")
-    # Old Draw at 0.05 scores 0.10 + 0.45, ahead of Low Ramp's 0.51.
+    # Old Draw at 0.05 scores 0.10 + 0.85, ahead of Low Ramp's 0.91.
     like = for_draw_idea(
         deck, rules(roles=peers, shares=shares_of(deck, {"old draw": 0.05, "low ramp": 0.05}))
     )
@@ -188,7 +188,7 @@ def test_equal_scores_go_to_the_bigger_surplus_then_the_less_popular_card_then_t
     removal = [card(f"Zed Removal {n}", (Role.REMOVAL,), rank=100) for n in (1, 2, 3)]
     deck = [*ramp_cards, *removal]
     peers = {Role.RAMP: band(1.0, 1.0), Role.REMOVAL: band(0.0, 0.0)}
-    # Ramp is 2 over its median, removal 3: every card scores 0.2, and removal leads despite the names.
+    # Ramp is 2 over its median, removal 3: every card scores 0.6, and removal leads despite the names.
     found = for_draw_idea(deck, rules(roles=peers, shares=shares_of(deck)))
     assert names(found) == ["Zed Removal 1", "Zed Removal 2", "Zed Removal 3", "Alpha Ramp 1"]
     # At equal surplus the higher rank number leads, the unranked card last, then the name.
@@ -239,11 +239,12 @@ def test_a_card_of_another_theme_is_cut_only_for_an_idea_20_points_more_played()
     held = {r.card.name.casefold(): frozenset({"Humans"}) for r in deck} | {"thalia": frozenset({"Stax"})}
 
     def offered(out_share: float) -> list[str]:
-        shares = table({"thalia": 0.5, "human a": out_share, "human b": 0.9, "human c": 0.9})
+        shares = table({"thalia": 0.35, "human a": out_share, "human b": 0.9, "human c": 0.9})
         return names(for_stax_idea(deck, rules(themes={"Humans": 1.0}, shares=shares, held=held)))
 
-    assert offered(0.31) == []
-    assert offered(0.30) == ["Human A"]
+    # An idea at 35% needs only 17.5 points over a cut for MIN_GAP, so the theme's 20 points decide.
+    assert offered(0.16) == []
+    assert offered(0.15) == ["Human A"]
     assert offered(0.0) == ["Human A"]
 
 
@@ -417,7 +418,9 @@ def test_a_card_of_another_role_is_cut_only_for_an_idea_more_played_than_it() ->
         card("Level Ramp", (Role.RAMP,)),
         card("Rare Ramp", (Role.RAMP,)),
     ]
-    shares = table({"mystic remora": IDEA_SHARE, "played ramp": 0.9, "level ramp": 0.5, "rare ramp": 0.2})
+    shares = table(
+        {"mystic remora": IDEA_SHARE, "played ramp": 0.95, "level ramp": IDEA_SHARE, "rare ramp": 0.2}
+    )
     assert names(for_draw_idea(deck, rules(roles={Role.RAMP: band(0.0)}, shares=shares))) == ["Rare Ramp"]
 
 
@@ -432,10 +435,12 @@ def test_a_card_of_a_role_the_idea_shares_but_of_another_theme_goes_by_theme_sur
 
 
 def test_scores_equal_up_to_float_noise_go_to_the_bigger_surplus() -> None:
-    # Old Draw: 0.10 + (0.5 - 0.35) and each ramp card: (0.5 - 0.4) + 5 * 0.03 are both 0.25, though the first
-    # computes as 0.25 and the second as 0.24999999999999997.
+    # Old Draw: 0.10 + (0.95 - 0.0) and each ramp card: (0.95 - 0.05) + 5 * 0.03 are both 1.05, though the
+    # first computes as 1.05 and the second as 1.0499999999999998.
     ramp_cards = ramp(6)
     deck = [card("Old Draw", (Role.DRAW,)), *ramp_cards]
-    shares = shares_of(deck, {"old draw": 0.35, **{r.card.name.casefold(): 0.4 for r in ramp_cards}})
+    shares = shares_of(
+        deck, {"mystic remora": 0.95, "old draw": 0.0, **{r.card.name.casefold(): 0.05 for r in ramp_cards}}
+    )
     found = for_draw_idea(deck, rules(roles={Role.RAMP: band(1.0, 1.0)}, shares=shares))
     assert names(found) == ["Ramp 1", "Ramp 2", "Ramp 3", "Ramp 4"]

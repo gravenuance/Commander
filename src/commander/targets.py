@@ -24,6 +24,9 @@ from commander.weightedshare import ShareTable, share_reason, weighted_shares
 log = logging.getLogger(__name__)
 
 MAX_TARGETS = 4
+# A computed cut must be this much less played than the idea, or half the idea's share when that is smaller:
+# a staple never pushes out a near-staple, and a barely played idea still finds cuts.
+MIN_GAP = 0.30
 # A card of another theme is cut only for one at least this many points more played (a share of 0.2).
 MIN_THEME_GAP = 0.20
 # Every candidate cut scores the idea's share less its own, plus a bonus for what makes it allowed (ADR 0036).
@@ -187,8 +190,8 @@ def role_targets(info: CardInfo, main: Sequence[ResolvedCard], rules: CutRules) 
     Every candidate scores the idea's weighted share (ADR 0026) less its own, plus a bonus for what makes it
     allowed. Equal scores go to the bigger surplus, then the less popular card on EDHREC (the higher rank
     number first, unranked last), then the name. Commanders and protected oracle ids are never offered, nor
-    is a card at least as played as the idea (a card no list plays counts as 0; basic lands excepted),
-    unless no list was read.
+    is a card within MIN_GAP of the idea's share (`_clearly_less_played`; a card no list plays counts as 0;
+    basic lands excepted), unless no list was read.
 
     - Like for like (+LIKE_FOR_LIKE_BONUS): a card of the idea's role (an idea with none matches cards with
       none, a land only lands), and a card serving a theme or leaning only for an idea serving the same.
@@ -199,7 +202,9 @@ def role_targets(info: CardInfo, main: Sequence[ResolvedCard], rules: CutRules) 
     roles = [role for role in ANALYZED_ROLES if role in info.roles]
     own = rules.themes.get(info.oracle_id, frozenset())
     eligible = [
-        r for r in main if _eligible(r, info, rules.protected) and _less_played(info.name, r, rules.shares)
+        r
+        for r in main
+        if _eligible(r, info, rules.protected) and _clearly_less_played(info.name, r, rules.shares)
     ]
     like = [
         _Candidate(
@@ -376,8 +381,8 @@ def _land_candidates(info: CardInfo, main: Sequence[ResolvedCard], rules: CutRul
     (`ManaGuard.spare_lands`). Each scores SURPLUS_BONUS per spare land. The basic with the most spare
     sources of its colour is one candidate, however played basics are (nearly every list runs them); a
     nonbasic land is another only when it does nothing but make mana (`ManaGuard.mana_only`), carries no
-    role, serves no theme or leaning (a utility or theme land is never spare) and is less played than the
-    idea, and adds its own share gap.
+    role, serves no theme or leaning (a utility or theme land is never spare) and is clearly less played than
+    the idea (`_clearly_less_played`), and adds its own share gap.
     """
     mana, shares = rules.mana, rules.shares
     if info.is_land or mana is None or not shares or rules.peers is None:
@@ -402,7 +407,7 @@ def _land_candidates(info: CardInfo, main: Sequence[ResolvedCard], rules: CutRul
             and not cut.roles
             and not _roles_of(r)
             and not _themes_of(r, rules)
-            and _less_played(info.name, r, shares)
+            and _clearly_less_played(info.name, r, shares)
         ):
             score = SURPLUS_BONUS * spare + _gap(info.name, r, shares)
             found.append(_Candidate(r, score, reason, _order(r, float(spare))))
@@ -495,6 +500,15 @@ def _shared(r: ResolvedCard, own: frozenset[str], rules: CutRules) -> frozenset[
 def _less_played(idea: str, cut: ResolvedCard, shares: ShareTable | None) -> bool:
     """Whether the deck card is less played than the idea; without any shares, every card is."""
     return not shares or _share(idea, shares) - _share(cut.card.name, shares) > _SHARE_NOISE
+
+
+def _clearly_less_played(idea: str, cut: ResolvedCard, shares: ShareTable | None) -> bool:
+    """Whether the deck card is at least MIN_GAP less played than the idea, or half the idea's share when
+    that is smaller; without any shares, every card is."""
+    if not shares:
+        return True
+    needed = min(MIN_GAP, _share(idea, shares) / 2)
+    return _less_played(idea, cut, shares) and _gap(idea, cut, shares) >= needed - _SHARE_NOISE
 
 
 def _gap(idea: str, cut: ResolvedCard, shares: ShareTable | None) -> float:

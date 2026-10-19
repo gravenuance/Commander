@@ -500,9 +500,12 @@ base against Frank Karsten's published numbers
   category under *What stops you* fold, and stay as you left them.
   The suggested targets are the cards you or Claude picked, or else the four best scoring deck cards
   ([ADR 0029](docs/adr/0029-replacement-targets-and-wider-cuts.md),
-  [ADR 0036](docs/adr/0036-surplus-cuts-on-one-score.md)). Every candidate scores the idea's share less its
-  own, plus a bonus for what allows the cut. Every cut suggested is less played than the idea, a card no
-  list plays counting as 0 (basic lands excepted); without list data there is no such gate. An idea left with no cut goes to the
+  [ADR 0036](docs/adr/0036-surplus-cuts-on-one-score.md),
+  [ADR 0041](docs/adr/0041-a-cut-clearly-less-played-than-the-idea.md)). Every candidate scores the idea's
+  share less its own, plus a bonus for what allows the cut. Every cut suggested is at least 0.30 less played
+  than the idea, or half the idea's share when that is smaller (a 90% idea replaces cards at 60% or less, a
+  10% idea cards at 5% or less), a card no list plays counting as 0 (basic lands excepted); a cut Claude
+  picked need only be less played; without list data there is no such gate. An idea left with no cut goes to the
   *No cut yet* panel, and a cut you pick yourself is never removed. Cards in the idea's role, and a card
   serving one of the deck's themes or leanings only for an idea serving the same, get +0.10. A card of another
   role scores +0.03 per card over the peers' median when the deck holds at least 2 more than that median

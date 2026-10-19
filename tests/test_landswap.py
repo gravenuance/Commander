@@ -243,8 +243,8 @@ NONBASIC = resolved("Azorius Guildgate", rank=2000, categories=("Land",), type_l
 
 
 def land_rules(mana: ManaGuard, played: dict[str, float], idea: str = "gadget") -> CutRules:
-    """The idea at 50% of the lists and the named cards as given; unnamed ones no list plays."""
-    return CutRules((), table({idea: 0.5, **played}), mana=mana, peers=PeerCounts({}, {}))
+    """The idea at 90% of the lists and the named cards as given; unnamed ones no list plays."""
+    return CutRules((), table({idea: 0.9, **played}), mana=mana, peers=PeerCounts({}, {}))
 
 
 def test_a_spare_land_may_go_for_a_spell_and_only_the_basic_with_most_sources_to_spare_is_offered() -> None:
@@ -257,15 +257,17 @@ def test_a_spare_land_may_go_for_a_spell_and_only_the_basic_with_most_sources_to
 
 
 def test_a_land_target_scores_per_spare_land_against_the_other_candidates() -> None:
-    # Filler: 0.10 + 0.5 - 0.49 = 0.11. Plains with two spare lands: 0.06, with four: 0.12.
-    two = land_rules(guard(20, 19, 60), {"filler": 0.49})
+    # A barely played idea needs a cut at most half as played, which keeps Filler's score low enough for a
+    # basic to pass it: Filler 0.10 + 0.1 - 0.04 = 0.16. Plains with two spare lands: 0.06, with six: 0.18.
+    played = {"gadget": 0.1, "filler": 0.04}
+    two = land_rules(guard(20, 19, 60), played)
     assert names(role_targets(GADGET_IDEA, deck_cards(), two)) == ["Filler", "Plains"]
-    four = land_rules(guard(21, 20, 58), {"filler": 0.49})
-    assert names(role_targets(GADGET_IDEA, deck_cards(), four)) == ["Plains", "Filler"]
+    six = land_rules(guard(22, 21, 56), played)
+    assert names(role_targets(GADGET_IDEA, deck_cards(), six)) == ["Plains", "Filler"]
 
 
 def test_a_single_spare_land_reads_in_the_singular_and_a_card_as_played_as_the_idea_is_no_target() -> None:
-    found = role_targets(GADGET_IDEA, deck_cards(), land_rules(guard(20, 18, 61), {"filler": 0.5}))
+    found = role_targets(GADGET_IDEA, deck_cards(), land_rules(guard(20, 18, 61), {"filler": 0.9}))
     assert names(found) == ["Plains"]
     assert found[0].reason.startswith("spare land: the mana base holds with 1 fewer land;")
 
@@ -275,12 +277,12 @@ def test_a_nonbasic_land_less_played_than_the_idea_adds_its_gap_to_the_score() -
     mana = ManaGuard.of(
         deck_of(("Plains", 20), ("Island", 18), ("Azorius Guildgate", 1), ("Filler", 60)), CARDS
     )
-    # 39 lands can lose two. Guildgate at 20%: 0.06 + 0.3, ahead of Filler's 0.10 + 0.2 and the Plains' 0.06.
+    # 39 lands can lose two. Guildgate at 20%: 0.06 + 0.7, ahead of Filler's 0.10 + 0.6 and the Plains' 0.06.
     found = role_targets(GADGET_IDEA, cards, land_rules(mana, {"filler": 0.3, "azorius guildgate": 0.2}))
     assert names(found) == ["Azorius Guildgate", "Filler", "Plains"]
     assert found[0].reason.startswith("spare land: the mana base holds with 2 fewer lands;")
     # As played as the idea it is not offered, though a basic still is.
-    level = land_rules(mana, {"filler": 0.3, "azorius guildgate": 0.5})
+    level = land_rules(mana, {"filler": 0.3, "azorius guildgate": 0.9})
     assert names(role_targets(GADGET_IDEA, cards, level)) == ["Filler", "Plains"]
 
 
@@ -378,14 +380,14 @@ def test_at_most_four_targets_are_offered_by_score_with_the_lands_among_them() -
     found = role_targets(
         GADGET_IDEA, [*deck_cards(), *extras], land_rules(guard(20, 19, 60), {"filler": 0.4})
     )
-    # Each extra scores 0.10 + 0.5; Filler 0.10 + 0.1 and the Plains 0.06 fall behind.
+    # Each extra scores 0.10 + 0.9; Filler 0.10 + 0.5 and the Plains 0.06 fall behind.
     assert MAX_TARGETS == 4
     assert sorted(names(found)) == ["Extra 1", "Extra 2", "Extra 3", "Extra 4"]
 
 
 def test_a_basic_land_needs_no_gap_to_the_idea_so_a_well_played_basic_is_still_offered() -> None:
-    # Basics are in nearly every list; the Plains at 90% is more played than the idea at 50%.
-    rules = land_rules(guard(20, 19, 60), {"filler": 0.3, "plains": 0.9})
+    # Basics are in nearly every list; the Plains at 95% is more played than the idea at 90%.
+    rules = land_rules(guard(20, 19, 60), {"filler": 0.3, "plains": 0.95})
     assert names(role_targets(GADGET_IDEA, deck_cards(), rules)) == ["Filler", "Plains"]
 
 
