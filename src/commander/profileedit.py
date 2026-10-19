@@ -10,7 +10,7 @@ from typing import cast
 
 import tomlkit
 from tomlkit.exceptions import ParseError
-from tomlkit.items import Array, Table
+from tomlkit.items import Array, KeyType, SingleKey, Table
 
 from commander.deckprofile import (
     GRACE_BLOCK,
@@ -141,7 +141,9 @@ def _with_grace_table(text: str) -> str:
     return text[:start] + gap + block + eol + text[start:]
 
 
-_GRACE_HEADER = re.compile(r"^[ \t]*\[[ \t]*grace[ \t]*\][ \t]*(?:#.*)?\r?$", re.MULTILINE)
+_GRACE_HEADER = re.compile(
+    r"""^[ \t]*\[[ \t]*(?:grace|"grace"|'grace')[ \t]*\][ \t]*(?:#.*)?\r?$""", re.MULTILINE
+)
 
 
 def _with_grace_cards(
@@ -172,14 +174,20 @@ def _with_grace_cards(
         del table[name]
     for name, factor in wanted.items():
         value = int(factor) if factor.is_integer() else factor
-        if name not in table or float(cast("float", table[name])) != factor:
+        if name not in table:
+            # Quoted like the template's example, whatever the name looks like.
+            table.append(SingleKey(name, KeyType.Basic), value)
+        elif float(cast("float", table[name])) != factor:
             table[name] = value
     edited = tomlkit.dumps(doc).replace("\r\n", "\n").replace("\n", eol)
     return "".join(lines[:start]) + edited + "".join(lines[end:])
 
 
 def _grace_lines(lines: Sequence[str]) -> tuple[int, int]:
-    """The line range of the [grace] table: its header to its last entry, and the comments directly below."""
+    """The line range of the [grace] table: its header to its last entry, and the comments directly below.
+
+    Comments that run on to the next table's header belong to that table, as in `_with_grace_table`.
+    """
     start = next(index for index, line in enumerate(lines) if _GRACE_HEADER.match(line.rstrip("\n")))
     end = start + 1
     for index in range(start + 1, len(lines)):
@@ -188,9 +196,11 @@ def _grace_lines(lines: Sequence[str]) -> tuple[int, int]:
             break
         if text and not text.startswith("#"):
             end = index + 1
-    while end < len(lines) and lines[end].strip().startswith("#"):
-        end += 1
-    return start, end
+    below = end
+    while below < len(lines) and lines[below].strip().startswith("#"):
+        below += 1
+    touches_next_table = below < len(lines) and lines[below].strip().startswith("[")
+    return start, end if touches_next_table else below
 
 
 def _table(doc: tomlkit.TOMLDocument, key: str) -> Table:

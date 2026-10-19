@@ -377,10 +377,53 @@ def test_a_grace_card_the_card_data_does_not_know_is_refused_and_the_file_stays(
     refused = save(desk, [], [], tag_search=True, grace=[("Arcane Signet", 4), ("Nonesuch Relic", 3)])
     assert refused == {"error": "No card named 'Nonesuch Relic' (check the spelling)"}
     assert profile_file(settings).read_bytes() == before
-    # The check ignores case and the spaces around a name.
+    # The check ignores case and the spaces around a name, and the card is written under its real name.
     assert save(desk, [], [], tag_search=False, grace=[("  mind STONE ", 3)])["grace"] == [
-        {"name": "mind STONE", "factor": 3.0}
+        {"name": "Mind Stone", "factor": 3.0}
     ]
+    assert '"Mind Stone" = 3' in profile_file(settings).read_text(encoding="utf-8")
+
+
+def test_a_grace_card_typed_twice_in_different_cases_is_refused(desk: Desk, settings: DeskSettings) -> None:
+    before = profile_file(settings).read_bytes()
+    refused = save(desk, [], [], tag_search=False, grace=[("mind stone", 3), ("MIND STONE", 4)])
+    assert "listed twice" in str(refused["error"])
+    assert profile_file(settings).read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("grace", "message"),
+    [
+        pytest.param("Mind Stone", "must be a list", id="text"),
+        pytest.param(None, "must be a list", id="none"),
+        pytest.param({"Mind Stone": 3}, "must be a list", id="mapping"),
+        pytest.param(["Mind Stone"], "needs a name and a factor", id="entry-not-a-dict"),
+        pytest.param([None], "needs a name and a factor", id="entry-none"),
+        pytest.param([{"name": ["Mind Stone"], "factor": 3}], "needs a name", id="name-not-text"),
+        pytest.param([{"name": "x" * 201, "factor": 3}], "at most 200 characters", id="long-name"),
+        pytest.param(
+            [{"name": f"Card {i}", "factor": 2} for i in range(101)], "at most 100 cards", id="long-list"
+        ),
+    ],
+)
+def test_a_malformed_grace_payload_is_refused_before_any_card_lookup(
+    desk: Desk, settings: DeskSettings, monkeypatch: pytest.MonkeyPatch, grace: object, message: str
+) -> None:
+    lookups: list[str] = []
+    real = CardDb.card_named
+
+    def counting(self: CardDb, name: str) -> object:
+        lookups.append(name)
+        return real(self, name)
+
+    monkeypatch.setattr(CardDb, "card_named", counting)
+    before = profile_file(settings).read_bytes()
+    refused = desk.save_settings(DECK, [], [], False, grace)  # noqa: FBT003
+    assert message in str(refused["error"])
+    assert "Something went wrong" not in str(refused["error"])
+    assert set(refused) == {"error"}
+    assert lookups == []
+    assert profile_file(settings).read_bytes() == before
 
 
 def test_a_grace_card_already_in_the_profile_stays_even_when_the_card_data_lacks_it(
@@ -450,7 +493,8 @@ def test_the_settings_dialog_has_a_grace_section_with_a_name_a_factor_and_an_add
     assert name is not None
     assert factor is not None
     assert 'aria-label="Card name"' in name.group(0)
-    assert all(part in factor.group(0) for part in ('type="number"', 'value="3"', 'max="10"', "aria-label="))
+    wanted = ('type="number"', 'value="3"', 'min="1"', 'max="10"', 'step="any"', "aria-label=")
+    assert all(part in factor.group(0) for part in wanted)
     assert re.search(r'<button[^>]*id="settings-grace-add"[^>]*>Add card</button>', dialog)
 
 

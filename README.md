@@ -461,11 +461,11 @@ grouped by card type with counts and EUR totals. S, M and L above the grid set t
 the commander carries a pill with its weighted share of the lists other players run with the commander, and
 its sources in the tooltip. Click a card to see it large (× or Esc closes it). Copy decklist, next to the commander's name, copies the saved deck
 in TopDeck.gg's decklist format (`~~Commanders~~`, then `~~Mainboard~~`, one `1 Name` a line).
-Settings, beside it, edits the deck's `profile.toml` with autocomplete: the commanders
-that play alike (`[ideas] commanders`; "+ partner" on one makes a pair), the *Search decks by tag* switch
+Settings, beside it, edits the deck's `profile.toml`: the commanders
+that play alike (`[ideas] commanders`, with autocomplete; "+ partner" on one makes a pair), the *Search decks by tag* switch
 (`[ideas] tag_search`) and the themes to ignore
 (`[themes] ignore`: the deck's tags, categories and leanings are one click away, and any Tagger tag
-can be typed) and the grace cards (`[grace]`, below). Your comments and everything else in the file stay as they are.
+can be typed, with autocomplete) and the grace cards (`[grace]`, below; type the card's name, no autocomplete). Your comments and everything else in the file stay as they are.
 
 The right-hand rail has two tabs. **Activity** lists what changed on the board. **Mana** checks the mana
 base against Frank Karsten's published numbers

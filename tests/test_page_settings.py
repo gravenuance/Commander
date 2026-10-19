@@ -130,7 +130,7 @@ def test_a_factor_outside_the_range_is_refused_in_the_dialog_and_adds_nothing() 
     await add("Sol Ring", "2");
     return { refusals, rows: rows().length, hidden: $("settings-error").hidden };
     """)
-    assert seen["refusals"] == [[False, "A factor over 1 and at most 10", 0]] * 5
+    assert seen["refusals"] == [[False, "Enter a factor over 1 and at most 10.", 0]] * 5
     assert (seen["rows"], seen["hidden"]) == (1, True)
 
 
@@ -187,3 +187,27 @@ def test_reopening_the_dialog_shows_the_saved_cards_not_the_discarded_edits() ->
     return rows().map((r) => r.name);
     """)
     assert seen == ["Basalt Monolith", "Rings of Brighthearth"]
+
+
+def test_a_rows_factor_input_takes_any_number_over_one() -> None:
+    seen = run("""
+    await open();
+    const field = $("settings-grace").children[0].querySelector("input");
+    return [field.getAttribute("min"), field.getAttribute("max"), field.getAttribute("step")];
+    """)
+    assert seen == ["1", "10", "any"]
+
+
+def test_removing_a_card_moves_focus_to_the_next_rows_factor_or_to_the_add_field() -> None:
+    seen = run("""
+    await open({ grace: [{ name: "A", factor: 2 }, { name: "B", factor: 3 }, { name: "C", factor: 4 }] });
+    const remove = (index) => fire($("settings-grace").children[index].querySelector("button"), "click");
+    const input = (index) => $("settings-grace").children[index].querySelector("input");
+    await remove(1);
+    const middle = [rows().map((r) => r.name), document.activeElement === input(1)];
+    await remove(1);
+    const last = [rows().map((r) => r.name), document.activeElement === $("settings-grace-name")];
+    await remove(0);
+    return { middle, last, empty: [rows().length, document.activeElement === $("settings-grace-name")] };
+    """)
+    assert seen == {"middle": [["A", "C"], True], "last": [["A"], True], "empty": [0, True]}

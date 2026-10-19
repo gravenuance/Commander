@@ -386,3 +386,46 @@ def test_saving_settings_to_a_profile_with_a_byte_order_mark_edits_the_grace_and
     assert data.startswith(BOM)
     assert not data.startswith(BOM + BOM)
     assert read_profile(tmp_path).grace == {"Sol Ring": 2.0}
+
+
+def test_a_new_card_lands_above_the_comment_that_touches_the_next_table(tmp_path: Path) -> None:
+    path = write(
+        tmp_path,
+        'version = 1\n[grace]\n"A" = 2\n# Lands decks that play like it.\n[ideas]\ncommanders = []\n',
+    )
+    settings_with(tmp_path, {"A": 2, "B": 3})
+    assert path.read_text(encoding="utf-8").split("commanders")[0] == (
+        'version = 1\n[grace]\n"A" = 2\n"B" = 3\n# Lands decks that play like it.\n[ideas]\n'
+    )
+
+
+def test_comments_under_the_last_entry_stay_with_the_grace_table_when_a_blank_line_follows(
+    tmp_path: Path,
+) -> None:
+    path = write(tmp_path, 'version = 1\n[grace]\n"A" = 2\n# about A\n\n[ideas]\ncommanders = []\n')
+    settings_with(tmp_path, {"A": 2, "B": 3})
+    assert path.read_text(encoding="utf-8").startswith(
+        'version = 1\n[grace]\n"A" = 2\n# about A\n"B" = 3\n\n[ideas]\n'
+    )
+
+
+def test_new_cards_are_written_with_quoted_keys_like_the_existing_ones(tmp_path: Path) -> None:
+    path = write(tmp_path, 'version = 1\n[grace]\n"Sol Ring" = 3\n')
+    settings_with(tmp_path, {"Sol Ring": 3, "Necropotence": 2, "Mind Stone": 1.5, "Urza's Saga": 4})
+    text = path.read_text(encoding="utf-8")
+    assert '"Sol Ring" = 3\n"Necropotence" = 2\n"Mind Stone" = 1.5\n"Urza\'s Saga" = 4\n' in text
+    assert read_profile(tmp_path).grace == {
+        "Sol Ring": 3.0,
+        "Necropotence": 2.0,
+        "Mind Stone": 1.5,
+        "Urza's Saga": 4.0,
+    }
+
+
+@pytest.mark.parametrize("header", ['["grace"]', "[ 'grace' ]", "[ grace ]  # mine"])
+def test_a_quoted_or_spaced_grace_header_is_edited_in_place(tmp_path: Path, header: str) -> None:
+    path = write(tmp_path, f'version = 1\n{header}\n"A" = 2\n\n[ideas]\ncommanders = []\n')
+    settings_with(tmp_path, {"A": 3, "B": 2})
+    expected = f'version = 1\n{header}\n"A" = 3\n"B" = 2\n\n[ideas]\n'
+    assert path.read_text(encoding="utf-8").startswith(expected)
+    assert read_profile(tmp_path).grace == {"A": 3.0, "B": 2.0}

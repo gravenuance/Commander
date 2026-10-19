@@ -57,7 +57,7 @@ from commander.config import ConfigError, MetaSettings, forget_account, switch_a
 from commander.credentials import CredentialError, TokenStore
 from commander.deckexport import cardmarket_wants_text, topdeck_text
 from commander.deckgrid import GridGroup, deck_grid, image_url
-from commander.deckprofile import MAX_ADJACENT, Profile, ProfileError, read_profile
+from commander.deckprofile import MAX_ADJACENT, MAX_LIST, MAX_TEXT, Profile, ProfileError, read_profile
 from commander.deckthemes import merge_themes
 from commander.edhtop16 import Edhtop16Error
 from commander.fetchpriority import FetchPriority
@@ -554,26 +554,34 @@ class Desk:
         adjacent: list[list[str]],
         ignore: list[str],
         tag_search: bool,  # noqa: FBT001 — the page's bridge passes positionals
-        grace: list[Json],
+        grace: object,
     ) -> Json:
         """Write the adjacent commanders, tag search, ignored themes and grace cards ([{name, factor}]) into
-        profile.toml, comments kept."""
+        profile.toml, comments kept. A new grace card is written under the name the card data gives it."""
         with self._writing("settings save", "save the settings") as busy:
             if busy:
                 return busy
             stored = self._stored(deck_id)
-            cards = _grace_from_page(grace)
+            typed = _grace_from_page(grace)
             held = {card_key(name) for name in read_profile(stored.folder).grace}
+            cards: dict[str, float] = {}
             with self._db() as db:
                 for group in adjacent:
                     for name in group:
                         found = {info.name.casefold() for info in db.search_commanders(name)}
                         if name.strip().casefold() not in found:
                             return {"error": f"{name!r} is not a commander the card data knows"}
-                # A card already in the profile may be newer than the card data; only new ones are checked.
-                for name in cards:
-                    if card_key(name) not in held and db.card_named(name) is None:
-                        return {"error": f"No card named {name!r} (check the spelling)"}
+                for name, factor in typed.items():
+                    real = name
+                    # A profile card may be newer than the card data: only new ones are looked up.
+                    if card_key(name) not in held:
+                        info = db.card_named(name)
+                        if info is None:
+                            return {"error": f"No card named {name!r} (check the spelling)"}
+                        real = info.name
+                    if real in cards:
+                        raise ProfileError(f"{real} is listed twice in the grace cards")
+                    cards[real] = factor
             save_settings(
                 stored.folder,
                 stored.deck,
@@ -988,14 +996,27 @@ def _group_json(group: GridGroup, colours: Mapping[str, str], shares: ShareTable
     }
 
 
-def _grace_from_page(entries: list[Json]) -> dict[str, float]:
-    """The panel's grace cards, [{name, factor}], by trimmed name; ProfileError for a malformed entry."""
+def _grace_from_page(entries: object) -> dict[str, float]:
+    """The panel's grace cards, [{name, factor}], by trimmed name; ProfileError for a payload that is not one.
+
+    The bridge hands over whatever the page sent, so the shape and sizes are checked here, before any lookup.
+    """
+    if not isinstance(entries, list):
+        raise ProfileError("the grace cards must be a list of cards with their factors")
+    items = cast("list[object]", entries)
+    if len(items) > MAX_LIST:
+        raise ProfileError(f"the grace holds at most {MAX_LIST} cards")
     found: dict[str, float] = {}
-    for entry in entries:
+    for item in items:
+        if not isinstance(item, dict):
+            raise ProfileError("each grace card needs a name and a factor")
+        entry = cast("Json", item)
         name, factor = entry.get("name"), entry.get("factor")
         if not isinstance(name, str) or not name.strip():
             raise ProfileError("a grace card needs a name")
         name = name.strip()
+        if len(name) > MAX_TEXT:
+            raise ProfileError(f"{name[:30]}...: a card name is at most {MAX_TEXT} characters")
         if isinstance(factor, bool) or not isinstance(factor, int | float):
             raise ProfileError(f"{name}: the factor must be a number over 1 and at most {MAX_GRACE:g}")
         if name in found:

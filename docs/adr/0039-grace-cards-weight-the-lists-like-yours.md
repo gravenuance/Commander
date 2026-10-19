@@ -32,11 +32,12 @@ Option 4.
   name to a factor. The user edits the file, or the deck's Settings dialog, which already writes the profile
   through `profileedit.save_settings` (adjacent commanders, tag search, ignored themes) and now writes
   `[grace]` there on the same *Save settings* button. It edits the table's own lines only: an entry keeps its
-  place and trailing comment, a new card goes below the last entry (above the comments that belong to
-  `[ideas]`), the commented example stays, and a profile without the table gets it above `[ideas]`. The result
+  place and trailing comment, a new card goes below the last entry (above any comments that run on to the
+  next table's header, which belong to that table), the commented example stays, and a profile without the table gets it above `[ideas]`. The result
   is read back with the profile's own rules (`_grace`: a factor over 1 and at most 10, no card twice) before
-  anything is written, so a bad value leaves the file as it was. The bridge also refuses a card name that
-  `card_named` does not know; a card already in the profile is not asked again, so a name the card data lacks
+  anything is written, so a bad value leaves the file as it was. The bridge checks the payload's shape and
+  sizes first, then refuses a card name that `card_named` does not know and writes a new card under the name
+  `card_named` returns; a card already in the profile is not asked again, so a name the card data lacks
   cannot block saving other settings. A `grace = {...}` written as an inline table is read as before but not
   edited by the app. `cmdr profile` shows the grace cards.
 - **An empty table by default.** The template writes a live, empty `[grace]` table with a one-line

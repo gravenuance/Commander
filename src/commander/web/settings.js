@@ -70,7 +70,7 @@ function renderGrace() {
   $("settings-grace-factor").max = String(s.maxGrace);
   $("settings-grace").replaceChildren(...s.grace.map((card, index) => {
     const factor = el("input", {
-      class: "grace-factor", type: "number", min: "1.1", max: String(s.maxGrace), step: "0.1",
+      class: "grace-factor", type: "number", min: "1", max: String(s.maxGrace), step: "any",
       "aria-label": `Factor for ${card.name}`,
       oninput: (event) => { card.factor = event.target.value === "" ? null : Number(event.target.value); },
     });
@@ -83,6 +83,8 @@ function renderGrace() {
         onclick: () => {
           s.grace.splice(index, 1);
           renderGrace();
+          // The clicked button is gone: focus goes to the row that took its place, or to the add field.
+          ($("settings-grace").children[index]?.querySelector("input") ?? $("settings-grace-name")).focus();
         },
       }));
   }));
@@ -99,7 +101,7 @@ function addGrace() {
     return;
   }
   if (!(factor > 1 && factor <= s.maxGrace)) {
-    problem.textContent = `A factor over 1 and at most ${s.maxGrace}`;
+    problem.textContent = `Enter a factor over 1 and at most ${s.maxGrace}.`;
     problem.hidden = false;
     $("settings-grace-factor").focus();
     return;
