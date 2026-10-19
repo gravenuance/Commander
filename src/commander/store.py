@@ -12,6 +12,7 @@ from commander.fsutil import write_text_atomic
 from commander.jsonshape import (
     ShapeError,
     as_object,
+    opt_bool,
     opt_int,
     opt_str,
     req_bool,
@@ -170,6 +171,8 @@ def snapshot_json(deck: Deck) -> str:
         "bracket": deck.bracket,
         "updatedAt": deck.updated_at,
         "tags": None if deck.tags is None else list(deck.tags),
+        "private": deck.private,
+        "unlisted": deck.unlisted,
         "cards": [
             {
                 "name": card.name,
@@ -221,6 +224,9 @@ def parse_snapshot(raw: object) -> Deck:
         updated_at=req_str(document, "updatedAt", "snapshot"),
         cards=tuple(cards),
         tags=_tags(document),
+        # Snapshots from before sync read private decks have neither key; those were all public.
+        private=opt_bool(document, "private", "snapshot") or False,
+        unlisted=opt_bool(document, "unlisted", "snapshot") or False,
     )
 
 

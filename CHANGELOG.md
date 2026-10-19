@@ -10,6 +10,10 @@
   broken one is left alone) and writes the template, with the table, for a deck that has no profile. The meta
   breakdown is unchanged. `cmdr profile` lists the grace cards, and the percentage's breakdown in the app says
   which are set and how many lists hold one.
+- `cmdr sync` and the app's Sync also pull your private and unlisted decks when a login is saved (ADR 0040): the
+  deck list and each deck are read with it. Without a login, or with one Archidekt refuses, sync lists the
+  public decks alone and warns that private and unlisted decks were not updated (without a login, only when
+  such decks are already in the folder); those decks stay as they are and are not reported as missing.
 
 ### Changed
 - Cut targets for an idea (ADR 0036): every candidate scores on one number and the best four are offered (were

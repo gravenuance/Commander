@@ -51,6 +51,10 @@ class Deck:
     cards: tuple[DeckCard, ...]
     # Archidekt's deck tags (Stax, Dwarves, cEDH...); None for a snapshot saved before they were kept.
     tags: tuple[str, ...] | None = ()
+    # Visibility on Archidekt: only the owner's login lists a private deck or reads it, and only the owner's
+    # login lists an unlisted one (ADR 0040).
+    private: bool = False
+    unlisted: bool = False
 
     def __post_init__(self) -> None:
         if self.id < 1:
@@ -61,6 +65,11 @@ class Deck:
     @property
     def url(self) -> str:
         return ARCHIDEKT_DECK_URL.format(id=self.id)
+
+    @property
+    def needs_login(self) -> bool:
+        """Whether an anonymous listing of the owner's decks leaves this one out."""
+        return self.private or self.unlisted
 
     @property
     def main_cards(self) -> tuple[DeckCard, ...]:
@@ -110,6 +119,8 @@ class DeckSummary:
     updated_at: str
     # The deck tags the list shows; Archidekt keeps updated_at when only these change. None when not sent.
     tags: tuple[str, ...] | None = None
+    private: bool = False
+    unlisted: bool = False
 
 
 def plan_category(name: str) -> bool:

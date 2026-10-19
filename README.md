@@ -33,7 +33,7 @@ This creates `.venv` with the exact versions pinned in `uv.lock`.
 
 ```sh
 uv run cmdr init --user <archidekt-user> --workspace decks   # one-time: save your username and the deck folder
-uv run cmdr sync                                    # pull every public deck, report what changed, compile ideas
+uv run cmdr sync                                    # pull every deck, report what changed, compile ideas
 uv run cmdr sync --no-ideas                         # the same, without compiling ideas from other players
 uv run cmdr list                                    # show the decks saved locally
 uv run cmdr analyze                                 # curve, lands and roles of every deck side by side
@@ -635,7 +635,17 @@ Labels set on the Archidekt website come back with the next `sync`. See
 repository of its own (`git init decks`) and commit there after each sync.
 
 When a deck is renamed on Archidekt, `sync` renames its folder to match. When a deck disappears from
-Archidekt (deleted, or made private), `sync` reports it and keeps the local copy.
+Archidekt (deleted, or made private while you were signed out), `sync` reports it and keeps the local copy.
+
+#### Private and unlisted decks
+
+With a saved login (`cmdr login`, or signing in to the app), `sync` lists and reads your decks with it, so your
+private and unlisted decks are synced like the public ones
+([ADR 0040](docs/adr/0040-sync-private-and-unlisted-decks.md)). Their data lands in the deck folder only.
+Without a login, or when Archidekt refuses it (it expired, or the credential store cannot be read), `sync`
+lists your public decks alone and warns "Not signed in to Archidekt: private and unlisted decks were not
+updated". With no login at all the warning appears only when private or unlisted decks are already in the
+folder. Those decks stay as they are and are not reported as disappeared; run `cmdr login` again to update them.
 
 ### Settings
 
@@ -650,7 +660,7 @@ defaults.
 | Cache folder: card data, meta answers, other players' decks, view scores (`views.json`), logs | n/a | `CMDR_CACHE_DIR` | n/a | `%LOCALAPPDATA%\Commander` |
 | Role targets for `suggest` | n/a | n/a | `[targets]` table | ramp 10, draw 10, removal 8, board_wipe 2 |
 | Sample sizes for `meta` and `sync` | n/a | n/a | `[meta]` table | 60 days, events of 16+, up to 60 Archidekt decks, 10 commanders, 30 lists each |
-| Archidekt login for `apply --save` | `cmdr login` | n/a | n/a | none; the token is kept in Windows Credential Manager |
+| Archidekt login for `apply --save`, and for `sync` to read private and unlisted decks | `cmdr login` | n/a | n/a | none; the token is kept in Windows Credential Manager |
 | App log detail | n/a | `CMDR_LOG_LEVEL` | n/a | `INFO` |
 
 ## Test
@@ -668,7 +678,7 @@ Tests use recorded fixture data and never touch the network.
 
 | Service | Used for | Notes |
 |---|---|---|
-| Archidekt (`archidekt.com/api`) | Reading decks; changing them with `apply --save` | Public decks need no login; changes need `cmdr login`, whose token lives in Windows Credential Manager and is refreshed on each save. The API is undocumented, so every response's shape is checked and a clear message names what changed. A save makes a handful of requests, never retried. Its written terms forbid automated requests; its co-founder has said on its forum that the API is open to use. See [ADR 0004](docs/adr/0004-deck-changes-through-archidekts-site-api.md). |
+| Archidekt (`archidekt.com/api`) | Reading decks; changing them with `apply --save` | Public decks need no login; changes, and `sync` of your private and unlisted decks, need `cmdr login`, whose token lives in Windows Credential Manager and is refreshed on each save. The API is undocumented, so every response's shape is checked and a clear message names what changed. A save makes a handful of requests, never retried. Its written terms forbid automated requests; its co-founder has said on its forum that the API is open to use. See [ADR 0004](docs/adr/0004-deck-changes-through-archidekts-site-api.md). |
 | Scryfall (`api.scryfall.com/bulk-data`, files on `data.scryfall.io`; card images from `cards.scryfall.io` in the app) | Card facts, rules text, EUR prices, Tagger tags for roles and profiles, card art | One API call per `sync` for the file list; the files themselves have no rate limit. Scryfall updates prices once a day and asks for bulk files rather than per-card calls for lookups like these. Tag data is community-maintained and can change. See [ADR 0001](docs/adr/0001-scryfall-bulk-card-data.md). |
 | Commander Spellbook (`backend.commanderspellbook.com`: `estimate-bracket`, `find-my-combos`) | Bracket estimates, combos, and combos one card short | One request per deck and command, at most four at a time, and none while a cached answer is under 7 days old. Spellbook asks tools to name themselves in the User-Agent, keep to a few calls per user action, stay under about 80 requests a minute, handle 429, and credit and link back to commanderspellbook.com, which `bracket` and `suggest` do in their output. Only card names and quantities are sent. See [ADR 0002](docs/adr/0002-bracket-estimates-from-commander-spellbook.md) and [ADR 0003](docs/adr/0003-suggestions-from-spellbook-and-scryfall.md). |
 | EDHTop16 (`edhtop16.com/api/graphql`) | Tournament lists, spice and the most-played commanders for `meta` and `sync`'s ideas | Requests 1.5 s apart, none while a cached answer is under a day old; malformed entries are skipped and future-dated events left out. Its terms offer the API as-is and forbid excessive automated requests, implying endorsement and redistributing its statistics; reports credit it and stay local. See [ADR 0007](docs/adr/0007-meta-from-edhtop16-archidekt-and-spellbook.md). |

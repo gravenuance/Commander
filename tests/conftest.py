@@ -414,7 +414,15 @@ class FakeArchidekt:
         self.writes: list[tuple[str, str, Json, str | None]] = []
         self.write_status: dict[str, int] = {}
         self.refresh_tokens = {REFRESH_TOKEN}
+        # Private decks are listed and read only with the header (403 without); unlisted ones are left out of
+        # an anonymous listing but can be read by id.
         self.private: set[int] = set()
+        self.unlisted: set[int] = set()
+        # The Authorization header of each deck listing request, None for an anonymous one.
+        self.listing_auth: list[str | None] = []
+        # What a deck listing that carries the expected header answers with; anything but 200 stands for a
+        # refused login.
+        self.signed_in_listing_status = HTTP_OK
         self.next_entry = 9_000_000_000
         self.scryfall = FakeScryfall()
         self.spellbook = FakeSpellbook()
@@ -465,10 +473,11 @@ class FakeArchidekt:
         if path == "/api/cards/v2/":
             return httpx.Response(200, json=self._card_search(request.url.params))
         if path == "/api/decks/v3/":
-            return self._deck_search(request.url.params)
+            return self._deck_search(request)
         return self._get_deck(request)
 
-    def _deck_search(self, params: httpx.QueryParams) -> httpx.Response:
+    def _deck_search(self, request: httpx.Request) -> httpx.Response:
+        params = request.url.params
         if "deckTagName" in params:
             self.tag_searches.append(params["deckTagName"])
             return httpx.Response(
@@ -478,20 +487,37 @@ class FakeArchidekt:
             return httpx.Response(200, json=self.peer_pages.get(params["commanderName"], self.peer_page))
         if params.get("ownerUsername") != self.user:
             return httpx.Response(200, json=deck_page([]))
+        self.listing_auth.append(request.headers.get("Authorization"))
+        signed_in = self._signed_in(request)
+        if signed_in and self.signed_in_listing_status != HTTP_OK:
+            return httpx.Response(self.signed_in_listing_status)
         rows = [
-            {**summary_row(d["id"], d["name"], d["updatedAt"]), "tags": d.get("deckTags", [])}
+            {
+                **summary_row(d["id"], d["name"], d["updatedAt"]),
+                "tags": d.get("deckTags", []),
+                **self._visibility(d["id"]),
+            }
             for d in self.decks.values()
             if d.get("owner", {}).get("username", self.user) == self.user
+            and (signed_in or not self._hidden(d["id"]))
         ]
         return httpx.Response(200, json=deck_page(rows))
+
+    def _hidden(self, deck_id: int) -> bool:
+        return deck_id in self.private or deck_id in self.unlisted
+
+    def _visibility(self, deck_id: int) -> Json:
+        return {"private": deck_id in self.private, "unlisted": deck_id in self.unlisted}
 
     def _get_deck(self, request: httpx.Request) -> httpx.Response:
         deck_id = int(request.url.path.removeprefix("/api/decks/").rstrip("/"))
         if deck_id in self.failing:
             return httpx.Response(self.failing[deck_id])
-        if deck_id not in self.decks or (deck_id in self.private and not self._signed_in(request)):
+        if deck_id not in self.decks:
             return httpx.Response(404)
-        return httpx.Response(200, json=self.decks[deck_id])
+        if deck_id in self.private and not self._signed_in(request):
+            return httpx.Response(403)
+        return httpx.Response(200, json={**self.decks[deck_id], **self._visibility(deck_id)})
 
     def client(self) -> httpx.Client:
         return httpx.Client(transport=httpx.MockTransport(self.handler))

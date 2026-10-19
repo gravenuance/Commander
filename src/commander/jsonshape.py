@@ -71,6 +71,12 @@ def req_bool(obj: Mapping[str, object], key: str, where: str) -> bool:
     return value
 
 
+def opt_bool(obj: Mapping[str, object], key: str, where: str) -> bool | None:
+    if obj.get(key) is None:
+        return None
+    return req_bool(obj, key, where)
+
+
 def req_object(obj: Mapping[str, object], key: str, where: str) -> Mapping[str, object]:
     return as_object(obj.get(key), f"{where}.{key}")
 

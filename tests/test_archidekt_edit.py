@@ -188,7 +188,7 @@ def test_find_card_rejects_an_unusable_name(fetcher: Fetcher) -> None:
 def test_get_deck_signs_in_for_a_private_deck(fake: FakeArchidekt, fetcher: Fetcher) -> None:
     fake.private.add(DECK_ID)
 
-    with pytest.raises(NetworkError, match="HTTP 404"):
+    with pytest.raises(NetworkError, match="HTTP 403"):
         ArchidektEditor(fetcher, None).get_deck(DECK_ID)
     live = ArchidektEditor(fetcher, ACCESS_TOKEN).get_deck(DECK_ID)
 

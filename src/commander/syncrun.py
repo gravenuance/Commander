@@ -30,7 +30,7 @@ from commander.net import Fetcher, NetworkError, Pacer
 from commander.profileedit import ensure_grace_table
 from commander.scryfall import CardRefresh, RefreshStatus, ScryfallClient, ScryfallError, refresh_card_db
 from commander.store import StoredDeck, Workspace
-from commander.sync import SyncResult, SyncStatus, sync_decks
+from commander.sync import PRIVATE_NOT_UPDATED, SyncResult, SyncStatus, sync_decks
 from commander.viewscore import VIEWS_FILE, ViewScores
 
 log = logging.getLogger(__name__)
@@ -129,15 +129,22 @@ def run_sync(
                 name="card-data",
             )
         try:
+            login = _sign_in(fetcher, user, services)
+            if login.problem is not None:
+                log.warning("Archidekt login not usable: %s", login.problem)
+                warnings.append(f"Archidekt login not usable ({login.problem}): {PRIVATE_NOT_UPDATED}")
             results = sync_decks(
-                ArchidektClient(fetcher),
+                ArchidektClient(fetcher, token=login.token),
                 workspace,
                 user,
                 force=options.force,
                 dry_run=options.dry_run,
                 on_progress=on_progress,
+                warn=warnings.append,
             )
-            labels = None if options.dry_run else _sync_labels(fetcher, workspace, user, services, warnings)
+            if not login.attempted and any(stored.deck.needs_login for stored in workspace.load_all()):
+                warnings.append(f"Not signed in to Archidekt: {PRIVATE_NOT_UPDATED}")
+            labels = None if options.dry_run else _sync_labels(fetcher, workspace, login, warnings)
         except Exception:
             # The download shares this client, which closes on leaving the block: wait for it, and log
             # its status because there is no outcome to carry it.
@@ -182,16 +189,45 @@ def _add_grace_tables(workspace: Workspace, warnings: list[str]) -> None:
             warnings.append(f"deck {deck_id}: [grace] table not added: {error}")
 
 
+@dataclass(slots=True, frozen=True)
+class _Login:
+    """What the saved Archidekt login gave this sync."""
+
+    # The access token; None without a login or when it could not be used.
+    token: str | None = None
+    # Why a saved login could not be used; None when there is none or it worked.
+    problem: str | None = None
+
+    @property
+    def attempted(self) -> bool:
+        """Whether there was a saved login to try."""
+        return self.token is not None or self.problem is not None
+
+
+def _sign_in(fetcher: Fetcher, user: str, services: SyncServices) -> _Login:
+    """An access token for the saved login, which lets the sync list and read the private and unlisted decks
+    too (ADR 0040); a login that cannot be used is a problem for the caller to warn about, not an error."""
+    auth = ArchidektAuth(fetcher, services.token_store)
+    try:
+        if not auth.has_login(user):
+            return _Login()
+        return _Login(token=auth.access_token(user))
+    except (AuthError, CredentialError, NetworkError, ArchidektError) as error:
+        return _Login(problem=str(error))
+
+
 def _sync_labels(
-    fetcher: Fetcher, workspace: Workspace, user: str, services: SyncServices, warnings: list[str]
+    fetcher: Fetcher, workspace: Workspace, login: _Login, warnings: list[str]
 ) -> list[tuple[str, str]] | None:
     """Keep the account's card labels for the app (ADR 0012); None when not signed in or the read fails."""
-    auth = ArchidektAuth(fetcher, services.token_store)
-    if not auth.has_login(user):
+    if login.problem is not None:
+        warnings.append(f"card labels not refreshed: {login.problem}")
+        return None
+    if login.token is None:
         return None
     try:
-        labels = ArchidektEditor(fetcher, auth.access_token(user)).account_labels()
-    except (AuthError, CredentialError, NetworkError, ArchidektError) as error:
+        labels = ArchidektEditor(fetcher, login.token).account_labels()
+    except (AuthError, NetworkError, ArchidektError) as error:
         warnings.append(f"card labels not refreshed: {error}")
         return None
     try:

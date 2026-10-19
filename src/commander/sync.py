@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 from functools import partial
 
-from commander.archidekt import ArchidektClient, ArchidektError
+from commander.archidekt import ArchidektClient, ArchidektError, LoginRefusedError
 from commander.background import run_all
 from commander.diff import DeckDiff, diff_decks
 from commander.models import Deck, DeckSummary
@@ -16,6 +16,8 @@ from commander.store import Workspace, WorkspaceError, folder_name
 log = logging.getLogger(__name__)
 
 MAX_PARALLEL_FETCHES = 4
+# Said whenever a sync could not see the decks that only the owner's login reaches (ADR 0040).
+PRIVATE_NOT_UPDATED = "private and unlisted decks were not updated"
 
 
 class SyncStatus(Enum):
@@ -49,9 +51,21 @@ def sync_decks(
     force: bool = False,
     dry_run: bool = False,
     on_progress: Callable[[str], None] = lambda _: None,
+    warn: Callable[[str], None] = lambda _: None,
 ) -> list[SyncResult]:
-    """Fetch decks whose Archidekt edit time moved (or all, with force) and save them unless dry_run."""
-    summaries = client.list_commander_decks(user)
+    """Fetch decks whose Archidekt edit time moved (or all, with force) and save them unless dry_run.
+
+    A signed-in client whose listing Archidekt refuses carries on without the login and says so to warn.
+    Decks on disk that the listing lacks come back as MISSING_UPSTREAM, except private and unlisted ones when
+    the listing was anonymous, which could not show them (ADR 0040).
+    """
+    try:
+        summaries = client.list_commander_decks(user)
+    except LoginRefusedError as error:
+        log.warning("%s; listing %s's public decks only", error, user)
+        warn(f"Archidekt refused the login: {PRIVATE_NOT_UPDATED}")
+        client = client.anonymous()
+        summaries = client.list_commander_decks(user)
     on_progress(f"found {len(summaries)} Commander decks for {user}")
     results: list[SyncResult] = []
     to_fetch: list[_Plan] = []
@@ -92,7 +106,7 @@ def sync_decks(
     results += [
         SyncResult(stored.deck.id, stored.deck.name, SyncStatus.MISSING_UPSTREAM)
         for stored in workspace.load_all()
-        if stored.deck.id not in upstream_ids
+        if stored.deck.id not in upstream_ids and (client.signed_in or not stored.deck.needs_login)
     ]
     return results
 
@@ -105,6 +119,8 @@ def _is_current(workspace: Workspace, previous: Deck, summary: DeckSummary) -> b
         and previous.labels_known
         # Archidekt keeps the edit time when only the deck tags change, so the list's tags are compared too.
         and (summary.tags is None or summary.tags == previous.tags)
+        and summary.private == previous.private
+        and summary.unlisted == previous.unlisted
         and folder is not None
         and folder.name == folder_name(previous)
     )

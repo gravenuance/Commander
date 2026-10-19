@@ -1079,6 +1079,36 @@ def test_a_sync_without_an_open_deck_goes_by_views(
     assert sync_with_stubs(desk, pending, monkeypatch) == [20001, DECK, 20002, 20003]
 
 
+def test_the_apps_sync_pulls_a_private_deck_and_a_later_signed_out_one_warns_and_keeps_it(
+    settings: DeskSettings, fake: FakeArchidekt, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    private_id = 27461808
+    fake.put({**raw_deck, "id": private_id, "name": "Private test"})
+    fake.private.add(private_id)
+    desk, pending = deferred_desk(settings, fake)
+    sync_with_stubs(desk, pending, monkeypatch)
+    assert Workspace(settings.workspace).load(private_id) is not None
+    assert desk.sync_status()["warnings"] == []
+
+    signed_out = Desk(
+        settings,
+        client_factory=fake.client,
+        token_store=MemoryTokenStore(),
+        now=lambda: NOW,
+        pacer_factory=lambda _: Pacer(0),
+        background=pending.append,
+    )
+    pending.clear()
+    signed_out.sync()
+    [start] = pending
+    start()
+
+    assert signed_out.sync_status()["warnings"] == [
+        "Not signed in to Archidekt: private and unlisted decks were not updated"
+    ]
+    assert Workspace(settings.workspace).load(private_id) is not None
+
+
 def test_a_deck_opened_during_the_sync_is_fetched_after_the_one_in_progress(
     settings: DeskSettings, fake: FakeArchidekt, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
 ) -> None:

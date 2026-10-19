@@ -8,6 +8,7 @@ from datetime import datetime
 from commander.jsonshape import (
     ShapeError,
     as_object,
+    opt_bool,
     opt_int,
     opt_str,
     req_bool,
@@ -18,7 +19,7 @@ from commander.jsonshape import (
     str_list,
 )
 from commander.models import ARCHIDEKT_DECK_URL, Deck, DeckCard, DeckSummary
-from commander.net import Fetcher, Pacer, RateLimitedError
+from commander.net import Fetcher, HttpStatusError, Pacer, RateLimitedError
 
 log = logging.getLogger(__name__)
 
@@ -46,19 +47,39 @@ MAX_DECK_READS = 60
 # of a commander's deck reads (rounded up).
 TAG_SEARCH_PAGES_PER_BRACKET = 3
 TAG_READ_DIVISOR = 4
+_UNAUTHORIZED = frozenset({401, 403})
 
 
 class ArchidektError(Exception):
     """Archidekt answered with something this tool cannot use."""
 
 
+class LoginRefusedError(ArchidektError):
+    """Archidekt turned the access token down; the message never holds it."""
+
+
 class ArchidektClient:
-    def __init__(self, fetcher: Fetcher, base_url: str = API_BASE) -> None:
+    """The owner's decks. With an access token the listing and the reads also cover the owner's private and
+    unlisted decks (ADR 0040); without one they cover public decks only, as plain requests."""
+
+    def __init__(self, fetcher: Fetcher, base_url: str = API_BASE, *, token: str | None = None) -> None:
         self._fetcher = fetcher
         self._base_url = base_url.rstrip("/")
+        self._headers = {"Authorization": f"JWT {token}"} if token else None
+
+    @property
+    def signed_in(self) -> bool:
+        return self._headers is not None
+
+    def anonymous(self) -> "ArchidektClient":
+        """The same client without the token."""
+        return ArchidektClient(self._fetcher, self._base_url)
 
     def list_commander_decks(self, user: str) -> list[DeckSummary]:
-        """Every public Commander deck the user owns, following pagination."""
+        """Every Commander deck the user owns that this client may see, following pagination.
+
+        Raises LoginRefusedError when Archidekt answers a signed-in listing with 401 or 403.
+        """
         if not user:
             raise ValueError("user is empty")
         url: str | None = f"{self._base_url}/decks/v3/"
@@ -67,7 +88,7 @@ class ArchidektClient:
         for _ in range(MAX_PAGES):
             if url is None:
                 return decks
-            raw = self._fetcher.get_json(url, params)
+            raw = self._get(url, params)
             try:
                 page, url = parse_deck_page(raw)
             except ShapeError as error:
@@ -78,7 +99,17 @@ class ArchidektClient:
         raise ArchidektError(f"deck list for {user} is longer than {MAX_PAGES} pages")
 
     def get_deck(self, deck_id: int) -> Deck:
-        return _read_deck(self._fetcher.get_json(f"{self._base_url}/decks/{deck_id}/"), deck_id)
+        return _read_deck(self._get(f"{self._base_url}/decks/{deck_id}/", None), deck_id)
+
+    def _get(self, url: str, params: Mapping[str, str | int] | None) -> object:
+        if self._headers is None:
+            return self._fetcher.get_json(url, params)
+        try:
+            return self._fetcher.get_json(url, params, headers=self._headers)
+        except HttpStatusError as error:
+            if error.status in _UNAUTHORIZED:
+                raise LoginRefusedError(f"Archidekt refused the login (HTTP {error.status})") from None
+            raise
 
 
 def _read_deck(raw: object, deck_id: int) -> Deck:
@@ -250,6 +281,8 @@ def parse_deck_page(raw: object) -> tuple[list[DeckSummary], str | None]:
                 name=req_str(deck, "name", where),
                 updated_at=req_str(deck, "updatedAt", where),
                 tags=_tag_names(deck, "tags", where) if "tags" in deck else None,
+                private=opt_bool(deck, "private", where) or False,
+                unlisted=opt_bool(deck, "unlisted", where) or False,
             )
         )
     return decks, next_url
@@ -272,6 +305,8 @@ def parse_deck(raw: object) -> Deck:
         updated_at=req_str(deck, "updatedAt", "deck"),
         cards=tuple(cards),
         tags=_deck_tags(deck),
+        private=opt_bool(deck, "private", "deck") or False,
+        unlisted=opt_bool(deck, "unlisted", "deck") or False,
     )
 
 
