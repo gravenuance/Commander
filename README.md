@@ -328,8 +328,10 @@ the product of their factors, at most 10. Names match whatever the case, by the 
 of a two-faced card; punctuation must match and a back face does not. The meta breakdown does not use grace.
 A heavy grace leaves fewer lists doing the work, so the idea test is stricter for each card, while cards your
 line plays can pass that would not have before; the percentage's breakdown in the app says which grace cards are set
-and how many lists hold one, and `cmdr profile` lists them and flags names that match no card. Only you edit it; the app never writes
-`[grace]` ([ADR 0039](docs/adr/0039-grace-cards-weight-the-lists-like-yours.md)).
+and how many lists hold one, and `cmdr profile` lists them and flags names that match no card. Edit `[grace]`
+in the file or in the app's Settings (*Grace cards*: add a card with its factor, change a factor, remove a card;
+the app refuses a name that matches no card, and saves with the rest of the Settings
+without touching your comments) ([ADR 0039](docs/adr/0039-grace-cards-weight-the-lists-like-yours.md)).
 
 ### Deck themes
 
@@ -463,7 +465,7 @@ Settings, beside it, edits the deck's `profile.toml` with autocomplete: the comm
 that play alike (`[ideas] commanders`; "+ partner" on one makes a pair), the *Search decks by tag* switch
 (`[ideas] tag_search`) and the themes to ignore
 (`[themes] ignore`: the deck's tags, categories and leanings are one click away, and any Tagger tag
-can be typed). Your comments and everything else in the file stay as they are.
+can be typed) and the grace cards (`[grace]`, below). Your comments and everything else in the file stay as they are.
 
 The right-hand rail has two tabs. **Activity** lists what changed on the board. **Mana** checks the mana
 base against Frank Karsten's published numbers

@@ -28,17 +28,26 @@ clustering lists by similarity would be a design of its own, and would guess at 
 
 Option 4.
 
-- **Profile only.** `profile.toml` gets a `[grace]` table mapping a card name to a factor. The app never writes
-  it: the user edits the file, as for the other keys that are not in the Settings dialog. `cmdr profile` shows
-  the grace cards.
+- **In the profile, edited in the file or in Settings.** `profile.toml` gets a `[grace]` table mapping a card
+  name to a factor. The user edits the file, or the deck's Settings dialog, which already writes the profile
+  through `profileedit.save_settings` (adjacent commanders, tag search, ignored themes) and now writes
+  `[grace]` there on the same *Save settings* button. It edits the table's own lines only: an entry keeps its
+  place and trailing comment, a new card goes below the last entry (above the comments that belong to
+  `[ideas]`), the commented example stays, and a profile without the table gets it above `[ideas]`. The result
+  is read back with the profile's own rules (`_grace`: a factor over 1 and at most 10, no card twice) before
+  anything is written, so a bad value leaves the file as it was. The bridge also refuses a card name that
+  `card_named` does not know; a card already in the profile is not asked again, so a name the card data lacks
+  cannot block saving other settings. A `grace = {...}` written as an inline table is read as before but not
+  edited by the app. `cmdr profile` shows the grace cards.
 - **An empty table by default.** The template writes a live, empty `[grace]` table with a one-line
   explanation and a commented example, above `[ideas]`, so the setting is found in the file. Profiles that
   already exist get the same table from `cmdr sync` (`profileedit.ensure_grace_table`): it inserts the table
   before `[ideas]`, or at the end, leaves every other byte alone, writes atomically and logs each deck it
   changes. A profile that does not parse is left as it is. A deck without a profile gets the template from
   `cmdr sync`, so every deck, new or old, has a profile with the table to edit. Nothing
-  that only reads (the app's deck view, `cmdr profile`) writes it. The table goes above `[ideas]` because the
-  app appends `tag_search` to the end of that table, which must never land under `[grace]`.
+  that only reads (the app's deck view, `cmdr profile`) writes it; the Settings dialog writes it on Save. The
+  table goes above `[ideas]` because the app appends `tag_search` to the end of that table, which must never
+  land under `[grace]`.
 - **A per-card factor, multiplied, capped.** A factor is a number over 1 and at most 10. A list's or deck's
   weight is multiplied by the product of the factors of the grace cards it holds, and the product is capped at
   `MAX_GRACE = 10`, so a list holding every grace card cannot become the whole sample. A factor of 1 or less
@@ -70,7 +79,6 @@ Option 4.
 - The user has to know which cards mark their line, and a wrong or too heavy choice makes the shares describe
   the grace cards' lists only. `cmdr profile` and the breakdown line show what is set.
 - Editing `profile.toml` refreshes what the app shows through the board stamp, which already includes the
-  profile; the next `sync` recompiles the ideas with it. There is no setting in the app's dialog, and none is
-  planned until the file proves awkward.
+  profile, and so does a save from the Settings dialog; the next `sync` recompiles the ideas with it.
 - The ideas already on a board are judged again at the next sync (`rejudge_ideas`) with the grace in force,
   so an idea that only passed on the other lines is turned down then, with the usual reason.

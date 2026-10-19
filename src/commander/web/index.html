@@ -51,7 +51,7 @@
         <div class="deck-name">
           <h1 id="deck-short" class="deck-short"></h1>
           <button id="export" class="button small" type="button" title="Copy the saved decklist for TopDeck.gg">Copy decklist</button>
-          <button id="settings" class="button small" type="button" title="Commanders that play alike, themes to ignore">Settings</button>
+          <button id="settings" class="button small" type="button" title="Commanders that play alike, grace cards, themes to ignore">Settings</button>
         </div>
         <p class="deck-sub">
           <a id="deck-link" class="deck-title" href="#" target="_blank" rel="noopener" title="Open on Archidekt"></a>
@@ -202,6 +202,18 @@
       <ul id="settings-ignore-results" class="results" role="listbox" aria-label="Matching themes and tags" hidden></ul>
     </div>
     <div id="settings-offers" class="setting-offers"></div>
+  </section>
+  <section class="setting" aria-labelledby="settings-grace-title">
+    <h3 id="settings-grace-title">Grace cards</h3>
+    <p class="muted small">Lists holding these cards count more in this deck's percentages and ideas.</p>
+    <ul id="settings-grace" class="setting-grace" aria-label="Grace cards"></ul>
+    <div class="setting-grace-add">
+      <input id="settings-grace-name" type="text" placeholder="Add a card" aria-label="Card name"
+             autocomplete="off" spellcheck="false">
+      <input id="settings-grace-factor" class="grace-factor" type="number" min="1.1" max="10" step="0.1" value="3"
+             aria-label="Factor for the new card">
+      <button id="settings-grace-add" class="button" type="button">Add card</button>
+    </div>
   </section>
   <p id="settings-error" class="field-error" role="alert" hidden></p>
   <div class="dialog-actions">

@@ -3,7 +3,7 @@
 import logging
 import re
 import tomllib
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import cast
 
@@ -28,10 +28,16 @@ log = logging.getLogger(__name__)
 
 
 def save_settings(
-    folder: Path, deck: Deck, *, adjacent: Sequence[Sequence[str]], ignore: Sequence[str], tag_search: bool
+    folder: Path,
+    deck: Deck,
+    *,
+    adjacent: Sequence[Sequence[str]],
+    ignore: Sequence[str],
+    tag_search: bool,
+    grace: Mapping[str, float] | None = None,
 ) -> Profile:
-    """Set the adjacent commanders ([ideas] commanders), the tag search ([ideas] tag_search) and the ignored
-    themes ([themes] ignore).
+    """Set the adjacent commanders ([ideas] commanders), the tag search ([ideas] tag_search), the ignored
+    themes ([themes] ignore) and, unless `grace` is None, the grace cards ([grace], ADR 0039).
 
     A deck without a profile gets the commented template first. Everything else in the file, comments
     included, stays as it was. The result is checked as `read_profile` would before it is written, so a bad
@@ -39,13 +45,14 @@ def save_settings(
     """
     path = profile_path(folder)
     text = read_profile_text(path)
-    try:
-        doc = tomlkit.parse(profile_template(deck) if text is None else text)
-    except ParseError as error:
-        raise ProfileError(f"cannot read {path}: {error}") from error
+    source = profile_template(deck) if text is None else text
     # The file as it stands must be a profile before it is edited, so a wrong shape is an error here.
-    existing = migrate_profile(cast("dict[str, object]", doc.unwrap()), path)
-    parse_profile(existing, str(path))
+    existing = parse_profile(
+        migrate_profile(cast("dict[str, object]", _parse(source, path).unwrap()), path), str(path)
+    )
+    if grace is not None:
+        source = _with_grace_cards(source, _named(grace), existing.grace, path)
+    doc = _parse(source, path)
     groups: dict[tuple[str, ...], list[str]] = {}
     for group in adjacent:
         names = [name.strip() for name in group if name.strip()]
@@ -58,6 +65,18 @@ def save_settings(
     profile = parse_profile(cast("dict[str, object]", doc.unwrap()), str(path))
     write_text_atomic(path, tomlkit.dumps(doc))
     return profile
+
+
+def _parse(source: str, path: Path) -> tomlkit.TOMLDocument:
+    try:
+        return tomlkit.parse(source)
+    except ParseError as error:
+        raise ProfileError(f"cannot read {path}: {error}") from error
+
+
+def _named(grace: Mapping[str, float]) -> dict[str, float]:
+    """The grace cards by trimmed name, blank names left out."""
+    return {name.strip(): factor for name, factor in grace.items() if name.strip()}
 
 
 def ensure_grace_table(folder: Path) -> bool:
@@ -111,6 +130,58 @@ def _with_grace_table(text: str) -> str:
         start = previous
     gap = "" if start == 0 or text[:start].endswith(eol + eol) else eol
     return text[:start] + gap + block + eol + text[start:]
+
+
+_GRACE_HEADER = re.compile(r"^[ \t]*\[[ \t]*grace[ \t]*\][ \t]*(?:#.*)?\r?$", re.MULTILINE)
+
+
+def _with_grace_cards(
+    source: str, wanted: Mapping[str, float], current: Mapping[str, float], path: Path
+) -> str:
+    """The text with the [grace] table holding exactly `wanted`; the text itself when it already does.
+
+    Only the table's own lines are edited, so the comments below its entries, which belong to the next table,
+    stay where they are and new cards land above them.
+    """
+    if wanted == dict(current):
+        return source
+    if _GRACE_HEADER.search(source) is None:
+        if "grace" in tomllib.loads(source):
+            raise ProfileError(f"{path}: write grace as a [grace] table to edit it in the app")
+        if not wanted:
+            return source
+        source = _with_grace_table(source)
+    eol = "\r\n" if "\r\n" in source else "\n"
+    lines = source.splitlines(keepends=True)
+    start, end = _grace_lines(lines)
+    section = "".join(lines[start:end])
+    if not section.endswith("\n"):
+        section += eol
+    doc = tomlkit.parse(section)
+    table = cast("Table", doc["grace"])
+    for name in [name for name in table if name not in wanted]:
+        del table[name]
+    for name, factor in wanted.items():
+        value = int(factor) if factor.is_integer() else factor
+        if name not in table or float(cast("float", table[name])) != factor:
+            table[name] = value
+    edited = tomlkit.dumps(doc).replace("\r\n", "\n").replace("\n", eol)
+    return "".join(lines[:start]) + edited + "".join(lines[end:])
+
+
+def _grace_lines(lines: Sequence[str]) -> tuple[int, int]:
+    """The line range of the [grace] table: its header to its last entry, and the comments directly below."""
+    start = next(index for index, line in enumerate(lines) if _GRACE_HEADER.match(line.rstrip("\n")))
+    end = start + 1
+    for index in range(start + 1, len(lines)):
+        text = lines[index].strip()
+        if text.startswith("["):
+            break
+        if text and not text.startswith("#"):
+            end = index + 1
+    while end < len(lines) and lines[end].strip().startswith("#"):
+        end += 1
+    return start, end
 
 
 def _table(doc: tomlkit.TOMLDocument, key: str) -> Table:

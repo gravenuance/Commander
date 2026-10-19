@@ -210,3 +210,151 @@ def test_a_profile_in_another_encoding_raises_profile_error(tmp_path: Path) -> N
     (tmp_path / "profile.toml").write_bytes(b"version = 1\n# caf\xe9\n")
     with pytest.raises(ProfileError, match="cannot read"):
         save_settings(tmp_path, DECK, adjacent=[], ignore=[], tag_search=False)
+
+
+WITH_GRACE = """\
+# Squirrels, by the owner.
+version = 1
+
+# Lists holding these cards weigh more in this deck's shares: a factor over 1, up to 10.
+[grace]
+# "Basalt Monolith" = 3
+"Rings of Brighthearth" = 2.5  # the engine
+"Urza's Saga" = 4
+
+# Lands decks that play like it.
+[ideas]
+commanders = ["The Gitrog Monster"]
+"""
+
+
+def settings_with(folder: Path, grace: dict[str, float], *, tag_search: bool = False) -> None:
+    save_settings(
+        folder, DECK, adjacent=[["The Gitrog Monster"]], ignore=[], tag_search=tag_search, grace=grace
+    )
+
+
+def test_grace_cards_are_added_changed_and_removed_in_place(tmp_path: Path) -> None:
+    path = write(tmp_path, WITH_GRACE)
+    both = {"Rings of Brighthearth": 2.5, "Urza's Saga": 4, "Sol Ring": 1.5}
+    profile = save_settings(
+        tmp_path, DECK, adjacent=[["The Gitrog Monster"]], ignore=[], tag_search=False, grace=both
+    )
+    assert profile.grace == {"Rings of Brighthearth": 2.5, "Urza's Saga": 4.0, "Sol Ring": 1.5}
+    added = path.read_text(encoding="utf-8")
+    assert '"Urza\'s Saga" = 4\n"Sol Ring" = 1.5\n\n# Lands decks' in added
+    settings_with(tmp_path, {"Rings of Brighthearth": 6, "Sol Ring": 1.5})
+    assert read_profile(tmp_path).grace == {"Rings of Brighthearth": 6.0, "Sol Ring": 1.5}
+    after = path.read_text(encoding="utf-8")
+    # A changed factor keeps its line and trailing comment; a removed card takes only its own line.
+    assert '"Rings of Brighthearth" = 6  # the engine\n"Sol Ring" = 1.5\n\n' in after
+    assert "Urza" not in after
+    settings_with(tmp_path, {})
+    assert read_profile(tmp_path).grace == {}
+
+
+def test_the_grace_edit_keeps_every_comment_and_the_example(tmp_path: Path) -> None:
+    path = write(tmp_path, WITH_GRACE)
+    settings_with(tmp_path, {"Sol Ring": 2})
+    # Everything above [ideas], where the grace lives, is the file as it was but for the cards.
+    old = """\
+"Rings of Brighthearth" = 2.5  # the engine
+"Urza's Saga" = 4
+"""
+    assert (
+        path.read_text(encoding="utf-8").split("[ideas]")[0]
+        == (WITH_GRACE.replace(old, '"Sol Ring" = 2\n').split("[ideas]")[0])
+    )
+
+
+def test_a_save_that_leaves_the_grace_as_it_is_leaves_its_text_alone(tmp_path: Path) -> None:
+    path = write(tmp_path, WITH_GRACE.replace("= 2.5  # the engine", "=   2.5"))
+    settings_with(tmp_path, {"Rings of Brighthearth": 2.5, "Urza's Saga": 4})
+    assert "=   2.5" in path.read_text(encoding="utf-8")
+
+
+def test_a_profile_without_a_grace_table_gets_it_above_ideas_and_the_cards_in_it(tmp_path: Path) -> None:
+    path = write(tmp_path, WITHOUT_GRACE)
+    settings_with(tmp_path, {"Basalt Monolith": 3})
+    assert path.read_text(encoding="utf-8").split("commanders")[0] == (
+        'version = 1\narchetype = "Squirrels"\n\n'
+        + GRACE_BLOCK
+        + '"Basalt Monolith" = 3\n\n# Lands decks that play like it.\n[ideas]\n'
+    )
+
+
+def test_no_grace_cards_add_no_table_to_a_profile_without_one(tmp_path: Path) -> None:
+    path = write(tmp_path, WITHOUT_GRACE)
+    settings_with(tmp_path, {})
+    assert "[grace]" not in path.read_text(encoding="utf-8")
+
+
+def test_grace_stays_above_ideas_and_tag_search_stays_under_ideas(tmp_path: Path) -> None:
+    path = write(tmp_path, WITH_GRACE)
+    settings_with(tmp_path, {"Sol Ring": 2}, tag_search=True)
+    text = path.read_text(encoding="utf-8")
+    assert (
+        text.index("[grace]")
+        < text.index('"Sol Ring" = 2')
+        < text.index("[ideas]")
+        < text.index("tag_search = true")
+    )
+    profile = read_profile(tmp_path)
+    assert (profile.tag_search, profile.grace) == (True, {"Sol Ring": 2.0})
+    settings_with(tmp_path, {"Sol Ring": 2, "Mind Stone": 3}, tag_search=False)
+    again = read_profile(tmp_path)
+    assert (again.tag_search, again.grace) == (False, {"Sol Ring": 2.0, "Mind Stone": 3.0})
+
+
+def test_a_deck_without_a_profile_gets_the_template_with_its_grace_cards(tmp_path: Path) -> None:
+    settings_with(tmp_path, {"Basalt Monolith": 3})
+    text = (tmp_path / "profile.toml").read_text(encoding="utf-8")
+    assert '# "Basalt Monolith" = 3\n"Basalt Monolith" = 3\n' in text
+    assert text.index("[grace]") < text.index("[ideas]")
+    assert read_profile(tmp_path).grace == {"Basalt Monolith": 3.0}
+
+
+def test_grace_edits_keep_crlf_line_ends(tmp_path: Path) -> None:
+    path = write(tmp_path, WITH_GRACE.replace("\n", "\r\n"))
+    settings_with(tmp_path, {"Sol Ring": 2, "Mind Stone": 3})
+    raw = path.read_bytes().decode("utf-8")
+    assert '"Sol Ring" = 2\r\n"Mind Stone" = 3\r\n\r\n# Lands decks' in raw
+    assert raw.split("[ideas]")[0].replace("\r\n", "").count("\n") == 0
+
+
+@pytest.mark.parametrize(
+    ("grace", "message"),
+    [
+        pytest.param({"Sol Ring": 1}, "grace.Sol Ring must be a number over 1 and at most 10", id="one"),
+        pytest.param({"Sol Ring": 0.5}, "grace.Sol Ring must be a number", id="below-one"),
+        pytest.param({"Sol Ring": 10.5}, "at most 10", id="over-the-cap"),
+        pytest.param({"Sol Ring": float("nan")}, "grace.Sol Ring must be a number", id="not-a-number"),
+        pytest.param({"Sol Ring": 2, "sol ring": 3}, "listed twice", id="twice"),
+        pytest.param(
+            {"Rings of Brighthearth": 2, "RINGS OF BRIGHTHEARTH": 3}, "listed twice", id="twice-cased"
+        ),
+    ],
+)
+def test_a_bad_grace_factor_or_repeat_raises_and_leaves_the_file_byte_identical(
+    tmp_path: Path, grace: dict[str, float], message: str
+) -> None:
+    path = write(tmp_path, WITH_GRACE)
+    with pytest.raises(ProfileError, match=message):
+        settings_with(tmp_path, grace, tag_search=True)
+    assert path.read_bytes() == WITH_GRACE.encode("utf-8")
+
+
+def test_a_grace_written_as_an_inline_table_refuses_a_change_and_is_left_alone(tmp_path: Path) -> None:
+    text = 'version = 1\ngrace = { "Sol Ring" = 2 }\n'
+    path = write(tmp_path, text)
+    with pytest.raises(ProfileError, match=r"write grace as a \[grace\] table"):
+        settings_with(tmp_path, {"Mind Stone": 3})
+    assert path.read_bytes() == text.encode("utf-8")
+    save_settings(tmp_path, DECK, adjacent=[], ignore=[], tag_search=True)
+    assert read_profile(tmp_path).grace == {"Sol Ring": 2.0}
+
+
+def test_settings_saved_without_grace_leave_the_grace_cards_as_they_are(tmp_path: Path) -> None:
+    write(tmp_path, WITH_GRACE)
+    save_settings(tmp_path, DECK, adjacent=[], ignore=[], tag_search=True)
+    assert read_profile(tmp_path).grace == {"Rings of Brighthearth": 2.5, "Urza's Saga": 4.0}

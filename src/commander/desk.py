@@ -18,6 +18,7 @@ from typing import cast
 
 import httpx
 
+from commander.answers import card_key
 from commander.apply import NotYourDeckError, Resolution, SaveError
 from commander.archidekt import ArchidektError
 from commander.archidekt_edit import (
@@ -56,7 +57,7 @@ from commander.config import ConfigError, MetaSettings, forget_account, switch_a
 from commander.credentials import CredentialError, TokenStore
 from commander.deckexport import cardmarket_wants_text, topdeck_text
 from commander.deckgrid import GridGroup, deck_grid, image_url
-from commander.deckprofile import MAX_ADJACENT, Profile, read_profile
+from commander.deckprofile import MAX_ADJACENT, Profile, ProfileError, read_profile
 from commander.deckthemes import merge_themes
 from commander.edhtop16 import Edhtop16Error
 from commander.fetchpriority import FetchPriority
@@ -89,6 +90,7 @@ from commander.syncrun import CardState, FetchState, SyncOutcome, SyncServices, 
 from commander.targets import CutRules, Target, deck_cut_rules, targets_for, with_ideas
 from commander.viewscore import VIEWS_FILE, ViewScores
 from commander.weightedshare import (
+    MAX_GRACE,
     ShareTable,
     SourceShare,
     WeightedShare,
@@ -511,7 +513,7 @@ class Desk:
 
     @_guarded
     def settings(self, deck_id: int) -> Json:
-        """The profile's adjacent commanders, tag search, ignored themes and the deck's themes."""
+        """The profile's commanders, tag search, grace cards, ignored themes and the deck's themes."""
         stored = self._stored(deck_id)
         profile = read_profile(stored.folder)
         with self._db() as db:
@@ -522,6 +524,8 @@ class Desk:
             "adjacent": [list(group) for group in profile.adjacent],
             "ignore": list(profile.ignore_themes),
             "tagSearch": profile.tag_search,
+            "grace": [{"name": name, "factor": factor} for name, factor in profile.grace.items()],
+            "maxGrace": MAX_GRACE,
             "themes": [{"name": t.name, "kind": t.source.value} for t in derived.themes],
             "leanings": [leaning.tag for leaning in leanings],
             "maxAdjacent": MAX_ADJACENT,
@@ -550,19 +554,34 @@ class Desk:
         adjacent: list[list[str]],
         ignore: list[str],
         tag_search: bool,  # noqa: FBT001 — the page's bridge passes positionals
+        grace: list[Json],
     ) -> Json:
-        """Write the adjacent commanders, tag search and ignored themes into profile.toml, comments kept."""
+        """Write the adjacent commanders, tag search, ignored themes and grace cards ([{name, factor}]) into
+        profile.toml, comments kept."""
         with self._writing("settings save", "save the settings") as busy:
             if busy:
                 return busy
             stored = self._stored(deck_id)
+            cards = _grace_from_page(grace)
+            held = {card_key(name) for name in read_profile(stored.folder).grace}
             with self._db() as db:
                 for group in adjacent:
                     for name in group:
                         found = {info.name.casefold() for info in db.search_commanders(name)}
                         if name.strip().casefold() not in found:
                             return {"error": f"{name!r} is not a commander the card data knows"}
-            save_settings(stored.folder, stored.deck, adjacent=adjacent, ignore=ignore, tag_search=tag_search)
+                # A card already in the profile may be newer than the card data; only new ones are checked.
+                for name in cards:
+                    if card_key(name) not in held and db.card_named(name) is None:
+                        return {"error": f"No card named {name!r} (check the spelling)"}
+            save_settings(
+                stored.folder,
+                stored.deck,
+                adjacent=adjacent,
+                ignore=ignore,
+                tag_search=tag_search,
+                grace=cards,
+            )
         return self.settings(deck_id)
 
     @_guarded
@@ -967,6 +986,22 @@ def _group_json(group: GridGroup, colours: Mapping[str, str], shares: ShareTable
             for c in group.cards
         ],
     }
+
+
+def _grace_from_page(entries: list[Json]) -> dict[str, float]:
+    """The panel's grace cards, [{name, factor}], by trimmed name; ProfileError for a malformed entry."""
+    found: dict[str, float] = {}
+    for entry in entries:
+        name, factor = entry.get("name"), entry.get("factor")
+        if not isinstance(name, str) or not name.strip():
+            raise ProfileError("a grace card needs a name")
+        name = name.strip()
+        if isinstance(factor, bool) or not isinstance(factor, int | float):
+            raise ProfileError(f"{name}: the factor must be a number over 1 and at most {MAX_GRACE:g}")
+        if name in found:
+            raise ProfileError(f"{name} is listed twice in the grace cards")
+        found[name] = float(factor)
+    return found
 
 
 def _grace_json(profile: Profile, shares: ShareTable) -> Json:

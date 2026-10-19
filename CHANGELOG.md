@@ -9,7 +9,9 @@
   lists. Every deck's profile carries an empty `[grace]` table: `cmdr sync` adds it to existing profiles (a
   broken one is left alone) and writes the template, with the table, for a deck that has no profile. The meta
   breakdown is unchanged. `cmdr profile` lists the grace cards, and the percentage's breakdown in the app says
-  which are set and how many lists hold one.
+  which are set and how many lists hold one. The deck's Settings in the app list the grace cards too: add a
+  card with its factor (3 to start), change a factor or remove a card, and *Save settings* writes `[grace]`
+  with the rest, keeping your comments and the example, and refusing a card name that matches no card.
 - `cmdr sync` and the app's Sync also pull your private and unlisted decks when a login is saved (ADR 0040): the
   deck list and each deck are read with it. Without a login, or with one Archidekt refuses, sync lists the
   public decks alone and warns that private and unlisted decks were not updated (without a login, only when

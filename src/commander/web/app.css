@@ -346,7 +346,7 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .head-actions { display: flex; gap: var(--space-2); align-items: flex-start; margin-top: var(--space-2); }
 
 .propose { position: relative; }
-.propose input {
+.propose input, .setting-grace-add input, .setting-grace input {
   width: 260px;
   min-height: 36px;
   padding: var(--space-2) var(--space-3);
@@ -1030,6 +1030,12 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .setting-offers ul { list-style: none; margin: 0; padding: 0; }
 .deck-chip.offer { cursor: pointer; font: inherit; font-size: var(--text-s); color: inherit; }
 .deck-chip.offer:hover { background: var(--accent-soft); }
+.setting-grace { list-style: none; margin: 0 0 var(--space-2); padding: 0; display: grid; gap: var(--space-1); }
+.setting-grace li { display: flex; align-items: center; gap: var(--space-2); }
+.setting-grace .grace-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.setting-grace-add { display: flex; align-items: center; gap: var(--space-2); }
+.setting-grace-add input[type="text"] { flex: 1; min-width: 0; width: auto; }
+.setting .grace-factor { width: 5rem; flex: none; }
 
 /* Mana tab */
 .mana { flex: 1; overflow-y: auto; padding: var(--space-3) var(--space-4) var(--space-4); display: grid; gap: var(--space-4); align-content: start; font-size: var(--text-s); }

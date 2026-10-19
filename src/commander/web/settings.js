@@ -1,20 +1,26 @@
 "use strict";
 
-/* Settings: the profile's commanders that play alike, the tag search and themes to ignore */
+/* Settings: the profile's commanders that play alike, the tag search, grace cards and themes to ignore */
 
-const settingsState = { deck: null, adjacent: [], tagSearch: false, ignore: [], themes: [], leanings: [], max: 8, pairWith: null };
+const DEFAULT_GRACE = 3;
+const settingsState = {
+  deck: null, adjacent: [], tagSearch: false, grace: [], maxGrace: 10, ignore: [], themes: [], leanings: [], max: 8, pairWith: null,
+};
 
 async function openSettings() {
   const deck = state.current;
   try {
     const answer = await api("settings", deck);
     Object.assign(settingsState, {
-      deck, adjacent: answer.adjacent, tagSearch: answer.tagSearch, ignore: answer.ignore, themes: answer.themes,
-      leanings: answer.leanings, max: answer.maxAdjacent, pairWith: null,
+      deck, adjacent: answer.adjacent, tagSearch: answer.tagSearch, grace: answer.grace, maxGrace: answer.maxGrace,
+      ignore: answer.ignore, themes: answer.themes, leanings: answer.leanings, max: answer.maxAdjacent, pairWith: null,
     });
+    $("settings-grace-name").value = "";
+    $("settings-grace-factor").value = String(DEFAULT_GRACE);
     $("settings-deck").textContent = $("deck-short").textContent;
     $("settings-error").hidden = true;
     renderSettings();
+    renderGrace();
     $("settings-dialog").showModal();
     $("settings-adjacent-input").focus();
   } catch { /* shown in the status line */ }
@@ -58,6 +64,56 @@ function renderSettings() {
   ] : []));
 }
 
+// One row per grace card; typing in a factor changes the state alone, so the box keeps its focus.
+function renderGrace() {
+  const s = settingsState;
+  $("settings-grace-factor").max = String(s.maxGrace);
+  $("settings-grace").replaceChildren(...s.grace.map((card, index) => {
+    const factor = el("input", {
+      class: "grace-factor", type: "number", min: "1.1", max: String(s.maxGrace), step: "0.1",
+      "aria-label": `Factor for ${card.name}`,
+      oninput: (event) => { card.factor = event.target.value === "" ? null : Number(event.target.value); },
+    });
+    factor.value = String(card.factor);
+    return el("li", {},
+      el("span", { class: "grace-name", text: card.name }),
+      factor,
+      el("button", {
+        class: "chip-remove", type: "button", text: "×", "aria-label": `Remove ${card.name}`,
+        onclick: () => {
+          s.grace.splice(index, 1);
+          renderGrace();
+        },
+      }));
+  }));
+}
+
+// A card already listed (case aside) takes the new factor instead of a second row.
+function addGrace() {
+  const s = settingsState;
+  const problem = $("settings-error");
+  const name = $("settings-grace-name").value.trim();
+  const factor = Number($("settings-grace-factor").value);
+  if (!name) {
+    $("settings-grace-name").focus();
+    return;
+  }
+  if (!(factor > 1 && factor <= s.maxGrace)) {
+    problem.textContent = `A factor over 1 and at most ${s.maxGrace}`;
+    problem.hidden = false;
+    $("settings-grace-factor").focus();
+    return;
+  }
+  problem.hidden = true;
+  const held = s.grace.find((card) => card.name.toLowerCase() === name.toLowerCase());
+  if (held) held.factor = factor;
+  else s.grace.push({ name, factor });
+  $("settings-grace-name").value = "";
+  $("settings-grace-factor").value = String(DEFAULT_GRACE);
+  renderGrace();
+  $("settings-grace-name").focus();
+}
+
 function addAdjacent(text) {
   const s = settingsState;
   if (s.pairWith !== null && s.adjacent[s.pairWith]) {
@@ -90,7 +146,7 @@ async function saveSettings() {
   const problem = $("settings-error");
   problem.hidden = true;
   try {
-    await api("save_settings", s.deck, s.adjacent, s.ignore, s.tagSearch);
+    await api("save_settings", s.deck, s.adjacent, s.ignore, s.tagSearch, s.grace);
     $("settings-dialog").close();
     showStatus("Settings saved to the deck's profile.toml");
     await refresh();
@@ -106,6 +162,14 @@ function setupSettings() {
   $("settings-cancel").addEventListener("click", () => $("settings-dialog").close());
   $("settings-save").addEventListener("click", saveSettings);
   $("settings-tag-search").addEventListener("change", (event) => { settingsState.tagSearch = event.target.checked; });
+  $("settings-grace-add").addEventListener("click", addGrace);
+  for (const id of ["settings-grace-name", "settings-grace-factor"]) {
+    $(id).addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      addGrace();
+    });
+  }
   const adjacent = $("settings-adjacent-input");
   // A partner pair is typed "First + Second": matches are for the name after the last +.
   combobox(adjacent, $("settings-adjacent-results"), async (text) => {

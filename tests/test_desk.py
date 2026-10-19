@@ -4,7 +4,7 @@ import copy
 import json
 import re
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from importlib import resources
 from pathlib import Path
@@ -79,8 +79,17 @@ def fetch_meta(settings: DeskSettings, fake: FakeArchidekt) -> None:
     assert result.code == 0, result.err
 
 
-def save(desk: Desk, adjacent: list[list[str]], ignore: list[str], *, tag_search: bool) -> Json:
-    return desk.save_settings(DECK, adjacent, ignore, tag_search)
+def save(
+    desk: Desk,
+    adjacent: list[list[str]],
+    ignore: list[str],
+    *,
+    tag_search: bool,
+    grace: Sequence[tuple[str, object]] = (),
+) -> Json:
+    return desk.save_settings(
+        DECK, adjacent, ignore, tag_search, [{"name": name, "factor": factor} for name, factor in grace]
+    )
 
 
 def items(answer: Json, key: str) -> list[Json]:
@@ -336,7 +345,113 @@ def test_the_settings_dialog_has_a_labelled_tag_search_switch_saved_with_the_res
     assert "tagSearch: answer.tagSearch" in script
     assert '$("settings-tag-search").checked = s.tagSearch;' in script
     assert "settingsState.tagSearch = event.target.checked;" in script
-    assert 'api("save_settings", s.deck, s.adjacent, s.ignore, s.tagSearch)' in script
+    assert 'api("save_settings", s.deck, s.adjacent, s.ignore, s.tagSearch, s.grace)' in script
+
+
+def profile_file(settings: DeskSettings) -> Path:
+    return settings.workspace / "10004639-honestly-though" / "profile.toml"
+
+
+def test_the_settings_list_the_grace_cards_and_a_save_returns_the_new_ones(
+    desk: Desk, settings: DeskSettings
+) -> None:
+    before = desk.settings(DECK)
+    assert (before["grace"], before["maxGrace"]) == ([], 10)
+    saved = save(desk, [], [], tag_search=False, grace=[("Arcane Signet", 4), ("Mind Stone", 2.5)])
+    expected = [{"name": "Arcane Signet", "factor": 4.0}, {"name": "Mind Stone", "factor": 2.5}]
+    assert saved["grace"] == expected
+    assert desk.settings(DECK)["grace"] == expected
+    text = profile_file(settings).read_text(encoding="utf-8")
+    assert '"Arcane Signet" = 4\n"Mind Stone" = 2.5\n' in text
+    assert '# "Basalt Monolith" = 3' in text
+    changed = save(desk, [], [], tag_search=False, grace=[("Mind Stone", 6)])
+    assert changed["grace"] == [{"name": "Mind Stone", "factor": 6.0}]
+    assert save(desk, [], [], tag_search=False)["grace"] == []
+
+
+def test_a_grace_card_the_card_data_does_not_know_is_refused_and_the_file_stays(
+    desk: Desk, settings: DeskSettings
+) -> None:
+    save(desk, [], [], tag_search=False, grace=[("Arcane Signet", 4)])
+    before = profile_file(settings).read_bytes()
+    refused = save(desk, [], [], tag_search=True, grace=[("Arcane Signet", 4), ("Nonesuch Relic", 3)])
+    assert refused == {"error": "No card named 'Nonesuch Relic' (check the spelling)"}
+    assert profile_file(settings).read_bytes() == before
+    # The check ignores case and the spaces around a name.
+    assert save(desk, [], [], tag_search=False, grace=[("  mind STONE ", 3)])["grace"] == [
+        {"name": "mind STONE", "factor": 3.0}
+    ]
+
+
+def test_a_grace_card_already_in_the_profile_stays_even_when_the_card_data_lacks_it(
+    desk: Desk, settings: DeskSettings
+) -> None:
+    profile_file(settings).write_text('[grace]\n"Newest Relic" = 3\n', encoding="utf-8")
+    saved = save(desk, [], [], tag_search=True, grace=[("Newest Relic", 5)])
+    assert saved["grace"] == [{"name": "Newest Relic", "factor": 5.0}]
+    assert saved["tagSearch"] is True
+
+
+@pytest.mark.parametrize(
+    ("grace", "message"),
+    [
+        pytest.param([("Arcane Signet", 1)], "grace.Arcane Signet must be a number over 1", id="one"),
+        pytest.param([("Arcane Signet", 11)], "at most 10", id="over-the-cap"),
+        pytest.param([("Arcane Signet", None)], "Arcane Signet: the factor must be a number", id="missing"),
+        pytest.param([("Arcane Signet", "3")], "Arcane Signet: the factor must be a number", id="text"),
+        pytest.param([("Arcane Signet", True)], "Arcane Signet: the factor must be a number", id="flag"),
+        pytest.param([("Arcane Signet", 2), ("arcane signet", 3)], "listed twice", id="twice"),
+        pytest.param([("Arcane Signet", 2), (" Arcane Signet", 3)], "listed twice", id="twice-trimmed"),
+        pytest.param([("  ", 3)], "needs a name", id="blank"),
+    ],
+)
+def test_a_bad_grace_factor_shows_as_the_panels_error_and_leaves_the_file_alone(
+    desk: Desk, settings: DeskSettings, grace: list[tuple[str, object]], message: str
+) -> None:
+    save(desk, [], [], tag_search=False, grace=[("Mind Stone", 2)])
+    before = profile_file(settings).read_bytes()
+    refused = save(desk, [], [], tag_search=True, grace=grace)
+    assert message in str(refused["error"])
+    assert set(refused) == {"error"}
+    assert profile_file(settings).read_bytes() == before
+
+
+def test_a_grace_save_refreshes_the_decks_grace_line_and_shares_at_once(
+    desk: Desk, settings: DeskSettings, fake: FakeArchidekt
+) -> None:
+    fake.edhtop16.pages[MAGDA] = [magda_page()]
+    fetch_meta(settings, fake)
+    plain = desk.deck(DECK)
+    assert plain["grace"] == {"cards": [], "holding": 0, "lists": 6}
+
+    def golem_share(view: Json) -> Json:
+        grid = {c["name"]: c for g in items(view, "grid") for c in cast("list[Json]", g["cards"])}
+        return cast("Json", grid["Battered Golem"]["share"])
+
+    save(desk, [], [], tag_search=False, grace=[("Arcane Signet", 4)])
+    graced = desk.deck(DECK)
+    assert graced["grace"] == {"cards": [{"name": "Arcane Signet", "factor": 4.0}], "holding": 1, "lists": 6}
+    assert golem_share(graced)["share"] == pytest.approx(4.75 / 6.85, abs=1e-4)
+    # The same file size: the shares cache follows the file's time, not only its size.
+    save(desk, [], [], tag_search=False, grace=[("Arcane Signet", 5)])
+    heavier = desk.deck(DECK)
+    assert heavier["grace"] == {"cards": [{"name": "Arcane Signet", "factor": 5.0}], "holding": 1, "lists": 6}
+    assert golem_share(heavier)["share"] == pytest.approx(4.75 / 7.375, abs=1e-4)
+    save(desk, [], [], tag_search=False)
+    assert desk.deck(DECK)["grace"] == {"cards": [], "holding": 0, "lists": 6}
+    assert golem_share(desk.deck(DECK))["share"] == golem_share(plain)["share"]
+
+
+def test_the_settings_dialog_has_a_grace_section_with_a_name_a_factor_and_an_add_button() -> None:
+    dialog = page_html().split('<dialog id="settings-dialog"', 1)[1].split("</dialog>", 1)[0]
+    assert "Lists holding these cards count more in this deck's percentages and ideas." in dialog
+    name = re.search(r'<input[^>]*id="settings-grace-name"[^>]*>', dialog)
+    factor = re.search(r'<input[^>]*id="settings-grace-factor"[^>]*>', dialog)
+    assert name is not None
+    assert factor is not None
+    assert 'aria-label="Card name"' in name.group(0)
+    assert all(part in factor.group(0) for part in ('type="number"', 'value="3"', 'max="10"', "aria-label="))
+    assert re.search(r'<button[^>]*id="settings-grace-add"[^>]*>Add card</button>', dialog)
 
 
 def test_the_mana_tab_reports_lands_and_colour_sources(desk: Desk) -> None:
@@ -800,7 +915,7 @@ def _remove(desk: Desk) -> Json:
 
 
 def _save_settings(desk: Desk) -> Json:
-    return save(desk, [["Tempestra, Dame of Games"]], ["Stax"], tag_search=True)
+    return save(desk, [["Tempestra, Dame of Games"]], ["Stax"], tag_search=True, grace=[("Arcane Signet", 3)])
 
 
 @pytest.mark.parametrize(
@@ -826,6 +941,7 @@ def test_board_edits_and_settings_wait_while_an_update_runs(
     profile = folder / "profile.toml"
     text = profile.read_text(encoding="utf-8") if profile.exists() else ""
     assert "Tempestra" not in text
+    assert "Arcane Signet" not in text
     assert "\ntag_search = true" not in text
 
 
