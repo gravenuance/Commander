@@ -199,7 +199,12 @@ decks for that commander updated in the same window (see *Which Archidekt decks 
   [ADR 0017](docs/adr/0017-key-cards-found-from-the-deck.md).
 - **Meta combos and your answers:** the combos those lists run most, from
   [Commander Spellbook](https://commanderspellbook.com), each with the deck's answers: stax pieces that stop
-  it first, then removal for a piece, then counterspells. "no answer in the deck" flags the gaps.
+  it first, then removal for a piece, then counterspells. "no answer in the deck" flags the gaps. A combo is
+  listed when it makes up 5% of the meta (at most 100, most exposed first); newer lists weigh more, and
+  "rising" marks one that is twice as common in the last 30 days' lists as in the 30 days before. See
+  [ADR 0037](docs/adr/0037-meta-combos-by-floor-and-recency.md). Combos that share at least two pieces (the
+  commander counts) are listed together under a "Shared:" line naming those pieces, each combo showing only
+  its other pieces ([ADR 0038](docs/adr/0038-meta-combos-grouped-by-shared-pieces.md)).
 
 A deck's play-style deck tags weigh the report ([ADR 0031](docs/adr/0031-play-styles-as-score-multipliers.md)).
 Each tag favours some kinds of card, and the staples sort by their share times a weight: 1.25 for a clear fit,
@@ -472,21 +477,26 @@ base against Frank Karsten's published numbers
   no card to replace wait in their own *No cut yet* panel below Considering, shown only while there are any:
   click one, then the deck card it replaces.
   × turns the idea down, with a reason if you like: turned-down cards wait under *Turned down* (closed until
-  opened) with their reasons, and Reconsider brings one back. Considering, Meta and each Meta section
-  fold, and stay as you left them.
-  The suggested targets are the cards you or Claude picked, or else the weakest cards like the idea
-  ([ADR 0029](docs/adr/0029-replacement-targets-and-wider-cuts.md)). Like for like comes first: cards in the
-  same role, and a card serving one of the deck's themes or leanings only for an idea serving the same, the
-  least played first and unranked cards last. Every cut suggested is less played than the idea, a card no
-  list plays counting as 0; without list data there is no such gate. An idea left with no cut goes to the
-  *No cut yet* panel, and a cut you pick yourself is never removed. Slots left over go to cards of another
-  role or theme, but only
-  while the deck keeps what other players of the commander run (the peers' 25th percentile of each role, the
-  median of each theme; roles counted by Tagger tag alone, as the peers' are), and an other-theme cut needs
-  the idea to be 20 points more played. A cut of another role also scores 3 points per card a role it fills
-  runs over the peers' median. The reason names what makes each cut allowed. A swap that takes a land out or
-  puts one in is offered only if the land count ends within one of Karsten's, closer to it than before, or
-  inside the range of three or more other lists, and every colour keeps its sources
+  opened) with their reasons, and Reconsider brings one back. Considering, Meta, each Meta section and each
+  category under *What stops you* fold, and stay as you left them.
+  The suggested targets are the cards you or Claude picked, or else the four best scoring deck cards
+  ([ADR 0029](docs/adr/0029-replacement-targets-and-wider-cuts.md),
+  [ADR 0036](docs/adr/0036-surplus-cuts-on-one-score.md)). Every candidate scores the idea's share less its
+  own, plus a bonus for what allows the cut. Every cut suggested is less played than the idea, a card no
+  list plays counting as 0 (basic lands excepted); without list data there is no such gate. An idea left with no cut goes to the
+  *No cut yet* panel, and a cut you pick yourself is never removed. Cards in the idea's role, and a card
+  serving one of the deck's themes or leanings only for an idea serving the same, get +0.10. A card of another
+  role scores +0.03 per card over the peers' median when the deck holds at least 2 more than that median
+  of every role of ramp, draw, removal and tutors it fills (other roles keep the peers' 25th percentile). A
+  card of another theme goes the same way when the deck runs 2 over the peers' median of every theme it
+  serves and the idea is 0.20 more played; a leaning, or a card that would empty one of those four roles, never goes
+  as a theme surplus. A nonland idea may replace a land the mana base can spare, +0.03 per spare land
+  (lands above the greater of Karsten's count less one and the peers' median land count): the basic land of
+  the colour with most sources to spare, and nonbasic lands that only make one mana at a time (no fetch, copy, cycling or other ability, and none that can make more than one mana, like Ancient Tomb or Gaea's Cradle), fill no role, serve no theme and are less played
+  than the idea. Surplus cuts need at least three recent decks of the commander read, and the reason says
+  which kind allows each cut. A swap that takes a land out or puts one in is offered only if the land count
+  ends within one of Karsten's, closer to it than before, or inside the range of three or more other lists,
+  and every colour keeps its sources
   ([ADR 0030](docs/adr/0030-land-swaps-guarded-by-the-mana-base.md)).
 - **Labels**: the flag in a grid card's top-left corner sets its Archidekt label. Every deck offers your
   account's labels in their colours, read on each signed-in `sync` and before each label change

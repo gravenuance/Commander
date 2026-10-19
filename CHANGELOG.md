@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Changed
+- Cut targets for an idea (ADR 0036): every candidate scores on one number and the best four are offered (were
+  three, like-for-like cards first). A deck that holds more than the peers' median of ramp, draw, removal or
+  tutors, or of a theme, offers those cards for ideas of another role or theme; a deck with lands to spare
+  offers a basic land or a less played nonbasic land (one that only makes mana, with no role or theme) for a nonland idea. A role or
+  theme surplus needs the deck 2 cards over the peers' median. The reason says which. A theme the peers
+  were not counted for no longer lets a card go for an idea of another theme.
+- Meta combos (ADR 0037): every combo making up at least 5% of the meta is listed, most exposed first, at most
+  100 (was the top 15). A list weighs less the older its tournament and more the bigger the event, as in the
+  card shares, so a combo spreading now counts at its present share. `cmdr meta` and the app's Meta panel
+  mark a combo "rising" when its share of the last 30 days' lists is twice that of the 30 days before
+  (or two lists hold it where none did); the JSON has `rising`.
+- Meta combos that share at least two pieces, the commander included, are listed together (ADR 0038): a
+  "Shared:" line names the pieces and each combo shows only its others, in `cmdr meta` and the app's Meta panel.
+  The app's answer carries them as `comboGroups`.
+- A land whose mana ability can make more than one mana (Ancient Tomb, Gaea's Cradle, Cabal Coffers, Nykthos,
+  Urza's Tower) is a utility land, never offered as a spare land (ADR 0036).
+- The app's main panel titles (Considering, Meta) are a step smaller in size than the sections inside them, but
+  in bold capitals, so they read as the larger heading. They line up with the sub-sections and lost their
+  hover background. Each category under *What stops you* folds, staying as you left it.
+
 ## 0.6.0 - 2026-10-18
 
 ### Added
