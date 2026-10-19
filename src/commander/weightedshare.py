@@ -17,8 +17,7 @@ from datetime import UTC, datetime, timedelta
 from commander.answers import card_key
 from commander.deckcache import Clock
 from commander.edhtop16 import Entry
-from commander.meta import listed_entries
-from commander.metadata import MetaData, PeerList
+from commander.metadata import MetaData, PeerList, listed_entries
 
 # A list or deck weighs half as much for every 30 days since its tournament or last update.
 HALF_LIFE_DAYS = 30.0
@@ -157,9 +156,19 @@ def weighted_shares(data: MetaData | None, *, now: Clock) -> ShareTable:
     )
 
 
+def list_age_days(entry: Entry, moment: datetime) -> int:
+    """Whole days from the entry's tournament to `moment` (UTC date); negative when it is still to come."""
+    return (moment.astimezone(UTC).date() - entry.tournament.held_on).days
+
+
+def event_weight(entry: Entry, moment: datetime) -> float:
+    """A list's weight without its placing: half per HALF_LIFE_DAYS since its tournament, times the event's
+    size factor."""
+    return recency_weight(list_age_days(entry, moment)) * size_factor(entry.tournament.size)
+
+
 def _list_weight(entry: Entry, moment: datetime) -> float:
-    age = (moment.astimezone(UTC).date() - entry.tournament.held_on).days
-    return recency_weight(age) * placement_weight(entry)
+    return recency_weight(list_age_days(entry, moment)) * placement_weight(entry)
 
 
 def _deck_weight(deck: PeerList, moment: datetime) -> float:

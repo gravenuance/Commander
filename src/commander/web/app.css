@@ -69,6 +69,7 @@
   --text-2xs: 0.6875rem;
   --text-xs: 0.75rem;
   --text-s: 0.8125rem;
+  --text-sm: 0.875rem;
   --text-m: 0.9375rem;
   --text-l: 1.25rem;
   --text-xl: 1.75rem;
@@ -620,20 +621,21 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   align-items: center;
   gap: var(--space-2);
   min-height: 28px;
-  padding: 0 var(--space-1);
-  margin-left: var(--space-2);
+  /* Flush left, so its arrow lines up with the sub-toggles' (.meta-section > summary). */
+  padding: 0;
   border: 0;
   border-radius: var(--radius-s);
   background: transparent;
   color: var(--muted);
   font: inherit;
-  font-size: var(--text-s);
-  font-weight: 600;
+  /* A step under the sub-toggles' --text-m: in capitals with this spacing it still reads larger than they do. */
+  font-size: var(--text-sm);
+  font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   cursor: pointer;
 }
-.panel-toggle:hover { background: var(--surface-2); }
+.panel-toggle:focus-visible { outline-offset: -2px; }
 .count { font-weight: 500; }
 .cards { display: grid; gap: var(--space-3); }
 .empty { margin: 0; color: var(--muted); font-size: var(--text-s); }
@@ -929,15 +931,19 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .meta-head p { margin: 0; font-size: var(--text-s); }
 .meta-head .spacer { flex: 1; }
 .meta-body { display: grid; gap: var(--space-4); margin-top: var(--space-3); }
-.meta-section h3 { display: inline; margin: 0; font-size: var(--text-m); }
+.meta-section h3, .meta-section h4 { display: inline; margin: 0; font-size: var(--text-m); }
 .meta-section > summary { cursor: pointer; margin-bottom: var(--space-2); width: fit-content; }
 .meta-section:not([open]) > summary { margin-bottom: 0; }
 .meta-section > p { margin: var(--space-2) 0 0; }
 .meta-rows { display: grid; }
 .meta-row { display: grid; gap: var(--space-1); padding: var(--space-2) 0; border-top: 1px solid var(--border); font-size: var(--text-s); }
 .meta-row p { margin: 0; }
+.combo-group { border-top: 1px solid var(--border); padding-top: var(--space-2); }
+.combo-shared { margin: 0; font-size: var(--text-s); font-weight: 600; color: var(--muted); overflow-wrap: anywhere; }
+.combo-group > .meta-row { margin-left: var(--space-3); }
 .meta-card { font-weight: 600; font-size: var(--text-m); }
 .meta-card a { color: var(--accent); }
+.meta-card .badge { margin-left: var(--space-2); }
 .meta-list { list-style: none; margin: 0; padding: 0 0 0 var(--space-3); display: grid; gap: var(--space-1); border-left: 2px solid var(--border); }
 .threat { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-2); align-items: baseline; }
 .threat-name { font-weight: 600; }
@@ -953,13 +959,13 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .deck-chip.more { color: var(--muted); }
 .answers { overflow-wrap: anywhere; }
 .role-groups { display: grid; gap: var(--space-2); }
-.role-name { margin: 0 0 var(--space-1); font-weight: 600; color: var(--muted); }
+.role-name { font-weight: 600; color: var(--muted); }
 .stopper { display: grid; gap: var(--space-1); }
 .stopper p { margin: 0; }
 .deck-chip.stops { background: var(--surface); border-style: dashed; }
 .deck-chip.stops a { color: var(--accent); }
 .key-chips .deck-chip { cursor: help; font-size: var(--text-s); }
-.untouched { margin-top: var(--space-2); }
+.meta-section > .role-group { margin-top: var(--space-2); }
 
 /* No cut yet and Turned down, under Considering */
 .fold-group { margin-top: var(--space-3); }

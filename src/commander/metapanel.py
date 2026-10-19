@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from commander.answers import AnswerKind
 from commander.keycards import KeyCard
 from commander.meta import OwnCombo, Threat
-from commander.metacombos import AnswerRole, MetaCombo
+from commander.metacombos import AnswerRole, MetaCombo, group_combos
 from commander.models import short_commander_name
 
 type Json = dict[str, object]
@@ -89,12 +89,29 @@ def combo_rows(combos: Sequence[MetaCombo]) -> list[Json]:
             "results": list(combo.results),
             "url": combo.url,
             "exposure": round(combo.exposure, 4),
+            "rising": combo.rising,
             "decks": _decks(combo.played_by),
             "answers": [
                 {"card": a.card, "how": a.how, "role": a.role.value, "catch": a.catch} for a in combo.answers
             ],
         }
         for combo in combos
+    ]
+
+
+def combo_groups(combos: Sequence[MetaCombo]) -> list[Json]:
+    """The meta's combos grouped by shared pieces (ADR 0038), each combo row with its `others`: the pieces
+    outside the group's shared ones. A combo on its own has no shared pieces and all of them as `others`."""
+    rows = {combo.id: row for combo, row in zip(combos, combo_rows(combos), strict=True)}
+    return [
+        {
+            "shared": list(group.shared),
+            "combos": [
+                {**rows[combo.id], "others": [p for p in combo.pieces if p not in group.shared]}
+                for combo in group.combos
+            ],
+        }
+        for group in group_combos(combos)
     ]
 
 

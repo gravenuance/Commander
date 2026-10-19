@@ -9,7 +9,7 @@ PRELUDE = """
 const REPORT = {
   report: { sample: { known: true, withLists: 5, thin: false }, since: "2026-08-16",
     sources: [{ fetchedAt: null }] },
-  keys: [], stoppers: [], untouched: { combos: [], keys: [] }, combos: [], racing: false,
+  keys: [], stoppers: [], untouched: { combos: [], keys: [] }, comboGroups: [], racing: false,
 };
 const NOTHING = { report: null };
 const syncing = (decks) => ({ user: "MAKKIS", signedIn: true,
@@ -98,3 +98,163 @@ def test_a_poll_that_leaves_the_fetch_state_alone_does_not_reread_the_meta() -> 
     return metaCalls();
     """)
     assert calls == 1
+
+
+def test_a_rising_combo_carries_a_rising_badge_and_the_others_do_not() -> None:
+    seen = run("""
+    const combo = (pieces, rising) => ({ pieces, others: pieces, results: [], url: "https://example.test/c",
+      exposure: 0.1, rising, decks: [], answers: [] });
+    const combos = [combo(["Sol Ring", "<b>x</b>"], true), combo(["Mana Vault"], false)];
+    stub.meta = async () => ({ ...REPORT, comboGroups: combos.map((c) => ({ shared: [], combos: [c] })) });
+    await metaPanel.load();
+    const rows = $("meta-body").querySelectorAll(".meta-card");
+    const badges = (row) => row.querySelectorAll(".badge.rising").map((b) => b.textContent);
+    return rows.map((row) => ({ text: row.textContent, badges: badges(row) }));
+    """)
+    assert seen == [
+        {"text": "Sol Ring + <b>x</b>Rising", "badges": ["Rising"]},
+        {"text": "Mana Vault", "badges": []},
+    ]
+
+
+def test_combos_sharing_pieces_sit_under_a_shared_line_with_only_their_other_pieces() -> None:
+    seen = run("""
+    const combo = (others, rising) => ({ pieces: ["Kinnan", "Oracle", ...others], others, results: [],
+      url: "https://example.test/c", exposure: 0.1, rising, decks: [], answers: [] });
+    const single = { pieces: ["Sol Ring", "Mana Vault"], others: ["Sol Ring", "Mana Vault"], results: [],
+      url: "https://example.test/s", exposure: 0.05, rising: false, decks: [], answers: [] };
+    const comboGroups = [
+      { shared: ["Kinnan", "Oracle"],
+        combos: [combo(["<b>Ballista</b>"], true), combo(["Monolith"], false)] },
+      { shared: [], combos: [single] },
+    ];
+    stub.meta = async () => ({ ...REPORT, comboGroups });
+    await metaPanel.load();
+    const rows = $("meta-body").querySelector(".meta-rows").children;
+    return rows.map((node) => ({
+      shared: node.querySelectorAll(".combo-shared").map((p) => p.textContent),
+      combos: node.matches(".combo-group")
+        ? node.querySelectorAll(".meta-card").map((p) => p.textContent)
+        : [node.querySelector(".meta-card").textContent],
+      title: node.querySelector(".meta-card a").title,
+    }));
+    """)
+    assert seen == [
+        {
+            "shared": ["Shared: Kinnan, Oracle"],
+            "combos": ["<b>Ballista</b>Rising", "Monolith"],
+            "title": "Open on Commander Spellbook: Kinnan + Oracle + <b>Ballista</b>",
+        },
+        {
+            "shared": [],
+            "combos": ["Sol Ring + Mana Vault"],
+            "title": "Open on Commander Spellbook: Sol Ring + Mana Vault",
+        },
+    ]
+
+
+# Meta cards that stop the deck's key cards, filed by how: two removal, one stax, one counter.
+STOPPERS = """
+const stopper = (card, role) =>
+  ({ card, role, exposure: 0.1, decks: [], combos: [], keys: ["Sol Ring"], kinds: [] });
+const STOPPING = { ...REPORT, stoppers: [stopper("Swords", "removal"), stopper("Fierce Guardian", "removal"),
+  stopper("Null Rod", "stax"), stopper("Force of Will", "counter")] };
+const groups = () => $("meta-body").querySelectorAll(".role-group");
+const states = () => groups().map((g) => [g.tagName, g.querySelector("summary").textContent, g.open]);
+const KEY = "commander.panelOpen.meta-stops-removal";
+"""
+
+
+def test_each_what_stops_you_category_is_an_open_toggle() -> None:
+    seen = run(
+        STOPPERS
+        + """
+    stub.meta = async () => STOPPING;
+    await metaPanel.load();
+    return states();
+    """
+    )
+    assert seen == [
+        ["DETAILS", "Stax (1)", True],
+        ["DETAILS", "Removal (2)", True],
+        ["DETAILS", "Counters (1)", True],
+    ]
+
+
+def test_a_category_the_viewer_closes_stays_closed_on_a_reload_and_for_other_decks() -> None:
+    seen = run(
+        STOPPERS
+        + """
+    stub.meta = async () => STOPPING;
+    await metaPanel.load();
+    const removal = groups()[1];
+    removal.open = false;
+    await fire(removal, "toggle");
+    const kept = storage[KEY];
+    renderMeta(1, STOPPING);
+    const reloaded = states();
+    renderMeta(2, STOPPING);
+    return { kept, reloaded, otherDeck: states() };
+    """
+    )
+    closed = [
+        ["DETAILS", "Stax (1)", True],
+        ["DETAILS", "Removal (2)", False],
+        ["DETAILS", "Counters (1)", True],
+    ]
+    assert seen == {"kept": "0", "reloaded": closed, "otherDeck": closed}
+
+
+def test_reopening_a_category_is_remembered_too() -> None:
+    seen = run(
+        STOPPERS
+        + """
+    storage[KEY] = "0";
+    renderMeta(1, STOPPING);
+    const before = groups()[1].open;
+    groups()[1].open = true;
+    await fire(groups()[1], "toggle");
+    renderMeta(1, STOPPING);
+    return { before, after: groups()[1].open, kept: storage[KEY] };
+    """
+    )
+    assert seen == {"before": False, "after": True, "kept": "1"}
+
+
+def test_categories_render_open_and_keep_working_when_storage_is_blocked() -> None:
+    seen = run(
+        STOPPERS
+        + """
+    const blocked = () => { throw new Error("blocked"); };
+    localStorage.getItem = blocked;
+    localStorage.setItem = blocked;
+    renderMeta(1, STOPPING);
+    const removal = groups()[1];
+    removal.open = false;
+    await fire(removal, "toggle");
+    return { states: states(), kept: Object.keys(storage) };
+    """
+    )
+    assert seen == {
+        "states": [
+            ["DETAILS", "Stax (1)", True],
+            ["DETAILS", "Removal (2)", False],
+            ["DETAILS", "Counters (1)", True],
+        ],
+        "kept": [],
+    }
+
+
+def test_a_grouped_combo_made_of_the_shared_pieces_alone_says_so() -> None:
+    seen = run("""
+    const combo = (others) => ({ pieces: ["Kinnan", "Oracle", ...others], others, results: [],
+      url: "https://example.test/c", exposure: 0.1, rising: false, decks: [], answers: [] });
+    const comboGroups = [{ shared: ["Kinnan", "Oracle"], combos: [combo(["Ballista"]), combo([])] }];
+    stub.meta = async () => ({ ...REPORT, comboGroups });
+    await metaPanel.load();
+    return $("meta-body").querySelectorAll(".meta-card a").map((a) => [a.textContent, a.title]);
+    """)
+    assert seen == [
+        ["Ballista", "Open on Commander Spellbook: Kinnan + Oracle + Ballista"],
+        ["Only the shared pieces", "Open on Commander Spellbook: Kinnan + Oracle"],
+    ]

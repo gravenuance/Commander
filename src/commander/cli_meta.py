@@ -23,7 +23,7 @@ from commander.meta import (
     analyse,
     check_card,
 )
-from commander.metacombos import AnswerRole, ComboAnswer
+from commander.metacombos import AnswerRole, ComboAnswer, MetaCombo, group_combos
 from commander.metadata import CEDH_BRACKET, MetaData, MetaSources, Progress, gather
 from commander.metadata import meta_sources as shared_meta_sources
 from commander.metajson import report_json
@@ -104,7 +104,7 @@ def _cmd_meta(args: argparse.Namespace, ctx: Context) -> int:
                 refresh=args.refresh,
                 on_progress=progress,
             )
-            report = analyse(deck.deck, data, read_profile(deck.folder), db)
+            report = analyse(deck.deck, data, read_profile(deck.folder), db, now=ctx.now)
             results.append((deck, data, report))
             if args.to_board:
                 _to_board(deck, data, db, sources, ctx, refresh=args.refresh, progress=progress)
@@ -319,27 +319,35 @@ def _print_combos(report: MetaReport, out: TextIO) -> None:
     if not report.combos or total == 0:
         print("  none found", file=out)
         return
-    for combo in report.combos:
-        players = ", ".join(
-            f"{short_commander_name(name)} {round(share * 100)}%" for name, share in combo.played_by[:3]
-        )
-        results = "; ".join(combo.results[:2])
-        print(
-            f"  {_percent(combo.exposure / total)}  {' + '.join(combo.pieces)}: {results}  ({players})",
-            file=out,
-        )
-        if combo.requirements:
-            print(f"        also needs: {'; '.join(combo.requirements)}", file=out)
-        if not combo.answers:
-            racing = f" ({report.style.label}: racing, not answering)" if report.style.races else ""
-            print(f"        no answer in the deck{racing}", file=out)
+    for group in group_combos(report.combos):
+        if group.shared:
+            print(f"  Shared: {', '.join(group.shared)}", file=out)
+        indent = "    " if group.shared else ""
+        for combo in group.combos:
+            pieces = " + ".join(p for p in combo.pieces if p not in group.shared) or "only the shared pieces"
+            head = f"{indent}  {_percent(combo.exposure / total)}  {pieces}"
+            _print_combo(report, combo, head, indent, out)
+
+
+def _print_combo(report: MetaReport, combo: MetaCombo, head: str, indent: str, out: TextIO) -> None:
+    players = ", ".join(
+        f"{short_commander_name(name)} {round(share * 100)}%" for name, share in combo.played_by[:3]
+    )
+    results = "; ".join(combo.results[:2])
+    rising = "  rising" if combo.rising else ""
+    print(f"{head}: {results}  ({players}){rising}", file=out)
+    if combo.requirements:
+        print(f"{indent}        also needs: {'; '.join(combo.requirements)}", file=out)
+    if not combo.answers:
+        racing = f" ({report.style.label}: racing, not answering)" if report.style.races else ""
+        print(f"{indent}        no answer in the deck{racing}", file=out)
+        return
+    for role in AnswerRole:
+        answers = [a for a in combo.answers if a.role is role]
+        if not answers:
             continue
-        for role in AnswerRole:
-            answers = [a for a in combo.answers if a.role is role]
-            if not answers:
-                continue
-            shown = [_answer_shown(a) for a in answers]
-            print(f"        {role.value}: {_names(shown, COMBO_ANSWERS_SHOWN)}", file=out)
+        shown = [_answer_shown(a) for a in answers]
+        print(f"{indent}        {role.value}: {_names(shown, COMBO_ANSWERS_SHOWN)}", file=out)
 
 
 def _answer_shown(answer: ComboAnswer | MetaAnswer) -> str:

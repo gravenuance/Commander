@@ -77,7 +77,7 @@ from commander.metadata import (
     meta_sources,
 )
 from commander.metajson import report_json
-from commander.metapanel import combo_rows, key_card_rows, stopper_rows, untouched
+from commander.metapanel import combo_groups, key_card_rows, stopper_rows, untouched
 from commander.models import COMMANDER_CATEGORY, Deck
 from commander.net import Fetcher, NetworkError, Pacer
 from commander.profileedit import save_settings
@@ -782,7 +782,7 @@ class Desk:
         stored = self._stored(deck_id)
         data = self._gather(stored.deck)
         with self._db() as db:
-            report = analyse(stored.deck, data, read_profile(stored.folder), db)
+            report = analyse(stored.deck, data, read_profile(stored.folder), db, now=self._now)
         if data.lists.data is None and data.field.data is None and data.peers.data is None:
             return {"report": None}
         return {
@@ -790,7 +790,7 @@ class Desk:
             "keys": key_card_rows(report.key_cards),
             "stoppers": stopper_rows(report.own_combos, report.threats),
             "untouched": untouched(report.key_cards, report.own_combos, report.threats),
-            "combos": combo_rows(report.combos),
+            "comboGroups": combo_groups(report.combos),
             "racing": report.style.races,
         }
 

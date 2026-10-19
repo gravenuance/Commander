@@ -902,7 +902,7 @@ def test_meta_reads_only_the_cache_and_a_sync_fills_it(
     report = cast("Json", fresh["report"])
     assert [m["name"] for m in cast("list[Json]", report["missing"])] == ["Mind Stone", "Jeska's Will"]
     assert len(fake.edhtop16.requests) == asked
-    assert {"keys", "stoppers", "untouched", "combos"} <= set(fresh)
+    assert {"keys", "stoppers", "untouched", "comboGroups"} <= set(fresh)
     assert [k["name"] for k in cast("list[Json]", fresh["keys"])][:1] == ["Magda, Brazen Outlaw"]
     board = items(desk.deck(DECK), "cards")
     # Jeska's Will, in 2 of the 6 lists, is under the Wilson bar.

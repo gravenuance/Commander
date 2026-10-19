@@ -14,6 +14,8 @@ from commander.weightedshare import (
     SourceShare,
     WeightedShare,
     effective_sample_size,
+    event_weight,
+    list_age_days,
     placement_weight,
     recency_weight,
     share_reason,
@@ -46,6 +48,14 @@ def test_an_event_counts_by_how_many_doublings_it_is_over_16_players() -> None:
     assert size_factor(8) == pytest.approx(MIN_SIZE_FACTOR)
     assert size_factor(1) == pytest.approx(MIN_SIZE_FACTOR)
     assert 0 < MIN_SIZE_FACTOR < 1
+
+
+def test_an_events_weight_is_its_age_and_size_without_the_placing() -> None:
+    # NOW is 2026-10-15: a list from 2026-09-15 is 30 days old, so half, and 32 players count double.
+    last_month = date(2026, 9, 15)
+    assert list_age_days(entry(9, 32, 8, [("A", 0)], held_on=last_month), NOW) == 30
+    assert event_weight(entry(9, 32, 8, [("A", 0)], held_on=last_month), NOW) == pytest.approx(1.0)
+    assert event_weight(entry(1, 16, 4, [("A", 0)], held_on=last_month), NOW) == pytest.approx(0.5)
 
 
 def test_a_placement_weighs_its_percentile_times_the_event_size_factor() -> None:

@@ -14,13 +14,27 @@ from enum import Enum
 
 from commander.answers import CardAnswer, Piece, card_answers, card_key, piece_facts
 from commander.carddb import CardDb, CardInfo, Theme, front_name, front_type
+from commander.deckcache import Clock
 from commander.metadata import CommanderCombos, MetaCommander
 from commander.models import Deck
 from commander.spellbook import ComboDetail, ComboPiece
+from commander.weightedshare import event_weight, list_age_days
 
-# A combo counts for a commander when this share of its lists hold every named piece.
+# A combo counts for a commander when this weighted share of its lists hold every named piece.
 COMBO_SHARE = 0.2
-MAX_COMBOS = 15
+# A combo is listed when its exposure is at least this share of the meta (the figure the report prints).
+MIN_COMBO_EXPOSURE = 0.05
+MAX_COMBOS = 100
+# A combo is rising when its share among the last RISING_DAYS' lists is RISING_FACTOR times its share among
+# the RISING_DAYS before, or when none of those held it and at least RISING_FROM_NONE of the recent ones do.
+RISING_DAYS = 30
+RISING_FACTOR = 2.0
+RISING_FROM_NONE = 2
+# Fewer lists than this in either half and a commander cannot say.
+RISING_MIN_LISTS = 3
+# Combos sharing at least this many pieces are listed together (ADR 0038).
+MIN_SHARED_PIECES = 2
+MIN_GROUPED_COMBOS = 2
 _BATTLEFIELD = frozenset({"B", "C"})
 _OFF_ZONES = frozenset({"G", "E", "L"})
 
@@ -104,10 +118,20 @@ class MetaCombo:
     pieces: tuple[str, ...]
     requirements: tuple[str, ...]
     results: tuple[str, ...]
-    # Sum over the top commanders of meta share x the share of their lists that hold every piece.
+    # Sum over the top commanders of meta share x the weighted share of their lists that hold every piece.
     exposure: float
     played_by: tuple[tuple[str, float], ...]
     answers: tuple[ComboAnswer, ...]
+    # More of the recent lists hold it than of the lists before them (see RISING_FACTOR).
+    rising: bool = False
+
+
+@dataclass(slots=True, frozen=True)
+class ComboGroup:
+    """Meta combos listed together for the pieces they share; `shared` is empty for a combo on its own."""
+
+    shared: tuple[str, ...]
+    combos: tuple[MetaCombo, ...]
 
 
 @dataclass(slots=True, frozen=True)
@@ -134,12 +158,25 @@ class DeckAnswers:
 
 
 def meta_combos(
-    deck: Deck, field: Sequence[MetaCommander], combos: Sequence[CommanderCombos], since: date, db: CardDb
+    deck: Deck,
+    field: Sequence[MetaCommander],
+    combos: Sequence[CommanderCombos],
+    since: date,
+    db: CardDb,
+    *,
+    now: Clock,
+    meta_total: float,
 ) -> tuple[MetaCombo, ...]:
-    """The combos common in top commanders' lists since `since`, most seen first, with the deck's answers."""
+    """The combos worth a deck's attention since `since`, most exposed first, with the deck's answers.
+
+    A combo counts for a commander at COMBO_SHARE of its lists, each weighed by age and event size; it is
+    listed when its exposure reaches MIN_COMBO_EXPOSURE of `meta_total`, the top commanders' shares added up.
+    """
+    moment = now()
     stats = {c.stats.name: c for c in field}
     seen: dict[str, ComboDetail] = {}
     shares: dict[str, list[tuple[str, float, float]]] = defaultdict(list)
+    halves: dict[str, _Halves] = defaultdict(_Halves)
     for found in combos:
         commander = stats.get(found.commander)
         if commander is None:
@@ -147,30 +184,73 @@ def meta_combos(
         lists = [e for e in commander.entries if e.cards and e.tournament.held_on >= since]
         if not lists:
             continue
+        weights = [event_weight(e, moment) for e in lists]
+        ages = [list_age_days(e, moment) for e in lists]
         held = [{card_key(c.name) for c in e.cards} | _commander_keys(found.commander) for e in lists]
         for combo in found.combos:
             pieces = {card_key(p.name) for p in combo.pieces}
-            share = sum(1 for cards in held if pieces <= cards) / len(lists)
+            holds = [pieces <= cards for cards in held]
+            share = sum(w for w, hold in zip(weights, holds, strict=True) if hold) / sum(weights)
             if share >= COMBO_SHARE:
                 seen.setdefault(combo.id, combo)
                 shares[combo.id].append((commander.stats.name, share, commander.stats.meta_share))
-    answers = _deck_answers(deck, db)
-    facts = piece_facts(db, {(p.name, p.type_line) for combo in seen.values() for p in combo.pieces})
-    ranked = [
-        MetaCombo(
-            id=combo.id,
-            url=combo.url,
-            pieces=tuple(p.name for p in combo.pieces),
-            requirements=combo.requirements,
-            results=combo.results,
-            exposure=sum(share * meta for _, share, meta in shares[combo.id]),
-            played_by=tuple(sorted(((n, s) for n, s, _ in shares[combo.id]), key=lambda r: -r[1])),
-            answers=combo_answers(combo, answers, facts),
-        )
-        for combo in seen.values()
+                halves[combo.id].add(ages, holds)
+    exposures = {cid: sum(share * meta for _, share, meta in shares[cid]) for cid in seen}
+    listed = [
+        cid
+        for cid, exposure in exposures.items()
+        if meta_total > 0 and exposure / meta_total >= MIN_COMBO_EXPOSURE
     ]
-    ranked.sort(key=lambda c: (-c.exposure, c.id))
-    return tuple(ranked[:MAX_COMBOS])
+    listed.sort(key=lambda cid: (-exposures[cid], cid))
+    listed = listed[:MAX_COMBOS]
+    answers = _deck_answers(deck, db)
+    facts = piece_facts(db, {(p.name, p.type_line) for cid in listed for p in seen[cid].pieces})
+    return tuple(
+        MetaCombo(
+            id=cid,
+            url=seen[cid].url,
+            pieces=tuple(p.name for p in seen[cid].pieces),
+            requirements=seen[cid].requirements,
+            results=seen[cid].results,
+            exposure=exposures[cid],
+            played_by=tuple(sorted(((n, s) for n, s, _ in shares[cid]), key=lambda r: -r[1])),
+            answers=combo_answers(seen[cid], answers, facts),
+            rising=halves[cid].rising,
+        )
+        for cid in listed
+    )
+
+
+@dataclass(slots=True)
+class _Halves:
+    """How many lists hold a combo in the last RISING_DAYS and in the RISING_DAYS before, pooled over the
+    commanders that have RISING_MIN_LISTS of each."""
+
+    recent_held: int = 0
+    recent: int = 0
+    earlier_held: int = 0
+    earlier: int = 0
+
+    def add(self, ages: Sequence[int], holds: Sequence[bool]) -> None:
+        recent = [hold for age, hold in zip(ages, holds, strict=True) if age < RISING_DAYS]
+        earlier = [
+            hold for age, hold in zip(ages, holds, strict=True) if RISING_DAYS <= age < 2 * RISING_DAYS
+        ]
+        if min(len(recent), len(earlier)) < RISING_MIN_LISTS:
+            return
+        self.recent_held += sum(recent)
+        self.recent += len(recent)
+        self.earlier_held += sum(earlier)
+        self.earlier += len(earlier)
+
+    @property
+    def rising(self) -> bool:
+        if not self.recent or not self.earlier:
+            return False
+        if not self.earlier_held:
+            return self.recent_held >= RISING_FROM_NONE
+        # Cross-multiplied, so a share exactly RISING_FACTOR times the earlier one is not lost to rounding.
+        return self.recent_held * self.earlier >= RISING_FACTOR * self.earlier_held * self.recent
 
 
 def combo_answers(
@@ -424,3 +504,55 @@ def _stop_tags(db: CardDb, oracle_ids: Sequence[str]) -> dict[Stop, frozenset[st
 def _commander_keys(name: str) -> set[str]:
     # A list's commander is in every game, though decklists don't always repeat it among the cards.
     return {card_key(part) for part in name.split(" / ")}
+
+
+def group_combos(combos: Sequence[MetaCombo]) -> tuple[ComboGroup, ...]:
+    """Group the combos that share at least MIN_SHARED_PIECES pieces (commanders count as pieces), ADR 0038.
+
+    A core is a set of that many pieces or more that is the intersection of two or more combos. Each combo
+    joins the group of the largest core it holds; a tie goes to the core whose combos' exposure adds up to
+    more, then to the core's names. A group left with one combo after that is a single. Groups and singles
+    come by their best exposure, the combos of a group in the order given.
+    """
+    pieces = [frozenset(c.pieces) for c in combos]
+    cores = _cores(pieces)
+    holders = {core: [i for i, held in enumerate(pieces) if core <= held] for core in cores}
+    exposure = {core: sum(combos[i].exposure for i in members) for core, members in holders.items()}
+    joined: dict[frozenset[str], list[int]] = defaultdict(list)
+    for i, held in enumerate(pieces):
+        fitting = [core for core in cores if core <= held]
+        if fitting:
+            best = min(fitting, key=lambda core: (-len(core), -exposure[core], _core_name(core)))
+            joined[best].append(i)
+    groups: list[tuple[int, ComboGroup]] = []
+    grouped: set[int] = set()
+    for core, members in joined.items():
+        if len(members) < MIN_GROUPED_COMBOS:
+            continue
+        grouped.update(members)
+        groups.append(
+            (members[0], ComboGroup(tuple(sorted(core, key=str.casefold)), tuple(combos[i] for i in members)))
+        )
+    groups.extend((i, ComboGroup((), (combos[i],))) for i in range(len(combos)) if i not in grouped)
+    # Equal best exposures keep the order the combos came in.
+    groups.sort(key=lambda entry: (-max(c.exposure for c in entry[1].combos), entry[0]))
+    return tuple(group for _, group in groups)
+
+
+def _cores(pieces: Sequence[frozenset[str]]) -> list[frozenset[str]]:
+    """Every piece set of MIN_SHARED_PIECES or more that is the intersection of two or more of the sets."""
+    found = {a & b for n, a in enumerate(pieces) for b in pieces[n + 1 :]}
+    pending = [core for core in found if len(core) >= MIN_SHARED_PIECES]
+    found = set(pending)
+    while pending:
+        core = pending.pop()
+        for held in pieces:
+            narrower = core & held
+            if len(narrower) >= MIN_SHARED_PIECES and narrower not in found:
+                found.add(narrower)
+                pending.append(narrower)
+    return sorted(found, key=_core_name)
+
+
+def _core_name(core: frozenset[str]) -> str:
+    return ", ".join(sorted(core, key=str.casefold))

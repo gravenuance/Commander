@@ -15,7 +15,7 @@ from commander.playstyle import Fit, PlayStyle, Style, deck_play_style, staple_w
 from commander.scryfall import ROLE_TAGS
 from conftest import FILLER_CARDS, build_card_db, filler_card
 from test_ideas import share
-from test_meta import REMOVAL_TAGS, SINCE, TOP_CUT_LISTS, deck, entry, meta_data, peer
+from test_meta import NOW, REMOVAL_TAGS, SINCE, TOP_CUT_LISTS, deck, entry, meta_data, peer
 
 __all__ = ["deck"]  # fixture shared with test_meta
 
@@ -364,7 +364,9 @@ def test_a_turbo_decks_missing_staples_put_its_plan_first_and_interaction_last(
     deck: Deck, db: CardDb
 ) -> None:
     peers = [peer(1, ["Chaos Warp", "Mind Stone"]), peer(2, ["Chaos Warp"]), peer(3, ["Lightning Bolt"])]
-    report = analyse(replace(deck, tags=("Turbo",)), meta_data(TOP_CUT_LISTS, peers), Profile(), db)
+    report = analyse(
+        replace(deck, tags=("Turbo",)), meta_data(TOP_CUT_LISTS, peers), Profile(), db, now=lambda: NOW
+    )
     # Unweighted: Mind Stone, Arcane Signet, High-Speed Hoverbike, Jeska's Will, Chaos Warp.
     assert [(c.name, c.fit) for c in report.missing] == [
         ("Mind Stone", Fit.FAVOURED),
@@ -383,14 +385,14 @@ def test_missing_staples_rank_by_share_times_weight_so_a_well_played_off_plan_ca
     lists = [
         entry(i, 40, 8, [(name, 0) for name, count in played.items() if i <= count]) for i in range(1, 11)
     ]
-    turbo = analyse(replace(deck, tags=("Turbo",)), meta_data(lists), Profile(), db)
+    turbo = analyse(replace(deck, tags=("Turbo",)), meta_data(lists), Profile(), db, now=lambda: NOW)
     # 0.8 x 0.8 = 0.64, 0.5 x 1.25 = 0.625 and 0.6: the off-plan card still carries its mark.
     assert [(c.name, c.fit, c.multiplier) for c in turbo.missing] == [
         ("Chaos Warp", Fit.OFF_PLAN, 0.8),
         ("Arcane Signet", Fit.FAVOURED, 1.25),
         ("High-Speed Hoverbike", Fit.NEUTRAL, 1.0),
     ]
-    neutral = analyse(deck, meta_data(lists), Profile(), db)
+    neutral = analyse(deck, meta_data(lists), Profile(), db, now=lambda: NOW)
     assert [c.name for c in neutral.missing] == ["Chaos Warp", "High-Speed Hoverbike", "Arcane Signet"]
 
 

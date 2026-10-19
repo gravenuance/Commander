@@ -1,10 +1,12 @@
 """The Meta section: each meta card once with what of the deck's it stops, combos with the deck's answers."""
 
+from typing import cast
+
 from commander.answers import AnswerKind
 from commander.keycards import KeyCard
 from commander.meta import MetaAnswer, OwnCombo, Threat
 from commander.metacombos import AnswerRole, ComboAnswer, MetaCombo
-from commander.metapanel import combo_rows, stopper_rows, untouched
+from commander.metapanel import Json, combo_groups, combo_rows, stopper_rows, untouched
 
 KINNAN = "Kinnan, Bonder Prodigy"
 KRAUM = "Kraum, Ludevic's Opus / Tymna the Weaver"
@@ -31,12 +33,46 @@ def test_combos_keep_their_order_with_the_decks_that_play_them_and_the_answers()
             "results": ["Infinite mana"],
             "url": "https://commanderspellbook.com/combo/1-2/",
             "exposure": 0.3,
+            "rising": False,
             "decks": [{"short": "Kinnan", "name": KINNAN, "share": 0.25}],
             "answers": [
                 {"card": "Grafdigger's Cage", "how": "locks the graveyard", "role": "stax", "catch": ""}
             ],
         }
     ]
+
+
+def test_a_rising_combo_says_so() -> None:
+    combo = MetaCombo(
+        "1-2", "https://commanderspellbook.com/combo/1-2/", ("A", "B"), (), (), 0.1, (), (), rising=True
+    )
+    assert [row["rising"] for row in combo_rows([combo])] == [True]
+
+
+def made_up(combo_id: str, exposure: float, *pieces: str) -> MetaCombo:
+    return MetaCombo(combo_id, f"https://example.test/{combo_id}", pieces, (), (), exposure, (), ())
+
+
+def test_combos_come_in_groups_with_their_shared_pieces_and_the_others() -> None:
+    first = made_up("1-2", 0.3, "Kinnan", "Thassa's Oracle", "Walking Ballista")
+    second = made_up("3-4", 0.2, "Kinnan", "Thassa's Oracle", "Basalt Monolith")
+    alone = made_up("5-6", 0.25, "Sol Ring", "Mana Vault")
+    groups = combo_groups([first, second, alone])
+    assert [
+        (g["shared"], [(c["pieces"], c["others"]) for c in cast("list[Json]", g["combos"])]) for g in groups
+    ] == [
+        (
+            ["Kinnan", "Thassa's Oracle"],
+            [
+                (["Kinnan", "Thassa's Oracle", "Walking Ballista"], ["Walking Ballista"]),
+                (["Kinnan", "Thassa's Oracle", "Basalt Monolith"], ["Basalt Monolith"]),
+            ],
+        ),
+        ([], [(["Sol Ring", "Mana Vault"], ["Sol Ring", "Mana Vault"])]),
+    ]
+    # A grouped combo is still a whole row of combo_rows, plus its others.
+    [row, *_] = cast("list[Json]", groups[0]["combos"])
+    assert row == {**combo_rows([first])[0], "others": ["Walking Ballista"]}
 
 
 def own_combo(*answers: MetaAnswer) -> OwnCombo:

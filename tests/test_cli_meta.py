@@ -1,8 +1,10 @@
 """`cmdr meta` end to end, against the fake Archidekt, which also stands in for EDHTop16."""
 
 import copy
+import io
 import json
 import shutil
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +12,10 @@ import pytest
 
 from commander.board import Origin, Status, read_board
 from commander.carddb import CARD_DB_FILE
+from commander.cli_meta import print_report
+from commander.edhtop16 import CommanderStats
+from commander.meta import Basis, MetaReport, Sample
+from commander.metacombos import AnswerRole, ComboAnswer, MetaCombo
 from conftest import DECK_ID, FakeArchidekt, Json, card_entry, deck_page, load_fixture
 from test_cli_apply import Run, run
 
@@ -138,12 +144,32 @@ def test_the_report_compares_the_deck_with_performing_lists(home: Path, fake: Fa
     ]
     assert section(result.out, "Meta answers to your key cards") == ["  none found"]
     assert section(result.out, "Meta combos and your answers") == [
-        "   15%  Kinnan, Bonder Prodigy + Basalt Monolith: Infinite colorless mana  (Kinnan 50%)",
+        # Kinnan's two lists weigh 1.55 (45 days old, 120 players) and 2.76 (8 days, 80 players), so the one
+        # with the combo is 36% of them, not half; 36% of Kinnan's 30% of the meta is 11%.
+        "   11%  Kinnan, Bonder Prodigy + Basalt Monolith: Infinite colorless mana  (Kinnan 36%)",
         "        stax: Disruptor Flute (stops activated abilities)",
     ]
     assert lines[-1].startswith(
         "data from EDHTop16 (edhtop16.com), Archidekt (archidekt.com) and Commander Spellbook"
     )
+
+
+def test_a_combo_held_by_more_of_the_recent_lists_is_marked_rising(home: Path, fake: FakeArchidekt) -> None:
+    # Three lists from 10 days ago hold the combo, none of the three from 40 days ago do.
+    recent = [
+        edge(n, [("Sol Ring", 0), ("Basalt Monolith", 0)], "2026-10-05T10:00:00.000Z") for n in (1, 2, 3)
+    ]
+    earlier = [edge(n, [("Sol Ring", 0)], "2026-09-05T10:00:00.000Z") for n in (4, 5, 6)]
+    page: dict[str, Any] = {"pageInfo": {"hasNextPage": False, "endCursor": "6"}, "edges": recent + earlier}
+    fake.edhtop16.pages["Kinnan, Bonder Prodigy"] = [
+        {"data": {"commander": {"name": "Kinnan, Bonder Prodigy", "entries": page}}}
+    ]
+    result = meta(home, fake, "magda")
+    assert result.code == 0, result.err
+    # The recent lists weigh twice the earlier ones, so the combo is 2 of 3 parts of Kinnan's lists.
+    [line, _] = section(result.out, "Meta combos and your answers")
+    assert line.endswith("(Kinnan 67%)  rising")
+    assert "rising" not in section(result.out, "Meta combos and your answers")[1]
 
 
 def test_queries_follow_the_config_and_leave_out_the_users_own_deck(home: Path, fake: FakeArchidekt) -> None:
@@ -204,7 +230,10 @@ def test_json_combos_carry_short_commander_names_and_answer_roles(home: Path, fa
     [combo] = json.loads(result.out)["reports"][0]["combos"]
     assert combo["pieces"] == ["Kinnan, Bonder Prodigy", "Basalt Monolith"]
     assert combo["results"] == ["Infinite colorless mana"]
-    assert combo["playedBy"] == [{"commander": "Kinnan, Bonder Prodigy", "short": "Kinnan", "share": 0.5}]
+    [played] = combo["playedBy"]
+    assert (played["commander"], played["short"]) == ("Kinnan, Bonder Prodigy", "Kinnan")
+    assert played["share"] == pytest.approx(0.36, abs=0.001)
+    assert combo["rising"] is False
     assert combo["answers"] == [
         {"card": "Disruptor Flute", "how": "stops activated abilities", "role": "stax", "catch": ""}
     ]
@@ -549,3 +578,67 @@ def test_sync_names_an_alike_commander_it_cannot_search_and_carries_on(
     assert result.code == 0, result.err
     assert "cmdr: Magda: no recent Ygra, Eater of All decks to learn from (" in result.err
     assert "Magda ideas: +1 from meta\n" in result.out
+
+
+def made_up(combo_id: str, exposure: float, *pieces: str, answers: tuple[ComboAnswer, ...] = ()) -> MetaCombo:
+    return MetaCombo(
+        combo_id, f"https://example.test/{combo_id}", pieces, (), ("Infinite mana",), exposure, (), answers
+    )
+
+
+def report_of(combos: tuple[MetaCombo, ...]) -> MetaReport:
+    sample = Sample(known=True, entries=5, with_lists=5, top_cuts=5, performing=5, basis=Basis.TOP_CUT)
+    field = (CommanderStats("Kinnan", 10, 5, 0.5, 1.0),)
+    return MetaReport(
+        deck="Magda",
+        commander=MAGDA,
+        since=date(2026, 10, 19),
+        sample=sample,
+        missing=(),
+        spicy=(),
+        outliers=(),
+        threats=(),
+        combos=combos,
+        own_combos=(),
+        field=field,
+        peers=(),
+        peers_skipped=0,
+        key_cards=(),
+        sources=(),
+    )
+
+
+def test_combos_that_share_pieces_print_under_a_shared_line_with_only_their_other_pieces() -> None:
+    answer = ComboAnswer("Grafdigger's Cage", "locks the graveyard", AnswerRole.STAX)
+    combos = (
+        made_up("1-2", 0.3, "Kinnan", "Thassa's Oracle", "Walking Ballista", answers=(answer,)),
+        made_up("5-6", 0.25, "Sol Ring", "Mana Vault"),
+        made_up("3-4", 0.2, "Kinnan", "Thassa's Oracle", "Basalt Monolith"),
+    )
+    report = report_of(combos)
+    out = io.StringIO()
+    print_report(report, out)
+    assert section(out.getvalue(), "Meta combos and your answers") == [
+        "  Shared: Kinnan, Thassa's Oracle",
+        "       30%  Walking Ballista: Infinite mana  ()",
+        "            stax: Grafdigger's Cage (locks the graveyard)",
+        "       20%  Basalt Monolith: Infinite mana  ()",
+        "            no answer in the deck",
+        "   25%  Sol Ring + Mana Vault: Infinite mana  ()",
+        "        no answer in the deck",
+    ]
+
+
+def test_a_grouped_combo_made_of_the_shared_pieces_alone_says_so() -> None:
+    combos = (
+        made_up("1-2", 0.3, "Kinnan", "Thassa's Oracle", "Walking Ballista"),
+        made_up("3-4", 0.2, "Kinnan", "Thassa's Oracle"),
+    )
+    out = io.StringIO()
+    print_report(report_of(combos), out)
+    assert section(out.getvalue(), "Meta combos and your answers")[:4] == [
+        "  Shared: Kinnan, Thassa's Oracle",
+        "       30%  Walking Ballista: Infinite mana  ()",
+        "            no answer in the deck",
+        "       20%  only the shared pieces: Infinite mana  ()",
+    ]

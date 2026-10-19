@@ -48,7 +48,7 @@ function renderMeta(deck, answer) {
     s.known ? `${s.withLists} lists since ${report.since}` : "No EDHTop16 lists",
     fetched ? new Date(fetched).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "",
   ].filter(Boolean).join(" · ");
-  $("meta-body").replaceChildren(metaKeys(answer.keys), metaStoppers(answer.stoppers, answer.untouched), metaCombos(answer.combos, answer.racing));
+  $("meta-body").replaceChildren(metaKeys(answer.keys), metaStoppers(answer.stoppers, answer.untouched), metaCombos(answer.comboGroups, answer.racing));
 }
 
 function deckChips(decks) {
@@ -61,18 +61,27 @@ function deckChips(decks) {
   return el("ul", { class: "deck-chips", "aria-label": "Played by" }, ...chips);
 }
 
-// A Meta section folds on its own, and stays folded across decks and refreshes.
-function metaSection(title, ...children) {
-  const id = `meta-${title.toLowerCase().replace(/[^a-z]+/g, "-")}`;
+// A section folds on its own, and stays folded across decks and refreshes. The viewer's choice is kept by id.
+function foldable(id, className, heading, ...children) {
   const key = `${PANEL_KEY}.${id}`;
   let open = true;
   try { open = localStorage.getItem(key) !== "0"; } catch { /* storage is a convenience */ }
-  const section = el("details", { class: "meta-section", open },
-    el("summary", {}, el("h3", { id, text: title })), ...children);
+  const section = el("details", { class: className, open }, el("summary", {}, heading), ...children);
   section.addEventListener("toggle", () => {
     try { localStorage.setItem(key, section.open ? "1" : "0"); } catch { /* as above */ }
   });
   return section;
+}
+
+function metaSection(title, ...children) {
+  const id = `meta-${title.toLowerCase().replace(/[^a-z]+/g, "-")}`;
+  return foldable(id, "meta-section", el("h3", { id, text: title }), ...children);
+}
+
+// A category inside "What stops you" folds like a section, by its name, so the choice holds across decks.
+function stopCategory(name, label, ...children) {
+  const id = `meta-stops-${name}`;
+  return foldable(id, "meta-section role-group", el("h4", { id, class: "role-name", text: label }), ...children);
 }
 
 function shortList(items, shown, build) {
@@ -95,8 +104,7 @@ function metaStoppers(stoppers, untouched) {
   const groups = ANSWER_ROLES.map(([role, label]) => {
     const found = stoppers.filter((s) => s.role === role);
     if (!found.length) return null;
-    return el("div", { class: "role-group" }, el("p", { class: "role-name", text: `${label} (${found.length})` }),
-      shortList(found, THREATS_SHOWN, stopperRow));
+    return stopCategory(role, `${label} (${found.length})`, shortList(found, THREATS_SHOWN, stopperRow));
   });
   const clear = [
     ...untouched.combos.map((c) => el("li", { class: "deck-chip stops combo" },
@@ -105,7 +113,7 @@ function metaStoppers(stoppers, untouched) {
   ];
   return metaSection("What stops you",
     stoppers.length ? el("div", { class: "role-groups" }, ...groups) : el("p", { class: "empty", text: "Nothing in the meta stops your combos or key cards." }),
-    clear.length ? el("div", { class: "untouched" }, el("p", { class: "role-name", text: "Untouched" }), el("ul", { class: "deck-chips" }, ...clear)) : null);
+    clear.length ? stopCategory("untouched", "Untouched", el("ul", { class: "deck-chips" }, ...clear)) : null);
 }
 
 function stopperRow(s) {
@@ -127,13 +135,24 @@ function shortCombo(pieces) {
   return pieces.split(" + ").map((name) => name.split(",")[0]).join(" + ");
 }
 
-function metaCombos(combos, racing) {
-  const rows = combos.map((c) => el("div", { class: "meta-row" },
+// A combo shows only the pieces outside its group's shared ones; the full list is on hover.
+function comboRow(c, racing) {
+  return el("div", { class: "meta-row" },
     el("p", { class: "meta-card" },
-      el("a", { href: c.url, target: "_blank", rel: "noopener", text: c.pieces.join(" + "), title: "Open on Commander Spellbook" })),
+      el("a", { href: c.url, target: "_blank", rel: "noopener", text: c.others.length ? c.others.join(" + ") : "Only the shared pieces",
+        title: `Open on Commander Spellbook: ${c.pieces.join(" + ")}` }),
+      c.rising ? el("span", { class: "badge status rising", text: "Rising", title: "Twice as common in the last 30 days as in the 30 before" }) : null),
     c.results.length ? el("p", { class: "muted small", text: c.results.slice(0, 2).join("; ") }) : null,
     deckChips(c.decks),
-    comboAnswers(c.answers, racing)));
+    comboAnswers(c.answers, racing));
+}
+
+// Combos that share pieces come grouped under those pieces, as the server ordered them (ADR 0038).
+function metaCombos(groups, racing) {
+  const rows = groups.map((g) => g.shared.length
+    ? el("div", { class: "combo-group" }, el("p", { class: "combo-shared", text: `Shared: ${g.shared.join(", ")}` }),
+      ...g.combos.map((c) => comboRow(c, racing)))
+    : comboRow(g.combos[0], racing));
   return metaSection("Meta combos",
     rows.length ? el("div", { class: "meta-rows" }, ...rows) : el("p", { class: "empty", text: "No combos in the meta." }));
 }

@@ -16,7 +16,7 @@ statistics), for a day unless stated, and the sources are fetched in parallel, e
 import logging
 import os
 from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from functools import partial
@@ -152,6 +152,18 @@ class MetaData:
     combos: Answer[tuple["CommanderCombos", ...]]
     # The combos inside the deck itself, which the meta's answers are checked against.
     own_combos: Answer[tuple[ComboDetail, ...]]
+
+
+def entries_since(entries: Iterable[Entry], since: date) -> tuple[Entry, ...]:
+    # A cached answer from an earlier day can reach a little further back than today's window.
+    return tuple(e for e in entries if e.tournament.held_on >= since)
+
+
+def listed_entries(data: MetaData) -> list[Entry]:
+    """Every list with a decklist in the window, whatever it placed."""
+    return [
+        e for e in entries_since(data.lists.data.entries if data.lists.data else (), data.since) if e.cards
+    ]
 
 
 @dataclass(slots=True, frozen=True)

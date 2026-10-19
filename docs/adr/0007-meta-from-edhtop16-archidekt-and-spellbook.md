@@ -3,7 +3,9 @@
 **Status:** Accepted · **Date:** 2026-10-16 · Superseded in part by [ADR 0008](0008-answers-read-from-rules-text.md)
 and [ADR 0017](0017-key-cards-found-from-the-deck.md) (how threats and answers are matched),
 [ADR 0027](0027-reading-other-players-archidekt-decks.md) (the Archidekt ranking, thin data, pacing and
-`peer_decks`) and [ADR 0032](0032-one-considering-list-and-one-sync.md) (the app's Refresh meta)
+`peer_decks`) and [ADR 0032](0032-one-considering-list-and-one-sync.md) (the app's Refresh meta) ·
+Amended in part by [ADR 0037](0037-meta-combos-by-floor-and-recency.md) (the 15-combo cut and the unweighted
+share of lists)
 
 ## Context
 

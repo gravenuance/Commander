@@ -162,7 +162,7 @@ def test_without_any_top_cut_every_list_performs_best_first() -> None:
 
 def test_sample_counts_only_the_window_and_flags_thin_data(deck: Deck, db: CardDb) -> None:
     old = entry(1, 40, 8, [("Mind Stone", 0)], held_on=date(2026, 8, 15))
-    report = analyse(deck, meta_data([old, *TOP_CUT_LISTS]), Profile(), db)
+    report = analyse(deck, meta_data([old, *TOP_CUT_LISTS]), Profile(), db, now=lambda: NOW)
     sample = report.sample
     assert (sample.entries, sample.with_lists, sample.top_cuts, sample.performing) == (5, 5, 5, 5)
     assert sample.basis is Basis.TOP_CUT
@@ -172,7 +172,7 @@ def test_sample_counts_only_the_window_and_flags_thin_data(deck: Deck, db: CardD
 
 def test_missing_staples_come_from_performing_and_archidekt_lists(deck: Deck, db: CardDb) -> None:
     peers = [peer(1, ["Chaos Warp", "Mind Stone"]), peer(2, ["Chaos Warp"]), peer(3, ["Lightning Bolt"])]
-    report = analyse(deck, meta_data(TOP_CUT_LISTS, peers), Profile(), db)
+    report = analyse(deck, meta_data(TOP_CUT_LISTS, peers), Profile(), db, now=lambda: NOW)
     assert [(c.name, c.lists, c.peer_lists, c.spice, c.flagged) for c in report.missing] == [
         ("Mind Stone", 3, 1, 1, False),
         # Two of five is the 40% line; the Hoverbike on the deck's Maybeboard counts as missing.
@@ -189,13 +189,13 @@ def test_missing_staples_leave_out_banned_and_off_colour_cards(deck: Deck, db: C
     played = [("Mind Stone", 0), (BANNED_CARD, 0), (BLUE_CARD, 0), ("Too New To Know", 0)]
     lists = [entry(i, 40, 8, played) for i in range(1, 6)]
     peers = [peer(i, [BANNED_CARD, BLUE_CARD]) for i in range(1, 4)]
-    report = analyse(deck, meta_data(lists, peers), Profile(), db)
+    report = analyse(deck, meta_data(lists, peers), Profile(), db, now=lambda: NOW)
     # A card the card data lacks can't be judged, so it stays.
     assert [c.name for c in report.missing] == ["Mind Stone", "Too New To Know"]
 
 
 def test_spicy_picks_skip_deck_cards_and_mild_ones(deck: Deck, db: CardDb) -> None:
-    report = analyse(deck, meta_data(TOP_CUT_LISTS), Profile(), db)
+    report = analyse(deck, meta_data(TOP_CUT_LISTS), Profile(), db, now=lambda: NOW)
     assert [(p.name, p.spice, p.lists, p.best.standing) for p in report.spicy] == [
         ("Jeska's Will", 4, 2, 1),
         ("High-Speed Hoverbike", 3, 1, 1),
@@ -204,13 +204,13 @@ def test_spicy_picks_skip_deck_cards_and_mild_ones(deck: Deck, db: CardDb) -> No
 
 def test_outliers_are_deck_cards_few_performing_lists_play(deck: Deck, db: CardDb) -> None:
     lists = [*TOP_CUT_LISTS[:4], entry(5, 40, 8, [("Arcane Signet", 0)])]
-    report = analyse(deck, meta_data(lists), Profile(keep_categories=("Stax",)), db)
+    report = analyse(deck, meta_data(lists), Profile(keep_categories=("Stax",)), db, now=lambda: NOW)
     # Battered Golem is in three of five; Magda is the commander and Mountain a basic.
     assert [(c.name, c.lists, c.flagged) for c in report.outliers] == [("Disruptor Flute", 0, True)]
 
 
 def test_key_cards_are_the_commander_its_plan_and_what_the_profile_keeps(deck: Deck, db: CardDb) -> None:
-    report = analyse(deck, meta_data(TOP_CUT_LISTS), Profile(keep_categories=("stax",)), db)
+    report = analyse(deck, meta_data(TOP_CUT_LISTS), Profile(keep_categories=("stax",)), db, now=lambda: NOW)
     assert [(k.name, k.reasons) for k in report.key_cards] == [
         (MAGDA, ("your commander",)),
         ("Battered Golem", ("you file it under Combo Pieces",)),
@@ -234,7 +234,9 @@ def field() -> list[MetaCommander]:
 
 
 def test_threats_are_common_meta_answers_to_key_pieces(deck: Deck, db: CardDb) -> None:
-    report = analyse(deck, meta_data(TOP_CUT_LISTS, field=field()), Profile(keep_categories=("Stax",)), db)
+    report = analyse(
+        deck, meta_data(TOP_CUT_LISTS, field=field()), Profile(keep_categories=("Stax",)), db, now=lambda: NOW
+    )
     assert [(t.name, t.kinds, t.hits, t.played_by) for t in report.threats] == [
         (
             "Lightning Bolt",
@@ -256,7 +258,7 @@ def test_threats_are_common_meta_answers_to_key_pieces(deck: Deck, db: CardDb) -
 
 
 def test_without_kept_cards_only_the_found_key_cards_are_threatened(deck: Deck, db: CardDb) -> None:
-    report = analyse(deck, meta_data(TOP_CUT_LISTS, field=field()), Profile(), db)
+    report = analyse(deck, meta_data(TOP_CUT_LISTS, field=field()), Profile(), db, now=lambda: NOW)
     assert [t.hits for t in report.threats] == [("Battered Golem", MAGDA), ("Battered Golem", MAGDA)]
 
 
@@ -318,7 +320,7 @@ def test_an_unknown_commander_reports_as_unknown(deck: Deck, db: CardDb) -> None
         Answer(None, AnswerSource.UNAVAILABLE, None, "offline"),
         Answer(None, AnswerSource.UNAVAILABLE, None, "offline"),
     )
-    report = analyse(deck, data, Profile(), db)
+    report = analyse(deck, data, Profile(), db, now=lambda: NOW)
     assert not report.sample.known
     assert report.sample.basis is Basis.ALL
     assert report.missing == ()
@@ -336,7 +338,7 @@ def test_two_faced_cards_compare_by_their_front_face() -> None:
 
 
 def test_the_report_names_the_deck_by_its_commander(deck: Deck, db: CardDb, tmp_path: Path) -> None:
-    assert analyse(deck, meta_data([]), Profile(), db).deck == "Magda"
+    assert analyse(deck, meta_data([]), Profile(), db, now=lambda: NOW).deck == "Magda"
     assert tmp_path.exists()
 
 
@@ -346,7 +348,7 @@ def test_a_spicy_card_in_one_list_off_the_cut_is_left_out(deck: Deck, db: CardDb
         entry(30, 40, 8, [("Jeska's Will", 4)]),
         entry(31, 40, 8, [("Jeska's Will", 3)]),
     ]
-    report = analyse(deck, meta_data(lists), Profile(), db)
+    report = analyse(deck, meta_data(lists), Profile(), db, now=lambda: NOW)
     assert [(p.name, p.lists) for p in report.spicy] == [("Jeska's Will", 2)]
 
 
@@ -387,7 +389,7 @@ def test_the_meta_pool_is_worked_out_once_for_the_threats_and_the_decks_combos(
 
     monkeypatch.setattr(db, "matching", counting)
     data = replace(meta_data(TOP_CUT_LISTS, field=field()), own_combos=fetched((GOLEM_COMBO,)))
-    report = analyse(deck, data, Profile(keep_categories=("Stax",)), db)
+    report = analyse(deck, data, Profile(keep_categories=("Stax",)), db, now=lambda: NOW)
     assert report.threats
     assert report.own_combos[0].answers
     # Bolt, Chaos Warp and Mind Stone are the cards 30% of a top commander's lists play. Each answer kind and

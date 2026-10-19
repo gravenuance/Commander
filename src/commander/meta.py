@@ -11,12 +11,12 @@ from enum import Enum
 from commander.answers import AnswerKind, card_key, piece_facts
 from commander.archidekt import PeerDeck
 from commander.carddb import CardDb, CardInfo
-from commander.deckcache import Answer, AnswerSource
+from commander.deckcache import Answer, AnswerSource, Clock
 from commander.deckprofile import Profile
 from commander.edhtop16 import CommanderStats, Entry
 from commander.keycards import KeyCard, key_cards
 from commander.metacombos import AnswerRole, DeckAnswers, MetaCombo, combo_answers, infos_answers, meta_combos
-from commander.metadata import MetaCommander, MetaData, PeerList
+from commander.metadata import MetaCommander, MetaData, PeerList, entries_since, listed_entries
 from commander.models import COMMANDER_CATEGORY, Deck
 from commander.playstyle import NEUTRAL, Fit, PlayStyle, Weight, deck_play_style, staple_weights
 from commander.spellbook import ComboDetail
@@ -166,8 +166,8 @@ class CardCheck:
     meta_lists_with: int
 
 
-def analyse(deck: Deck, data: MetaData, profile: Profile, db: CardDb) -> MetaReport:
-    lists = _window(data.lists.data.entries if data.lists.data else (), data.since)
+def analyse(deck: Deck, data: MetaData, profile: Profile, db: CardDb, *, now: Clock) -> MetaReport:
+    lists = entries_since(data.lists.data.entries if data.lists.data else (), data.since)
     performing, basis = performing_lists(lists)
     entries = len(lists)
     with_lists = [e for e in lists if e.cards]
@@ -181,7 +181,9 @@ def analyse(deck: Deck, data: MetaData, profile: Profile, db: CardDb) -> MetaRep
     )
     peer_lists = data.peers.data.decks if data.peers.data else ()
     field = tuple(
-        MetaCommander(c.stats, _window(c.entries, data.since)) for c in (data.field.data or ()) if c.entries
+        MetaCommander(c.stats, entries_since(c.entries, data.since))
+        for c in (data.field.data or ())
+        if c.entries
     )
     keys = key_cards(deck, profile, data.own_combos.data or (), peer_lists, db)
     names = _display_names(performing, peer_lists, deck)
@@ -196,7 +198,15 @@ def analyse(deck: Deck, data: MetaData, profile: Profile, db: CardDb) -> MetaRep
         spicy=spicy_picks(deck, performing),
         outliers=outliers(deck, performing, peer_lists, profile, db),
         threats=threats((k.name for k in keys), pool, db),
-        combos=meta_combos(deck, field, data.combos.data or (), data.since, db),
+        combos=meta_combos(
+            deck,
+            field,
+            data.combos.data or (),
+            data.since,
+            db,
+            now=now,
+            meta_total=sum(c.stats.meta_share for c in data.field.data or ()),
+        ),
         own_combos=own_combos(data.own_combos.data or (), pool, db),
         field=tuple(c.stats for c in (data.field.data or ())),
         peers=tuple(p.deck for p in peer_lists),
@@ -327,7 +337,7 @@ def all_staples(
     window's lists then, not just the top cuts."""
     if is_staple is None:
         performing, basis = performing_lists(
-            _window(data.lists.data.entries if data.lists.data else (), data.since)
+            entries_since(data.lists.data.entries if data.lists.data else (), data.since)
         )
     else:
         performing = listed_entries(data)
@@ -386,13 +396,8 @@ def outliers(
 
 def performing_entries(data: MetaData) -> list[Entry]:
     """The commander's lists to learn from in the window: top cuts, or every list when none made one."""
-    lists = _window(data.lists.data.entries if data.lists.data else (), data.since)
+    lists = entries_since(data.lists.data.entries if data.lists.data else (), data.since)
     return performing_lists(lists)[0]
-
-
-def listed_entries(data: MetaData) -> list[Entry]:
-    """Every list with a decklist in the window, whatever it placed."""
-    return [e for e in _window(data.lists.data.entries if data.lists.data else (), data.since) if e.cards]
 
 
 # Per top commander playing a card: (commander, share of its lists, the commander's meta share).
@@ -504,14 +509,16 @@ def threats(pieces: Iterable[str], pool: MetaPool, db: CardDb) -> tuple[Threat, 
 def check_card(name: str, deck: Deck, data: MetaData) -> CardCheck:
     """How the commander's lists, Archidekt lists and the meta's lists use one card."""
     key = card_key(name)
-    lists = [e for e in _window(data.lists.data.entries if data.lists.data else (), data.since) if e.cards]
+    lists = [
+        e for e in entries_since(data.lists.data.entries if data.lists.data else (), data.since) if e.cards
+    ]
     performing, _ = performing_lists(lists)
     having: list[Entry] = []
     lacking: list[Entry] = []
     for e in lists:
         (having if _plays(e, key) else lacking).append(e)
     peers = data.peers.data.decks if data.peers.data else ()
-    meta_lists = [e for c in (data.field.data or ()) for e in _window(c.entries, data.since) if e.cards]
+    meta_lists = [e for c in (data.field.data or ()) for e in entries_since(c.entries, data.since) if e.cards]
     spice = [c.spice for e in lists for c in e.cards if card_key(c.name) == key]
     return CardCheck(
         name=name,
@@ -538,11 +545,6 @@ def _plays(entry: Entry, key: str) -> bool:
 
 def _state[T](name: str, answer: Answer[T]) -> SourceState:
     return SourceState(name, answer.source, answer.fetched_at, answer.error)
-
-
-def _window(entries: Iterable[Entry], since: date) -> tuple[Entry, ...]:
-    # A cached answer from an earlier day can reach a little further back than today's window.
-    return tuple(e for e in entries if e.tournament.held_on >= since)
 
 
 def _list_counts(entries: Iterable[Entry]) -> Counter[str]:
