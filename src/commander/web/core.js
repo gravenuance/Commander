@@ -7,6 +7,8 @@ const SEARCH_DELAY_MS = 150;
 const STATUS_MS = 6000;
 const META_BRACKET = 5;
 const PANEL_KEY = "commander.panelOpen";
+// Grace cards a tooltip names before counting the rest.
+const GRACE_TIP_CARDS = 2;
 
 const state = {
   decks: [],
@@ -95,6 +97,16 @@ function hideStatus() {
 const times = (copies, name) => (copies > 1 ? `${copies} × ${name}` : name);
 const euro = (cents) => (cents === null || cents === undefined ? "" : `€${(cents / 100).toFixed(2)}`);
 const pct = (share) => `${Math.round(share * 100)}%`;
+
+// How the deck's grace cards (profile.toml [grace]) weigh the shares; "" when it has none. A tooltip passes
+// a limit, which names that many cards and counts the rest.
+function graceLine(grace, limit = Infinity) {
+  if (!grace || !grace.cards.length) return "";
+  const named = grace.cards.slice(0, limit).map((c) => `${c.name} ×${c.factor}`).join(", ");
+  const rest = grace.cards.length - limit;
+  const names = rest > 0 ? `${named} +${rest} more` : named;
+  return `Weighted toward lists with ${names}: ${grace.holding} of ${grace.lists} ${grace.holding === 1 ? "holds" : "hold"} one`;
+}
 
 // A panel that loads an answer for the open deck and draws it. `load()` drops an answer that arrives after
 // the deck changed; `render(deck, answer)` skips one the panel already shows. The renderer is called with

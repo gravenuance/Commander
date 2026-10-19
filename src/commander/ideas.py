@@ -201,7 +201,7 @@ def compile_ideas(
     """
     deck = stored.deck
     profile = read_profile(stored.folder)
-    table = weighted_shares(data, now=now)
+    table = weighted_shares(data, now=now, grace=profile.grace_by_key())
     ideas = staple_ideas(deck, all_staples(deck, data, db, is_staple=table.is_idea), data.since, table)
     ideas += adjacent_ideas(deck, adjacent, profile.adjacent, db)
     ideas += tagged_ideas(deck, tagged, db)
@@ -331,8 +331,8 @@ def rejudge_ideas(
     without a list read. Cards by you or Claude, and queued, applied or turned-down ones, are never touched
     (`turn_down_open` checks the card is still open), nor is one the user reopened until they decide it.
     """
-    table = weighted_shares(data, now=now)
     profile = read_profile(stored.folder)
+    table = weighted_shares(data, now=now, grace=profile.grace_by_key())
     judge = _IdeaJudge(
         data,
         table,
@@ -398,7 +398,7 @@ def relabel_legacy_ideas(stored: StoredDeck, data: MetaData, db: CardDb, *, now:
     """Label the open ideas of the old Maybeboard pick-up that pass the idea test as ideas cmdr compiled,
     from the source that plays them more, so none stays neutral in Considering; what it relabelled. Nothing
     without a list read (`rejudge_ideas` judges none then either)."""
-    table = weighted_shares(data, now=now)
+    table = weighted_shares(data, now=now, grace=read_profile(stored.folder).grace_by_key())
     if not table:
         return []
     legacy = [

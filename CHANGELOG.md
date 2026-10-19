@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+- Grace cards (ADR 0039): a deck's `profile.toml` can name cards under `[grace]`, each with a factor over 1 and
+  at most 10. A meta list or recent Archidekt deck holding them counts for more (the factors multiply, at most
+  10) in that deck's percentages, cut targets and compiled ideas, for a commander that runs several different
+  lists. The meta breakdown is unchanged. `cmdr profile` lists the grace cards, and the percentage's breakdown in the
+  app says which are set and how many lists hold one.
+
 ### Changed
 - Cut targets for an idea (ADR 0036): every candidate scores on one number and the best four are offered (were
   three, like-for-like cards first). A deck that holds more than the peers' median of ramp, draw, removal or

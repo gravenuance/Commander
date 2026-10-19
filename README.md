@@ -306,6 +306,10 @@ ignore = ["Pyrokinesis"]     # found, but not key
 [ideas]                      # commanders that play like this one: `sync` learns from their decks too
 commanders = ["The Gitrog Monster", ["Tevesh Szat, Doom of Fools", "Kodama of the East Tree"]]
 tag_search = true            # also learn from decks carrying the deck's theme tags; off when missing
+
+[grace]                      # lists holding these cards count for more in this deck's shares
+"Basalt Monolith" = 3
+"Rings of Brighthearth" = 2
 ```
 
 Every key is optional. `[exclude]`, `bracket_ceiling` and `max_card_eur` apply to the ideas `sync`
@@ -313,6 +317,18 @@ compiles as well as to `suggest`. `cmdr profile <deck>` shows the profile as `su
 about tags Tagger doesn't have. Flags still win over the profile: `--max-price` and `--within-bracket` override
 `max_card_eur` and `bracket_ceiling`. Tagger tags are community-maintained, so a tag can be renamed or
 removed; `cmdr profile` is the place to notice. See [ADR 0005](docs/adr/0005-deck-profiles.md).
+
+**Grace cards.** Some commanders run several very different lists (Kinnan: little flips, big flips, no
+Basalt Monolith), and the shares pooled over all of them describe none. Name the cards that mark your line
+under `[grace]`, each with a factor over 1 and at most 10, and a meta list or recent Archidekt deck holding one
+counts that many times more in this deck's weighted shares: the percentages on the deck list and in
+Considering, the cut targets and the ideas `sync` compiles. A list holding several grace cards is weighed by
+the product of their factors, at most 10. Names match whatever the case, by the full name or the front face
+of a two-faced card; punctuation must match and a back face does not. The meta breakdown does not use grace.
+A heavy grace leaves fewer lists doing the work, so the idea test is stricter for each card, while cards your
+line plays can pass that would not have before; the percentage's breakdown in the app says which grace cards are set
+and how many lists hold one, and `cmdr profile` lists them and flags names that match no card. Only you edit it; the app never writes
+`[grace]` ([ADR 0039](docs/adr/0039-grace-cards-weight-the-lists-like-yours.md)).
 
 ### Deck themes
 

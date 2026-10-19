@@ -18,7 +18,7 @@ from commander.metadata import MetaData, PeerList, PeerLists
 from commander.models import Deck, DeckCard
 from commander.peercounts import RoleBand
 from commander.spellbook import ComboDetail, ComboPiece
-from commander.targets import deck_cut_rules, role_targets, with_ideas
+from commander.targets import CutRules, deck_cut_rules, role_targets, with_ideas
 from conftest import ANCIENT_TOMB, build_card_db
 
 
@@ -164,6 +164,32 @@ def test_cards_in_a_leaning_are_cut_only_for_ideas_in_it_and_lands_never_join_it
     )
     tomb = db.cards_named(["Ancient Tomb"])["ancient tomb"]
     assert "extra-combat" not in with_ideas(rules, [tomb], db).themes.get(tomb.oracle_id, frozenset())
+
+
+def test_the_decks_grace_cards_weight_the_shares_that_order_its_cut_targets(db: CardDb) -> None:
+    cards = deck_cards(50, 51)
+    deck = Deck(1, "test", "me", 3, "2026-10-16", tuple(cards))
+    main = resolved(db, cards)
+    # Four equally fresh peer decks: the idea is in three, Filler Card 50 in one and 51 in two.
+    pool = pool_of(peers_each((50, 60), (51, 60), (51, 60), ()))
+    [idea] = db.cards_named(["Filler Card 60"]).values()
+
+    def rules_for(profile: Profile) -> CutRules:
+        return with_ideas(deck_cut_rules(deck, main, profile, db, pool, now=lambda: NOW), [idea], db)
+
+    def cuts(profile: Profile) -> list[str]:
+        return [t.name for t in role_targets(idea, main, rules_for(profile))]
+
+    # Least played first: 50 at 1/4 goes before 51 at 1/2.
+    assert cuts(Profile()) == ["Filler Card 50", "Filler Card 51"]
+    # Grace x6 on Filler Card 50 weighs the deck playing it 6, 1, 1, 1 (scaled 8/3, 4/9, 4/9, 4/9 of
+    # four): 50 is 2/3, 51 is 2/9 and the idea 8/9, so now 51 is the less played.
+    graced = Profile(grace={"Filler Card 50": 6.0})
+    assert cuts(graced) == ["Filler Card 51", "Filler Card 50"]
+    shares = rules_for(graced).shares
+    assert shares is not None
+    fractions = shares.fractions()
+    assert [fractions[f"filler card {n}"] for n in (50, 51, 60)] == pytest.approx([2 / 3, 2 / 9, 8 / 9])
 
 
 def test_the_rules_hold_the_peer_decks_role_and_theme_counts_only_with_enough_decks(db: CardDb) -> None:

@@ -1,6 +1,6 @@
 """Deck profiles: what one deck wants from suggestions and from the ideas sync compiles, kept by hand as
 profile.toml (ADR 0005): role targets, themes, exclusions, kept cards, key cards to leave out and the
-commanders that play alike."""
+commanders that play alike, and grace cards that weigh the lists holding them more (ADR 0039)."""
 
 import tomllib
 from collections.abc import Iterable, Mapping, Sequence
@@ -8,10 +8,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
+from commander.answers import card_key
 from commander.carddb import CardDb, Role, Theme, name_keys
 from commander.config import ConfigError, parse_targets
 from commander.fsutil import write_text_atomic
 from commander.models import Deck
+from commander.weightedshare import MAX_GRACE
 
 PROFILE_FILE = "profile.toml"
 # The name ideas give the themes a profile.toml names itself.
@@ -37,6 +39,7 @@ _TOP_KEYS = frozenset(
         "keep",
         "key_cards",
         "ideas",
+        "grace",
     }
 )
 _THEME_KEYS = frozenset({"types", "keywords", "tags"})
@@ -87,12 +90,18 @@ class Profile:
     adjacent: tuple[tuple[str, ...], ...] = ()
     # Whether sync also reads recent decks of other commanders carrying the deck's theme tags (ADR 0028).
     tag_search: bool = False
+    # Cards that weigh a list holding them more in this deck's shares (ADR 0039): name as written, factor.
+    grace: Mapping[str, float] = field(default_factory=dict[str, float])
 
     def __post_init__(self) -> None:
         if self.bracket_ceiling is not None and not 1 <= self.bracket_ceiling <= 5:  # noqa: PLR2004 — brackets 1..5
             raise ValueError(f"bracket_ceiling must be 1-5, got {self.bracket_ceiling}")
         if self.max_card_cents is not None and self.max_card_cents < 0:
             raise ValueError(f"max_card_cents must not be negative, got {self.max_card_cents}")
+
+    def grace_by_key(self) -> dict[str, float]:
+        """The grace factors by `card_key`, as `weighted_shares` takes them."""
+        return {card_key(name): factor for name, factor in self.grace.items()}
 
     def keeps(self, name: str, categories: Iterable[str] = ()) -> bool:
         """Whether the profile keeps a deck card, by its name (either face) or one of its categories."""
@@ -170,6 +179,7 @@ def parse_profile(raw: Mapping[str, object], where: str) -> Profile:
         ignore_keys=_strings(key_cards, "ignore", "key_cards", where),
         adjacent=_commander_groups(ideas.get("commanders"), where),
         tag_search=_flag(ideas.get("tag_search"), "ideas.tag_search", where),
+        grace=_grace(raw.get("grace"), where),
     )
 
 
@@ -236,6 +246,11 @@ categories = []
 # why); the cards kept above are key too. ignore: cards by name that are found but are not key.
 [key_cards]
 ignore = []
+
+# Cards that mark the lists like yours: a meta list or recent deck holding one counts for more in this
+# deck's percentages and ideas, by the factor (more than 1, at most {MAX_GRACE:g}); factors multiply.
+# [grace]
+# "Basalt Monolith" = 3
 
 # Commanders that play like this one: their recent Archidekt decks at this deck's bracket give `sync`
 # ideas too. A partner pair goes in its own list:
@@ -327,6 +342,31 @@ def _commander_groups(value: object, where: str) -> tuple[tuple[str, ...], ...]:
             raise ProfileError(f"{where}: {key}[{index}] must be a commander or a list of two partners")
         groups.append(group)
     return tuple(groups)
+
+
+def _grace(value: object, where: str) -> dict[str, float]:
+    key = "grace"
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ProfileError(f"{where}: '{key}' must be a table, like [{key}]")
+    table = cast("dict[str, object]", value)
+    if len(table) > MAX_LIST:
+        raise ProfileError(f"{where}: {key} holds over {MAX_LIST} cards")
+    found: dict[str, float] = {}
+    seen: set[str] = set()
+    for written, factor in table.items():
+        name = written.strip()
+        label = f"{key}.{name}"
+        if not name or len(name) > MAX_TEXT:
+            raise ProfileError(f"{where}: a {key} card name must be text of at most {MAX_TEXT} characters")
+        if isinstance(factor, bool) or not isinstance(factor, int | float) or not 1 < factor <= MAX_GRACE:
+            raise ProfileError(f"{where}: {label} must be a number over 1 and at most {MAX_GRACE:g}")
+        if card_key(name) in seen:
+            raise ProfileError(f"{where}: {label} names a card listed twice in [{key}]")
+        seen.add(card_key(name))
+        found[name] = float(factor)
+    return found
 
 
 def _flag(value: object, key: str, where: str) -> bool:

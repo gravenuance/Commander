@@ -47,6 +47,7 @@ def _cmd_profile(args: argparse.Namespace, ctx: Context) -> int:
     file = read_config(config_path(args.config, ctx.env))
     with open_card_db(ctx) as db, ctx.client_factory() as http:
         unknown = resolve_themes(profile, db).unknown_tags
+        unknown_grace = tuple(name for name in profile.grace if db.card_named(name) is None)
         merged = merge_themes(stored.deck, profile, db)
         # Leaning tags can be ignored too, so only names that are no Tagger tag either are unknown.
         tags = db.tag_ids(name.strip().casefold() for name in merged.unknown_ignores)
@@ -62,13 +63,15 @@ def _cmd_profile(args: argparse.Namespace, ctx: Context) -> int:
         ).leanings
     for slug in unknown:
         print(f"cmdr: tag {slug!r} is not a Tagger tag; `cmdr tags` finds them", file=ctx.err)
+    for name in unknown_grace:
+        print(f"cmdr: grace card {name!r} is no card in the card data", file=ctx.err)
     for name in unknown_ignores:
         print(
             f"cmdr: the profile ignores {name!r}, which is no deck tag, category or Tagger tag", file=ctx.err
         )
     if args.json:
         document = {
-            **profile_json(profile, unknown),
+            **profile_json(profile, unknown, unknown_grace),
             **derived_json(merged),
             "unknownIgnores": unknown_ignores,
             "leanings": [leaning_json(leaning) for leaning in leanings],
@@ -116,11 +119,14 @@ def profile_lines(profile: Profile) -> list[str]:
         ),
         ("ideas also from", "; ".join(" + ".join(group) for group in profile.adjacent)),
         ("search decks by tag", "on" if profile.tag_search else "off"),
+        ("grace cards", ", ".join(f"{name} \u00d7{factor:g}" for name, factor in profile.grace.items())),
     ]
     return [f"{label}: {value or '-'}" for label, value in rows]
 
 
-def profile_json(profile: Profile, unknown_tags: tuple[str, ...]) -> dict[str, object]:
+def profile_json(
+    profile: Profile, unknown_tags: tuple[str, ...], unknown_grace: tuple[str, ...] = ()
+) -> dict[str, object]:
     return {
         "archetype": profile.archetype,
         "bracketCeiling": profile.bracket_ceiling,
@@ -130,7 +136,9 @@ def profile_json(profile: Profile, unknown_tags: tuple[str, ...]) -> dict[str, o
         "exclude": {**_spec_json(profile.exclude), "cards": list(profile.exclude_cards)},
         "keep": {"cards": list(profile.keep_cards), "categories": list(profile.keep_categories)},
         "ideas": {"commanders": [list(group) for group in profile.adjacent], "tagSearch": profile.tag_search},
+        "grace": dict(profile.grace),
         "unknownTags": list(unknown_tags),
+        "unknownGrace": list(unknown_grace),
     }
 
 

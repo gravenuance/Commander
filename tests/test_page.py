@@ -290,3 +290,95 @@ def test_proposing_a_card_with_no_cut_opens_its_folded_panel_without_saving_that
     assert seen["stored"] == "0"
     assert seen["selected"] == "n"
     assert seen["status"] == "New: pick the deck card it replaces"
+
+
+GRACE = """{ cards: [{ name: "Basalt Monolith", factor: 3 }, { name: "Rings of Brighthearth", factor: 2 }],
+  holding: 12, lists: 30 }"""
+
+
+GRACE_LINE = (
+    "Weighted toward lists with Basalt Monolith \u00d73, Rings of Brighthearth \u00d72: 12 of 30 hold one"
+)
+
+
+def test_the_breakdown_says_which_grace_cards_weigh_the_lists_and_how_many_hold_one() -> None:
+    seen = run(
+        """
+    const idea = card({ share: combined(0.6, 3, 5, { meta: part(0.6, 3, 5) }) });
+    const none = buildTile(idea);
+    state.view = { grace: """
+        + GRACE
+        + """ };
+    const graced = buildTile(idea);
+    state.view = { grace: { cards: [{ name: "Basalt Monolith", factor: 2.5 }], holding: 1, lists: 30 } };
+    const one = buildTile(idea);
+    const unshared = buildTile(card({ origin: null, share: null, pool: part(0.5, 2, 4) }));
+    return { none: texts(none, ".share-grace"), graced: texts(graced, ".share-grace"),
+      one: texts(one, ".share-grace"), unshared: texts(unshared, ".share-grace"),
+      total: texts(graced, ".share-total") };
+    """
+    )
+    assert seen["none"] == []
+    assert seen["graced"] == [GRACE_LINE]
+    assert seen["one"] == ["Weighted toward lists with Basalt Monolith \u00d72.5: 1 of 30 holds one"]
+    # No combined share, nothing weighted to explain.
+    assert seen["unshared"] == []
+    assert seen["total"] == ["Combined 60% \u00b7 3 of 5"]
+
+
+def test_the_grid_tooltip_names_two_grace_cards_and_counts_the_rest() -> None:
+    seen = run("""
+    const gridCard = { name: "Sol Ring", quantity: 1, image: null, category: "Artifact", label: "",
+      labelColour: null, cents: 100, share: combined(0.5, 5, 10, { tip: "meta 50% (5/10 lists)" }) };
+    state.view = { grace: { cards: [{ name: "A", factor: 3 }, { name: "B", factor: 2 },
+      { name: "C", factor: 4 }, { name: "D", factor: 5 }], holding: 1, lists: 30 } };
+    const title = buildGridCard(gridCard).querySelector(".share").title;
+    const tile = buildTile(card({ share: combined(0.6, 3, 5, { meta: part(0.6, 3, 5) }) }));
+    const popover = texts(tile, ".share-grace");
+    return { title, popover };
+    """)
+    assert seen["title"] == (
+        "meta 50% (5/10 lists)\nWeighted toward lists with A \u00d73, B \u00d72 +2 more: 1 of 30 holds one"
+    )
+    # The breakdown has the room to name them all.
+    assert seen["popover"] == [
+        "Weighted toward lists with A \u00d73, B \u00d72, C \u00d74, D \u00d75: 1 of 30 holds one"
+    ]
+
+
+def test_a_tile_is_rebuilt_when_the_decks_grace_changes_under_an_unchanged_card() -> None:
+    seen = run(
+        """
+    const idea = card({ share: combined(0.6, 3, 5, { meta: part(0.6, 3, 5) }) });
+    state.view = { grace: """
+        + GRACE
+        + """ };
+    const first = tileFor(idea);
+    $("list-considering").append(first);
+    const same = tileFor(idea) === first;
+    state.view = { grace: { cards: [{ name: "Basalt Monolith", factor: 4 }], holding: 12, lists: 30 } };
+    const second = tileFor(idea);
+    return { same, rebuilt: second !== first, text: texts(second, ".share-grace") };
+    """
+    )
+    assert seen["same"] is True
+    assert seen["rebuilt"] is True
+    assert seen["text"] == ["Weighted toward lists with Basalt Monolith \u00d74: 12 of 30 hold one"]
+
+
+def test_a_deck_grid_cards_share_title_adds_the_grace_line() -> None:
+    seen = run(
+        """
+    const gridCard = { name: "Sol Ring", quantity: 1, image: null, category: "Artifact", label: "",
+      labelColour: null, cents: 100, share: combined(0.5, 5, 10, { tip: "meta 50% (5/10 lists)" }) };
+    state.view = { grace: """
+        + GRACE
+        + """ };
+    const graced = buildGridCard(gridCard).querySelector(".share").title;
+    state.view = { grace: { cards: [], holding: 0, lists: 30 } };
+    const plain = buildGridCard(gridCard).querySelector(".share").title;
+    return { graced, plain };
+    """
+    )
+    assert seen["plain"] == "meta 50% (5/10 lists)"
+    assert seen["graced"] == f"meta 50% (5/10 lists)\n{GRACE_LINE}"

@@ -118,7 +118,7 @@ function renderRejected(cards) {
 }
 
 function tileFor(card) {
-  const key = JSON.stringify(card);
+  const key = JSON.stringify([card, state.view?.grace]);
   const known = state.tiles.get(card.id);
   if (known && known.key === key) return known.node;
   const node = buildTile(card);
@@ -220,10 +220,12 @@ function sharePill(card) {
 
 function sharePopover(card, popId) {
   const rows = shareRows(card);
+  const grace = card.share ? graceLine(state.view?.grace) : "";
   return el("div", { class: "share-pop", id: popId, role: "group", "aria-label": `${card.name}: share breakdown`, hidden: true },
     card.share
       ? el("p", { class: "share-total", text: `Combined ${card.share.label} · ${card.share.count} of ${card.share.total}` })
       : null,
+    grace ? el("p", { class: "muted share-grace", text: grace }) : null,
     card.origin ? null : el("p", { class: "muted", text: `Added by ${card.source}` }),
     rows.length ? el("ul", { class: "share-rows" }, ...rows.map((row) => shareRow(card, row))) : null);
 }

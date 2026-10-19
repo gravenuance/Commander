@@ -47,6 +47,10 @@ categories = ["Stax"]
 [ideas]
 commanders = ["The Gitrog Monster", ["Tevesh Szat, Doom of Fools", "Kodama of the East Tree"]]
 tag_search = true
+
+[grace]
+"Basalt Monolith" = 3
+"Rings of Brighthearth" = 2.5
 """
 
 
@@ -77,6 +81,7 @@ def test_full_profile_is_read(tmp_path: Path) -> None:
         ignore_themes=("Vehicles",),
         adjacent=(("The Gitrog Monster",), ("Tevesh Szat, Doom of Fools", "Kodama of the East Tree")),
         tag_search=True,
+        grace={"Basalt Monolith": 3.0, "Rings of Brighthearth": 2.5},
     )
 
 
@@ -152,6 +157,20 @@ def test_byte_order_mark_is_accepted(tmp_path: Path) -> None:
         ("[ideas]\ntags = []", "unknown key 'tags' in [ideas]"),
         ("[ideas]\ntag_search = 'yes'", "ideas.tag_search must be true or false"),
         ("[ideas]\ntag_search = 1", "ideas.tag_search must be true or false"),
+        ("grace = 3", "'grace' must be a table"),
+        ("[grace]\n'Basalt Monolith' = 1", "grace.Basalt Monolith must be a number over 1 and at most 10"),
+        ("[grace]\n'Basalt Monolith' = 0.5", "grace.Basalt Monolith must be a number over 1 and at most 10"),
+        ("[grace]\n'Basalt Monolith' = 10.5", "grace.Basalt Monolith must be a number over 1 and at most 10"),
+        ("[grace]\n'Basalt Monolith' = 11", "grace.Basalt Monolith must be a number over 1 and at most 10"),
+        ("[grace]\n'Basalt Monolith' = '3'", "grace.Basalt Monolith must be a number over 1 and at most 10"),
+        ("[grace]\n'Basalt Monolith' = true", "grace.Basalt Monolith must be a number over 1 and at most 10"),
+        ("[grace]\n'Basalt Monolith' = nan", "grace.Basalt Monolith must be a number over 1 and at most 10"),
+        ("[grace]\n'Basalt Monolith' = [3]", "grace.Basalt Monolith must be a number over 1 and at most 10"),
+        ("[grace]\n'  ' = 3", "a grace card name must be text"),
+        (
+            "[grace]\n'Basalt Monolith' = 3\n'basalt monolith' = 2",
+            "grace.basalt monolith names a card listed twice",
+        ),
     ],
 )
 def test_invalid_profiles_name_the_problem(tmp_path: Path, text: str, message: str) -> None:
@@ -159,6 +178,20 @@ def test_invalid_profiles_name_the_problem(tmp_path: Path, text: str, message: s
     with pytest.raises(ProfileError, match=re.escape(message)) as caught:
         read_profile(tmp_path)
     assert str(path) in str(caught.value)
+
+
+def test_grace_factors_run_up_to_10_and_are_looked_up_by_card_key() -> None:
+    profile = parse_profile({"grace": {"Basalt Monolith": 10, "Fire // Ice": 1.5}}, "p")
+    assert profile.grace == {"Basalt Monolith": 10.0, "Fire // Ice": 1.5}
+    # The front face of a two-faced card, casefolded: how lists spell it.
+    assert profile.grace_by_key() == {"basalt monolith": 10.0, "fire": 1.5}
+    assert Profile().grace_by_key() == {}
+
+
+def test_grace_names_are_stripped_and_a_name_repeated_around_spaces_is_a_duplicate() -> None:
+    assert parse_profile({"grace": {"  Sol Ring ": 2}}, "p").grace == {"Sol Ring": 2.0}
+    with pytest.raises(ProfileError, match="listed twice"):
+        parse_profile({"grace": {"Sol Ring": 2, " Sol Ring": 9}}, "p")
 
 
 def test_too_many_entries_are_refused() -> None:
@@ -180,6 +213,16 @@ def test_oversized_file_is_refused(tmp_path: Path) -> None:
 def test_template_is_valid_and_empty(deck: Deck) -> None:
     raw = tomllib.loads(profile_template(deck))
     assert parse_profile(raw, "template") == Profile()
+
+
+def test_the_templates_grace_example_is_valid_once_uncommented(deck: Deck) -> None:
+    template = profile_template(deck)
+    assert "# [grace]" in template
+    uncommented = "\n".join(
+        line.removeprefix("# ") if line.startswith(("# [grace]", '# "Basalt Monolith"')) else line
+        for line in template.splitlines()
+    )
+    assert parse_profile(tomllib.loads(uncommented), "template").grace == {"Basalt Monolith": 3.0}
 
 
 def test_template_is_never_written_over_a_profile(tmp_path: Path, deck: Deck) -> None:

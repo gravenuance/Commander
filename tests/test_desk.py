@@ -553,6 +553,49 @@ def test_the_deck_view_carries_each_cards_combined_share_on_deck_and_board_cards
     assert cast("Json", stone["share"])["label"] == "90%"
 
 
+def test_grace_cards_weight_the_decks_shares_and_the_view_counts_the_lists_holding_one(
+    desk: Desk, settings: DeskSettings, fake: FakeArchidekt
+) -> None:
+    fake.edhtop16.pages[MAGDA] = [magda_page()]
+    fetch_meta(settings, fake)
+    assert desk.deck(DECK)["grace"] == {"cards": [], "holding": 0, "lists": 6}
+    profile = settings.workspace / "10004639-honestly-though" / "profile.toml"
+    # Only the sixth list, which weighs 0.525 of the others' 4.75, runs the Signet: x4 makes it 2.1 of 6.85.
+    profile.write_text('[grace]\n"Arcane Signet" = 4\n', encoding="utf-8")
+    view = desk.deck(DECK)
+    assert view["grace"] == {"cards": [{"name": "Arcane Signet", "factor": 4.0}], "holding": 1, "lists": 6}
+    grid = {c["name"]: c for g in items(view, "grid") for c in cast("list[Json]", g["cards"])}
+    golem = cast("Json", grid["Battered Golem"]["share"])
+    assert (golem["count"], golem["total"], golem["label"]) == (5, 6, "69%")
+    assert golem["share"] == pytest.approx(4.75 / 6.85, abs=1e-4)
+    stone = next(c for c in items(view, "cards") if c["name"] == "Mind Stone")
+    assert cast("Json", stone["share"])["label"] == "69%"
+    # Taking the grace card out of the profile brings the plain shares back at once.
+    profile.write_text("version = 1\n", encoding="utf-8")
+    again = desk.deck(DECK)
+    assert again["grace"] == {"cards": [], "holding": 0, "lists": 6}
+    assert [c["share"] for c in items(again, "cards") if c["name"] == "Mind Stone"] == [
+        cast("Json", stone["share"])
+        | {"share": pytest.approx(4.75 / 5.275, abs=1e-4), "label": "90%"}
+        | {
+            "tip": "meta 90% (5/6 lists)",
+            "meta": {"share": pytest.approx(4.75 / 5.275, abs=1e-4), "count": 5, "total": 6},
+        }
+    ]
+
+
+def test_the_meta_breakdown_ignores_the_decks_grace_cards(
+    desk: Desk, settings: DeskSettings, fake: FakeArchidekt
+) -> None:
+    fake.edhtop16.pages[MAGDA] = [magda_page()]
+    fetch_meta(settings, fake)
+    before = desk.meta(DECK)
+    assert before["report"] is not None
+    profile = settings.workspace / "10004639-honestly-though" / "profile.toml"
+    profile.write_text('[grace]\n"Arcane Signet" = 4\n"Mind Stone" = 9\n', encoding="utf-8")
+    assert desk.meta(DECK) == before
+
+
 def test_each_board_card_comes_with_the_deck_cards_it_could_replace(desk: Desk) -> None:
     desk.propose(DECK, "Lightning Bolt")
     [bolt] = items(desk.deck(DECK), "cards")

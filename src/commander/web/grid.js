@@ -48,7 +48,7 @@ function renderGrid(groups) {
   const seen = new Set();
   groups.forEach((group, index) => {
     seen.add(group.name);
-    const key = JSON.stringify(group);
+    const key = JSON.stringify([group, state.view?.grace]);
     let known = state.groups.get(group.name);
     if (!known || known.key !== key) {
       const node = buildGroup(group);
@@ -101,7 +101,7 @@ function buildGridCard(card) {
     cardImage(card.image, card.name, "face"),
     card.quantity > 1 ? el("span", { class: "qty", text: `×${card.quantity}`, "aria-label": `${card.quantity} copies` }) : null,
     el("span", { class: "sr-only", text: card.name }),
-    card.share ? el("span", { class: "share", text: card.share.label, title: card.share.tip }) : null,
+    card.share ? el("span", { class: "share", text: card.share.label, title: [card.share.tip, graceLine(state.view?.grace, GRACE_TIP_CARDS)].filter(Boolean).join("\n") }) : null,
     flag,
     el("span", { class: "out-note", hidden: true }),
     swap);

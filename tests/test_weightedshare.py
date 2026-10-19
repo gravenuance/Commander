@@ -9,12 +9,15 @@ from commander.archidekt import PeerDeck
 from commander.metadata import PeerList
 from commander.weightedshare import (
     IDEA_LOWER_BOUND,
+    MAX_GRACE,
     MIN_SIZE_FACTOR,
     ShareTable,
     SourceShare,
     WeightedShare,
     effective_sample_size,
     event_weight,
+    grace_factor,
+    graced_count,
     list_age_days,
     placement_weight,
     recency_weight,
@@ -24,7 +27,7 @@ from commander.weightedshare import (
     weighted_shares,
     wilson_lower_bound,
 )
-from test_meta import NOW, entry, meta_data
+from test_meta import NOW, TOP_CUT_LISTS, entry, meta_data
 
 
 def peer_at(deck_id: int, cards: list[str], updated: datetime = NOW) -> PeerList:
@@ -219,6 +222,117 @@ def test_the_table_takes_its_effective_sample_size_from_every_scaled_weight() ->
     table = weighted_shares(meta_data([], peers), now=lambda: NOW)
     assert table.effective_n == pytest.approx(8 / 3)
     assert weighted_shares(None, now=lambda: NOW).effective_n == 0.0
+
+
+def share_of(table: ShareTable, name: str) -> WeightedShare:
+    found = table.of(name)
+    assert found is not None
+    return found
+
+
+def four_decks() -> list[PeerList]:
+    # Four equally fresh decks, so every weight is the same until a grace card changes one.
+    return [
+        peer_at(1, ["Basalt Monolith", "Sol Ring"]),
+        peer_at(2, ["Sol Ring", "Mind Stone"]),
+        peer_at(3, ["Mind Stone"]),
+        peer_at(4, ["Fury"]),
+    ]
+
+
+def test_no_grace_leaves_every_share_as_it_was() -> None:
+    data = meta_data(TOP_CUT_LISTS, four_decks())
+    plain = weighted_shares(data, now=lambda: NOW)
+    assert weighted_shares(data, now=lambda: NOW, grace={}) == plain
+    # A grace card no list holds weighs nothing either.
+    assert weighted_shares(data, now=lambda: NOW, grace={"craterhoof behemoth": 4.0}) == plain
+    assert plain.graced == 0
+    # Four equal decks: Sol Ring is in two of them.
+    decks_only = weighted_shares(meta_data([], four_decks()), now=lambda: NOW)
+    assert share_of(decks_only, "Sol Ring").share == pytest.approx(0.5)
+
+
+def test_a_grace_card_triples_the_decks_holding_it() -> None:
+    table = weighted_shares(meta_data([], four_decks()), now=lambda: NOW, grace={"basalt monolith": 3.0})
+    # Weights 3, 1, 1, 1 over a mean of 1.5 scale to 2, 2/3, 2/3, 2/3 out of four decks.
+    assert share_of(table, "Basalt Monolith").share == pytest.approx(0.5)
+    assert share_of(table, "Sol Ring").share == pytest.approx(2 / 3)
+    assert share_of(table, "Mind Stone").share == pytest.approx(1 / 3)
+    assert share_of(table, "Fury").share == pytest.approx(1 / 6)
+    # Counts stay the decks that play the card, the total the decks read.
+    sol = share_of(table, "Sol Ring")
+    assert (sol.count, sol.total) == (2, 4)
+    assert sol.archidekt is not None
+    assert (sol.archidekt.share, sol.archidekt.count, sol.archidekt.total) == (pytest.approx(2 / 3), 2, 4)
+    # One deck holds a grace card.
+    assert table.graced == 1
+    # The Kish size drops from 4 to 6^2 / (9 + 1 + 1 + 1) = 3.
+    assert table.effective_n == pytest.approx(3.0)
+    assert weighted_shares(meta_data([], four_decks()), now=lambda: NOW).effective_n == pytest.approx(4.0)
+
+
+def test_grace_cards_multiply_and_the_product_is_capped() -> None:
+    decks = [
+        peer_at(1, ["Basalt Monolith", "Rings of Brighthearth"]),
+        peer_at(2, ["Rings of Brighthearth"]),
+        peer_at(3, ["Mind Stone"]),
+        peer_at(4, ["Fury"]),
+    ]
+    both = {"basalt monolith": 3.0, "rings of brighthearth": 2.0}
+    table = weighted_shares(meta_data([], decks), now=lambda: NOW, grace=both)
+    # Weights 6, 2, 1, 1 over a mean of 2.5 scale to 2.4, 0.8, 0.4, 0.4.
+    assert share_of(table, "Basalt Monolith").share == pytest.approx(0.6)
+    assert share_of(table, "Rings of Brighthearth").share == pytest.approx(0.8)
+    assert share_of(table, "Mind Stone").share == pytest.approx(0.1)
+    assert table.graced == 2
+    # 5 x 4 = 20 would be, but a list never weighs more than MAX_GRACE: 10, 4, 1, 1 over a mean of 4.
+    assert MAX_GRACE == 10.0
+    capped = weighted_shares(
+        meta_data([], decks), now=lambda: NOW, grace={"basalt monolith": 5.0, "rings of brighthearth": 4.0}
+    )
+    assert share_of(capped, "Basalt Monolith").share == pytest.approx(0.625)
+    assert share_of(capped, "Rings of Brighthearth").share == pytest.approx(0.875)
+
+
+def test_the_factor_of_a_list_is_the_product_of_its_grace_cards_up_to_the_cap() -> None:
+    grace = {"a": 2.0, "b": 3.0, "c": 4.0}
+    assert grace_factor(frozenset(), grace) == 1.0
+    assert grace_factor(frozenset({"x"}), grace) == 1.0
+    assert grace_factor(frozenset({"a", "x"}), grace) == 2.0
+    assert grace_factor(frozenset({"a", "b"}), grace) == 6.0
+    assert grace_factor(frozenset({"a", "b", "c"}), grace) == MAX_GRACE
+    assert graced_count([frozenset({"a"}), frozenset({"x"}), frozenset({"b", "c"})], grace) == 2
+
+
+def test_grace_names_match_by_card_key_so_case_and_the_front_face_do_not_matter() -> None:
+    decks = [peer_at(1, ["BASALT MONOLITH"]), peer_at(2, ["Fire // Ice"]), peer_at(3, ["Sol Ring"])]
+    # The keys are what a profile's names become: casefolded, the front face of a two-faced card.
+    table = weighted_shares(
+        meta_data([], decks), now=lambda: NOW, grace={"basalt monolith": 3.0, "fire": 2.0}
+    )
+    # Weights 3, 2, 1 over a mean of 2 scale to 1.5, 1, 0.5 out of three decks.
+    assert share_of(table, "Basalt Monolith").share == pytest.approx(0.5)
+    assert share_of(table, "Fire // Ice").share == pytest.approx(1 / 3)
+    assert share_of(table, "Sol Ring").share == pytest.approx(1 / 6)
+    assert table.graced == 2
+
+
+def test_meta_lists_and_decks_are_both_weighted_and_each_source_scales_on_its_own() -> None:
+    lists = [
+        entry(1, 16, 4, [("Basalt Monolith", 0), ("Mind Stone", 0)]),
+        entry(1, 16, 4, [("Mind Stone", 0), ("Fury", 0)]),
+    ]
+    decks = [peer_at(1, ["Basalt Monolith"]), peer_at(2, ["Fury"])]
+    table = weighted_shares(meta_data(lists, decks), now=lambda: NOW, grace={"basalt monolith": 3.0})
+    # Each source's weights are 3 and 1, scaled to 1.5 and 0.5 out of two.
+    basalt = share_of(table, "Basalt Monolith")
+    assert basalt.meta is not None
+    assert (basalt.meta.share, basalt.meta.count, basalt.meta.total) == (pytest.approx(0.75), 1, 2)
+    assert basalt.archidekt is not None
+    assert (basalt.archidekt.share, basalt.archidekt.count) == (pytest.approx(0.75), 1)
+    assert (basalt.share, basalt.count, basalt.total) == (pytest.approx(0.75), 2, 4)
+    assert share_of(table, "Fury").share == pytest.approx(0.25)
+    assert table.graced == 2
 
 
 def test_a_card_is_an_idea_from_a_lower_bound_of_30_percent() -> None:

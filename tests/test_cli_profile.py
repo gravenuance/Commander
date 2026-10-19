@@ -74,12 +74,28 @@ def test_profile_is_shown_and_unknown_tags_are_warned(
         "keep: categories Maybeboard",
         "ideas also from: The Gitrog Monster; Tevesh Szat, Doom of Fools + Kodama of the East Tree",
         "search decks by tag: on",
+        "grace cards: -",
         "from Archidekt:",
         "  Dwarves (deck tag): types Dwarf",
         "  Vehicles (deck tag): types Vehicle",
         "  cEDH (deck tag): how the deck plays, not a theme",
     ]
     assert "tag 'no-such-tag' is not a Tagger tag" in err
+
+
+GRACE = '[grace]\n"Basalt Monolith" = 3\n"Rings of Brighthearth" = 2.5\n'
+
+
+def test_profile_lists_its_grace_cards_with_their_factors(
+    tmp_path: Path, raw_deck: Json, own_cache: Path
+) -> None:
+    synced(tmp_path, raw_deck)
+    (deck_folder(tmp_path) / PROFILE_FILE).write_text(PROFILE + GRACE, encoding="utf-8")
+    code, out, _ = profile(["magda"], tmp_path, own_cache)
+    assert code == 0
+    assert "grace cards: Basalt Monolith \u00d73, Rings of Brighthearth \u00d72.5" in out.splitlines()
+    data = json.loads(profile(["magda", "--json"], tmp_path, own_cache)[1])
+    assert data["grace"] == {"Basalt Monolith": 3.0, "Rings of Brighthearth": 2.5}
 
 
 def test_profile_says_the_tag_search_is_off_by_default(
@@ -92,6 +108,21 @@ def test_profile_says_the_tag_search_is_off_by_default(
     assert "search decks by tag: off" in profile(["magda"], tmp_path, own_cache)[1].splitlines()
     data = json.loads(profile(["magda", "--json"], tmp_path, own_cache)[1])
     assert data["ideas"]["tagSearch"] is False
+
+
+def test_profile_flags_grace_names_that_match_no_card(
+    tmp_path: Path, raw_deck: Json, own_cache: Path
+) -> None:
+    synced(tmp_path, raw_deck)
+    grace = '[grace]\n"Battered Golem" = 3\n"Nonesuch Relic" = 4\n'
+    (deck_folder(tmp_path) / PROFILE_FILE).write_text(grace, encoding="utf-8")
+    code, out, err = profile(["magda"], tmp_path, own_cache)
+    assert code == 0
+    assert "grace cards: Battered Golem \u00d73, Nonesuch Relic \u00d74" in out.splitlines()
+    assert "cmdr: grace card 'Nonesuch Relic' is no card in the card data" in err
+    assert "'Battered Golem'" not in err
+    data = json.loads(profile(["magda", "--json"], tmp_path, own_cache)[1])
+    assert data["unknownGrace"] == ["Nonesuch Relic"]
 
 
 def test_profile_shows_the_derived_themes_it_leaves_out(

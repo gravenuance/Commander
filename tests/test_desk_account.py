@@ -2,6 +2,7 @@
 
 import logging
 import shutil
+from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -127,9 +128,9 @@ def test_signing_in_again_drops_the_shares_kept_for_the_last_account(
     computed: list[int] = []
     real = desk_module.weighted_shares
 
-    def counting(data: MetaData | None, *, now: Clock) -> ShareTable:
+    def counting(data: MetaData | None, *, now: Clock, grace: Mapping[str, float]) -> ShareTable:
         computed.append(1)
-        return real(data, now=now)
+        return real(data, now=now, grace=grace)
 
     monkeypatch.setattr(desk_module, "weighted_shares", counting)
     desk = env.desk()

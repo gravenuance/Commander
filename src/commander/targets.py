@@ -105,7 +105,7 @@ def deck_cut_rules(
     with the commander (`gather_for`), None when nothing was read.
     """
     peers = data.peers.data.decks if data is not None and data.peers.data else ()
-    shares = weighted_shares(data, now=now)
+    shares = weighted_shares(data, now=now, grace=profile.grace_by_key())
     ignored = {name.strip().casefold() for name in profile.ignore_themes}
     leanings = find_leanings(main, peers, db, ignore=ignored)
     tag_ids = db.tag_ids([*profile.themes.tags, *(leaning.tag for leaning in leanings)])

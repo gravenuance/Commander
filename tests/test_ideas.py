@@ -28,6 +28,7 @@ from commander.ideas import (
     idea_labels,
     ideas_summary,
     rejudge_ideas,
+    relabel_legacy_ideas,
     staple_ideas,
     tagged_ideas,
 )
@@ -961,3 +962,76 @@ def test_only_the_ideas_cmdr_compiled_from_a_source_fill_its_places(
     found = compile_ideas(StoredDeck(tmp_path, deck), data, db, now=lambda: NOW)
 
     assert [c.name for c in found[Origin.META]] == added
+
+
+GRACE_GOLEM = '[grace]\n"Battered Golem" = 4\n'
+
+
+def graced_folders(tmp_path: Path, grace: str) -> tuple[Path, Path]:
+    """A deck folder with no profile and one whose profile holds `grace`."""
+    plain, graced = tmp_path / "plain", tmp_path / "graced"
+    for folder in (plain, graced):
+        folder.mkdir()
+    (graced / "profile.toml").write_text(grace, encoding="utf-8")
+    return plain, graced
+
+
+def test_the_decks_grace_cards_decide_which_idea_a_source_keeps(
+    deck: Deck, db: CardDb, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ideas_module, "MAX_PER_SOURCE", 1)
+    # Ten equally weighted lists: Mind Stone in the first eight, Jeska's Will with the deck's Battered Golem
+    # in the last seven.
+    lists = [
+        entry(
+            2,
+            40,
+            8,
+            [
+                *([("Mind Stone", 0)] if i <= 8 else []),
+                *([("Jeska's Will", 0), ("Battered Golem", 0)] if i >= 4 else []),
+            ],
+        )
+        for i in range(1, 11)
+    ]
+    plain, graced = graced_folders(tmp_path, GRACE_GOLEM)
+    # Plain, Mind Stone leads with 8/10 against 7/10. The Golem lists weigh 4: 28 of 31 for Jeska's Will,
+    # 23 of 31 for Mind Stone.
+    assert [
+        c.name
+        for c in compile_ideas(StoredDeck(plain, deck), meta_data(lists), db, now=lambda: NOW)[Origin.META]
+    ] == ["Mind Stone"]
+    added = compile_ideas(StoredDeck(graced, deck), meta_data(lists), db, now=lambda: NOW)
+    assert [c.name for c in added[Origin.META]] == ["Jeska's Will"]
+
+
+def signet_lists() -> list[Entry]:
+    """Ten equally weighted lists: the first three run the Signet with the deck's Battered Golem."""
+    return [
+        entry(2, 40, 8, [("Arcane Signet", 0), ("Battered Golem", 0)] if i < 3 else [("Mind Stone", 0)])
+        for i in range(10)
+    ]
+
+
+def test_rejudging_weighs_the_lists_by_the_decks_grace_cards(deck: Deck, db: CardDb, tmp_path: Path) -> None:
+    plain, graced = graced_folders(tmp_path, '[grace]\n"Battered Golem" = 8\n')
+    for folder in (plain, graced):
+        seed(folder, deck, db, "Arcane Signet", Actor.CMDR, origin=Origin.META)
+    # Plain, 3 of 10 lists is a lower bound of about 0.11. The Golem lists weigh 8: 24 of 31, about 0.35.
+    assert judge(plain, deck, db, meta_data(signet_lists())) == ["Arcane Signet"]
+    assert judge(graced, deck, db, meta_data(signet_lists())) == []
+
+
+def test_relabelling_old_pick_ups_weighs_the_lists_by_the_decks_grace_cards(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    plain, graced = graced_folders(tmp_path, '[grace]\n"Battered Golem" = 8\n')
+    for folder in (plain, graced):
+        seed(folder, deck, db, "Arcane Signet", Actor.ARCHIDEKT)
+
+    def relabelled(folder: Path) -> list[str]:
+        found = relabel_legacy_ideas(StoredDeck(folder, deck), meta_data(signet_lists()), db, now=lambda: NOW)
+        return [card.name for card in found]
+
+    assert relabelled(plain) == []
+    assert relabelled(graced) == ["Arcane Signet"]

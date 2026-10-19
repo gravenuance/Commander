@@ -456,7 +456,7 @@ class Desk:
             infos = db.cards(card.oracle_id for card in board.cards)
             rules = with_ideas(self._deck_rules(stored, main, profile, db), infos.values(), db)
             budget = resolved_budget(stored.deck.bracket, main, profile.max_card_cents)
-            shares = self._shares(stored.deck)
+            shares = self._shares(stored)
             cards = [
                 {
                     **self._card_view(db, card),
@@ -480,6 +480,7 @@ class Desk:
             "bracket": stored.deck.bracket,
             "commanders": list(stored.deck.commanders),
             "archetype": profile.archetype,
+            "grace": _grace_json(profile, shares),
             "leanings": [leaning_json(leaning) for leaning in rules.leanings],
             "tags": list(stored.deck.tags or ()),
             "identity": identity,
@@ -705,9 +706,7 @@ class Desk:
             stored = self._stored(deck_id)
             board_card = read_board(stored.folder).find(card_id)
             found = (
-                self._shares(stored.deck).of(board_card.name)
-                if status is Status.REJECTED and board_card
-                else None
+                self._shares(stored).of(board_card.name) if status is Status.REJECTED and board_card else None
             )
             share = found.share if found is not None else None
             with self._service(deck_id) as service:
@@ -799,17 +798,23 @@ class Desk:
         if card is None or card.status is not Status.REJECTED or not card.relabellable:
             return None
         with self._db() as db:
-            labels = idea_labels(stored.deck, self._pool(stored.deck), db, self._shares(stored.deck), [card])
+            labels = idea_labels(stored.deck, self._pool(stored.deck), db, self._shares(stored), [card])
         return labels.get(card.id)
 
-    def _shares(self, deck: Deck) -> ShareTable:
+    def _shares(self, stored: StoredDeck) -> ShareTable:
         """Each card's weighted share of the lists other players run with the deck's commander, from cached
-        answers; empty without any."""
-        stamp = f"{cache_stamp(self._settings.cache)}|{self._now().date()}"
+        answers and weighted by the deck's grace cards; empty without any lists. Kept until the cached
+        answers or the deck's profile change."""
+        deck = stored.deck
+        stamp = (
+            f"{files_stamp(stored.folder, ('profile.toml',))}"
+            f"|{cache_stamp(self._settings.cache)}|{self._now().date()}"
+        )
         known = self._tables.get(deck.id)
         if known is not None and known[0] == stamp:
             return known[1]
-        table = weighted_shares(self._pool(deck), now=self._now)
+        grace = read_profile(stored.folder).grace_by_key()
+        table = weighted_shares(self._pool(deck), now=self._now, grace=grace)
         self._tables[deck.id] = (stamp, table)
         return table
 
@@ -961,6 +966,15 @@ def _group_json(group: GridGroup, colours: Mapping[str, str], shares: ShareTable
             }
             for c in group.cards
         ],
+    }
+
+
+def _grace_json(profile: Profile, shares: ShareTable) -> Json:
+    """The deck's grace cards with their factors, and how many of the lists read hold at least one."""
+    return {
+        "cards": [{"name": name, "factor": factor} for name, factor in profile.grace.items()],
+        "holding": shares.graced,
+        "lists": shares.absent.total,
     }
 
 

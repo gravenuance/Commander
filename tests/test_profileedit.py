@@ -23,6 +23,25 @@ commanders = ["The Gitrog Monster"]
 """
 
 
+def test_the_templates_grace_example_stays_valid_once_uncommented_after_the_app_saves_settings(
+    tmp_path: Path,
+) -> None:
+    save_settings(tmp_path, DECK, adjacent=[["Ygra, Eater of All"]], ignore=[], tag_search=True)
+    path = tmp_path / "profile.toml"
+    text = path.read_text(encoding="utf-8")
+    assert "# [grace]" in text
+    path.write_text(
+        "\n".join(
+            line.removeprefix("# ") if line.startswith(("# [grace]", '# "Basalt Monolith"')) else line
+            for line in text.splitlines()
+        ),
+        encoding="utf-8",
+    )
+    profile = read_profile(tmp_path)
+    assert profile.tag_search is True
+    assert profile.grace == {"Basalt Monolith": 3.0}
+
+
 def test_settings_replace_their_two_lists_and_keep_everything_else(tmp_path: Path) -> None:
     (tmp_path / "profile.toml").write_text(PROFILE, encoding="utf-8")
     pair = ["Tevesh Szat, Doom of Fools", "Kodama of the East Tree"]

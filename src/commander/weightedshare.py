@@ -5,6 +5,9 @@ Each list or deck gets a weight, recent and well placed ones more. A source's we
 of one, so each list still counts as about one vote and the weights only reorder within a source; the two
 sources then pool by their list counts. A card counts once per list.
 
+A deck can name grace cards (ADR 0039): a list holding one weighs its factor more, so the lists that play
+like the deck count for more. The factors multiply, capped at MAX_GRACE, before the weights are scaled.
+
 A card is only an idea when the lower bound of its share is high enough: the Wilson score interval, taken on
 the Kish effective sample size of the weights, so a few heavy lists count as the few they are.
 """
@@ -13,6 +16,7 @@ import math
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from types import MappingProxyType
 
 from commander.answers import card_key
 from commander.deckcache import Clock
@@ -29,6 +33,8 @@ MIN_SIZE_FACTOR = 0.25
 UNKNOWN_PERCENTILE = 0.5
 # 95% confidence, two-sided.
 WILSON_Z = 1.96
+# The most a grace card's factor, or the product of several, can multiply a list's weight by.
+MAX_GRACE = 10.0
 # A card is an idea when the Wilson lower bound of its weighted share reaches this. A backtest's best F1 was
 # at 0.32; 0.30 is within noise of it and was chosen for recall.
 IDEA_LOWER_BOUND = 0.30
@@ -64,6 +70,8 @@ class ShareTable:
     absent: WeightedShare
     # The Kish effective sample size of every list's weight; 0 when no list was read.
     effective_n: float = 0.0
+    # How many of the lists read hold at least one grace card.
+    graced: int = 0
 
     def __bool__(self) -> bool:
         return self.absent.total > 0
@@ -86,6 +94,8 @@ class ShareTable:
 # The key of no card, which no list plays.
 _NO_CARD = ""
 NO_SHARES = ShareTable({}, WeightedShare(0.0, 0, 0, None, None))
+# A deck with no grace cards.
+NO_GRACE: Mapping[str, float] = MappingProxyType({})
 
 
 def wilson_lower_bound(share: float, n: float, z: float = WILSON_Z) -> float:
@@ -124,18 +134,25 @@ def placement_weight(entry: Entry) -> float:
     return percentile * size_factor(players)
 
 
-def weighted_shares(data: MetaData | None, *, now: Clock) -> ShareTable:
+def weighted_shares(
+    data: MetaData | None, *, now: Clock, grace: Mapping[str, float] = NO_GRACE
+) -> ShareTable:
     """Each card's weighted share of the commander's lists with a decklist in the window and of its recent
-    Archidekt decks; NO_SHARES when there are none."""
+    Archidekt decks; NO_SHARES when there are none.
+
+    grace maps `card_key`s to the factor a list holding the card weighs more by (the profile's, ADR 0039).
+    """
     if data is None:
         return NO_SHARES
     moment = now()
     lists = listed_entries(data)
     peers = data.peers.data.decks if data.peers.data else ()
-    meta = _Source.of(
-        [_keys(c.name for c in e.cards) for e in lists], [_list_weight(e, moment) for e in lists]
+    held_in_lists = [_keys(c.name for c in e.cards) for e in lists]
+    held_in_decks = [_keys(p.cards) for p in peers]
+    meta = _Source.of(held_in_lists, _graced([_list_weight(e, moment) for e in lists], held_in_lists, grace))
+    archidekt = _Source.of(
+        held_in_decks, _graced([_deck_weight(p, moment) for p in peers], held_in_decks, grace)
     )
-    archidekt = _Source.of([_keys(p.cards) for p in peers], [_deck_weight(p, moment) for p in peers])
     total = meta.total + archidekt.total
     if not total:
         return NO_SHARES
@@ -153,7 +170,22 @@ def weighted_shares(data: MetaData | None, *, now: Clock) -> ShareTable:
         cards,
         WeightedShare(0.0, 0, total, meta.share_of(_NO_CARD), archidekt.share_of(_NO_CARD)),
         effective_sample_size([*meta.scaled, *archidekt.scaled]),
+        graced_count([*held_in_lists, *held_in_decks], grace),
     )
+
+
+def grace_factor(held: Iterable[str], grace: Mapping[str, float]) -> float:
+    """The product of the grace factors of the cards (by `card_key`) a list holds, at most MAX_GRACE; 1 when
+    it holds none."""
+    factor = 1.0
+    for key in held:
+        factor *= grace.get(key, 1.0)
+    return min(factor, MAX_GRACE)
+
+
+def graced_count(held: Iterable[frozenset[str]], grace: Mapping[str, float]) -> int:
+    """How many of the lists hold at least one grace card."""
+    return sum(1 for keys in held if not keys.isdisjoint(grace))
 
 
 def list_age_days(entry: Entry, moment: datetime) -> int:
@@ -165,6 +197,12 @@ def event_weight(entry: Entry, moment: datetime) -> float:
     """A list's weight without its placing: half per HALF_LIFE_DAYS since its tournament, times the event's
     size factor."""
     return recency_weight(list_age_days(entry, moment)) * size_factor(entry.tournament.size)
+
+
+def _graced(
+    weights: Sequence[float], held: Sequence[frozenset[str]], grace: Mapping[str, float]
+) -> list[float]:
+    return [w * grace_factor(keys, grace) for w, keys in zip(weights, held, strict=True)]
 
 
 def _list_weight(entry: Entry, moment: datetime) -> float:
