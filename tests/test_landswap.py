@@ -2,14 +2,17 @@
 
 from dataclasses import replace
 
+import pytest
+
 from commander.board import ReplaceOption
 from commander.carddb import CardDb, ResolvedCard, Role
 from commander.landswap import ManaGuard, comparison_lists, mana_guard
 from commander.models import Deck
-from commander.targets import CutRules, TargetSource, role_targets, targets_for, with_ideas
+from commander.peercounts import PeerCounts
+from commander.targets import MAX_TARGETS, CutRules, TargetSource, role_targets, targets_for, with_ideas
 from test_manabase import ISLAND, LEADER, PLAINS, by_name, card, deck_of
 from test_meta import TOP_CUT_LISTS, db, deck, meta_data, peer
-from test_targets import board_card, info, names
+from test_targets import board_card, info, names, table
 from test_targets import card as resolved
 
 __all__ = ["db", "deck"]  # fixtures shared with test_meta
@@ -23,16 +26,26 @@ GUILDGATE = card(
     text="This land enters tapped.\n{T}: Add {W} or {U}.",
     produced="WU",
 )
-CARDS = by_name(LEADER, PLAINS, ISLAND, FILLER, COUNTERSPELL, WASTES, GUILDGATE)
+GADGET = card("Gadget", "{2}", 2, "Artifact")
+CARDS = by_name(LEADER, PLAINS, ISLAND, FILLER, COUNTERSPELL, WASTES, GUILDGATE, GADGET)
 
 
-def guard(plains: int, islands: int, spells: int, land_range: tuple[float, float] | None = None) -> ManaGuard:
+def guard(
+    plains: int,
+    islands: int,
+    spells: int,
+    land_range: tuple[float, float] | None = None,
+    land_median: float | None = None,
+) -> ManaGuard:
     """A white and blue deck of one gold commander, lands and two-mana filler.
 
     Karsten asks 37.7 lands of it, and 17.2 to 17.7 sources of each colour for the commander, by the count.
     """
     return ManaGuard.of(
-        deck_of(("Plains", plains), ("Island", islands), ("Filler", spells)), CARDS, land_range=land_range
+        deck_of(("Plains", plains), ("Island", islands), ("Filler", spells)),
+        CARDS,
+        land_range=land_range,
+        land_median=land_median,
     )
 
 
@@ -128,10 +141,13 @@ def test_the_guard_of_a_deck_takes_its_land_range_from_at_least_three_lists_comp
     runs = [replace(peer(n, ["Battered Golem", "Mountain"]), multiples=(("Mountain", m),)) for n, m in LANDS]
     below_five = replace(deck, bracket=3)
     assert mana_guard(below_five, db, meta_data([], runs)).land_range == (36.0, 38.0)
+    assert mana_guard(below_five, db, meta_data([], runs)).land_median == 37.0
     # A range of one or two lists is no range to go by.
     assert mana_guard(below_five, db, meta_data([], runs[:2])).land_range is None
+    assert mana_guard(below_five, db, meta_data([], runs[:2])).land_median is None
     assert mana_guard(below_five, db, meta_data([], runs[:1])).land_range is None
     assert mana_guard(deck, db, None).land_range is None
+    assert mana_guard(deck, db, None).land_median is None
 
 
 LANDS = [(1, 36), (2, 38), (3, 37)]
@@ -184,3 +200,215 @@ def test_the_rules_learn_the_mana_of_the_ideas_they_are_given(db: CardDb) -> Non
     known = with_ideas(target_rules(mana), [info("Mountain", type_line="Basic Land — Mountain")], db).mana
     assert known is not None
     assert "mountain" in known.cards
+
+
+def test_the_lands_a_deck_could_lose_go_down_to_karstens_count_less_the_tolerance() -> None:
+    # Karsten's 37.7 less a tolerance of one is 36.7: 37 lands can lose none, 38 one, 39 two, 41 four.
+    assert guard(19, 18, 62).spare_lands() == 0
+    assert guard(19, 19, 61).spare_lands() == 1
+    assert guard(20, 19, 60).spare_lands() == 2
+    assert guard(21, 20, 58).spare_lands() == 4
+
+
+def test_the_lands_a_deck_could_lose_stop_at_the_peers_median_when_that_is_higher() -> None:
+    # 39 lands. A median of 37 lands is above 36.7 and still leaves two; 38 leaves one; 39 none.
+    assert guard(20, 19, 60, land_median=37.0).spare_lands() == 2
+    assert guard(20, 19, 60, land_median=38.0).spare_lands() == 1
+    assert guard(20, 19, 60, land_median=38.5).spare_lands() == 0
+    assert guard(20, 19, 60, land_median=39.0).spare_lands() == 0
+    # A median under Karsten's count less the tolerance lowers nothing, and a deck under it has none to spare.
+    assert guard(20, 19, 60, land_median=34.0).spare_lands() == 2
+    assert guard(19, 18, 62, land_median=30.0).spare_lands() == 0
+
+
+def test_the_peer_ranges_low_end_is_no_floor_for_spare_lands() -> None:
+    # Peers running 34 to 41 lands once let 38 lose four; now only Karsten's floor counts.
+    assert guard(19, 19, 61, land_range=(34, 41)).spare_lands() == 1
+
+
+def test_the_sources_a_colour_could_lose_are_what_its_most_demanding_spell_leaves() -> None:
+    # 39 lands scale the commander's 18 sources to 17.1 and add one for its two colours: 18.1.
+    base = guard(20, 19, 60)
+    assert base.spare_sources("Plains") == pytest.approx(1.9)
+    assert base.spare_sources("Island") == pytest.approx(0.9)
+    # A land making both colours has the least of them to spare.
+    assert base.spare_sources("Azorius Guildgate") == pytest.approx(0.9)
+    # A land making no colour, or one the data does not know, has none to speak of.
+    assert base.spare_sources("Wastes") is None
+    assert base.spare_sources("Mystery Land") is None
+
+
+GADGET_IDEA = info("Gadget", type_line="Artifact")
+NONBASIC = resolved("Azorius Guildgate", rank=2000, categories=("Land",), type_line="Land — Gate")
+
+
+def land_rules(mana: ManaGuard, played: dict[str, float], idea: str = "gadget") -> CutRules:
+    """The idea at 50% of the lists and the named cards as given; unnamed ones no list plays."""
+    return CutRules((), table({idea: 0.5, **played}), mana=mana, peers=PeerCounts({}, {}))
+
+
+def test_a_spare_land_may_go_for_a_spell_and_only_the_basic_with_most_sources_to_spare_is_offered() -> None:
+    # 39 lands can lose two. White has 1.9 sources to spare, blue 0.9: of the two basics, the Plains.
+    found = role_targets(GADGET_IDEA, deck_cards(), land_rules(guard(20, 19, 60), {"filler": 0.3}))
+    assert names(found) == ["Filler", "Plains"]
+    assert found[1].reason.startswith("spare land: the mana base holds with 2 fewer lands; in 0% of")
+    flipped = role_targets(GADGET_IDEA, deck_cards(), land_rules(guard(19, 20, 60), {"filler": 0.3}))
+    assert names(flipped) == ["Filler", "Island"]
+
+
+def test_a_land_target_scores_per_spare_land_against_the_other_candidates() -> None:
+    # Filler: 0.10 + 0.5 - 0.49 = 0.11. Plains with two spare lands: 0.06, with four: 0.12.
+    two = land_rules(guard(20, 19, 60), {"filler": 0.49})
+    assert names(role_targets(GADGET_IDEA, deck_cards(), two)) == ["Filler", "Plains"]
+    four = land_rules(guard(21, 20, 58), {"filler": 0.49})
+    assert names(role_targets(GADGET_IDEA, deck_cards(), four)) == ["Plains", "Filler"]
+
+
+def test_a_single_spare_land_reads_in_the_singular_and_a_card_as_played_as_the_idea_is_no_target() -> None:
+    found = role_targets(GADGET_IDEA, deck_cards(), land_rules(guard(20, 18, 61), {"filler": 0.5}))
+    assert names(found) == ["Plains"]
+    assert found[0].reason.startswith("spare land: the mana base holds with 1 fewer land;")
+
+
+def test_a_nonbasic_land_less_played_than_the_idea_adds_its_gap_to_the_score() -> None:
+    cards = [*deck_cards(), NONBASIC]
+    mana = ManaGuard.of(
+        deck_of(("Plains", 20), ("Island", 18), ("Azorius Guildgate", 1), ("Filler", 60)), CARDS
+    )
+    # 39 lands can lose two. Guildgate at 20%: 0.06 + 0.3, ahead of Filler's 0.10 + 0.2 and the Plains' 0.06.
+    found = role_targets(GADGET_IDEA, cards, land_rules(mana, {"filler": 0.3, "azorius guildgate": 0.2}))
+    assert names(found) == ["Azorius Guildgate", "Filler", "Plains"]
+    assert found[0].reason.startswith("spare land: the mana base holds with 2 fewer lands;")
+    # As played as the idea it is not offered, though a basic still is.
+    level = land_rules(mana, {"filler": 0.3, "azorius guildgate": 0.5})
+    assert names(role_targets(GADGET_IDEA, cards, level)) == ["Filler", "Plains"]
+
+
+@pytest.mark.parametrize(
+    ("roles", "categories", "themes"),
+    [
+        ((Role.RECURSION,), ("Land",), frozenset[str]()),
+        ((Role.EXTRA_TURN,), ("Land",), frozenset[str]()),
+        ((), ("Land", "Ramp"), frozenset[str]()),
+        ((), ("Land",), frozenset({"Gates"})),
+    ],
+    ids=["role tag", "role outside the analysed ones", "role by category", "theme"],
+)
+def test_a_nonbasic_land_with_a_role_or_a_theme_is_never_a_spare_land(
+    roles: tuple[Role, ...], categories: tuple[str, ...], themes: frozenset[str]
+) -> None:
+    utility = resolved("Azorius Guildgate", roles, rank=2000, categories=categories, type_line="Land — Gate")
+    mana = ManaGuard.of(
+        deck_of(("Plains", 20), ("Island", 18), ("Azorius Guildgate", 1), ("Filler", 60)), CARDS
+    )
+    rules = replace(
+        land_rules(mana, {"filler": 0.3, "azorius guildgate": 0.2}),
+        themes={"azorius guildgate": themes},
+    )
+    assert names(role_targets(GADGET_IDEA, [*deck_cards(), utility], rules)) == ["Filler", "Plains"]
+
+
+VESUVA = "You may have this land enter tapped as a copy of any land on the battlefield."
+COMMAND_TOWER = "{T}: Add one mana of any color in your commander's color identity."
+FIELD_OF_THE_DEAD = (
+    "This land enters tapped.\n{T}: Add {C}.\nWhenever this land or another land you control enters, if you "
+    "control seven or more lands with different names, create a 2/2 black Zombie creature token."
+)
+
+
+@pytest.mark.parametrize(
+    ("name", "text", "produced", "offered"),
+    [
+        ("Vesuva", VESUVA, "", False),
+        ("Field of the Dead", FIELD_OF_THE_DEAD, "C", False),
+        ("Command Tower", COMMAND_TOWER, "WUBRG", True),
+    ],
+)
+def test_only_a_land_that_does_nothing_but_make_mana_is_a_spare_land(
+    name: str, text: str, produced: str, *, offered: bool
+) -> None:
+    land = card(name, type_line="Land", text=text, produced=produced)
+    mana = ManaGuard.of(
+        deck_of(("Plains", 20), ("Island", 18), (name, 1), ("Filler", 60)), {**CARDS, name.casefold(): land}
+    )
+    cut = resolved(name, rank=2000, categories=("Land",), type_line="Land")
+    rules = land_rules(mana, {"filler": 0.3, name.casefold(): 0.2})
+    assert (name in names(role_targets(GADGET_IDEA, [*deck_cards(), cut], rules))) is offered
+
+
+def test_no_land_is_offered_when_the_mana_base_has_none_to_spare() -> None:
+    # 37 lands cannot lose one.
+    rules = land_rules(guard(19, 18, 62), {"filler": 0.3})
+    assert names(role_targets(GADGET_IDEA, deck_cards(), rules)) == ["Filler"]
+
+
+def test_no_land_is_offered_when_the_guard_refuses_the_swap_itself() -> None:
+    # 38 lands can lose one, but Counterspell wants about 28 blue sources and the deck has 18.
+    mana = guard(20, 18, 61)
+    assert mana.spare_lands() == 1
+    rules = land_rules(mana, {"filler": 0.3}, idea="counterspell")
+    assert names(role_targets(info("Counterspell", type_line="Instant"), deck_cards(), rules)) == ["Filler"]
+
+
+def test_a_land_idea_never_gets_the_spare_land_cuts_of_a_spell() -> None:
+    rules = land_rules(guard(20, 19, 60), {"plains": 0.1, "island": 0.2}, idea="wastes")
+    # Wastes makes no colour, so only the Plains can go: blue is down to 18 of the 18.1 it needs.
+    assert names(role_targets(info("Wastes", type_line="Land"), deck_cards(), rules)) == ["Plains"]
+
+
+def test_land_targets_need_the_shares_the_peers_and_the_mana_data() -> None:
+    mana = guard(20, 19, 60)
+    full = land_rules(mana, {"filler": 0.3})
+    assert names(role_targets(GADGET_IDEA, deck_cards(), full)) == ["Filler", "Plains"]
+    for lacking in (replace(full, shares=None), replace(full, peers=None), replace(full, mana=None)):
+        assert names(role_targets(GADGET_IDEA, deck_cards(), lacking)) == ["Filler"]
+    # A guard that knows none of the cards refuses every swap of a land.
+    assert names(role_targets(GADGET_IDEA, deck_cards(), replace(full, mana=replace(mana, cards={})))) == [
+        "Filler"
+    ]
+
+
+def test_a_kept_land_is_never_a_spare_land_cut() -> None:
+    rules = replace(land_rules(guard(20, 19, 60), {"filler": 0.3}), protected={"plains"})
+    assert names(role_targets(GADGET_IDEA, deck_cards(), rules)) == ["Filler", "Island"]
+
+
+def test_at_most_four_targets_are_offered_by_score_with_the_lands_among_them() -> None:
+    extras = [resolved(f"Extra {n}", rank=500 + n, type_line="Artifact") for n in range(1, 5)]
+    found = role_targets(
+        GADGET_IDEA, [*deck_cards(), *extras], land_rules(guard(20, 19, 60), {"filler": 0.4})
+    )
+    # Each extra scores 0.10 + 0.5; Filler 0.10 + 0.1 and the Plains 0.06 fall behind.
+    assert MAX_TARGETS == 4
+    assert sorted(names(found)) == ["Extra 1", "Extra 2", "Extra 3", "Extra 4"]
+
+
+def test_a_basic_land_needs_no_gap_to_the_idea_so_a_well_played_basic_is_still_offered() -> None:
+    # Basics are in nearly every list; the Plains at 90% is more played than the idea at 50%.
+    rules = land_rules(guard(20, 19, 60), {"filler": 0.3, "plains": 0.9})
+    assert names(role_targets(GADGET_IDEA, deck_cards(), rules)) == ["Filler", "Plains"]
+
+
+def test_only_the_basic_of_the_colour_with_most_to_spare_is_considered_so_a_refusal_offers_no_other(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def refuse_plains(self: ManaGuard, add: str, cut: str) -> bool:  # noqa: ARG001 — replaces a method
+        return cut != "Plains"
+
+    monkeypatch.setattr(ManaGuard, "allows", refuse_plains)
+    # White has the most to spare (1.9 against 0.9), the guard refuses its Plains, and the Island stays out.
+    rules = land_rules(guard(20, 19, 60), {"filler": 0.3})
+    assert names(role_targets(GADGET_IDEA, deck_cards(), rules)) == ["Filler"]
+
+
+def test_a_land_count_with_a_part_land_counts_the_whole_lands_above_the_floor() -> None:
+    # 38 lands and a land/spell card as 0.38 of a land make 38.38; the floor is Karsten's 37.7 less one.
+    base = guard(19, 19, 61)
+
+    def spare(lands: float) -> int:
+        return replace(base, lands=replace(base.lands, lands=lands)).spare_lands()
+
+    assert spare(38.38) == 1
+    assert spare(38.69) == 1
+    assert spare(38.7) == 2
+    assert spare(36.69) == 0

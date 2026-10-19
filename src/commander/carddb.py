@@ -218,6 +218,11 @@ def back_is_land(type_line: str) -> bool:
     return len(faces) > 1 and "Land" in faces[-1].split() and "Land" not in faces[0].split()
 
 
+def has_nonland_face(type_line: str) -> bool:
+    """A land with a spell or artifact half (Midgar's Adventure, Balamb Garden's vehicle back)."""
+    return any("Land" not in face.split() for face in type_line.split(_NAME_FACE_SEPARATOR))
+
+
 @dataclass(slots=True, frozen=True)
 class CardInfo:
     """Facts shared by every printing of a card."""

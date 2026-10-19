@@ -1,7 +1,9 @@
 """What a deck plays far more of than recent decks with its commander, and how that steers cuts."""
 
 import json
+import logging
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -15,6 +17,7 @@ from commander.leanings import Leaning, find_leanings
 from commander.metadata import MetaData, PeerList, PeerLists
 from commander.models import Deck, DeckCard
 from commander.peercounts import RoleBand
+from commander.spellbook import ComboDetail, ComboPiece
 from commander.targets import deck_cut_rules, role_targets, with_ideas
 from conftest import ANCIENT_TOMB, build_card_db
 
@@ -197,6 +200,39 @@ def test_a_profile_word_a_deck_tag_names_too_is_one_theme_under_the_deck_tag(db:
     rules = deck_cut_rules(deck, resolved(db, cards), profile, db, None, now=lambda: NOW)
     idea = db.cards_named(["Filler Card 21"])["filler card 21"]
     assert with_ideas(rules, [idea], db).themes[idea.oracle_id] == frozenset({"Reanimate"})
+
+
+def test_the_pieces_of_a_combo_inside_the_deck_are_never_cut(db: CardDb) -> None:
+    cards = deck_cards(50, 51)
+    deck = Deck(1, "test", "me", 3, "2026-10-16", tuple(cards))
+    main = resolved(db, cards)
+    # Spellbook names its pieces in its own case; the combo's other piece is not in the deck.
+    pieces = (ComboPiece("filler card 50", "Creature", ("B",)), ComboPiece("Elsewhere", "Artifact", ("B",)))
+    combo = ComboDetail("1-2", pieces, (), ("Infinite mana",), "")
+    data = replace(pool(), own_combos=Answer((combo,), AnswerSource.FETCHED, None, None))
+    protected = deck_cut_rules(deck, main, Profile(), db, data, now=lambda: NOW).protected
+    by_name = {r.card.name: r.info.oracle_id for r in main if r.info}
+    assert set(protected) == {by_name["Filler Card 50"]}
+    assert not deck_cut_rules(deck, main, Profile(), db, pool(), now=lambda: NOW).protected
+
+
+def test_a_deck_without_spellbooks_combo_answer_logs_that_its_combo_pieces_are_not_protected(
+    db: CardDb, caplog: pytest.LogCaptureFixture
+) -> None:
+    cards = deck_cards(50, 51)
+    deck = Deck(1, "test", "me", 3, "2026-10-16", tuple(cards))
+    main = resolved(db, cards)
+    with caplog.at_level(logging.INFO, logger="commander.targets"):
+        deck_cut_rules(deck, main, Profile(), db, pool(), now=lambda: NOW)
+    [record] = [r for r in caplog.records if "combo" in r.getMessage()]
+    assert record.levelno == logging.INFO
+    assert "test" in record.getMessage()
+    caplog.clear()
+    combo = ComboDetail("1-2", (ComboPiece("Elsewhere", "Artifact", ("B",)),), (), ("Infinite mana",), "")
+    data = replace(pool(), own_combos=Answer((combo,), AnswerSource.FETCHED, None, None))
+    with caplog.at_level(logging.INFO, logger="commander.targets"):
+        deck_cut_rules(deck, main, Profile(), db, data, now=lambda: NOW)
+    assert not [r for r in caplog.records if "combo" in r.getMessage()]
 
 
 def test_below_bracket_5_the_cuts_rank_by_the_share_of_recent_decks_weighted_by_age(db: CardDb) -> None:

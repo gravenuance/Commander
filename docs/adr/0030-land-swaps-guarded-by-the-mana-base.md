@@ -1,6 +1,7 @@
 # 0030: A land swap must leave the mana base sound
 
-**Status:** Accepted · **Date:** 2026-10-18
+**Status:** Accepted · **Date:** 2026-10-18 · Amended in part by
+[ADR 0036](0036-surplus-cuts-on-one-score.md) (a nonland idea may replace a spare land)
 
 ## Context
 

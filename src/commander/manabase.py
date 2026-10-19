@@ -13,7 +13,15 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from statistics import median
 
-from commander.carddb import COLORS, FACE_SEPARATOR, CardMana, back_is_land, front_face, front_type
+from commander.carddb import (
+    COLORS,
+    FACE_SEPARATOR,
+    CardMana,
+    back_is_land,
+    front_face,
+    front_type,
+    has_nonland_face,
+)
 from commander.models import Deck
 
 # Karsten's 99-card table: sources needed for a spell of mana value M with N pips of one colour, keyed
@@ -62,6 +70,29 @@ _SOMETIMES_TAPPED = ("unless", "if you control", "if you don't", "untap that lan
 # Check lands and reveal lands: untapped given a land of the basic types they name.
 _TYPED_CONDITION = ("unless you control a", "you may reveal a")
 _TYPE_WORD = re.compile(r"\b(plains|island|swamp|mountain|forest)\b")
+# What a land that does nothing but make mana may say, a line at a time (see `mana_only_land`). A mana
+# ability: a tap cost and perhaps others (a life payment, a filter land's mana), then "Add", and a painland's
+# damage to its controller.
+_COST = r"(?:\{[^}]+\}|pay \d+ life)"
+_MANA_ABILITY = re.compile(
+    rf"{_COST}(?:, {_COST})*: add [^.]+\.(?: this (?:land|permanent) deals \d+ damage to you\.)?"
+)
+# Enters tapped, unconditionally or unless a condition holds (check, fast, slow and similar lands).
+_ENTERS_TAPPED = re.compile(r"this (?:land|permanent) enters (?:the battlefield )?tapped(?: unless [^.]+)?\.")
+# Reveal lands and shock lands: a choice as the land enters, tapped when it is not made.
+_ENTERS_BY_CHOICE = re.compile(
+    r"as this (?:land|permanent) enters, you may (?:reveal [^.]+|pay \d+ life)\."
+    r" if you don't, (?:it|this land) enters (?:the battlefield )?tapped\."
+)
+_REMINDER_TEXT = re.compile(r"\([^)]*\)")
+# A mana ability whose amount varies or is chosen ("for each", "equal to", X): more than one mana.
+_VARIABLE_MANA = re.compile(
+    r"for each|equal to|amount of mana|that much|twice|additional mana|\bx mana|\{x\}"
+)
+# Mana symbols side by side after "add" ({C}{C}, {R}{G}): two or more mana from one ability.
+_SEVERAL_PIPS_ADDED = re.compile(r"add [^.]*\{[^}]+\}\{[^}]+\}")
+# A cost of mana beyond the tap: a filter land then turns one mana into two, a net gain of one.
+_MANA_PAID = re.compile(r"\{(?!t\})[^}]+\}")
 # Cavern of Souls and its kind: their coloured mana casts only some spells.
 RESTRICTED = "spend this mana only"
 _PIP = re.compile(r"\{([^}]+)\}")
@@ -389,6 +420,37 @@ def tapped_share(text: str, lands: DeckLands) -> float:
     if types and any(phrase in text for phrase in _TYPED_CONDITION):
         return lands.missed(types)
     return CONDITIONAL_TAPPED
+
+
+def mana_only_land(info: CardMana) -> bool:
+    """Whether the land's front face does nothing but make mana and perhaps enter tapped: every line of its
+    text, reminder text in parentheses left out, is a one-mana ability, an enters-tapped line or empty.
+
+    A fetch land, a copy land, a man-land, Field of the Dead, a bounce land, a land with cycling or any
+    other ability, and a land that can make more than one mana (Ancient Tomb, Gaea's Cradle, Cabal Coffers,
+    Nykthos, Urza's Tower) are utility lands. A land with a spell half (an Adventure) is a
+    utility land too, and one with no oracle text is not known, so not mana-only.
+    """
+    if not info.oracle_text.strip() or has_nonland_face(info.type_line):
+        return False
+    front = info.oracle_text.split(FACE_SEPARATOR)[0].casefold()
+    lines = (line.strip() for line in _REMINDER_TEXT.sub("", front).splitlines())
+    return all(
+        not line
+        or (
+            any(p.fullmatch(line) for p in (_MANA_ABILITY, _ENTERS_TAPPED, _ENTERS_BY_CHOICE))
+            and not _makes_several_mana(line)
+        )
+        for line in lines
+    )
+
+
+def _makes_several_mana(line: str) -> bool:
+    """Whether the mana ability can make more than one mana, a filter land's two for one paid aside."""
+    if _VARIABLE_MANA.search(line):
+        return True
+    cost, _, effect = line.partition(":")
+    return not _MANA_PAID.search(cost) and _SEVERAL_PIPS_ADDED.search(effect) is not None
 
 
 def mostly_untapped(tapped: float) -> bool:

@@ -2,7 +2,8 @@
 
 **Status:** Accepted · **Date:** 2026-10-18 · Replaces the targets in
 [ADR 0011](0011-app-deck-grid-and-replacement-targets.md) and the targets of
-[ADR 0016](0016-replacements-like-for-like.md)
+[ADR 0016](0016-replacements-like-for-like.md) ·
+Amended in part by [ADR 0036](0036-surplus-cuts-on-one-score.md) (one score, four targets, median gate)
 
 ## Context
 

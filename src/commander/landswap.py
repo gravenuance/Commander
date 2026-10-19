@@ -2,15 +2,24 @@
 
 A cut target or an idea that is a land is allowed only while the land count ends within LAND_TOLERANCE of
 Karsten's count for the deck, closer to it than before, or inside the range of three or more lists compared
-with, and every colour keeps the sources its spells need (ADR 0030).
+with, and every colour keeps the sources its spells need (ADR 0030). The guard also counts the lands and
+colour sources a deck has to spare, for the land cuts of nonland ideas (ADR 0036).
 """
 
 import logging
+import math
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 
 from commander.carddb import CardDb, CardMana
-from commander.manabase import ALTERNATIVE_COST_TAGS, LandCount, ManaBase, analyse_mana, info_is_land
+from commander.manabase import (
+    ALTERNATIVE_COST_TAGS,
+    LandCount,
+    ManaBase,
+    analyse_mana,
+    info_is_land,
+    mana_only_land,
+)
 from commander.manaplan import LAND_TOLERANCE, deck_with_counts
 from commander.meta import MIN_PEER_LISTS, performing_entries
 from commander.metadata import CEDH_BRACKET, MetaData
@@ -57,8 +66,13 @@ class ManaGuard:
     land_range: tuple[float, float] | None
     # The sources each card short of them has now, by colour: a swap may not add to these nor lower them.
     short: Mapping[_Need, float]
-    # How far the deck's land count is from Karsten's now.
-    lands_off: float
+    # The median land count of the compared lists; None without MIN_PEER_LISTS of them.
+    land_median: float | None
+    # The deck's land count and Karsten's now.
+    lands: LandCount
+    # How many sources each colour has beyond what its most demanding spell needs; the colour's lands when
+    # no spell needs it.
+    slack: Mapping[str, float]
 
     @staticmethod
     def of(
@@ -67,10 +81,20 @@ class ManaGuard:
         *,
         alternative_cost: Iterable[str] = (),
         land_range: tuple[float, float] | None = None,
+        land_median: float | None = None,
     ) -> "ManaGuard":
         alternative = frozenset(name.casefold() for name in alternative_cost)
         report = analyse_mana(deck, cards, alternative_cost=alternative)
-        return ManaGuard(deck, cards, alternative, land_range, _shortfalls(report), _lands_off(report.lands))
+        return ManaGuard(
+            deck,
+            cards,
+            alternative,
+            land_range,
+            _shortfalls(report),
+            land_median,
+            report.lands,
+            _slack(report),
+        )
 
     def with_cards(self, cards: Mapping[str, CardMana]) -> "ManaGuard":
         """The guard knowing these cards too, such as the ideas a swap may bring in."""
@@ -91,9 +115,33 @@ class ManaGuard:
         moves_count = info_is_land(added) != info_is_land(cut_card)
         return (not moves_count or self._count_holds(after.lands)) and self._sources_hold(after)
 
+    def spare_lands(self) -> int:
+        """How many lands the deck could lose before it falls below its floor: the greater of Karsten's count
+        less LAND_TOLERANCE and the compared lists' median land count (Karsten's alone without enough lists).
+
+        Worked out on the deck as it stands, with Karsten's count kept; `allows` then judges the real swap.
+        The compared lists' lowest count is no floor: it is the least anyone runs, not what to aim for.
+        """
+        floor = self.lands.suggested - LAND_TOLERANCE
+        if self.land_median is not None:
+            floor = max(floor, self.land_median)
+        return max(math.floor(round(self.lands.lands - floor, 2)), 0)
+
+    def spare_sources(self, land: str) -> float | None:
+        """How many sources the colours the land makes could lose, the least of them; None when the land's
+        mana is unknown or it makes no colour the deck uses."""
+        info = self.cards.get(land.casefold())
+        made = [self.slack[colour] for colour in info.produced if colour in self.slack] if info else []
+        return min(made) if made else None
+
+    def mana_only(self, land: str) -> bool:
+        """Whether the land does nothing but make mana (`mana_only_land`); False when its text is unknown."""
+        info = self.cards.get(land.casefold())
+        return info is not None and mana_only_land(info)
+
     def _count_holds(self, lands: LandCount) -> bool:
-        off = _lands_off(lands)
-        if off <= LAND_TOLERANCE or off < self.lands_off:
+        off = abs(_lands_over(lands))
+        if off <= LAND_TOLERANCE or off < abs(_lands_over(self.lands)):
             return True
         return self.land_range is not None and self.land_range[0] <= lands.lands <= self.land_range[1]
 
@@ -123,23 +171,31 @@ def mana_guard(deck: Deck, db: CardDb, data: MetaData | None) -> ManaGuard:
     )
     compared = report.comparison
     # A range of fewer than MIN_PEER_LISTS lists is too narrow to go by; Karsten's count stands instead.
-    land_range = (
-        (compared.lands_low, compared.lands_high)
-        if compared is not None and compared.lists >= MIN_PEER_LISTS
-        else None
-    )
+    enough = compared is not None and compared.lists >= MIN_PEER_LISTS
+    land_range = (compared.lands_low, compared.lands_high) if compared is not None and enough else None
+    land_median = compared.lands if compared is not None and enough else None
     return ManaGuard(
         deck,
         cards,
         frozenset(name.casefold() for name in alternative),
         land_range,
         _shortfalls(report),
-        _lands_off(report.lands),
+        land_median,
+        report.lands,
+        _slack(report),
     )
 
 
-def _lands_off(lands: LandCount) -> float:
-    return abs(round(lands.suggested - lands.lands, 2))
+def _lands_over(lands: LandCount) -> float:
+    """How many lands the deck runs over Karsten's count; negative when under."""
+    return round(lands.lands - lands.suggested, 2)
+
+
+def _slack(report: ManaBase) -> dict[str, float]:
+    return {
+        colour.colour: min((need.have - need.needed for need in colour.needs), default=colour.lands)
+        for colour in report.colours
+    }
 
 
 def _shortfalls(report: ManaBase) -> dict[_Need, float]:

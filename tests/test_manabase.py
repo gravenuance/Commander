@@ -8,6 +8,7 @@ from commander.manabase import (
     cheap_draw,
     cheap_ramp,
     land_count,
+    mana_only_land,
     needed_sources,
 )
 from commander.models import Deck, DeckCard
@@ -239,3 +240,113 @@ def test_cards_with_only_hybrid_or_phyrexian_pips_are_listed_as_not_counted() ->
     report = analyse_mana(deck, by_name(LEADER, PLAINS, hybrid, phyrexian, mixed))
     assert report.skipped == ("Boros Charm Twin", "Gut Shot Twin")
     assert any(need.card == "Mixed Bag" for colour in report.colours for need in colour.needs)
+
+
+def oracle(*lines: str) -> str:
+    return "\n".join(lines)
+
+
+# Oracle texts as Scryfall's bulk data has them (this land for the card's name).
+MANA_ONLY = {
+    "Overgrown Tomb": oracle(
+        "({T}: Add {B} or {G}.)", "As this land enters, you may pay 2 life. If you don't, it enters tapped."
+    ),
+    "Woodland Cemetery": oracle(
+        "This land enters tapped unless you control a Swamp or a Forest.", "{T}: Add {B} or {G}."
+    ),
+    "Llanowar Wastes": oracle("{T}: Add {C}.", "{T}: Add {B} or {G}. This land deals 1 damage to you."),
+    "Command Tower": oracle("{T}: Add one mana of any color in your commander's color identity."),
+    "Exotic Orchard": oracle(
+        "{T}: Add one mana of any color that a land an opponent controls could produce."
+    ),
+    "Branchloft Pathway // Boulderloft Pathway": oracle("{T}: Add {G}.", "//", "{T}: Add {W}."),
+    "Port Town": oracle(
+        "As this land enters, you may reveal a Plains or Island card from your hand. If you don't, this land enters tapped.",  # noqa: E501 — an oracle text
+        "{T}: Add {W} or {U}.",
+    ),
+    "Underground Sea": oracle("({T}: Add {U} or {B}.)"),
+    "Azorius Guildgate": oracle("This land enters tapped.", "{T}: Add {W} or {U}."),
+    # A filter land turns one mana into two, so it nets one.
+    "Graven Cairns": oracle("{T}: Add {C}.", "{B/R}, {T}: Add {B}{B}, {B}{R}, or {R}{R}."),
+    "Sungrass Prairie": oracle("{1}, {T}: Add {G}{W}."),
+}
+UTILITY = {
+    "Vesuva": oracle("You may have this land enter tapped as a copy of any land on the battlefield."),
+    "Field of the Dead": oracle(
+        "This land enters tapped.",
+        "{T}: Add {C}.",
+        "Whenever this land or another land you control enters, if you control seven or more lands with different names, create a 2/2 black Zombie creature token.",  # noqa: E501 — an oracle text
+    ),
+    "Mirrorpool": oracle(
+        "This land enters tapped.",
+        "{T}: Add {C}.",
+        "{2}{C}, {T}, Sacrifice this land: Copy target instant or sorcery spell you control. You may choose new targets for the copy.",  # noqa: E501 — an oracle text
+        "{4}{C}, {T}, Sacrifice this land: Create a token that's a copy of target creature you control.",
+    ),
+    "Verdant Catacombs": oracle(
+        "{T}, Pay 1 life, Sacrifice this land: Search your library for a Swamp or Forest card, put it onto the battlefield, then shuffle."  # noqa: E501 — an oracle text
+    ),
+    "Mishra's Factory": oracle(
+        "{T}: Add {C}.",
+        "{1}: This land becomes a 2/2 Assembly-Worker artifact creature until end of turn. It's still a land.",  # noqa: E501 — an oracle text
+        "{T}: Target Assembly-Worker creature gets +1/+1 until end of turn.",
+    ),
+    "Tranquil Thicket": oracle(
+        "This land enters tapped.", "{T}: Add {G}.", "Cycling {G} ({G}, Discard this card: Draw a card.)"
+    ),
+    "Gruul Turf": oracle(
+        "This land enters tapped.",
+        "When this land enters, return a land you control to its owner's hand.",
+        "{T}: Add {R}{G}.",
+    ),
+    "Evolving Wilds": oracle(
+        "{T}, Sacrifice this land: Search your library for a basic land card, put it onto the battlefield tapped, then shuffle."  # noqa: E501 — an oracle text
+    ),
+    "Cavern of Souls": oracle(
+        "As this land enters, choose a creature type.",
+        "{T}: Add {C}.",
+        "{T}: Add one mana of any color. Spend this mana only to cast a creature spell of the chosen type, and that spell can't be countered.",  # noqa: E501 — an oracle text
+    ),
+    # Lands whose mana ability can make more than one mana, from the card database.
+    "Gaea's Cradle": oracle("{T}: Add {G} for each creature you control."),
+    "Ancient Tomb": oracle("{T}: Add {C}{C}. This land deals 2 damage to you."),
+    "Cabal Coffers": oracle("{2}, {T}: Add {B} for each Swamp you control."),
+    "Nykthos, Shrine to Nyx": oracle(
+        "{T}: Add {C}.",
+        "{2}, {T}: Choose a color. Add an amount of mana of that color equal to your devotion to that color. (Your devotion to a color is the number of mana symbols of that color in the mana costs of permanents you control.)",  # noqa: E501 — an oracle text
+    ),
+    "Urza's Tower": oracle(
+        "{T}: Add {C}. If you control an Urza's Mine and an Urza's Power-Plant, add {C}{C}{C} instead."
+    ),
+    "Baldur's Gate": oracle(
+        "{T}: Add {C}.",
+        "{2}, {T}: Add X mana of any one color, where X is the number of other Gates you control.",
+    ),
+    "Unknown": "",
+}
+
+
+@pytest.mark.parametrize("name", list(MANA_ONLY))
+def test_a_land_that_only_makes_mana_or_enters_tapped_is_mana_only(name: str) -> None:
+    assert mana_only_land(card(name, type_line="Land", text=MANA_ONLY[name]))
+
+
+@pytest.mark.parametrize("name", list(UTILITY))
+def test_a_land_with_any_other_ability_or_no_known_text_is_not_mana_only(name: str) -> None:
+    assert not mana_only_land(card(name, type_line="Land", text=UTILITY[name]))
+
+
+def test_a_land_with_a_spell_half_is_a_utility_land_but_a_land_on_both_halves_is_not() -> None:
+    midgar = oracle(
+        "This land enters tapped.",
+        "{T}: Add {B}.",
+        "//",
+        "You may sacrifice an artifact or creature. If you do, draw two cards. (Then exile this card. You may play the land later from exile.)",  # noqa: E501 — an oracle text
+    )
+    adventure = card(
+        "Midgar, City of Mako // Reactor Raid", type_line="Land — Town // Sorcery — Adventure", text=midgar
+    )
+    assert not mana_only_land(adventure)
+    pathway = oracle("{T}: Add {G}.", "//", "{T}: Add {W}.")
+    both = card("Branchloft Pathway // Boulderloft Pathway", type_line="Land // Land", text=pathway)
+    assert mana_only_land(both)

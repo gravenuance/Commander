@@ -1,10 +1,10 @@
-"""The deck cards a board card could replace: picked by hand, else the weakest like it (ADR 0029)."""
+"""The deck cards a board card could replace: picked by hand, else the best scoring cuts (ADRs 0029, 0036)."""
 
+import logging
 from collections import Counter
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import Enum
-from itertools import islice
 
 from commander.analysis import ANALYZED_ROLES
 from commander.answers import card_key
@@ -21,14 +21,27 @@ from commander.peercounts import PeerCounts, peer_counts
 from commander.suggest import fills_role, protected_cards
 from commander.weightedshare import ShareTable, share_reason, weighted_shares
 
-MAX_TARGETS = 3
+log = logging.getLogger(__name__)
+
+MAX_TARGETS = 4
 # A card of another theme is cut only for one at least this many points more played (a share of 0.2).
 MIN_THEME_GAP = 0.20
-# Cutting from a role the deck over-runs scores this much per card over the peer decks' median: how much less
-# played each extra card of a role is among peer decks (median slope, 95 commander x role cases, 2026-10-18).
-OVERRUN_BONUS = 0.03
+# Every candidate cut scores the idea's share less its own, plus a bonus for what makes it allowed (ADR 0036).
+# A cut in the idea's role or themes adds this.
+LIKE_FOR_LIKE_BONUS = 0.10
+# A surplus cut adds this per card the deck holds over the peer decks' median of the role or theme, or per
+# land it could lose: how much less played each extra card of a role is among peer decks (median slope,
+# 95 commander x role cases, 2026-10-18). Provisional, to retune with more data.
+SURPLUS_BONUS = 0.03
+# A role or theme surplus needs the deck to hold this many cards over the peers' median, and still the median
+# after the cut: one over is within the noise of a median taken over a few decks.
+SURPLUS_MARGIN = 2
+# The roles whose over-run lets a card of another role go; the other roles keep the peers' floor.
+SURPLUS_ROLES = frozenset({Role.RAMP, Role.DRAW, Role.REMOVAL, Role.TUTOR})
 # Weighted shares are fractions; this keeps float noise from deciding the gap.
 _SHARE_NOISE = 1e-9
+# Scores equal up to this many digits tie, and go on to the tie-break.
+_SCORE_DIGITS = 9
 _PICKERS = frozenset({Actor.YOU, Actor.CLAUDE})
 
 
@@ -114,8 +127,18 @@ def deck_cut_rules(
         nonland_only={m.name for m in leaning_matchers},
     )
     mana = mana_guard(deck, db, data)
-    rules = CutRules(protected_cards(main, profile), shares or None, {}, leanings, matchers, mana, counts)
+    protected = protected_cards(main, profile) | _combo_pieces(deck, main, data)
+    rules = CutRules(protected, shares or None, {}, leanings, matchers, mana, counts)
     return with_ideas(rules, [r.info for r in main if r.info is not None], db)
+
+
+def _combo_pieces(deck: Deck, main: Sequence[ResolvedCard], data: MetaData | None) -> frozenset[str]:
+    """Oracle ids of the deck cards in a combo Spellbook finds inside the deck; none without its answer."""
+    combos = data.own_combos.data if data is not None else None
+    if combos is None:
+        log.info("No Spellbook combos for deck %s: its combo pieces are not protected from cuts", deck.name)
+    names = {card_key(piece.name) for combo in combos or () for piece in combo.pieces}
+    return frozenset(r.info.oracle_id for r in main if r.info is not None and card_key(r.card.name) in names)
 
 
 def with_ideas(rules: CutRules, cards: Iterable[CardInfo], db: CardDb) -> CutRules:
@@ -138,7 +161,7 @@ def with_ideas(rules: CutRules, cards: Iterable[CardInfo], db: CardDb) -> CutRul
 def targets_for(
     card: BoardCard, info: CardInfo | None, main: Sequence[ResolvedCard], rules: CutRules
 ) -> tuple[Target, ...]:
-    """The replace options you or Claude gave the card, still in the deck; else the weakest like it.
+    """The replace options you or Claude gave the card, still in the deck; else the best scoring cuts.
 
     Every cut but the ones you picked must be less played than the card (`_less_played`). See `role_targets`
     for the second.
@@ -159,110 +182,237 @@ def targets_for(
 
 
 def role_targets(info: CardInfo, main: Sequence[ResolvedCard], rules: CutRules) -> tuple[Target, ...]:
-    """The weakest deck cards like the card, at most MAX_TARGETS; the slots left go to cards unlike it.
+    """The best scoring deck cards for the card to replace, at most MAX_TARGETS.
 
-    Like for like: a deck card serving a theme or leaning is offered only for an idea serving one of the
-    same, and those come first. A card with roles is matched to deck cards sharing one, a card without any
-    to deck cards filling none; lands only to lands. Weakest means the smallest weighted share of the meta's
-    lists and recent decks (when known), then the least played on EDHREC, unranked cards last. Commanders and
-    protected oracle ids are never offered, nor is a card at least as played as the idea (a card no list
-    plays counts as 0), unless no list was read.
+    Every candidate scores the idea's weighted share (ADR 0026) less its own, plus a bonus for what makes it
+    allowed. Equal scores go to the bigger surplus, then the less popular card on EDHREC (the higher rank
+    number first, unranked last), then the name. Commanders and protected oracle ids are never offered, nor
+    is a card at least as played as the idea (a card no list plays counts as 0; basic lands excepted),
+    unless no list was read.
 
-    With the recent decks' counts read, cards of another role or theme, less played than the idea, fill the
-    slots like for like leaves (`_wider_cuts`).
+    - Like for like (+LIKE_FOR_LIKE_BONUS): a card of the idea's role (an idea with none matches cards with
+      none, a land only lands), and a card serving a theme or leaning only for an idea serving the same.
+    - With the recent decks' counts read (`_wider_candidates`): a card of another role the deck holds more
+      of than the peers' median, or of another theme it over-runs, scores SURPLUS_BONUS per extra card.
+    - A nonland idea may also replace a land the mana base can spare (`_land_candidates`).
     """
     roles = [role for role in ANALYZED_ROLES if role in info.roles]
     own = rules.themes.get(info.oracle_id, frozenset())
     eligible = [
         r for r in main if _eligible(r, info, rules.protected) and _less_played(info.name, r, rules.shares)
     ]
-    pool = [r for r in eligible if _same_role(r, roles) and _swappable(r, own, rules)]
-    ranked = sorted(pool, key=lambda r: (not _shared(r, own, rules), *_weakness(r, rules.shares)))
     like = [
-        Target(r.card.name, _reason(r, roles, own, rules), TargetSource.ROLE)
-        for r in islice((r for r in ranked if _sound(info, r, rules)), MAX_TARGETS)
+        _Candidate(
+            r,
+            LIKE_FOR_LIKE_BONUS + _gap(info.name, r, rules.shares),
+            _reason(r, roles, own, rules),
+            _order(r, 0.0),
+        )
+        for r in eligible
+        if _same_role(r, roles) and _swappable(r, own, rules)
     ]
-    if len(like) == MAX_TARGETS:
-        return tuple(like)
-    wider = (
-        Target(w.cut.card.name, _reason(w.cut, roles, own, rules, w), TargetSource.ROLE)
-        for w in _wider_cuts(info, eligible, main, rules)
-        if _sound(info, w.cut, rules)
-    )
-    return (*like, *islice(wider, MAX_TARGETS - len(like)))
+    candidates = [
+        *like,
+        *_wider_candidates(info, eligible, main, rules),
+        *_land_candidates(info, main, rules),
+    ]
+    taken: list[Target] = []
+    groups: set[str] = set()
+    for c in sorted(candidates, key=lambda c: (-round(c.score, _SCORE_DIGITS), c.order)):
+        if len(taken) == MAX_TARGETS:
+            break
+        if c.group in groups:
+            continue
+        # The first of a group is the only one considered, offered or not.
+        if c.group is not None:
+            groups.add(c.group)
+        if _sound(info, c.cut, rules):
+            taken.append(Target(c.cut.card.name, c.reason, TargetSource.ROLE))
+    return tuple(taken)
 
 
 @dataclass(slots=True, frozen=True)
-class _Wider:
-    """A cut of another role or theme than the idea's, and what makes it allowed."""
+class _Candidate:
+    """A deck card the idea may replace, with what it scores and how it reads."""
 
     cut: ResolvedCard
-    # The idea's share less the card's, plus the bonus for a role the deck over-runs.
     score: float
-    # The role the deck over-runs most that the card fills, with the deck's count and the peers' median.
-    over: tuple[Role, int, float] | None
-    # How far the idea is more played than the card, when the card is of another theme.
-    theme_gap: float | None
+    reason: str
+    # Breaks ties: the bigger surplus first, then (for basic lands) the colour with more sources to spare,
+    # then the lower EDHREC popularity (the higher rank number first, unranked last), then the name.
+    order: tuple[float, float, bool, int, str]
+    # At most one candidate of a group is offered (one basic land).
+    group: str | None = None
 
 
-def _wider_cuts(
+@dataclass(slots=True, frozen=True)
+class _Held:
+    """What the deck holds of each role and theme, against what the peer decks hold."""
+
+    peers: PeerCounts
+    roles: Mapping[Role, int]
+    themes: Mapping[str, int]
+    # The names of the deck's leanings, which stay protected.
+    leanings: frozenset[str]
+
+
+@dataclass(slots=True, frozen=True)
+class _Idea:
+    """The roles and themes of the card a cut is sought for."""
+
+    roles: frozenset[Role]
+    themes: frozenset[str]
+
+
+@dataclass(slots=True, frozen=True)
+class _Surplus:
+    """What lets a wider cut go: how many cards the deck holds over the peers' median, and how the reason
+    reads; no note for a plain cut of another role."""
+
+    over: float
+    note: str | None
+
+    @property
+    def bonus(self) -> float:
+        return SURPLUS_BONUS * self.over
+
+
+def _wider_candidates(
     info: CardInfo, eligible: Sequence[ResolvedCard], main: Sequence[ResolvedCard], rules: CutRules
-) -> list[_Wider]:
-    """Deck cards of another role or theme that may go for the idea, the best first.
+) -> list[_Candidate]:
+    """Deck cards of another role or theme than the idea's that may go for it.
 
-    None without the recent decks' counts or the shares. A card of another role may go only while each role
-    it fills and the idea does not keeps the peers' 25th percentile of cards (roles counted by Tagger tag
-    alone, as the peers' are). A card of another theme may go
-    only while the idea is MIN_THEME_GAP more played and each of its themes keeps the peers' median count (a
-    theme with no peer count, the profile's own, may lose one card).
-    Cards of the idea's themes come first, then by score: the idea's share less the card's, plus
-    OVERRUN_BONUS for each card a role it fills runs over the peers' median (a cut of another role only).
+    None without the recent decks' counts or the shares. See `_wider_cut` for what lets one go.
     """
     peers, shares = rules.peers, rules.shares
     if peers is None or not shares:
         return []
     roles = [role for role in ANALYZED_ROLES if role in info.roles]
     own = rules.themes.get(info.oracle_id, frozenset())
-    gain = _share(info.name, shares)
-    held_roles, held_themes = _role_counts(main), _theme_counts(main, rules)
-    found: list[_Wider] = []
-    for r in eligible:
-        other_role = not _same_role(r, roles)
-        other_theme = not _swappable(r, own, rules)
-        if not (other_role or other_theme):
-            continue
-        lost = [role for role in _tagged_roles(r) if role not in info.roles]
-        if any(role in peers.roles and held_roles[role] - 1 < peers.roles[role].floor for role in lost):
-            continue
-        gap = gain - _share(r.card.name, shares)
-        if other_theme and (
-            gap < MIN_THEME_GAP - _SHARE_NOISE or not _themes_hold(r, held_themes, rules, peers)
-        ):
-            continue
-        over = _over_run(lost, held_roles, peers) if other_role else None
-        bonus = OVERRUN_BONUS * (over[1] - over[2]) if over is not None else 0.0
-        found.append(_Wider(r, gap + bonus, over, gap if other_theme else None))
-    found.sort(
-        key=lambda w: (
-            w.theme_gap is not None,
-            not _shared(w.cut, own, rules),
-            -w.score,
-            *_weakness(w.cut, shares),
-        )
+    held = _Held(
+        peers,
+        _role_counts(main),
+        _theme_counts(main, rules),
+        frozenset(leaning.tag for leaning in rules.leanings),
     )
+    found: list[_Candidate] = []
+    for r in eligible:
+        if _same_role(r, roles) and _swappable(r, own, rules):
+            continue
+        gap = _gap(info.name, r, shares)
+        surplus = _wider_cut(r, _Idea(info.roles, own), gap, held, rules)
+        if surplus is not None:
+            reason = _reason(r, roles, own, rules, surplus.note)
+            found.append(_Candidate(r, gap + surplus.bonus, reason, _order(r, surplus.over)))
     return found
 
 
-def _over_run(
-    lost: Sequence[Role], held: Mapping[Role, int], peers: PeerCounts
-) -> tuple[Role, int, float] | None:
-    over = [(role, held[role], peers.roles[role].median) for role in lost if role in peers.roles]
-    return max((o for o in over if o[1] > o[2]), key=lambda o: o[1] - o[2], default=None)
+def _wider_cut(r: ResolvedCard, idea: _Idea, gap: float, held: _Held, rules: CutRules) -> _Surplus | None:
+    """Whether a deck card that is not like the idea may go for it, and why.
+
+    A card of a leaning the idea does not serve never goes. A card that would empty one of SURPLUS_ROLES is
+    judged by role surplus alone; any other card of another theme by theme surplus, and one of another role
+    only by the peers' floor of the roles it fills.
+    """
+    themes = _themes_of(r, rules)
+    if (themes & held.leanings) - idea.themes:
+        return None
+    tagged = _tagged_roles(r)
+    lost = [role for role in tagged if role not in idea.roles]
+    if any(role in SURPLUS_ROLES for role in lost):
+        return _role_surplus(lost, held)
+    if any(role in held.peers.roles and held.roles[role] - 1 < held.peers.roles[role].floor for role in lost):
+        return None
+    if not _swappable(r, idea.themes, rules):
+        return _theme_surplus(themes, gap, held)
+    return _Surplus(0.0, None)
 
 
-def _themes_hold(r: ResolvedCard, held: Mapping[str, int], rules: CutRules, peers: PeerCounts) -> bool:
-    """Whether each theme of the deck card keeps the peers' count without it."""
-    return all(held[theme] - 1 >= peers.themes.get(theme, held[theme] - 1) for theme in _themes_of(r, rules))
+def _role_surplus(lost: Sequence[Role], held: _Held) -> _Surplus | None:
+    """Every role of SURPLUS_ROLES the cut empties must run SURPLUS_MARGIN over the peers' median and keep
+    the median after the cut; any other keeps the peers' floor. The role over-run most sets the bonus."""
+    over: list[tuple[Role, int, float]] = []
+    for role in lost:
+        band, count = held.peers.roles.get(role), held.roles[role]
+        if role not in SURPLUS_ROLES:
+            if band is not None and count - 1 < band.floor:
+                return None
+        elif band is None or count < band.median + SURPLUS_MARGIN or count - 1 < band.median:
+            return None
+        else:
+            over.append((role, count, band.median))
+    if not over:
+        return None
+    role, count, middle = max(over, key=lambda o: o[1] - o[2])
+    return _Surplus(count - middle, f"surplus {role.value}: {_against(count, middle)}")
+
+
+def _theme_surplus(themes: frozenset[str], gap: float, held: _Held) -> _Surplus | None:
+    """The idea must be MIN_THEME_GAP more played, and every theme the cut empties must have a peer median,
+    run SURPLUS_MARGIN over it and keep it after the cut. The theme over-run most sets the bonus."""
+    if gap < MIN_THEME_GAP - _SHARE_NOISE:
+        return None
+    over: list[tuple[str, int, float]] = []
+    for theme in themes:
+        middle, count = held.peers.themes.get(theme), held.themes[theme]
+        if middle is None or count < middle + SURPLUS_MARGIN or count - 1 < middle:
+            return None
+        over.append((theme, count, middle))
+    theme, count, middle = max(over, key=lambda o: (o[1] - o[2], o[0]))
+    return _Surplus(
+        count - middle,
+        f"surplus theme ({theme}): {_against(count, middle)}; idea {gap * 100:.0f} points more played",
+    )
+
+
+def _against(count: int, middle: float) -> str:
+    return f"{count} against a median of {middle:g} in recent decks"
+
+
+def _land_candidates(info: CardInfo, main: Sequence[ResolvedCard], rules: CutRules) -> list[_Candidate]:
+    """Lands a nonland idea may replace while the mana base has lands to spare.
+
+    None without the shares, the peers' counts or the mana data, or while the guard counts no spare land
+    (`ManaGuard.spare_lands`). Each scores SURPLUS_BONUS per spare land. The basic with the most spare
+    sources of its colour is one candidate, however played basics are (nearly every list runs them); a
+    nonbasic land is another only when it does nothing but make mana (`ManaGuard.mana_only`), carries no
+    role, serves no theme or leaning (a utility or theme land is never spare) and is less played than the
+    idea, and adds its own share gap.
+    """
+    mana, shares = rules.mana, rules.shares
+    if info.is_land or mana is None or not shares or rules.peers is None:
+        return []
+    spare = mana.spare_lands()
+    if spare <= 0:
+        return []
+    note = f"spare land: the mana base holds with {spare} fewer {'land' if spare == 1 else 'lands'}"
+    found: list[_Candidate] = []
+    for r in main:
+        cut = r.info
+        if not _cuttable(r, info, rules.protected) or cut is None or not cut.is_land:
+            continue
+        reason = _reason(r, (), frozenset(), rules, note)
+        if "Basic" in cut.front_type_line.split():
+            sources = mana.spare_sources(r.card.name)
+            if sources is not None:
+                order = (-float(spare), -sources, True, 0, r.card.name.casefold())
+                found.append(_Candidate(r, SURPLUS_BONUS * spare, reason, order, group="basic"))
+        elif (
+            mana.mana_only(r.card.name)
+            and not cut.roles
+            and not _roles_of(r)
+            and not _themes_of(r, rules)
+            and _less_played(info.name, r, shares)
+        ):
+            score = SURPLUS_BONUS * spare + _gap(info.name, r, shares)
+            found.append(_Candidate(r, score, reason, _order(r, float(spare))))
+    return found
+
+
+def _order(r: ResolvedCard, over: float) -> tuple[float, float, bool, int, str]:
+    """The tie-break of a candidate that scores like another: see `_Candidate.order`."""
+    rank = r.info.edhrec_rank if r.info else None
+    return (-over, 0.0, rank is None, -(rank or 0), r.card.name.casefold())
 
 
 def _role_counts(main: Sequence[ResolvedCard]) -> Counter[Role]:
@@ -300,13 +450,6 @@ def _sound(info: CardInfo | None, cut: ResolvedCard, rules: CutRules) -> bool:
     return rules.mana.allows(info.name, cut.card.name)
 
 
-def _over_run_note(wider: _Wider | None) -> str:
-    if wider is None or wider.over is None:
-        return ""
-    _, count, middle = wider.over
-    return f", over-run: {count} against a median of {middle:g} in recent decks"
-
-
 def _by_word(spec: ThemeSpec, tag_ids: Mapping[str, str]) -> list[tuple[str, Theme]]:
     """The profile's own themes one word at a time, each named by itself."""
     return [
@@ -316,15 +459,18 @@ def _by_word(spec: ThemeSpec, tag_ids: Mapping[str, str]) -> list[tuple[str, The
     ]
 
 
-def _eligible(r: ResolvedCard, info: CardInfo, protected: Collection[str]) -> bool:
+def _cuttable(r: ResolvedCard, info: CardInfo, protected: Collection[str]) -> bool:
     other = r.info
     return (
         other is not None
         and COMMANDER_CATEGORY not in r.card.categories
         and other.oracle_id not in protected
         and other.oracle_id != info.oracle_id
-        and other.is_land == info.is_land
     )
+
+
+def _eligible(r: ResolvedCard, info: CardInfo, protected: Collection[str]) -> bool:
+    return _cuttable(r, info, protected) and r.info is not None and r.info.is_land == info.is_land
 
 
 def _same_role(r: ResolvedCard, roles: Sequence[Role]) -> bool:
@@ -351,35 +497,35 @@ def _less_played(idea: str, cut: ResolvedCard, shares: ShareTable | None) -> boo
     return not shares or _share(idea, shares) - _share(cut.card.name, shares) > _SHARE_NOISE
 
 
+def _gap(idea: str, cut: ResolvedCard, shares: ShareTable | None) -> float:
+    """How far the idea is more played than the deck card; 0 without any shares."""
+    return _share(idea, shares) - _share(cut.card.name, shares) if shares else 0.0
+
+
 def _share(name: str, shares: ShareTable) -> float:
     found = shares.of(name)
     return found.share if found is not None else 0.0
 
 
-def _weakness(r: ResolvedCard, shares: ShareTable | None) -> tuple[float, bool, int, str]:
-    share = _share(r.card.name, shares) if shares is not None else 0.0
-    rank = r.info.edhrec_rank if r.info else None
-    return (share, rank is None, -(rank or 0), r.card.name.casefold())
-
-
 def _reason(
-    r: ResolvedCard, roles: Sequence[Role], own: frozenset[str], rules: CutRules, wider: _Wider | None = None
+    r: ResolvedCard, roles: Sequence[Role], own: frozenset[str], rules: CutRules, surplus: str | None = None
 ) -> str:
+    """Why the card may go: what makes a surplus cut allowed, else what it shares with the idea."""
     parts: list[str] = []
-    shared_themes = _shared(r, own, rules)
-    if shared_themes:
-        parts.append(f"same theme ({', '.join(sorted(shared_themes, key=str.casefold))})")
-    elif wider is not None and wider.theme_gap is not None:
-        theirs = ", ".join(sorted(_themes_of(r, rules), key=str.casefold))
-        parts.append(f"other theme ({theirs}; idea {wider.theme_gap * 100:.0f} points more played)")
-    shared = [role.value for role in roles if fills_role(r, role)]
-    filled = [role.value for role in _roles_of(r)]
-    if shared:
-        parts.append(f"same role ({', '.join(shared)})")
-    elif filled:
-        parts.append(f"other role ({', '.join(filled)}{_over_run_note(wider)})")
+    if surplus is not None:
+        parts.append(surplus)
     else:
-        parts.append("fills no role" if roles else "fills no role either")
+        shared_themes = _shared(r, own, rules)
+        if shared_themes:
+            parts.append(f"same theme ({', '.join(sorted(shared_themes, key=str.casefold))})")
+        shared = [role.value for role in roles if fills_role(r, role)]
+        filled = [role.value for role in _roles_of(r)]
+        if shared:
+            parts.append(f"same role ({', '.join(shared)})")
+        elif filled:
+            parts.append(f"other role ({', '.join(filled)})")
+        else:
+            parts.append("fills no role" if roles else "fills no role either")
     share = rules.shares.of(r.card.name) if rules.shares is not None else None
     if share is not None:
         parts.append(share_reason(share))

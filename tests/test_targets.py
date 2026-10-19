@@ -91,14 +91,14 @@ def test_hand_picked_targets_win_while_they_are_still_in_the_deck() -> None:
 def test_a_tools_generic_cut_list_gives_way_to_the_cards_role() -> None:
     generic = board_card("Mystic Remora", (ReplaceOption("Kataki", "no role, in no combo"),), Actor.CMDR)
     targets = targets_for(generic, info("Mystic Remora", (Role.DRAW,)), DECK, CutRules((), None))
-    assert names(targets) == ["Compost", "Archivist of Oghma", "Esper Sentinel"]
+    assert names(targets) == ["Compost", "Archivist of Oghma", "Esper Sentinel", "Sylvan Library"]
 
 
 def test_without_picks_the_weakest_cards_in_the_same_role_least_played_first_unranked_last() -> None:
     targets = targets_for(
         board_card("Mystic Remora"), info("Mystic Remora", (Role.DRAW,)), DECK, CutRules((), None)
     )
-    assert names(targets) == ["Compost", "Archivist of Oghma", "Esper Sentinel"]
+    assert names(targets) == ["Compost", "Archivist of Oghma", "Esper Sentinel", "Sylvan Library"]
     assert targets[0].reason == "same role (draw); EDHREC rank 9,000"
     assert {t.source for t in targets} == {TargetSource.ROLE}
 
@@ -111,7 +111,7 @@ def test_meta_share_ranks_before_popularity_and_shows_in_the_reason() -> None:
     targets = targets_for(
         board_card("Mystic Remora"), info("Mystic Remora", (Role.DRAW,)), DECK, CutRules((), shares)
     )
-    assert names(targets) == ["Archivist of Oghma", "Sylvan Library", "Esper Sentinel"]
+    assert names(targets) == ["Archivist of Oghma", "Sylvan Library", "Esper Sentinel", "Compost"]
     assert targets[1].reason == "same role (draw); in 5% of meta lists (1/20); unranked on EDHREC"
 
 
@@ -185,7 +185,7 @@ def test_a_card_in_both_sources_ranks_by_the_one_pooled_share() -> None:
     targets = targets_for(
         board_card("Mystic Remora"), info("Mystic Remora", (Role.DRAW,)), DECK, CutRules((), shares)
     )
-    assert names(targets) == ["Archivist of Oghma", "Compost", "Sylvan Library"]
+    assert names(targets) == ["Archivist of Oghma", "Compost", "Sylvan Library", "Esper Sentinel"]
 
 
 REMORA = info("Mystic Remora", (Role.DRAW,))
@@ -245,7 +245,7 @@ def test_a_same_theme_card_more_played_than_the_idea_is_not_offered() -> None:
 @pytest.mark.parametrize("shares", [None, NO_SHARES])
 def test_without_shares_every_card_in_the_role_stays_a_target(shares: ShareTable | None) -> None:
     targets = targets_for(board_card("Mystic Remora"), REMORA, DECK, CutRules((), shares))
-    assert names(targets) == ["Compost", "Archivist of Oghma", "Esper Sentinel"]
+    assert names(targets) == ["Compost", "Archivist of Oghma", "Esper Sentinel", "Sylvan Library"]
 
 
 def test_claudes_picked_cut_more_played_than_the_idea_gives_way_to_the_roles_weaker_cards() -> None:
