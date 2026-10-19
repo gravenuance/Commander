@@ -13,6 +13,8 @@
     {"id": 1547702, "tag": 12, "deck": 10004639, "name": "cEDH", "position": "M-550000"}
   ],
   "deckFormat": 3,
+  "private": false,
+  "unlisted": false,
   "categories": [
     {
       "id": 196576664,

@@ -76,6 +76,17 @@ def test_two_folders_for_one_deck_is_an_error(tmp_path: Path, deck: Deck) -> Non
         Workspace(tmp_path).load(deck.id)
 
 
+def test_load_folder_reads_the_snapshot_of_one_folder_even_when_a_deck_has_two(
+    tmp_path: Path, deck: Deck
+) -> None:
+    workspace = Workspace(tmp_path)
+    folder = workspace.save(deck)
+    twin = tmp_path / f"{deck.id}-twin"
+    twin.mkdir()
+    assert workspace.load_folder(folder) == deck
+    assert workspace.load_folder(twin) is None
+
+
 def test_unreadable_snapshot_is_skipped(tmp_path: Path, deck: Deck) -> None:
     workspace = Workspace(tmp_path)
     folder = workspace.save(deck)

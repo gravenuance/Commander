@@ -64,6 +64,10 @@ class Workspace:
         folder = self.folder_for(deck_id)
         if folder is None:
             return None
+        return self.load_folder(folder)
+
+    def load_folder(self, folder: Path) -> Deck | None:
+        """The snapshot saved in this deck folder, None when there is none or it cannot be read (logged)."""
         return _read_snapshot(folder / SNAPSHOT_FILE)
 
     def deck_folders(self) -> list[tuple[int, Path]]:

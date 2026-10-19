@@ -423,6 +423,10 @@ class FakeArchidekt:
         # What a deck listing that carries the expected header answers with; anything but 200 stands for a
         # refused login.
         self.signed_in_listing_status = HTTP_OK
+        # Decks per listing page, 0 for one page with them all. With `signed_in_pages` set, only that many
+        # signed-in pages are served before the token counts as expired (401).
+        self.listing_page_size = 0
+        self.signed_in_pages: int | None = None
         self.next_entry = 9_000_000_000
         self.scryfall = FakeScryfall()
         self.spellbook = FakeSpellbook()
@@ -491,6 +495,12 @@ class FakeArchidekt:
         signed_in = self._signed_in(request)
         if signed_in and self.signed_in_listing_status != HTTP_OK:
             return httpx.Response(self.signed_in_listing_status)
+        page = int(params.get("page", "1"))
+        if signed_in and self.signed_in_pages is not None and page > self.signed_in_pages:
+            return httpx.Response(401)
+        return httpx.Response(200, json=self._listing_page(page, signed_in=signed_in))
+
+    def _listing_page(self, page: int, *, signed_in: bool) -> Json:
         rows = [
             {
                 **summary_row(d["id"], d["name"], d["updatedAt"]),
@@ -501,7 +511,12 @@ class FakeArchidekt:
             if d.get("owner", {}).get("username", self.user) == self.user
             and (signed_in or not self._hidden(d["id"]))
         ]
-        return httpx.Response(200, json=deck_page(rows))
+        if not self.listing_page_size:
+            return deck_page(rows)
+        start = (page - 1) * self.listing_page_size
+        more = start + self.listing_page_size < len(rows)
+        next_url = f"https://archidekt.com/api/decks/v3/?ownerUsername={self.user}&page={page + 1}"
+        return deck_page(rows[start : start + self.listing_page_size], next_url if more else None)
 
     def _hidden(self, deck_id: int) -> bool:
         return deck_id in self.private or deck_id in self.unlisted

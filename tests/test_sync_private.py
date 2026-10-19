@@ -174,6 +174,54 @@ def test_a_refused_signed_in_listing_falls_back_to_the_anonymous_one(
     assert fake.listing_auth == [SIGNED_IN, SIGNED_IN, None]
 
 
+def test_a_token_that_expires_partway_through_the_listing_is_listed_again_anonymously_from_the_start(
+    tmp_path: Path, raw_deck: Json
+) -> None:
+    fake = archidekt_with_hidden_decks(raw_deck)
+    fake.listing_page_size = 1
+    sync(tmp_path, fake, signed_in())
+    private_before = snapshot_bytes(tmp_path, PRIVATE_FOLDER)
+    fake.listing_auth.clear()
+    fake.signed_in_pages = 1
+
+    outcome = sync(tmp_path, fake, signed_in())
+
+    assert outcome.warnings == [REFUSED]
+    # The one signed-in page that was served is dropped, not mixed into the anonymous listing.
+    assert [r.deck_id for r in outcome.results] == [DECK_ID]
+    assert statuses(outcome) == {DECK_ID: SyncStatus.UNCHANGED}
+    assert snapshot_bytes(tmp_path, PRIVATE_FOLDER) == private_before
+    assert fake.listing_auth == [SIGNED_IN, SIGNED_IN, None]
+
+
+def test_a_token_revoked_after_the_listing_fails_the_decks_to_fetch_and_deletes_nothing(
+    tmp_path: Path, raw_deck: Json
+) -> None:
+    fake = archidekt_with_hidden_decks(raw_deck)
+    sync(tmp_path, fake, signed_in())
+    before = {folder: snapshot_bytes(tmp_path, folder) for folder in (PRIVATE_FOLDER, UNLISTED_FOLDER)}
+    public_before = snapshot_bytes(tmp_path, "10004639-honestly-though")
+    # Edited on Archidekt since the last sync, so both are fetched; the login is refused on those reads.
+    for deck_id in (DECK_ID, PRIVATE_ID):
+        fake.decks[deck_id]["updatedAt"] = "2026-10-16T08:00:00.000000Z"
+        fake.failing[deck_id] = 401
+
+    outcome = sync(tmp_path, fake, signed_in())
+
+    assert fake.listing_auth == [SIGNED_IN, SIGNED_IN]
+    assert statuses(outcome) == {
+        DECK_ID: SyncStatus.FAILED,
+        PRIVATE_ID: SyncStatus.FAILED,
+        UNLISTED_ID: SyncStatus.UNCHANGED,
+    }
+    assert {r.error for r in outcome.results if r.status is SyncStatus.FAILED} == {
+        "Archidekt refused the login (HTTP 401)"
+    }
+    assert outcome.warnings == []
+    assert snapshot_bytes(tmp_path, "10004639-honestly-though") == public_before
+    assert {folder: snapshot_bytes(tmp_path, folder) for folder in before} == before
+
+
 def test_a_signed_in_listing_that_fails_otherwise_is_not_a_fallback(tmp_path: Path, raw_deck: Json) -> None:
     fake = archidekt_with_hidden_decks(raw_deck)
     fake.signed_in_listing_status = 404
@@ -299,6 +347,16 @@ def test_no_log_line_holds_a_token(tmp_path: Path, raw_deck: Json, caplog: pytes
     )
     assert ACCESS_TOKEN not in text
     assert REFRESH_TOKEN not in text
+
+
+def test_the_single_deck_read_takes_the_flags_from_the_response(raw_deck: Json) -> None:
+    # The recorded response of a public deck names both flags; a missing key would also read as false.
+    assert (raw_deck["private"], raw_deck["unlisted"]) == (False, False)
+    raw_deck["private"], raw_deck["unlisted"] = True, True
+
+    deck = parse_deck(raw_deck)
+
+    assert (deck.private, deck.unlisted) == (True, True)
 
 
 def test_the_flags_must_be_true_or_false(raw_deck: Json) -> None:

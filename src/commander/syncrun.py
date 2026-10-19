@@ -178,13 +178,13 @@ def _add_grace_tables(workspace: Workspace, warnings: list[str]) -> None:
     for deck_id, folder in workspace.deck_folders():
         try:
             if not profile_path(folder).exists():
-                deck = workspace.load(deck_id)
+                deck = workspace.load_folder(folder)
                 if deck is not None:
                     write_profile_template(folder, deck)
                     log.info("%s: wrote profile.toml from the template", folder.name)
             elif ensure_grace_table(folder):
                 log.info("%s: added an empty [grace] table to profile.toml", folder.name)
-        except OSError as error:
+        except (OSError, ProfileError) as error:
             log.warning("deck %s: could not add the [grace] table: %s", deck_id, error)
             warnings.append(f"deck {deck_id}: [grace] table not added: {error}")
 

@@ -1,5 +1,6 @@
 """Changes to a deck's profile.toml from the app, keeping the owner's comments and layout."""
 
+import codecs
 import logging
 import re
 import tomllib
@@ -63,8 +64,17 @@ def save_settings(
     _table(doc, "ideas")["tag_search"] = tag_search
     _table(doc, "themes")["ignore"] = _array(_once(name.strip() for name in ignore if name.strip()))
     profile = parse_profile(cast("dict[str, object]", doc.unwrap()), str(path))
-    write_text_atomic(path, tomlkit.dumps(doc))
+    write_text_atomic(path, _bom(path) + tomlkit.dumps(doc))
     return profile
+
+
+def _bom(path: Path) -> str:
+    """The byte order mark the file starts with, which `read_profile_text` drops and a write must put back."""
+    try:
+        with path.open("rb") as handle:
+            return "\ufeff" if handle.read(3) == codecs.BOM_UTF8 else ""
+    except OSError:
+        return ""
 
 
 def _parse(source: str, path: Path) -> tomlkit.TOMLDocument:
@@ -94,9 +104,8 @@ def ensure_grace_table(folder: Path) -> bool:
         before = parse_profile(migrate_profile(tomllib.loads(text), path), str(path))
         if "grace" in tomllib.loads(text):
             return False
-        # The file as it is, with any byte order mark the check above dropped.
-        original = path.read_bytes().decode("utf-8")
-        added = _checked(_with_grace_table(original), before, path)
+        bom = _bom(path)
+        added = bom + _checked(_with_grace_table(text), before, path)
     except (ProfileError, tomllib.TOMLDecodeError) as error:
         log.warning("%s left as it is, without a [grace] table: %s", path, error)
         return False

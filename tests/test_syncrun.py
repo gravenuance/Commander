@@ -451,6 +451,54 @@ def test_a_sync_gives_a_deck_without_a_profile_the_template_with_its_empty_grace
     assert profile.read_text(encoding="utf-8").endswith("# mine\n")
 
 
+def sync_profiles(tmp_path: Path, fake: FakeArchidekt) -> SyncOutcome:
+    return run_sync(
+        services(tmp_path, fake),
+        Workspace(tmp_path / "decks"),
+        "MAKKIS",
+        MetaSettings(),
+        SyncOptions(cards=False, ideas=False),
+        on_progress=lambda _: None,
+    )
+
+
+def test_two_folders_for_an_untracked_deck_do_not_stop_the_other_decks_getting_their_profile(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path
+) -> None:
+    fake, stored = populated(tmp_path, raw_deck, card_db_file)
+    # These sort before the tracked deck's folder, so an abort at them would skip it.
+    (tmp_path / "decks" / "1000-first").mkdir()
+    (tmp_path / "decks" / "1000-second").mkdir()
+
+    outcome = sync_profiles(tmp_path, fake)
+
+    assert (stored.folder / "profile.toml").read_text(encoding="utf-8") == profile_template(stored.deck)
+    assert not (tmp_path / "decks" / "1000-first" / "profile.toml").exists()
+    assert not (tmp_path / "decks" / "1000-second" / "profile.toml").exists()
+    assert not outcome.warnings
+
+
+def test_a_profile_that_appears_during_the_sync_is_a_warning_and_not_a_failed_sync(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake, stored = populated(tmp_path, raw_deck, card_db_file)
+    profile = stored.folder / "profile.toml"
+    write_template = syncrun.write_profile_template
+
+    def written_by_someone_else(folder: Path, deck: Deck) -> Path:
+        profile.write_text("version = 1\n", encoding="utf-8")
+        return write_template(folder, deck)
+
+    monkeypatch.setattr(syncrun, "write_profile_template", written_by_someone_else)
+
+    outcome = sync_profiles(tmp_path, fake)
+
+    assert profile.read_text(encoding="utf-8") == "version = 1\n"
+    assert [w for w in outcome.warnings if "[grace]" in w] == [
+        f"deck {stored.deck.id}: [grace] table not added: {profile} already exists; edit it instead"
+    ]
+
+
 def seed_board(stored: StoredDeck, card_db_file: Path) -> dict[str, str]:
     """A board with two open cards from the old Maybeboard pick-up and one of each kind that must stay as it
     is; the ids by card name."""

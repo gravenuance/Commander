@@ -81,5 +81,7 @@ The app's Sync calls the same `run_sync`, so it behaves the same, and shows the 
   because nothing on disk says it was ever hidden; the next signed-in sync finds it again.
 - A signed-in sync makes the same requests as before, plus one more listing in the fallback: the token swap
   moved before the decks instead of after them.
+- A dry-run sync also signs in, to list the private decks, so it refreshes, and may rotate, the saved Archidekt
+  login token like a real sync does.
 - Revisit if Archidekt documents the API, or if the owner wants hidden decks left out of the ideas and meta
   steps.

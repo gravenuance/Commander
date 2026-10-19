@@ -358,3 +358,31 @@ def test_settings_saved_without_grace_leave_the_grace_cards_as_they_are(tmp_path
     write(tmp_path, WITH_GRACE)
     save_settings(tmp_path, DECK, adjacent=[], ignore=[], tag_search=True)
     assert read_profile(tmp_path).grace == {"Rings of Brighthearth": 2.5, "Urza's Saga": 4.0}
+
+
+BOM = b"\xef\xbb\xbf"
+
+
+def test_a_profile_with_a_byte_order_mark_gets_the_grace_table_and_keeps_the_mark(tmp_path: Path) -> None:
+    path = tmp_path / "profile.toml"
+    path.write_bytes(BOM + WITHOUT_GRACE.encode("utf-8"))
+    before = read_profile(tmp_path)
+    assert ensure_grace_table(tmp_path) is True
+    assert path.read_bytes() == BOM + (
+        'version = 1\narchetype = "Squirrels"\n\n'
+        + GRACE_BLOCK
+        + '\n# Lands decks that play like it.\n[ideas]\ncommanders = ["The Gitrog Monster"]\n'
+    ).encode("utf-8")
+    assert read_profile(tmp_path) == before
+
+
+def test_saving_settings_to_a_profile_with_a_byte_order_mark_edits_the_grace_and_keeps_the_mark(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "profile.toml"
+    path.write_bytes(BOM + WITHOUT_GRACE.encode("utf-8"))
+    settings_with(tmp_path, {"Sol Ring": 2.0})
+    data = path.read_bytes()
+    assert data.startswith(BOM)
+    assert not data.startswith(BOM + BOM)
+    assert read_profile(tmp_path).grace == {"Sol Ring": 2.0}
