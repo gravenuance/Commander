@@ -20,13 +20,11 @@ import httpx
 
 from commander.answers import card_key
 from commander.apply import NotYourDeckError, Resolution, SaveError
-from commander.archidekt import ArchidektError
+from commander.archidekt import ArchidektError, AuthError, SignInRequiredError
 from commander.archidekt_edit import (
     ArchidektAuth,
     ArchidektEditor,
-    AuthError,
     ReadBackError,
-    SignInRequiredError,
 )
 from commander.background import in_background
 from commander.board import (

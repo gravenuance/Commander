@@ -14,8 +14,8 @@ from pathlib import Path
 
 import httpx
 
-from commander.archidekt import ArchidektClient, ArchidektError
-from commander.archidekt_edit import ArchidektAuth, ArchidektEditor, AuthError
+from commander.archidekt import ArchidektClient, ArchidektError, AuthError
+from commander.archidekt_edit import ArchidektAuth, ArchidektEditor
 from commander.background import in_background
 from commander.board import BoardCard, BoardError, Origin
 from commander.carddb import CARD_DB_FILE, CardDataError, CardDb

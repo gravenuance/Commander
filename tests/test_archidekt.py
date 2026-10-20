@@ -4,9 +4,18 @@ from collections.abc import Callable
 import httpx
 import pytest
 
-from commander.archidekt import ArchidektClient, ArchidektError, category_flags, parse_deck
+from commander.archidekt import (
+    ArchidektClient,
+    ArchidektError,
+    AuthError,
+    SignInRequiredError,
+    auth_headers,
+    category_flags,
+    parse_deck,
+    raise_if_unauthorized,
+)
 from commander.jsonshape import ShapeError
-from commander.net import Fetcher
+from commander.net import Fetcher, HttpStatusError
 from conftest import Handler, Json, card_entry, deck_page, summary_row
 
 
@@ -222,3 +231,48 @@ def test_category_flags_say_which_categories_count_in_the_deck(raw_deck: Json) -
     assert flags["Maybeboard"] is False
     assert flags["Sideboard"] is True
     assert flags["Commander"] is True
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_a_401_or_403_becomes_a_sign_in_required_error_naming_the_status(status: int) -> None:
+    with pytest.raises(
+        SignInRequiredError, match=rf"^Archidekt refused the login \(HTTP {status}\)$"
+    ) as raised:
+        raise_if_unauthorized(HttpStatusError("refused", status))
+
+    assert isinstance(raised.value, AuthError)
+
+
+def test_an_unauthorized_status_uses_the_message_the_caller_gives() -> None:
+    with pytest.raises(SignInRequiredError) as raised:
+        raise_if_unauthorized(HttpStatusError("refused", 401), "the saved login has expired")
+
+    assert str(raised.value) == "the saved login has expired"
+
+
+@pytest.mark.parametrize("status", [400, 404, 429, 500])
+def test_any_other_status_passes_through_the_helper_unchanged(status: int) -> None:
+    raise_if_unauthorized(HttpStatusError("failed", status))
+
+
+def test_the_auth_header_carries_the_token_and_an_anonymous_call_has_none() -> None:
+    assert auth_headers("abc") == {"Authorization": "JWT abc"}
+    assert auth_headers(None) is None
+    assert auth_headers("") is None
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_a_signed_in_client_maps_a_refused_read_to_sign_in_required(status: int) -> None:
+    with httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(status))) as http:
+        client = ArchidektClient(Fetcher(http), token="stale")
+        with pytest.raises(SignInRequiredError, match=rf"HTTP {status}"):
+            client.get_deck(1)
+
+
+def test_a_signed_in_client_leaves_other_failures_as_they_are() -> None:
+    with httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(404))) as http:
+        client = ArchidektClient(Fetcher(http), token="good")
+        with pytest.raises(HttpStatusError) as raised:
+            client.get_deck(1)
+
+    assert raised.value.status == 404

@@ -17,13 +17,11 @@ from commander.apply import (
     SaveResult,
     apply_plan,
 )
-from commander.archidekt import ArchidektError
+from commander.archidekt import ArchidektError, AuthError, SignInRequiredError
 from commander.archidekt_edit import (
     ArchidektAuth,
     ArchidektEditor,
-    AuthError,
     ReadBackError,
-    SignInRequiredError,
 )
 from commander.board import (
     BoardError,
