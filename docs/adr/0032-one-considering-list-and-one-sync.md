@@ -5,7 +5,8 @@
 [ADR 0007](0007-meta-from-edhtop16-archidekt-and-spellbook.md) and
 [ADR 0011](0011-app-deck-grid-and-replacement-targets.md) and the waiting of
 [ADR 0023](0023-accounts-and-sync-in-the-app.md) · Extended by
-[ADR 0034](0034-fetch-the-decks-you-look-at-first.md) (the order a sync fetches in)
+[ADR 0034](0034-fetch-the-decks-you-look-at-first.md) (the order a sync fetches in) · No overlap amended by
+[ADR 0042](0042-writes-wait-only-while-the-sync-writes-the-deck.md) (deck writes wait only for the deck pull)
 
 ## Context
 

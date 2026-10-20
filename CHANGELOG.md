@@ -7,6 +7,9 @@
   with EDHTop16's own message, and the Meta panel says why its data is missing instead of only "not fetched
   yet". A cache read with nothing fetched is logged at DEBUG, so the log no longer fills with it.
 - A card change refused while a sync runs now says which sync phase it is waiting for, and is logged.
+- Card changes, settings and saves to Archidekt no longer wait for the whole sync, which on a first sync of
+  many decks could take most of an hour: they wait only while the sync pulls the decks (ADR 0042). Each deck's
+  new ideas are merged under that deck's lock, around what you changed meanwhile.
 
 ### Added
 - The log records each sync's start, phases, end and duration; every refused write; each Archidekt save and
