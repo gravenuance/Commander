@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 from functools import partial
 
-from commander.archidekt import ArchidektClient, ArchidektError, LoginRefusedError
+from commander.archidekt import ArchidektClient, ArchidektError, AuthError, SignInRequiredError
 from commander.background import run_all
 from commander.diff import DeckDiff, diff_decks
 from commander.models import Deck, DeckSummary
@@ -61,7 +61,7 @@ def sync_decks(
     """
     try:
         summaries = client.list_commander_decks(user)
-    except LoginRefusedError as error:
+    except SignInRequiredError as error:
         log.warning("%s; listing %s's public decks only", error, user)
         warn(f"Archidekt refused the login: {PRIVATE_NOT_UPDATED}")
         client = client.anonymous()
@@ -90,7 +90,7 @@ def sync_decks(
         for plan, future in zip(to_fetch, futures, strict=True):
             try:
                 deck = future.result()
-            except (NetworkError, ArchidektError) as error:
+            except (NetworkError, ArchidektError, AuthError) as error:
                 results.append(_failed(plan.summary, str(error)))
                 continue
             on_progress(f"fetched {deck.name}")

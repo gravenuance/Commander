@@ -8,10 +8,9 @@ from datetime import datetime
 from enum import Enum
 
 from commander.analysis import game_changers
-from commander.archidekt import ArchidektError
+from commander.archidekt import ArchidektError, AuthError
 from commander.archidekt_edit import (
     ArchidektEditor,
-    AuthError,
     CardEdit,
     EditKind,
     EntryState,
