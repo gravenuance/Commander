@@ -644,7 +644,7 @@ class Desk:
             cards = db.card_mana(names | set(BASIC_NAMES.values()))
             ids = [info.oracle_id for card in deck.main_cards if (info := cards.get(card.name.casefold()))]
             lineage = db.tag_lineage(ids)
-            options, budget = ([], None) if cedh else _land_options(db, deck, stored.folder)
+            options, budget = ([], None) if cedh else land_options(db, deck, stored.folder)
         alternative = [
             info.name
             for info in cards.values()
@@ -945,7 +945,7 @@ def _pool_json(card: BoardCard) -> Json | None:
     return {"count": pool.count, "total": pool.total, "share": round(pool.share, 4)}
 
 
-def _land_options(db: CardDb, deck: Deck, folder: Path) -> tuple[list[LandOption], int | None]:
+def land_options(db: CardDb, deck: Deck, folder: Path) -> tuple[list[LandOption], int | None]:
     """Lands the suggestion may name, and the deck's working budget (ADR 0024, 0025).
 
     Options are in the commander's identity, neither in the deck nor turned down on its board, and within the
@@ -954,7 +954,7 @@ def _land_options(db: CardDb, deck: Deck, folder: Path) -> tuple[list[LandOption
     main = db.resolve(deck.main_cards)
     identity = deck_identity(main) or ""
     budget = resolved_budget(deck.bracket, main, read_profile(folder).max_card_cents)
-    skip = {card.name.casefold() for card in deck.cards} | {
+    skip = {card.name.casefold() for card in deck.main_cards} | {
         name.casefold() for name in read_board(folder).rejected_names
     }
     options = [

@@ -16,6 +16,7 @@ from commander import apply as apply_module
 from commander import desk as desk_module
 from commander import syncrun
 from commander.app import desk_settings, page_html
+from commander.archidekt import parse_deck
 from commander.board import Actor, BoardService, Origin, OriginPool, Status, read_board
 from commander.carddb import CARD_DB_FILE, CardDb
 from commander.desk import Desk, DeskSettings
@@ -25,7 +26,7 @@ from commander.net import Pacer
 from commander.scryfall import CardRefresh
 from commander.store import StoredDeck, Workspace
 from commander.viewscore import ViewScores
-from conftest import REFRESH_TOKEN, FakeArchidekt, Json, MemoryTokenStore
+from conftest import REFRESH_TOKEN, FakeArchidekt, Json, MemoryTokenStore, card_entry
 from test_cli_apply import run
 from test_cli_meta import MAGDA, magda_page
 from test_cli_meta import meta as cli_meta
@@ -1365,3 +1366,13 @@ def test_no_cut_yet_is_a_side_panel_between_considering_and_meta_not_a_fold() ->
     assert '<div id="uncut-body" class="panel-body">' in panel
     assert '<div id="list-uncut" class="cards" role="list"></div>' in panel
     assert html.index('id="h-considering"') < html.index('id="h-uncut"') < html.index('id="h-meta"')
+
+
+def test_a_land_on_the_maybeboard_is_not_in_the_deck_so_the_mana_tab_may_offer_it(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path
+) -> None:
+    raw_deck["cards"].append(card_entry(7_000_000_001, "Ancient Tomb", ["Maybeboard"]))
+    deck = parse_deck(raw_deck)
+    with CardDb(card_db_file) as db:
+        options, _ = desk_module.land_options(db, deck, tmp_path)
+    assert "Ancient Tomb" in {option.mana.name for option in options}
