@@ -245,6 +245,25 @@ def test_no_cut_yet_ideas_fill_their_own_panel_and_hide_it_when_there_are_none()
     assert shown["none"] == {"panel": True, "count": ""}
 
 
+def test_opening_another_deck_shows_only_its_own_no_cut_yet_ideas() -> None:
+    """Deck A's no-cut tiles must not stay in the panel once deck B is open."""
+    shown = run("""
+    state.current = 1;
+    renderConsidering([card({ id: "a1", name: "Damping Sphere", targets: [] }),
+      card({ id: "a2", name: "Hammerheim", targets: [] })]);
+    stub.deck = async () => ({ id: 99 });
+    stub.decks = async () => ({ decks: [] });
+    await openDeck(2);
+    renderConsidering([card({ id: "b1", name: "Bayou", targets: [] })]);
+    const one = { names: texts($("list-uncut"), ".card-name"), count: $("count-uncut").textContent };
+    await openDeck(3);
+    renderConsidering([]);
+    return { one, none: { names: texts($("list-uncut"), ".card-name"), hidden: $("uncut").hidden } };
+    """)
+    assert shown["one"] == {"names": ["Bayou"], "count": "(1)"}
+    assert shown["none"] == {"names": [], "hidden": True}
+
+
 def test_a_pooled_idea_with_no_combined_share_still_renders_its_tile() -> None:
     """A commander without cached lists has no share; an alike idea still carries its pool."""
     tile = run("""

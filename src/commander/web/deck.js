@@ -109,7 +109,9 @@ async function openDeck(id) {
     state.collapsed.clear();
     state.tagsKey = null;
     state.leaningsKey = null;
+    // Both lists hold the tiles just forgotten above; one left full would keep the last deck's cards.
     $("list-considering").replaceChildren();
+    $("list-uncut").replaceChildren();
     $("grid").replaceChildren();
     closeLabelMenu(false);
     renderDecks();
