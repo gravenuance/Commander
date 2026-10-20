@@ -360,13 +360,20 @@ drops one by its tag slug ([ADR 0016](docs/adr/0016-replacements-like-for-like.m
 
 A deck's board holds the cards you are weighing for it, in one list, **Considering**. You, Claude, `suggest`
 and `sync` put cards there. Each card carries why it might fit
-and which deck cards it could replace. You decide each one: add it (choosing the card to cut), turn it down,
-or reopen it later. The board file is `board.json` version 2; opening a version 1 file (which had two lists)
-keeps a copy as `board.v1.bak` before the first save.
+and which deck cards it could replace. You decide each one: add it (choosing the card to cut, or none, and
+the deck category it goes under), turn it down, or reopen it later. The board also queues count changes to
+the deck's own cards: one more Forest, or a card taken out
+([ADR 0043](docs/adr/0043-count-changes-and-adds-without-a-cut-on-the-board.md)). More copies than the deck
+holds are only for a basic land or a card whose rules text allows them ("A deck can have any number of cards
+named ...", "up to seven"). A count change and a queued swap never touch the same card. The board file is
+`board.json` version 3; opening an older file keeps a copy as `board.v1.bak` or `board.v2.bak` before the first
+save.
 
 ```sh
 uv run cmdr board add ellivere "Sylvan Safekeeper" --reason "protects stax pieces" --replace "Compost=not stax"
 uv run cmdr board decide ellivere "Sylvan Safekeeper" add --cut Compost
+uv run cmdr board decide ellivere "Arcane Signet" add --category Ramp   # add without a cut
+uv run cmdr board count ellivere Forest 12   # queue 12 Forests; 0 takes a card out
 uv run cmdr board commit ellivere          # preview the queued changes against Archidekt
 uv run cmdr board commit ellivere --save   # make them
 ```
@@ -455,13 +462,22 @@ now**, Escape) or signing out leaves "Sign in to see your decks" with a **Sign i
 and `cmdr` keep working on the decks.
 
 A sync and a save, a label change, the Mana tab's swaps, a board edit (proposing, deciding or removing a
-card), saving the Settings or a sign-in or sign-out never run together: the one
+card, or + and −), saving the Settings or a sign-in or sign-out never run together: the one
 that starts second is refused with a message ("Wait for the save to finish, then sync.") and can be tried
 again when the first ends. The app only reads the cache of other players' data; Sync is the one way to
 refresh it ([ADR 0032](docs/adr/0032-one-considering-list-and-one-sync.md)).
 
 `cmdr app` opens a window over every deck's board. Pick a deck on the left to see it as a card grid,
-grouped by card type with counts and EUR totals. S, M and L above the grid set the card size. Each card but
+grouped by card type with counts and EUR totals. The deck's Sideboard, Maybeboard and any other category
+Archidekt keeps outside the deck follow as groups of their own, marked *Not in deck*
+([ADR 0044](docs/adr/0044-the-sideboard-and-maybeboard-shown-again.md)): their cards carry pills like the
+others but count in no total, and ideas may still suggest them. Above the grid stand the deck's card count,
+its Don't Have cards and what they cost, and the average mana value of its spells (lands left out), for the
+deck as saved; where queued changes would alter one, it reads "saved → after Review". S, M and L beside them
+set the card size. Hovering a deck card shows − (one copy fewer; at one copy it takes the card out) and, on a
+basic land or a card allowed in multiples, +. These and the cards queued to come in show in the grid until
+saved: "×6 → 7" or *Out* on the copies badge, a dashed outline and *New · category* on a card coming in,
+whose − takes it off the queue. Each card but
 the commander carries a pill with its weighted share of the lists other players run with the commander, and
 its sources in the tooltip. Click a card to see it large (× or Esc closes it). Copy decklist, next to the commander's name, copies the saved deck
 in TopDeck.gg's decklist format (`~~Commanders~~`, then `~~Mainboard~~`, one `1 Name` a line).
@@ -498,7 +514,8 @@ base against Frank Karsten's published numbers
   Hover over an idea or click it to light the deck cards it could replace. Click one of them to queue the
   swap; once an idea is clicked, any other deck card but the commander can be clicked too. Ideas that name
   no card to replace wait in their own *No cut yet* panel below Considering, shown only while there are any:
-  click one, then the deck card it replaces.
+  click one, then the deck card it replaces. A clicked idea also offers **Add without a cut**, under one of
+  the deck's categories (its card type's first); like every add it is labelled Don't Have when saved.
   × turns the idea down, with a reason if you like: turned-down cards wait under *Turned down* (closed until
   opened) with their reasons, and Reconsider brings one back. Considering, Meta, each Meta section and each
   category under *What stops you* fold, and stay as you left them.
@@ -537,10 +554,11 @@ base against Frank Karsten's published numbers
   the profile's ceiling disagree, it turns amber; click it for the notes and causes, each combo linked to
   Spellbook. The cards behind a cause carry the bracket they lift the deck to in an amber badge beside the
   label flag, with the reasons on hover. The estimate comes from the same 7-day cache as `bracket`.
-- **Review changes** checks the queued swaps against the deck on Archidekt and saves them.
+- **Review changes** checks the queued swaps, adds and count changes against the deck on Archidekt and
+  saves them.
 
 The window follows changes made with the CLI or by Claude within a couple of seconds. The rail on the
-right opens each deck's activity.
+right opens the open deck's activity and mana base; it is hidden while no deck is open.
 
 The app draws its page with Microsoft Edge WebView2, part of Windows 11, through
 [pywebview](https://pywebview.flowrl.com); it opens no network port. It logs to

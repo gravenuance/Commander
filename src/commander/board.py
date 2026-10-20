@@ -23,6 +23,7 @@ from pathlib import Path
 
 from commander.answers import card_key
 from commander.carddb import CardDb, CardInfo
+from commander.copylimit import copy_limit
 from commander.fsutil import write_text_atomic
 from commander.jsonshape import (
     ShapeError,
@@ -36,7 +37,7 @@ from commander.jsonshape import (
     req_str,
 )
 from commander.models import COMMANDER_CATEGORY, Deck
-from commander.plan import AddCard, Plan, RemoveCard
+from commander.plan import MAX_CATEGORY_LENGTH, AddCard, Plan, RemoveCard
 from commander.suggest import Suggestions, deck_identity, name_keys
 
 log = logging.getLogger(__name__)
@@ -44,7 +45,7 @@ log = logging.getLogger(__name__)
 BOARD_FILE = "board.json"
 ACTIVITY_FILE = "activity.jsonl"
 LOCK_FILE = ".board.lock"
-BOARD_VERSION = 2
+BOARD_VERSION = 3
 MAX_REASON = 4000
 MAX_NOTE = 1000
 MAX_REPLACE = 10
@@ -153,6 +154,8 @@ class BoardCard:
     copies: int = 1
     # Set when the user reopened a turned-down card: the automatic re-judge leaves it until they decide it.
     reconsidered: bool = False
+    # The Archidekt category a card being added is filed under; None files it by its card type.
+    category: str | None = None
 
     @property
     def relabellable(self) -> bool:
@@ -176,6 +179,26 @@ class BoardCard:
             raise ValueError(f"{self.name}: only an alike or tagged idea has a pool")
         if self.reconsidered and self.status is not Status.OPEN:
             raise ValueError(f"{self.name}: only an open card can be reconsidered")
+        if self.category is not None and self.status not in {Status.ADD, Status.APPLIED}:
+            raise ValueError(f"{self.name}: only a card being added has a category")
+
+
+@dataclass(slots=True, frozen=True)
+class CountChange:
+    """A deck card queued to end up with `count` copies (0 takes it out), from `was` when it was queued: the
+    decklist's + and - (ADR 0043). Gone from the board once the deck holds that many."""
+
+    name: str
+    was: int
+    count: int
+    by: Actor
+    at: str
+
+    def __post_init__(self) -> None:
+        if not 0 <= self.count <= MAX_COPIES or not 1 <= self.was <= MAX_COPIES:
+            raise ValueError(f"{self.name}: copies must be 0-{MAX_COPIES}, from 1-{MAX_COPIES}")
+        if self.count == self.was:
+            raise ValueError(f"{self.name}: a count change must change the count")
 
 
 @dataclass(slots=True, frozen=True)
@@ -201,6 +224,7 @@ class Activity:
 @dataclass(slots=True, frozen=True)
 class Board:
     cards: tuple[BoardCard, ...]
+    counts: tuple[CountChange, ...] = ()
 
     def find(self, key: str) -> BoardCard | None:
         """A card by its id, or by its name (any case; the front face is enough)."""
@@ -217,6 +241,16 @@ class Board:
     @property
     def rejected_names(self) -> tuple[str, ...]:
         return tuple(card.name for card in self.cards if card.status is Status.REJECTED)
+
+    @property
+    def pending(self) -> int:
+        """How many changes the next save makes: the cards queued to add and the count changes."""
+        return len(self.queued) + len(self.counts)
+
+    def count_of(self, name: str) -> CountChange | None:
+        """The queued count change of a deck card, by name (any case; the front face is enough)."""
+        keys = name_keys(name.strip())
+        return next((c for c in self.counts if name_keys(c.name) & keys), None)
 
 
 def board_stamp(folder: Path) -> str:
@@ -319,9 +353,23 @@ def parse_board(raw: Mapping[str, object]) -> Board:
                 origin_pool=_pool(card, where),
                 copies=opt_int(card, "copies", where) or 1,
                 reconsidered=card.get("reconsidered") is True,
+                category=opt_str(card, "category", where),
             )
         )
-    return Board(tuple(cards))
+    counts: list[CountChange] = []
+    for index, item in enumerate(req_list(raw, "counts", "board") if "counts" in raw else ()):
+        where = f"board.counts[{index}]"
+        change = as_object(item, where)
+        counts.append(
+            CountChange(
+                name=req_str(change, "name", where),
+                was=req_int(change, "was", where),
+                count=req_int(change, "count", where),
+                by=Actor(req_str(change, "by", where)),
+                at=req_str(change, "at", where),
+            )
+        )
+    return Board(tuple(cards), tuple(counts))
 
 
 def _origin(value: str | None) -> Origin | None:
@@ -338,7 +386,21 @@ def _pool(card: Mapping[str, object], where: str) -> OriginPool | None:
 
 
 def board_json(board: Board) -> dict[str, object]:
-    return {"version": BOARD_VERSION, "cards": [card_json(card) for card in board.cards]}
+    return {
+        "version": BOARD_VERSION,
+        "cards": [card_json(card) for card in board.cards],
+        "counts": [count_json(change) for change in board.counts],
+    }
+
+
+def count_json(change: CountChange) -> dict[str, object]:
+    return {
+        "name": change.name,
+        "was": change.was,
+        "count": change.count,
+        "by": change.by.value,
+        "at": change.at,
+    }
 
 
 def card_json(card: BoardCard) -> dict[str, object]:
@@ -362,6 +424,7 @@ def card_json(card: BoardCard) -> dict[str, object]:
         else None,
         "copies": card.copies,
         "reconsidered": card.reconsidered,
+        "category": card.category,
     }
 
 
@@ -378,19 +441,36 @@ def activity_json(entry: Activity) -> dict[str, object]:
 def board_plan(deck: Deck, board: Board) -> Plan | None:
     """The plan for the next save; None when it would change nothing.
 
-    It adds every queued card and removes its chosen cut. A cut the deck holds more copies of, such as a
-    basic land, loses one copy for each copy a card adds (most add one) instead.
+    It adds every queued card, under its category when it has one, and removes its chosen cut. A cut the
+    deck holds more copies of, such as a basic land, loses one copy for each copy a card adds (most add one)
+    instead. Each count change asks for its count: at least that many when it is more than the deck holds,
+    at most that many when it is fewer.
 
     The counts come from deck, so it should be the deck as it is on Archidekt now: a queued card that deck
-    already holds (other than a basic land) is done, and neither adds nor cuts.
+    already holds (other than a basic land) is done, and neither adds nor cuts; so is a count change the
+    deck already meets.
     """
     held = _held(deck)
     done = already_added(deck, board)
     queued = tuple(card for card in board.queued if card not in done)
-    if not queued:
+    met = counts_met(deck, board)
+    counts = tuple(change for change in board.counts if change not in met)
+    if not queued and not counts:
         return None
-    adds = tuple(AddCard(card.name, _add_target(held, card)) for card in queued)
-    return Plan(str(deck.id), adds, _cuts(held, queued))
+    adds = [AddCard(card.name, _add_target(held, card), category=card.category) for card in queued]
+    cuts = list(_cuts(held, queued))
+    for change in counts:
+        if change.count > held[card_key(change.name)]:
+            adds.append(AddCard(change.name, change.count))
+        else:
+            cuts.append(RemoveCard(change.name, keep=change.count))
+    return Plan(str(deck.id), tuple(adds), tuple(cuts))
+
+
+def counts_met(deck: Deck, board: Board) -> tuple[CountChange, ...]:
+    """The count changes deck already meets: nothing is left to do for them."""
+    held = _held(deck)
+    return tuple(change for change in board.counts if held[card_key(change.name)] == change.count)
 
 
 def already_added(deck: Deck, board: Board) -> tuple[BoardCard, ...]:
@@ -499,7 +579,7 @@ class BoardService:
                 copies=copies,
             )
             save(
-                Board((*board.cards, card)),
+                Board((*board.cards, card), board.counts),
                 Activity(stamp, actor, "proposed (considering)", card.name, reason),
             )
             return card
@@ -553,8 +633,10 @@ class BoardService:
         note: str = "",
         share: float | None = None,
         relabel: Relabel | None = None,
+        category: str | None = None,
     ) -> BoardCard:
-        """Mark a card to add (with the deck card to cut), turn it down, or reopen it.
+        """Mark a card to add (with the deck card to cut, or none, and the category to file it under), turn
+        it down, or reopen it.
 
         share is the card's weighted share of the lists read now; a turned-down card keeps it, so lists that
         have since taken to the card can offer it again (`feed_ideas`). A turned-down card the user reopens is
@@ -565,6 +647,7 @@ class BoardService:
         if status is Status.APPLIED:
             raise BoardError("a card counts as applied only once it is saved to Archidekt")
         note = _bounded(note, MAX_NOTE, "the note")
+        filed = self._category(category) if status is Status.ADD else None
         with self._editing() as (board, save):
             card = _require(board, key)
             if card.status is Status.APPLIED:
@@ -572,12 +655,16 @@ class BoardService:
             cut = self._choice(choice) if status is Status.ADD else None
             if cut is not None and (held := self._copies(cut)) < card.copies:
                 raise BoardError(f"{card.name} adds {card.copies} copies; the deck has only {held} {cut}")
+            for name in (card.name, cut) if status is Status.ADD else ():
+                if name is not None and board.count_of(name) is not None:
+                    raise BoardError(f"{name} has a queued count change; undo it first")
             kept_share = share if status is Status.REJECTED else None
             reconsidering = status is Status.OPEN and card.status is Status.REJECTED
             updated = replace(
                 card,
                 status=status,
                 choice=cut,
+                category=filed,
                 note=note,
                 updated_at=self._stamp(),
                 rejected_share=kept_share,
@@ -596,12 +683,15 @@ class BoardService:
     def remove(self, key: str, actor: Actor) -> None:
         with self._editing() as (board, save):
             card = _require(board, key)
-            remaining = Board(tuple(c for c in board.cards if c.id != card.id))
+            remaining = Board(tuple(c for c in board.cards if c.id != card.id), board.counts)
             save(remaining, Activity(self._stamp(), actor, "removed", card.name, ""))
 
-    def mark_applied(self, ids: Sequence[str], actor: Actor, snapshot: str | None) -> None:
-        """Record that the queued cards with these ids were saved to Archidekt, or, with no snapshot, were
-        found in the deck there already."""
+    def mark_applied(
+        self, ids: Sequence[str], actor: Actor, snapshot: str | None, *, counts: Sequence[str] = ()
+    ) -> None:
+        """Record that the queued cards with these ids, and the count changes of the deck cards named in
+        counts, were saved to Archidekt, or, with no snapshot, were found in the deck there already. A done
+        count change leaves the board."""
         with self._editing() as (board, save):
             stamp = self._stamp()
             done = set(ids)
@@ -611,12 +701,72 @@ class BoardService:
                 else c
                 for c in board.cards
             )
-            names = ", ".join(c.name for c in board.cards if c.id in done)
+            counted = {card_key(name) for name in counts}
+            finished = [c for c in board.counts if card_key(c.name) in counted]
+            names = ", ".join(
+                [c.name for c in board.cards if c.id in done] + [_count_text(c) for c in finished]
+            )
             if snapshot is None:
                 entry = Activity(stamp, actor, "found in the deck on Archidekt", None, names)
             else:
                 entry = Activity(stamp, actor, "saved to Archidekt", None, f"{names}; snapshot '{snapshot}'")
-            save(Board(cards), entry)
+            save(Board(cards, tuple(c for c in board.counts if c not in finished)), entry)
+
+    def set_count(self, name: str, count: int, actor: Actor) -> CountChange | None:
+        """Queue a deck card to end up with count copies (0 takes it out); None when that is what the deck
+        holds, which drops the card's queued count change. More copies than the deck holds are only for a
+        card allowed in multiples (a basic land, or one whose rules text allows more)."""
+        return self._count(name, lambda _: count, actor)
+
+    def step_count(self, name: str, step: int, actor: Actor) -> CountChange | None:
+        """Move a deck card's queued count (the copies it holds when none is queued) by step: + and -."""
+        return self._count(name, lambda current: current + step, actor)
+
+    def _count(self, name: str, target: Callable[[int], int], actor: Actor) -> CountChange | None:
+        held = self._held(name)
+        if held is None:
+            raise BoardError(f"{name.strip()!r} is not in the deck")
+        was = self._copies(held)
+        with self._editing() as (board, save):
+            queued = board.count_of(held)
+            count = target(queued.count if queued is not None else was)
+            self._check_count(board, held, was, count)
+            others = tuple(c for c in board.counts if c is not queued)
+            stamp = self._stamp()
+            if count == was:
+                if queued is None:
+                    return None
+                save(Board(board.cards, others), Activity(stamp, actor, "count change undone", held, ""))
+                return None
+            if queued is None and len(board.counts) >= MAX_CARDS:
+                raise BoardError(f"the board holds at most {MAX_CARDS} count changes; save some first")
+            change = CountChange(held, was, count, actor, stamp)
+            action = "queued to remove" if count == 0 else "queued copies"
+            save(
+                Board(board.cards, (*others, change)),
+                Activity(stamp, actor, action, held, f"{was} → {count}"),
+            )
+            return change
+
+    def _check_count(self, board: Board, name: str, was: int, count: int) -> None:
+        if count < 0:
+            raise BoardError(f"{name} is already queued to come out")
+        if count > MAX_COPIES:
+            raise BoardError(f"a deck holds at most {MAX_COPIES} copies of {name}")
+        if count > was and (limit := self._copy_limit(name)) is not None and count > limit:
+            allowed = "one" if limit == 1 else str(limit)
+            raise BoardError(f"Commander allows {allowed} {name}")
+        keys = name_keys(name)
+        for card in board.queued:
+            if any(other and name_keys(other) & keys for other in (card.name, card.choice)):
+                raise BoardError(f"{name} is in a queued change for {card.name}; undo that first")
+
+    def _copy_limit(self, name: str) -> int | None:
+        info = self._db.card_named(name)
+        if info is None:
+            raise BoardError(f"no card data for {name}; sync to refresh it")
+        text = self._db.card_text(info.oracle_id)
+        return copy_limit(info, text.text if text else "")
 
     def turn_down_open(self, key: str, note: str, share: float) -> BoardCard | None:
         """Turn down a card as cmdr, but only while it is still open and its own: None when it was decided,
@@ -747,6 +897,18 @@ class BoardService:
             checked.append(ReplaceOption(held, _bounded(option.reason, MAX_NOTE, "a replace reason")))
         return tuple(checked)
 
+    def _category(self, category: str | None) -> str | None:
+        """The category to file an added card under, checked; None leaves it to the card type."""
+        if category is None or not category.strip():
+            return None
+        named = category.strip()
+        if len(named) > MAX_CATEGORY_LENGTH:
+            raise BoardError(f"a category name is at most {MAX_CATEGORY_LENGTH} characters")
+        outside = {c.primary_category.casefold() for c in self._deck.cards if not c.in_deck}
+        if named.casefold() in outside | _OUTSIDE_NAMES:
+            raise BoardError(f"{named} is outside the deck; name a category in the deck")
+        return named
+
     def _choice(self, choice: str | None) -> str | None:
         if choice is None:
             return None
@@ -797,6 +959,12 @@ class BoardService:
 
 
 _DECISIONS = {Status.ADD: "queued to add", Status.REJECTED: "turned down", Status.OPEN: "reopened"}
+# Archidekt's own categories outside the deck, refused for an add even in a deck that has neither yet.
+_OUTSIDE_NAMES = frozenset({"maybeboard", "sideboard"})
+
+
+def _count_text(change: CountChange) -> str:
+    return f"{change.name} {change.was} → {change.count}"
 
 
 def _require(board: Board, key: str) -> BoardCard:
@@ -821,7 +989,7 @@ def _relabelled(card: BoardCard, label: Relabel) -> BoardCard:
 
 
 def _swap(board: Board, card: BoardCard) -> Board:
-    return Board(tuple(card if c.id == card.id else c for c in board.cards))
+    return Board(tuple(card if c.id == card.id else c for c in board.cards), board.counts)
 
 
 def _bounded(text: str, limit: int, what: str) -> str:

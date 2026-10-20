@@ -289,7 +289,7 @@ def test_proposing_a_card_with_no_cut_opens_its_folded_panel_without_saving_that
     # Folding it again next time stays the user's call: the stored choice is untouched.
     assert seen["stored"] == "0"
     assert seen["selected"] == "n"
-    assert seen["status"] == "New: pick the deck card it replaces"
+    assert seen["status"] == "New: pick the deck card it replaces, or add it without one"
 
 
 GRACE = """{ cards: [{ name: "Basalt Monolith", factor: 3 }, { name: "Rings of Brighthearth", factor: 2 }],

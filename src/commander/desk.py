@@ -8,7 +8,7 @@ refuses while a sync runs, and a sync refuses while one of them runs.
 
 import logging
 import threading
-from collections.abc import Callable, Collection, Generator, Mapping, Sequence
+from collections.abc import Callable, Collection, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -20,7 +20,7 @@ from typing import cast
 import httpx
 
 from commander.answers import card_key
-from commander.apply import NotYourDeckError, Resolution, SaveError
+from commander.apply import NotYourDeckError, Resolution, SaveError, default_category
 from commander.archidekt import ArchidektError, AuthError, SignInRequiredError
 from commander.archidekt_edit import (
     ArchidektAuth,
@@ -40,6 +40,7 @@ from commander.board import (
     board_digest,
     board_stamp,
     card_json,
+    count_json,
     files_stamp,
     read_activity,
     read_board,
@@ -50,16 +51,16 @@ from commander.bracket import estimate_cache, estimate_deck
 from commander.bracketcheck import check_bracket, check_json
 from commander.bracketpreview import preview_json, spellbook_preview
 from commander.budget import resolved_budget
-from commander.carddb import CardDataError, CardDb, CardInfo, ResolvedCard
+from commander.carddb import CardDataError, CardDb, ResolvedCard
 from commander.changetext import change_mark, change_text
 from commander.config import ConfigError, MetaSettings, forget_account, switch_account, validate_user
 from commander.credentials import CredentialError, TokenStore
 from commander.deckcache import NOT_FETCHED
 from commander.deckexport import cardmarket_wants_text, topdeck_text
-from commander.deckgrid import GridGroup, deck_grid, image_url
 from commander.decklocks import DeckLocks
 from commander.deckprofile import MAX_ADJACENT, MAX_LIST, MAX_TEXT, Profile, ProfileError, read_profile
 from commander.deckthemes import merge_themes
+from commander.deckview import card_image, decklist_json
 from commander.edhtop16 import Edhtop16Error
 from commander.fetchpriority import FetchPriority
 from commander.ideas import idea_labels
@@ -80,7 +81,7 @@ from commander.metadata import (
 )
 from commander.metajson import report_json
 from commander.metapanel import combo_groups, key_card_rows, stopper_rows, untouched
-from commander.models import COMMANDER_CATEGORY, Deck
+from commander.models import Deck
 from commander.net import Fetcher, NetworkError, Pacer
 from commander.profileedit import save_settings
 from commander.spellbook import SpellbookClient
@@ -564,7 +565,7 @@ class Desk:
                 log.warning("deck %s: %s", stored.deck.id, error)
                 row["error"] = str(error)
             else:
-                row["queued"] = len(board.queued)
+                row["queued"] = board.pending
                 row["open"] = sum(1 for c in board.cards if c.status is Status.OPEN)
             rows.append(row)
         rows.sort(key=lambda row: str(row["short"]).casefold())
@@ -586,7 +587,6 @@ class Desk:
         with self._db() as db:
             main = db.resolve(stored.deck.main_cards)
             identity = deck_identity(main)
-            grid = deck_grid(main)
             infos = db.cards(card.oracle_id for card in board.cards)
             rules = with_ideas(self._deck_rules(stored, main, profile, db), infos.values(), db)
             budget = resolved_budget(stored.deck.bracket, main, profile.max_card_cents)
@@ -601,11 +601,19 @@ class Desk:
                     "targets": [
                         _target_json(t) for t in targets_for(card, infos.get(card.oracle_id), main, rules)
                     ],
+                    "typeCategory": default_category(info) if (info := infos.get(card.oracle_id)) else None,
                 }
                 for card in board.cards
             ]
+            account = self._workspace.account_labels()
+            decklist = decklist_json(
+                stored.deck,
+                board,
+                db,
+                colours=dict(account or ()),
+                share=lambda name: _share_json(shares.of(name)),
+            )
         activity = read_activity(stored.folder)[-ACTIVITY_SHOWN:]
-        account = self._workspace.account_labels()
         return {
             "id": stored.deck.id,
             "short": stored.deck.short_name,
@@ -620,11 +628,11 @@ class Desk:
             "identity": identity,
             "stamp": board_stamp(stored.folder),
             "budget": budget.json(),
-            "pending": len(board.queued),
+            "pending": board.pending,
             "cards": cards,
             "deckCards": sorted({c.name for c in stored.deck.main_cards if "Commander" not in c.categories}),
             "labels": [{"name": n, "colour": c} for n, c in label_options(stored.deck, account)],
-            "grid": [_group_json(group, dict(account or ()), shares) for group in grid],
+            **decklist,
             "activity": [activity_json(entry) for entry in reversed(activity)],
         }
 
@@ -776,7 +784,7 @@ class Desk:
             cards = db.card_mana(names | set(BASIC_NAMES.values()))
             ids = [info.oracle_id for card in deck.main_cards if (info := cards.get(card.name.casefold()))]
             lineage = db.tag_lineage(ids)
-            options, budget = ([], None) if cedh else _land_options(db, deck, stored.folder)
+            options, budget = ([], None) if cedh else land_options(db, deck, stored.folder)
         alternative = [
             info.name
             for info in cards.values()
@@ -854,8 +862,14 @@ class Desk:
         return {"card": card_json(card)}
 
     @_guarded
-    def decide(
-        self, deck_id: int, card_id: str, decision: str, choice: str | None = None, note: str = ""
+    def decide(  # noqa: PLR0917 — the page passes its arguments by position
+        self,
+        deck_id: int,
+        card_id: str,
+        decision: str,
+        choice: str | None = None,
+        note: str = "",
+        category: str | None = None,
     ) -> Json:
         status = _DECISIONS.get(decision)
         if status is None:
@@ -878,9 +892,23 @@ class Desk:
                     note=note,
                     share=share,
                     relabel=self._relabel(stored, board_card) if status is Status.OPEN else None,
+                    category=category or None,
                 )
             log.info("board: decision %s for %s on deck %d", decision, card.name, deck_id)
         return {"card": card_json(card)}
+
+    @_guarded
+    def count(self, deck_id: int, name: str, step: int) -> Json:
+        """Queue one copy more (step 1) or fewer (step -1) of a deck card: the decklist's + and -."""
+        if step not in {1, -1}:
+            return {"error": f"a count moves by one copy, not {step!r}"}
+        with self._writing("count change", "change the count", deck_id) as busy:
+            if busy:
+                return busy
+            with self._service(deck_id) as service:
+                change = service.step_count(name, step, Actor.YOU)
+            log.info("board: count %+d for %s on deck %d", step, name, deck_id)
+        return {"change": count_json(change) if change else None}
 
     @_guarded
     def remove(self, deck_id: int, card_id: str) -> Json:
@@ -1070,7 +1098,7 @@ class Desk:
             priceCents=info.cheapest_cents if info else None,
             gameChanger=info.game_changer if info else False,
             text=text.text if text else "",
-            image=_image_url(db, info) if info else None,
+            image=card_image(db, info) if info else None,
             pool=_pool_json(card),
         )
         return view
@@ -1085,7 +1113,7 @@ def _pool_json(card: BoardCard) -> Json | None:
     return {"count": pool.count, "total": pool.total, "share": round(pool.share, 4)}
 
 
-def _land_options(db: CardDb, deck: Deck, folder: Path) -> tuple[list[LandOption], int | None]:
+def land_options(db: CardDb, deck: Deck, folder: Path) -> tuple[list[LandOption], int | None]:
     """Lands the suggestion may name, and the deck's working budget (ADR 0024, 0025).
 
     Options are in the commander's identity, neither in the deck nor turned down on its board, and within the
@@ -1094,7 +1122,7 @@ def _land_options(db: CardDb, deck: Deck, folder: Path) -> tuple[list[LandOption
     main = db.resolve(deck.main_cards)
     identity = deck_identity(main) or ""
     budget = resolved_budget(deck.bracket, main, read_profile(folder).max_card_cents)
-    skip = {card.name.casefold() for card in deck.cards} | {
+    skip = {card.name.casefold() for card in deck.main_cards} | {
         name.casefold() for name in read_board(folder).rejected_names
     }
     options = [
@@ -1103,37 +1131,6 @@ def _land_options(db: CardDb, deck: Deck, folder: Path) -> tuple[list[LandOption
         if mana.name.casefold() not in skip
     ]
     return options, budget.line
-
-
-def _image_url(db: CardDb, info: CardInfo) -> str | None:
-    printings = db.printings_of(info.oracle_id)
-    regular = [p for p in printings if p.regular] or printings
-    if not regular:
-        return None
-    return image_url(regular[-1].scryfall_id)
-
-
-def _group_json(group: GridGroup, colours: Mapping[str, str], shares: ShareTable) -> Json:
-    """One grid group; a label the account keeps shows in the account's colour (ADR 0012). The commander
-    is in every list by definition, so it carries no share."""
-    return {
-        "name": group.name,
-        "count": group.count,
-        "cents": group.cents,
-        "cards": [
-            {
-                "name": c.name,
-                "quantity": c.quantity,
-                "image": c.image,
-                "category": c.category,
-                "label": c.label,
-                "labelColour": colours.get(c.label, c.label_colour) if c.label else c.label_colour,
-                "cents": c.cents,
-                "share": None if group.name == COMMANDER_CATEGORY else _share_json(shares.of(c.name)),
-            }
-            for c in group.cards
-        ],
-    }
 
 
 def _grace_from_page(entries: object) -> dict[str, float]:

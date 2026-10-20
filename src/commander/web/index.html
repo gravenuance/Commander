@@ -75,11 +75,14 @@
 
       <div class="workspace">
         <section class="grid-pane" aria-label="Deck cards">
-          <div class="grid-tools" role="group" aria-label="Card size">
-            <span class="muted small">Card size</span>
-            <button class="button quiet small size" type="button" data-size="s" aria-pressed="false">S</button>
-            <button class="button quiet small size" type="button" data-size="m" aria-pressed="false">M</button>
-            <button class="button quiet small size" type="button" data-size="l" aria-pressed="false">L</button>
+          <div class="grid-head">
+            <dl id="deck-stats" class="deck-stats" aria-label="Deck stats"></dl>
+            <div class="grid-tools" role="group" aria-label="Card size">
+              <span class="muted small">Card size</span>
+              <button class="button quiet small size" type="button" data-size="s" aria-pressed="false">S</button>
+              <button class="button quiet small size" type="button" data-size="m" aria-pressed="false">M</button>
+              <button class="button quiet small size" type="button" data-size="l" aria-pressed="false">L</button>
+            </div>
           </div>
           <div id="grid" class="grid"></div>
         </section>
@@ -88,7 +91,7 @@
           <section class="panel" aria-labelledby="h-considering">
             <h2 class="panel-title">
               <button id="h-considering" class="panel-toggle" type="button" aria-expanded="true" aria-controls="considering-body">
-                <span class="chevron" aria-hidden="true"></span>Considering <span class="count" id="count-considering"></span>
+                <span class="disclosure" aria-hidden="true"></span>Considering <span class="count" id="count-considering"></span>
               </button>
             </h2>
             <div id="considering-body" class="panel-body">
@@ -104,7 +107,7 @@
           <section id="uncut" class="panel" aria-labelledby="h-uncut" hidden>
             <h2 class="panel-title">
               <button id="h-uncut" class="panel-toggle" type="button" aria-expanded="true" aria-controls="uncut-body">
-                <span class="chevron" aria-hidden="true"></span>No cut yet <span class="count" id="count-uncut"></span>
+                <span class="disclosure" aria-hidden="true"></span>No cut yet <span class="count" id="count-uncut"></span>
               </button>
             </h2>
             <div id="uncut-body" class="panel-body">
@@ -115,7 +118,7 @@
           <section id="meta" class="panel" aria-labelledby="h-meta" hidden>
             <h2 class="panel-title">
               <button id="h-meta" class="panel-toggle" type="button" aria-expanded="true" aria-controls="meta-panel">
-                <span class="chevron" aria-hidden="true"></span>Meta
+                <span class="disclosure" aria-hidden="true"></span>Meta
               </button>
             </h2>
             <div id="meta-panel" class="panel-body">
@@ -136,7 +139,7 @@
     </section>
   </main>
 
-  <aside id="activity-pane" class="activity" aria-label="Activity and mana base">
+  <aside id="activity-pane" class="activity" aria-label="Activity and mana base" hidden>
     <div class="rail-tabs">
       <button id="activity-toggle" class="rail-toggle" type="button" aria-expanded="false" aria-controls="activity" data-tab="activity">
         <span class="rail-label">Activity</span>

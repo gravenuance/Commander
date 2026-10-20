@@ -512,11 +512,14 @@ def test_while_the_card_data_downloads_a_write_that_looks_cards_up_waits_and_one
         assert download.downloading.wait(WAIT_SECONDS)
         assert download.pulled.wait(WAIT_SECONDS)
         looks_up = desk.propose(DECK, "Chaos Warp")
+        counted = desk.count(DECK, "Mountain", 1)
         removed = desk.remove(DECK, card_id)
     finally:
         download.release.set()
         sync.join()
     assert looks_up == {"error": "Wait for the card data to finish downloading, then propose the card."}
+    # The copy limit comes from the card data.
+    assert counted == {"error": "Wait for the card data to finish downloading, then change the count."}
     assert removed == {"ok": True}
     assert "Arcane Signet" not in board_cards(settings)
     assert "card" in desk.propose(DECK, "Chaos Warp"), "the card data is in once the download is done"

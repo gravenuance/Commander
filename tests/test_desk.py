@@ -18,6 +18,7 @@ from commander import desk as desk_module
 from commander import syncrun
 from commander.app import desk_settings, page_html
 from commander.apply import Resolution
+from commander.archidekt import parse_deck
 from commander.board import Actor, BoardService, Origin, OriginPool, Status, read_board
 from commander.boardsave import BoardSave
 from commander.carddb import CARD_DB_FILE, CardDb
@@ -30,7 +31,7 @@ from commander.scryfall import CardRefresh
 from commander.store import StoredDeck, Workspace
 from commander.syncrun import CardState, CardStatus, FetchState, SyncOutcome
 from commander.viewscore import ViewScores
-from conftest import REFRESH_TOKEN, FakeArchidekt, Json, MemoryTokenStore, load_fixture
+from conftest import REFRESH_TOKEN, FakeArchidekt, Json, MemoryTokenStore, card_entry, load_fixture
 from test_cli_apply import run
 from test_cli_meta import MAGDA, magda_page
 from test_cli_meta import meta as cli_meta
@@ -674,11 +675,19 @@ def test_the_deck_view_carries_the_card_grid(desk: Desk) -> None:
     # No recent decks with Magda are cached, so there is nothing to lean against.
     assert view["leanings"] == []
     grid = items(view, "grid")
-    assert [(g["name"], g["count"]) for g in grid] == [
-        ("Commander", 1),
-        ("Creature", 1),
-        ("Artifact", 1),
-        ("Land", 6),
+    assert [(g["name"], g["count"], g["inDeck"]) for g in grid] == [
+        ("Commander", 1, True),
+        ("Creature", 1, True),
+        ("Artifact", 1, True),
+        ("Land", 6, True),
+        # The fixture's Maybeboard is unticked as "included in deck": its own group, after the deck's.
+        ("Maybeboard", 2, False),
+    ]
+    assert grid[-1]["key"] == "outside:Maybeboard"
+    aside = cast("list[Json]", grid[-1]["cards"])
+    assert [(c["name"], c["more"], c["less"]) for c in aside] == [
+        ("High-Speed Hoverbike", False, False),
+        ("Tempestra, Dame of Games", False, False),
     ]
     golem = cast("list[Json]", grid[1]["cards"])[0]
     assert (golem["name"], golem["label"], golem["category"]) == ("Battered Golem", "", "Combo Pieces")
@@ -713,6 +722,9 @@ def test_the_deck_view_carries_each_cards_combined_share_on_deck_and_board_cards
     mountain = cast("Json", grid["Mountain"]["share"])
     assert (mountain["count"], mountain["total"], mountain["label"]) == (0, 6, "0%")
     assert grid["Magda, Brazen Outlaw"]["share"] is None
+    # A Maybeboard card carries its share like any other, though it is not in the deck.
+    hoverbike = cast("Json", grid["High-Speed Hoverbike"]["share"])
+    assert hoverbike["total"] == 6
     stone = next(c for c in items(view, "cards") if c["name"] == "Mind Stone")
     assert cast("Json", stone["share"])["label"] == "90%"
 
@@ -963,6 +975,10 @@ def _remove(desk: Desk) -> Json:
     return desk.remove(DECK, "any")
 
 
+def _count(desk: Desk) -> Json:
+    return desk.count(DECK, "Mountain", 1)
+
+
 def _save_settings(desk: Desk) -> Json:
     return save(desk, [["Tempestra, Dame of Games"]], ["Stax"], tag_search=True, grace=[("Arcane Signet", 3)])
 
@@ -973,6 +989,7 @@ def _save_settings(desk: Desk) -> Json:
         (_propose, "propose the card"),
         (_decide, "decide"),
         (_remove, "remove the card"),
+        (_count, "change the count"),
         (_save_settings, "save the settings"),
     ],
 )
@@ -1370,6 +1387,89 @@ def test_no_cut_yet_is_a_side_panel_between_considering_and_meta_not_a_fold() ->
     assert '<div id="uncut-body" class="panel-body">' in panel
     assert '<div id="list-uncut" class="cards" role="list"></div>' in panel
     assert html.index('id="h-considering"') < html.index('id="h-uncut"') < html.index('id="h-meta"')
+
+
+def test_a_land_on_the_maybeboard_is_not_in_the_deck_so_the_mana_tab_may_offer_it(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path
+) -> None:
+    raw_deck["cards"].append(card_entry(7_000_000_001, "Ancient Tomb", ["Maybeboard"]))
+    deck = parse_deck(raw_deck)
+    with CardDb(card_db_file) as db:
+        options, _ = desk_module.land_options(db, deck, tmp_path)
+    assert "Ancient Tomb" in {option.mana.name for option in options}
+
+
+def test_the_decklist_shows_queued_count_changes_and_adds_with_the_stats_before_and_after(
+    desk: Desk, settings: DeskSettings, fake: FakeArchidekt, tmp_path: Path
+) -> None:
+    for entry in fake.decks[DECK]["cards"]:
+        if entry["card"]["oracleCard"]["name"] in {"Disruptor Flute", "Mountain"}:
+            entry["label"] = "Don't Have,#f47373"
+    fake.decks[DECK]["updatedAt"] = "2026-10-16T10:00:00.000000Z"
+    assert (
+        run(["sync", "--no-cards", "--no-ideas", "--workspace", str(settings.workspace)], tmp_path, fake).code
+        == 0
+    )
+    # Magda (2) 7.63, Battered Golem (3) 0.35, Disruptor Flute (2) 2.17 and six Mountains at 0.12 each; the
+    # Flute and the Mountains are Don't Have: 7 cards, 2.17 + 6 x 0.12 = 2.89. Spells average 7 / 3.
+    saved = {"cards": 9, "dontHave": 7, "dontHaveCents": 289, "dontHaveUnpriced": 0, "averageManaValue": 2.33}
+    view = desk.deck(DECK)
+    assert view["stats"] == {"saved": saved, "after": saved}
+    assert view["categories"] == ["Combo Pieces", "Land", "Stax"]
+
+    assert desk.count(DECK, "Mountain", 1) == {
+        "change": {"name": "Mountain", "was": 6, "count": 7, "by": "you", "at": "2026-10-15T12:00:00+00:00"}
+    }
+    desk.count(DECK, "Battered Golem", -1)
+    signet = str(cast("Json", desk.propose(DECK, "Arcane Signet")["card"])["id"])
+    assert "error" not in desk.decide(DECK, signet, "add", None, "", "Ramp")
+    assert desk.count(DECK, "Disruptor Flute", 1) == {"error": "Commander allows one Disruptor Flute"}
+
+    view = desk.deck(DECK)
+    assert view["pending"] == 3
+    # Golem out, a seventh Mountain (still Don't Have) and Arcane Signet (2, cheapest 0.30) as Don't Have:
+    # 10 cards, 9 Don't Have at 2.17 + 7 x 0.12 + 0.30 = 3.31, spells Magda, Flute and Signet at 2 each.
+    after = {"cards": 10, "dontHave": 9, "dontHaveCents": 331, "dontHaveUnpriced": 0, "averageManaValue": 2.0}
+    assert view["stats"] == {"saved": saved, "after": after}
+    grid = {c["name"]: c for g in items(view, "grid") for c in cast("list[Json]", g["cards"])}
+    shown = {
+        name: (grid[name]["pending"], grid[name]["more"], grid[name]["less"])
+        for name in ("Mountain", "Battered Golem", "Disruptor Flute", "Magda, Brazen Outlaw", "Arcane Signet")
+    }
+    assert shown == {
+        "Mountain": ({"kind": "count", "was": 6, "count": 7}, True, True),
+        "Battered Golem": ({"kind": "count", "was": 1, "count": 0}, True, False),
+        "Disruptor Flute": (None, False, True),
+        "Magda, Brazen Outlaw": (None, False, False),
+        "Arcane Signet": ({"kind": "add", "id": signet}, False, False),
+    }
+    artifacts = next(g for g in items(view, "grid") if g["name"] == "Artifact")
+    assert [c["name"] for c in cast("list[Json]", artifacts["cards"])] == ["Arcane Signet", "Disruptor Flute"]
+    assert (grid["Arcane Signet"]["category"], grid["Arcane Signet"]["label"]) == ("Ramp", "Don't Have")
+    [board_signet] = items(view, "cards")
+    assert board_signet["typeCategory"] == "Artifact"
+
+
+def test_a_count_moves_one_copy_at_a_time(desk: Desk) -> None:
+    assert desk.count(DECK, "Mountain", 2) == {"error": "a count moves by one copy, not 2"}
+
+
+def test_panel_titles_and_their_sub_toggles_share_one_marker_and_a_green_hover_without_a_background() -> None:
+    css = (resources.files("commander") / "web" / "app.css").read_text(encoding="utf-8")
+    light, dark = css.split("@media (prefers-color-scheme: dark)", 1)
+    assert "--accent-hover: #237a64;" in light
+    assert "--accent-hover: #79d4ba;" in dark.split("}", 1)[0]
+    rules = dict(re.findall(r"([^{}]+)\{([^{}]*)\}", css))
+
+    def rule(selector: str) -> str:
+        return next(body for name, body in rules.items() if selector in [s.strip() for s in name.split(",")])
+
+    assert rule(".panel-toggle:hover") == rule(".meta-section > summary:hover")
+    assert "color: var(--accent-hover)" in rule(".panel-toggle:hover")
+    assert "background" not in rule(".panel-toggle:hover")
+    assert rule(".panel-toggle > .disclosure::before") == rule(".meta-section > summary::before")
+    html = (resources.files("commander") / "web" / "index.html").read_text(encoding="utf-8")
+    assert html.count('<span class="disclosure" aria-hidden="true"></span>') == 3
 
 
 REFUSED_BODY_TEXT = "Only persisted queries are allowed in production. Plain text queries are disabled."

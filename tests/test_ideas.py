@@ -1035,3 +1035,16 @@ def test_relabelling_old_pick_ups_weighs_the_lists_by_the_decks_grace_cards(
 
     assert relabelled(plain) == []
     assert relabelled(graced) == ["Arcane Signet"]
+
+
+def test_a_card_on_the_maybeboard_is_not_in_the_deck_so_it_can_be_an_idea(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    (tmp_path / "profile.toml").write_text(ALIKE, encoding="utf-8")
+    # Every pooled deck plays High-Speed Hoverbike, which waits on this deck's Maybeboard, and Battered Golem,
+    # which is in it.
+    assert {c.name: c.in_deck for c in deck.cards}["High-Speed Hoverbike"] is False
+    pool = [peer(i, ["High-Speed Hoverbike", "Battered Golem"]) for i in range(1, 5)]
+    added = compile_ideas(StoredDeck(tmp_path, deck), meta_data([], []), db, now=lambda: NOW, adjacent=pool)
+    assert [card.name for card in added[Origin.ADJACENT]] == ["High-Speed Hoverbike"]
+    assert read_board(tmp_path).find("High-Speed Hoverbike") is not None

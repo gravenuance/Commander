@@ -20,6 +20,7 @@ from commander.archidekt_edit import (
     new_entry_state,
 )
 from commander.carddb import CardDb, CardInfo, Printing
+from commander.copylimit import copy_limit
 from commander.models import COMMANDER_CATEGORY, DONT_HAVE_LABEL, Deck, DeckCard
 from commander.net import NetworkError
 from commander.plan import AddCard, Plan, RemoveCard
@@ -145,10 +146,13 @@ class _Resolver:
         if problem is not None:
             self.problems.append(f"add {info.name}: {problem}")
             return changers
-        if wanted.quantity > 1 and not info.front_type_line.startswith("Basic"):
+        limit = self._copy_limit(info) if wanted.quantity > 1 else None
+        if limit == 1:
             self.warnings.append(
                 f"{info.name}: {wanted.quantity} copies; Commander allows one unless the card says so"
             )
+        elif limit is not None and wanted.quantity > limit:
+            self.warnings.append(f"{info.name}: {wanted.quantity} copies; the card allows {limit}")
         if held:
             entry = held[0]
             have = sum(e.quantity for e in held)
@@ -178,6 +182,10 @@ class _Resolver:
             )
         )
         return changers + 1 if info.game_changer else changers
+
+    def _copy_limit(self, info: CardInfo) -> int | None:
+        text = self.db.card_text(info.oracle_id)
+        return copy_limit(info, text.text if text else "")
 
     def _add_problem(self, info: CardInfo, identity: str | None, held: Sequence[DeckCard]) -> str | None:
         if info.oracle_id in self.added:

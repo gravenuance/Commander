@@ -9,6 +9,8 @@
   --text: #1d1b18;
   --muted: #5c574f;
   --accent: #1f6f5c;
+  /* The accent a step brighter, for text under the pointer; 4.5:1 on --bg. */
+  --accent-hover: #237a64;
   --accent-text: #ffffff;
   --accent-soft: #dcefe9;
   --primary: #1f6f5c;
@@ -98,6 +100,7 @@
     --text: #ece9e3;
     --muted: #b0aaa0;
     --accent: #5fc4a8;
+    --accent-hover: #79d4ba;
     --accent-text: #0e1a17;
     --accent-soft: #1d3a33;
     /* The accent's hue, dark enough to carry the light text at 4.5:1. */
@@ -157,6 +160,8 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   grid-template-columns: var(--nav-w) minmax(0, 1fr) var(--rail-w);
   height: 100vh;
 }
+/* With no deck open the rail is hidden, and its column goes with it. */
+.app:has(> .activity[hidden]) { grid-template-columns: var(--nav-w) minmax(0, 1fr); }
 
 /* Deck list: the brand and the account stay put, only the decks scroll. */
 .decks {
@@ -469,7 +474,15 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .group-toggle .count, .group-price { color: var(--muted); font-weight: 500; }
 .group-price::before { content: "· "; }
 
-.grid-tools { display: flex; align-items: center; gap: var(--space-1); justify-content: flex-end; margin-bottom: var(--space-2); }
+.grid-head { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2) var(--space-4); margin-bottom: var(--space-2); }
+.grid-tools { display: flex; align-items: center; gap: var(--space-1); justify-content: flex-end; margin-left: auto; }
+/* Stats above the decklist: the saved deck, "saved → after Review" where the queued changes alter it. */
+.deck-stats { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); margin: 0; font-size: var(--text-s); }
+.stat { display: flex; gap: var(--space-1); align-items: baseline; }
+.stat dt { color: var(--muted); }
+.stat dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stat dd.changed { color: var(--queued); }
+.outside-badge { font-weight: 500; }
 .grid-tools .size[aria-pressed="true"] { background: var(--surface-2); font-weight: 700; }
 /* Cards overlap row on row like Archidekt's stacks, so each shows its title; hover lifts a card whole. */
 .stack {
@@ -595,7 +608,41 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .swap.any { border-color: transparent; background: transparent; }
 .swap.any:hover, .swap.any:focus-visible { border-color: var(--target); border-style: dashed; }
 .gcard { cursor: zoom-in; }
-.gcard.out img { filter: grayscale(1) brightness(0.7); }
+.gcard.out img, .gcard.leaving img { filter: grayscale(1) brightness(0.7); }
+/* A card queued to come in: outlined in the queued colour until it is saved. */
+.gcard.incoming { outline: 2px dashed var(--queued); outline-offset: -2px; }
+.qty.pending { background: var(--queued); color: var(--accent-text); }
+.group.outside .group-name { font-style: italic; }
+/* + and - along the card's foot, shown on hover or focus like the label flag. */
+.count-tools {
+  position: absolute;
+  z-index: 2;
+  bottom: var(--space-1);
+  left: 50%;
+  display: flex;
+  gap: var(--space-1);
+  transform: translateX(-50%);
+  opacity: 0;
+  transition: opacity var(--fast);
+}
+.gcard:hover .count-tools, .count-tools:focus-within { opacity: 1; }
+.count-step {
+  min-width: var(--icon-button);
+  min-height: var(--icon-button);
+  padding: 0;
+  border: 1px solid rgb(255 255 255 / 60%);
+  border-radius: var(--radius-pill);
+  background: var(--flag);
+  color: var(--flag-text);
+  font: inherit;
+  font-size: var(--text-m);
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+.count-step:hover { background: var(--queued); color: var(--accent-text); }
+.count-step:disabled { cursor: progress; opacity: 0.6; }
+.pending-note,
 .out-note {
   position: absolute;
   z-index: 2;
@@ -616,26 +663,45 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 /* Side panels */
 /* Flex, so the h2's larger font adds no line box above the toggle and the title lines up with the card size row. */
 .panel-title { display: flex; margin: 0 0 var(--space-3); }
+.add-plain { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin-top: var(--space-2); }
+.add-plain select {
+  min-height: 28px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-s);
+}
+/* Styled as the sub-toggles (.meta-section > summary) and flush left, so both markers share one x. */
 .panel-toggle {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1);
   min-height: 28px;
-  /* Flush left, so its arrow lines up with the sub-toggles' (.meta-section > summary). */
   padding: 0;
   border: 0;
   border-radius: var(--radius-s);
   background: transparent;
-  color: var(--muted);
+  color: var(--text);
   font: inherit;
-  /* A step under the sub-toggles' --text-m: in capitals with this spacing it still reads larger than they do. */
-  font-size: var(--text-sm);
+  font-size: var(--text-m);
   font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   cursor: pointer;
 }
 .panel-toggle:focus-visible { outline-offset: -2px; }
+/* The panel titles and their sub-toggles fold alike: one marker, and text turning green under the pointer. */
+.panel-toggle > .disclosure { width: 1em; }
+.meta-section > summary { list-style: none; }
+.meta-section > summary::-webkit-details-marker { display: none; }
+.meta-section > summary::before,
+.panel-toggle > .disclosure::before { content: "▸"; display: inline-block; width: 1em; }
+.meta-section > summary::before { margin-right: var(--space-1); }
+.meta-section[open] > summary::before,
+.panel-toggle[aria-expanded="true"] > .disclosure::before { content: "▾"; }
+.panel-toggle:hover,
+.meta-section > summary:hover { color: var(--accent-hover); }
 .count { font-weight: 500; }
 .cards { display: grid; gap: var(--space-3); }
 .empty { margin: 0; color: var(--muted); font-size: var(--text-s); }
@@ -845,6 +911,7 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   cursor: pointer;
 }
 .rail-toggle:hover { background: var(--surface-2); }
+.activity[hidden] { display: none; }
 /* Folded, the tabs stand as vertical labels; open, they sit in a row with the open one marked. */
 .rail-tabs { display: flex; flex-direction: column; }
 .activity.open .rail-tabs { flex-direction: row; border-bottom: 1px solid var(--border); }

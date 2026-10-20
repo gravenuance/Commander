@@ -16,6 +16,7 @@ from commander.board import (
     Board,
     BoardCard,
     BoardService,
+    CountChange,
     NothingQueuedError,
     ReplaceOption,
     Status,
@@ -47,7 +48,7 @@ from commander.clibase import (
 from commander.config import cache_dir, config_path, read_config, resolve_user
 from commander.deckprofile import read_profile
 from commander.net import Fetcher
-from commander.plan import Plan
+from commander.plan import AddCard, Plan, RemoveCard
 from commander.store import StoredDeck
 
 _TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(Z|\+00:00)?")
@@ -63,6 +64,8 @@ examples:
   cmdr board show ellivere
   cmdr board add ellivere "Sylvan Safekeeper" --reason "protects stax pieces" --replace "Compost=not stax"
   cmdr board decide ellivere "Sylvan Safekeeper" add --cut Compost
+  cmdr board decide ellivere "Arcane Signet" add --category Ramp     add without a cut
+  cmdr board count ellivere Forest 12          queue the deck's Forests to become 12 (0 takes a card out)
   cmdr board log --since 2026-10-15T18:00
   cmdr board commit ellivere          preview the queued changes against Archidekt
   cmdr board commit ellivere --save   make them, then update the local copy
@@ -99,8 +102,18 @@ def add_board_commands(add_parser: Callable[..., argparse.ArgumentParser]) -> No
     decide.add_argument("card", help="card name or board id")
     decide.add_argument("decision", choices=list(_DECISIONS), help="what to do with it")
     decide.add_argument("--cut", metavar="CARD", help="the deck card that makes room (with add)")
+    decide.add_argument(
+        "--category", metavar="NAME", help="the deck category to file it under (with add; default: its type)"
+    )
     decide.add_argument("--note", default="", help="why")
     decide.set_defaults(handler=_cmd_decide)
+
+    count = _deck_action(
+        actions.add_parser, "count", "queue how many copies of a deck card the deck should hold", by=True
+    )
+    count.add_argument("card", help="a card in the deck")
+    count.add_argument("copies", type=int, help="copies wanted; 0 takes the card out")
+    count.set_defaults(handler=_cmd_count)
 
     remove = _deck_action(actions.add_parser, "remove", "take a card off the board", by=True)
     remove.add_argument("card", help="card name or board id")
@@ -193,10 +206,25 @@ def _cmd_decide(args: argparse.Namespace, ctx: Context) -> int:
     status = _DECISIONS[args.decision]
     if args.cut and status is not Status.ADD:
         raise UsageError("--cut goes with add")
+    if args.category and status is not Status.ADD:
+        raise UsageError("--category goes with add")
     with _board(args, ctx) as (_, service, _):
-        card = service.decide(args.card, status, _ACTORS[args.by], choice=args.cut, note=args.note)
+        card = service.decide(
+            args.card, status, _ACTORS[args.by], choice=args.cut, note=args.note, category=args.category
+        )
     cut = f", cutting {card.choice}" if card.choice else ""
-    print(f"{card.name}: {_STATUS_TEXT[card.status]}{cut}", file=ctx.out)
+    filed = f", under {card.category}" if card.category else ""
+    print(f"{card.name}: {_STATUS_TEXT[card.status]}{cut}{filed}", file=ctx.out)
+    return EXIT_OK
+
+
+def _cmd_count(args: argparse.Namespace, ctx: Context) -> int:
+    with _board(args, ctx) as (_, service, _):
+        change = service.set_count(args.card, args.copies, _ACTORS[args.by])
+    if change is None:
+        print(f"{args.card.strip()}: no count change queued; the deck holds that many", file=ctx.out)
+    else:
+        print(f"{change.name}: {_count_text(change)}", file=ctx.out)
     return EXIT_OK
 
 
@@ -292,24 +320,36 @@ def _cmd_commit(args: argparse.Namespace, ctx: Context) -> int:
 def print_board(stored: StoredDeck, board: Board, out: TextIO) -> None:
     deck = stored.deck
     print(f"{deck.short_name}: {deck.name} ({deck.id})", file=out)
-    if not board.cards:
+    if not board.cards and not board.counts:
         print(f"the board is empty; `cmdr board add {deck.id} <card>` puts a card on it", file=out)
         return
-    print("\nconsidering", file=out)
+    if board.cards:
+        print("\nconsidering", file=out)
     for card in board.cards:
         _print_card(card, out)
+    if board.counts:
+        print("\ncount changes", file=out)
+    for change in board.counts:
+        print(f"  {change.name}: {_count_text(change)}  (by {change.by.value})", file=out)
     queued = board.queued
-    if queued:
+    if queued or board.counts:
         cuts = sum(1 for c in queued if c.choice)
+        counts = f", {len(board.counts)} count changes" if board.counts else ""
         print(
-            f"\nqueued: {len(queued)} to add, {cuts} to cut; `cmdr board commit {deck.id}` previews", file=out
+            f"\nqueued: {len(queued)} to add, {cuts} to cut{counts}; `cmdr board commit {deck.id}` previews",
+            file=out,
         )
+
+
+def _count_text(change: CountChange) -> str:
+    return "remove" if change.count == 0 else f"{change.was} → {change.count}"
 
 
 def _print_card(card: BoardCard, out: TextIO) -> None:
     status = _STATUS_TEXT[card.status]
     cut = f", cut {card.choice}" if card.choice else ""
-    print(f"  [{status}{cut}] {card.name}  (by {card.source.value}, id {card.id})", file=out)
+    filed = f", under {card.category}" if card.category and card.status is Status.ADD else ""
+    print(f"  [{status}{cut}{filed}] {card.name}  (by {card.source.value}, id {card.id})", file=out)
     if card.reason:
         print(f"      {card.reason}", file=out)
     for option in card.replace:
@@ -326,12 +366,26 @@ def activity_line(entry: Activity, deck: str) -> str:
 
 
 def plan_toml(plan: Plan) -> str:
+    """The plan as `cmdr apply` reads it: a bare name, or a table for copies, a category or cards kept."""
     lines = [f"deck = {_toml(plan.deck)}"]
     if plan.add:
-        lines.append("add = [" + ", ".join(_toml(a.name) for a in plan.add) + "]")
+        lines.append("add = [" + ", ".join(_add_toml(a) for a in plan.add) + "]")
     if plan.remove:
-        lines.append("remove = [" + ", ".join(_toml(r.name) for r in plan.remove) + "]")
+        lines.append("remove = [" + ", ".join(_remove_toml(r) for r in plan.remove) + "]")
     return "\n".join(lines) + "\n"
+
+
+def _add_toml(card: AddCard) -> str:
+    fields = [f"name = {_toml(card.name)}"]
+    if card.quantity != 1:
+        fields.append(f"quantity = {card.quantity}")
+    if card.category:
+        fields.append(f"category = {_toml(card.category)}")
+    return _toml(card.name) if len(fields) == 1 else "{" + ", ".join(fields) + "}"
+
+
+def _remove_toml(card: RemoveCard) -> str:
+    return f"{{name = {_toml(card.name)}, keep = {card.keep}}}" if card.keep else _toml(card.name)
 
 
 def _options(values: Sequence[str] | None) -> list[ReplaceOption]:

@@ -2,7 +2,15 @@
 
 ## Unreleased
 
+### Changed
+- The board file is version 3 (count changes); an older one is kept as `board.v2.bak` on its first save.
+- The side panels' titles look like the Meta panel's sub-toggles, with the same markers on one line, and both
+  turn green under the pointer instead of taking a background. The Activity and Mana rail is hidden while no
+  deck is open.
+
 ### Fixed
+- `cmdr board plan` keeps quantities and kept copies (a basic land swap printed plain names before).
+- The Mana tab may suggest a land that only waits on the Maybeboard.
 - EDHTop16 errors are readable again: a refused query (EDHTop16 now answers with plain-text errors) is logged
   with EDHTop16's own message, and the Meta panel says why its data is missing instead of only "not fetched
   yet". A cache read with nothing fetched is logged at DEBUG, so the log no longer fills with it.
@@ -12,6 +20,16 @@
   new ideas are merged under that deck's lock, around what you changed meanwhile.
 
 ### Added
+- − and + on the decklist's cards (ADR 0043): − takes one copy out (at one copy, the card), + adds one to a
+  basic land or a card whose rules text allows more. The change is queued on the board, shown on the card
+  ("×6 → 7", *Out*) and saved through Review. `cmdr board count <deck> <card> <copies>` does the same.
+- Add a card without a cut: a clicked idea offers **Add without a cut** under one of the deck's categories,
+  preset to its card type's, labelled Don't Have when saved; `cmdr board decide ... add --category NAME`.
+  Cards queued to come in show in the decklist until saved.
+- The Sideboard, Maybeboard and any other category Archidekt keeps outside the deck show under the decklist
+  as groups of their own, with share pills, counted in no total (ADR 0044).
+- Stats above the decklist: cards in the deck, Don't Have cards and their cost, and the average mana value of
+  the spells; with changes queued, "saved → after Review".
 - The log records each sync's start, phases, end and duration; every refused write; each Archidekt save and
   board proposal or decision; and errors on the app's page, so a handed-over log shows what went wrong.
 

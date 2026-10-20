@@ -247,8 +247,8 @@ def test_unreadable_or_newer_boards_are_refused(tmp_path: Path) -> None:
     (tmp_path / BOARD_FILE).write_text("{", encoding="utf-8")
     with pytest.raises(BoardError, match="cannot read"):
         read_board(tmp_path)
-    (tmp_path / BOARD_FILE).write_text(json.dumps({"version": 3, "cards": []}), encoding="utf-8")
-    with pytest.raises(BoardError, match="board version 3 is newer than this cmdr reads"):
+    (tmp_path / BOARD_FILE).write_text(json.dumps({"version": 4, "cards": []}), encoding="utf-8")
+    with pytest.raises(BoardError, match="board version 4 is newer than this cmdr reads"):
         read_board(tmp_path)
     (tmp_path / BOARD_FILE).write_text(json.dumps({"version": 0, "cards": []}), encoding="utf-8")
     with pytest.raises(BoardError, match="board version 0 is not supported"):
@@ -283,7 +283,7 @@ def test_a_version_1_board_reads_with_every_card_considering_and_is_backed_up_be
     service.decide("Lightning Bolt", Status.REJECTED, Actor.YOU)
 
     saved = json.loads((tmp_path / BOARD_FILE).read_text(encoding="utf-8"))
-    assert saved["version"] == 2
+    assert saved["version"] == 3
     assert all("section" not in card for card in saved["cards"])
     assert (tmp_path / "board.v1.bak").read_text(encoding="utf-8") == original
     # A board already at the current version is not backed up again.
@@ -392,7 +392,7 @@ def test_a_card_without_an_origin_tag_saves_none_and_a_board_from_before_it_read
     service.propose("Lightning Bolt", Actor.CMDR, origin=Origin.DECKS)
     path = tmp_path / BOARD_FILE
     saved = json.loads(path.read_text(encoding="utf-8"))
-    assert saved["version"] == 2
+    assert saved["version"] == 3
     assert saved["cards"][0]["originTag"] is None
     del saved["cards"][0]["originTag"]
     path.write_text(json.dumps(saved), encoding="utf-8")
@@ -679,7 +679,7 @@ def test_an_ideas_pool_goes_through_the_board_file_as_origin_pool(
     assert read_board(tmp_path).cards == (card,)
     assert read_board(tmp_path).cards[0].origin_pool == OriginPool(7, 15)
     saved = json.loads((tmp_path / BOARD_FILE).read_text(encoding="utf-8"))
-    assert saved["version"] == 2
+    assert saved["version"] == 3
     assert saved["cards"][0]["originPool"] == {"count": 7, "total": 15}
 
 

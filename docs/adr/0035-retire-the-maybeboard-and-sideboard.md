@@ -1,7 +1,8 @@
 # 0035: Retire the Maybeboard and Sideboard as a second home for ideas
 
 **Status:** Accepted · **Date:** 2026-10-18 · Replaces the Sideboard and Maybeboard parts of
-[ADR 0006](0006-deck-boards-and-desktop-app.md); the sync step that picked those cards up (ADR 0023) goes with them
+[ADR 0006](0006-deck-boards-and-desktop-app.md); the sync step that picked those cards up (ADR 0023) goes with them · The app shows those cards again,
+outside the deck, by [ADR 0044](0044-the-sideboard-and-maybeboard-shown-again.md)
 
 ## Context
 

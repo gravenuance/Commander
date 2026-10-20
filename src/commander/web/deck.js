@@ -113,6 +113,7 @@ async function openDeck(id) {
     $("grid").replaceChildren();
     closeLabelMenu(false);
     renderDecks();
+    showRailFor(true);
     metaPanel.render(id, null);
     $("meta-empty").hidden = true;
     syncMetaUpdating();
@@ -152,6 +153,7 @@ function renderDeck() {
   review.textContent = pending ? `Review ${pending} change${pending === 1 ? "" : "s"}` : "Review changes";
   $("meta").hidden = view.bracket !== META_BRACKET;
 
+  renderStats(view.stats);
   renderGrid(view.grid);
   renderConsidering(view.cards);
   paint();
@@ -159,6 +161,31 @@ function renderDeck() {
   renderActivity(view.activity);
   manaPanel.load();
   bracketPanel.load();
+}
+
+// Stats above the decklist, for the deck as saved; a value the queued changes would alter shows as
+// "saved → after Review".
+const STATS = [
+  { key: "cards", name: "Cards", show: String },
+  { key: "dontHave", name: "Don't Have", show: String },
+  { key: "dontHaveCents", name: "Don't Have cost", show: euro },
+  { key: "averageManaValue", name: "Avg. mana value", show: (value) => (value === null ? "–" : value.toFixed(2)) },
+];
+
+function renderStats(stats) {
+  const box = $("deck-stats");
+  if (!stats) { box.replaceChildren(); return; }
+  const { saved, after } = stats;
+  box.replaceChildren(...STATS.map(({ key, name, show }) => {
+    const changed = saved[key] !== after[key];
+    const value = el("dd", { class: changed ? "changed" : "", title: changed ? "As saved → after Review" : undefined },
+      show(saved[key]),
+      changed ? el("span", { class: "sr-only", text: ", after Review " }) : null,
+      changed ? el("span", { "aria-hidden": "true", text: " → " }) : null,
+      changed ? show(after[key]) : null);
+    if (key === "dontHaveCents" && after.dontHaveUnpriced) value.title = `${after.dontHaveUnpriced} without a price`;
+    return el("div", { class: "stat" }, el("dt", { text: name }), value);
+  }));
 }
 
 function renderTags(tags) {
