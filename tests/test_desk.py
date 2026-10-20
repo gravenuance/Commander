@@ -1442,3 +1442,21 @@ def test_the_decklist_shows_queued_count_changes_and_adds_with_the_stats_before_
 
 def test_a_count_moves_one_copy_at_a_time(desk: Desk) -> None:
     assert desk.count(DECK, "Mountain", 2) == {"error": "a count moves by one copy, not 2"}
+
+
+def test_panel_titles_and_their_sub_toggles_share_one_marker_and_a_green_hover_without_a_background() -> None:
+    css = (resources.files("commander") / "web" / "app.css").read_text(encoding="utf-8")
+    light, dark = css.split("@media (prefers-color-scheme: dark)", 1)
+    assert "--accent-hover: #237a64;" in light
+    assert "--accent-hover: #79d4ba;" in dark.split("}", 1)[0]
+    rules = dict(re.findall(r"([^{}]+)\{([^{}]*)\}", css))
+
+    def rule(selector: str) -> str:
+        return next(body for name, body in rules.items() if selector in [s.strip() for s in name.split(",")])
+
+    assert rule(".panel-toggle:hover") == rule(".meta-section > summary:hover")
+    assert "color: var(--accent-hover)" in rule(".panel-toggle:hover")
+    assert "background" not in rule(".panel-toggle:hover")
+    assert rule(".panel-toggle > .disclosure::before") == rule(".meta-section > summary::before")
+    html = (resources.files("commander") / "web" / "index.html").read_text(encoding="utf-8")
+    assert html.count('<span class="disclosure" aria-hidden="true"></span>') == 3

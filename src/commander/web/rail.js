@@ -5,15 +5,17 @@ const ACTIVITY_KEY = "commander.activityOpen";
 
 /* Activity rail */
 
-// The right-hand rail: Activity or Mana open, or both folded to their labels. Remembered per viewer.
+// The right-hand rail: Activity or Mana open, or both folded to their labels. Remembered per viewer. It
+// belongs to the open deck, so it is hidden, its panel folded, while no deck is open.
 const RAIL_TABS = ["activity", "mana"];
 let railTab = null;
+// The tab the viewer last left open; a deck opening shows the rail that way again.
+let railWanted = null;
 
 function setupActivity() {
-  let open = null;
   try {
     const stored = localStorage.getItem(ACTIVITY_KEY);
-    open = stored === "1" ? "activity" : RAIL_TABS.includes(stored) ? stored : null;
+    railWanted = stored === "1" ? "activity" : RAIL_TABS.includes(stored) ? stored : null;
   } catch { /* storage is a convenience */ }
   for (const tab of RAIL_TABS) {
     $(`${tab}-toggle`).addEventListener("click", () => showRail(railTab === tab ? null : tab));
@@ -26,17 +28,32 @@ function setupActivity() {
     showRail(null);
     toggle.focus();
   });
-  showRail(open);
+  showRailFor(state.current !== null);
 }
 
+// Shows the rail while a deck is open, as the viewer left it; hides it and folds its panel when none is.
+function showRailFor(deckOpen) {
+  const pane = $("activity-pane");
+  const shown = !pane.hidden;
+  pane.hidden = !deckOpen;
+  if (!deckOpen) paintRail(null);
+  else if (!shown) paintRail(railWanted);
+}
+
+// The viewer's choice of tab, remembered.
 function showRail(tab) {
+  railWanted = tab;
+  try { localStorage.setItem(ACTIVITY_KEY, tab || "0"); } catch { /* as above */ }
+  paintRail(tab);
+}
+
+function paintRail(tab) {
   railTab = tab;
   for (const name of RAIL_TABS) {
     $(`${name}-toggle`).setAttribute("aria-expanded", String(name === tab));
     $(name).hidden = name !== tab;
   }
   $("activity-pane").classList.toggle("open", tab !== null);
-  try { localStorage.setItem(ACTIVITY_KEY, tab || "0"); } catch { /* as above */ }
   if (tab === "mana") manaPanel.load();
 }
 

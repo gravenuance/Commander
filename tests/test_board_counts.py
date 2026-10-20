@@ -1,4 +1,4 @@
-"""Count changes and adds without a cut on a deck's board (ADR 0042): the decklist's + and -, queued until a
+"""Count changes and adds without a cut on a deck's board (ADR 0043): the decklist's + and -, queued until a
 save, and what a save sends for them."""
 
 import json

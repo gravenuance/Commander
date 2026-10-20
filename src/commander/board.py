@@ -186,7 +186,7 @@ class BoardCard:
 @dataclass(slots=True, frozen=True)
 class CountChange:
     """A deck card queued to end up with `count` copies (0 takes it out), from `was` when it was queued: the
-    decklist's + and - (ADR 0042). Gone from the board once the deck holds that many."""
+    decklist's + and - (ADR 0043). Gone from the board once the deck holds that many."""
 
     name: str
     was: int

@@ -155,14 +155,16 @@ function buildTile(card) {
       : [el("p", { class: "muted small", text: "Pick the deck card it replaces" })]));
 
   const reasoning = [card.reason, card.note].filter(Boolean).join("\n");
+  const doing = card.choice ? `Replacing ${times(card.copies, card.choice)}` : `Adding to ${card.category ?? card.typeCategory ?? "the deck"}`;
   const body = el("div", { class: "card-body" },
     el("div", { class: "card-title" }, pick, manaCost(card.manaCost)),
     meta,
     queued ? el("p", { class: "replacing" },
-      el("span", { text: `Replacing ${times(card.copies, card.choice)}` }),
-      el("button", { class: "button quiet small", type: "button", text: "Undo", "aria-label": `Undo ${card.name} replacing ${card.choice}`,
+      el("span", { text: doing }),
+      el("button", { class: "button quiet small", type: "button", text: "Undo", "aria-label": `Undo ${card.name}: ${doing}`,
         onclick: () => decide(card, "reopen") })) : null,
     targets,
+    plainAdd(card),
     card.text ? el("details", { class: "fold" }, el("summary", { text: "Rules text" }), el("p", { text: card.text })) : null,
     reasoning ? el("details", { class: "fold" }, el("summary", { text: "Reasoning" }), el("p", { text: reasoning })) : null);
 
@@ -343,8 +345,35 @@ function paint() {
     node.classList.toggle("lit", card.id === activeId);
     node.querySelector(".pick").setAttribute("aria-pressed", String(on));
     node.querySelector(".targets").hidden = !on;
+    node.querySelector(".add-plain").hidden = !on || (card.status === "add" && !card.choice);
   }
   $("grid").classList.toggle("choosing", Boolean(active));
+}
+
+// Adding with no cut, filed under one of the deck's categories, its card type's first.
+function plainAdd(card) {
+  const preset = card.category ?? card.typeCategory ?? "";
+  const categories = [...new Set([...(state.view?.categories ?? []), preset].filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
+  const select = el("select", { class: "input small", "aria-label": `Category for ${card.name}`, title: "Category it is filed under" },
+    ...categories.map((name) => el("option", { value: name, text: name })));
+  select.value = preset;
+  const add = el("button", { class: "button small", type: "button", text: "Add without a cut",
+    onclick: () => addPlain(card, select.value) });
+  return el("div", { class: "add-plain", role: "group", "aria-label": `Add ${card.name} without a cut`, hidden: true }, select, add);
+}
+
+async function addPlain(card, category) {
+  const tile = state.tiles.get(card.id)?.node;
+  const controls = tile ? [...tile.querySelectorAll(".add-plain select, .add-plain button")] : [];
+  await whileBusy(controls, async () => {
+    try {
+      await api("decide", state.current, card.id, "add", null, "", category);
+      state.selected = null;
+      showStatus(`${card.name} queued to add to ${category}`);
+      await refresh();
+    } catch { /* shown in the status line */ }
+  });
 }
 
 async function swapIn(cardId, target) {
@@ -420,10 +449,15 @@ async function propose(name) {
         // The panel may be folded away, and its tile is only on show while it is open.
         showPanel($("h-uncut"), true);
         select(answer.card.id);
-        showStatus(`${answer.card.name}: pick the deck card it replaces`);
+        showStatus(`${answer.card.name}: pick the deck card it replaces, or add it without one`);
         return;
       }
       const shown = considering(cards).some((c) => c.id === answer.card.id);
+      // Selected, its cuts light up and its add without a cut is on offer.
+      if (shown) {
+        showPanel($("h-considering"), true);
+        select(answer.card.id);
+      }
       showStatus(shown ? `${answer.card.name} is under consideration` : `${answer.card.name} is not under consideration`, !shown);
     } catch { /* shown in the status line */ }
   });

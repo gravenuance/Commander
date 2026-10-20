@@ -120,6 +120,7 @@ function showSignedOut() {
   renderActivity([]);
   $("mana").replaceChildren();
   manaPanel.forget();
+  showRailFor(false);
   $("deck").hidden = true;
   $("loading").hidden = true;
   $("no-decks").hidden = true;
@@ -170,6 +171,7 @@ async function showAccountDecks() {
   state.view = null;
   state.stamps = {};
   $("deck").hidden = true;
+  showRailFor(false);
   $("loading").hidden = false;
   try {
     await loadDecks();

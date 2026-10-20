@@ -1,5 +1,5 @@
 """The app's decklist as the page draws it: the grid groups with each card's queued change and its + and -,
-the cards outside the deck, the deck's categories for an add, and the stats above it (ADR 0042, 0043)."""
+the cards outside the deck, the deck's categories for an add, and the stats above it (ADR 0043, 0044)."""
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
