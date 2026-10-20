@@ -15,6 +15,7 @@ from commander.board import (
     NothingQueuedError,
     already_added,
     board_plan,
+    counts_met,
     read_board,
 )
 from commander.carddb import CardDb
@@ -54,12 +55,14 @@ def save_board(
     now: Callable[[], datetime],
     on_progress: Callable[[str], None] = lambda _: None,
 ) -> BoardSave:
-    """Save the queued cards to Archidekt, then update the local deck copy and mark them applied.
+    """Save the queued cards and count changes to Archidekt, then update the local deck copy and mark them
+    applied (a done count change leaves the board).
 
     The plan is made from the deck as it is on Archidekt now, not from the local copy, which may be behind.
-    Queued cards that deck already holds are marked applied too, their cuts left alone; when they are all
-    that is queued, nothing is written to Archidekt. A plan with problems saves nothing and comes back with
-    them. A failed save is logged to the board's activity before the error goes on to the caller.
+    Queued cards that deck already holds, and count changes it already meets, are marked applied too, their
+    cuts left alone; when they are all that is queued, nothing is written to Archidekt. A plan with problems
+    saves nothing and comes back with them. A failed save is logged to the board's activity before the error
+    goes on to the caller.
     """
     board = read_board(stored.folder)
     live = fetch_own_deck(editor, stored.deck.id, user=user)
@@ -67,8 +70,9 @@ def save_board(
     if plan is None:
         resolution = _nothing_to_change(live, board)
         workspace.save(live.deck)
-        service.mark_applied([card.id for card in board.queued], actor, None)
-        return BoardSave(resolution, None, tuple(card.name for card in board.queued))
+        counts = [change.name for change in board.counts]
+        service.mark_applied([card.id for card in board.queued], actor, None, counts=counts)
+        return BoardSave(resolution, None, (*(card.name for card in board.queued), *counts))
     try:
         outcome = apply_to_live(editor, live, plan, db, save_changes=True, now=now, on_progress=on_progress)
     except SaveError as error:
@@ -86,16 +90,21 @@ def save_board(
     }
     # A swap is done only when both its add and its cut are; a card already in the deck needs nothing more.
     applied = [card for card in board.queued if not failed & _swap_keys(card)]
-    service.mark_applied([card.id for card in applied], actor, result.snapshot)
+    counts = [change.name for change in board.counts if card_key(change.name) not in failed]
+    service.mark_applied([card.id for card in applied], actor, result.snapshot, counts=counts)
     if result.mismatches:
         service.note(actor, "Archidekt shows differences", "; ".join(result.mismatches))
-    return BoardSave(outcome.resolution, result, tuple(card.name for card in applied))
+    return BoardSave(outcome.resolution, result, (*(card.name for card in applied), *counts))
 
 
 def _done_lines(live: LiveDeck, board: Board) -> tuple[str, ...]:
-    return tuple(
+    added = tuple(
         f"{card.name}: already in the deck on Archidekt; saving marks it applied"
         for card in already_added(live.deck, board)
+    )
+    return added + tuple(
+        f"{change.name}: already {change.count} in the deck on Archidekt; saving clears the change"
+        for change in counts_met(live.deck, board)
     )
 
 
@@ -115,8 +124,8 @@ def _swap_keys(card: BoardCard) -> set[str]:
 
 
 def live_plan(live: LiveDeck, board: Board) -> Plan | None:
-    """The plan from the live deck; None when every queued card is already in it."""
+    """The plan from the live deck; None when the deck already holds every queued change."""
     plan = board_plan(live.deck, board)
-    if plan is None and not board.queued:
-        raise NothingQueuedError("nothing is queued to add")
+    if plan is None and not board.pending:
+        raise NothingQueuedError("nothing is queued to change")
     return plan

@@ -179,7 +179,7 @@ def test_log_shows_every_change_and_filters_by_time(home: Path, fake: FakeArchid
 
 def test_plan_prints_the_queued_cards_for_apply(home: Path, fake: FakeArchidekt) -> None:
     empty = board(home, fake, "plan", "magda")
-    assert (empty.code, empty.err) == (1, "cmdr: nothing is queued to add\n")
+    assert (empty.code, empty.err) == (1, "cmdr: nothing is queued to change\n")
     board(home, fake, "add", "magda", "Arcane Signet", "--replace", "Disruptor Flute")
     board(home, fake, "decide", "magda", "Arcane Signet", "add", "--cut", "Disruptor Flute")
     result = board(home, fake, "plan", "magda")
@@ -242,7 +242,7 @@ def test_commit_previews_then_saves_and_marks_the_cards_applied(
     assert after.find("Disruptor Flute") is None
     assert [e.action for e in read_activity(folder(home))][-2:] == ["queued to add", "saved to Archidekt"]
     nothing = board(home, fake, "commit", "magda")
-    assert (nothing.code, nothing.err) == (1, "cmdr: nothing is queued to add\n")
+    assert (nothing.code, nothing.err) == (1, "cmdr: nothing is queued to change\n")
 
 
 def test_a_damaged_board_file_is_a_failure_not_a_usage_error(home: Path, fake: FakeArchidekt) -> None:
@@ -343,3 +343,50 @@ def test_a_failed_save_is_logged_and_keeps_the_cards_queued(
     last = read_activity(folder(home))[-1]
     assert (last.action, last.card) == ("save to Archidekt failed", None)
     assert SNAPSHOT in last.detail
+
+
+def test_count_and_an_add_without_a_cut_show_on_the_board_and_go_into_the_plan(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    more = board(home, fake, "count", "magda", "mountain", "8")
+    assert (more.code, more.out) == (0, "Mountain: 6 → 8\n")
+    out = board(home, fake, "count", "magda", "Battered Golem", "0")
+    assert (out.code, out.out) == (0, "Battered Golem: remove\n")
+    board(home, fake, "add", "magda", "Arcane Signet")
+    added = board(home, fake, "decide", "magda", "Arcane Signet", "add", "--category", "Ramp")
+    assert (added.code, added.out) == (0, "Arcane Signet: add, under Ramp\n")
+
+    shown = board(home, fake, "show", "magda").out.splitlines()
+    assert shown[2:] == [
+        "considering",
+        f"  [add, under Ramp] Arcane Signet  (by you, id {board_id(home, 'Arcane Signet')})",
+        "",
+        "count changes",
+        "  Mountain: 6 → 8  (by you)",
+        "  Battered Golem: remove  (by you)",
+        "",
+        "queued: 1 to add, 0 to cut, 2 count changes; `cmdr board commit 10004639` previews",
+    ]
+    plan = board(home, fake, "plan", "magda")
+    assert plan.out == (
+        'deck = "10004639"\n'
+        'add = [{name = "Arcane Signet", category = "Ramp"}, {name = "Mountain", quantity = 8}]\n'
+        'remove = ["Battered Golem"]\n'
+    )
+
+
+def test_count_refuses_more_of_a_singleton_and_back_to_the_deck_drops_the_change(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    refused = board(home, fake, "count", "magda", "Battered Golem", "2")
+    assert (refused.code, refused.err) == (2, "cmdr: Commander allows one Battered Golem\n")
+    board(home, fake, "count", "magda", "Mountain", "4")
+    back = board(home, fake, "count", "magda", "Mountain", "6")
+    assert back.out == "Mountain: no count change queued; the deck holds that many\n"
+    assert read_board(folder(home)).counts == ()
+
+
+def test_category_goes_with_add_only(home: Path, fake: FakeArchidekt) -> None:
+    board(home, fake, "add", "magda", "Arcane Signet")
+    result = board(home, fake, "decide", "magda", "Arcane Signet", "reject", "--category", "Ramp")
+    assert (result.code, result.err) == (2, "cmdr: --category goes with add\n")

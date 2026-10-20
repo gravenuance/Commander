@@ -265,9 +265,9 @@ def test_a_save_whose_queued_card_is_in_the_deck_already_writes_nothing(
 def test_an_empty_board_is_still_an_error_to_preview_or_save(
     preview: Callable[..., ApplyOutcome], commit: Callable[[], BoardSave]
 ) -> None:
-    with pytest.raises(BoardError, match="nothing is queued to add"):
+    with pytest.raises(BoardError, match="nothing is queued to change"):
         preview()
-    with pytest.raises(BoardError, match="nothing is queued to add"):
+    with pytest.raises(BoardError, match="nothing is queued to change"):
         commit()
 
 
