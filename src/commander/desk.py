@@ -56,6 +56,7 @@ from commander.credentials import CredentialError, TokenStore
 from commander.deckcache import NOT_FETCHED
 from commander.deckexport import cardmarket_wants_text, topdeck_text
 from commander.deckgrid import GridGroup, deck_grid, image_url
+from commander.decklocks import DeckLocks
 from commander.deckprofile import MAX_ADJACENT, MAX_LIST, MAX_TEXT, Profile, ProfileError, read_profile
 from commander.deckthemes import merge_themes
 from commander.edhtop16 import Edhtop16Error
@@ -180,6 +181,8 @@ class _SyncState:
     warnings: list[str] = field(default_factory=list[str])
     # Each deck's step in the ideas phase while the sync runs; nothing is kept once it ends.
     decks: dict[int, FetchState] = field(default_factory=dict[int, FetchState])
+    # Set once the sync has pulled the decks; from then on a deck's writes go through under its lock.
+    pulled: bool = False
 
 
 def sync_summary(outcome: SyncOutcome) -> str:
@@ -253,6 +256,8 @@ class Desk:
         self._priority: FetchPriority | None = None
         # What each running write to the decks or Archidekt is called; guarded by _sync_lock like the sync.
         self._writes: list[str] = []
+        # Held by each write to a deck and by the sync's ideas merge into it (ADR 0042).
+        self._deck_locks = DeckLocks()
 
     @_guarded
     def account(self) -> Json:
@@ -358,14 +363,17 @@ class Desk:
 
     @contextmanager
     def _writing(self, doing: str, then: str, deck_id: int | None = None) -> Generator[Json | None]:
-        """Marks a write to the decks or Archidekt as running, so no sync starts meanwhile.
+        """Marks a write to the decks or Archidekt as running, so no sync starts meanwhile, and holds the
+        deck's lock for a write to one deck.
 
-        Yields the refusal instead, and marks nothing, when a sync already runs: the check and the mark
-        are one step under the lock, so a sync and a write cannot both start. The refusal is logged with
-        the phase the sync is in and says so too, so the page can tell the user why.
+        Yields the refusal instead, and marks nothing, while a sync pulls the decks, or for a write to no one
+        deck (signing in or out) while a sync runs at all: the check and the mark are one step under the
+        lock, so a sync and a write cannot both start. Once the decks are pulled, a deck's write waits only
+        for the sync's merge into that deck (ADR 0042). The refusal is logged with the phase the sync is in
+        and says so too, so the page can tell the user why.
         """
         with self._sync_lock:
-            busy = self._sync.running
+            busy = self._sync.running and (deck_id is None or not self._sync.pulled)
             phase = self._sync.progress
             started_at = self._sync.started_at
             if not busy:
@@ -381,7 +389,11 @@ class Desk:
             yield {"error": f"Wait for the sync to finish, then {then}{f' (now: {phase})' if phase else ''}."}
             return
         try:
-            yield None
+            if deck_id is None:
+                yield None
+            else:
+                with self._deck_locks.hold(int(deck_id)):
+                    yield None
         finally:
             with self._sync_lock:
                 self._writes.remove(doing)
@@ -417,6 +429,8 @@ class Desk:
                 priority=priority,
                 on_deck=self._sync_deck,
                 on_progress=self._sync_progress,
+                on_pulled=self._sync_pulled,
+                deck_lock=self._deck_locks.hold,
             )
         except _EXPECTED as error:
             log.warning("sync for %s failed after %s: %s", user, self._elapsed(started_at), error)
@@ -436,6 +450,11 @@ class Desk:
         with self._sync_lock:
             self._sync.progress = message
         log.info("sync phase: %s", message)
+
+    def _sync_pulled(self) -> None:
+        with self._sync_lock:
+            self._sync.pulled = True
+        log.info("sync: decks pulled; deck changes go through again")
 
     def _sync_deck(self, deck_id: int, state: FetchState) -> None:
         with self._sync_lock:

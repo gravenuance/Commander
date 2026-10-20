@@ -1,6 +1,9 @@
 """A full sync: the decks, the card data, the account's labels, the ideas and the re-judging of the open ones
 (ADR 0023).
 
+Up to `on_pulled` the sync writes deck folders freely and its caller lets nothing else write; after it, the
+ideas phase fetches with no lock held and merges each deck's ideas under `deck_lock` (ADR 0042).
+
 `cmdr sync` and the app's Sync button both run it; neither prints from in here, so
 each failure comes back as a warning to show the way the caller shows things.
 """
@@ -22,6 +25,7 @@ from commander.carddb import CARD_DB_FILE, CardDataError, CardDb
 from commander.config import MetaSettings
 from commander.credentials import CredentialError, TokenStore
 from commander.deckcache import Clock
+from commander.decklocks import DeckLock, no_deck_lock
 from commander.deckprofile import ProfileError, profile_path, write_profile_template
 from commander.fetchpriority import FetchPriority
 from commander.ideas import compile_ideas, gather_idea_pools, rejudge_ideas, relabel_legacy_ideas
@@ -114,6 +118,8 @@ def run_sync(
     priority: FetchPriority | None = None,
     on_deck: DeckProgress | None = None,
     on_progress: Progress,
+    on_pulled: Callable[[], None] | None = None,
+    deck_lock: DeckLock = no_deck_lock,
 ) -> SyncOutcome:
     warnings: list[str] = []
     with services.client_factory() as http:
@@ -155,6 +161,8 @@ def run_sync(
     if options.dry_run:
         return SyncOutcome(results, cards, labels, warnings=warnings)
     _add_grace_tables(workspace, warnings)
+    if on_pulled is not None:
+        on_pulled()
     ideas, turned_down = (
         _compile_ideas(
             workspace,
@@ -165,6 +173,7 @@ def run_sync(
             progress=on_progress,
             priority=priority,
             on_deck=on_deck or _ignore_deck,
+            deck_lock=deck_lock,
         )
         if options.ideas
         else ({}, {})
@@ -262,13 +271,15 @@ def _compile_ideas(
     progress: Progress,
     priority: FetchPriority | None,
     on_deck: DeckProgress,
+    deck_lock: DeckLock,
 ) -> tuple[dict[str, dict[Origin, list[BoardCard]]], dict[str, list[str]]]:
     """Each deck's new ideas from the meta and recent Archidekt decks (ADR 0028), by short name, and the open
     ideas turned down on the way for no longer passing the idea test.
 
     Answers under a day old come from the cache. A deck whose sources fail keeps its board as it was.
     The decks go in the order of how often the user opens them, and the one the priority names goes
-    ahead of those (ADR 0034).
+    ahead of those (ADR 0034). The reads hold no lock; the merge holds the deck's lock and works from the
+    deck and board as they are then, so a change the user made meanwhile stays (ADR 0042).
     """
     try:
         db = CardDb(services.cache / CARD_DB_FILE)
@@ -303,20 +314,26 @@ def _compile_ideas(
                     warn=warnings.append,
                     on_progress=progress,
                 )
-                dropped = rejudge_ideas(
-                    stored,
-                    data,
-                    db,
-                    now=services.now,
-                    adjacent=None if pools.groups_failed else pools.decks,
-                    tagged=pools.tagged,
-                )
-                if dropped:
-                    turned_down[deck.short_name] = [card.name for card in dropped]
-                relabel_legacy_ideas(stored, data, db, now=services.now)
-                found[deck.short_name] = compile_ideas(
-                    stored, data, db, now=services.now, adjacent=pools.decks, tagged=pools.tagged
-                )
+                with deck_lock(deck.id):
+                    current = _current(workspace, stored)
+                    if current is None:
+                        warnings.append(f"{deck.short_name} ideas not merged: {_GONE}")
+                        on_deck(deck.id, FetchState.INCOMPLETE)
+                        continue
+                    dropped = rejudge_ideas(
+                        current,
+                        data,
+                        db,
+                        now=services.now,
+                        adjacent=None if pools.groups_failed else pools.decks,
+                        tagged=pools.tagged,
+                    )
+                    if dropped:
+                        turned_down[deck.short_name] = [card.name for card in dropped]
+                    relabel_legacy_ideas(current, data, db, now=services.now)
+                    found[deck.short_name] = compile_ideas(
+                        current, data, db, now=services.now, adjacent=pools.decks, tagged=pools.tagged
+                    )
             except (BoardError, ProfileError) as error:
                 warnings.append(f"{deck.short_name} ideas not compiled: {error}")
                 on_deck(deck.id, FetchState.INCOMPLETE)
@@ -327,6 +344,19 @@ def _compile_ideas(
             incomplete = len(warnings) > warned or data.peers.data is None
             on_deck(deck.id, FetchState.INCOMPLETE if incomplete else FetchState.DONE)
     return found, turned_down
+
+
+_GONE = "the deck left its folder or changed its commander while its ideas were fetched"
+
+
+def _current(workspace: Workspace, fetched: StoredDeck) -> StoredDeck | None:
+    """The deck as saved now, which a save from the app may have changed since its ideas were fetched; None
+    when its folder is gone or renamed, or it no longer has the commander the ideas were fetched for."""
+    deck = workspace.load_folder(fetched.folder)
+    if deck is None or deck.commanders != fetched.deck.commanders:
+        log.info("deck %d: ideas not merged: %s", fetched.deck.id, _GONE)
+        return None
+    return StoredDeck(fetched.folder, deck)
 
 
 def _most_viewed_first(decks: list[StoredDeck], services: SyncServices) -> list[StoredDeck]:
