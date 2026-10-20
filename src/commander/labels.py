@@ -10,13 +10,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from enum import Enum
 
-from commander.archidekt import ArchidektError
+from commander.archidekt import ArchidektError, AuthError
 from commander.archidekt_edit import (
     DEFAULT_LABEL,
     LABEL_COLOURS,
     NO_LABEL_COLOUR,
     ArchidektEditor,
-    AuthError,
     CardEdit,
     EditKind,
     ReadBackError,

@@ -172,12 +172,12 @@ def test_queries_are_paced() -> None:
     assert clock.sleeps == [1.5]
 
 
-def test_a_refused_query_is_an_error() -> None:
-    with pytest.raises(Exception, match="no data; errors: Cannot query field"):
+def test_a_refused_query_is_an_error_carrying_edhtop16s_message() -> None:
+    with pytest.raises(Edhtop16Error, match="EDHTop16 refused the query: Cannot query field"):
         graphql_data({"errors": [{"message": 'Cannot query field "x"'}]})
     fake = FakeEdhtop16()
     fake.commanders = {"errors": [{"message": "Cannot query field"}]}
-    with pytest.raises(Edhtop16Error, match="unexpected answer from EDHTop16"):
+    with pytest.raises(Edhtop16Error, match="EDHTop16 refused the query: Cannot query field"):
         client_for(fake).top_commanders(since=SINCE, min_event_size=16, count=1)
 
 
@@ -463,3 +463,74 @@ def test_a_page_with_a_broken_overall_shape_is_still_refused(damage: Callable[[J
         client_for(fake).entries(
             ELLIVERE, since=SINCE, until=UNTIL, min_event_size=16, sort=EntrySort.NEW, limit=10
         )
+
+
+REFUSAL = "Only persisted queries are allowed in production. Plain text queries are disabled."
+
+
+def refusing_fake() -> FakeEdhtop16:
+    """EDHTop16 as it answers plain-text queries since 2026-10-19: HTTP 200, string errors, no data."""
+    fake = FakeEdhtop16()
+    refused = load_fixture("edhtop16_refused.json")
+    fake.pages[ELLIVERE] = [refused]
+    fake.commanders = refused
+    return fake
+
+
+def test_a_plain_text_query_refusal_keeps_edhtop16s_own_words_for_a_commanders_lists() -> None:
+    with pytest.raises(Edhtop16Error) as refused:
+        client_for(refusing_fake()).entries(
+            ELLIVERE, since=SINCE, until=UNTIL, min_event_size=16, sort=EntrySort.NEW, limit=10
+        )
+    assert str(refused.value) == f"EDHTop16 refused the query: {REFUSAL}"
+
+
+def test_a_plain_text_query_refusal_keeps_edhtop16s_own_words_for_the_ranking() -> None:
+    with pytest.raises(Edhtop16Error) as refused:
+        client_for(refusing_fake()).top_commanders(since=SINCE, min_event_size=16, count=1)
+    assert str(refused.value) == f"EDHTop16 refused the query: {REFUSAL}"
+
+
+def test_a_refusal_is_logged_once_at_warning_with_the_operation_and_the_message(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client = client_for(refusing_fake())
+    with caplog.at_level(logging.WARNING, logger="commander.edhtop16"), pytest.raises(Edhtop16Error):
+        client.entries(ELLIVERE, since=SINCE, until=UNTIL, min_event_size=16, sort=EntrySort.NEW, limit=10)
+    with caplog.at_level(logging.WARNING, logger="commander.edhtop16"), pytest.raises(Edhtop16Error):
+        client.top_commanders(since=SINCE, min_event_size=16, count=1)
+    assert [(r.levelno, r.getMessage()) for r in caplog.records] == [
+        (logging.WARNING, f"EDHTop16 lists for {ELLIVERE} failed: EDHTop16 refused the query: {REFUSAL}"),
+        (logging.WARNING, f"EDHTop16 meta failed: EDHTop16 refused the query: {REFUSAL}"),
+    ]
+
+
+def test_errors_are_read_whether_they_are_objects_strings_or_something_else() -> None:
+    with pytest.raises(Edhtop16Error) as refused:
+        graphql_data({"errors": ["plain text", {"message": "an object"}, {"code": 7}, 42, None]})
+    assert str(refused.value) == (
+        "EDHTop16 refused the query: plain text; an object; an error without a message; "
+        "an error of type int; an error of type NoneType"
+    )
+
+
+def test_the_messages_of_a_refusal_are_capped_at_300_characters() -> None:
+    with pytest.raises(Edhtop16Error) as refused:
+        graphql_data({"errors": ["x" * 500]})
+    assert str(refused.value) == "EDHTop16 refused the query: " + "x" * 300
+
+
+def test_string_errors_beside_usable_data_are_logged_and_the_data_is_used(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="commander.edhtop16"):
+        data = graphql_data({"data": {"commanders": []}, "errors": ["slow resolver"]})
+    assert data == {"commanders": []}
+    assert caplog.messages == ["EDHTop16 answered with data and errors: slow resolver"]
+
+
+def test_an_answer_with_neither_data_nor_errors_is_an_unexpected_answer() -> None:
+    fake = FakeEdhtop16()
+    fake.commanders = {}
+    with pytest.raises(Edhtop16Error, match="unexpected answer from EDHTop16"):
+        client_for(fake).top_commanders(since=SINCE, min_event_size=16, count=1)

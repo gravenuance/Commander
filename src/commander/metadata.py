@@ -39,7 +39,16 @@ from commander.archidekt import (
 )
 from commander.background import in_background
 from commander.config import MetaSettings
-from commander.deckcache import Answer, AnswerSource, Clock, DeckCache, cache_item, cached_answer
+from commander.deckcache import (
+    NOT_FETCHED,
+    Answer,
+    AnswerSource,
+    Clock,
+    DeckCache,
+    NotFetchedError,
+    cache_item,
+    cached_answer,
+)
 from commander.deckreads import FOLDER as DECK_READS_FOLDER
 from commander.deckreads import DeckRead, DeckReads, decode_multiples, read_of
 from commander.edhtop16 import (
@@ -95,10 +104,6 @@ CEDH_BRACKET = 5
 EDHTOP16_BRACKETS = frozenset({4, CEDH_BRACKET})
 # Enough for the busiest commanders' two months; the client stops at its page cap before this anyway.
 MAX_OWN_ENTRIES = 400
-
-
-class NotFetchedError(Exception):
-    """Raised in place of a request when gathering may only read the cache."""
 
 
 _ERRORS = (NetworkError, Edhtop16Error, ArchidektError, SpellbookError, NotFetchedError)
@@ -685,7 +690,7 @@ def _combined(
 def _live[T](offline: bool, fetch: Callable[[], T]) -> Callable[[Mapping[str, object]], T]:  # noqa: FBT001 — mirrors gather's flag
     def run(_: Mapping[str, object]) -> T:
         if offline:
-            raise NotFetchedError("not fetched yet")
+            raise NotFetchedError(NOT_FETCHED)
         return fetch()
 
     return run

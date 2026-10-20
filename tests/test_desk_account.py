@@ -161,6 +161,14 @@ def test_signing_in_and_out_is_logged_without_the_password(
     assert REFRESH_TOKEN not in caplog.text
 
 
+def test_the_first_sync_after_signing_in_says_who_started_it(
+    env: Env, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.INFO, logger="commander.desk"):
+        env.desk(inline=False).sign_in("MAKKIS", PASSWORD)
+    assert "sync started for MAKKIS (first sign-in)" in caplog.messages
+
+
 def test_syncing_needs_an_account(env: Env) -> None:
     assert env.desk().sync() == {"error": "Sign in to Archidekt first."}
 
@@ -172,8 +180,12 @@ def test_no_second_sync_and_no_account_change_while_one_runs(env: Env) -> None:
     assert sync_of(answer)["progress"] == "Starting the sync"
     desk.sync()
     assert len(env.pending) == 1
-    assert desk.sign_in("MAKKIS", PASSWORD) == {"error": "Wait for the sync to finish, then sign in."}
-    assert desk.sign_out() == {"error": "Wait for the sync to finish, then sign out."}
+    assert desk.sign_in("MAKKIS", PASSWORD) == {
+        "error": "Wait for the sync to finish, then sign in (now: Starting the sync)."
+    }
+    assert desk.sign_out() == {
+        "error": "Wait for the sync to finish, then sign out (now: Starting the sync)."
+    }
     env.pending.pop()()
     assert sync_of(desk.account())["running"] is False
 

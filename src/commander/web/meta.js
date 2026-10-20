@@ -16,10 +16,10 @@ function metaWanted() {
     && $("h-meta").getAttribute("aria-expanded") === "true";
 }
 
-// An answer without a report reads the same as none.
+// An answer without a report reads the same as none, except for the reason a source is missing.
 const metaPanel = panel((deck) => api("meta", deck), renderMeta, {
   wanted: metaWanted,
-  keyOf: (answer) => JSON.stringify(answer && answer.report ? answer : null),
+  keyOf: (answer) => JSON.stringify(answer && answer.report ? answer : { why: answer ? answer.unavailable : null }),
 });
 
 // The panel reads the cache at any time. It says it is updating only while the sync has this deck queued or
@@ -35,6 +35,9 @@ function syncMetaUpdating() {
 
 function renderMeta(deck, answer) {
   const report = answer ? answer.report : null;
+  const why = answer && answer.unavailable ? answer.unavailable : "";
+  $("meta-why").textContent = why;
+  $("meta-why").hidden = !why;
   $("meta-empty").hidden = Boolean(report);
   $("meta-thin").hidden = !report || !report.sample.thin;
   if (!report) {

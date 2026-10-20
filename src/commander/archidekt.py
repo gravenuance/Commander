@@ -54,8 +54,24 @@ class ArchidektError(Exception):
     """Archidekt answered with something this tool cannot use."""
 
 
-class LoginRefusedError(ArchidektError):
-    """Archidekt turned the access token down; the message never holds it."""
+class AuthError(Exception):
+    """Signing in or using the login failed."""
+
+
+class SignInRequiredError(AuthError):
+    """No usable Archidekt login: none saved, or Archidekt refused it. The message states the problem and
+    never holds the token; each front end adds how to sign in."""
+
+
+def auth_headers(token: str | None) -> dict[str, str] | None:
+    """The request headers that sign a call in as the token's owner; None for an anonymous call."""
+    return {"Authorization": f"JWT {token}"} if token else None
+
+
+def raise_if_unauthorized(error: HttpStatusError, message: str | None = None) -> None:
+    """Turn a 401 or 403 into SignInRequiredError; any other status returns, so the caller can re-raise."""
+    if error.status in _UNAUTHORIZED:
+        raise SignInRequiredError(message or f"Archidekt refused the login (HTTP {error.status})") from None
 
 
 class ArchidektClient:
@@ -65,7 +81,7 @@ class ArchidektClient:
     def __init__(self, fetcher: Fetcher, base_url: str = API_BASE, *, token: str | None = None) -> None:
         self._fetcher = fetcher
         self._base_url = base_url.rstrip("/")
-        self._headers = {"Authorization": f"JWT {token}"} if token else None
+        self._headers = auth_headers(token)
 
     @property
     def signed_in(self) -> bool:
@@ -78,7 +94,7 @@ class ArchidektClient:
     def list_commander_decks(self, user: str) -> list[DeckSummary]:
         """Every Commander deck the user owns that this client may see, following pagination.
 
-        Raises LoginRefusedError when Archidekt answers a signed-in listing with 401 or 403.
+        Raises SignInRequiredError when Archidekt answers a signed-in listing with 401 or 403.
         """
         if not user:
             raise ValueError("user is empty")
@@ -107,8 +123,7 @@ class ArchidektClient:
         try:
             return self._fetcher.get_json(url, params, headers=self._headers)
         except HttpStatusError as error:
-            if error.status in _UNAUTHORIZED:
-                raise LoginRefusedError(f"Archidekt refused the login (HTTP {error.status})") from None
+            raise_if_unauthorized(error)
             raise
 
 

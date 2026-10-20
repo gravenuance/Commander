@@ -427,6 +427,10 @@ you open while a sync runs goes next, once the commander being fetched is done. 
 itself, so the main area stays blank until you pick one, and with none picked Sync goes by the scores alone.
 While a sync runs each deck in the list shows its step beside it: waiting, fetching, fetched, or a warning
 sign when a source failed ([ADR 0034](docs/adr/0034-fetch-the-decks-you-look-at-first.md)).
+Once the decks are pulled you can keep working while the ideas come in: proposing, deciding, the settings and
+saving to Archidekt go through, and a deck's new ideas are merged around your changes. Only while the sync
+pulls the decks, and for signing in or out, does the app ask you to wait
+([ADR 0042](docs/adr/0042-writes-wait-only-while-the-sync-writes-the-deck.md)).
 
 Every change lands in the deck's activity log with who made it (you, Claude or cmdr; logs written by an
 earlier version may also show Archidekt, for cards it took from the Maybeboard).

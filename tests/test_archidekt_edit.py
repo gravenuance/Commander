@@ -7,16 +7,14 @@ import httpx
 import keyring.errors
 import pytest
 
-from commander.archidekt import ArchidektError
+from commander.archidekt import ArchidektError, AuthError, SignInRequiredError
 from commander.archidekt_edit import (
     DEFAULT_LABEL,
     ArchidektAuth,
     ArchidektEditor,
-    AuthError,
     CardEdit,
     EditKind,
     EntryState,
-    SignInRequiredError,
     edit_json,
     label_value,
     new_entry_state,
@@ -435,7 +433,7 @@ def test_an_expired_login_on_the_labels_read_says_the_login_was_refused(fetcher:
     with pytest.raises(SignInRequiredError) as raised:
         ArchidektEditor(fetcher, "expired access token").account_labels()
 
-    assert str(raised.value) == "Archidekt refused the login"
+    assert str(raised.value) == "Archidekt refused the login (HTTP 401)"
 
 
 @pytest.mark.parametrize("status", [401, 403])
@@ -447,7 +445,7 @@ def test_a_refused_login_on_a_deck_read_says_the_login_was_refused(
     with pytest.raises(SignInRequiredError) as raised:
         ArchidektEditor(fetcher, ACCESS_TOKEN).get_deck(DECK_ID)
 
-    assert str(raised.value) == "Archidekt refused the login"
+    assert str(raised.value) == f"Archidekt refused the login (HTTP {status})"
 
 
 def test_a_refused_deck_read_without_a_login_stays_a_network_error(

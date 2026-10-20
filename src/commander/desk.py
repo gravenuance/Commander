@@ -20,13 +20,11 @@ import httpx
 
 from commander.answers import card_key
 from commander.apply import NotYourDeckError, Resolution, SaveError, default_category
-from commander.archidekt import ArchidektError
+from commander.archidekt import ArchidektError, AuthError, SignInRequiredError
 from commander.archidekt_edit import (
     ArchidektAuth,
     ArchidektEditor,
-    AuthError,
     ReadBackError,
-    SignInRequiredError,
 )
 from commander.background import in_background
 from commander.board import (
@@ -46,7 +44,7 @@ from commander.board import (
     read_activity,
     read_board,
 )
-from commander.boardsave import preview_board, save_board
+from commander.boardsave import BoardSave, preview_board, save_board
 from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
 from commander.bracket import estimate_cache, estimate_deck
 from commander.bracketcheck import check_bracket, check_json
@@ -56,7 +54,9 @@ from commander.carddb import CardDataError, CardDb, ResolvedCard
 from commander.changetext import change_mark, change_text
 from commander.config import ConfigError, MetaSettings, forget_account, switch_account, validate_user
 from commander.credentials import CredentialError, TokenStore
+from commander.deckcache import NOT_FETCHED
 from commander.deckexport import cardmarket_wants_text, topdeck_text
+from commander.decklocks import DeckLocks
 from commander.deckprofile import MAX_ADJACENT, MAX_LIST, MAX_TEXT, Profile, ProfileError, read_profile
 from commander.deckthemes import merge_themes
 from commander.deckview import card_image, decklist_json
@@ -122,6 +122,11 @@ _DECISIONS = {"add": Status.ADD, "reject": Status.REJECTED, "reopen": Status.OPE
 # The settings pane's autocomplete: names offered at once, and the letters before tags are searched.
 MAX_SUGGESTIONS = 12
 MIN_TAG_SEARCH = 2
+# Page errors reach the log up to this many per session, each distinct one once, cut to these lengths.
+MAX_PAGE_ERRORS = 20
+PAGE_ERROR_MESSAGE_CHARS = 500
+PAGE_ERROR_SOURCE_CHARS = 200
+PAGE_ERROR_STACK_CHARS = 1500
 
 type Json = dict[str, object]
 
@@ -171,11 +176,14 @@ class _SyncState:
 
     running: bool = False
     progress: str = ""
+    started_at: datetime | None = None
     summary: str | None = None
     failed: bool = False
     warnings: list[str] = field(default_factory=list[str])
     # Each deck's step in the ideas phase while the sync runs; nothing is kept once it ends.
     decks: dict[int, FetchState] = field(default_factory=dict[int, FetchState])
+    # Set once the sync has pulled the decks; from then on a deck's writes go through under its lock.
+    pulled: bool = False
 
 
 def sync_summary(outcome: SyncOutcome) -> str:
@@ -238,6 +246,10 @@ class Desk:
         self._rules: dict[int, tuple[str, CutRules]] = {}
         self._sync_lock = threading.Lock()
         self._sync = _SyncState()
+        # The page errors already logged, as (message, source, line), under their own lock.
+        self._page_errors: set[tuple[str, str, int]] = set()
+        self._page_errors_capped = False
+        self._page_errors_lock = threading.Lock()
         # How often each deck is opened, and the deck open now; the sync fetches by both (ADR 0034).
         self._views = ViewScores(settings.cache / VIEWS_FILE, now)
         self._open_deck: int | None = None
@@ -245,6 +257,8 @@ class Desk:
         self._priority: FetchPriority | None = None
         # What each running write to the decks or Archidekt is called; guarded by _sync_lock like the sync.
         self._writes: list[str] = []
+        # Held by each write to a deck and by the sync's ideas merge into it (ADR 0042).
+        self._deck_locks = DeckLocks()
 
     @_guarded
     def account(self) -> Json:
@@ -275,7 +289,7 @@ class Desk:
             self._use_account(user, folder)
             log.info("signed in as %s; decks in %s", user, folder)
         if not self._workspace.load_all():
-            self._start_sync(user)
+            self._start_sync(user, "first sign-in")
         return self.account()
 
     @_guarded
@@ -304,6 +318,33 @@ class Desk:
     def sync_status(self) -> Json:
         return self._sync_json()
 
+    @_guarded
+    def log_page_error(self, message: str, source: str, line: int, stack: str) -> Json:
+        """Write an error the page's scripts raised to the log. Each distinct error is logged once, and no
+        more than MAX_PAGE_ERRORS a session, so a page stuck in a loop cannot flood it."""
+        seen = (str(message), str(source), int(line))
+        with self._page_errors_lock:
+            if seen in self._page_errors:
+                return {}
+            if len(self._page_errors) >= MAX_PAGE_ERRORS:
+                first_over = not self._page_errors_capped
+                self._page_errors_capped = True
+                if first_over:
+                    log.warning(
+                        "page errors: more than %d this session; the rest are not logged", MAX_PAGE_ERRORS
+                    )
+                return {}
+            self._page_errors.add(seen)
+        trace = " | ".join(str(stack)[:PAGE_ERROR_STACK_CHARS].splitlines())
+        log.warning(
+            "page error: %r at %r:%d; stack: %s",
+            str(message)[:PAGE_ERROR_MESSAGE_CHARS],
+            str(source)[:PAGE_ERROR_SOURCE_CHARS],
+            int(line),
+            trace,
+        )
+        return {}
+
     def _config(self) -> Path:
         if self._settings.config is None:
             raise ConfigError("signing in needs the config file's location")
@@ -322,41 +363,64 @@ class Desk:
             self._open_deck = None
 
     @contextmanager
-    def _writing(self, doing: str, then: str) -> Generator[Json | None]:
-        """Marks a write to the decks or Archidekt as running, so no sync starts meanwhile.
+    def _writing(self, doing: str, then: str, deck_id: int | None = None) -> Generator[Json | None]:
+        """Marks a write to the decks or Archidekt as running, so no sync starts meanwhile, and holds the
+        deck's lock for a write to one deck.
 
-        Yields the refusal instead, and marks nothing, when a sync already runs: the check and the mark
-        are one step under the lock, so a sync and a write cannot both start.
+        Yields the refusal instead, and marks nothing, while a sync pulls the decks, or for a write to no one
+        deck (signing in or out) while a sync runs at all: the check and the mark are one step under the
+        lock, so a sync and a write cannot both start. Once the decks are pulled, a deck's write waits only
+        for the sync's merge into that deck (ADR 0042). The refusal is logged with the phase the sync is in
+        and says so too, so the page can tell the user why.
         """
         with self._sync_lock:
-            busy = self._sync.running
+            busy = self._sync.running and (deck_id is None or not self._sync.pulled)
+            phase = self._sync.progress
+            started_at = self._sync.started_at
             if not busy:
                 self._writes.append(doing)
         if busy:
-            yield {"error": f"Wait for the sync to finish, then {then}."}
+            log.info(
+                "refused the %s%s: the sync has run for %s, now at: %s",
+                doing,
+                f" for deck {deck_id}" if deck_id is not None else "",
+                self._elapsed(started_at),
+                phase,
+            )
+            yield {"error": f"Wait for the sync to finish, then {then}{f' (now: {phase})' if phase else ''}."}
             return
         try:
-            yield None
+            if deck_id is None:
+                yield None
+            else:
+                with self._deck_locks.hold(int(deck_id)):
+                    yield None
         finally:
             with self._sync_lock:
                 self._writes.remove(doing)
 
-    def _start_sync(self, user: str) -> Json | None:
+    def _start_sync(self, user: str, trigger: str = "sync button") -> Json | None:
         """Starts the sync unless one runs already; the refusal when a write is under way."""
         with self._sync_lock:
             if self._writes:
                 return {"error": f"Wait for the {self._writes[0]} to finish, then sync."}
             if self._sync.running:
                 return None
-            self._sync = _SyncState(running=True, progress="Starting the sync")
+            self._sync = _SyncState(running=True, progress="Starting the sync", started_at=self._now())
             self._priority = priority = FetchPriority(self._open_deck)
+        log.info("sync started for %s (%s)", user, trigger)
         self._background(lambda: self._run_sync(user, priority))
         return None
+
+    def _elapsed(self, started_at: datetime | None) -> str:
+        return "0s" if started_at is None else f"{max((self._now() - started_at).total_seconds(), 0):.0f}s"
 
     def _run_sync(self, user: str, priority: FetchPriority) -> None:
         services = SyncServices(
             self._client_factory, self._token_store, self._settings.cache, self._now, self._pacer_factory
         )
+        with self._sync_lock:
+            started_at = self._sync.started_at
         try:
             outcome = run_sync(
                 services,
@@ -366,26 +430,37 @@ class Desk:
                 priority=priority,
                 on_deck=self._sync_deck,
                 on_progress=self._sync_progress,
+                on_pulled=self._sync_pulled,
+                deck_lock=self._deck_locks.hold,
             )
         except _EXPECTED as error:
-            log.warning("sync failed: %s", error)
+            log.warning("sync for %s failed after %s: %s", user, self._elapsed(started_at), error)
             self._finish_sync(f"Sync failed: {error}", failed=True)
             return
         except Exception:
-            log.exception("sync failed unexpectedly")
+            log.exception("sync for %s failed unexpectedly after %s", user, self._elapsed(started_at))
             self._finish_sync("Sync failed; the details are in the log.", failed=True)
             return
         for warning in outcome.warnings:
             log.warning("sync: %s", warning)
-        self._finish_sync(sync_summary(outcome), failed=outcome.failed, warnings=outcome.warnings)
+        summary = sync_summary(outcome)
+        log.info("sync finished for %s in %s: %s", user, self._elapsed(started_at), summary)
+        self._finish_sync(summary, failed=outcome.failed, warnings=outcome.warnings)
 
     def _sync_progress(self, message: str) -> None:
         with self._sync_lock:
             self._sync.progress = message
+        log.info("sync phase: %s", message)
+
+    def _sync_pulled(self) -> None:
+        with self._sync_lock:
+            self._sync.pulled = True
+        log.info("sync: decks pulled; deck changes go through again")
 
     def _sync_deck(self, deck_id: int, state: FetchState) -> None:
         with self._sync_lock:
             self._sync.decks[deck_id] = state
+        log.info("sync deck %d: %s", deck_id, state.value)
 
     def _finish_sync(self, summary: str, *, failed: bool, warnings: Sequence[str] = ()) -> None:
         with self._sync_lock:
@@ -507,7 +582,7 @@ class Desk:
     @_guarded
     def set_label(self, deck_id: int, name: str, label: str) -> Json:
         """Give one deck card one of the deck's labels ("" for none) on Archidekt at once (ADR 0010)."""
-        with self._writing("label change", "change the label") as busy:
+        with self._writing("label change", "change the label", deck_id) as busy:
             if busy:
                 return busy
             stored = self._stored(deck_id)
@@ -566,7 +641,7 @@ class Desk:
     ) -> Json:
         """Write the adjacent commanders, tag search, ignored themes and grace cards ([{name, factor}]) into
         profile.toml, comments kept. A new grace card is written under the name the card data gives it."""
-        with self._writing("settings save", "save the settings") as busy:
+        with self._writing("settings save", "save the settings", deck_id) as busy:
             if busy:
                 return busy
             stored = self._stored(deck_id)
@@ -619,7 +694,7 @@ class Desk:
     @_guarded
     def mana_to_board(self, deck_id: int) -> Json:
         """Put the suggested swaps on the board under Considering, each with its cut; the user decides."""
-        with self._writing("swaps", "add the swaps") as busy:
+        with self._writing("swaps", "add the swaps", deck_id) as busy:
             if busy:
                 return busy
             _, plan = self._mana(deck_id)
@@ -721,11 +796,12 @@ class Desk:
 
     @_guarded
     def propose(self, deck_id: int, name: str) -> Json:
-        with self._writing("proposal", "propose the card") as busy:
+        with self._writing("proposal", "propose the card", deck_id) as busy:
             if busy:
                 return busy
             with self._service(deck_id) as service:
                 card = service.propose(name, Actor.YOU)
+            log.info("board: proposed %s on deck %d", card.name, deck_id)
         return {"card": card_json(card)}
 
     @_guarded
@@ -741,7 +817,7 @@ class Desk:
         status = _DECISIONS.get(decision)
         if status is None:
             return {"error": f"unknown decision {decision!r}"}
-        with self._writing("decision", "decide") as busy:
+        with self._writing("decision", "decide", deck_id) as busy:
             if busy:
                 return busy
             stored = self._stored(deck_id)
@@ -761,6 +837,7 @@ class Desk:
                     relabel=self._relabel(stored, board_card) if status is Status.OPEN else None,
                     category=category or None,
                 )
+            log.info("board: decision %s for %s on deck %d", decision, card.name, deck_id)
         return {"card": card_json(card)}
 
     @_guarded
@@ -768,20 +845,23 @@ class Desk:
         """Queue one copy more (step 1) or fewer (step -1) of a deck card: the decklist's + and -."""
         if step not in {1, -1}:
             return {"error": f"a count moves by one copy, not {step!r}"}
-        with self._writing("count change", "change the count") as busy:
+        with self._writing("count change", "change the count", deck_id) as busy:
             if busy:
                 return busy
             with self._service(deck_id) as service:
                 change = service.step_count(name, step, Actor.YOU)
+            log.info("board: count %+d for %s on deck %d", step, name, deck_id)
         return {"change": count_json(change) if change else None}
 
     @_guarded
     def remove(self, deck_id: int, card_id: str) -> Json:
-        with self._writing("removal", "remove the card") as busy:
+        with self._writing("removal", "remove the card", deck_id) as busy:
             if busy:
                 return busy
+            held = read_board(self._stored(deck_id).folder).find(card_id)
             with self._service(deck_id) as service:
                 service.remove(card_id, Actor.YOU)
+            log.info("board: removed %s from deck %d", held.name if held else card_id, deck_id)
         return {"ok": True}
 
     @_guarded
@@ -808,20 +888,22 @@ class Desk:
     @_guarded
     def commit(self, deck_id: int, stamp: str) -> Json:
         """Save the queued cards, if the board is still as the preview with this stamp saw it."""
-        with self._writing("save", "save") as busy:
+        with self._writing("save", "save", deck_id) as busy:
             if busy:
                 return busy
             stored = self._stored(deck_id)
             user = self._user()
             if board_digest(stored.folder) != stamp:
+                log.info("refused the save of deck %d: the board changed after the preview", deck_id)
                 return {"error": "The board changed after the preview; open Review again before saving."}
             with self._service_and_db(stored) as (service, db), self._client_factory() as http:
                 editor = self._editor(http, user)
                 saved = save_board(
                     editor, self._workspace, stored, db, service, user=user, actor=Actor.YOU, now=self._now
                 )
-        view = _resolution_json(saved.resolution)
         result = saved.result
+        _log_save(deck_id, saved)
+        view = _resolution_json(saved.resolution)
         view["saved"] = result is not None
         view["snapshot"] = result.snapshot if result else None
         view["mismatches"] = list(result.mismatches) if result else []
@@ -836,9 +918,11 @@ class Desk:
         data = self._gather(stored.deck)
         with self._db() as db:
             report = analyse(stored.deck, data, read_profile(stored.folder), db, now=self._now)
+        why = _unavailable_reason(data)
         if data.lists.data is None and data.field.data is None and data.peers.data is None:
-            return {"report": None}
+            return {"report": None, **why}
         return {
+            **why,
             "report": report_json(report),
             "keys": key_card_rows(report.key_cards),
             "stoppers": stopper_rows(report.own_combos, report.threats),
@@ -1050,6 +1134,37 @@ def _source_json(part: SourceShare | WeightedShare) -> Json:
 
 def _target_json(target: Target) -> Json:
     return {"name": target.name, "reason": target.reason, "source": target.source.value}
+
+
+def _unavailable_reason(data: MetaData) -> Json:
+    """Why a meta source has nothing to show, when a fetch failed; nothing for one that was never fetched."""
+    reasons = {
+        answer.error
+        for answer in (data.lists, data.field, data.peers)
+        if answer.error and answer.error != NOT_FETCHED
+    }
+    return {"unavailable": "; ".join(sorted(reasons))[:300]} if reasons else {}
+
+
+def _log_save(deck_id: int, saved: BoardSave) -> None:
+    resolution = saved.resolution
+    if saved.result is not None:
+        log.info(
+            "saved deck %d on Archidekt: %d change(s), %d board card(s) applied",
+            deck_id,
+            len(resolution.changes),
+            len(saved.applied),
+        )
+        if saved.result.mismatches:
+            log.info(
+                "deck %d on Archidekt differs from the save: %s", deck_id, "; ".join(saved.result.mismatches)
+            )
+    elif resolution.problems:
+        log.info("save of deck %d not made: %s", deck_id, "; ".join(resolution.problems))
+    else:
+        log.info(
+            "save of deck %d sent nothing: %d board card(s) already in the deck", deck_id, len(saved.applied)
+        )
 
 
 def _resolution_json(resolution: Resolution) -> Json:

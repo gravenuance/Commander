@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -20,6 +21,36 @@ log = logging.getLogger(__name__)
 _SAFE_ITEM = re.compile(r"[a-z0-9][a-z0-9-]{0,99}")
 
 Clock = Callable[[], datetime]
+
+NOT_FETCHED = "not fetched yet"
+
+
+class NotFetchedError(Exception):
+    """Raised in place of a request when gathering may only read the cache."""
+
+
+class _FetchFailures:
+    """Why the last fetch of each cache entry failed, kept in memory for the run. A cache-only read, which is
+    all the app's panels do, then names that reason instead of "not fetched yet"."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._reasons: dict[tuple[Path, int | str], str] = {}
+
+    def record(self, entry: tuple[Path, int | str], reason: str) -> None:
+        with self._lock:
+            self._reasons[entry] = reason
+
+    def forget(self, entry: tuple[Path, int | str]) -> None:
+        with self._lock:
+            self._reasons.pop(entry, None)
+
+    def reason(self, entry: tuple[Path, int | str]) -> str | None:
+        with self._lock:
+            return self._reasons.get(entry)
+
+
+_failures = _FetchFailures()
 
 
 class AnswerSource(Enum):
@@ -66,6 +97,10 @@ class DeckCache[T]:
         self.what = what
         self._encode = encode
         self._decode = decode
+
+    def entry(self, item: int | str) -> tuple[Path, int | str]:
+        """Names one cached item across cache objects made for the same folder."""
+        return self._folder, item
 
     def load(self, item: int | str, key: str) -> CachedAnswer[T] | None:
         path = self._path(item)
@@ -143,13 +178,22 @@ def cached_answer[T](
     # A time ahead of the clock (a wrong clock, a hand-edited file) cannot be trusted as recent.
     if cached is not None and not refresh and timedelta(0) <= now() - cached.fetched_at < fresh_for:
         return Answer(cached.data, AnswerSource.CACHED, cached.fetched_at, None)
+    entry = cache.entry(item)
     try:
         data = fetch(request)
     except errors as error:
-        log.info("%s for %s failed: %s", cache.what, _label(item), error)
+        reason = str(error)
+        if isinstance(error, NotFetchedError):
+            # A cache miss on a cache-only read is routine and repeats on every panel refresh.
+            reason = _failures.reason(entry) or reason
+            log.debug("%s for %s not read from the cache: %s", cache.what, _label(item), reason)
+        else:
+            log.info("%s for %s failed: %s", cache.what, _label(item), reason)
+            _failures.record(entry, reason)
         if cached is not None:
-            return Answer(cached.data, AnswerSource.STALE, cached.fetched_at, str(error))
-        return Answer(None, AnswerSource.UNAVAILABLE, None, str(error))
+            return Answer(cached.data, AnswerSource.STALE, cached.fetched_at, reason)
+        return Answer(None, AnswerSource.UNAVAILABLE, None, reason)
+    _failures.forget(entry)
     fetched_at = now()
     try:
         cache.save(item, key, data, fetched_at)

@@ -18,8 +18,8 @@ from commander.apply import (
     save,
     verify,
 )
-from commander.archidekt import parse_deck
-from commander.archidekt_edit import ArchidektEditor, AuthError, EditKind, LiveDeck, parse_entry_states
+from commander.archidekt import AuthError, parse_deck
+from commander.archidekt_edit import ArchidektEditor, EditKind, LiveDeck, parse_entry_states
 from commander.carddb import CardDb, CardInfo
 from commander.models import Deck
 from commander.net import MAX_ATTEMPTS, Fetcher

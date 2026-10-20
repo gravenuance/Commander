@@ -11,7 +11,16 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 
-from commander.archidekt import API_BASE, ArchidektError, category_flags, parse_deck
+from commander.archidekt import (
+    API_BASE,
+    ArchidektError,
+    AuthError,
+    SignInRequiredError,
+    auth_headers,
+    category_flags,
+    parse_deck,
+    raise_if_unauthorized,
+)
 from commander.credentials import CredentialError, TokenStore
 from commander.jsonshape import (
     ShapeError,
@@ -40,17 +49,8 @@ _COLOUR = re.compile(r"#[0-9a-fA-F]{6}")
 MAX_NAME_LENGTH = 200
 # A refused login answers 400; elsewhere 400 means the request itself was rejected, with a reason.
 _LOGIN_REFUSED = frozenset({400, 401, 403})
-_UNAUTHORIZED = frozenset({401, 403})
 _BAD_REQUEST = 400
 _TOO_MANY = 429
-
-
-class AuthError(Exception):
-    """Signing in or using the login failed."""
-
-
-class SignInRequiredError(AuthError):
-    """No usable Archidekt login. The message states the problem; each front end adds how to sign in."""
 
 
 class ReadBackError(Exception):
@@ -194,8 +194,7 @@ class ArchidektAuth:
                 "POST", f"{self._base_url}/rest-auth/token/refresh/", {"refresh": refresh}
             )
         except HttpStatusError as error:
-            if error.status in _UNAUTHORIZED:
-                raise SignInRequiredError("the saved Archidekt login has expired") from None
+            raise_if_unauthorized(error, "the saved Archidekt login has expired")
             if error.status == _BAD_REQUEST:
                 raise ArchidektError(f"Archidekt rejected the token refresh: {error.detail}") from None
             raise
@@ -219,7 +218,7 @@ class ArchidektEditor:
 
     def __init__(self, fetcher: Fetcher, token: str | None, base_url: str = API_BASE) -> None:
         self._fetcher = fetcher
-        self._headers = {"Authorization": f"JWT {token}"} if token else None
+        self._headers = auth_headers(token)
         self._base_url = base_url.rstrip("/")
 
     def get_deck(self, deck_id: int) -> LiveDeck:
@@ -227,8 +226,8 @@ class ArchidektEditor:
             raw = self._fetcher.get_json(f"{self._base_url}/decks/{deck_id}/", headers=self._headers)
         except HttpStatusError as error:
             # Without a token a 401/403 is the deck being private, which the status error already says.
-            if self._headers is not None and error.status in _UNAUTHORIZED:
-                raise SignInRequiredError("Archidekt refused the login") from None
+            if self._headers is not None:
+                raise_if_unauthorized(error)
             raise
         try:
             return LiveDeck(parse_deck(raw), parse_entry_states(raw), category_flags(raw))
@@ -257,8 +256,7 @@ class ArchidektEditor:
         try:
             raw = self._fetcher.get_json(f"{self._base_url}/decks/colorTags/", headers=self._headers)
         except HttpStatusError as error:
-            if error.status in _UNAUTHORIZED:
-                raise SignInRequiredError("Archidekt refused the login") from None
+            raise_if_unauthorized(error)
             raise
         try:
             return parse_account_labels(raw)
@@ -280,11 +278,11 @@ class ArchidektEditor:
         try:
             self._fetcher.send(method, self._base_url + path, payload, headers=self._headers)
         except HttpStatusError as error:
-            if error.status in _UNAUTHORIZED:
-                raise SignInRequiredError(
-                    f"Archidekt refused the change (HTTP {error.status}); "
-                    "the deck may not be yours, or the login has expired"
-                ) from None
+            raise_if_unauthorized(
+                error,
+                f"Archidekt refused the change (HTTP {error.status}); "
+                "the deck may not be yours, or the login has expired",
+            )
             if error.status == _BAD_REQUEST:
                 raise ArchidektError(f"Archidekt rejected the change (HTTP 400): {error.detail}") from None
             if error.status == _TOO_MANY:
