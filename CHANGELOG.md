@@ -16,8 +16,10 @@
   yet". A cache read with nothing fetched is logged at DEBUG, so the log no longer fills with it.
 - A card change refused while a sync runs now says which sync phase it is waiting for, and is logged.
 - Card changes, settings and saves to Archidekt no longer wait for the whole sync, which on a first sync of
-  many decks could take most of an hour: they wait only while the sync pulls the decks (ADR 0042). Each deck's
-  new ideas are merged under that deck's lock, around what you changed meanwhile.
+  many decks could take most of an hour: a deck's changes wait only while the sync may still rewrite that deck,
+  which it pulls first when it is the one open, and changes that look cards up also wait while the card data
+  downloads (ADR 0042). Each deck's new ideas are merged under that deck's lock, around what you changed
+  meanwhile.
 
 ### Added
 - − and + on the decklist's cards (ADR 0043): − takes one copy out (at one copy, the card), + adds one to a

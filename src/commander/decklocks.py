@@ -1,4 +1,4 @@
-"""One lock per deck folder, so the app's writes and a sync's ideas merge never interleave on a deck
+"""One lock per deck folder, so the app's writes and a sync's pull and ideas merge never interleave on a deck
 (ADR 0042).
 
 The board's own lock file (ADR 0006) covers one read-modify-write of board.json; this covers a whole
