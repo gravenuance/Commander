@@ -258,3 +258,23 @@ def test_a_grouped_combo_made_of_the_shared_pieces_alone_says_so() -> None:
         ["Ballista", "Open on Commander Spellbook: Kinnan + Oracle + Ballista"],
         ["Only the shared pieces", "Open on Commander Spellbook: Kinnan + Oracle"],
     ]
+
+
+def test_the_reason_meta_data_is_missing_shows_beneath_the_panel_and_goes_when_there_is_none() -> None:
+    seen = run("""
+    const why = () => ({ text: $("meta-why").textContent, hidden: $("meta-why").hidden });
+    stub.meta = async () => ({ report: null, unavailable: "EDHTop16 refused the query: Only persisted" });
+    await metaPanel.load();
+    const empty = why();
+    stub.meta = async () => ({ ...REPORT, unavailable: "Archidekt answered HTTP 429" });
+    await metaPanel.load();
+    const withReport = why();
+    stub.meta = async () => NOTHING;
+    await metaPanel.load();
+    return { empty, withReport, none: why() };
+    """)
+    assert seen == {
+        "empty": {"text": "EDHTop16 refused the query: Only persisted", "hidden": False},
+        "withReport": {"text": "Archidekt answered HTTP 429", "hidden": False},
+        "none": {"text": "", "hidden": True},
+    }

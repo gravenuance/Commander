@@ -51,10 +51,36 @@ async function api(name, ...args) {
   const answer = await window.pywebview.api[name](...args);
   if (answer && answer.error) {
     showStatus(answer.error, true);
-    throw new Error(answer.error);
+    const refusal = new Error(answer.error);
+    // The status line shows it and the app's log has it, so it is not a page error.
+    refusal.fromBridge = true;
+    throw refusal;
   }
   return answer;
 }
+
+// Errors the page's scripts raise go to the app's log, each distinct one once and a few per session, so a
+// tester's log shows what broke. A failing report is dropped: reporting must never raise another error.
+const MAX_PAGE_ERRORS = 20;
+const pageErrorsSent = new Set();
+function reportPageError(message, source, line, stack) {
+  const bridge = window.pywebview && window.pywebview.api;
+  const key = `${message}|${source}|${line}`;
+  if (!bridge || pageErrorsSent.has(key) || pageErrorsSent.size >= MAX_PAGE_ERRORS) return;
+  pageErrorsSent.add(key);
+  try {
+    const sent = bridge.log_page_error(String(message), String(source || ""), Number(line) || 0, String(stack || ""));
+    if (sent && sent.catch) sent.catch(() => {});
+  } catch { /* nothing more can be done when the bridge itself fails */ }
+}
+window.addEventListener("error", (event) => {
+  reportPageError(event.message, event.filename, event.lineno, event.error && event.error.stack);
+});
+window.addEventListener("unhandledrejection", (event) => {
+  const reason = event.reason;
+  if (reason && reason.fromBridge) return;
+  reportPageError(reason instanceof Error ? reason.message : String(reason), "unhandledrejection", 0, reason && reason.stack);
+});
 
 // Disables the controls while work runs, so a second click or Enter cannot send a second request.
 async function whileBusy(controls, work) {

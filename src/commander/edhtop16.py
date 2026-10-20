@@ -9,6 +9,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from enum import Enum
+from typing import cast
 from urllib.parse import quote
 
 from commander.jsonshape import (
@@ -168,7 +169,7 @@ class Edhtop16Client:
                 "sortBy": sort.value,
                 "minEventSize": min_event_size,
             }
-            data = self._query(ENTRIES_QUERY, variables)
+            data = self._query(ENTRIES_QUERY, variables, f"lists for {commander}")
             try:
                 page = parse_entries_page(data)
             except (ShapeError, ValueError) as error:
@@ -190,7 +191,7 @@ class Edhtop16Client:
             "minDate": since.isoformat(),
             "minSize": min_event_size,
         }
-        data = self._query(COMMANDERS_QUERY, variables)
+        data = self._query(COMMANDERS_QUERY, variables, "meta")
         try:
             ranked = parse_commanders(data)
         except (ShapeError, ValueError) as error:
@@ -198,13 +199,18 @@ class Edhtop16Client:
         ranked.sort(key=lambda stats: (-stats.entries, stats.name))
         return tuple(ranked[:count])
 
-    def _query(self, query: str, variables: Mapping[str, object]) -> Mapping[str, object]:
+    def _query(self, query: str, variables: Mapping[str, object], operation: str) -> Mapping[str, object]:
         self._pacer.wait()
         raw = self._fetcher.post_json(self._url, {"query": query, "variables": variables})
         try:
             return graphql_data(raw)
         except ShapeError as error:
-            raise Edhtop16Error(f"unexpected answer from EDHTop16: {error}") from error
+            failure = Edhtop16Error(f"unexpected answer from EDHTop16: {error}")
+            log.warning("EDHTop16 %s failed: %s", operation, failure)
+            raise failure from error
+        except Edhtop16Error as error:
+            log.warning("EDHTop16 %s failed: %s", operation, error)
+            raise
 
 
 def graphql_data(raw: object) -> Mapping[str, object]:
@@ -214,7 +220,9 @@ def graphql_data(raw: object) -> Mapping[str, object]:
     answer = as_object(raw, "answer")
     data = answer.get("data")
     if data is None:
-        raise ShapeError(f"no data; errors: {_error_messages(answer)}")
+        if not answer.get("errors"):
+            raise ShapeError("neither data nor errors")
+        raise Edhtop16Error(f"EDHTop16 refused the query: {_error_messages(answer)}")
     if answer.get("errors"):
         try:
             messages = _error_messages(answer)
@@ -225,11 +233,18 @@ def graphql_data(raw: object) -> Mapping[str, object]:
 
 
 def _error_messages(answer: Mapping[str, object]) -> str:
-    messages = [
-        str(as_object(item, "answer.errors[]").get("message", "?"))
-        for item in req_list(answer, "errors", "answer")
-    ]
+    messages = [_error_message(item) for item in req_list(answer, "errors", "answer")]
     return "; ".join(messages)[:300]
+
+
+def _error_message(item: object) -> str:
+    """One entry of a GraphQL `errors` list: an object with a `message`, or a plain string."""
+    if isinstance(item, str):
+        return item
+    if isinstance(item, Mapping):
+        message = cast("Mapping[str, object]", item).get("message")
+        return message if isinstance(message, str) else "an error without a message"
+    return f"an error of type {type(item).__name__}"
 
 
 def parse_entries_page(data: Mapping[str, object]) -> tuple[list[Entry], str | None] | None:

@@ -387,3 +387,53 @@ def test_a_deck_grid_cards_share_title_adds_the_grace_line() -> None:
     )
     assert seen["plain"] == "meta 50% (5/10 lists)"
     assert seen["graced"] == f"meta 50% (5/10 lists)\n{GRACE_LINE}"
+
+
+def test_a_page_error_is_sent_to_the_apps_log_once_with_its_place_and_stack() -> None:
+    sent = page("""
+    stub.log_page_error = async () => ({});
+    const failure = { message: "x is not a function", filename: "deck.js", lineno: 42,
+      error: { stack: "at a" } };
+    await fire(window, "error", failure);
+    await fire(window, "error", failure);
+    await settle();
+    return calls.filter((c) => c[0] === "log_page_error");
+    """)
+    assert sent == [["log_page_error", "x is not a function", "deck.js", 42, "at a"]]
+
+
+def test_a_rejection_nobody_handled_is_sent_but_a_refusal_the_page_already_showed_is_not() -> None:
+    sent = page("""
+    stub.log_page_error = async () => ({});
+    stub.propose = async () => ({ error: "Wait for the sync to finish" });
+    let refusal;
+    try { await api("propose", 1, "x"); } catch (error) { refusal = error; }
+    await fire(window, "unhandledrejection", { reason: refusal });
+    await fire(window, "unhandledrejection", { reason: new Error("boom") });
+    await settle();
+    return calls.filter((c) => c[0] === "log_page_error").map((c) => [c[1], c[2]]);
+    """)
+    assert sent == [["boom", "unhandledrejection"]]
+
+
+def test_the_page_sends_no_more_than_a_few_distinct_errors_a_session() -> None:
+    sent = page("""
+    stub.log_page_error = async () => ({});
+    for (let n = 0; n < 60; n++) {
+      await fire(window, "error", { message: `e${n}`, filename: "a.js", lineno: n });
+    }
+    await settle();
+    return calls.filter((c) => c[0] === "log_page_error").length;
+    """)
+    assert sent == 20
+
+
+def test_a_bridge_that_fails_while_reporting_an_error_starts_no_loop() -> None:
+    sent = page("""
+    stub.log_page_error = async () => { throw new Error("bridge down"); };
+    await fire(window, "error", { message: "first", filename: "a.js", lineno: 1 });
+    await settle();
+    await settle();
+    return calls.filter((c) => c[0] === "log_page_error").length;
+    """)
+    assert sent == 1

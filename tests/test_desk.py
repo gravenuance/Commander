@@ -2,10 +2,11 @@
 
 import copy
 import json
+import logging
 import re
 import shutil
 from collections.abc import Callable, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from importlib import resources
 from pathlib import Path
 from typing import cast
@@ -16,16 +17,20 @@ from commander import apply as apply_module
 from commander import desk as desk_module
 from commander import syncrun
 from commander.app import desk_settings, page_html
+from commander.apply import Resolution
 from commander.board import Actor, BoardService, Origin, OriginPool, Status, read_board
+from commander.boardsave import BoardSave
 from commander.carddb import CARD_DB_FILE, CardDb
+from commander.config import MetaSettings
 from commander.desk import Desk, DeskSettings
 from commander.ideas import compile_ideas
-from commander.metadata import CACHE_FOLDER
+from commander.metadata import CACHE_FOLDER, gather_for, meta_sources
 from commander.net import Pacer
 from commander.scryfall import CardRefresh
 from commander.store import StoredDeck, Workspace
+from commander.syncrun import CardState, CardStatus, FetchState, SyncOutcome
 from commander.viewscore import ViewScores
-from conftest import REFRESH_TOKEN, FakeArchidekt, Json, MemoryTokenStore
+from conftest import REFRESH_TOKEN, FakeArchidekt, Json, MemoryTokenStore, load_fixture
 from test_cli_apply import run
 from test_cli_meta import MAGDA, magda_page
 from test_cli_meta import meta as cli_meta
@@ -941,7 +946,7 @@ def test_nothing_changes_the_deck_or_board_while_an_update_runs(
     desk, pending = deferred_desk(settings, fake)
     desk.sync()
     assert len(pending) == 1
-    assert call(desk) == {"error": f"Wait for the sync to finish, then {then}."}
+    assert call(desk) == {"error": f"Wait for the sync to finish, then {then} (now: Starting the sync)."}
     assert not fake.card_writes()
     assert not (settings.workspace / "10004639-honestly-though" / "board.json").exists()
 
@@ -978,7 +983,7 @@ def test_board_edits_and_settings_wait_while_an_update_runs(
     folder = settings.workspace / "10004639-honestly-though"
     desk.sync()
     assert len(pending) == 1
-    assert call(desk) == {"error": f"Wait for the sync to finish, then {then}."}
+    assert call(desk) == {"error": f"Wait for the sync to finish, then {then} (now: Starting the sync)."}
     assert not (folder / "board.json").exists()
     assert not (folder / "activity.jsonl").exists()
     # The sync writes the profile template for a deck without one (ADR 0039); the settings are not in it.
@@ -1365,3 +1370,251 @@ def test_no_cut_yet_is_a_side_panel_between_considering_and_meta_not_a_fold() ->
     assert '<div id="uncut-body" class="panel-body">' in panel
     assert '<div id="list-uncut" class="cards" role="list"></div>' in panel
     assert html.index('id="h-considering"') < html.index('id="h-uncut"') < html.index('id="h-meta"')
+
+
+REFUSED_BODY_TEXT = "Only persisted queries are allowed in production. Plain text queries are disabled."
+
+
+def test_the_meta_panel_gets_edhtop16s_reason_after_a_refused_fetch(
+    desk: Desk, settings: DeskSettings, fake: FakeArchidekt
+) -> None:
+    refused = load_fixture("edhtop16_refused.json")
+    fake.edhtop16.pages[MAGDA] = [refused]
+    fake.edhtop16.commanders = refused
+    deck = Workspace(settings.workspace).load(DECK)
+    assert deck is not None
+    with fake.client() as http:
+        sources = meta_sources(http, lambda _: Pacer(0), "MAKKIS", MetaSettings())
+        gather_for(deck, sources, settings.cache, now=lambda: NOW, refresh=False)
+    answer = desk.meta(DECK)
+    assert answer["unavailable"] == f"EDHTop16 refused the query: {REFUSED_BODY_TEXT}"
+
+
+def test_the_meta_panel_names_no_reason_when_nothing_was_fetched_yet(desk: Desk) -> None:
+    assert desk.meta(DECK) == {"report": None}
+
+
+DESK_LOG = "commander.desk"
+
+
+def logged(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.name == DESK_LOG and r.levelno >= logging.INFO]
+
+
+type PhaseReport = Callable[[str], None]
+type DeckReport = Callable[[int, FetchState], None]
+
+
+def stubbed_sync(
+    desk: Desk,
+    pending: list[Callable[[], None]],
+    monkeypatch: pytest.MonkeyPatch,
+    clock: list[datetime],
+    during: Callable[[], None] = lambda: None,
+) -> None:
+    """Run the sync the desk is holding back with a run_sync that reports a phase, lets `during` act while
+    it runs, takes 130 seconds by the clock and finishes."""
+
+    def run_sync(*_: object, on_progress: PhaseReport, on_deck: DeckReport, **__: object) -> SyncOutcome:
+        on_progress("Archidekt: recent Magda decks")
+        on_deck(DECK, FetchState.FETCHING)
+        clock[0] += timedelta(seconds=125)
+        during()
+        clock[0] += timedelta(seconds=5)
+        return SyncOutcome([], CardStatus(CardState.SKIPPED, "dry run"), None)
+
+    monkeypatch.setattr(desk_module, "run_sync", run_sync)
+    desk.sync()
+    [start] = pending
+    start()
+
+
+def clocked_desk(
+    settings: DeskSettings, fake: FakeArchidekt
+) -> tuple[Desk, list[Callable[[], None]], list[datetime]]:
+    pending: list[Callable[[], None]] = []
+    clock = [NOW]
+    desk = Desk(
+        settings,
+        client_factory=fake.client,
+        token_store=MemoryTokenStore({"makkis": REFRESH_TOKEN}),
+        now=lambda: clock[0],
+        pacer_factory=lambda _: Pacer(0),
+        background=pending.append,
+    )
+    return desk, pending, clock
+
+
+def test_a_sync_logs_its_start_each_phase_and_its_end_with_the_duration(
+    settings: DeskSettings,
+    fake: FakeArchidekt,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    desk, pending, clock = clocked_desk(settings, fake)
+    with caplog.at_level(logging.INFO, logger=DESK_LOG):
+        stubbed_sync(desk, pending, monkeypatch, clock)
+    assert logged(caplog) == [
+        "sync started for MAKKIS (sync button)",
+        "sync phase: Archidekt: recent Magda decks",
+        f"sync deck {DECK}: fetching",
+        "sync finished for MAKKIS in 130s: Synced 0 decks, 0 changed.",
+    ]
+
+
+def test_a_failed_sync_logs_how_long_it_ran_and_why_it_stopped(
+    settings: DeskSettings,
+    fake: FakeArchidekt,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    desk, pending, clock = clocked_desk(settings, fake)
+
+    def run_sync(*_: object, **__: object) -> SyncOutcome:
+        clock[0] += timedelta(seconds=7)
+        raise desk_module.NetworkError("Archidekt answered HTTP 429")
+
+    monkeypatch.setattr(desk_module, "run_sync", run_sync)
+    with caplog.at_level(logging.INFO, logger=DESK_LOG):
+        desk.sync()
+        pending[0]()
+    assert logged(caplog) == [
+        "sync started for MAKKIS (sync button)",
+        "sync for MAKKIS failed after 7s: Archidekt answered HTTP 429",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("act", "what", "then"),
+    [
+        (_propose, "proposal", "propose the card"),
+        (_decide, "decision", "decide"),
+        (_remove, "removal", "remove the card"),
+        (_commit, "save", "save"),
+    ],
+)
+def test_a_write_refused_during_a_sync_is_logged_with_what_it_was_and_the_phase(
+    settings: DeskSettings,
+    fake: FakeArchidekt,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    *,
+    act: Callable[[Desk], Json],
+    what: str,
+    then: str,
+) -> None:
+    desk, pending, clock = clocked_desk(settings, fake)
+    answers: list[Json] = []
+    with caplog.at_level(logging.INFO, logger=DESK_LOG):
+        stubbed_sync(desk, pending, monkeypatch, clock, lambda: answers.append(act(desk)))
+    assert logged(caplog)[3] == (
+        f"refused the {what} for deck {DECK}: "
+        "the sync has run for 125s, now at: Archidekt: recent Magda decks"
+    )
+    assert answers == [
+        {"error": f"Wait for the sync to finish, then {then} (now: Archidekt: recent Magda decks)."}
+    ]
+
+
+def test_a_successful_save_logs_the_deck_and_the_number_of_changes(
+    desk: Desk, caplog: pytest.LogCaptureFixture
+) -> None:
+    desk.propose(DECK, "Arcane Signet")
+    desk.decide(DECK, first_card_id(desk), "add", "Disruptor Flute", "")
+    stamp = reviewed(desk)
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger=DESK_LOG):
+        assert desk.commit(DECK, stamp)["saved"] is True
+    assert logged(caplog) == [f"saved deck {DECK} on Archidekt: 2 change(s), 1 board card(s) applied"]
+
+
+def test_board_changes_by_the_user_are_logged_with_the_deck_and_the_card(
+    desk: Desk, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.INFO, logger=DESK_LOG):
+        desk.propose(DECK, "Arcane Signet")
+        card_id = first_card_id(desk)
+        desk.decide(DECK, card_id, "reject", None, "too slow")
+        desk.remove(DECK, card_id)
+    assert logged(caplog) == [
+        f"board: proposed Arcane Signet on deck {DECK}",
+        f"board: decision reject for Arcane Signet on deck {DECK}",
+        f"board: removed Arcane Signet from deck {DECK}",
+    ]
+
+
+def test_a_save_refused_for_a_changed_board_is_logged(desk: Desk, caplog: pytest.LogCaptureFixture) -> None:
+    desk.propose(DECK, "Arcane Signet")
+    desk.decide(DECK, first_card_id(desk), "add", None, "")
+    stamp = reviewed(desk)
+    desk.propose(DECK, "Lightning Bolt")
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger=DESK_LOG):
+        assert "board changed" in str(desk.commit(DECK, stamp)["error"])
+    assert logged(caplog) == [f"refused the save of deck {DECK}: the board changed after the preview"]
+
+
+def test_a_save_that_comes_back_unsaved_logs_its_problems(
+    desk: Desk, settings: DeskSettings, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    deck = Workspace(settings.workspace).load(DECK)
+    assert deck is not None
+    problems = ("Arcane Signet: not found", "Sol Ring: outside the identity")
+
+    def unsaved(*_: object, **__: object) -> BoardSave:
+        return BoardSave(Resolution(deck, (), problems, ()), None, ())
+
+    desk.propose(DECK, "Arcane Signet")
+    desk.decide(DECK, first_card_id(desk), "add", None, "")
+    stamp = reviewed(desk)
+    monkeypatch.setattr(desk_module, "save_board", unsaved)
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger=DESK_LOG):
+        assert desk.commit(DECK, stamp)["saved"] is False
+    assert logged(caplog) == [
+        f"save of deck {DECK} not made: Arcane Signet: not found; Sol Ring: outside the identity"
+    ]
+
+
+def test_a_page_error_is_logged_at_warning_with_message_source_line_and_stack(
+    desk: Desk, caplog: pytest.LogCaptureFixture
+) -> None:
+    stack = "at a (deck.js:42)\nat b (core.js:7)"
+    with caplog.at_level(logging.WARNING, logger=DESK_LOG):
+        answer = desk.log_page_error("x is not a function", "deck.js", 42, stack)
+    assert answer == {}
+    assert [(r.levelno, r.getMessage()) for r in caplog.records] == [
+        (
+            logging.WARNING,
+            "page error: 'x is not a function' at 'deck.js':42; stack: at a (deck.js:42) | at b (core.js:7)",
+        )
+    ]
+
+
+def test_a_page_error_is_cut_to_a_length_that_cannot_flood_the_log(
+    desk: Desk, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.WARNING, logger=DESK_LOG):
+        desk.log_page_error("m" * 5000, "s" * 5000, 1, "t" * 50000)
+    [line] = caplog.messages
+    assert len(line) < 3000
+    assert "m" * desk_module.PAGE_ERROR_MESSAGE_CHARS in line
+    assert "m" * (desk_module.PAGE_ERROR_MESSAGE_CHARS + 1) not in line
+
+
+def test_the_same_page_error_is_logged_once(desk: Desk, caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING, logger=DESK_LOG):
+        for _ in range(5):
+            assert desk.log_page_error("boom", "deck.js", 3, "") == {}
+    assert len(caplog.messages) == 1
+
+
+def test_page_errors_stop_being_logged_after_a_cap_with_one_notice(
+    desk: Desk, caplog: pytest.LogCaptureFixture
+) -> None:
+    cap = desk_module.MAX_PAGE_ERRORS
+    with caplog.at_level(logging.WARNING, logger=DESK_LOG):
+        for number in range(cap + 10):
+            desk.log_page_error(f"boom {number}", "deck.js", number, "")
+    assert len(caplog.messages) == cap + 1
+    assert caplog.messages[-1] == f"page errors: more than {cap} this session; the rest are not logged"

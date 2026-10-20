@@ -828,3 +828,25 @@ def test_a_future_dated_and_a_malformed_entry_leave_the_commander_lists_readable
         date(2026, 9, 13),
         date(2026, 8, 16),
     ]
+
+
+REFUSAL = (
+    "EDHTop16 refused the query: Only persisted queries are allowed in production. "
+    "Plain text queries are disabled."
+)
+
+
+def test_a_cache_only_read_after_edhtop16_refused_the_fetch_says_why_not_not_fetched_yet(rig: Rig) -> None:
+    refused = load_fixture("edhtop16_refused.json")
+    rig.edhtop16.pages[ELLIVERE] = [refused]
+    rig.edhtop16.commanders = refused
+    fetched = rig.gather()
+    assert (fetched.lists.source, fetched.lists.error) == (AnswerSource.UNAVAILABLE, REFUSAL)
+    assert fetched.field.error == REFUSAL
+    cache_only = gather(
+        ellivere_deck(), rig.sources(), rig.cache, now=lambda: rig.now, refresh=False, offline=True
+    )
+    assert cache_only.lists.error == REFUSAL
+    assert cache_only.field.error == REFUSAL
+    # Archidekt answered, so its cached decks are read as before.
+    assert cache_only.peers.source is AnswerSource.CACHED
