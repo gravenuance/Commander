@@ -1,14 +1,17 @@
 """Bring the local deck folders up to date with Archidekt."""
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Collection
+from concurrent.futures import Future, as_completed
 from dataclasses import dataclass
 from enum import Enum
 from functools import partial
 
 from commander.archidekt import ArchidektClient, ArchidektError, AuthError, SignInRequiredError
 from commander.background import run_all
+from commander.decklocks import DeckLock, no_deck_lock
 from commander.diff import DeckDiff, diff_decks
+from commander.fetchpriority import FetchPriority
 from commander.models import Deck, DeckSummary
 from commander.net import NetworkError
 from commander.store import Workspace, WorkspaceError, folder_name
@@ -43,6 +46,29 @@ class _Plan:
     previous: Deck | None
 
 
+def _ignore_ids(_deck_ids: Collection[int]) -> None:
+    return
+
+
+def _ignore_id(_deck_id: int) -> None:
+    return
+
+
+@dataclass(slots=True, frozen=True)
+class PullWatch:
+    """How a caller that lets others write meanwhile follows and steers the pull (ADR 0042).
+
+    `on_listed` gets the decks the pull will still write, once it knows them; `on_done` gets each of those
+    as the pull is done with it (written, or failed). Each is written under `deck_lock`, and the next deck
+    fetched is the one `priority` names if it still waits.
+    """
+
+    priority: FetchPriority | None = None
+    deck_lock: DeckLock = no_deck_lock
+    on_listed: Callable[[Collection[int]], None] = _ignore_ids
+    on_done: Callable[[int], None] = _ignore_id
+
+
 def sync_decks(
     client: ArchidektClient,
     workspace: Workspace,
@@ -52,12 +78,14 @@ def sync_decks(
     dry_run: bool = False,
     on_progress: Callable[[str], None] = lambda _: None,
     warn: Callable[[str], None] = lambda _: None,
+    watch: PullWatch = PullWatch(),  # noqa: B008 — frozen, so one shared default is safe
 ) -> list[SyncResult]:
     """Fetch decks whose Archidekt edit time moved (or all, with force) and save them unless dry_run.
 
     A signed-in client whose listing Archidekt refuses carries on without the login and says so to warn.
     Decks on disk that the listing lacks come back as MISSING_UPSTREAM, except private and unlisted ones when
-    the listing was anonymous, which could not show them (ADR 0040).
+    the listing was anonymous, which could not show them (ADR 0040). The results are in listing order; each
+    fetched deck is written as soon as it arrives.
     """
     try:
         summaries = client.list_commander_decks(user)
@@ -80,27 +108,29 @@ def sync_decks(
         else:
             to_fetch.append(_Plan(summary, previous))
 
+    watch.on_listed([plan.summary.id for plan in to_fetch])
+
+    priority = watch.priority or FetchPriority()
     # Daemon threads, so Ctrl-C ends the process without waiting for the fetches still in flight.
     futures = run_all(
         [partial(client.get_deck, plan.summary.id) for plan in to_fetch],
         limit=MAX_PARALLEL_FETCHES,
         name="deck-fetch",
+        pick=lambda waiting: priority.pick(waiting, lambda index: to_fetch[index].summary.id),
     )
+    plans = dict(zip(futures, to_fetch, strict=True))
+    fetched: dict[int, SyncResult] = {}
     try:
-        for plan, future in zip(to_fetch, futures, strict=True):
+        for future in as_completed(futures):
+            plan = plans[future]
             try:
-                deck = future.result()
-            except (NetworkError, ArchidektError, AuthError) as error:
-                results.append(_failed(plan.summary, str(error)))
-                continue
-            on_progress(f"fetched {deck.name}")
-            if deck.owner.casefold() != user.casefold():
-                results.append(_failed(plan.summary, f"belongs to {deck.owner}, not {user}; skipped"))
-                continue
-            results.append(_apply(workspace, plan.previous, deck, dry_run=dry_run))
+                fetched[plan.summary.id] = _write(future, plan, workspace, user, dry_run, on_progress, watch)
+            finally:
+                watch.on_done(plan.summary.id)
     finally:
         for future in futures:
             future.cancel()
+    results += [fetched[plan.summary.id] for plan in to_fetch]
 
     upstream_ids = {summary.id for summary in summaries}
     results += [
@@ -109,6 +139,27 @@ def sync_decks(
         if stored.deck.id not in upstream_ids and (client.signed_in or not stored.deck.needs_login)
     ]
     return results
+
+
+def _write(  # noqa: PLR0917 — the one step of sync_decks' loop
+    future: Future[Deck],
+    plan: _Plan,
+    workspace: Workspace,
+    user: str,
+    dry_run: bool,  # noqa: FBT001
+    on_progress: Callable[[str], None],
+    watch: PullWatch,
+) -> SyncResult:
+    """The fetched deck written to its folder under its lock, or why it was not."""
+    try:
+        deck = future.result()
+    except (NetworkError, ArchidektError, AuthError) as error:
+        return _failed(plan.summary, str(error))
+    on_progress(f"fetched {deck.name}")
+    if deck.owner.casefold() != user.casefold():
+        return _failed(plan.summary, f"belongs to {deck.owner}, not {user}; skipped")
+    with watch.deck_lock(deck.id):
+        return _apply(workspace, plan.previous, deck, dry_run=dry_run)
 
 
 def _is_current(workspace: Workspace, previous: Deck, summary: DeckSummary) -> bool:

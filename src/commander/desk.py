@@ -8,10 +8,11 @@ refuses while a sync runs, and a sync refuses while one of them runs.
 
 import logging
 import threading
-from collections.abc import Callable, Generator, Mapping, Sequence
+from collections.abc import Callable, Collection, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from enum import Enum
 from functools import wraps
 from pathlib import Path
 from typing import cast
@@ -85,7 +86,7 @@ from commander.profileedit import save_settings
 from commander.spellbook import SpellbookClient
 from commander.store import StoredDeck, Workspace, WorkspaceError
 from commander.suggest import deck_identity
-from commander.sync import SyncStatus
+from commander.sync import PullWatch, SyncStatus
 from commander.syncrun import CardState, FetchState, SyncOutcome, SyncServices, run_sync
 from commander.targets import CutRules, Target, deck_cut_rules, targets_for, with_ideas
 from commander.viewscore import VIEWS_FILE, ViewScores
@@ -169,6 +170,14 @@ def _sync_thread(work: Callable[[], None]) -> object:
     return in_background(work, name="app-sync")
 
 
+class _Wait(Enum):
+    """Why a write waits for the running sync, as its refusal is logged."""
+
+    SYNC = ""
+    DECK = "still syncing"
+    CARDS = "card data downloading"
+
+
 @dataclass(slots=True)
 class _SyncState:
     """The app's one sync at a time; guarded by Desk._sync_lock."""
@@ -181,8 +190,25 @@ class _SyncState:
     warnings: list[str] = field(default_factory=list[str])
     # Each deck's step in the ideas phase while the sync runs; nothing is kept once it ends.
     decks: dict[int, FetchState] = field(default_factory=dict[int, FetchState])
-    # Set once the sync has pulled the decks; from then on a deck's writes go through under its lock.
-    pulled: bool = False
+    # Set once the pull has listed the decks; until then it may write any of them (ADR 0042).
+    listed: bool = False
+    # The decks the pull will still write; a write to one of these waits, the rest go through under the
+    # deck's lock.
+    pulling: set[int] = field(default_factory=set[int])
+    # Set once the card data is in place, or will not change; until then a write that looks cards up waits.
+    cards_ready: bool = False
+
+    def wait_for(self, deck_id: int | None, *, needs_cards: bool) -> _Wait | None:
+        """What a write to this deck (None: to no one deck) must wait for now; None when it may go ahead."""
+        if not self.running:
+            return None
+        if deck_id is None:
+            return _Wait.SYNC
+        if not self.listed or deck_id in self.pulling:
+            return _Wait.DECK
+        if needs_cards and not self.cards_ready:
+            return _Wait.CARDS
+        return None
 
 
 def sync_summary(outcome: SyncOutcome) -> str:
@@ -362,41 +388,61 @@ class Desk:
             self._open_deck = None
 
     @contextmanager
-    def _writing(self, doing: str, then: str, deck_id: int | None = None) -> Generator[Json | None]:
+    def _writing(
+        self, doing: str, then: str, deck_id: int | None = None, *, needs_cards: bool = True
+    ) -> Generator[Json | None]:
         """Marks a write to the decks or Archidekt as running, so no sync starts meanwhile, and holds the
         deck's lock for a write to one deck.
 
-        Yields the refusal instead, and marks nothing, while a sync pulls the decks, or for a write to no one
-        deck (signing in or out) while a sync runs at all: the check and the mark are one step under the
-        lock, so a sync and a write cannot both start. Once the decks are pulled, a deck's write waits only
-        for the sync's merge into that deck (ADR 0042). The refusal is logged with the phase the sync is in
-        and says so too, so the page can tell the user why.
+        Yields the refusal instead, and marks nothing, while a sync runs: for a write to no one deck (signing
+        in or out) throughout; for a deck's write while the pull may still write that deck; and, for a write
+        that looks cards up (`needs_cards`), while the card data downloads. The check and the mark are one
+        step under the lock, so a sync and a write cannot both start. Otherwise a deck's write waits only for
+        the sync's own write to that deck (ADR 0042). The refusal is logged with the phase the sync is in, so
+        the log shows why.
         """
+        target = None if deck_id is None else int(deck_id)
         with self._sync_lock:
-            busy = self._sync.running and (deck_id is None or not self._sync.pulled)
-            phase = self._sync.progress
-            started_at = self._sync.started_at
-            if not busy:
+            wait = self._sync.wait_for(target, needs_cards=needs_cards)
+            phase, started_at = self._sync.progress, self._sync.started_at
+            if wait is None:
                 self._writes.append(doing)
-        if busy:
+        if wait is not None:
             log.info(
-                "refused the %s%s: the sync has run for %s, now at: %s",
+                "refused the %s%s%s: the sync has run for %s, now at: %s",
                 doing,
-                f" for deck {deck_id}" if deck_id is not None else "",
+                f" for deck {target}" if target is not None else "",
+                f" ({wait.value})" if wait.value else "",
                 self._elapsed(started_at),
                 phase,
             )
-            yield {"error": f"Wait for the sync to finish, then {then}{f' (now: {phase})' if phase else ''}."}
+            yield {"error": self._wait_text(wait, then, phase, target)}
             return
         try:
-            if deck_id is None:
+            if target is None:
                 yield None
             else:
-                with self._deck_locks.hold(int(deck_id)):
+                with self._deck_locks.hold(target):
                     yield None
         finally:
             with self._sync_lock:
                 self._writes.remove(doing)
+
+    def _wait_text(self, wait: _Wait, then: str, phase: str, deck_id: int | None) -> str:
+        if wait is _Wait.CARDS:
+            return f"Wait for the card data to finish downloading, then {then}."
+        if wait is _Wait.DECK and deck_id is not None:
+            return f"Wait for {self._deck_name(deck_id)} to finish syncing, then {then}."
+        return f"Wait for the sync to finish, then {then}{f' (now: {phase})' if phase else ''}."
+
+    def _deck_name(self, deck_id: int) -> str:
+        """The deck's short name for a message, read without its lock: the pull writes deck.json atomically,
+        so this sees the old deck or the new one."""
+        try:
+            deck = self._workspace.load(deck_id)
+        except WorkspaceError:
+            deck = None
+        return deck.short_name if deck is not None else f"deck {deck_id}"
 
     def _start_sync(self, user: str, trigger: str = "sync button") -> Json | None:
         """Starts the sync unless one runs already; the refusal when a write is under way."""
@@ -429,8 +475,8 @@ class Desk:
                 priority=priority,
                 on_deck=self._sync_deck,
                 on_progress=self._sync_progress,
-                on_pulled=self._sync_pulled,
-                deck_lock=self._deck_locks.hold,
+                pull=PullWatch(priority, self._deck_locks.hold, self._sync_listed, self._sync_pulled),
+                on_cards=self._sync_cards,
             )
         except _EXPECTED as error:
             log.warning("sync for %s failed after %s: %s", user, self._elapsed(started_at), error)
@@ -451,10 +497,21 @@ class Desk:
             self._sync.progress = message
         log.info("sync phase: %s", message)
 
-    def _sync_pulled(self) -> None:
+    def _sync_listed(self, to_write: Collection[int]) -> None:
         with self._sync_lock:
-            self._sync.pulled = True
-        log.info("sync: decks pulled; deck changes go through again")
+            self._sync.listed = True
+            self._sync.pulling = set(to_write)
+        log.info("sync: %d decks to pull; changes to the others go through", len(to_write))
+
+    def _sync_pulled(self, deck_id: int) -> None:
+        with self._sync_lock:
+            self._sync.pulling.discard(deck_id)
+        log.info("sync: deck %d pulled; its changes go through", deck_id)
+
+    def _sync_cards(self) -> None:
+        with self._sync_lock:
+            self._sync.cards_ready = True
+        log.info("sync: card data in place; card lookups go through")
 
     def _sync_deck(self, deck_id: int, state: FetchState) -> None:
         with self._sync_lock:
@@ -574,7 +631,7 @@ class Desk:
     @_guarded
     def set_label(self, deck_id: int, name: str, label: str) -> Json:
         """Give one deck card one of the deck's labels ("" for none) on Archidekt at once (ADR 0010)."""
-        with self._writing("label change", "change the label", deck_id) as busy:
+        with self._writing("label change", "change the label", deck_id, needs_cards=False) as busy:
             if busy:
                 return busy
             stored = self._stored(deck_id)
@@ -803,7 +860,7 @@ class Desk:
         status = _DECISIONS.get(decision)
         if status is None:
             return {"error": f"unknown decision {decision!r}"}
-        with self._writing("decision", "decide", deck_id) as busy:
+        with self._writing("decision", "decide", deck_id, needs_cards=False) as busy:
             if busy:
                 return busy
             stored = self._stored(deck_id)
@@ -827,7 +884,7 @@ class Desk:
 
     @_guarded
     def remove(self, deck_id: int, card_id: str) -> Json:
-        with self._writing("removal", "remove the card", deck_id) as busy:
+        with self._writing("removal", "remove the card", deck_id, needs_cards=False) as busy:
             if busy:
                 return busy
             held = read_board(self._stored(deck_id).folder).find(card_id)

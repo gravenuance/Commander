@@ -29,6 +29,14 @@ def test_no_more_threads_than_the_limit_run_at_once() -> None:
     assert peak == 2
 
 
+def test_pick_chooses_which_waiting_job_starts_next_and_the_futures_stay_in_job_order() -> None:
+    started: list[int] = []
+    jobs = [lambda n=n: started.append(n) or n for n in range(4)]
+    futures = run_all(jobs, limit=1, name="t", pick=lambda waiting: waiting[-1])
+    assert [f.result(timeout=5) for f in futures] == [0, 1, 2, 3]
+    assert started == [3, 2, 1, 0]
+
+
 def test_an_error_reaches_the_caller_through_its_future() -> None:
     def fail() -> int:
         raise KeyError("boom")

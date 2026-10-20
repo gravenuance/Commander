@@ -1,8 +1,9 @@
 """A full sync: the decks, the card data, the account's labels, the ideas and the re-judging of the open ones
 (ADR 0023).
 
-Up to `on_pulled` the sync writes deck folders freely and its caller lets nothing else write; after it, the
-ideas phase fetches with no lock held and merges each deck's ideas under `deck_lock` (ADR 0042).
+Every write to a deck folder, the pull's, the [grace] tables' and the ideas merge's, holds that deck's
+`deck_lock`; the pull also tells its caller which decks it will still write, so the app refuses a write only
+to those (ADR 0042). The ideas phase fetches with no lock held.
 
 `cmdr sync` and the app's Sync button both run it; neither prints from in here, so
 each failure comes back as a warning to show the way the caller shows things.
@@ -25,7 +26,7 @@ from commander.carddb import CARD_DB_FILE, CardDataError, CardDb
 from commander.config import MetaSettings
 from commander.credentials import CredentialError, TokenStore
 from commander.deckcache import Clock
-from commander.decklocks import DeckLock, no_deck_lock
+from commander.decklocks import DeckLock
 from commander.deckprofile import ProfileError, profile_path, write_profile_template
 from commander.fetchpriority import FetchPriority
 from commander.ideas import compile_ideas, gather_idea_pools, rejudge_ideas, relabel_legacy_ideas
@@ -34,7 +35,7 @@ from commander.net import Fetcher, NetworkError, Pacer
 from commander.profileedit import ensure_grace_table
 from commander.scryfall import CardRefresh, RefreshStatus, ScryfallClient, ScryfallError, refresh_card_db
 from commander.store import StoredDeck, Workspace
-from commander.sync import PRIVATE_NOT_UPDATED, SyncResult, SyncStatus, sync_decks
+from commander.sync import PRIVATE_NOT_UPDATED, PullWatch, SyncResult, SyncStatus, sync_decks
 from commander.viewscore import VIEWS_FILE, ViewScores
 
 log = logging.getLogger(__name__)
@@ -118,10 +119,14 @@ def run_sync(
     priority: FetchPriority | None = None,
     on_deck: DeckProgress | None = None,
     on_progress: Progress,
-    on_pulled: Callable[[], None] | None = None,
-    deck_lock: DeckLock = no_deck_lock,
+    pull: PullWatch | None = None,
+    on_cards: Callable[[], None] | None = None,
 ) -> SyncOutcome:
+    """The whole sync. `pull` follows and steers the deck pull, and its `deck_lock` covers every write to a
+    deck folder; `on_cards` is told once the card data is in place, or will not change (ADR 0042)."""
     warnings: list[str] = []
+    pull = pull or PullWatch(priority=priority)
+    deck_lock = pull.deck_lock
     with services.client_factory() as http:
         fetcher = Fetcher(http)
         # The card download is independent of the decks, so it runs while they sync.
@@ -134,6 +139,11 @@ def run_sync(
                 ),
                 name="card-data",
             )
+        if on_cards is not None:
+            if cards_job is None:
+                on_cards()
+            else:
+                cards_job.add_done_callback(lambda _: on_cards())
         try:
             login = _sign_in(fetcher, user, services)
             if login.problem is not None:
@@ -147,6 +157,7 @@ def run_sync(
                 dry_run=options.dry_run,
                 on_progress=on_progress,
                 warn=warnings.append,
+                watch=pull,
             )
             if not login.attempted and any(stored.deck.needs_login for stored in workspace.load_all()):
                 warnings.append(f"Not signed in to Archidekt: {PRIVATE_NOT_UPDATED}")
@@ -160,9 +171,7 @@ def run_sync(
         cards = _card_status(cards_job, options)
     if options.dry_run:
         return SyncOutcome(results, cards, labels, warnings=warnings)
-    _add_grace_tables(workspace, warnings)
-    if on_pulled is not None:
-        on_pulled()
+    _add_grace_tables(workspace, warnings, deck_lock)
     ideas, turned_down = (
         _compile_ideas(
             workspace,
@@ -181,21 +190,29 @@ def run_sync(
     return SyncOutcome(results, cards, labels, turned_down, ideas, warnings)
 
 
-def _add_grace_tables(workspace: Workspace, warnings: list[str]) -> None:
+def _add_grace_tables(workspace: Workspace, warnings: list[str], deck_lock: DeckLock) -> None:
     """Give each deck's profile the empty [grace] table (ADR 0039), writing the template for a deck with no
-    profile yet; a profile that cannot be written is a warning."""
+    profile yet, under the deck's lock; a profile that cannot be written is a warning."""
     for deck_id, folder in workspace.deck_folders():
         try:
-            if not profile_path(folder).exists():
-                deck = workspace.load_folder(folder)
-                if deck is not None:
-                    write_profile_template(folder, deck)
-                    log.info("%s: wrote profile.toml from the template", folder.name)
-            elif ensure_grace_table(folder):
-                log.info("%s: added an empty [grace] table to profile.toml", folder.name)
+            with deck_lock(deck_id):
+                _add_grace_table(workspace, folder)
         except (OSError, ProfileError) as error:
             log.warning("deck %s: could not add the [grace] table: %s", deck_id, error)
             warnings.append(f"deck {deck_id}: [grace] table not added: {error}")
+
+
+def _add_grace_table(workspace: Workspace, folder: Path) -> None:
+    # A save that held the lock may have renamed the folder after a rename on Archidekt; the next sync has it.
+    if not folder.is_dir():
+        return
+    if not profile_path(folder).exists():
+        deck = workspace.load_folder(folder)
+        if deck is not None:
+            write_profile_template(folder, deck)
+            log.info("%s: wrote profile.toml from the template", folder.name)
+    elif ensure_grace_table(folder):
+        log.info("%s: added an empty [grace] table to profile.toml", folder.name)
 
 
 @dataclass(slots=True, frozen=True)

@@ -946,7 +946,7 @@ def test_nothing_changes_the_deck_or_board_while_an_update_runs(
     desk, pending = deferred_desk(settings, fake)
     desk.sync()
     assert len(pending) == 1
-    assert call(desk) == {"error": f"Wait for the sync to finish, then {then} (now: Starting the sync)."}
+    assert call(desk) == {"error": f"Wait for Magda to finish syncing, then {then}."}
     assert not fake.card_writes()
     assert not (settings.workspace / "10004639-honestly-though" / "board.json").exists()
 
@@ -983,7 +983,7 @@ def test_board_edits_and_settings_wait_while_an_update_runs(
     folder = settings.workspace / "10004639-honestly-though"
     desk.sync()
     assert len(pending) == 1
-    assert call(desk) == {"error": f"Wait for the sync to finish, then {then} (now: Starting the sync)."}
+    assert call(desk) == {"error": f"Wait for Magda to finish syncing, then {then}."}
     assert not (folder / "board.json").exists()
     assert not (folder / "activity.jsonl").exists()
     # The sync writes the profile template for a deck without one (ADR 0039); the settings are not in it.
@@ -1508,12 +1508,10 @@ def test_a_write_refused_during_a_sync_is_logged_with_what_it_was_and_the_phase(
     with caplog.at_level(logging.INFO, logger=DESK_LOG):
         stubbed_sync(desk, pending, monkeypatch, clock, lambda: answers.append(act(desk)))
     assert logged(caplog)[3] == (
-        f"refused the {what} for deck {DECK}: "
+        f"refused the {what} for deck {DECK} (still syncing): "
         "the sync has run for 125s, now at: Archidekt: recent Magda decks"
     )
-    assert answers == [
-        {"error": f"Wait for the sync to finish, then {then} (now: Archidekt: recent Magda decks)."}
-    ]
+    assert answers == [{"error": f"Wait for Magda to finish syncing, then {then}."}]
 
 
 def test_a_successful_save_logs_the_deck_and_the_number_of_changes(
