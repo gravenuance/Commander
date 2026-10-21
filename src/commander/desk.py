@@ -223,7 +223,9 @@ def sync_summary(outcome: SyncOutcome) -> str:
     if problems:
         return f"Sync finished with problems: {', '.join(problems)}; see the log."
     changed = counts[SyncStatus.NEW] + counts[SyncStatus.UPDATED]
-    return f"Synced {_decks(len(outcome.results))}, {changed} changed."
+    removed = counts[SyncStatus.REMOVED]
+    gone = f", {removed} removed" if removed else ""
+    return f"Synced {_decks(len(outcome.results) - removed)}, {changed} changed{gone}."
 
 
 def _decks(count: int) -> str:
@@ -476,7 +478,9 @@ class Desk:
                 priority=priority,
                 on_deck=self._sync_deck,
                 on_progress=self._sync_progress,
-                pull=PullWatch(priority, self._deck_locks.hold, self._sync_listed, self._sync_pulled),
+                pull=PullWatch(
+                    priority, self._deck_locks.hold, self._sync_listed, self._sync_pulled, self._sync_removed
+                ),
                 on_cards=self._sync_cards,
             )
         except _EXPECTED as error:
@@ -508,6 +512,17 @@ class Desk:
         with self._sync_lock:
             self._sync.pulling.discard(deck_id)
         log.info("sync: deck %d pulled; its changes go through", deck_id)
+
+    def _sync_removed(self, deck_id: int) -> None:
+        """The sync deleted the deck's folder: forget what the app kept for it, the open deck included."""
+        self._pools.pop(deck_id, None)
+        self._tables.pop(deck_id, None)
+        self._rules.pop(deck_id, None)
+        with self._sync_lock:
+            if self._open_deck == deck_id:
+                self._open_deck = None
+            self._sync.decks.pop(deck_id, None)
+        log.info("sync: deck %d removed; it was deleted on Archidekt", deck_id)
 
     def _sync_cards(self) -> None:
         with self._sync_lock:

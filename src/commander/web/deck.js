@@ -92,6 +92,36 @@ async function loadDecks() {
   $("no-decks").hidden = state.decks.length > 0;
   $("copy-to-buy").hidden = state.decks.length === 0;
   renderDecks();
+  closeOpenDeckIfGone();
+}
+
+// A sync deletes the folder of a deck deleted on Archidekt (ADR 0045); if it was the open one, its view closes
+// with a notice instead of asking the bridge for a deck that is no longer there.
+function closeOpenDeckIfGone() {
+  if (state.current === null || state.decks.some((deck) => deck.id === state.current)) return;
+  const name = state.view ? state.view.name : "The open deck";
+  deckRequest++;
+  state.current = null;
+  state.view = null;
+  state.selected = null;
+  state.hovered = null;
+  state.tiles.clear();
+  state.groups.clear();
+  state.gridCards.clear();
+  state.collapsed.clear();
+  state.tagsKey = null;
+  state.leaningsKey = null;
+  $("list-considering").replaceChildren();
+  $("list-uncut").replaceChildren();
+  $("grid").replaceChildren();
+  closeLabelMenu(false);
+  renderDecks();
+  renderActivity([]);
+  $("mana").replaceChildren();
+  manaPanel.forget();
+  showRailFor(false);
+  $("deck").hidden = true;
+  showStatus(`${name} is no longer among your decks (deleted on Archidekt?), so it is closed.`);
 }
 
 // Only the user opens a deck, so each opening is a view; the main area stays blank until they pick one.
