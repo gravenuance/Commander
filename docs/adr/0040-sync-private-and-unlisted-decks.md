@@ -7,7 +7,7 @@
 
 `sync` listed `GET /api/decks/v3/?ownerUsername=<user>&pageSize=50` and read each deck, both without a login, so
 it saw only public decks. The owner has a private deck (the private test deck) and an unlisted one
-(27586769) that it never pulled.
+that it never pulled.
 
 A read-only probe on 2026-10-19 showed:
 

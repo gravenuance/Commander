@@ -18,7 +18,7 @@ from commander.syncrun import SyncOptions, SyncOutcome, SyncServices, run_sync
 from conftest import ACCESS_TOKEN, DECK_ID, REFRESH_TOKEN, FakeArchidekt, Json, MemoryTokenStore
 
 PRIVATE_ID = 10000003
-UNLISTED_ID = 27586769
+UNLISTED_ID = 10000004
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 NOT_SIGNED_IN = "Not signed in to Archidekt: private and unlisted decks were not updated"
 REFUSED = "Archidekt refused the login: private and unlisted decks were not updated"
