@@ -4,8 +4,10 @@ import threading
 from collections.abc import Callable, Sequence
 
 SEPARATOR = " · "
-# The most words a status line holds (ui.md); past it, the first phase and a count of the others.
+# The most words a status line holds (ui.md); past it, the first phase, cut short if need be, and a count of
+# the others.
 MAX_WORDS = 12
+ELLIPSIS = "…"
 
 
 class ActivePhases:
@@ -45,6 +47,16 @@ class ActivePhases:
 
 
 def _line(steps: Sequence[str]) -> str:
-    if len(steps) == 1 or sum(len(step.split()) for step in steps) <= MAX_WORDS:
+    if sum(len(step.split()) for step in steps) <= MAX_WORDS:
         return SEPARATOR.join(steps)
-    return f"{steps[0]} +{len(steps) - 1} more"
+    if len(steps) == 1:
+        return _cut(steps[0], MAX_WORDS)
+    more = f"+{len(steps) - 1} more"
+    return f"{_cut(steps[0], MAX_WORDS - len(more.split()))} {more}"
+
+
+def _cut(step: str, words: int) -> str:
+    kept = step.split()
+    if len(kept) <= words:
+        return step
+    return " ".join(kept[:words]) + ELLIPSIS

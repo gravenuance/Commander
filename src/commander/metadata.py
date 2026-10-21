@@ -71,7 +71,7 @@ from commander.jsonshape import (
     req_str,
     str_list,
 )
-from commander.models import Deck
+from commander.models import Deck, short_commander_name
 from commander.net import Fetcher, HttpStatusError, NetworkError, Pacer, WaitListener
 from commander.peerschedule import fresh_for as peer_fresh_for
 from commander.peersearch import SearchHits, update_hits
@@ -282,6 +282,11 @@ def window_start(now: datetime, settings: MetaSettings) -> date:
     return utc_today(now) - timedelta(days=settings.window_days)
 
 
+def _peers_step(name: str) -> str:
+    # The short name keeps the progress line within its twelve words (ui.md).
+    return f"Archidekt: recent {short_commander_name(name)} decks"
+
+
 class _Steps:
     """Tells a caller where a read is: each step as it starts and as it ends, even when it fails."""
 
@@ -380,7 +385,7 @@ def start_gather(
             )
 
     def peers() -> Answer[PeerLists]:
-        with steps.running(f"Archidekt: recent {name} decks"):
+        with steps.running(_peers_step(name)):
             return _peers(deck, sources, folder, since, now=now, refresh=refresh, offline=offline)
 
     def own_combos() -> Answer[tuple[ComboDetail, ...]]:
@@ -500,7 +505,7 @@ def start_gather_peers(
     steps = _Steps(on_progress, on_done)
 
     def peers() -> Answer[PeerLists]:
-        with steps.running(f"Archidekt: recent {name} decks"):
+        with steps.running(_peers_step(name)):
             return _peers(deck, sources, folder, since, now=now, refresh=refresh, offline=offline)
 
     def lists() -> Answer[CommanderEntries]:
@@ -670,7 +675,7 @@ def gather_adjacent(
     groups_failed = False
     for group in groups:
         name = commander_name(group)
-        with steps.running(f"Archidekt: recent {name} decks"):
+        with steps.running(_peers_step(name)):
             answer = _group_peers(
                 group,
                 deck.bracket,

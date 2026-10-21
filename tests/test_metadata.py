@@ -258,7 +258,7 @@ def test_every_step_that_is_reported_started_is_reported_done(rig: Rig, bracket:
         on_progress=started.append,
         on_done=finished.append,
     )
-    assert f"Archidekt: recent {ELLIVERE} decks" in started
+    assert "Archidekt: recent Ellivere decks" in started
     assert sorted(started) == sorted(finished)
 
 
@@ -276,7 +276,7 @@ def test_the_adjacent_reads_report_each_step_started_and_done(rig: Rig) -> None:
         on_progress=started.append,
         on_done=finished.append,
     )
-    assert started == [f"Archidekt: recent {MAGDA} decks", "Archidekt: recent decks tagged Stax"]
+    assert started == ["Archidekt: recent Magda decks", "Archidekt: recent decks tagged Stax"]
     assert finished == started
 
 

@@ -94,9 +94,19 @@ def test_phases_started_from_several_threads_are_all_kept() -> None:
     assert len(lines) == 40
 
 
-def test_one_phase_longer_than_twelve_words_shows_whole() -> None:
+LONG_STEP = "Archidekt: recent Kraum, Ludevic's Opus / Tymna the Weaver decks tagged Partner Tempo Value"
+
+
+def test_one_phase_longer_than_twelve_words_is_cut_to_twelve() -> None:
     lines: list[str] = []
     phases = shown_by(lines)
-    step = "Archidekt: recent Kraum, Ludevic's Opus / Tymna the Weaver decks tagged Partner Tempo Value"
-    phases.start(step)
-    assert lines == [step]
+    phases.start(LONG_STEP)
+    assert lines == ["Archidekt: recent Kraum, Ludevic's Opus / Tymna the Weaver decks tagged Partner…"]
+
+
+def test_a_long_first_phase_is_cut_so_the_count_of_the_others_still_fits_twelve_words() -> None:
+    lines: list[str] = []
+    phases = shown_by(lines)
+    phases.start(LONG_STEP)
+    phases.start("TopDeck: recent tournaments")
+    assert lines[-1] == "Archidekt: recent Kraum, Ludevic's Opus / Tymna the Weaver decks… +1 more"

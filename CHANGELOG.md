@@ -10,8 +10,9 @@
   (ADR 0047). Before, the first deck of a first sync waited for the whole fetch, minutes for a 60-day window,
   before anything else was read, and every deck's merge waited for it.
 - The sync's progress line names every read under way ("TopDeck: recent tournaments · Archidekt: recent
-  Edgar Markov decks"), drops each as it ends and shows a wait for TopDeck's rate limit ("TopDeck: waiting 30 s
-  (rate limit)"). Before, it showed the last one that started, and said Archidekt while TopDeck waited.
+  Edgar decks"), drops each as it ends and shows a wait for TopDeck's rate limit ("TopDeck: waiting 30 s
+  (rate limit)"). Before, it showed the last one that started, and said Archidekt while TopDeck waited. It
+  keeps to 12 words: commanders go by their short name, and a longer line is cut with "…".
 - `sync` prunes the cached Archidekt deck reads once, after every deck's reads are over, instead of as each deck
   finishes while other decks are still reading them (ADR 0027).
 - Testing or saving a TopDeck key no longer hangs for up to five minutes when TopDeck answers 429: the app and

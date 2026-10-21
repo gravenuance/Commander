@@ -64,10 +64,11 @@ Option 4, behind the provider seam that stood in front of EDHTop16 (`tournaments
   (Ctrl-C does not wait).
 - **Saying where the sync is** (`phases.ActivePhases`). The reads of a sync run side by side, so the progress
   line lists every one that is under way, in the order they started, joined with " · " (for example
-  "TopDeck: recent tournaments · Archidekt: recent Edgar Markov decks"); a read leaves the line when it ends,
+  "TopDeck: recent tournaments · Archidekt: recent Edgar decks"); a read leaves the line when it ends,
   and `metadata.gather` and the others tell their caller both when a step starts and when it ends. A wait for
   a 429 shows in place of the TopDeck step ("TopDeck: waiting 30 s (rate limit)") and goes back when the wait
-  is over. Past twelve words (`ui.md`) the line is the first read and "+N more".
+  is over. A step names commanders by their short name ("Etali", "Kraum/Tymna"). Past twelve words (`ui.md`)
+  the line is the first read and "+N more", the read cut with "…" so the whole line stays within twelve.
 - **Keeping** (`topdeckstore.py`). One compact JSON file per event in `<cache>\topdeck\events\` holding the
   commander (partners joined in alphabetical order, as before), each deck's finish (its place in the standings)
   and cards, and `coverage.json`, the span of start dates that is complete. A run asks only for days outside
