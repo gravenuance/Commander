@@ -63,7 +63,9 @@ Option 4, behind the provider seam that stood in front of EDHTop16 (`tournaments
   showing it. A window the store already covers in part still answers when a refresh fails (no key, a refused
   key, TopDeck down): the stored events answer as a stale copy that carries the reason and the day the store
   is complete to (`TopdeckClient.stale_note`, `deckcache.StaleNote`), and is not cached as a fresh answer. A
-  window the store never held fails with the error.
+  window the store never held fails with the error. A client remembers its first key or network failure for
+  its lifetime (one sync, one `meta` run, one app read) and gives it again without sending, so a sync does not
+  try TopDeck again for every deck.
 - **The credit** is a line in every CLI output that shows the data (`meta`, its JSON, `topdeck`), and a link in
   the app's Meta and Considering panels and the TopDeck panel.
 - **Removed:** spice (spicy picks, the spice of `meta --card`, the `spice` JSON fields), the unknown-standing

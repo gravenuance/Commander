@@ -360,6 +360,42 @@ def test_a_server_error_is_a_network_error(tmp_path: Path) -> None:
         ask(client_for(fake, tmp_path))
 
 
+def test_after_a_network_failure_the_client_sends_nothing_more(tmp_path: Path) -> None:
+    fake = FakeTopdeck()
+    fake.status = 503
+    client = client_for(fake, tmp_path)
+    with pytest.raises(NetworkError):
+        ask(client)
+    assert len(fake.requests) == 1
+    # Another commander, another window and the meta field all read through the same client.
+    with pytest.raises(NetworkError):
+        ask(client, KINNAN)
+    with pytest.raises(NetworkError):
+        ask(client, since=date(2026, 9, 1))
+    with pytest.raises(NetworkError):
+        client.top_commanders(since=SINCE, until=UNTIL, min_event_size=64, count=3)
+    assert len(fake.requests) == 1
+
+
+def test_after_a_refused_key_the_client_sends_nothing_more(tmp_path: Path) -> None:
+    fake = FakeTopdeck()
+    client = client_for(fake, tmp_path, MemoryKeyStore("not-the-key"))
+    with pytest.raises(TopdeckKeyError, match="refused the key"):
+        ask(client)
+    with pytest.raises(TopdeckKeyError, match="refused the key"):
+        ask(client, KINNAN)
+    assert len(fake.requests) == 1
+
+
+def test_a_failure_is_forgotten_with_the_client(tmp_path: Path) -> None:
+    fake = FakeTopdeck()
+    fake.status = 503
+    with pytest.raises(NetworkError):
+        ask(client_for(fake, tmp_path))
+    fake.status = 200
+    assert len(ask(client_for(fake, tmp_path))) == 3
+
+
 def test_an_answer_that_is_not_a_list_is_refused(tmp_path: Path) -> None:
     client = TopdeckClient(
         Fetcher(

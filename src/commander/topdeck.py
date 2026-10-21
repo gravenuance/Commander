@@ -92,6 +92,8 @@ class TopdeckClient:
         # Lists and the meta field read side by side: one fetches, the other waits and reads what it stored.
         self._lock = threading.Lock()
         self._loaded: tuple[_Window, list[TournamentRecord], StaleNote | None] | None = None
+        # The first key or network failure: a sync reads once per deck, so later reads give up unsent.
+        self._failure: TopdeckKeyError | NetworkError | None = None
 
     def check_key(self, key: str) -> None:
         """Ask TopDeck for events no one reached; TopdeckKeyError when it refuses the key."""
@@ -159,8 +161,12 @@ class TopdeckClient:
         stored events stand in. Without stored events the error goes to the caller."""
         before = self._store.coverage()
         try:
+            if self._failure is not None:
+                raise self._failure
             self._ensure(window)
         except (TopdeckError, NetworkError) as error:
+            if isinstance(error, TopdeckKeyError | NetworkError):
+                self._failure = error
             if before is None or not _overlaps(before, window):
                 raise
             log.warning("TopDeck refresh failed, answering from the stored events: %s", error)
