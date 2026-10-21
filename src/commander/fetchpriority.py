@@ -2,6 +2,11 @@
 
 import threading
 from collections.abc import Callable, Sequence
+from contextvars import ContextVar
+
+# The deck a read is for, set by the thread that reads it; the threads it starts inherit it (`background`).
+# A request made with none, like the Meta panel's, is no deck's.
+fetching_deck: ContextVar[int | None] = ContextVar("fetching_deck", default=None)
 
 
 class FetchPriority:
@@ -17,6 +22,15 @@ class FetchPriority:
     def prefer(self, deck_id: int) -> None:
         with self._lock:
             self._selected = deck_id
+
+    def rank(self, deck_id: int, order: Sequence[int]) -> int:
+        """Where the deck stands for requests that wait their turn, lowest first: the preferred deck, then the
+        decks in `order`, then any not in it. Read afresh each time, so a deck opened later moves up."""
+        with self._lock:
+            selected = self._selected
+        if deck_id == selected:
+            return 0
+        return 1 + (order.index(deck_id) if deck_id in order else len(order))
 
     def pick[T](self, waiting: Sequence[T], deck_id: Callable[[T], int]) -> T:
         """The preferred deck if it still waits, else the first of those waiting, which is in their order."""

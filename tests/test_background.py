@@ -1,4 +1,5 @@
 import threading
+from contextvars import ContextVar
 
 import pytest
 
@@ -58,3 +59,17 @@ def test_no_jobs_gives_no_futures() -> None:
 def test_limit_below_one_is_a_programming_error() -> None:
     with pytest.raises(ValueError, match="at least 1"):
         run_all([lambda: 1], limit=0, name="t")
+
+
+def test_a_job_sees_the_context_variables_of_the_code_that_started_it_and_leaves_them_unchanged() -> None:
+    answer: ContextVar[str] = ContextVar("answer", default="none")
+    answer.set("outer")
+
+    def job() -> tuple[str, str]:
+        seen = answer.get()
+        answer.set("inner")
+        # A job's own jobs inherit from it, not from the first caller.
+        return seen, in_background(answer.get, name="t").result(timeout=5)
+
+    assert in_background(job, name="t").result(timeout=5) == ("outer", "inner")
+    assert answer.get() == "outer"
