@@ -55,6 +55,7 @@ uv run cmdr board show ellivere                     # cards under consideration 
 uv run cmdr board log --since 2026-10-15T18:00      # what changed on the boards since then
 uv run cmdr app                                     # the desktop app over every deck's board
 uv run cmdr login                                   # one-time: sign in so apply can change decks
+uv run cmdr topdeck                                 # one-time: save your TopDeck.gg key for the tournament lists
 uv run cmdr apply plan.toml                         # preview a plan of cards to add and remove
 uv run cmdr apply plan.toml --save                  # make those changes on Archidekt
 ```
@@ -178,14 +179,14 @@ them together.
 
 ### cEDH meta
 
-`meta` compares a bracket 5 deck with what performs in cEDH: its commander's tournament lists on
-[EDHTop16](https://edhtop16.com) from the last two months (top cuts first), and the most-viewed Archidekt
-decks for that commander updated in the same window (see *Which Archidekt decks are read* below). It lists:
+`meta` compares a bracket 5 deck with what performs in cEDH: its commander's tournament lists from
+[TopDeck.gg](https://topdeck.gg) from the last two months (top cuts first), and the most-viewed Archidekt
+decks for that commander updated in the same window (see *Which Archidekt decks are read* below). The
+tournament lists need a free TopDeck key (see *TopDeck key* below); without one, `meta` and the app say so and
+carry on with the Archidekt decks. It lists:
 
 - **Staples you don't play:** cards in at least 40% of the lists read, or in half the Archidekt decks, that
   the deck lacks.
-- **Spicy picks:** cards EDHTop16 rates 3 or 4 for spice (new or rarely played) in at least two lists,
-  with their best finish.
 - **Your own picks:** deck cards under 10% of the lists play; cards the profile keeps are marked.
 - **Your combos and what the meta stops them with:** the deck's own combos, from Commander Spellbook, each
   with the cards the ten most-played commanders' lists commonly play against it: stax pieces first, then
@@ -241,21 +242,39 @@ a few minutes, because requests are spaced out. The sample sizes are set in the 
 ```toml
 [meta]
 window_days = 60       # 7 to 90
-min_event_size = 16    # smallest tournament counted
+min_event_size = 64    # smallest tournament counted, 64 to 1000
 peer_decks = 60        # most Archidekt decks read per commander, 0 to 60 (0 reads none)
 meta_commanders = 10   # most-played commanders searched for answers and combos
 meta_lists = 30        # best-placed lists read per meta commander
 ```
 
-EDHTop16's terms forbid redistributing its statistics, so meta reports stay on your machine. See
-[ADR 0007](docs/adr/0007-meta-from-edhtop16-archidekt-and-spellbook.md).
+Tournament data is TopDeck.gg's: every output that shows it credits and links TopDeck.gg, and the stored
+events stay on your machine. See [ADR 0007](docs/adr/0007-meta-from-edhtop16-archidekt-and-spellbook.md) for
+the report and [ADR 0047](docs/adr/0047-tournament-lists-from-topdeck-with-a-key-per-user.md) for where the
+tournaments come from.
+
+### TopDeck key
+
+TopDeck.gg's API needs a free key for each user. Issue yours at [topdeck.gg/developers](https://topdeck.gg/developers),
+then either press **TopDeck** at the foot of the app's deck list (paste the key, **Test key**, **Save key**) or
+run `uv run cmdr topdeck` and paste it when asked. TopDeck is asked whether it takes the key before it is
+saved in Windows Credential Manager (service `Commander (cmdr) TopDeck`, user `api-key`); it never goes on a
+command line, into a file or into the log. `cmdr topdeck --key-stdin` reads it from stdin for scripts,
+`--no-check` saves it without asking TopDeck, and `--remove` forgets it.
+
+Events of 64 players or more are fetched a week at a time, two seconds apart (TopDeck allows 100 requests a
+minute, fewer for bulk queries), and each is kept in the cache folder (`topdeck\`) as the commander and the
+cards of each deck with its finish, so a day later only the new days are asked for, and the last three days
+again because an event that started then may not have finished. Players' names and ids are dropped as the
+answer is read and never stored. The lists of a commander and the most-played commanders and their shares are
+worked out from those events.
 
 ### Which Archidekt decks are read
 
 The search looks at the deck's own bracket and the one above (bracket 5 has none above), newest update first,
 up to 20 pages per commander. It keeps decks with at least 1000 views, or 750, or 500 when fewer than ten
 reach the bar, or all of them when fewer than ten reach 500, and reads at most `peer_decks` of them, most
-viewed first. Your own decks are never read. A bracket 4 deck also reads its commander's EDHTop16 lists, which
+viewed first. Your own decks are never read. A bracket 4 deck also reads its commander's tournament lists, which
 bracket 5 decks always do.
 
 Searches and deck reads are five seconds apart, and after a 429 nothing goes out for three minutes (or the
@@ -402,7 +421,7 @@ Each `sync` also compiles ideas from other players into Considering
 ([ADR 0028](docs/adr/0028-ideas-from-four-sources.md)), up to 50 per source, and only for cards the deck
 lacks that its profile, bracket ceiling and budget allow:
 
-- **meta** ("Tournament lists" in the app): the staples of the commander's EDHTop16 lists, for decks at
+- **meta** ("Tournament lists" in the app): the staples of the commander's TopDeck.gg lists, for decks at
   bracket 4 and 5.
 - **archidekt decks** ("Archidekt: *commander* decks"): the staples of its most-viewed recent decks, at the
   deck's bracket and the one above.
@@ -463,7 +482,9 @@ own deck folder, remembered in the config's `[workspaces]` table. Your own keeps
 and a new account gets a sibling folder named `decks-<username>`, or `Documents\Commander\decks-<username>`
 when no folder was set. Signing in as a new account syncs its decks at once. The foot of the deck list shows
 who is signed in, with **Sync** (the same as `cmdr sync`, card data and ideas included, with a spinner and the
-step it is on beneath) and **Sign out**, which removes the saved login. Without an account the button stays,
+step it is on beneath), **TopDeck** (the key the tournament lists need, with its steps, **Test key** and
+**Save key**; the Meta and Considering panels credit TopDeck.gg) and **Sign out**, which removes the saved
+login. Without an account the button stays,
 off, with "Sign in to sync" beside it. Signing in again finds the same folder. The page lists no decks until a sign-in succeeds: at start without a
 signed-in account the sign-in dialog opens over a blurred, dimmed page, and leaving it any other way (**Not
 now**, Escape) or signing out leaves "Sign in to see your decks" with a **Sign in** button, while the config
@@ -705,8 +726,9 @@ defaults.
 | Config file | `--config` | `CMDR_CONFIG` | n/a | `%APPDATA%\Commander\config.toml` |
 | Cache folder: card data, meta answers, other players' decks, view scores (`views.json`), logs | n/a | `CMDR_CACHE_DIR` | n/a | `%LOCALAPPDATA%\Commander` |
 | Role targets for `suggest` | n/a | n/a | `[targets]` table | ramp 10, draw 10, removal 8, board_wipe 2 |
-| Sample sizes for `meta` and `sync` | n/a | n/a | `[meta]` table | 60 days, events of 16+, up to 60 Archidekt decks, 10 commanders, 30 lists each |
+| Sample sizes for `meta` and `sync` | n/a | n/a | `[meta]` table | 60 days, events of 64+, up to 60 Archidekt decks, 10 commanders, 30 lists each |
 | Archidekt login for `apply --save`, and for `sync` to read private and unlisted decks | `cmdr login` | n/a | n/a | none; the token is kept in Windows Credential Manager |
+| TopDeck.gg API key for the tournament lists | `cmdr topdeck`, or the app's TopDeck button | n/a | n/a | none; the key is kept in Windows Credential Manager |
 | App log detail | n/a | `CMDR_LOG_LEVEL` | n/a | `INFO` |
 
 ## Test
@@ -727,7 +749,7 @@ Tests use recorded fixture data and never touch the network.
 | Archidekt (`archidekt.com/api`) | Reading decks; changing them with `apply --save` | Public decks need no login; changes, and `sync` of your private and unlisted decks, need `cmdr login`, whose token lives in Windows Credential Manager and is refreshed on each save and each sync. The API is undocumented, so every response's shape is checked and a clear message names what changed. A save makes a handful of requests, never retried. Its written terms forbid automated requests; its co-founder has said on its forum that the API is open to use. See [ADR 0004](docs/adr/0004-deck-changes-through-archidekts-site-api.md). |
 | Scryfall (`api.scryfall.com/bulk-data`, files on `data.scryfall.io`; card images from `cards.scryfall.io` in the app) | Card facts, rules text, EUR prices, Tagger tags for roles and profiles, card art | One API call per `sync` for the file list; the files themselves have no rate limit. Scryfall updates prices once a day and asks for bulk files rather than per-card calls for lookups like these. Tag data is community-maintained and can change. See [ADR 0001](docs/adr/0001-scryfall-bulk-card-data.md). |
 | Commander Spellbook (`backend.commanderspellbook.com`: `estimate-bracket`, `find-my-combos`) | Bracket estimates, combos, and combos one card short | One request per deck and command, at most four at a time, and none while a cached answer is under 7 days old. Spellbook asks tools to name themselves in the User-Agent, keep to a few calls per user action, stay under about 80 requests a minute, handle 429, and credit and link back to commanderspellbook.com, which `bracket` and `suggest` do in their output. Only card names and quantities are sent. See [ADR 0002](docs/adr/0002-bracket-estimates-from-commander-spellbook.md) and [ADR 0003](docs/adr/0003-suggestions-from-spellbook-and-scryfall.md). |
-| EDHTop16 (`edhtop16.com/api/graphql`) | Tournament lists, spice and the most-played commanders for `meta` and `sync`'s ideas | Requests 1.5 s apart, none while a cached answer is under a day old; malformed entries are skipped and future-dated events left out. Its terms offer the API as-is and forbid excessive automated requests, implying endorsement and redistributing its statistics; reports credit it and stay local. See [ADR 0007](docs/adr/0007-meta-from-edhtop16-archidekt-and-spellbook.md). |
+| TopDeck.gg (`topdeck.gg/api/v2/tournaments`) | Commander tournaments with decklists, for the commander's lists and the most-played commanders in `meta` and `sync`'s ideas | A free key for each user (`cmdr topdeck`, or the app), sent in the `Authorization` header and kept in Windows Credential Manager; it does not expire unless TopDeck revokes it. 100 requests a minute, fewer for bulk queries: events of 64+ players are asked for a week at a time, 2 s apart, only for days not seen yet, and kept per event in the cache folder; malformed events and decks are skipped and logged. Player names and ids are dropped as the answer is read. Any output that shows the data credits and links TopDeck.gg, as its terms ask. See [ADR 0047](docs/adr/0047-tournament-lists-from-topdeck-with-a-key-per-user.md). |
 | Archidekt deck search (`archidekt.com/api/decks/v3/`) | Other players' recent decks for `meta` and `sync`'s ideas | Searches and deck reads 5 s apart, after a 429 a pause of at least 3 minutes, and a second 429 ends Archidekt for the run; at most 20 search pages and `peer_decks` (60) deck reads per commander, and a quarter of that per deck tag, for decks that search by tag. Search results are cached for a day, each deck read until its owner edits it. Your own decks are left out. Under the same informal permission as the rest of Archidekt's API (ADR 0004). See [ADR 0027](docs/adr/0027-reading-other-players-archidekt-decks.md). |
 | Commander Spellbook (`find-my-combos`, for `meta`) | The combos the most-played commanders' lists run | One request per meta commander, 1 s apart, cached for 7 days. |
 | EDHREC (via Scryfall's `edhrec_rank`) | Popularity ranks for `suggest` | Never contacted: the rank comes inside Scryfall's bulk files. EDHREC's terms forbid automated requests to its site. |

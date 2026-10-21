@@ -1,6 +1,7 @@
 # 0028: Ideas for Considering from four sources, tested by the weighted share
 
-**Status:** Accepted · **Date:** 2026-10-18 · Replaces [ADR 0014](0014-considered-compiled-on-every-sync.md) and
+**Status:** Accepted · **Date:** 2026-10-18 · Its tournament lists now come from TopDeck.gg
+([ADR 0047](0047-tournament-lists-from-topdeck-with-a-key-per-user.md)) · Replaces [ADR 0014](0014-considered-compiled-on-every-sync.md) and
 [ADR 0015](0015-ideas-from-commanders-that-play-alike.md) · Extended by
 [ADR 0034](0034-fetch-the-decks-you-look-at-first.md) (the order a sync fetches in)
 

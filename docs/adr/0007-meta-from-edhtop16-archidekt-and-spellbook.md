@@ -1,6 +1,8 @@
 # 0007: The cEDH meta from EDHTop16, Archidekt search and Commander Spellbook
 
-**Status:** Accepted · **Date:** 2026-10-16 · Superseded in part by [ADR 0008](0008-answers-read-from-rules-text.md)
+**Status:** Accepted · **Date:** 2026-10-16 · Superseded in part by
+[ADR 0047](0047-tournament-lists-from-topdeck-with-a-key-per-user.md) (the tournament source: TopDeck.gg, not
+EDHTop16), [ADR 0008](0008-answers-read-from-rules-text.md)
 and [ADR 0017](0017-key-cards-found-from-the-deck.md) (how threats and answers are matched),
 [ADR 0027](0027-reading-other-players-archidekt-decks.md) (the Archidekt ranking, thin data, pacing and
 `peer_decks`) and [ADR 0032](0032-one-considering-list-and-one-sync.md) (the app's Refresh meta) ·
