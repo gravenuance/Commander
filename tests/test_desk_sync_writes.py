@@ -646,3 +646,39 @@ def test_a_sync_removes_the_folder_of_the_open_deck_deleted_on_archidekt_and_the
     assert str(desk.deck(OTHER)["error"]).startswith(f"deck {OTHER} is not in")
     assert str(desk.open_deck(OTHER)["error"]).startswith(f"deck {OTHER} is not in")
     assert f"sync: deck {OTHER} removed; it was deleted on Archidekt" in logged(caplog)
+
+
+def test_a_deck_whose_fetch_failed_takes_a_write_while_the_pull_goes_on(
+    settings: DeskSettings, fake: FakeArchidekt, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_decks(settings, fake, raw_deck, OTHER)
+    edited_upstream(fake, DECK, OTHER)
+    fake.failing[DECK] = 404
+    fetches = HeldFetches(monkeypatch, held=[OTHER])
+    failed_deck_opened = threading.Event()
+
+    class Opened(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            if record.getMessage().startswith(f"sync: deck {DECK} pulled"):
+                failed_deck_opened.set()
+
+    handler = Opened()
+    desk_log = logging.getLogger(DESK_LOG)
+    desk_log.addHandler(handler)
+    monkeypatch.setattr(desk_log, "level", logging.INFO)
+    no_download(monkeypatch)
+    stub_meta(monkeypatch)
+    sync = SyncThread()
+    desk = make_desk(settings, fake, sync.start)
+    try:
+        desk.sync()
+        assert fetches.fetching[OTHER].wait(WAIT_SECONDS)
+        assert failed_deck_opened.wait(WAIT_SECONDS)
+        answer = desk.propose(DECK, "Arcane Signet")
+        still_syncing = desk.propose(OTHER, "Arcane Signet")
+    finally:
+        fetches.release_all()
+        sync.join()
+        desk_log.removeHandler(handler)
+    assert "card" in answer, answer
+    assert "error" in still_syncing
