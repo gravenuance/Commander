@@ -225,6 +225,91 @@ def test_applied_cards_are_final(tmp_path: Path, service: BoardService) -> None:
         service.decide(card.id, Status.APPLIED, Actor.YOU)
 
 
+def holding(deck: Deck, *names: str) -> Deck:
+    """The deck with these cards added to its main list."""
+    golem = next(c for c in deck.main_cards if c.name == "Battered Golem")
+    extra = tuple(
+        replace(golem, name=name, entry_id=900 + i, categories=("Ramp",)) for i, name in enumerate(names)
+    )
+    return replace(deck, cards=(*deck.cards, *extra))
+
+
+def test_queueing_a_card_the_deck_has_held_since_it_was_proposed_is_refused(
+    tmp_path: Path, service: BoardService, deck: Deck, db: CardDb
+) -> None:
+    card = service.propose("Lightning Bolt", Actor.YOU)
+    later = BoardService(tmp_path, holding(deck, "Lightning Bolt"), db, now=Clock())
+
+    with pytest.raises(BoardError, match=re.escape("Lightning Bolt is already in the deck; remove it")):
+        later.decide(card.id, Status.ADD, Actor.YOU)
+
+
+def test_close_held_closes_open_cards_the_main_deck_holds_as_applied_and_logs_each(
+    tmp_path: Path, service: BoardService, deck: Deck, db: CardDb
+) -> None:
+    bolt = service.propose("Lightning Bolt", Actor.CMDR, origin=Origin.META)
+    signet = service.propose("Arcane Signet", Actor.YOU)
+    mountain = service.propose("Mountain", Actor.YOU)
+    service.propose("Mind Stone", Actor.CLAUDE)
+    later = BoardService(tmp_path, holding(deck, "Lightning Bolt", "Arcane Signet"), db, now=Clock())
+
+    closed = later.close_held()
+
+    assert [c.name for c in closed] == ["Lightning Bolt", "Arcane Signet"]
+    board = read_board(tmp_path)
+    assert {c.name: c.status for c in board.cards} == {
+        "Lightning Bolt": Status.APPLIED,
+        "Arcane Signet": Status.APPLIED,
+        "Mountain": Status.OPEN,
+        "Mind Stone": Status.OPEN,
+    }
+    assert {c.note for c in board.cards if c.status is Status.APPLIED} == {"already in the deck"}
+    entries = [(e.actor, e.action, e.card, e.detail) for e in read_activity(tmp_path) if e.action == "closed"]
+    assert entries == [
+        (Actor.CMDR, "closed", "Lightning Bolt", "already in the deck"),
+        (Actor.CMDR, "closed", "Arcane Signet", "already in the deck"),
+    ]
+    assert (bolt.id, signet.id, mountain.id) == tuple(c.id for c in board.cards[:3])
+    assert later.close_held() == []
+
+
+def test_close_held_leaves_queued_turned_down_and_applied_cards_and_closes_a_reopened_one(
+    tmp_path: Path, service: BoardService, deck: Deck, db: CardDb
+) -> None:
+    queued = service.propose("Lightning Bolt", Actor.YOU)
+    service.decide(queued.id, Status.ADD, Actor.YOU, choice="Battered Golem")
+    declined = service.propose("Arcane Signet", Actor.YOU)
+    service.decide(declined.id, Status.REJECTED, Actor.YOU, note="no")
+    reopened = service.propose("Mind Stone", Actor.YOU)
+    service.decide(reopened.id, Status.REJECTED, Actor.YOU, note="no")
+    service.decide(reopened.id, Status.OPEN, Actor.YOU)
+    later = BoardService(
+        tmp_path, holding(deck, "Lightning Bolt", "Arcane Signet", "Mind Stone"), db, now=Clock()
+    )
+
+    closed = later.close_held()
+
+    assert [c.name for c in closed] == ["Mind Stone"]
+    board = read_board(tmp_path)
+    assert {c.name: (c.status, c.reconsidered) for c in board.cards} == {
+        "Lightning Bolt": (Status.ADD, False),
+        "Arcane Signet": (Status.REJECTED, False),
+        "Mind Stone": (Status.APPLIED, False),
+    }
+
+
+def test_a_card_closed_as_held_returns_as_an_idea_once_the_deck_lacks_it(
+    tmp_path: Path, service: BoardService, deck: Deck, db: CardDb
+) -> None:
+    service.propose("Lightning Bolt", Actor.CMDR, origin=Origin.META)
+    BoardService(tmp_path, holding(deck, "Lightning Bolt"), db, now=Clock()).close_held()
+    board = read_board(tmp_path)
+
+    [back] = feed_ideas(service, {"Lightning Bolt": "in 5 of 6 lists"}, (), board, origin=Origin.META)
+
+    assert (back.status, back.reason) == (Status.OPEN, "back: no longer in the deck; in 5 of 6 lists")
+
+
 def test_removing_a_card_drops_it_and_logs_it(tmp_path: Path, service: BoardService) -> None:
     card = service.propose("Lightning Bolt", Actor.YOU)
     service.remove("lightning bolt", Actor.YOU)
