@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -27,7 +28,7 @@ from commander.metadata import (
 from commander.models import Deck, DeckCard
 from commander.net import HTTP_OK, Fetcher, Pacer
 from commander.spellbook import SpellbookClient
-from commander.topdeck import TopdeckClient
+from commander.topdeck import NO_KEY_MESSAGE, TopdeckClient
 from commander.topdeckstore import TournamentStore
 from conftest import (
     DECK_ID,
@@ -517,6 +518,28 @@ def test_without_a_cached_answer_a_failure_is_unavailable(rig: Rig) -> None:
     assert data.peers.source is AnswerSource.UNAVAILABLE
     assert data.peers.data is None
     assert data.lists.source is AnswerSource.FETCHED
+
+
+def test_the_next_day_without_a_key_the_stored_events_answer_as_a_stale_copy(rig: Rig) -> None:
+    first = rig.gather()
+    assert first.lists.data is not None
+    # No cached answer to fall back on, only the stored events.
+    shutil.rmtree(rig.cache / CACHE_FOLDER)
+    rig.now = NOW + timedelta(days=1)
+    rig.keys.key = None
+    rig.topdeck.requests.clear()
+    data = rig.gather()
+    assert data.lists.source is AnswerSource.STALE
+    # The August event left the window with the day; the two later ones stand.
+    assert data.lists.data is not None
+    assert [e.standing for e in data.lists.data.entries] == [12, 5]
+    assert data.lists.error == NO_KEY_MESSAGE
+    assert data.field.source is AnswerSource.STALE
+    assert data.field.data is not None
+    assert ELLIVERE in [c.stats.name for c in data.field.data]
+    assert rig.topdeck.requests == []
+    # A stale copy is not cached as a fresh one: the next run tries TopDeck again.
+    assert not list((rig.cache / CACHE_FOLDER).glob("tournament*.json"))
 
 
 def test_an_unreadable_deck_is_skipped_and_counted(rig: Rig) -> None:

@@ -62,6 +62,16 @@ class AnswerSource(Enum):
 
 
 @dataclass(slots=True, frozen=True)
+class StaleNote:
+    """A refresh failed and stored data answered instead: why, how far the stored data reaches, and whether
+    the failure was a missing or refused key."""
+
+    reason: str
+    as_of: datetime
+    key_problem: bool
+
+
+@dataclass(slots=True, frozen=True)
 class Answer[T]:
     data: T | None
     source: AnswerSource
@@ -171,8 +181,12 @@ def cached_answer[T](
     refresh: bool,
     fresh_for: timedelta,
     errors: tuple[type[Exception], ...],
+    stale: Callable[[], StaleNote | None] | None = None,
 ) -> Answer[T]:
-    """A recent cached answer, else a fresh one; if fetching fails with one of errors, the last good one."""
+    """A recent cached answer, else a fresh one; if fetching fails with one of errors, the last good one.
+
+    `stale` is asked after a fetch that returned: a note means stored data answered because refreshing failed,
+    so the answer is stale and not cached as fresh."""
     key = request_key(request)
     cached = cache.load(item, key)
     # A time ahead of the clock (a wrong clock, a hand-edited file) cannot be trusted as recent.
@@ -193,6 +207,10 @@ def cached_answer[T](
         if cached is not None:
             return Answer(cached.data, AnswerSource.STALE, cached.fetched_at, reason)
         return Answer(None, AnswerSource.UNAVAILABLE, None, reason)
+    note = stale() if stale is not None else None
+    if note is not None:
+        log.info("%s for %s answered from stored data: %s", cache.what, _label(item), note.reason)
+        return Answer(data, AnswerSource.STALE, note.as_of, note.reason)
     _failures.forget(entry)
     fetched_at = now()
     try:

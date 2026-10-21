@@ -295,6 +295,55 @@ def test_a_stored_window_needs_no_key(tmp_path: Path) -> None:
     assert len(ask(client_for(fake, tmp_path, MemoryKeyStore(None)))) == 3
 
 
+def test_the_next_day_without_a_key_answers_from_the_store_and_says_why_it_is_stale(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake = FakeTopdeck()
+    ask(client_for(fake, tmp_path))
+    fake.requests.clear()
+    client = client_for(fake, tmp_path, MemoryKeyStore(None))
+    with caplog.at_level(logging.WARNING):
+        found = ask(client, since=date(2026, 8, 17), until=date(2026, 10, 16))
+    assert found == ((date(2026, 10, 4), 12), (date(2026, 9, 13), 5))
+    note = client.stale_note()
+    assert note is not None
+    assert (note.reason, note.key_problem) == (NO_KEY_MESSAGE, True)
+    # The store is complete to the end of 12 October (three days before the end of the 15th).
+    assert note.as_of == datetime(2026, 10, 12, 23, 59, 59, tzinfo=UTC)
+    assert fake.requests == []
+    assert "TopDeck refresh failed" in caplog.text
+
+
+def test_the_next_day_with_a_refused_key_or_a_down_service_answers_from_the_store(tmp_path: Path) -> None:
+    fake = FakeTopdeck()
+    ask(client_for(fake, tmp_path))
+    refused = client_for(fake, tmp_path, MemoryKeyStore("not-the-key"))
+    assert len(ask(refused, since=date(2026, 8, 17), until=date(2026, 10, 16))) == 2
+    refusal = refused.stale_note()
+    assert refusal is not None
+    assert refusal.key_problem
+    fake.status = 503
+    down = client_for(fake, tmp_path)
+    assert len(ask(down, since=date(2026, 8, 17), until=date(2026, 10, 16))) == 2
+    note = down.stale_note()
+    assert note is not None
+    assert not note.key_problem
+    assert "503" in note.reason
+
+
+def test_a_window_the_store_never_saw_still_fails_without_a_key(tmp_path: Path) -> None:
+    ask(client_for(FakeTopdeck(), tmp_path))
+    client = client_for(FakeTopdeck(), tmp_path, MemoryKeyStore(None))
+    with pytest.raises(TopdeckKeyError):
+        ask(client, since=date(2026, 1, 1), until=date(2026, 1, 31))
+
+
+def test_a_fresh_store_has_no_stale_note(tmp_path: Path) -> None:
+    client = client_for(FakeTopdeck(), tmp_path)
+    ask(client)
+    assert client.stale_note() is None
+
+
 def test_checking_a_key_asks_for_no_events(tmp_path: Path) -> None:
     fake = FakeTopdeck()
     client_for(fake, tmp_path).check_key(TOPDECK_KEY)

@@ -31,6 +31,9 @@
   rating. The EDHTop16 client, its fixtures and its cached answers (deleted on the next run).
 
 ### Fixed
+- A TopDeck window kept in the cache still answers on a later day when there is no key, TopDeck refuses it
+  or is down: the lists come from the stored events, marked as a stale copy with the reason, where the first
+  day after the last fetch showed nothing.
 - `cmdr board plan` keeps quantities and kept copies (a basic land swap printed plain names before).
 - The Mana tab may suggest a land that only waits on the Maybeboard.
 - EDHTop16 errors are readable again: a refused query (EDHTop16 now answers with plain-text errors) is logged
