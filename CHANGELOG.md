@@ -74,7 +74,8 @@
 - The app closes a deck deleted on Archidekt even when its old folder could not be deleted yet; it kept the
   deck open before, and every action on it failed with "deck N is not in ...; press Sync".
 - A deck listed twice by Archidekt's paged listing (one edited between two page reads) is fetched and
-  reported once.
+  reported once; the listing is read again from page 1 first, because the edit may also have moved another
+  deck off every page read, and only a second drift keeps the first row (logged at INFO).
 
 ### Added
 - − and + on the decklist's cards (ADR 0043): − takes one copy out (at one copy, the card), + adds one to a

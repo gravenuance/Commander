@@ -1,3 +1,4 @@
+import logging
 import re
 from collections.abc import Callable
 
@@ -171,6 +172,49 @@ def test_list_follows_pagination_and_keeps_only_commander_decks() -> None:
     decks = client_for(handler).list_commander_decks("TESTER")
     assert [(d.id, d.name, d.updated_at) for d in decks] == [(1, "First", "t1"), (3, "Third", "t3")]
     assert seen[1] == second
+
+
+SECOND_PAGE = "https://archidekt.com/api/decks/v3/?ownerUsername=TESTER&page=2"
+
+
+def drifting_listing(reads: list[list[list[int]]]) -> tuple[Handler, list[str]]:
+    """A two-page listing; the n-th read from page 1 answers with the ids in `reads[n]` (page 1, page 2)."""
+    requests: list[str] = []
+    state = {"read": -1}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(str(request.url))
+        second = request.url.params.get("page") == "2"
+        if not second:
+            state["read"] += 1
+        ids = reads[min(state["read"], len(reads) - 1)][1 if second else 0]
+        rows = [summary_row(i, f"Deck {i}", f"t{i}") for i in ids]
+        return httpx.Response(200, json=deck_page(rows, next_url=None if second else SECOND_PAGE))
+
+    return handler, requests
+
+
+def test_a_listing_that_shows_a_deck_twice_is_read_again_from_page_one() -> None:
+    # The first read sees deck 2 on both pages and misses deck 4, which an edit moved to page 1 meanwhile.
+    handler, requests = drifting_listing([[[1, 2], [2, 3]], [[4, 1], [2, 3]]])
+
+    decks = client_for(handler).list_commander_decks("TESTER")
+
+    assert [d.id for d in decks] == [4, 1, 2, 3]
+    assert sum(1 for url in requests if "page=2" not in url) == 2
+
+
+def test_a_listing_that_drifts_again_keeps_the_first_row_of_a_repeated_deck_and_logs_it(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    handler, requests = drifting_listing([[[1, 2], [2, 3]]])
+
+    with caplog.at_level(logging.INFO, logger="commander.archidekt"):
+        decks = client_for(handler).list_commander_decks("TESTER")
+
+    assert [d.id for d in decks] == [1, 2, 3]
+    assert sum(1 for url in requests if "page=2" not in url) == 2
+    assert [r.levelno for r in caplog.records if "drift" in r.getMessage()] == [logging.INFO, logging.INFO]
 
 
 def test_list_rows_carry_the_deck_tags_when_archidekt_sends_them() -> None:

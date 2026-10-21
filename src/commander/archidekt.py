@@ -74,6 +74,10 @@ def raise_if_unauthorized(error: HttpStatusError, message: str | None = None) ->
         raise SignInRequiredError(message or f"Archidekt refused the login (HTTP {error.status})") from None
 
 
+class _ListingDrifted(Exception):  # noqa: N818 - control flow inside list_commander_decks, never escapes
+    """A paged listing showed one deck on two pages."""
+
+
 class ArchidektClient:
     """The owner's decks. With an access token the listing and the reads also cover the owner's private and
     unlisted decks (ADR 0040); without one they cover public decks only, as plain requests."""
@@ -98,6 +102,15 @@ class ArchidektClient:
         """
         if not user:
             raise ValueError("user is empty")
+        try:
+            return self._read_listing(user, restart_on_repeat=True)
+        except _ListingDrifted:
+            return self._read_listing(user, restart_on_repeat=False)
+
+    def _read_listing(self, user: str, *, restart_on_repeat: bool) -> list[DeckSummary]:
+        """One pass over the listing's pages. A deck edited between two page reads moves between pages, so it
+        shows twice and another may be missing: the pass then raises _ListingDrifted when `restart_on_repeat`,
+        and otherwise keeps the first row of each deck."""
         url: str | None = f"{self._base_url}/decks/v3/"
         params: Mapping[str, str | int] | None = {"ownerUsername": user, "pageSize": PAGE_SIZE}
         decks: list[DeckSummary] = []
@@ -112,11 +125,23 @@ class ArchidektClient:
                 raise ArchidektError(f"unexpected deck list from Archidekt: {error}") from error
             # The "next" link already carries the query string.
             params = None
-            # A deck edited between two page reads can be on both pages; the first row is the one kept.
             for deck in page:
-                if deck.id not in seen:
-                    seen.add(deck.id)
-                    decks.append(deck)
+                if deck.id in seen:
+                    if restart_on_repeat:
+                        log.info(
+                            "listing for %s drifted: deck %d is on two pages; reading it again from page 1",
+                            user,
+                            deck.id,
+                        )
+                        raise _ListingDrifted
+                    log.info(
+                        "listing for %s drifted again: deck %d is on two pages; keeping its first row",
+                        user,
+                        deck.id,
+                    )
+                    continue
+                seen.add(deck.id)
+                decks.append(deck)
         raise ArchidektError(f"deck list for {user} is longer than {MAX_PAGES} pages")
 
     def get_deck(self, deck_id: int) -> Deck:
