@@ -29,6 +29,10 @@ class NotFetchedError(Exception):
     """Raised in place of a request when gathering may only read the cache."""
 
 
+class ServiceKeyError(Exception):
+    """A service needs a key that is missing, or that it refused; answers built from it are marked."""
+
+
 class _FetchFailures:
     """Why the last fetch of each cache entry failed, kept in memory for the run. A cache-only read, which is
     all the app's panels do, then names that reason instead of "not fetched yet"."""
@@ -77,6 +81,8 @@ class Answer[T]:
     source: AnswerSource
     fetched_at: datetime | None
     error: str | None
+    # The error is a missing or refused key, which the user fixes once for every deck.
+    key_problem: bool = False
 
     def __post_init__(self) -> None:
         if (self.data is None) != (self.source is AnswerSource.UNAVAILABLE):
@@ -204,13 +210,14 @@ def cached_answer[T](
         else:
             log.info("%s for %s failed: %s", cache.what, _label(item), reason)
             _failures.record(entry, reason)
+        key_problem = isinstance(error, ServiceKeyError)
         if cached is not None:
-            return Answer(cached.data, AnswerSource.STALE, cached.fetched_at, reason)
-        return Answer(None, AnswerSource.UNAVAILABLE, None, reason)
+            return Answer(cached.data, AnswerSource.STALE, cached.fetched_at, reason, key_problem)
+        return Answer(None, AnswerSource.UNAVAILABLE, None, reason, key_problem)
     note = stale() if stale is not None else None
     if note is not None:
         log.info("%s for %s answered from stored data: %s", cache.what, _label(item), note.reason)
-        return Answer(data, AnswerSource.STALE, note.as_of, note.reason)
+        return Answer(data, AnswerSource.STALE, note.as_of, note.reason, note.key_problem)
     _failures.forget(entry)
     fetched_at = now()
     try:

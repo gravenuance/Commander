@@ -430,8 +430,20 @@ def test_sync_without_a_topdeck_key_says_so_once_and_asks_nothing(
     memory_keyring.secrets.clear()
     result = sync(home, fake)
     assert result.code == 0, result.err
-    assert result.err.count("tournament lists skipped: no TopDeck key saved") == 1
+    assert result.err.count("tournament lists skipped: missing or refused TopDeck key") == 1
     assert fake.topdeck.requests == []
+    assert read_board(home / "decks" / FOLDER).find("Mind Stone") is None
+
+
+def test_sync_with_a_refused_topdeck_key_says_so_once_and_asks_once(
+    home: Path, fake: FakeArchidekt, memory_keyring: MemoryKeyring
+) -> None:
+    memory_keyring.secrets[(TOPDECK_SERVICE, "api-key")] = "a-wrong-key"
+    result = sync(home, fake)
+    assert result.code == 0, result.err
+    assert result.err.count("tournament lists skipped: missing or refused TopDeck key") == 1
+    assert "a-wrong-key" not in result.out + result.err
+    assert len(fake.topdeck.requests) == 1
     assert read_board(home / "decks" / FOLDER).find("Mind Stone") is None
 
 

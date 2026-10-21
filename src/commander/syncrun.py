@@ -36,7 +36,6 @@ from commander.profileedit import ensure_grace_table
 from commander.scryfall import CardRefresh, RefreshStatus, ScryfallClient, ScryfallError, refresh_card_db
 from commander.store import StoredDeck, Workspace
 from commander.sync import PRIVATE_NOT_UPDATED, PullWatch, SyncResult, SyncStatus, sync_decks
-from commander.topdeck import NO_KEY_MESSAGE
 from commander.viewscore import VIEWS_FILE, ViewScores
 
 log = logging.getLogger(__name__)
@@ -393,22 +392,25 @@ def _compile_ideas(
             if data.lists.data is None and data.peers.data is None:
                 why = data.peers.error or data.lists.error
                 warnings.append(f"{deck.short_name}: no meta or Archidekt decks to learn from ({why})")
-            no_key = _note_no_key(data.lists.error, warnings)
-            incomplete = len(warnings) > warned or data.peers.data is None or no_key
+            key_problem = _note_key_problem(data.lists.key_problem, warnings)
+            incomplete = len(warnings) > warned or data.peers.data is None or key_problem
             on_deck(deck.id, FetchState.INCOMPLETE if incomplete else FetchState.DONE)
     return phase
 
 
 _GONE = "the deck left its folder or changed its commander while its ideas were fetched"
-_NO_KEY_WARNING = f"tournament lists skipped: {NO_KEY_MESSAGE}"
+_KEY_WARNING = (
+    "tournament lists skipped: missing or refused TopDeck key; "
+    "add one in the app's TopDeck panel or with `cmdr topdeck`"
+)
 
 
-def _note_no_key(lists_error: str | None, warnings: list[str]) -> bool:
-    """Whether the tournament lists were skipped for want of a TopDeck key; warns once per sync."""
-    if lists_error != NO_KEY_MESSAGE:
+def _note_key_problem(key_problem: bool, warnings: list[str]) -> bool:  # noqa: FBT001 — an answer's flag
+    """Whether the tournament lists lack a working TopDeck key; warns once per sync."""
+    if not key_problem:
         return False
-    if _NO_KEY_WARNING not in warnings:
-        warnings.append(_NO_KEY_WARNING)
+    if _KEY_WARNING not in warnings:
+        warnings.append(_KEY_WARNING)
     return True
 
 

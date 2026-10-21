@@ -16,7 +16,7 @@ from datetime import UTC, date, datetime
 
 from commander.config import MIN_EVENT_SIZE
 from commander.credentials import CredentialError, KeyStore
-from commander.deckcache import StaleNote
+from commander.deckcache import ServiceKeyError, StaleNote
 from commander.jsonshape import (
     ShapeError,
     as_list,
@@ -71,7 +71,7 @@ class TopdeckError(Exception):
     """TopDeck answered with something this tool cannot use."""
 
 
-class TopdeckKeyError(TopdeckError):
+class TopdeckKeyError(TopdeckError, ServiceKeyError):
     """There is no key, or TopDeck refused it."""
 
 
@@ -172,7 +172,7 @@ class TopdeckClient:
             log.warning("TopDeck refresh failed, answering from the stored events: %s", error)
             reached = self._store.coverage() or before
             return StaleNote(
-                str(error), datetime.fromtimestamp(reached.last, UTC), isinstance(error, TopdeckKeyError)
+                str(error), datetime.fromtimestamp(reached.last, UTC), isinstance(error, ServiceKeyError)
             )
         return None
 

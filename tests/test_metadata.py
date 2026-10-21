@@ -534,6 +534,7 @@ def test_the_next_day_without_a_key_the_stored_events_answer_as_a_stale_copy(rig
     assert data.lists.data is not None
     assert [e.standing for e in data.lists.data.entries] == [12, 5]
     assert data.lists.error == NO_KEY_MESSAGE
+    assert data.lists.key_problem
     assert data.field.source is AnswerSource.STALE
     assert data.field.data is not None
     assert ELLIVERE in [c.stats.name for c in data.field.data]
@@ -877,6 +878,9 @@ def test_a_cache_only_read_after_topdeck_refused_the_key_says_why_not_not_fetche
     fetched = rig.gather()
     assert (fetched.lists.source, fetched.lists.error) == (AnswerSource.UNAVAILABLE, REFUSAL)
     assert fetched.field.error == REFUSAL
+    assert fetched.lists.key_problem
+    assert fetched.field.key_problem
+    assert not fetched.peers.key_problem
     cache_only = gather(
         ellivere_deck(), rig.sources(), rig.cache, now=lambda: rig.now, refresh=False, offline=True
     )

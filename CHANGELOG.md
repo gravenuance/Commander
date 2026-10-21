@@ -36,6 +36,8 @@
   day after the last fetch showed nothing.
 - After TopDeck fails (no key, a refused key, down), a sync or `meta` run no longer asks it again for every
   deck: the first failure stands for the rest of the run.
+- `sync` now says when TopDeck refused the key, not only when there is none ("tournament lists skipped:
+  missing or refused TopDeck key"), once per sync, and marks the decks incomplete either way.
 - `cmdr board plan` keeps quantities and kept copies (a basic land swap printed plain names before).
 - The Mana tab may suggest a land that only waits on the Maybeboard.
 - EDHTop16 errors are readable again: a refused query (EDHTop16 now answers with plain-text errors) is logged

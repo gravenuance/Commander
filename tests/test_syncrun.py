@@ -26,6 +26,7 @@ from commander.board import (
 )
 from commander.carddb import CARD_DB_FILE, CardDataMeta, CardDb
 from commander.config import MetaSettings
+from commander.deckcache import Answer, AnswerSource
 from commander.deckprofile import Profile, profile_template, read_profile
 from commander.fetchpriority import FetchPriority
 from commander.ideas import rejudge_ideas, relabel_legacy_ideas
@@ -138,7 +139,9 @@ def stub_meta(
         after_gather(deck.id)
         return cast(
             "MetaData",
-            SimpleNamespace(lists=SimpleNamespace(data=1, error=None), peers=SimpleNamespace(data=1)),
+            SimpleNamespace(
+                lists=SimpleNamespace(data=1, error=None, key_problem=False), peers=SimpleNamespace(data=1)
+            ),
         )
 
     def sources(*_: object, **__: object) -> object:
@@ -330,6 +333,37 @@ def test_a_deck_whose_ideas_fail_is_incomplete_and_the_others_carry_on(
     monkeypatch.setattr(syncrun, "compile_ideas", compile_ideas)
     final = dict(sync_states(tmp_path, fake))
     assert final == {101: "incomplete", 102: "incomplete", 103: "done"}
+
+
+def test_decks_whose_tournament_lists_hit_a_key_problem_are_incomplete_and_the_sync_warns_once(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = three_decks(tmp_path, raw_deck, card_db_file)
+    stub_meta(monkeypatch)
+    refused = Answer[object](
+        None, AnswerSource.UNAVAILABLE, None, "TopDeck refused the key (HTTP 401)", key_problem=True
+    )
+
+    def gather(*_: object, **__: object) -> object:
+        return SimpleNamespace(lists=refused, peers=SimpleNamespace(data=1))
+
+    monkeypatch.setattr(syncrun, "gather_for", gather)
+    states: dict[int, str] = {}
+    outcome = run_sync(
+        services(tmp_path, fake),
+        Workspace(tmp_path / "decks"),
+        "MAKKIS",
+        MetaSettings(),
+        SyncOptions(cards=False),
+        on_deck=lambda deck_id, state: states.__setitem__(deck_id, state.value),
+        on_progress=lambda _: None,
+    )
+    assert states == {101: "incomplete", 102: "incomplete", 103: "incomplete"}
+    warning = (
+        "tournament lists skipped: missing or refused TopDeck key; "
+        "add one in the app's TopDeck panel or with `cmdr topdeck`"
+    )
+    assert [w for w in outcome.warnings if "TopDeck key" in w] == [warning]
 
 
 def populated(tmp_path: Path, raw_deck: Json, card_db_file: Path) -> tuple[FakeArchidekt, StoredDeck]:
