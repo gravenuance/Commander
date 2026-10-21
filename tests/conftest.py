@@ -381,12 +381,16 @@ class FakeTopdeck:
         self.requests: list[Json] = []
         # Added to every answer whatever the window, as a misbehaving API might: out of range or broken.
         self.extra: list[Json] = []
+        # Answers given to the next requests, in turn, before the usual ones.
+        self.queued: list[httpx.Response] = []
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         if request.method != "POST" or str(request.url) != TOPDECK_API:
             return httpx.Response(404)
         body: Json = json.loads(request.content)
         self.requests.append(body)
+        if self.queued:
+            return self.queued.pop(0)
         if self.status != HTTP_OK:
             return httpx.Response(self.status)
         if request.headers.get("Authorization") != self.key:

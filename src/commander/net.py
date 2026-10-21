@@ -42,6 +42,17 @@ class NetworkError(Exception):
     """A request failed in a way the user should hear about (offline, server error, bad response)."""
 
 
+class StillRateLimitedError(NetworkError):
+    """`send_paced` stopped waiting out 429s, because the next wait would pass its limit.
+
+    retry_after is the wait the server asked for last, if it named one.
+    """
+
+    def __init__(self, message: str, retry_after: float | None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
 class ResponseTooLargeError(NetworkError):
     """The answer ran past the size cap; asking again would get the same answer, so it is not retried."""
 
@@ -359,8 +370,16 @@ def send_paced[T](
             asked = RATE_LIMIT_FALLBACK_SECONDS if error.retry_after is None else error.retry_after
             seconds = max(asked, RATE_LIMIT_MIN_SECONDS)
             if waited + seconds > max_wait:
-                log.warning("%s is still rate limited after waiting %.0f s; giving up", what, waited)
-                raise NetworkError(f"{what} is still rate limited after waiting {waited:.0f} s") from error
+                # Nothing waited means the caller chose not to wait, which is no warning.
+                log.log(
+                    logging.WARNING if waited else logging.INFO,
+                    "%s is still rate limited after waiting %.0f s; giving up",
+                    what,
+                    waited,
+                )
+                raise StillRateLimitedError(
+                    f"{what} is still rate limited after waiting {waited:.0f} s", error.retry_after
+                ) from error
             waited += seconds
             log.info("%s rate limited; waiting %.0f s", what, seconds)
             pacer.cool_down(seconds)

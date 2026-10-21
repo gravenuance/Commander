@@ -3,6 +3,7 @@
 import io
 from pathlib import Path
 
+import httpx
 import keyring.errors
 import pytest
 
@@ -63,6 +64,17 @@ def test_a_key_topdeck_refuses_is_not_saved(
     assert result.err == "cmdr: TopDeck refused the key (HTTP 401); check it in the TopDeck panel\n"
     assert empty_keyring.secrets == {}
     assert "not-the-key" not in result.out + result.err
+
+
+def test_a_busy_topdeck_says_when_to_try_again_and_the_key_is_not_saved(
+    home: Path, archidekt: FakeArchidekt, empty_keyring: MemoryKeyring
+) -> None:
+    archidekt.topdeck.queued = [httpx.Response(429, headers={"Retry-After": "2"})]
+    result = run(["topdeck"], home, archidekt, stdin=Terminal(), password=TOPDECK_KEY)
+    assert result.code == 1
+    assert result.err == "cmdr: TopDeck is busy; try again in 2 s\n"
+    assert len(archidekt.topdeck.requests) == 1
+    assert empty_keyring.secrets == {}
 
 
 def test_no_check_saves_without_asking_topdeck(

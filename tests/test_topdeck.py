@@ -381,6 +381,23 @@ def test_a_request_gives_up_when_the_429_waits_add_up_to_more_than_five_minutes(
     assert len(asked) == 2
 
 
+def test_a_key_check_that_gets_a_429_does_not_wait_and_says_when_to_try_again(tmp_path: Path) -> None:
+    pacer = RecordingPacer(12.0)
+    limited = httpx.Response(429, headers={"Retry-After": "30"})
+    client, asked = limited_client(tmp_path, pacer, limited, httpx.Response(200, json=[]))
+    with pytest.raises(TopdeckError, match=r"^TopDeck is busy; try again in 30 s$"):
+        client.check_key(TOPDECK_KEY)
+    assert len(asked) == 1
+    assert (pacer.sleeps, pacer.cool_downs) == ([], [])
+
+
+def test_a_key_check_that_gets_a_429_without_a_time_says_a_minute(tmp_path: Path) -> None:
+    client, asked = limited_client(tmp_path, RecordingPacer(12.0), httpx.Response(429))
+    with pytest.raises(TopdeckError, match=r"^TopDeck is busy; try again in a minute$"):
+        client.check_key(TOPDECK_KEY)
+    assert len(asked) == 1
+
+
 def test_the_429_waits_of_one_request_do_not_count_against_the_next(tmp_path: Path) -> None:
     pacer = RecordingPacer(12.0)
     limited = httpx.Response(429, headers={"Retry-After": "200"})

@@ -3,6 +3,7 @@
 import logging
 from pathlib import Path
 
+import httpx
 import pytest
 
 from commander.desk import Desk, DeskSettings
@@ -64,6 +65,18 @@ def test_a_refused_key_says_so_and_is_never_logged(
     assert tested == saved == {"error": "TopDeck refused the key (HTTP 401); check it in the TopDeck panel"}
     assert memory_keyring.secrets == {}
     assert "a-wrong-key" not in caplog.text
+
+
+def test_a_busy_topdeck_says_when_to_try_again_and_the_key_stays_unsaved(
+    env: Env, memory_keyring: MemoryKeyring
+) -> None:
+    busy = httpx.Response(429, headers={"Retry-After": "2"})
+    env.fake.topdeck.queued = [busy, busy]
+    tested = env.desk.test_topdeck_key(TOPDECK_KEY)
+    saved = env.desk.save_topdeck_key(TOPDECK_KEY)
+    assert tested == saved == {"error": "TopDeck is busy; try again in 2 s"}
+    assert len(env.fake.topdeck.requests) == 2
+    assert memory_keyring.secrets == {}
 
 
 def test_a_key_is_saved_once_topdeck_accepts_it(env: Env, memory_keyring: MemoryKeyring) -> None:

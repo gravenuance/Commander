@@ -8,6 +8,7 @@ answer is read and never stored.
 """
 
 import logging
+import math
 import threading
 from collections import Counter
 from collections.abc import Mapping
@@ -28,11 +29,13 @@ from commander.jsonshape import (
     req_str,
 )
 from commander.net import (
+    MAX_RATE_LIMIT_WAIT_SECONDS,
     Fetcher,
     HttpStatusError,
     NetworkError,
     Pacer,
     ResponseTooLargeError,
+    StillRateLimitedError,
     WaitListener,
     send_paced,
 )
@@ -119,7 +122,11 @@ class TopdeckClient:
     def check_key(self, key: str) -> None:
         """Ask TopDeck for events no one reached; TopdeckKeyError when it refuses the key."""
         body = {"game": GAME, "format": FORMAT, "last": 1, "participantMin": _KEY_CHECK_PARTICIPANTS}
-        self._post(body, key)
+        # Someone is waiting at the key panel or the prompt, so a 429 is reported and not waited out.
+        try:
+            self._post(body, key, max_wait=0)
+        except StillRateLimitedError as error:
+            raise TopdeckError(_busy_message(error.retry_after)) from error
 
     def entries(
         self, commander: str, *, since: date, until: date, min_event_size: int, sort: EntrySort, limit: int
@@ -270,7 +277,9 @@ class TopdeckClient:
         log.info("TopDeck: %d events from %s to %s", len(records), _day(start), _day(end))
         return records
 
-    def _post(self, body: Mapping[str, object], key: str) -> object:
+    def _post(
+        self, body: Mapping[str, object], key: str, *, max_wait: float = MAX_RATE_LIMIT_WAIT_SECONDS
+    ) -> object:
         try:
             return send_paced(
                 self._pacer,
@@ -278,6 +287,7 @@ class TopdeckClient:
                     API_URL, body, headers={"Authorization": key}, surface_rate_limit=True
                 ),
                 what="TopDeck",
+                max_wait=max_wait,
                 waits=self._waits,
             )
         except HttpStatusError as error:
@@ -286,6 +296,11 @@ class TopdeckClient:
                     f"TopDeck refused the key (HTTP {error.status}); check it in the TopDeck panel"
                 ) from error
             raise
+
+
+def _busy_message(retry_after: float | None) -> str:
+    when = "a minute" if retry_after is None else f"{math.ceil(retry_after)} s"
+    return f"TopDeck is busy; try again in {when}"
 
 
 def _overlaps(coverage: Coverage, window: _Window) -> bool:

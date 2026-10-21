@@ -260,7 +260,8 @@ then either press **TopDeck** at the foot of the app's deck list (paste the key,
 run `uv run cmdr topdeck` and paste it when asked. TopDeck is asked whether it takes the key before it is
 saved in Windows Credential Manager (service `Commander (cmdr) TopDeck`, user `api-key`); it never goes on a
 command line, into a file or into the log. `cmdr topdeck --key-stdin` reads it from stdin for scripts,
-`--no-check` saves it without asking TopDeck, and `--remove` forgets it.
+`--no-check` saves it without asking TopDeck, and `--remove` forgets it. If TopDeck is busy when it is asked,
+the check stops at once and says how long to wait ("TopDeck is busy; try again in 30 s").
 
 Events of 16 players or more are fetched seven days at a time, twelve seconds apart (TopDeck allows 100 requests a
 minute but answers bulk queries at about five a minute; a 429 is waited out as it asks), and each is kept in the cache folder (`topdeck\`) as the commander and the

@@ -87,7 +87,9 @@ Option 4, behind the provider seam that stood in front of EDHTop16 (`tournaments
 - **The key** is one per user in Windows Credential Manager, service `Commander (cmdr) TopDeck`, user
   `api-key` (`credentials.KeyringKeyStore`). `cmdr topdeck` asks for it with no echo, never from the command
   line (`--key-stdin` for scripts); the app's TopDeck panel has the steps, **Test key** and **Save key**.
-  Both ask TopDeck whether it takes the key before saving it. Without a key nothing is requested, and `meta`,
+  Both ask TopDeck whether it takes the key before saving it; a 429 there is not waited out (someone is
+  waiting at the panel or the prompt): they stop with "TopDeck is busy; try again in N s", N from the
+  `Retry-After` it sent or "a minute". Without a key nothing is requested, and `meta`,
   `sync` and the app say why the lists are missing (`topdeck.NO_KEY_MESSAGE`); a refused key says so without
   showing it. A window the store already covers in part still answers when a refresh fails (no key, a refused
   key, TopDeck down): the stored events answer as a stale copy that carries the reason and the day the store
