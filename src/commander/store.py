@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+import shutil
 import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -125,6 +126,17 @@ class Workspace:
             "labels": [{"name": name, "colour": colour} for name, colour in labels],
         }
         write_text_atomic(self.root / LABELS_FILE, json.dumps(document, ensure_ascii=False, indent=2) + "\n")
+
+    def remove_deck(self, deck_id: int) -> Path:
+        """Delete the deck's whole folder and return it; refuses anything that is not a plain deck folder
+        directly inside the workspace root (a link, or a path that resolves elsewhere)."""
+        folder = self.folder_for(deck_id)
+        if folder is None:
+            raise WorkspaceError(f"deck {deck_id} has no folder in {self.root}")
+        if folder.is_symlink() or folder.is_junction() or folder.resolve().parent != self.root.resolve():
+            raise WorkspaceError(f"{folder} is outside the workspace {self.root}; not removed")
+        shutil.rmtree(folder)
+        return folder
 
     def save(self, deck: Deck) -> Path:
         """Write deck.json and list.md, renaming the folder to match the deck name; never touches notes.md."""

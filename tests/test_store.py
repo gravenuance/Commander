@@ -201,3 +201,37 @@ def test_account_labels_round_trip_and_an_unreadable_file_reads_as_never_read(tm
     assert workspace.account_labels() == [("Don't Have", "#fa0d11"), ("Proxy", "#f445f4")]
     (tmp_path / "decks" / "labels.json").write_text('{"version": 9, "labels": []}', encoding="utf-8")
     assert workspace.account_labels() is None
+
+
+def test_remove_deck_deletes_that_decks_folder_and_nothing_else(tmp_path: Path, deck: Deck) -> None:
+    workspace = Workspace(tmp_path)
+    kept = workspace.save(replace(deck, id=7, name="Kept"))
+    gone = workspace.save(deck)
+    (gone / "board.json").write_text("{}", encoding="utf-8")
+    workspace.save_account_labels([("Proxy", "#f445f4")])
+
+    assert workspace.remove_deck(deck.id) == gone
+
+    assert not gone.exists()
+    assert sorted(p.name for p in tmp_path.iterdir()) == [kept.name, "labels.json"]
+    assert (kept / "deck.json").is_file()
+
+
+def test_remove_deck_without_a_folder_is_an_error(tmp_path: Path) -> None:
+    with pytest.raises(WorkspaceError, match="deck 5 has no folder"):
+        Workspace(tmp_path).remove_deck(5)
+
+
+def test_remove_deck_refuses_a_folder_that_is_not_directly_inside_the_workspace(tmp_path: Path) -> None:
+    outside = tmp_path / "elsewhere" / "5-x"
+    outside.mkdir(parents=True)
+    (outside / "keep.txt").write_text("keep", encoding="utf-8")
+
+    class Wandering(Workspace):
+        def folder_for(self, deck_id: int) -> Path | None:
+            return outside if deck_id == 5 else None
+
+    with pytest.raises(WorkspaceError, match="outside the workspace"):
+        Wandering(tmp_path / "decks").remove_deck(5)
+
+    assert (outside / "keep.txt").read_text(encoding="utf-8") == "keep"

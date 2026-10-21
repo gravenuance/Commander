@@ -19,7 +19,7 @@ from commander.jsonshape import (
     str_list,
 )
 from commander.models import ARCHIDEKT_DECK_URL, Deck, DeckCard, DeckSummary
-from commander.net import Fetcher, HttpStatusError, Pacer, RateLimitedError
+from commander.net import HTTP_NOT_FOUND, Fetcher, HttpStatusError, Pacer, RateLimitedError
 
 log = logging.getLogger(__name__)
 
@@ -116,6 +116,20 @@ class ArchidektClient:
 
     def get_deck(self, deck_id: int) -> Deck:
         return _read_deck(self._get(f"{self._base_url}/decks/{deck_id}/", None), deck_id)
+
+    def deck_is_gone(self, deck_id: int) -> bool:
+        """Whether Archidekt answers 404 for the deck's page, the one answer that means it was deleted.
+
+        Any other status (a refused login included, as SignInRequiredError) or network failure raises, and a
+        page that reads, even an odd one, is False: only a 404 may count as gone.
+        """
+        try:
+            self._get(f"{self._base_url}/decks/{deck_id}/", None)
+        except HttpStatusError as error:
+            if error.status == HTTP_NOT_FOUND:
+                return True
+            raise
+        return False
 
     def _get(self, url: str, params: Mapping[str, str | int] | None) -> object:
         if self._headers is None:
