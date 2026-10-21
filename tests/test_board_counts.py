@@ -282,7 +282,7 @@ def test_a_decrease_is_at_most_its_count_and_an_increase_at_least_so_either_is_m
 
 
 def test_an_increase_of_a_card_the_deck_no_longer_holds_is_dropped_like_a_decrease(raw: Json) -> None:
-    # Rats 3 -> 5 queued, then the card was cut on Archidekt: re-adding it is a separate, explicit choice.
+    # Mountain 3 -> 5 queued, then the card was cut on Archidekt: re-adding it is a separate, explicit choice.
     deck = mountains_held(raw, 0)
     board = Board((), (CountChange("Mountain", 3, 5, Actor.YOU, STAMP),))
 
