@@ -272,21 +272,24 @@ worked out from those events.
 
 ### Which Archidekt decks are read
 
-The search looks at the deck's own bracket and the one above (bracket 5 has none above), newest update first,
-up to 20 pages per commander. It keeps decks with at least 1000 views, or 750, or 500 when fewer than ten
-reach the bar, or all of them when fewer than ten reach 500, and reads at most `peer_decks` of them, most
-viewed first. Your own decks are never read. A bracket 4 deck also reads its commander's tournament lists, which
-bracket 5 decks always do.
+The search looks at the deck's own bracket and the one above (bracket 5 has none above), most viewed first,
+and pages down each bracket's list until it is under the bar: 1000 views, or 750 when fewer than ten decks
+updated in the window reach 1000, or 500 when fewer than ten reach 750, and never below 500. Up to five pages
+of 60 decks are read per bracket, and the log says when a busy commander hits that limit. It reads the decks
+at or over the bar that were updated in the window, at most `peer_decks` of them, most viewed first; when
+fewer than ten reach even 500 views, it reads those few, or none. Your own decks are never read. A bracket 4
+deck also reads its commander's tournament lists, which bracket 5 decks always do.
 
 Searches and deck reads are five seconds apart, and after a 429 nothing goes out for three minutes (or the
 `Retry-After`, if longer) before the request is tried once more. Each deck read is kept until its owner edits
 the deck, so a later run reads only the changes. Each commander's (and each tag's) search answer is refreshed
 every third day, on a day of its own, so a sync refreshes about a third of them and the ideas may lag Archidekt
-by up to three days; the other answers are cached for a day. A refresh pages a search only as far as the
-newest deck it already holds (the search lists the newest update first) and pages it in full about once a week,
-so view counts stay current. A run that fetches deletes the cached decks unused for 30 days, those last updated
+by up to three days; the other answers are cached for a day. A refresh searches again, which keeps the view
+counts current; the decks themselves are read again only after their owner edits them. A run that fetches
+deletes the cached decks unused for 30 days, those last updated
 before the window and those that no longer parse; a read from cache alone (the app) deletes nothing
-([ADR 0027](docs/adr/0027-reading-other-players-archidekt-decks.md)).
+([ADR 0027](docs/adr/0027-reading-other-players-archidekt-decks.md), searched by views since
+[ADR 0050](docs/adr/0050-search-archidekt-by-view-count.md)).
 
 The lists feed one weighted share per card, which the app shows on each card: recent lists and well-placed
 tournament entries count for more, and a card is an idea for Considering when the lower bound of its share
@@ -439,7 +442,7 @@ lacks that its profile, bracket ceiling and budget allow:
   Settings switch *Search decks by tag*; off when missing): the deck's theme tags (the Archidekt deck tags
   that became themes, not play styles, roles or card types) are searched for recent decks of other
   commanders. Each tag is a pool, read at the deck's bracket and the one above, three search pages per
-  bracket and up to a quarter of `peer_decks` decks. Cards at least half a pool plays become ideas, labelled
+  bracket (most viewed first, with the same view bars) and up to a quarter of `peer_decks` decks. Cards at least half a pool plays become ideas, labelled
   with the tag. Write the tag under `[themes] ignore` to stop using it. It is off by default because the
   pools added almost nothing beyond the commander's own decks and each tag costs about 1.5 to 2 minutes on
   a first sync. Tagged ideas already on the board stay, but with the search off, or once their tag has left
@@ -758,7 +761,7 @@ Tests use recorded fixture data and never touch the network.
 | Archidekt (`archidekt.com/api`) | Reading decks; changing them with `apply --save` | Public decks need no login; changes, and `sync` of your private and unlisted decks, need `cmdr login`, whose token lives in Windows Credential Manager and is refreshed on each save and each sync. The API is undocumented, so every response's shape is checked and a clear message names what changed. A save makes a handful of requests, never retried. Its written terms forbid automated requests; its co-founder has said on its forum that the API is open to use. See [ADR 0004](docs/adr/0004-deck-changes-through-archidekts-site-api.md). |
 | Scryfall (`api.scryfall.com/bulk-data`, files on `data.scryfall.io`; card images from `cards.scryfall.io` in the app) | Card facts, rules text, EUR prices, Tagger tags for roles and profiles, card art | One API call per `sync` for the file list; the files themselves have no rate limit. Scryfall updates prices once a day and asks for bulk files rather than per-card calls for lookups like these. Tag data is community-maintained and can change. See [ADR 0001](docs/adr/0001-scryfall-bulk-card-data.md). |
 | Commander Spellbook (`backend.commanderspellbook.com`: `estimate-bracket`, `find-my-combos`) | Bracket estimates, combos, and combos one card short | One request per deck and command, at most four at a time, and none while a cached answer is under 7 days old. Spellbook asks tools to name themselves in the User-Agent, keep to a few calls per user action, stay under about 80 requests a minute, handle 429, and credit and link back to commanderspellbook.com, which `bracket` and `suggest` do in their output. Only card names and quantities are sent. See [ADR 0002](docs/adr/0002-bracket-estimates-from-commander-spellbook.md) and [ADR 0003](docs/adr/0003-suggestions-from-spellbook-and-scryfall.md). |
-| Archidekt deck search (`archidekt.com/api/decks/v3/`) | Other players' recent decks for `meta` and `sync`'s ideas | Searches and deck reads 5 s apart, after a 429 a pause of at least 3 minutes, and a second 429 ends Archidekt for the run; at most 20 search pages and `peer_decks` (60) deck reads per commander, and a quarter of that per deck tag, for decks that search by tag. Each search answer is refreshed every third day (staggered per commander or tag), paging only to the newest deck already held and in full about weekly, and each deck read until its owner edits it. Your own decks are left out. Under the same informal permission as the rest of Archidekt's API (ADR 0004). See [ADR 0027](docs/adr/0027-reading-other-players-archidekt-decks.md). |
+| Archidekt deck search (`archidekt.com/api/decks/v3/`) | Other players' popular recent decks for `meta` and `sync`'s ideas | Searches and deck reads 5 s apart, after a 429 a pause of at least 3 minutes, and a second 429 ends Archidekt for the run; at most 5 search pages per bracket and `peer_decks` (60) deck reads per commander, and a quarter of that per deck tag, for decks that search by tag. Each search answer is refreshed every third day (staggered per commander or tag), by a new search by views, and each deck read until its owner edits it. Your own decks are left out. Under the same informal permission as the rest of Archidekt's API (ADR 0004). See [ADR 0027](docs/adr/0027-reading-other-players-archidekt-decks.md) and [ADR 0050](docs/adr/0050-search-archidekt-by-view-count.md). |
 | TopDeck.gg (`topdeck.gg/api/v2/tournaments`) | Commander tournaments with decklists, for the commander's lists and the most-played commanders in `meta` and `sync`'s ideas | A free key for each user (`cmdr topdeck`, or the app), sent in the `Authorization` header and kept in Windows Credential Manager; it does not expire unless TopDeck revokes it. 100 requests a minute, fewer for bulk queries: events of 16+ players are asked for seven days at a time, 12 s apart (a 429 is waited out for the `Retry-After` it names), only for days not seen yet, and kept per event in the cache folder; malformed events and decks are skipped and logged. Player names and ids are dropped as the answer is read. Any output that shows the data credits and links TopDeck.gg, as its terms ask. See [ADR 0047](docs/adr/0047-tournament-lists-from-topdeck-with-a-key-per-user.md). |
 | Commander Spellbook (`find-my-combos`, for `meta`) | The combos the most-played commanders' lists run | One request per meta commander, 1 s apart, cached for 7 days. |
 | EDHREC (via Scryfall's `edhrec_rank`) | Popularity ranks for `suggest` | Never contacted: the rank comes inside Scryfall's bulk files. EDHREC's terms forbid automated requests to its site. |
