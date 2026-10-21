@@ -70,8 +70,8 @@ delete a deck while the app wrote its board.
 - A held lock skips the removal for this sync: the result stays `missing`, with "its board is in use" in its
   error and a warning in the log.
 - A delete that fails after the rename is `failed`, names the set-aside folder, and does not call
-  `on_removed`; the owner's files are still on disk under that name. Every sync first retries the leftovers
-  (`Workspace.leftover_removals`): it reports `removed` and calls `on_removed` when the delete now works, a
+  `on_removed` (changed by the second amendment below); the owner's files are still on disk under that name.
+  Every sync first retries the leftovers (`Workspace.leftover_removals`): it reports `removed` and calls `on_removed` when the delete now works, a
   `failed` result naming the folder when it does not, and `would remove` on a dry run.
 - A set-aside folder of the same name that is still there blocks a second removal with a message to delete
   it; the retry runs before any new removal, so that only follows a retry that failed.
@@ -85,4 +85,6 @@ and reported as `missing` with the folder named in `error`, which `cmdr sync` pr
 and the next sync retries. `SyncResult.pending_removal` marks such a row, so the app's status bar says "1 old
 deck folder couldn't be deleted; see the log" and leaves it out of "Synced N decks". `failed` is kept for a
 folder the workspace refuses (outside the root, a link, an earlier leftover of the same name) and for a
-rename that fails. The retry and the app's `on_removed` are as before.
+rename that fails. The retry is as before. `on_removed` is now called when the delete fails after the rename
+too (but not when it fails in a later retry, which the first attempt already announced): the deck is out of the
+workspace from the rename on, and an app that kept it open answered every action with "deck N is not in ...".

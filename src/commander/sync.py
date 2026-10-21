@@ -74,7 +74,7 @@ class PullWatch:
     `on_listed` gets the decks the pull will still write, once it knows them; `on_done` gets each of those
     as the pull is done with it (written, or failed). Each is written under `deck_lock`, and the next deck
     fetched is the one `priority` names if it still waits. `on_removed` gets each deck whose folder was
-    deleted because Archidekt deleted the deck (ADR 0045), after the removal and outside the lock.
+    deleted or set aside because Archidekt deleted the deck (ADR 0045), after the removal, outside the lock.
     """
 
     priority: FetchPriority | None = None
@@ -219,6 +219,8 @@ def _remove_gone(workspace: Workspace, deck: Deck, missing: SyncResult, watch: P
         )
     except RemovalPendingError as error:
         log.warning("deck %d (%s): could not finish removing its folder: %s", deck.id, deck.name, error)
+        # The deck folder is already gone from the workspace, so the app must stop showing the deck.
+        watch.on_removed(deck.id)
         return replace(missing, error=f"deleted on Archidekt, but {error}", pending_removal=True)
     except (OSError, WorkspaceError) as error:
         log.warning("deck %d (%s): could not remove its folder: %s", deck.id, deck.name, error)

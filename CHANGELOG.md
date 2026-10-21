@@ -71,6 +71,8 @@
   `missing`, logged at WARNING): `cmdr sync` still exits zero, and the app's status bar says "1 old deck folder
   couldn't be deleted; see the log" instead of counting it as a synced deck. A deck whose board the app is
   writing is kept for that sync (ADR 0045).
+- The app closes a deck deleted on Archidekt even when its old folder could not be deleted yet; it kept the
+  deck open before, and every action on it failed with "deck N is not in ...; press Sync".
 - A deck listed twice by Archidekt's paged listing (one edited between two page reads) is fetched and
   reported once.
 

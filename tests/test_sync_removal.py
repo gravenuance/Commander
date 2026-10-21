@@ -300,7 +300,7 @@ def test_a_folder_that_cannot_be_deleted_is_set_aside_with_the_users_files_and_o
     assert MARKED in result.error
     assert result.pending_removal is True
     assert any(MARKED in r.getMessage() and r.levelno == logging.WARNING for r in caplog.records)
-    assert removed == []
+    assert removed == [GONE_ID]
     assert not folder(tmp_path).exists()
     assert (folder(tmp_path, MARKED) / "notes.md").is_file()
     # The set-aside folder is no deck: nothing lists it, loads it or writes a grace table into it.
