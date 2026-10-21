@@ -546,13 +546,7 @@ class BoardNotes:
         self._now = now
 
     def note(self, actor: Actor, action: str, detail: str, card: str | None = None) -> None:
-        entry = Activity(
-            self._now().isoformat(timespec="seconds"),
-            actor,
-            action,
-            card,
-            _bounded(detail, MAX_NOTE, "the detail"),
-        )
+        entry = _note_line(self._now().isoformat(timespec="seconds"), actor, action, detail, card)
         with board_lock(self._folder):
             try:
                 _append_activity(self._folder, entry)
@@ -957,9 +951,7 @@ class BoardService:
     def note(self, actor: Actor, action: str, detail: str, card: str | None = None) -> None:
         """Log something that happened to the deck without changing the board, such as a failed save."""
         with self._editing() as (board, save):
-            save(
-                board, Activity(self._stamp(), actor, action, card, _bounded(detail, MAX_NOTE, "the detail"))
-            )
+            save(board, _note_line(self._stamp(), actor, action, detail, card))
 
     @cached_property
     def _identity(self) -> str | None:
@@ -1096,6 +1088,11 @@ def _bounded(text: str, limit: int, what: str) -> str:
     if len(cleaned) > limit:
         raise BoardError(f"{what} is longer than {limit:,} characters")
     return cleaned
+
+
+def _note_line(stamp: str, actor: Actor, action: str, detail: str, card: str | None) -> Activity:
+    """The activity line of a note, its detail bounded."""
+    return Activity(stamp, actor, action, card, _bounded(detail, MAX_NOTE, "the detail"))
 
 
 def _back_up_older(folder: Path, version: int) -> None:
