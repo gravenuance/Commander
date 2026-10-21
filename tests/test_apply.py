@@ -165,6 +165,26 @@ def test_an_added_game_changer_is_marked_when_it_lifts_the_bracket(deck: Deck, d
     assert resolution.changes[0].raises == BracketRaise(3, "game changer")
 
 
+@pytest.mark.parametrize(
+    ("bracket", "estimated", "raises"),
+    [
+        (None, 2, BracketRaise(3, "game changer")),
+        (None, None, None),
+        # A bracket set on Archidekt wins over the estimate, whichever is lower.
+        (4, 2, None),
+        (2, 4, BracketRaise(3, "game changer")),
+    ],
+)
+def test_an_unset_deck_marks_its_adds_by_the_estimates_lowest_bracket(
+    deck: Deck, db: CardDb, bracket: int | None, estimated: int | None, raises: BracketRaise | None
+) -> None:
+    live = replace(deck, bracket=bracket)
+
+    resolution = resolve_plan(live, plan([AddCard("Jeska's Will")]), db, estimated=estimated)
+
+    assert resolution.changes[0].raises == raises
+
+
 def test_each_add_counts_the_game_changers_added_before_it(
     deck: Deck, db: CardDb, monkeypatch: pytest.MonkeyPatch
 ) -> None:

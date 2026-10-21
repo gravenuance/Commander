@@ -183,6 +183,12 @@ def cached_effective_deck(deck: Deck, cache: DeckCache[BracketEstimate], *, now:
     return with_effective_bracket(deck, answer.data)
 
 
+def cached_floor(deck: Deck, cache: DeckCache[BracketEstimate], *, now: Clock) -> int | None:
+    """The lowest bracket of the deck's cached estimate, whatever bracket is set: a save goes by it when
+    the deck on Archidekt has none set by then. None with no estimate cached, or a Banned one."""
+    return cached_effective_deck(replace(deck, bracket=None), cache, now=now).bracket
+
+
 def _not_fetched(_request: Mapping[str, object]) -> BracketEstimate:
     raise NotFetchedError(NOT_FETCHED)
 

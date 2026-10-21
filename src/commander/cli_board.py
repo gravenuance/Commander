@@ -41,6 +41,7 @@ from commander.clibase import (
     EXIT_USAGE,
     Context,
     UsageError,
+    estimate_floor,
     one_deck,
     open_card_db,
     workspace,
@@ -291,8 +292,9 @@ def _cmd_commit(args: argparse.Namespace, ctx: Context) -> int:
     with _board(args, ctx) as (stored, service, db), ctx.client_factory() as http:
         fetcher = Fetcher(http)
         editor = ArchidektEditor(fetcher, ArchidektAuth(fetcher, ctx.token_store).access_token(user))
+        estimated = estimate_floor(stored.deck, ctx)
         if not args.save:
-            outcome = preview_board(editor, stored, db, user=user, now=ctx.now)
+            outcome = preview_board(editor, stored, db, user=user, now=ctx.now, estimated=estimated)
             ceiling = read_profile(stored.folder).bracket_ceiling
             preview = spellbook_preview(
                 outcome.resolution, fetcher, cache_dir(ctx.env), ceiling=ceiling, now=ctx.now
@@ -311,6 +313,7 @@ def _cmd_commit(args: argparse.Namespace, ctx: Context) -> int:
             actor=Actor.YOU,
             now=ctx.now,
             on_progress=progress_printer(ctx.err),
+            estimated=estimated,
         )
     print_resolution(saved.resolution, ctx.out)
     print_apply_outcome(saved.resolution, saved.result, stored.folder, ctx.out, save=True)

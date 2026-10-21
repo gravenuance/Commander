@@ -63,16 +63,23 @@ class BoardPreview:
 
 
 def preview_board(
-    editor: ArchidektEditor, stored: StoredDeck, db: CardDb, *, user: str, now: Callable[[], datetime]
+    editor: ArchidektEditor,
+    stored: StoredDeck,
+    db: CardDb,
+    *,
+    user: str,
+    now: Callable[[], datetime],
+    estimated: int | None = None,
 ) -> BoardPreview:
-    """The changes the queued cards would make to the deck as it is on Archidekt now."""
+    """The changes the queued cards would make to the deck as it is on Archidekt now; estimated is the lowest
+    bracket of the deck's estimate, which an unset deck's bracket raises go by."""
     live = fetch_own_deck(editor, stored.deck.id, user=user)
     board = read_board(stored.folder)
     plan = live_plan(live, board)
     if plan is None:
         resolution = _nothing_to_change(live, board)
     else:
-        outcome = apply_to_live(editor, live, plan, db, save_changes=False, now=now)
+        outcome = apply_to_live(editor, live, plan, db, save_changes=False, now=now, estimated=estimated)
         resolution = _noting_done(outcome, live, board).resolution
     _log_dropped(stored.deck.id, resolution, "preview")
     return BoardPreview(resolution, _done_names(live, board))
@@ -89,9 +96,10 @@ def save_board(
     actor: Actor,
     now: Callable[[], datetime],
     on_progress: Callable[[str], None] = lambda _: None,
+    estimated: int | None = None,
 ) -> BoardSave:
     """Save the queued cards and count changes to Archidekt, then update the local deck copy and mark them
-    applied (a done count change leaves the board).
+    applied (a done count change leaves the board). estimated is as for `preview_board`.
 
     The plan is made from the deck as it is on Archidekt now, not from the local copy, which may be behind.
     Queued cards that deck already holds, and count changes it already meets, are marked applied too, their
@@ -110,7 +118,9 @@ def save_board(
         names = (*(card.name for card in board.queued), *(change.name for change in board.counts))
         return BoardSave(resolution, None, names)
     try:
-        outcome = apply_to_live(editor, live, plan, db, save_changes=True, now=now, on_progress=on_progress)
+        outcome = apply_to_live(
+            editor, live, plan, db, save_changes=True, now=now, on_progress=on_progress, estimated=estimated
+        )
     except SaveError as error:
         service.note(actor, "save to Archidekt failed", str(error))
         raise

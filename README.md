@@ -132,7 +132,9 @@ Oddball and Core as 2, Exhibition as 1. With no estimate, or a Banned one, it st
 set always wins. That decides which Archidekt brackets `sync` searches for the deck, whether it reads the
 commander's tournament lists, and which meta the app and `meta` show. `sync` asks Spellbook for such a deck's
 estimate (from the cache while under 7 days old); the app and `profile` only read the cache, however old, so a
-deck view never waits for Spellbook. The app's header still names only a bracket set on Archidekt.
+deck view never waits for Spellbook. The bracket marks of `suggest`, `apply` and Review go by it too, but
+`suggest --within-bracket` hides nothing on an estimate alone. The app's header still names only a bracket set
+on Archidekt.
 
 ### Suggestions
 
@@ -166,7 +168,8 @@ deck view never waits for Spellbook. The app's header still names only a bracket
   played first, with cards matching the deck's themes last. These are only candidates: a theme card often
   fills no role on paper.
 
-An idea marked `! bracket 3+ (game changer)` would lift the deck above the bracket set on Archidekt, by
+An idea marked `! bracket 3+ (game changer)` would lift the deck above the bracket set on Archidekt (or, with
+none set, its estimate's lowest), by
 the official rules (no game changers in brackets 1 and 2, at most three in bracket 3, no mass land denial
 below bracket 4) or by the tag of the combo it completes. `--within-bracket` leaves these out, and
 `--max-price 5` leaves out cards over EUR 5 and cards with no price. `-n` sets how many ideas each list

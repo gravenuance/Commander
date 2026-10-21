@@ -1664,6 +1664,25 @@ def test_the_deck_view_of_an_unset_deck_carries_its_estimates_lowest_bracket_fro
     assert len(fake.spellbook.bodies) == 1
 
 
+def test_review_marks_an_unset_decks_adds_by_its_cached_estimate(
+    desk: Desk, settings: DeskSettings, fake: FakeArchidekt, tmp_path: Path
+) -> None:
+    unset_the_bracket(settings, fake, tmp_path, "--no-ideas")
+    will = str(cast("Json", desk.propose(DECK, "Jeska's Will")["card"])["id"])
+    assert "error" not in desk.decide(DECK, will, "add", "Battered Golem", "")
+    # No estimate cached yet: an unset deck has no bracket to lift.
+    assert [c["text"] for c in items(desk.preview(DECK), "changes")][-1] == (
+        "+ Jeska's Will (MKC 156, €33.80) in Sorcery"
+    )
+
+    # The bracket panel caches Core 2+; a first game changer lifts a bracket 2 deck to 3.
+    fake.spellbook.answer["bracketTag"] = "C"
+    assert desk.bracket(DECK).get("effectiveBracket") == 2
+    assert [c["text"] for c in items(desk.preview(DECK), "changes")][-1] == (
+        "+ Jeska's Will (MKC 156, €33.80) in Sorcery  ! bracket 3+ (game changer)"
+    )
+
+
 def test_a_set_bracket_is_the_decks_effective_bracket_whatever_the_estimate_says(
     desk: Desk, fake: FakeArchidekt
 ) -> None:
