@@ -32,6 +32,7 @@ from commander.board import (
     Actor,
     BoardCard,
     BoardError,
+    BoardNotes,
     BoardService,
     Relabel,
     ReplaceOption,
@@ -170,6 +171,10 @@ def _app_text(error: Exception) -> str:
 
 def _sync_thread(work: Callable[[], None]) -> object:
     return in_background(work, name="app-sync")
+
+
+class CardDataDownloadingError(CardDataError):
+    """The card data is missing or old only because the running sync is downloading it."""
 
 
 class _Wait(Enum):
@@ -674,10 +679,11 @@ class Desk:
                 return busy
             stored = self._stored(deck_id)
             user = self._user()
-            with self._service_and_db(stored) as (service, _), self._client_factory() as http:
+            notes = BoardNotes(stored.folder, now=self._now)
+            with self._client_factory() as http:
                 editor = self._editor(http, user)
                 marked = set_label(
-                    editor, self._workspace, stored, service, name=name, label=label, actor=Actor.YOU
+                    editor, self._workspace, stored, notes, name=name, label=label, actor=Actor.YOU
                 )
         return {"card": marked.card, "before": marked.before, "after": marked.after}
 
@@ -913,7 +919,7 @@ class Desk:
                 self._shares(stored).of(board_card.name) if status is Status.REJECTED and board_card else None
             )
             share = found.share if found is not None else None
-            with self._service(deck_id) as service:
+            with self._service(deck_id, "decide") as service:
                 card = service.decide(
                     card_id,
                     status,
@@ -946,7 +952,7 @@ class Desk:
             if busy:
                 return busy
             held = read_board(self._stored(deck_id).folder).find(card_id)
-            with self._service(deck_id) as service:
+            with self._service(deck_id, "remove the card") as service:
                 service.remove(card_id, Actor.YOU)
             log.info("board: removed %s from deck %d", held.name if held else card_id, deck_id)
         return {"ok": True}
@@ -1110,10 +1116,29 @@ class Desk:
             yield db
 
     @contextmanager
-    def _service(self, deck_id: int) -> Generator[BoardService]:
+    def _service(self, deck_id: int, then: str = "try again") -> Generator[BoardService]:
+        """The deck's board service over the card data; `then` is what the user does once a card data
+        download that is still running has put the missing data in place."""
         stored = self._stored(deck_id)
-        with self._db() as db:
+        with self._db_or_download(deck_id, then) as db:
             yield BoardService(stored.folder, stored.deck, db, now=self._now)
+
+    @contextmanager
+    def _db_or_download(self, deck_id: int, then: str) -> Generator[CardDb]:
+        """The card data, or, when it is missing or old only because a sync is downloading it, the same
+        refusal as a write that looks cards up gets (ADR 0042) in place of the advice to run a sync."""
+        try:
+            db = CardDb(self._settings.card_db)
+        except CardDataError as error:
+            with self._sync_lock:
+                downloading = self._sync.running and not self._sync.cards_ready
+                phase = self._sync.progress
+            if not downloading:
+                raise
+            log.info("refused the write for deck %d (%s): %s", deck_id, _Wait.CARDS.value, error)
+            raise CardDataDownloadingError(self._wait_text(_Wait.CARDS, then, phase, deck_id)) from error
+        with db:
+            yield db
 
     @contextmanager
     def _service_and_db(self, stored: StoredDeck) -> Generator[tuple[BoardService, CardDb]]:

@@ -20,6 +20,7 @@ from datetime import datetime
 from enum import Enum
 from functools import cached_property
 from pathlib import Path
+from typing import Protocol
 
 from commander.answers import card_key
 from commander.carddb import CardDb, CardInfo
@@ -525,6 +526,37 @@ def _cuts(held: Counter[str], queued: Sequence[BoardCard]) -> tuple[RemoveCard, 
             left = held[key] - named[key]
             cuts[key] = RemoveCard(card.choice, keep=max(left, 0))
     return tuple(cuts.values())
+
+
+class ActivityNotes(Protocol):
+    """What logs something that happened to a deck without changing its board."""
+
+    def note(self, actor: Actor, action: str, detail: str, card: str | None = None) -> None: ...
+
+
+class BoardNotes:
+    """Writes lines to one deck's activity log under the board lock, and needs no card data, so a write that
+    reads none (a label change) can log without holding the card database (ADR 0042)."""
+
+    def __init__(self, folder: Path, *, now: Callable[[], datetime]) -> None:
+        self._folder = folder
+        self._now = now
+
+    def note(self, actor: Actor, action: str, detail: str, card: str | None = None) -> None:
+        entry = Activity(
+            self._now().isoformat(timespec="seconds"),
+            actor,
+            action,
+            card,
+            _bounded(detail, MAX_NOTE, "the detail"),
+        )
+        with _board_lock(self._folder):
+            try:
+                _append_activity(self._folder, entry)
+            except OSError as error:
+                log.exception("activity line was not written (%s)", entry.action)
+                saved = "its activity line could not be written"
+                raise BoardIOError(f"{entry.action}: {saved} ({error})") from error
 
 
 class BoardService:

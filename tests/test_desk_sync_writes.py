@@ -8,6 +8,7 @@ import threading
 from collections.abc import Callable, Collection, Generator
 from contextlib import contextmanager
 from pathlib import Path
+from types import TracebackType
 from typing import cast
 
 import pytest
@@ -16,8 +17,9 @@ from commander import desk as desk_module
 from commander import sync as sync_module
 from commander import syncrun
 from commander.archidekt import ArchidektClient
+from commander.archidekt_edit import ArchidektEditor
 from commander.board import Actor, BoardCard, Origin, Status, read_board
-from commander.carddb import CARD_DB_FILE
+from commander.carddb import CARD_DB_FILE, CardDb
 from commander.decklocks import DeckLocks
 from commander.desk import Desk, DeskSettings
 from commander.ideas import compile_ideas
@@ -523,6 +525,78 @@ def test_while_the_card_data_downloads_a_write_that_looks_cards_up_waits_and_one
     assert removed == {"ok": True}
     assert "Arcane Signet" not in board_cards(settings)
     assert "card" in desk.propose(DECK, "Chaos Warp"), "the card data is in once the download is done"
+
+
+def test_a_decision_and_a_removal_without_card_data_wait_for_the_download_and_a_label_change_needs_none(
+    settings: DeskSettings, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sync = SyncThread()
+    desk = make_desk(settings, fake, sync.start)
+    desk.propose(DECK, "Arcane Signet")
+    card_id = first_card_id(desk)
+    # A first run: the card data is not on disk until the download ends.
+    settings.card_db.unlink()
+    download = HeldDownload(monkeypatch)
+    stub_meta(monkeypatch)
+    try:
+        desk.sync()
+        assert download.downloading.wait(WAIT_SECONDS)
+        assert download.pulled.wait(WAIT_SECONDS)
+        decided = desk.decide(DECK, card_id, "add", None, "")
+        removed = desk.remove(DECK, card_id)
+        labelled = desk.set_label(DECK, "Battered Golem", "Getting")
+    finally:
+        download.release.set()
+        sync.join()
+    assert decided == {"error": "Wait for the card data to finish downloading, then decide."}
+    assert removed == {"error": "Wait for the card data to finish downloading, then remove the card."}
+    assert labelled == {"card": "Battered Golem", "before": "", "after": "Getting"}
+    assert board_cards(settings)["Arcane Signet"] == (Actor.YOU, Status.OPEN)
+
+
+def test_without_card_data_and_no_sync_a_decision_still_says_to_sync(
+    settings: DeskSettings, fake: FakeArchidekt
+) -> None:
+    desk = make_desk(settings, fake, SyncThread().start)
+    desk.propose(DECK, "Arcane Signet")
+    card_id = first_card_id(desk)
+    settings.card_db.unlink()
+
+    answer = desk.decide(DECK, card_id, "add", None, "")
+
+    assert str(answer["error"]).endswith("run `cmdr sync` to download it")
+
+
+def test_a_label_change_does_not_hold_the_card_data_open_across_the_archidekt_call(
+    settings: DeskSettings, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    open_dbs = 0
+
+    class CountedDb(CardDb):
+        def __init__(self, path: Path) -> None:
+            nonlocal open_dbs
+            super().__init__(path)
+            open_dbs += 1
+
+        def __exit__(
+            self, kind: type[BaseException] | None, error: BaseException | None, trace: TracebackType | None
+        ) -> None:
+            nonlocal open_dbs
+            open_dbs -= 1
+            super().__exit__(kind, error, trace)
+
+    seen: list[int] = []
+    monkeypatch.setattr(desk_module, "CardDb", CountedDb)
+    monkeypatch.setattr(
+        ArchidektEditor,
+        "modify_cards",
+        probing(ArchidektEditor.modify_cards, lambda: seen.append(open_dbs)),
+    )
+    desk = make_desk(settings, fake, SyncThread().start)
+
+    assert desk.set_label(DECK, "Battered Golem", "Getting")["after"] == "Getting"
+
+    assert seen == [0]
 
 
 def test_the_pull_and_the_grace_tables_write_each_deck_under_its_lock(

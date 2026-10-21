@@ -21,7 +21,7 @@ from commander.archidekt_edit import (
     ReadBackError,
     label_value,
 )
-from commander.board import Actor, BoardService
+from commander.board import ActivityNotes, Actor
 from commander.models import GETTING_LABEL, Deck
 from commander.net import NetworkError
 from commander.store import StoredDeck, Workspace
@@ -86,7 +86,7 @@ def set_label(
     editor: ArchidektEditor,
     workspace: Workspace,
     stored: StoredDeck,
-    service: BoardService,
+    notes: ActivityNotes,
     *,
     name: str,
     label: str,
@@ -98,14 +98,14 @@ def set_label(
         raise LabelError(f"{stored.deck.short_name} has no label {label!r}")
     value = f"{label},{colours[label]}" if label else DEFAULT_LABEL
     action = f"labelled {label}" if label else "unlabelled"
-    return _relabel(editor, workspace, stored, service, name, label, value, actor, action)
+    return _relabel(editor, workspace, stored, notes, name, label, value, actor, action)
 
 
 def mark(
     editor: ArchidektEditor,
     workspace: Workspace,
     stored: StoredDeck,
-    service: BoardService,
+    notes: ActivityNotes,
     *,
     name: str,
     step: Step,
@@ -117,7 +117,7 @@ def mark(
         editor,
         workspace,
         stored,
-        service,
+        notes,
         name,
         step.label,
         label_value(step.label, account),
@@ -137,7 +137,7 @@ def _relabel(  # noqa: PLR0917 — the shared body of set_label and mark
     editor: ArchidektEditor,
     workspace: Workspace,
     stored: StoredDeck,
-    service: BoardService,
+    notes: ActivityNotes,
     name: str,
     label: str,
     value: str,
@@ -168,7 +168,7 @@ def _relabel(  # noqa: PLR0917 — the shared body of set_label and mark
     try:
         editor.modify_cards(deck_id, edits)
     except (NetworkError, ArchidektError, AuthError) as error:
-        service.note(actor, f"{action} failed", str(error), card)
+        notes.note(actor, f"{action} failed", str(error), card)
         raise
     try:
         after = editor.get_deck(deck_id).deck
@@ -178,5 +178,5 @@ def _relabel(  # noqa: PLR0917 — the shared body of set_label and mark
             f"Archidekt took the change, but reading the deck back failed ({error})"
         ) from error
     workspace.save(after)
-    service.note(actor, action, f"label {before or 'none'} -> {label or 'none'}", card)
+    notes.note(actor, action, f"label {before or 'none'} -> {label or 'none'}", card)
     return Marked(after, card, before, label)
