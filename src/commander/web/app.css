@@ -83,7 +83,8 @@
   --art-width: 72px;
   --card-w: 160px;
   --card-h: calc(var(--card-w) * 680 / 488);
-  --peek: calc(var(--card-h) * 0.24);
+  /* How much of each stacked card shows: enough that the pointer lands on the row it is aimed at. */
+  --peek: calc(var(--card-h) * 0.3);
   --side-w: 380px;
   --rail-w: 40px;
   --activity-w: 300px;
@@ -511,7 +512,9 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   /* Its own stacking layer: the flag and tint stay inside the card, under the row that overlaps it. */
   z-index: 0;
 }
-.gcard:hover, .gcard:focus-within { z-index: 3; }
+/* Lifted under the pointer or keyboard focus, not mouse focus, so a card tucks back once the pointer leaves
+   even though its clicked + or - keeps focus. */
+.gcard:hover, .gcard:has(:focus-visible) { z-index: 3; }
 .face, .art {
   display: block;
   position: relative;
@@ -632,7 +635,7 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   opacity: 0;
   transition: opacity var(--fast);
 }
-.gcard:hover .count-tools, .count-tools:focus-within { opacity: 1; }
+.gcard:hover .count-tools, .count-tools:has(:focus-visible) { opacity: 1; }
 .count-step {
   min-width: var(--icon-button);
   min-height: var(--icon-button);

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Changed
+- The deck grid's stacked rows show more of each card (three tenths of its height instead of about a quarter),
+  so the pointer lands on the card it was aimed at rather than the one a row below, as a usability test found.
+
+### Fixed
+- A deck card whose + or − was clicked tucks back under the next row as soon as the pointer leaves it, instead
+  of staying lifted, with its buttons showing, until another card was picked. Keyboard focus still lifts it.
+
 ## 0.9.0 - 2026-10-21
 
 ### Fixed

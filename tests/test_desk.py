@@ -1546,6 +1546,21 @@ def test_a_considering_tiles_long_name_and_type_line_stay_inside_the_room_left_o
     assert "right: var(--space-2)" in css_rule(".reject")
 
 
+def test_each_grid_row_shows_three_tenths_of_a_card_so_the_pointer_lands_on_the_card_meant() -> None:
+    # Usability test: at 0.24 people often hovered the card one row under the one they meant.
+    assert re.search(r"--peek: calc\(var\(--card-h\) \* 0\.3\);", css_rule(":root"))
+
+
+def test_a_card_stays_lifted_after_a_click_only_while_the_pointer_is_on_it() -> None:
+    # A clicked + or - keeps focus, so :focus-within kept the card lifted and its buttons shown until another
+    # card was picked; keyboard focus (:focus-visible) still lifts it.
+    assert css_rule(".gcard:has(:focus-visible)") == css_rule(".gcard:hover")
+    assert "z-index: 3" in css_rule(".gcard:hover")
+    assert "opacity: 1" in css_rule(".count-tools:has(:focus-visible)")
+    css = (resources.files("commander") / "web" / "app.css").read_text(encoding="utf-8")
+    assert ":focus-within" not in css
+
+
 def test_scrollbars_are_hidden_everywhere_while_scrolling_stays() -> None:
     assert "scrollbar-width: none" in css_rule("*")
     assert "display: none" in css_rule("::-webkit-scrollbar")
