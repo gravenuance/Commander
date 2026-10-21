@@ -365,7 +365,9 @@ the deck category it goes under), turn it down, or reopen it later. The board al
 the deck's own cards: one more Forest, or a card taken out
 ([ADR 0043](docs/adr/0043-count-changes-and-adds-without-a-cut-on-the-board.md)). More copies than the deck
 holds are only for a basic land or a card whose rules text allows them ("A deck can have any number of cards
-named ...", "up to seven"). A count change and a queued swap never touch the same card. The board file is
+named ...", "up to seven"). A count change and a queued swap never touch the same card. A decrease means at
+most that many copies and an increase at least that many, so a change the deck already meets (it was edited on
+Archidekt) sends nothing, and `sync` clears it. The board file is
 `board.json` version 3; opening an older file keeps a copy as `board.v1.bak` or `board.v2.bak` before the first
 save.
 
@@ -675,7 +677,10 @@ if you keep its history) and reports it as `removed`; `sync --dry-run` says `wou
 It does so only when the deck is missing from a complete signed-in listing and Archidekt answers 404 for the
 deck itself ([ADR 0045](docs/adr/0045-sync-removes-the-folder-of-a-deleted-deck.md)). Any other case (not signed
 in, a refused login, a private deck, a network error or any other status) reports the deck as `missing` and keeps
-the folder. In the app, a removed open deck closes with a short notice.
+the folder. In the app, a removed open deck closes with a short notice. The folder is first renamed to
+`.removing-<name>`, and a deck whose board the app is writing is kept for that sync; if the delete then fails
+(a program holds a file open), the renamed folder keeps your files, the sync reports it as `failed` by name and
+the next sync retries.
 
 #### Private and unlisted decks
 
