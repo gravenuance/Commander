@@ -39,9 +39,16 @@ bracket, for the code that reads `deck.bracket`; such a deck is never saved or w
   before, and tells the page the effective bracket it found, so a deck view built before the estimate was
   cached is read again.
 - **What stays on the set bracket:** the header's "Bracket N" pill, which is empty for an unset deck, the
-  bracket check (set bracket against ceiling and estimate), `cmdr bracket`, `cmdr analyze`, `cmdr suggest`
-  (including `--within-bracket`) and `cmdr apply`'s bracket marks. They compare against the bracket the owner
-  declared, and an estimate's lowest bracket is only a floor.
+  bracket check (set bracket against ceiling and estimate), `cmdr bracket`, `cmdr analyze` and `cmdr suggest
+  --within-bracket`. They compare against the bracket the owner declared, and an estimate's lowest bracket is
+  only a floor: a ceiling at the floor would hide every idea past it.
+- **Bracket marks follow the estimate too** (amended 2026-10-21, the owner's choice): `cmdr suggest`'s "! bracket
+  N+" marks and budget, and the raises on adds in `cmdr apply`, `cmdr board commit` and the app's Review, go by
+  the cached estimate's lowest bracket when none is set (`cached_floor`; `resolve_plan(estimated=)`). A mark
+  there is true by the bracket rules (a first game changer does put a bracket 2 deck at 3 or above), so it is
+  no false alarm, only noise for a deck really played higher. A save reads the estimate of the synced deck from
+  the cache and never asks Spellbook; a bracket set on Archidekt by then wins. `suggest` says "no bracket set, at
+  least 2 by its estimate", and its `--json` keeps `bracket` as set and adds `effectiveBracket`.
 - **The Meta panel** shows for brackets 4 and 5, set or estimated (`META_BRACKETS` in the page). Bracket 4 reads
   the commander's tournament lists and its recent Archidekt decks only, not the most-played commanders or
   Spellbook's combos (ADR 0027), so the panel shows the key cards and the sample line, and leaves out "What

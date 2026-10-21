@@ -49,7 +49,13 @@ from commander.board import (
 )
 from commander.boardsave import BoardSave, preview_board, save_board
 from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
-from commander.bracket import cached_effective_deck, effective_bracket, estimate_cache, estimate_deck
+from commander.bracket import (
+    cached_effective_deck,
+    cached_floor,
+    effective_bracket,
+    estimate_cache,
+    estimate_deck,
+)
 from commander.bracketcheck import check_bracket, check_json
 from commander.bracketpreview import preview_json, spellbook_preview
 from commander.budget import resolved_budget
@@ -990,16 +996,17 @@ class Desk:
         return {"card": card_json(card)}
 
     @_guarded
-    def count(self, deck_id: int, name: str, step: int) -> Json:
-        """Queue one copy more (step 1) or fewer (step -1) of a deck card: the decklist's + and -."""
+    def count(self, deck_id: int, name: str, step: int, category: str | None = None) -> Json:
+        """Queue one copy more (step 1) or fewer (step -1) of a deck card: the decklist's + and -. With a
+        category outside the deck, - takes the card off it and + puts it back (ADR 0052)."""
         if step not in {1, -1}:
             return {"error": f"a count moves by one copy, not {step!r}"}
         with self._writing("count change", "change the count", deck_id) as busy:
             if busy:
                 return busy
             with self._service(deck_id) as service:
-                change = service.step_count(name, step, Actor.YOU)
-            log.info("board: count %+d for %s on deck %d", step, name, deck_id)
+                change = service.step_count(name, step, Actor.YOU, category=category or None)
+            log.info("board: count %+d for %s (%s) on deck %d", step, name, category or "deck", deck_id)
         return {"change": count_json(change) if change else None}
 
     @_guarded
@@ -1024,7 +1031,14 @@ class Desk:
             auth = ArchidektAuth(fetcher, self._token_store)
             # A preview reads the deck; a public one needs no login, a private one does.
             token = auth.access_token(user) if auth.has_login(user) else None
-            preview = preview_board(ArchidektEditor(fetcher, token), stored, db, user=user, now=self._now)
+            preview = preview_board(
+                ArchidektEditor(fetcher, token),
+                stored,
+                db,
+                user=user,
+                now=self._now,
+                estimated=self._floor(stored.deck),
+            )
             ceiling = read_profile(stored.folder).bracket_ceiling
             bracket = spellbook_preview(
                 preview.resolution, fetcher, self._settings.cache, ceiling=ceiling, now=self._now
@@ -1050,7 +1064,15 @@ class Desk:
             with self._service_and_db(stored) as (service, db), self._client_factory() as http:
                 editor = self._editor(http, user)
                 saved = save_board(
-                    editor, self._workspace, stored, db, service, user=user, actor=Actor.YOU, now=self._now
+                    editor,
+                    self._workspace,
+                    stored,
+                    db,
+                    service,
+                    user=user,
+                    actor=Actor.YOU,
+                    now=self._now,
+                    estimated=self._floor(stored.deck),
                 )
         result = saved.result
         _log_save(deck_id, saved)
@@ -1116,7 +1138,8 @@ class Desk:
         """The deck's cut rules, kept until its snapshot, its profile or the cached meta answers change."""
         stamp = (
             f"{files_stamp(stored.folder, ('deck.json', 'profile.toml'))}"
-            f"|{cache_stamp(self._settings.cache)}|{self._now().date()}|{self._effective(stored.deck).bracket}"
+            f"|{cache_stamp(self._settings.cache)}|{self._now().date()}"
+            f"|{self._effective(stored.deck).bracket}"
         )
         known = self._rules.get(stored.deck.id)
         if known is not None and known[0] == stamp:
@@ -1130,6 +1153,11 @@ class Desk:
         The cache alone, so a view never waits for Spellbook; the sync asks for the estimate."""
         cache = estimate_cache(self._settings.cache / SPELLBOOK_CACHE_FOLDER)
         return cached_effective_deck(deck, cache, now=self._now)
+
+    def _floor(self, deck: Deck) -> int | None:
+        """The lowest bracket of the deck's cached estimate, for Review's raises when no bracket is set."""
+        cache = estimate_cache(self._settings.cache / SPELLBOOK_CACHE_FOLDER)
+        return cached_floor(deck, cache, now=self._now)
 
     def _pool(self, deck: Deck) -> MetaData | None:
         """What other players do with the deck's commander, from cache only; None for a deck without one."""

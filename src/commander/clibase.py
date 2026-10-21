@@ -7,9 +7,12 @@ from typing import BinaryIO, TextIO
 
 import httpx
 
+from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
+from commander.bracket import cached_floor, estimate_cache
 from commander.carddb import CARD_DB_FILE, CardDataMeta, CardDb
 from commander.config import cache_dir, config_path, read_config, resolve_workspace
 from commander.credentials import TokenStore
+from commander.models import Deck
 from commander.net import Pacer
 from commander.store import StoredDeck, Workspace
 
@@ -86,6 +89,12 @@ def open_card_db(ctx: Context) -> CardDb:
     db = CardDb(cache_dir(ctx.env) / CARD_DB_FILE)
     warn_if_stale(db.meta(), ctx)
     return db
+
+
+def estimate_floor(deck: Deck, ctx: Context) -> int | None:
+    """The lowest bracket of the deck's cached Spellbook estimate, whatever bracket is set (ADR 0051); read
+    from the cache alone, which the sync keeps up to date."""
+    return cached_floor(deck, estimate_cache(cache_dir(ctx.env) / SPELLBOOK_CACHE_FOLDER), now=ctx.now)
 
 
 def warn_if_stale(meta: CardDataMeta, ctx: Context) -> None:

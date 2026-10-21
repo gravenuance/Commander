@@ -6,7 +6,15 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 
 from commander.answers import card_key
-from commander.apply import ApplyOutcome, Resolution, SaveError, SaveResult, apply_to_live, fetch_own_deck
+from commander.apply import (
+    ApplyOutcome,
+    Resolution,
+    SaveError,
+    SaveResult,
+    apply_to_live,
+    change_label,
+    fetch_own_deck,
+)
 from commander.archidekt_edit import ArchidektEditor, LiveDeck
 from commander.board import (
     Actor,
@@ -16,6 +24,7 @@ from commander.board import (
     NothingQueuedError,
     already_added,
     board_plan,
+    change_key,
     counts_met,
     read_board,
 )
@@ -54,16 +63,23 @@ class BoardPreview:
 
 
 def preview_board(
-    editor: ArchidektEditor, stored: StoredDeck, db: CardDb, *, user: str, now: Callable[[], datetime]
+    editor: ArchidektEditor,
+    stored: StoredDeck,
+    db: CardDb,
+    *,
+    user: str,
+    now: Callable[[], datetime],
+    estimated: int | None = None,
 ) -> BoardPreview:
-    """The changes the queued cards would make to the deck as it is on Archidekt now."""
+    """The changes the queued cards would make to the deck as it is on Archidekt now; estimated is the lowest
+    bracket of the deck's estimate, which an unset deck's bracket raises go by."""
     live = fetch_own_deck(editor, stored.deck.id, user=user)
     board = read_board(stored.folder)
     plan = live_plan(live, board)
     if plan is None:
         resolution = _nothing_to_change(live, board)
     else:
-        outcome = apply_to_live(editor, live, plan, db, save_changes=False, now=now)
+        outcome = apply_to_live(editor, live, plan, db, save_changes=False, now=now, estimated=estimated)
         resolution = _noting_done(outcome, live, board).resolution
     _log_dropped(stored.deck.id, resolution, "preview")
     return BoardPreview(resolution, _done_names(live, board))
@@ -80,9 +96,10 @@ def save_board(
     actor: Actor,
     now: Callable[[], datetime],
     on_progress: Callable[[str], None] = lambda _: None,
+    estimated: int | None = None,
 ) -> BoardSave:
     """Save the queued cards and count changes to Archidekt, then update the local deck copy and mark them
-    applied (a done count change leaves the board).
+    applied (a done count change leaves the board). estimated is as for `preview_board`.
 
     The plan is made from the deck as it is on Archidekt now, not from the local copy, which may be behind.
     Queued cards that deck already holds, and count changes it already meets, are marked applied too, their
@@ -97,11 +114,13 @@ def save_board(
         resolution = _nothing_to_change(live, board)
         _log_dropped(stored.deck.id, resolution, "save")
         workspace.save(live.deck)
-        counts = [change.name for change in board.counts]
-        service.mark_applied([card.id for card in board.queued], actor, None, counts=counts)
-        return BoardSave(resolution, None, (*(card.name for card in board.queued), *counts))
+        service.mark_applied([card.id for card in board.queued], actor, None, counts=board.counts)
+        names = (*(card.name for card in board.queued), *(change.name for change in board.counts))
+        return BoardSave(resolution, None, names)
     try:
-        outcome = apply_to_live(editor, live, plan, db, save_changes=True, now=now, on_progress=on_progress)
+        outcome = apply_to_live(
+            editor, live, plan, db, save_changes=True, now=now, on_progress=on_progress, estimated=estimated
+        )
     except SaveError as error:
         service.note(actor, "save to Archidekt failed", str(error))
         raise
@@ -110,18 +129,22 @@ def save_board(
     if result is None:
         return BoardSave(outcome.resolution, None, ())
     workspace.save(result.deck)
-    failed = {
-        card_key(c.name)
+    failed = [
+        c
         for c in outcome.resolution.changes
-        if any(m.startswith(f"{c.name}:") for m in result.mismatches)
-    }
+        if any(m.startswith(f"{change_label(c)}:") for m in result.mismatches)
+    ]
+    failed_in_deck = {card_key(c.name) for c in failed if c.in_deck}
+    failed_keys = {change_key(c.name, None if c.in_deck else c.category) for c in failed}
     # A swap is done only when both its add and its cut are; a card already in the deck needs nothing more.
-    applied = [card for card in board.queued if not failed & _swap_keys(card)]
-    counts = [change.name for change in board.counts if card_key(change.name) not in failed]
+    applied = [card for card in board.queued if not failed_in_deck & _swap_keys(card)]
+    counts = [change for change in board.counts if change.key not in failed_keys]
     service.mark_applied([card.id for card in applied], actor, result.snapshot, counts=counts)
     if result.mismatches:
         service.note(actor, "Archidekt shows differences", "; ".join(result.mismatches))
-    return BoardSave(outcome.resolution, result, (*(card.name for card in applied), *counts))
+    return BoardSave(
+        outcome.resolution, result, (*(card.name for card in applied), *(change.name for change in counts))
+    )
 
 
 def _log_dropped(deck_id: int, resolution: Resolution, doing: str) -> None:
@@ -147,7 +170,9 @@ def _done_lines(live: LiveDeck, board: Board) -> tuple[str, ...]:
         for card in already_added(live.deck, board)
     )
     return added + tuple(
-        f"{change.name}: the deck on Archidekt already meets the change to {change.count}; "
+        f"{change.name}: no longer on {change.category} on Archidekt; saving clears the change"
+        if change.category
+        else f"{change.name}: the deck on Archidekt already meets the change to {change.count}; "
         "saving clears the change"
         for change in counts_met(live.deck, board)
     )

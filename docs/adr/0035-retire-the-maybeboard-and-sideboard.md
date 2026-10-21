@@ -2,7 +2,8 @@
 
 **Status:** Accepted · **Date:** 2026-10-18 · Replaces the Sideboard and Maybeboard parts of
 [ADR 0006](0006-deck-boards-and-desktop-app.md); the sync step that picked those cards up (ADR 0023) goes with them · The app shows those cards again,
-outside the deck, by [ADR 0044](0044-the-sideboard-and-maybeboard-shown-again.md)
+outside the deck, by [ADR 0044](0044-the-sideboard-and-maybeboard-shown-again.md) · A save removes a card
+from them when the user queued that, by [ADR 0052](0052-take-a-card-off-the-sideboard-or-maybeboard.md)
 
 ## Context
 

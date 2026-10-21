@@ -132,7 +132,9 @@ Oddball and Core as 2, Exhibition as 1. With no estimate, or a Banned one, it st
 set always wins. That decides which Archidekt brackets `sync` searches for the deck, whether it reads the
 commander's tournament lists, and which meta the app and `meta` show. `sync` asks Spellbook for such a deck's
 estimate (from the cache while under 7 days old); the app and `profile` only read the cache, however old, so a
-deck view never waits for Spellbook. The app's header still names only a bracket set on Archidekt.
+deck view never waits for Spellbook. The bracket marks of `suggest`, `apply` and Review go by it too, but
+`suggest --within-bracket` hides nothing on an estimate alone. The app's header still names only a bracket set
+on Archidekt.
 
 ### Suggestions
 
@@ -166,7 +168,8 @@ deck view never waits for Spellbook. The app's header still names only a bracket
   played first, with cards matching the deck's themes last. These are only candidates: a theme card often
   fills no role on paper.
 
-An idea marked `! bracket 3+ (game changer)` would lift the deck above the bracket set on Archidekt, by
+An idea marked `! bracket 3+ (game changer)` would lift the deck above the bracket set on Archidekt (or, with
+none set, its estimate's lowest), by
 the official rules (no game changers in brackets 1 and 2, at most three in bracket 3, no mass land denial
 below bracket 4) or by the tag of the combo it completes. `--within-bracket` leaves these out, and
 `--max-price 5` leaves out cards over EUR 5 and cards with no price. `-n` sets how many ideas each list
@@ -415,6 +418,7 @@ uv run cmdr board add ellivere "Sylvan Safekeeper" --reason "protects stax piece
 uv run cmdr board decide ellivere "Sylvan Safekeeper" add --cut Compost
 uv run cmdr board decide ellivere "Arcane Signet" add --category Ramp   # add without a cut
 uv run cmdr board count ellivere Forest 12   # queue 12 Forests; 0 takes a card out
+uv run cmdr board count ellivere Ponder 0 --category Maybeboard   # take a card off the Maybeboard
 uv run cmdr board commit ellivere          # preview the queued changes against Archidekt
 uv run cmdr board commit ellivere --save   # make them
 ```
@@ -423,7 +427,9 @@ Saving a board works like `apply --save`, with a snapshot first. A card you cut 
 if it passes the idea test on a later `sync` it shows up in Considering again like any other idea.
 A cut the deck runs several copies of, such as a basic land, loses one copy instead.
 A save leaves the deck's Sideboard and Maybeboard on Archidekt as they are, and so does `sync`, which no
-longer reads them ([ADR 0035](docs/adr/0035-retire-the-maybeboard-and-sideboard.md)). Each `sync` tests the
+longer reads them ([ADR 0035](docs/adr/0035-retire-the-maybeboard-and-sideboard.md)), except for a card you
+queued to take off one: the save removes that entry and nothing else there
+([ADR 0052](docs/adr/0052-take-a-card-off-the-sideboard-or-maybeboard.md)). Each `sync` tests the
 open ideas `cmdr` compiled earlier again, and those taken from the Maybeboard by an earlier version too; one
 that no longer passes the idea test below is turned down ("no longer makes the cut") and comes back only if
 its share rises 20 points, unless you reopened it with Reconsider: that card is left alone until you decide
@@ -524,7 +530,8 @@ refresh it ([ADR 0032](docs/adr/0032-one-considering-list-and-one-sync.md)).
 grouped by card type with counts and EUR totals. The deck's Sideboard, Maybeboard and any other category
 Archidekt keeps outside the deck follow as groups of their own, marked *Not in deck*
 ([ADR 0044](docs/adr/0044-the-sideboard-and-maybeboard-shown-again.md)): their cards carry pills like the
-others but count in no total, and ideas may still suggest them. Above the grid stand the deck's card count,
+others but count in no total, and ideas may still suggest them. Hovering one shows −, which queues it to
+come off that category with the next save, and + undoes that. Above the grid stand the deck's card count,
 its Don't Have cards and what they cost, and the average mana value of its spells (lands left out), for the
 deck as saved; where queued changes would alter one, it reads "saved → after Review". S, M and L beside them
 set the card size. Hovering a deck card shows − (one copy fewer; at one copy it takes the card out) and, on a
@@ -637,14 +644,17 @@ See [ADR 0006](docs/adr/0006-deck-boards-and-desktop-app.md).
 ```toml
 deck = "magda"   # deck id, or part of its name as in other commands
 add = ["Arcane Signet", {name = "Sol Ring", set = "c21", category = "Ramp"}]
-remove = ["Wild Growth", {name = "Mountain", keep = 10}]
+remove = ["Wild Growth", {name = "Mountain", keep = 10}, {name = "Ponder", category = "Maybeboard"}]
 ```
 
 A plan says how the deck should end up. `add` means the deck ends with at least that many copies
-(`quantity`, default 1); `remove` means it ends with none, or with `keep` copies. Lines the deck already meets are skipped, so running a plan twice is safe. A new card
+(`quantity`, default 1); `remove` means it ends with none, or with `keep` copies. A `remove` with a
+`category` outside the deck, such as the Maybeboard, takes the card off that category and leaves the deck's
+own copies alone. Lines the deck already meets are skipped, so running a plan twice is safe. A new card
 gets its cheapest EUR printing, leaving out gold-bordered and other non-tournament printings, unless `set`
 names one; it goes under its card type (Land, Creature, Instant and so on) unless `category` names another.
-Saving a plan leaves the deck's Sideboard and Maybeboard alone, and an `add` into either category is refused
+Saving a plan leaves the deck's Sideboard and Maybeboard alone but for its own removals, and an `add` into
+either category is refused
 ([ADR 0035](docs/adr/0035-retire-the-maybeboard-and-sideboard.md)). The old `maybeboard = true` and
 `drop` keys are gone; a plan that still has them is refused.
 

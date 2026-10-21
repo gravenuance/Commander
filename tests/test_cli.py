@@ -8,10 +8,15 @@ import httpx
 import pytest
 
 from commander import __version__, cli, store
+from commander.archidekt import parse_deck
+from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
+from commander.bracket import estimate_cache, estimate_deck
 from commander.cli import main
 from commander.credentials import SERVICE
+from commander.net import Fetcher
+from commander.spellbook import SpellbookClient
 from commander.syncrun import CardState, CardStatus, SyncOutcome
-from conftest import CARDS_URL, REFRESH_TOKEN, FakeArchidekt, Json, MemoryKeyring, card_entry
+from conftest import CARDS_URL, REFRESH_TOKEN, FakeArchidekt, FakeSpellbook, Json, MemoryKeyring, card_entry
 
 NO_CARDS = "card data: skipped, --no-cards\n"
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
@@ -848,6 +853,45 @@ def test_suggest_within_bracket_hides_them(tmp_path: Path, raw_deck: Json, own_c
     assert "Jeska's Will" not in out
     assert "3 left out because they would lift the deck above bracket 2\n" in out
     assert "!" not in out
+
+
+def unset_and_estimated(tmp_path: Path, raw_deck: Json, cache: Path, tag: str) -> FakeArchidekt:
+    """The deck synced with no bracket set, and Spellbook's estimate for it (tag) in the cache."""
+    del raw_deck["edhBracket"]
+    fake = synced(tmp_path, raw_deck)
+    spellbook = FakeSpellbook()
+    spellbook.answer["bracketTag"] = tag
+    with spellbook.client() as http:
+        estimate_deck(
+            parse_deck(raw_deck),
+            SpellbookClient(Fetcher(http, max_attempts=1)),
+            estimate_cache(cache / SPELLBOOK_CACHE_FOLDER),
+            now=lambda: NOW,
+            refresh=False,
+        )
+    return fake
+
+
+def test_suggest_marks_an_unset_deck_by_its_estimates_lowest_bracket(
+    tmp_path: Path, raw_deck: Json, own_cache: Path
+) -> None:
+    fake = unset_and_estimated(tmp_path, raw_deck, own_cache, "C")
+    out = suggest(["magda", "--any-price"], tmp_path, fake, own_cache).out
+    assert "Magda, Brazen Outlaw; no bracket set, at least 2 by its estimate; colours R\n" in out
+    assert "     €16.93  Aggravated Assault (1 combo: Spicy)  ! bracket 3+ (Spicy combo)\n" in out
+    assert "     €33.80  Jeska's Will  ! bracket 3+ (game changer)\n" in out
+    [shown] = json.loads(suggest(["magda", "--json"], tmp_path, fake, own_cache).out)
+    assert (shown["bracket"], shown["effectiveBracket"]) == (None, 2)
+
+
+def test_suggest_within_bracket_hides_nothing_on_an_estimate_alone(
+    tmp_path: Path, raw_deck: Json, own_cache: Path
+) -> None:
+    # An estimate is a floor, not the bracket the owner plays at: it marks ideas but never hides them.
+    fake = unset_and_estimated(tmp_path, raw_deck, own_cache, "C")
+    out = suggest(["magda", "--within-bracket", "--any-price"], tmp_path, fake, own_cache).out
+    assert "     €33.80  Jeska's Will  ! bracket 3+ (game changer)\n" in out
+    assert "left out" not in out
 
 
 @pytest.mark.parametrize(

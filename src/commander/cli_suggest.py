@@ -2,6 +2,7 @@
 
 import argparse
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from decimal import ROUND_FLOOR, Decimal, InvalidOperation
 from typing import TextIO
 
@@ -23,6 +24,7 @@ from commander.clibase import (
     Context,
     UsageError,
     day,
+    estimate_floor,
     open_card_db,
     positive,
     selected_decks,
@@ -137,7 +139,11 @@ def _cmd_suggest(args: argparse.Namespace, ctx: Context) -> int:
                 deck_budget=not args.any_price,
                 rejected=read_board(folder).rejected_names,
             )
-            results.append(suggest(deck, db.resolve(deck.main_cards), db, answer, options))
+            # An unset deck's marks and budget go by its estimate's lowest bracket (ADR 0051); its
+            # --within-bracket ceiling stays on the bracket set, so an estimate alone hides no idea.
+            floor = estimate_floor(deck, ctx) if deck.bracket is None else None
+            playing = replace(deck, bracket=floor) if floor is not None else deck
+            results.append(suggest(playing, db.resolve(deck.main_cards), db, answer, options))
             if args.to_board:
                 added = feed_suggestions(
                     BoardService(folder, deck, db, now=ctx.now), results[-1], read_board(folder)
@@ -147,17 +153,17 @@ def _cmd_suggest(args: argparse.Namespace, ctx: Context) -> int:
     for result in results:
         warn_answer(result.deck, result.combos, "combo list", ctx.err)
     if args.json:
-        write_json([_suggestions_json(r) for r in results], ctx.out)
+        write_json([_suggestions_json(r, d.bracket) for r, d in zip(results, decks, strict=True)], ctx.out)
     elif args.deck:
         print(
             f"prices: each card's cheapest printing in EUR, Scryfall data of {day(meta.cards_updated_at)}",
             file=ctx.out,
         )
-        for result in results:
-            _print_suggestions(result, ctx.out, details=args.details)
+        for result, deck in zip(results, decks, strict=True):
+            _print_suggestions(result, ctx.out, details=args.details, set_bracket=deck.bracket)
         print(SUGGEST_CREDIT, file=ctx.out)
     else:
-        _print_suggestions_table(results, ctx.out)
+        _print_suggestions_table(results, [deck.bracket for deck in decks], ctx.out)
     unavailable = any(r.combos.source is AnswerSource.UNAVAILABLE for r in results)
     return EXIT_FAILURE if unavailable else EXIT_OK
 
@@ -168,10 +174,16 @@ SUGGEST_CREDIT = (
 )
 
 
-def _print_suggestions(result: Suggestions, out: TextIO, *, details: bool) -> None:
+def _print_suggestions(result: Suggestions, out: TextIO, *, details: bool, set_bracket: int | None) -> None:
+    """One deck's ideas; set_bracket is the bracket on Archidekt, where result.deck has the one marked by."""
     deck = result.deck
     commanders = " + ".join(deck.commanders) or "no commander"
-    bracket = f"bracket {deck.bracket} on Archidekt" if deck.bracket is not None else "no bracket set"
+    if set_bracket is not None:
+        bracket = f"bracket {set_bracket} on Archidekt"
+    elif deck.bracket is not None:
+        bracket = f"no bracket set, at least {deck.bracket} by its estimate"
+    else:
+        bracket = "no bracket set"
     colours = "colours unknown" if result.identity is None else f"colours {result.identity or 'colourless'}"
     print(f"\n{deck.name} ({deck.id})", file=out)
     print(f"{commanders}; {bracket}; {colours}", file=out)
@@ -285,16 +297,18 @@ def _print_cuts(result: Suggestions, out: TextIO) -> None:
         print("  (without Commander Spellbook, combo pieces may be among these)", file=out)
 
 
-def _print_suggestions_table(results: Sequence[Suggestions], out: TextIO) -> None:
+def _print_suggestions_table(
+    results: Sequence[Suggestions], set_brackets: Sequence[int | None], out: TextIO
+) -> None:
     roles = [role for role in ANALYZED_ROLES if any(t.role is role for r in results for t in r.roles)]
     widths = {role: max(len(ROLE_HEADINGS[role]), 5) for role in roles}
     headings = "".join(f" {ROLE_HEADINGS[role]:>{widths[role]}}" for role in roles)
     print(f"{'id':>9} {'set':>3} {'combo':>5}{headings} {'cuts':>4}  name", file=out)
-    for r in results:
+    for r, set_bracket in zip(results, set_brackets, strict=True):
         pieces = len(r.pieces) + r.more_pieces if r.combos.data is not None else None
         targets = {t.role: t for t in r.roles}
         cells = "".join(f" {_target_text(targets.get(role)):>{widths[role]}}" for role in roles)
-        bracket = r.deck.bracket if r.deck.bracket is not None else "-"
+        bracket = set_bracket if set_bracket is not None else "-"
         print(
             f"{r.deck.id:>9} {bracket:>3} {count_text(pieces):>5}{cells} {len(r.cuts):>4}  {r.deck.name}",
             file=out,
@@ -308,13 +322,15 @@ def _target_text(target: RoleTarget | None) -> str:
     return "-" if target is None else f"{target.have}/{target.target}"
 
 
-def _suggestions_json(result: Suggestions) -> dict[str, object]:
+def _suggestions_json(result: Suggestions, set_bracket: int | None) -> dict[str, object]:
     deck, answer = result.deck, result.combos
     return {
         "id": deck.id,
         "name": deck.name,
         "commanders": list(deck.commanders),
-        "bracket": deck.bracket,
+        "bracket": set_bracket,
+        # The bracket the marks and budget go by: the one set, else the estimate's lowest (ADR 0051).
+        "effectiveBracket": deck.bracket,
         "colorIdentity": result.identity,
         "combos": {
             "source": answer.source.value,

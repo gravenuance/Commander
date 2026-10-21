@@ -2,11 +2,20 @@
 
 ## Unreleased
 
+### Added
+- A card on the Sideboard, the Maybeboard or another category outside the deck can be taken off it: − on the
+  card in the app (+ undoes it), `cmdr board count <deck> <card> 0 --category Maybeboard`, or a plan's
+  `remove = [{name = "...", category = "Maybeboard"}]`. Review lists it as "*card* from the Maybeboard", and
+  the save removes that entry only, leaving the rest outside the deck alone. Boards are now version 4; the
+  first change keeps the old file as `board.v3.bak` (ADR 0052).
+
 ### Changed
 - A deck with no bracket set on Archidekt now goes by the lowest bracket of its Commander Spellbook estimate
   (ADR 0051): `sync` searches Archidekt at that bracket and the one above and reads tournament lists for
   4 and up, the app shows the Meta panel for it, and `cmdr meta` includes it. A bracket that is set always
-  wins, and without an estimate the deck stays unset. The header still names only a set bracket.
+  wins, and without an estimate the deck stays unset. The header still names only a set bracket. The
+  "! bracket N+" marks of `cmdr suggest`, `cmdr apply`, `cmdr board commit` and the app's Review go by the
+  estimate too, while `suggest --within-bracket` hides nothing on an estimate alone.
 - The Meta panel now shows for bracket 4 as well as 5. At bracket 4 it shows the key cards and the number of
   tournament lists read, since the most-played commanders and combos are read for bracket 5 only; `cmdr meta`
   lists bracket 4 decks too, and no longer reports the sources a bracket does not read as unavailable.

@@ -104,6 +104,8 @@ class _Resolver:
     deck: Deck
     db: CardDb
     categories: Mapping[str, bool]
+    # The bracket an add's raise is measured from: the deck's, else its estimate's lowest (ADR 0051).
+    bracket: int | None
     problems: list[str] = field(default_factory=list[str])
     warnings: list[str] = field(default_factory=list[str])
     skipped: list[str] = field(default_factory=list[str])
@@ -114,6 +116,9 @@ class _Resolver:
     removed_entries: set[int] = field(default_factory=set[int])
 
     def remove(self, wanted: RemoveCard) -> None:
+        if wanted.category is not None:
+            self._remove_outside(wanted, wanted.category)
+            return
         # Only cards counted in the deck; a Maybeboard copy stays.
         entries = [e for e in _entries_named(self.deck, wanted.name) if e.in_deck]
         if any(COMMANDER_CATEGORY in e.categories for e in entries):
@@ -126,6 +131,24 @@ class _Resolver:
         held = sum(e.quantity for e in entries)
         if held <= wanted.keep:
             what = "not in the deck" if not entries else f"already {held}"
+            self.skipped.append(f"remove {wanted.name}: {what}")
+            return
+        self.changes.extend(_cut_to(entries, held - wanted.keep))
+
+    def _remove_outside(self, wanted: RemoveCard, category: str) -> None:
+        """Cut the copies filed under a category outside the deck; the deck's own copies stay."""
+        entries = [
+            e
+            for e in _entries_named(self.deck, wanted.name)
+            if not e.in_deck and e.primary_category.casefold() == category.casefold()
+        ]
+        if any(e.entry_id in self.removed_entries for e in entries):
+            self.problems.append(f"remove {wanted.name}: the plan already removes it from {category}")
+            return
+        self.removed_entries.update(e.entry_id for e in entries)
+        held = sum(e.quantity for e in entries)
+        if held <= wanted.keep:
+            what = f"not on {category}" if not entries else f"already {held} on {category}"
             self.skipped.append(f"remove {wanted.name}: {what}")
             return
         self.changes.extend(_cut_to(entries, held - wanted.keep))
@@ -161,7 +184,7 @@ class _Resolver:
             else:
                 self.changes.append(_change(ChangeKind.MORE, entry, entry.quantity + wanted.quantity - have))
             return changers
-        raises = card_raise(info, self.deck.bracket, changers)
+        raises = card_raise(info, self.bracket, changers)
         printing = self._printing(info, wanted)
         if printing is None:
             return changers
@@ -219,13 +242,20 @@ class _Resolver:
 
 
 def resolve_plan(
-    live: Deck, plan: Plan, db: CardDb, *, categories: Mapping[str, bool] | None = None
+    live: Deck,
+    plan: Plan,
+    db: CardDb,
+    *,
+    categories: Mapping[str, bool] | None = None,
+    estimated: int | None = None,
 ) -> Resolution:
     """Check every change in the plan against the deck; problems block saving, warnings do not.
 
-    categories holds the deck's own setting of which categories count in the deck.
+    categories holds the deck's own setting of which categories count in the deck. estimated is the lowest
+    bracket of the deck's estimate: with no bracket set on the deck, an add's bracket raise goes by it.
     """
-    resolver = _Resolver(live, db, categories or {})
+    bracket = live.bracket if live.bracket is not None else estimated
+    resolver = _Resolver(live, db, categories or {}, bracket)
     main = db.resolve(live.main_cards)
     identity = deck_identity(main)
     if identity is None:
@@ -395,8 +425,14 @@ def verify(changes: Sequence[Change], before: Deck, after: Deck) -> list[str]:
         entry = next((c for c in after.cards if c.entry_id == change.entry_id), None)
         found = entry.quantity if entry else 0
         if found != change.after:
-            mismatches.append(f"{change.name}: expected {change.after}, Archidekt shows {found}")
+            mismatches.append(f"{change_label(change)}: expected {change.after}, Archidekt shows {found}")
     return mismatches
+
+
+def change_label(change: Change) -> str:
+    """How a mismatch names the change: the card, and for copies outside the deck, their category too, so
+    the deck's own copies and the Maybeboard's are told apart."""
+    return change.name if change.in_deck else f"{change.name} on {change.category}"
 
 
 class NotYourDeckError(Exception):
@@ -429,9 +465,11 @@ def apply_to_live(
     save_changes: bool,
     now: Callable[[], datetime],
     on_progress: Callable[[str], None] = lambda _: None,
+    estimated: int | None = None,
 ) -> ApplyOutcome:
-    """Check a plan against a deck fetched from Archidekt; save it when asked and nothing is wrong."""
-    resolution = resolve_plan(live.deck, plan, db, categories=live.categories)
+    """Check a plan against a deck fetched from Archidekt; save it when asked and nothing is wrong.
+    estimated is as for `resolve_plan`."""
+    resolution = resolve_plan(live.deck, plan, db, categories=live.categories, estimated=estimated)
     if not (save_changes and resolution.changes and not resolution.problems):
         return ApplyOutcome(resolution, None)
     return ApplyOutcome(resolution, save(editor, live, resolution, now=now, on_progress=on_progress))
@@ -447,10 +485,21 @@ def apply_plan(
     save_changes: bool,
     now: Callable[[], datetime],
     on_progress: Callable[[str], None] = lambda _: None,
+    estimated: int | None = None,
 ) -> ApplyOutcome:
-    """Check a plan against the deck as it is on Archidekt now; save it when asked and nothing is wrong."""
+    """Check a plan against the deck as it is on Archidekt now; save it when asked and nothing is wrong.
+    estimated is as for `resolve_plan`."""
     live = fetch_own_deck(editor, deck_id, user=user)
-    return apply_to_live(editor, live, plan, db, save_changes=save_changes, now=now, on_progress=on_progress)
+    return apply_to_live(
+        editor,
+        live,
+        plan,
+        db,
+        save_changes=save_changes,
+        now=now,
+        on_progress=on_progress,
+        estimated=estimated,
+    )
 
 
 def _entries_named(deck: Deck, name: str) -> list[DeckCard]:

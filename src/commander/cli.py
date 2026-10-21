@@ -59,6 +59,7 @@ from commander.clibase import (
     PacerFactory,
     PasswordPrompt,
     UsageError,
+    estimate_floor,
     one_deck,
     open_card_db,
 )
@@ -409,6 +410,8 @@ def _cmd_apply(args: argparse.Namespace, ctx: Context) -> int:
     file = read_config(config_path(args.config, ctx.env))
     user = resolve_user(args.user, ctx.env, file)
     deck_id, workspace = _plan_deck(plan.deck, args, ctx)
+    synced = workspace.load(deck_id) if workspace is not None else None
+    estimated = estimate_floor(synced, ctx) if synced is not None else None
     result: SaveResult | None = None
     with open_card_db(ctx) as db, ctx.client_factory() as http:
         fetcher = Fetcher(http)
@@ -422,6 +425,7 @@ def _cmd_apply(args: argparse.Namespace, ctx: Context) -> int:
             save_changes=args.save,
             now=ctx.now,
             on_progress=progress_printer(ctx.err),
+            estimated=estimated,
         )
         resolution, result = outcome.resolution, outcome.result
         preview = None

@@ -39,6 +39,7 @@ def decklist_json(
     A deck card carries its queued count change and whether + and - apply: - on any card but a commander,
     + on a card allowed in multiples (or back up to the copies the deck holds), neither on a card a queued
     swap brings in or cuts. A card queued to come in sits in its type's group with the id of its board card.
+    A card outside the deck has - to take it off its category, or + to undo that (ADR 0052).
     The stats are the saved deck's, and, while changes are queued, the deck's as a save would leave it.
     """
     main = db.resolve(deck.main_cards)
@@ -86,7 +87,9 @@ class _Edits:
     def json(self, card: GridCard, group: GridGroup) -> Json:
         if card.board_id is not None:
             return {"pending": {"kind": "add", "id": card.board_id}, "more": False, "less": False}
-        queued = self.board.count_of(card.name) if group.in_deck else None
+        if not group.in_deck:
+            return self._outside_json(card, group)
+        queued = self.board.count_of(card.name)
         pending = {"kind": "count", "was": queued.was, "count": queued.count} if queued else None
         editable = (
             group.in_deck and group.name != COMMANDER_CATEGORY and card_key(card.name) not in self.swapped
@@ -97,6 +100,12 @@ class _Edits:
             "more": editable and _more_allowed(card.name, held, queued, self.limits),
             "less": editable and (queued.count if queued else held) > 0,
         }
+
+    def _outside_json(self, card: GridCard, group: GridGroup) -> Json:
+        """A card outside the deck: - takes it off its category, and + puts it back while that is queued."""
+        queued = self.board.count_of(card.name, group.name)
+        pending = {"kind": "count", "was": queued.was, "count": queued.count} if queued else None
+        return {"pending": pending, "more": queued is not None, "less": queued is None}
 
 
 def _pending_adds(board: Board, db: CardDb, held: set[str]) -> list[PendingAdd]:
