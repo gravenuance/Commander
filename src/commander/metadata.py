@@ -17,11 +17,12 @@ for a day unless stated, and the sources are fetched in parallel, each at its ow
 
 import logging
 import os
+import threading
 from collections import Counter
 from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from concurrent.futures import Future
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from functools import partial
 from pathlib import Path
@@ -191,6 +192,21 @@ class CommanderCombos:
     combos: tuple[ComboDetail, ...]
 
 
+class ItemLocks:
+    """A lock for each cache item, made on first use and kept for the life of its owner."""
+
+    def __init__(self) -> None:
+        self._guard = threading.Lock()
+        self._locks: dict[str, threading.Lock] = {}
+
+    @contextmanager
+    def hold(self, item: str) -> Generator[None]:
+        with self._guard:
+            lock = self._locks.setdefault(item, threading.Lock())
+        with lock:
+            yield
+
+
 @dataclass(slots=True, frozen=True)
 class MetaSources:
     tournaments: TournamentSource
@@ -201,6 +217,8 @@ class MetaSources:
     # The Archidekt user whose own decks never count as other players' lists.
     user: str
     settings: MetaSettings
+    # Decks read side by side can want the same Archidekt search; the second waits for the first's answer.
+    searches: ItemLocks = field(default_factory=ItemLocks)
 
 
 def topdeck_client(
@@ -737,29 +755,30 @@ def _group_peers(
     item = cache_item("archidekt", name, str(bracket))
     cache = _peer_cache(folder, "Archidekt decks")
     request_fingerprint = request_key(request)
-    return cached_answer(
-        item,
-        request,
-        _live(
-            offline,
-            lambda: _peer_lists(
-                sources,
-                DeckReads(folder / DECK_READS_FOLDER),
-                group,
-                bracket,
-                own_id=own_id,
-                since=since,
-                now=now,
-                item=item,
-                previous=_previous_search(cache, item, request_fingerprint),
+    with sources.searches.hold(item):
+        return cached_answer(
+            item,
+            request,
+            _live(
+                offline,
+                lambda: _peer_lists(
+                    sources,
+                    DeckReads(folder / DECK_READS_FOLDER),
+                    group,
+                    bracket,
+                    own_id=own_id,
+                    since=since,
+                    now=now,
+                    item=item,
+                    previous=_previous_search(cache, item, request_fingerprint),
+                ),
             ),
-        ),
-        cache,
-        now=now,
-        refresh=refresh,
-        fresh_for=peer_fresh_for(item, now()),
-        errors=_ERRORS,
-    )
+            cache,
+            now=now,
+            refresh=refresh,
+            fresh_for=peer_fresh_for(item, now()),
+            errors=_ERRORS,
+        )
 
 
 def _distinct_tags(tags: Sequence[str]) -> list[str]:
@@ -806,28 +825,29 @@ def _tag_peers(
     item = cache_item("archidekt-tag", key, str(bracket))
     cache = _peer_cache(folder, "Archidekt tagged decks")
     request_fingerprint = request_key(request)
-    return cached_answer(
-        item,
-        request,
-        _live(
-            offline,
-            lambda: _tag_peer_lists(
-                sources,
-                DeckReads(folder / DECK_READS_FOLDER),
-                tag,
-                bracket,
-                since=since,
-                now=now,
-                item=item,
-                previous=_previous_search(cache, item, request_fingerprint),
+    with sources.searches.hold(item):
+        return cached_answer(
+            item,
+            request,
+            _live(
+                offline,
+                lambda: _tag_peer_lists(
+                    sources,
+                    DeckReads(folder / DECK_READS_FOLDER),
+                    tag,
+                    bracket,
+                    since=since,
+                    now=now,
+                    item=item,
+                    previous=_previous_search(cache, item, request_fingerprint),
+                ),
             ),
-        ),
-        cache,
-        now=now,
-        refresh=refresh,
-        fresh_for=peer_fresh_for(item, now()),
-        errors=_ERRORS,
-    )
+            cache,
+            now=now,
+            refresh=refresh,
+            fresh_for=peer_fresh_for(item, now()),
+            errors=_ERRORS,
+        )
 
 
 def core_request(commander: MetaCommander) -> dict[str, object] | None:

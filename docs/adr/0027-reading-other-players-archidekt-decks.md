@@ -78,6 +78,10 @@ Option 3 for the sample and option 2 for the cache, in `commander.archidekt`, `c
 - **Pruning:** a gather that fetches (never a cache-only read) deletes the deck files not used for 30 days,
   those whose deck was last updated before the window (no search lists them again) and those that no longer
   parse. A file's modification time is its last use, set when it is written or hit.
+- **One search at a time per answer:** a sync reads several decks side by side, so two of them can want the
+  same commander group or tag at once. Each search answer has a lock (`MetaSources.searches`, by cache item
+  name, made on first use and kept for the sources' life): the second caller waits for the first and then
+  reads its cached answer, so the group is searched and its decks read once.
 - **Tag searches** (ADR 0028) use the same pacer and cache, with their own caps.
 
 ## Consequences
