@@ -151,7 +151,6 @@ async function openDeck(id) {
     syncMetaUpdating();
   }
   await loadDeck();
-  metaPanel.load();
 }
 
 // Counts deck requests, so an answer that arrives after a newer request was sent is dropped.
@@ -164,6 +163,8 @@ async function loadDeck() {
   state.view = view;
   state.stamps[String(view.id)] = view.stamp;
   renderDeck();
+  // The report is worked out from the deck list, which a save or a sync may just have changed.
+  metaPanel.load();
 }
 
 /* Deck view */

@@ -42,6 +42,21 @@ def test_a_deck_opened_mid_sync_shows_the_cached_meta_at_once() -> None:
     assert seen == {"sample": "5 lists since 2026-08-16", "empty": True, "calls": 1}
 
 
+def test_every_reload_of_the_deck_rereads_its_meta_so_a_saved_list_is_reflected() -> None:
+    # A saved review changes the deck list, which the report's key cards and stoppers are worked out from;
+    # the panel was read only when the deck was opened, the panel unfolded or the meta cache changed.
+    seen = run("""
+    stub.meta = async () => REPORT;
+    stub.deck = async () => ({ id: 1, bracket: 5, stamp: "after the save" });
+    renderDeck = () => {};
+    await loadDeck();
+    const once = metaCalls();
+    await loadDeck();
+    return [once, metaCalls()];
+    """)
+    assert seen == [1, 2]
+
+
 def test_the_updating_line_shows_only_while_the_open_decks_own_fetch_is_pending() -> None:
     lines = run("""
     stub.meta = async () => REPORT;

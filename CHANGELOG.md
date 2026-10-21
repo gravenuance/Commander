@@ -13,6 +13,9 @@
   its Rules text and Reasoning folds, which ignored clicks before.
 - Picking a category for "Add without a cut" no longer closes the list at once: the click reached the card,
   which took its own selection away and hid the list.
+- The Meta panel is worked out again whenever the deck is reloaded, so a saved review (or a sync that changed
+  the list) shows at once in its key cards and what stops them; before, it kept the old list until the deck
+  was opened again.
 
 ## 0.9.0 - 2026-10-21
 
