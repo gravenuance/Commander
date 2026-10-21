@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.0.0 - 2026-10-21
+
 ### Added
 - A card on the Sideboard, the Maybeboard or another category outside the deck can be taken off it: − on the
   card in the app (+ undoes it), `cmdr board count <deck> <card> 0 --category Maybeboard`, or a plan's
