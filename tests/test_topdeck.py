@@ -11,10 +11,10 @@ import httpx
 import pytest
 
 from commander import net
+from commander.metadata import topdeck_client
 from commander.net import Fetcher, NetworkError, Pacer
 from commander.topdeck import (
     API_URL,
-    CHUNK_DAYS,
     NO_KEY_MESSAGE,
     TopdeckClient,
     TopdeckError,
@@ -133,11 +133,10 @@ def test_the_first_run_asks_for_every_chunk_of_the_window_oldest_first(tmp_path:
     ask(client_for(fake, tmp_path))
     starts = [r["start"] for r in fake.requests]
     ends = [r["end"] for r in fake.requests]
-    # 61 days from 16 August to 15 October: twenty chunks of three days and one of one, back to back.
-    assert len(fake.requests) == 21
+    # 61 days from 16 August to 15 October: eight chunks of seven days and one of five, back to back.
+    assert [(end - start + 1) // DAY for start, end in zip(starts, ends, strict=True)] == [7] * 8 + [5]
     assert starts[0] == stamp(2026, 8, 16)
     assert ends[-1] == stamp(2026, 10, 15, last_second=True)
-    assert all(end - start + 1 <= CHUNK_DAYS * DAY for start, end in zip(starts, ends, strict=True))
     assert starts[1:] == [end + 1 for end in ends[:-1]]
     body = fake.requests[0]
     assert (body["game"], body["format"], body["participantMin"], body["columns"]) == (
@@ -194,10 +193,9 @@ def test_the_next_day_asks_only_from_the_last_settled_day(tmp_path: Path) -> Non
     fake.requests.clear()
     ask(client_for(fake, tmp_path), since=date(2026, 8, 17), until=date(2026, 10, 16))
     # The first run settled up to the end of 12 October (three days before the end of the 15th); events
-    # that started later may still have been playing. Four days take two chunks.
+    # that started later may still have been playing. Four days take one chunk.
     assert [(r["start"], r["end"]) for r in fake.requests] == [
-        (stamp(2026, 10, 13), stamp(2026, 10, 15, last_second=True)),
-        (stamp(2026, 10, 16), stamp(2026, 10, 16, last_second=True)),
+        (stamp(2026, 10, 13), stamp(2026, 10, 16, last_second=True))
     ]
 
 
@@ -251,9 +249,9 @@ def test_a_failed_chunk_keeps_what_came_before_it(tmp_path: Path) -> None:
         ask(broken)
     fake.requests.clear()
     ask(client_for(fake, tmp_path))
-    # Three chunks were stored; the rest of the 21 is asked for, starting where the stored ones end.
-    assert len(fake.requests) == 18
-    assert fake.requests[0]["start"] == stamp(2026, 8, 16) + 3 * CHUNK_DAYS * DAY
+    # Three chunks of seven days were stored; the rest of the 9 is asked for, starting where they end.
+    assert len(fake.requests) == 6
+    assert fake.requests[0]["start"] == stamp(2026, 8, 16) + 21 * DAY
 
 
 def test_two_readers_at_once_fetch_the_window_once(tmp_path: Path) -> None:
@@ -269,8 +267,113 @@ def test_two_readers_at_once_fetch_the_window_once(tmp_path: Path) -> None:
         thread.start()
     for thread in threads:
         thread.join()
-    assert len(fake.requests) == 21
+    assert len(fake.requests) == 9
     assert results[0] == results[1]
+
+
+# Rate limit
+
+
+class RecordingPacer(Pacer):
+    """A pacer on a fake clock that records the cool-downs it is asked to hold and the pauses it slept."""
+
+    def __init__(self, interval: float) -> None:
+        self.now = 0.0
+        self.sleeps: list[float] = []
+        self.cool_downs: list[float] = []
+        super().__init__(interval, sleep=self._sleep, monotonic=lambda: self.now)
+
+    def _sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+    def cool_down(self, seconds: float) -> None:
+        self.cool_downs.append(seconds)
+        super().cool_down(seconds)
+
+
+# Four days to the 15th: the last three are never settled, so this is the shortest window that is fetched.
+FOUR_DAYS = date(2026, 10, 12)
+
+
+def limited_client(root: Path, pacer: Pacer, *answers: httpx.Response) -> tuple[TopdeckClient, list[int]]:
+    """A client whose requests get `answers` in turn, then empty 200s; the list counts the requests."""
+    asked: list[int] = []
+    waiting = list(answers)
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        asked.append(1)
+        return waiting.pop(0) if waiting else httpx.Response(200, json=[])
+
+    # One attempt only: a 429 that counted as an attempt would end the run here.
+    fetcher = Fetcher(httpx.Client(transport=httpx.MockTransport(handler)), max_attempts=1)
+    return TopdeckClient(fetcher, pacer, TournamentStore(root), MemoryKeyStore()), asked
+
+
+def test_a_429_holds_the_pacer_for_its_retry_after_and_the_request_goes_again(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    pacer = RecordingPacer(12.0)
+    limited = httpx.Response(429, headers={"Retry-After": "30"})
+    client, asked = limited_client(tmp_path, pacer, limited, limited, httpx.Response(200, json=[]))
+    with caplog.at_level(logging.INFO, logger="commander.net"):
+        ask(client, since=FOUR_DAYS)
+    assert pacer.cool_downs == [30.0, 30.0]
+    assert pacer.sleeps == [30.0, 30.0]
+    assert len(asked) == 3
+    waits = [r for r in caplog.records if "waiting" in r.getMessage()]
+    assert [(r.levelno, "waiting 30 s" in r.getMessage()) for r in waits] == [(logging.INFO, True)] * 2
+
+
+def test_a_429_with_the_wait_in_its_json_body_is_waited_out_too(tmp_path: Path) -> None:
+    pacer = RecordingPacer(12.0)
+    body = httpx.Response(429, json={"error": "Too many requests", "retryAfterSeconds": 17})
+    client, _ = limited_client(tmp_path, pacer, body)
+    ask(client, since=FOUR_DAYS)
+    assert pacer.cool_downs == [17.0]
+
+
+def test_a_429_that_says_nothing_about_how_long_is_waited_out_for_half_a_minute(tmp_path: Path) -> None:
+    pacer = RecordingPacer(12.0)
+    client, _ = limited_client(tmp_path, pacer, httpx.Response(429))
+    ask(client, since=FOUR_DAYS)
+    assert pacer.cool_downs == [30.0]
+
+
+def test_a_request_gives_up_when_the_429_waits_add_up_to_more_than_five_minutes(tmp_path: Path) -> None:
+    pacer = RecordingPacer(12.0)
+    limited = httpx.Response(429, headers={"Retry-After": "200"})
+    client, asked = limited_client(tmp_path, pacer, limited, limited, limited)
+    with pytest.raises(NetworkError, match="rate limited"):
+        ask(client, since=FOUR_DAYS)
+    # 200 s was waited; another 200 would pass the 300 s cap, so it is not.
+    assert pacer.cool_downs == [200.0]
+    assert len(asked) == 2
+    # The failure is remembered, so the run sends nothing more.
+    with pytest.raises(NetworkError, match="rate limited"):
+        ask(client, KINNAN, since=FOUR_DAYS)
+    assert len(asked) == 2
+
+
+def test_the_429_waits_of_one_request_do_not_count_against_the_next(tmp_path: Path) -> None:
+    pacer = RecordingPacer(12.0)
+    limited = httpx.Response(429, headers={"Retry-After": "200"})
+    client, asked = limited_client(tmp_path, pacer, limited, httpx.Response(200, json=[]), limited)
+    # Eleven days: a chunk of seven, then one of four.
+    ask(client, since=date(2026, 10, 5))
+    assert pacer.cool_downs == [200.0, 200.0]
+    assert len(asked) == 4
+
+
+def test_requests_start_twelve_seconds_apart(tmp_path: Path) -> None:
+    intervals: list[float] = []
+
+    def pacer_factory(interval: float) -> Pacer:
+        intervals.append(interval)
+        return Pacer(interval)
+
+    topdeck_client(httpx.Client(), pacer_factory, tmp_path)
+    assert intervals == [12.0]
 
 
 # Answers over the size cap
@@ -310,14 +413,17 @@ def test_an_answer_over_the_cap_is_asked_for_again_in_halves_down_to_what_fits(
     with caplog.at_level(logging.INFO):
         found = ask(client)
     assert found == ((date(2026, 10, 4), 12), (date(2026, 9, 13), 5), (date(2026, 8, 16), 21))
-    # The first three days: the whole span, then its first day, then the other two, then one day each.
-    spans = [(r["start"], r["end"]) for r in fake.requests[:5]]
+    # The first seven days: the whole span, then its first three, which split down to single days, then the
+    # last four.
+    spans = [(r["start"], r["end"]) for r in fake.requests[:7]]
     assert spans == [
+        (stamp(2026, 8, 16), stamp(2026, 8, 22, last_second=True)),
         (stamp(2026, 8, 16), stamp(2026, 8, 18, last_second=True)),
         (stamp(2026, 8, 16), stamp(2026, 8, 16, last_second=True)),
         (stamp(2026, 8, 17), stamp(2026, 8, 18, last_second=True)),
         (stamp(2026, 8, 17), stamp(2026, 8, 17, last_second=True)),
         (stamp(2026, 8, 18), stamp(2026, 8, 18, last_second=True)),
+        (stamp(2026, 8, 19), stamp(2026, 8, 22, last_second=True)),
     ]
     assert "over the size cap" in caplog.text
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]

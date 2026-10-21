@@ -12,6 +12,8 @@ EDHTop16's GraphQL API. Since 2026-10-19 it answers plain queries with "Only per
 production" and needs a key. TopDeck.gg publishes the same tournaments: `POST /api/v2/tournaments` with
 `Authorization: <key>`, free keys issued per user at topdeck.gg/developers, 100 requests a minute (fewer for
 bulk queries), and terms that ask for a visible credit with a link to TopDeck.gg wherever the data is shown.
+The bulk limit is stricter than the 100: the app's log of 2026-10-21 shows 429 after exactly five bulk requests
+every time, with `Retry-After` of 11 to 30 seconds, about five a minute.
 
 TopDeck gives events, not per-commander answers: each standing carries the decklist and a structured deck
 (`deckObj`: commanders, mainboard) in placement order, for about 86% of the entries. A 30-day answer for events
@@ -25,7 +27,7 @@ and no commander statistics, and each standing carries a player's name and id, w
    automated requests.
 3. **TopDeck, one request per commander.** Its API cannot filter by commander, so every read would fetch the
    whole window again.
-4. **TopDeck, events fetched once and kept; lists and shares worked out locally.** One request per three days of
+4. **TopDeck, events fetched once and kept; lists and shares worked out locally.** One request per seven days of
    new events, answers for any commander from the same files.
 
 ## Decision
@@ -35,8 +37,13 @@ Option 4, behind the provider seam that stood in front of EDHTop16 (`tournaments
 
 - **Fetching** (`topdeck.py`). Only events of at least 16 players (`participantMin`, the floor of
   `[meta] min_event_size`) and only the `decklist` column, so no names or ids are asked for. A window is
-  fetched by start date in three-day chunks (about 6 MB each, under the client's 20 MB cap), oldest first,
-  two seconds apart through the client's `Pacer`, saving each chunk as it arrives, so a failure part-way keeps what came before it. Reads that need the same missing days
+  fetched by start date in seven-day chunks (about 13.5 MB each on 2026-10-21, under the client's 20 MB cap),
+  oldest first, twelve seconds apart through the client's `Pacer` (measured from one request's start to the
+  next's, as answers take one to eight seconds), saving each chunk as it arrives, so a failure part-way keeps
+  what came before it. A 429 is no failure: `net.send_paced` holds the `Pacer` for the `Retry-After` (or the
+  JSON `retryAfterSeconds`, the longer of the two; 30 seconds if neither), logs the wait at INFO and sends the
+  request again without using one of the fetcher's attempts. The waits of one request may add up to five
+  minutes; past that it fails as a network error. Reads that need the same missing days
   (the commander's lists and the meta field run side by side) wait on one lock and the second finds the events
   stored. A chunk whose answer runs past the cap (`net.ResponseTooLargeError`) is asked for again in two
   halves, down to one day, logged at INFO; a single day still over the cap is skipped with a WARNING and the
@@ -84,8 +91,8 @@ Option 4, behind the provider seam that stood in front of EDHTop16 (`tournaments
 
 - The tool depends on a key each user issues; a user without one gets Archidekt's decks alone, as the report
   already allowed for a source that fails.
-- A first run for a 60-day window is about 21 requests and 115 MB (a minute or two, paced); later runs are
-  two small ones a day. The cache folder holds the compact events, far smaller than the answers.
+- A first run for a 60-day window is about 9 requests and 115 MB (two minutes or so, paced, plus any 429
+  waits); later runs are one small request a day. The cache folder holds the compact events, far smaller than the answers.
 - Meta shares are over decks with a structured list inside events of 16+, not EDHTop16's figures, so they
   differ from what its site shows. The event-size factor (ADR 0026) and the idea test's 0.30 bound were
   tuned on lists from events of 16+, the same floor, so they stand unchanged. Revisit if the ideas drift.
