@@ -51,7 +51,8 @@
 - A refresh of an Archidekt search pages only through the decks new or edited since the last one: the
   search lists the newest update first, so it stops at the first deck it already holds, and keeps the rest from
   the cached hits. Each commander and tag is still paged in full about once a week, on a day of its own, so
-  view counts do not go stale. Cached searches from before this are fetched again once (ADR 0027).
+  view counts do not go stale. Cached searches from before this stay usable and are paged in full on their
+  group's next refresh day, so they are not all searched at once (ADR 0027).
 
 ### Removed
 - Spicy picks, the spice figure of `meta --card` and the `spice` fields of `meta --json`: TopDeck has no spice

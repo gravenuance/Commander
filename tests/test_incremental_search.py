@@ -236,14 +236,37 @@ def test_a_tag_search_is_refreshed_incrementally_too(tmp_path: Path) -> None:
     assert 10_000_010 in hits_by_id(rig, "archidekt-tag-tokens")
 
 
-def test_a_cache_from_before_cached_hits_is_searched_in_full(tmp_path: Path) -> None:
-    rig = paged_rig(tmp_path, twelve_decks_and_four_old_ones())
-    sync(rig)
+def as_written_before_cached_hits(rig: Rig) -> None:
+    """Rewrite the stored Ellivere answer the way the version before the cached hits wrote it."""
     [path] = (rig.cache / CACHE_FOLDER).glob("archidekt-ellivere*.json")
     raw = json.loads(path.read_text(encoding="utf-8"))
     raw["version"] = 2
     del raw["answer"]["search"]
     path.write_text(json.dumps(raw), encoding="utf-8")
+
+
+def test_a_cache_from_before_cached_hits_still_answers_offline(tmp_path: Path) -> None:
+    rig = paged_rig(tmp_path, twelve_decks_and_four_old_ones())
+    first = sync(rig)
+    as_written_before_cached_hits(rig)
+    offline = gather_adjacent(
+        replace(ellivere_deck(), bracket=5),
+        ((ELLIVERE,),),
+        rig.sources(),
+        rig.cache,
+        now=lambda: rig.now,
+        refresh=False,
+        offline=True,
+    )
+    assert offline.errors == ()
+    assert offline.decks
+    assert offline.decks == first.decks
+
+
+def test_a_cache_from_before_cached_hits_is_searched_in_full(tmp_path: Path) -> None:
+    rig = paged_rig(tmp_path, twelve_decks_and_four_old_ones())
+    sync(rig)
+    as_written_before_cached_hits(rig)
     rig.now = NOW + timedelta(days=3)
     mark = len(paged(rig).pages)
     sync(rig)

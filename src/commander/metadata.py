@@ -103,8 +103,6 @@ _DECK_GONE_STATUSES = frozenset({403, 404, 410})
 
 FRESH_FOR = timedelta(hours=24)
 CACHE_VERSION = 2
-# The Archidekt search answers also hold their search hits; older ones are fetched again.
-PEER_CACHE_VERSION = 3
 CACHE_FOLDER = "meta"
 # Meta answers of the retired EDHTop16 provider (ADR 0047), which no run reads again.
 _RETIRED_PREFIX = "edhtop16"
@@ -1074,9 +1072,8 @@ def _cache[T](
 
 
 def _peer_cache(folder: Path, what: str) -> DeckCache[PeerLists]:
-    return DeckCache(
-        folder, version=PEER_CACHE_VERSION, what=what, encode=_encode_peers, decode=_decode_peers
-    )
+    # An answer from before the search hits has none: it serves as it is, and its refresh searches in full.
+    return _cache(folder, what, _encode_peers, _decode_peers)
 
 
 def _previous_search(cache: DeckCache[PeerLists], item: str, key: str) -> SearchHits | None:

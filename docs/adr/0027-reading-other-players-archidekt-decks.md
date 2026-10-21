@@ -66,8 +66,9 @@ Option 3 for the sample and option 2 for the cache, in `commander.archidekt`, `c
   refreshed at once. The other meta answers keep their day.
 - **Incremental search:** the search is sorted by `updatedAt`, newest first (`orderBy=-updatedAt`), so every
   deck listed above the newest one already held is new or edited. Each search answer therefore keeps its raw
-  hits (id, name, owner, views, `updatedAt`, bracket: `PeerLists.search`, cache version 3, so older answers
-  are fetched again). A refresh pages, per searched bracket, only to the page that reaches a deck updated at
+  hits (id, name, owner, views, `updatedAt`, bracket: `PeerLists.search`, in the same cache version 2: an older
+  answer has none, still serves, and is paged in full on its group's next refresh day, so a new version
+  would not hide the cached answers or send every group to a full search at once). A refresh pages, per searched bracket, only to the page that reaches a deck updated at
   or before the newest cached hit *of that bracket* (a stop at the newest hit of any bracket would cut the
   other bracket's search short), lays what it found over the cached hits by deck id, and drops hits older
   than the window. Between full searches the view counts of unedited decks go stale, and a deck that left
