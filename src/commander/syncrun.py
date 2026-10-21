@@ -30,8 +30,18 @@ from commander.decklocks import DeckLock
 from commander.deckprofile import ProfileError, profile_path, write_profile_template
 from commander.fetchpriority import FetchPriority
 from commander.ideas import compile_ideas, gather_idea_pools, rejudge_ideas, relabel_legacy_ideas
-from commander.metadata import Progress, gather_for, meta_sources
+from commander.metadata import (
+    TOURNAMENTS_STEP,
+    AdjacentDecks,
+    FinishMeta,
+    MetaSources,
+    Progress,
+    meta_sources,
+    start_gather_for,
+    start_tournament_refresh,
+)
 from commander.net import Fetcher, NetworkError, Pacer
+from commander.phases import ActivePhases
 from commander.profileedit import ensure_grace_table
 from commander.scryfall import CardRefresh, RefreshStatus, ScryfallClient, ScryfallError, refresh_card_db
 from commander.store import StoredDeck, Workspace
@@ -332,71 +342,189 @@ def _compile_ideas(
         warnings.append(f"ideas not compiled: {error}")
         return _IdeasPhase()
     phase = _IdeasPhase()
+    # Reads run side by side, so the line names each one that is under way.
+    phases = ActivePhases(progress, idle=_COMPILING)
     with db, services.client_factory() as http:
-        sources = meta_sources(http, services.pacer_factory, user, settings, services.cache)
+        sources = meta_sources(
+            http, services.pacer_factory, user, settings, services.cache, waits=_TopdeckWaits(phases)
+        )
         waiting = _most_viewed_first(workspace.load_all(), services)
+        # TopDeck's window is fetched once, on its own thread, while every deck's Archidekt and Spellbook
+        # reads go ahead; only the merge of a deck's tournament lists waits for it.
+        tournaments = start_tournament_refresh(
+            (s.deck for s in waiting),
+            sources,
+            now=services.now,
+            on_progress=phases.start,
+            on_done=phases.done,
+        )
         next_up = priority or FetchPriority()
         for queued in waiting:
             on_deck(queued.deck.id, FetchState.QUEUED)
+        reading: list[_ReadingDeck] = []
+
+        def merge_next() -> None:
+            read = next_up.pick(reading, lambda r: r.stored.deck.id)
+            reading.remove(read)
+            _merge_deck(
+                read,
+                workspace,
+                db,
+                services,
+                phase,
+                warnings=warnings,
+                on_deck=on_deck,
+                deck_lock=deck_lock,
+            )
+
         while waiting:
             stored = next_up.pick(waiting, lambda s: s.deck.id)
             waiting.remove(stored)
-            deck = stored.deck
-            warned = len(warnings)
-            on_deck(deck.id, FetchState.FETCHING)
+            on_deck(stored.deck.id, FetchState.FETCHING)
+            read_warnings: list[str] = []
             try:
-                data = gather_for(
-                    deck, sources, services.cache, now=services.now, refresh=False, on_progress=progress
+                reading.append(
+                    _start_reading(stored, db, sources, services, warnings=read_warnings, phases=phases)
                 )
-                pools = gather_idea_pools(
-                    stored,
-                    db,
-                    sources,
-                    services.cache,
-                    now=services.now,
-                    refresh=False,
-                    warn=warnings.append,
-                    on_progress=progress,
-                )
-                with deck_lock(deck.id):
-                    current = _current(workspace, stored)
-                    if current is None:
-                        warnings.append(f"{deck.short_name} ideas not merged: {_GONE}")
-                        on_deck(deck.id, FetchState.INCOMPLETE)
-                        continue
-                    # Before the re-judge, so a held card is closed and not turned down for its share.
-                    board_service = BoardService(current.folder, current.deck, db, now=services.now)
-                    held = board_service.close_held()
-                    if held:
-                        phase.closed[deck.short_name] = [card.name for card in held]
-                    met = board_service.clear_met_counts()
-                    if met:
-                        phase.counts_cleared[deck.short_name] = [f"{c.name} {c.was} → {c.count}" for c in met]
-                    dropped = rejudge_ideas(
-                        current,
-                        data,
-                        db,
-                        now=services.now,
-                        adjacent=None if pools.groups_failed else pools.decks,
-                        tagged=pools.tagged,
-                    )
-                    if dropped:
-                        phase.turned_down[deck.short_name] = [card.name for card in dropped]
-                    relabel_legacy_ideas(current, data, db, now=services.now)
-                    phase.ideas[deck.short_name] = compile_ideas(
-                        current, data, db, now=services.now, adjacent=pools.decks, tagged=pools.tagged
-                    )
             except (BoardError, ProfileError) as error:
-                warnings.append(f"{deck.short_name} ideas not compiled: {error}")
-                on_deck(deck.id, FetchState.INCOMPLETE)
+                warnings.extend(read_warnings)
+                warnings.append(f"{stored.deck.short_name} ideas not compiled: {error}")
+                on_deck(stored.deck.id, FetchState.INCOMPLETE)
                 continue
-            if data.lists.data is None and data.peers.data is None:
-                why = data.peers.error or data.lists.error
-                warnings.append(f"{deck.short_name}: no meta or Archidekt decks to learn from ({why})")
-            key_problem = _note_key_problem(data.lists.key_problem, warnings)
-            incomplete = len(warnings) > warned or data.peers.data is None or key_problem
-            on_deck(deck.id, FetchState.INCOMPLETE if incomplete else FetchState.DONE)
+            while reading and (tournaments is None or tournaments.done()):
+                merge_next()
+        while reading:
+            merge_next()
+        if tournaments is not None:
+            # The client closes with this block, so TopDeck's thread must be over first.
+            tournaments.result()
     return phase
+
+
+# Shown when no read is under way, as the ideas are merged.
+_COMPILING = "Compiling ideas"
+
+
+class _TopdeckWaits:
+    """Shows a wait for TopDeck's rate limit in the place of the step that is waiting."""
+
+    def __init__(self, phases: ActivePhases) -> None:
+        self._phases = phases
+        self._text = ""
+        self._replaced = False
+
+    def waiting(self, seconds: float) -> None:
+        self._text = f"TopDeck: waiting {seconds:.0f} s (rate limit)"
+        self._replaced = self._phases.replace(TOURNAMENTS_STEP, self._text)
+        if not self._replaced:
+            self._phases.start(self._text)
+
+    def resumed(self) -> None:
+        if self._replaced:
+            self._phases.replace(self._text, TOURNAMENTS_STEP)
+        else:
+            self._phases.done(self._text)
+
+
+@dataclass(slots=True)
+class _ReadingDeck:
+    """A deck whose Archidekt and Spellbook reads are done or under way; TopDeck's come at the merge."""
+
+    stored: StoredDeck
+    finish: FinishMeta
+    pools: AdjacentDecks
+    # What went wrong reading it, one sentence each.
+    warnings: list[str]
+
+
+def _start_reading(
+    stored: StoredDeck,
+    db: CardDb,
+    sources: MetaSources,
+    services: SyncServices,
+    *,
+    warnings: list[str],
+    phases: ActivePhases,
+) -> _ReadingDeck:
+    finish = start_gather_for(
+        stored.deck,
+        sources,
+        services.cache,
+        now=services.now,
+        refresh=False,
+        on_progress=phases.start,
+        on_done=phases.done,
+    )
+    pools = gather_idea_pools(
+        stored,
+        db,
+        sources,
+        services.cache,
+        now=services.now,
+        refresh=False,
+        warn=warnings.append,
+        on_progress=phases.start,
+        on_done=phases.done,
+    )
+    return _ReadingDeck(stored, finish, pools, warnings)
+
+
+def _merge_deck(
+    read: _ReadingDeck,
+    workspace: Workspace,
+    db: CardDb,
+    services: SyncServices,
+    phase: _IdeasPhase,
+    *,
+    warnings: list[str],
+    on_deck: DeckProgress,
+    deck_lock: DeckLock,
+) -> None:
+    """Wait for the deck's meta (TopDeck's lists last), then merge its ideas under its lock."""
+    deck, pools = read.stored.deck, read.pools
+    try:
+        data = read.finish()
+        with deck_lock(deck.id):
+            current = _current(workspace, read.stored)
+            if current is None:
+                warnings.extend(read.warnings)
+                warnings.append(f"{deck.short_name} ideas not merged: {_GONE}")
+                on_deck(deck.id, FetchState.INCOMPLETE)
+                return
+            # Before the re-judge, so a held card is closed and not turned down for its share.
+            board_service = BoardService(current.folder, current.deck, db, now=services.now)
+            held = board_service.close_held()
+            if held:
+                phase.closed[deck.short_name] = [card.name for card in held]
+            met = board_service.clear_met_counts()
+            if met:
+                phase.counts_cleared[deck.short_name] = [f"{c.name} {c.was} → {c.count}" for c in met]
+            dropped = rejudge_ideas(
+                current,
+                data,
+                db,
+                now=services.now,
+                adjacent=None if pools.groups_failed else pools.decks,
+                tagged=pools.tagged,
+            )
+            if dropped:
+                phase.turned_down[deck.short_name] = [card.name for card in dropped]
+            relabel_legacy_ideas(current, data, db, now=services.now)
+            phase.ideas[deck.short_name] = compile_ideas(
+                current, data, db, now=services.now, adjacent=pools.decks, tagged=pools.tagged
+            )
+    except (BoardError, ProfileError) as error:
+        warnings.extend(read.warnings)
+        warnings.append(f"{deck.short_name} ideas not compiled: {error}")
+        on_deck(deck.id, FetchState.INCOMPLETE)
+        return
+    if data.lists.data is None and data.peers.data is None:
+        why = data.peers.error or data.lists.error
+        read.warnings.append(f"{deck.short_name}: no meta or Archidekt decks to learn from ({why})")
+    warnings.extend(read.warnings)
+    key_problem = _note_key_problem(data.lists.key_problem, warnings)
+    incomplete = bool(read.warnings) or data.peers.data is None or key_problem
+    on_deck(deck.id, FetchState.INCOMPLETE if incomplete else FetchState.DONE)
 
 
 _GONE = "the deck left its folder or changed its commander while its ideas were fetched"

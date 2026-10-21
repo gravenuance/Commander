@@ -15,6 +15,7 @@ from commander.net import (
     Pacer,
     RateLimitedError,
     ResponseTooLargeError,
+    send_paced,
 )
 
 URL = "https://archidekt.com/api/decks/1/"
@@ -113,6 +114,38 @@ def test_a_surfaced_429_logs_the_servers_retry_after_with_the_url(caplog: pytest
         f"rate limited: {URL} (Retry-After: Thu, 15 Oct 2026 12:00:10 GMT)",
         f"rate limited: {URL} (Retry-After: none)",
     ]
+
+
+def test_a_surfaced_429_carries_the_wait_from_a_json_body_or_the_longer_of_it_and_the_header() -> None:
+    body = {"error": "Too many requests", "retryAfterSeconds": 17}
+    for response, expected in (
+        (httpx.Response(429, json=body), 17.0),
+        (httpx.Response(429, json=body, headers={"Retry-After": "11"}), 17.0),
+        (httpx.Response(429, json=body, headers={"Retry-After": "30"}), 30.0),
+        (httpx.Response(429, json={"retryAfterSeconds": "soon"}), None),
+        (httpx.Response(429, content=b"<html>slow down</html>"), None),
+    ):
+        with pytest.raises(RateLimitedError) as caught:
+            fetcher(Script(response), []).post_json(URL, {}, surface_rate_limit=True)
+        assert caught.value.retry_after == expected
+
+
+def test_send_paced_gives_up_on_a_429_that_always_asks_for_no_wait() -> None:
+    script = Script(*(httpx.Response(429, headers={"Retry-After": "0"}) for _ in range(400)))
+    sleeps: list[float] = []
+    now = [0.0]
+
+    def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    pacer = Pacer(0.0, sleep=sleep, monotonic=lambda: now[0])
+    web = fetcher(script, [])
+    with pytest.raises(NetworkError, match="Test is still rate limited after waiting 300 s"):
+        send_paced(pacer, lambda: web.get_json(URL, surface_rate_limit=True), what="Test")
+    # Each 429 is waited out for at least a second, so 300 of them use up the 300 seconds allowed.
+    assert script.calls == 301
+    assert sleeps == [1.0] * 300
 
 
 def test_a_caller_that_asks_for_the_429_still_gets_other_failures_retried() -> None:

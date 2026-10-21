@@ -33,7 +33,7 @@ from commander.sync import sync_decks
 from conftest import REFRESH_TOKEN, FakeArchidekt, Json, MemoryTokenStore
 from test_cli_apply import run
 from test_desk import DECK, DESK_LOG, NOW, first_card_id, items, logged, probing, reviewed
-from test_syncrun import DOWNLOADED, lists_with, stub_meta
+from test_syncrun import DOWNLOADED, lists_with, stub_gather, stub_meta
 
 # Only a safety net against a hung test: every wait below is released by the other side.
 WAIT_SECONDS = 30
@@ -176,7 +176,7 @@ def ideas_from(monkeypatch: pytest.MonkeyPatch, data: MetaData, during: Callable
         during()
         return data
 
-    monkeypatch.setattr(syncrun, "gather_for", gather)
+    stub_gather(monkeypatch, gather)
     monkeypatch.setattr(syncrun, "compile_ideas", compile_ideas)
 
 

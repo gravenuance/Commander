@@ -128,6 +128,17 @@ def judge_nothing(*_: object, **__: object) -> list[BoardCard]:
     return []
 
 
+def stub_gather(monkeypatch: pytest.MonkeyPatch, gather: Callable[..., object]) -> None:
+    """Replace the meta reads of the ideas phase with `gather`, called as each deck's reads start; what it
+    returns is that deck's meta, handed over when the merge asks for it."""
+
+    def start(*args: object, **kwargs: object) -> Callable[[], object]:
+        data = gather(*args, **kwargs)
+        return lambda: data
+
+    monkeypatch.setattr(syncrun, "start_gather_for", start)
+
+
 def stub_meta(
     monkeypatch: pytest.MonkeyPatch, after_gather: Callable[[int], None] = lambda _: None
 ) -> list[int]:
@@ -150,11 +161,15 @@ def stub_meta(
     def compile_nothing(*_: object, **__: object) -> dict[Origin, list[BoardCard]]:
         return {}
 
+    def no_refresh(*_: object, **__: object) -> None:
+        return None
+
     def no_pools(*_: object, **__: object) -> AdjacentDecks:
         return AdjacentDecks((), ())
 
     monkeypatch.setattr(syncrun, "meta_sources", sources)
-    monkeypatch.setattr(syncrun, "gather_for", gather)
+    monkeypatch.setattr(syncrun, "start_tournament_refresh", no_refresh)
+    stub_gather(monkeypatch, gather)
     monkeypatch.setattr(syncrun, "gather_idea_pools", no_pools)
     monkeypatch.setattr(syncrun, "compile_ideas", compile_nothing)
     monkeypatch.setattr(syncrun, "rejudge_ideas", judge_nothing)
@@ -347,7 +362,7 @@ def test_decks_whose_tournament_lists_hit_a_key_problem_are_incomplete_and_the_s
     def gather(*_: object, **__: object) -> object:
         return SimpleNamespace(lists=refused, peers=SimpleNamespace(data=1))
 
-    monkeypatch.setattr(syncrun, "gather_for", gather)
+    stub_gather(monkeypatch, gather)
     states: dict[int, str] = {}
     outcome = run_sync(
         services(tmp_path, fake),
@@ -387,7 +402,7 @@ def sync_with_lists(
     def gather(*_: object, **__: object) -> MetaData | None:
         return data
 
-    monkeypatch.setattr(syncrun, "gather_for", gather)
+    stub_gather(monkeypatch, gather)
     monkeypatch.setattr(syncrun, "rejudge_ideas", rejudge_ideas)
     monkeypatch.setattr(syncrun, "relabel_legacy_ideas", relabel_legacy_ideas)
     sync_ideas(tmp_path, fake)
@@ -668,7 +683,7 @@ def sync_outcome(
     def read_pools(*_: object, **__: object) -> AdjacentDecks:
         return pools or AdjacentDecks((), ())
 
-    monkeypatch.setattr(syncrun, "gather_for", read_data)
+    stub_gather(monkeypatch, read_data)
     monkeypatch.setattr(syncrun, "gather_idea_pools", read_pools)
     monkeypatch.setattr(syncrun, "rejudge_ideas", rejudge_ideas)
     monkeypatch.setattr(syncrun, "relabel_legacy_ideas", relabel_legacy_ideas)

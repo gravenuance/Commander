@@ -27,7 +27,15 @@ from commander.jsonshape import (
     req_object,
     req_str,
 )
-from commander.net import Fetcher, HttpStatusError, NetworkError, Pacer, ResponseTooLargeError
+from commander.net import (
+    Fetcher,
+    HttpStatusError,
+    NetworkError,
+    Pacer,
+    ResponseTooLargeError,
+    WaitListener,
+    send_paced,
+)
 from commander.topdeckstore import Coverage, DeckEntry, TournamentRecord, TournamentStore
 from commander.tournaments import (
     CommanderStats,
@@ -50,11 +58,13 @@ FORMAT = "EDH"
 COLUMNS = ("decklist",)
 # Events with fewer players say little about a list, and are not fetched at all.
 PARTICIPANT_MIN = MIN_EVENT_SIZE
-# 100 requests a minute, fewer for bulk queries whose answers run to megabytes: one every two seconds.
-REQUEST_INTERVAL_SECONDS = 2.0
-# Three days of Commander events of 16+ players are about 6 MB (13.5 MB a week on 2026-10-21); the HTTP
-# client caps an answer at 20.
-CHUNK_DAYS = 3
+# The documented 100 requests a minute does not hold for bulk queries: on 2026-10-21 TopDeck answered 429
+# after five of them in a row, about five a minute. Requests start twelve seconds apart, start to start,
+# as the answers take one to eight seconds to arrive.
+REQUEST_INTERVAL_SECONDS = 12.0
+# A week of Commander events of 16+ players is about 13.5 MB (2026-10-21); the HTTP client caps an answer
+# at 20. A chunk over the cap is asked for again in halves.
+CHUNK_DAYS = 7
 # Events that started in the last days may still be playing, so those days are asked for again next time.
 GRACE_DAYS = 3
 SLOW_QUERY_SECONDS = 30.0
@@ -85,9 +95,19 @@ class _Window:
 class TopdeckClient:
     """The tournament source: fetches the events a window lacks, then answers from the stored ones."""
 
-    def __init__(self, fetcher: Fetcher, pacer: Pacer, store: TournamentStore, keys: KeyStore) -> None:
+    def __init__(
+        self,
+        fetcher: Fetcher,
+        pacer: Pacer,
+        store: TournamentStore,
+        keys: KeyStore,
+        *,
+        waits: WaitListener | None = None,
+    ) -> None:
         self._fetcher = fetcher
         self._pacer = pacer
+        # Hears each wait for a 429, so the sync can say it is waiting.
+        self._waits = waits
         self._store = store
         self._keys = keys
         # Lists and the meta field read side by side: one fetches, the other waits and reads what it stored.
@@ -121,6 +141,12 @@ class TopdeckClient:
         """Set when the window last read was answered from the store because fetching the rest failed."""
         with self._lock:
             return None if self._loaded is None else self._loaded[2]
+
+    def load(self, *, since: date, until: date) -> None:
+        try:
+            self._events(since, until, 0)
+        except (TopdeckError, NetworkError) as error:
+            log.warning("TopDeck events for %s to %s not fetched: %s", since, until, error)
 
     def top_commanders(
         self, *, since: date, until: date, min_event_size: int, count: int
@@ -245,9 +271,15 @@ class TopdeckClient:
         return records
 
     def _post(self, body: Mapping[str, object], key: str) -> object:
-        self._pacer.wait()
         try:
-            return self._fetcher.post_json(API_URL, body, headers={"Authorization": key})
+            return send_paced(
+                self._pacer,
+                lambda: self._fetcher.post_json(
+                    API_URL, body, headers={"Authorization": key}, surface_rate_limit=True
+                ),
+                what="TopDeck",
+                waits=self._waits,
+            )
         except HttpStatusError as error:
             if error.status in (401, 403):
                 raise TopdeckKeyError(

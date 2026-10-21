@@ -85,3 +85,8 @@ class TournamentSource(Protocol):
     def stale_note(self) -> StaleNote | None:
         """Set when the events last read came from storage because fetching new ones failed."""
         ...
+
+    def load(self, *, since: date, until: date) -> None:
+        """Fetch the events of the window that are not stored yet, so the reads that follow find them. A
+        failure is not raised: the reads that follow give it again, or answer from what is stored."""
+        ...

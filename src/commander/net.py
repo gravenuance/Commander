@@ -9,10 +9,12 @@ import time
 from collections.abc import Callable, Mapping
 from email.utils import parsedate_to_datetime
 from pathlib import Path
+from typing import Protocol
 
 import httpx
 
 from commander import __version__
+from commander.jsonshape import as_object, opt_float
 
 log = logging.getLogger(__name__)
 
@@ -22,6 +24,12 @@ MAX_ATTEMPTS = 4
 BASE_DELAY_SECONDS = 1.0
 MAX_DELAY_SECONDS = 30.0
 SLOW_CALL_SECONDS = 5.0
+# What `send_paced` waits when a 429 names no time, and the least it waits, so a 429 that asks for none
+# cannot loop for ever.
+RATE_LIMIT_FALLBACK_SECONDS = 30.0
+RATE_LIMIT_MIN_SECONDS = 1.0
+# The most `send_paced` waits on 429s for one request before it gives up.
+MAX_RATE_LIMIT_WAIT_SECONDS = 300.0
 ERROR_DETAIL_BYTES = 300
 HTTP_OK = 200
 HTTP_NOT_FOUND = 404
@@ -56,7 +64,8 @@ class RateLimitedError(HttpStatusError):
     """The server answered 429 to a request that asked to see it (`get_json(surface_rate_limit=True)`); the
     caller decides how long to stay away.
 
-    retry_after is the server's Retry-After in seconds, if it sent one.
+    retry_after is the wait in seconds the server asked for, if it did: the longer of its Retry-After header
+    and the `retryAfterSeconds` of a JSON body.
     """
 
     def __init__(self, message: str, retry_after: float | None) -> None:
@@ -119,13 +128,27 @@ class Fetcher:
         )
         return _decode_json(url, body)
 
-    def post_json(self, url: str, payload: object, *, headers: Mapping[str, str] | None = None) -> object:
+    def post_json(
+        self,
+        url: str,
+        payload: object,
+        *,
+        headers: Mapping[str, str] | None = None,
+        surface_rate_limit: bool = False,
+    ) -> object:
         """POST a JSON query and read the JSON answer; only for read-only queries, as it retries like GET.
 
-        The headers may hold a key, which is never logged or put in an error message.
+        The headers may hold a key, which is never logged or put in an error message. surface_rate_limit
+        works as for get_json.
         """
         body = self._send(
-            "POST", url, None, payload, lambda r: _read_capped(r, url, MAX_RESPONSE_BYTES), headers=headers
+            "POST",
+            url,
+            None,
+            payload,
+            lambda r: _read_capped(r, url, MAX_RESPONSE_BYTES),
+            headers=headers,
+            surface_rate_limit=surface_rate_limit,
         )
         return _decode_json(url, body)
 
@@ -196,6 +219,7 @@ class Fetcher:
     ) -> T:
         for attempt in range(1, self._max_attempts + 1):
             started = self._monotonic()
+            limit_body = b""
             try:
                 with self._client.stream(
                     method, url, params=params, json=payload, headers=headers
@@ -203,6 +227,8 @@ class Fetcher:
                     status = response.status_code
                     retry_after = response.headers.get("Retry-After")
                     value = read(response) if status == HTTP_OK else None
+                    if status == HTTP_TOO_MANY_REQUESTS and surface_rate_limit:
+                        limit_body = _read_start(response, ERROR_DETAIL_BYTES)
             except (httpx.TimeoutException, httpx.TransportError) as error:
                 self._give_up_or_wait(attempt, url, str(error) or type(error).__name__, None)
                 continue
@@ -219,9 +245,9 @@ class Fetcher:
                 return value
             if status == HTTP_TOO_MANY_REQUESTS and surface_rate_limit:
                 log.info("rate limited: %s (Retry-After: %s)", url, retry_after or "none")
-                raise RateLimitedError(
-                    f"{url} returned HTTP {status}", _retry_after_seconds(retry_after, self._wall_clock())
-                )
+                header_wait = _retry_after_seconds(retry_after, self._wall_clock())
+                waits = [w for w in (header_wait, _retry_after_from_body(limit_body)) if w is not None]
+                raise RateLimitedError(f"{url} returned HTTP {status}", max(waits, default=None))
             if status in _RETRY_STATUSES:
                 self._give_up_or_wait(attempt, url, f"HTTP {status}", retry_after)
                 continue
@@ -290,6 +316,65 @@ class Pacer:
         """Hold every call from now until `seconds` have passed, for a service that asked for quiet."""
         with self._lock:
             self._not_before = max(self._not_before, self._monotonic() + max(seconds, 0.0))
+
+
+class WaitListener(Protocol):
+    """Told when `send_paced` starts and ends holding off a request for a service that asked for quiet."""
+
+    def waiting(self, seconds: float) -> None:
+        """The request waits for `seconds` before it goes again."""
+        ...
+
+    def resumed(self) -> None:
+        """The wait is over."""
+        ...
+
+
+def send_paced[T](
+    pacer: Pacer,
+    send: Callable[[], T],
+    *,
+    what: str,
+    max_wait: float = MAX_RATE_LIMIT_WAIT_SECONDS,
+    waits: WaitListener | None = None,
+) -> T:
+    """Wait the pacer's turn, then `send`; for a service that rations requests and says when to come back.
+
+    `send` is a fetcher call made with surface_rate_limit=True. On a 429 the pacer is held for the wait the
+    server asked for (30 seconds if it named none) and the request goes again, however many times it takes,
+    as a 429 means the request was not served and is no failure of its own. The waits of one request add up
+    to at most `max_wait`; past that it gives up with a NetworkError, so a service that never lets up cannot
+    hold a run for ever. `waits` hears each wait begin and end.
+    """
+    waited = 0.0
+    holding = False
+    while True:
+        pacer.wait()
+        if holding and waits is not None:
+            waits.resumed()
+        holding = False
+        try:
+            return send()
+        except RateLimitedError as error:
+            asked = RATE_LIMIT_FALLBACK_SECONDS if error.retry_after is None else error.retry_after
+            seconds = max(asked, RATE_LIMIT_MIN_SECONDS)
+            if waited + seconds > max_wait:
+                log.warning("%s is still rate limited after waiting %.0f s; giving up", what, waited)
+                raise NetworkError(f"{what} is still rate limited after waiting {waited:.0f} s") from error
+            waited += seconds
+            log.info("%s rate limited; waiting %.0f s", what, seconds)
+            pacer.cool_down(seconds)
+            if waits is not None:
+                waits.waiting(seconds)
+                holding = True
+
+
+def _retry_after_from_body(body: bytes) -> float | None:
+    """The `retryAfterSeconds` of a JSON answer, for services that put the wait there."""
+    try:
+        return opt_float(as_object(json.loads(body), "answer"), "retryAfterSeconds", "answer")
+    except ValueError:  # not JSON (JSONDecodeError), not an object or not a number (ShapeError)
+        return None
 
 
 def _retry_after_seconds(value: str | None, now: float) -> float | None:

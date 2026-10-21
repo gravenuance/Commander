@@ -433,6 +433,7 @@ def gather_idea_pools(
     refresh: bool,
     warn: Callable[[str], None],
     on_progress: Progress | None = None,
+    on_done: Progress | None = None,
 ) -> AdjacentDecks:
     """The recent decks of the commanders the deck's profile names as alike, and of other commanders carrying
     its theme tags (only when the profile turns the tag search on), gathered first (ADR 0028); a commander or
@@ -448,6 +449,7 @@ def gather_idea_pools(
         refresh=refresh,
         tags=tags,
         on_progress=on_progress,
+        on_done=on_done,
     )
     for name, why in pools.errors:
         warn(f"{stored.deck.short_name}: no recent {name} decks to learn from ({why})")

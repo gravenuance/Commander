@@ -5,6 +5,12 @@
 ## 0.8.0 - 2026-10-21
 
 ### Fixed
+- `sync` fetches TopDeck's events once, in the background, while it reads every deck's Archidekt and
+  Spellbook sources, and only each deck's tournament lists wait for them (ADR 0047). Before, the first deck
+  of a first sync waited for the whole fetch, minutes for a 60-day window, before anything else was read.
+- The sync's progress line names every read under way ("TopDeck: recent tournaments · Archidekt: recent
+  Edgar Markov decks"), drops each as it ends and shows a wait for TopDeck's rate limit ("TopDeck: waiting 30 s
+  (rate limit)"). Before, it showed the last one that started, and said Archidekt while TopDeck waited.
 - Testing a TopDeck key no longer fails with HTTP 400: the check now names the game and format, which TopDeck
   requires.
 
@@ -14,12 +20,13 @@
   (ADR 0047). Each user needs a free TopDeck key: `cmdr topdeck` asks for it (never on the command line), or
   the app's new **TopDeck** button has the steps, a **Test key** and a **Save key**; it is kept in Windows
   Credential Manager. Without one, `meta`, `sync` and the app say why the tournament lists are missing and carry
-  on with Archidekt's decks. Events of 16+ players are fetched three days at a time, two seconds apart, only for
-  days not seen yet, and kept per event in the cache folder; the commander's lists and the most-played
-  commanders and their shares are worked out from them, and player names and ids are never stored. `[meta]
-  min_event_size` runs from 16 (also its default): a smaller value in the config is raised to 16 with a
-  logged warning that says how to silence it. Every place the data shows, the app's Meta and Considering
-  panels and the CLI output, credits and links TopDeck.gg.
+  on with Archidekt's decks. Events of 16+ players are fetched seven days at a time, twelve seconds apart (TopDeck
+  answers bulk requests at about five a minute, and a 429 is waited out for as long as it asks, up to five
+  minutes a request), only for days not seen yet, and kept per event in the cache folder; the commander's
+  lists and the most-played commanders and their shares are worked out from them, and player names and ids
+  are never stored. `[meta] min_event_size` runs from 16 (also its default): a smaller value in the config is
+  raised to 16 with a logged warning that says how to silence it. Every place the data shows, the app's Meta
+  and Considering panels and the CLI output, credits and links TopDeck.gg.
 - `sync` now deletes the folder of a deck deleted on Archidekt (ADR 0045), where it only reported it before: a
   signed-in sync does so when the deck is missing from the complete listing and its own page answers 404, and
   reports `removed: <name>`; `--dry-run` says `would remove`. Anything else keeps the folder and reports

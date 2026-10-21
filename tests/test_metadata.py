@@ -23,6 +23,8 @@ from commander.metadata import (
     gather,
     gather_adjacent,
     gather_for,
+    start_gather_for,
+    start_tournament_refresh,
     window_start,
 )
 from commander.models import Deck, DeckCard
@@ -116,8 +118,8 @@ def ellivere_deck(*commanders: str) -> Deck:
     )
 
 
-# The 61 days of the window from 16 August to 15 October, asked for three days at a time.
-WINDOW_REQUESTS = 21
+# The 61 days of the window from 16 August to 15 October, asked for seven days at a time.
+WINDOW_REQUESTS = 9
 
 
 class Rig:
@@ -214,6 +216,84 @@ def test_the_decks_read_step_down_the_view_bar_until_enough_pass(rig: Rig) -> No
 def bracketed(rig: Rig, bracket: int) -> MetaData:
     deck = replace(ellivere_deck(), bracket=bracket)
     return gather_for(deck, rig.sources(), rig.cache, now=lambda: rig.now, refresh=False)
+
+
+@pytest.mark.parametrize("bracket", [4, 5])
+def test_the_reads_that_need_no_tournaments_start_first_and_tournaments_are_asked_only_at_the_finish(
+    rig: Rig, bracket: int
+) -> None:
+    deck = replace(ellivere_deck(), bracket=bracket)
+    finish = start_gather_for(deck, rig.sources(), rig.cache, now=lambda: rig.now, refresh=False)
+    assert rig.topdeck.requests == []
+    data = finish()
+    assert len(rig.topdeck.requests) == WINDOW_REQUESTS
+    assert data.lists.source is AnswerSource.FETCHED
+    assert data.peers.source is AnswerSource.FETCHED
+    assert rig.archidekt.searches
+
+
+def test_the_tournament_window_is_fetched_up_front_only_when_a_deck_reads_tournament_lists(rig: Rig) -> None:
+    decks = [replace(ellivere_deck(), bracket=bracket) for bracket in (2, 3)]
+    assert start_tournament_refresh(decks, rig.sources(), now=lambda: rig.now) is None
+    assert rig.topdeck.requests == []
+    refresh = start_tournament_refresh(
+        [*decks, replace(ellivere_deck(), bracket=4)], rig.sources(), now=lambda: rig.now
+    )
+    assert refresh is not None
+    refresh.result(timeout=30)
+    assert len(rig.topdeck.requests) == WINDOW_REQUESTS
+
+
+@pytest.mark.parametrize("bracket", [3, 4, 5])
+def test_every_step_that_is_reported_started_is_reported_done(rig: Rig, bracket: int) -> None:
+    started: list[str] = []
+    finished: list[str] = []
+    deck = replace(ellivere_deck(), bracket=bracket)
+    gather_for(
+        deck,
+        rig.sources(),
+        rig.cache,
+        now=lambda: rig.now,
+        refresh=False,
+        on_progress=started.append,
+        on_done=finished.append,
+    )
+    assert f"Archidekt: recent {ELLIVERE} decks" in started
+    assert sorted(started) == sorted(finished)
+
+
+def test_the_adjacent_reads_report_each_step_started_and_done(rig: Rig) -> None:
+    started: list[str] = []
+    finished: list[str] = []
+    gather_adjacent(
+        ellivere_deck(),
+        [(MAGDA,)],
+        rig.sources(),
+        rig.cache,
+        now=lambda: rig.now,
+        refresh=False,
+        tags=["Stax"],
+        on_progress=started.append,
+        on_done=finished.append,
+    )
+    assert started == [f"Archidekt: recent {MAGDA} decks", "Archidekt: recent decks tagged Stax"]
+    assert finished == started
+
+
+def test_the_tournament_refresh_reports_its_step_started_before_it_returns_and_done_after(rig: Rig) -> None:
+    started: list[str] = []
+    finished: list[str] = []
+    refresh = start_tournament_refresh(
+        [replace(ellivere_deck(), bracket=5)],
+        rig.sources(),
+        now=lambda: rig.now,
+        on_progress=started.append,
+        on_done=finished.append,
+    )
+    assert refresh is not None
+    assert started == ["TopDeck: recent tournaments"]
+    refresh.result(timeout=30)
+    assert finished == started
 
 
 def test_a_bracket_3_deck_reads_brackets_3_and_4_of_archidekt_and_no_tournament_lists(rig: Rig) -> None:
@@ -601,10 +681,17 @@ def test_combos_are_looked_for_in_each_top_commanders_core_cards(rig: Rig) -> No
         (ELLIVERE, ids),
         ("Kinnan, Bonder Prodigy", ids),
     ]
-    # The meta's cores first, then the deck's own list, whose combos the meta's answers are checked against.
-    ellivere, kinnan, own = rig.spellbook.combo_bodies
-    assert ellivere["commanders"] == [{"card": ELLIVERE, "quantity": 1}]
+    # Two cores and the deck's own list, which is read beside them and in no set order.
+    assert len(rig.spellbook.combo_bodies) == 3
+    [kinnan] = [b for b in rig.spellbook.combo_bodies if b["commanders"][0]["card"] != ELLIVERE]
+    [ellivere] = [
+        b for b in rig.spellbook.combo_bodies if {"card": "Gaea's Cradle", "quantity": 1} in b["main"]
+    ]
+    [own] = [
+        b for b in rig.spellbook.combo_bodies if {"card": "Containment Priest", "quantity": 1} in b["main"]
+    ]
     assert kinnan["commanders"] == [{"card": "Kinnan, Bonder Prodigy", "quantity": 1}]
+    assert ellivere["commanders"] == [{"card": ELLIVERE, "quantity": 1}]
     assert own["commanders"] == [{"card": ELLIVERE, "quantity": 1}]
     assert data.own_combos.source is AnswerSource.FETCHED
     # Every card of the two Kinnan lists is in at least a fifth of them, so all are core; so is every
