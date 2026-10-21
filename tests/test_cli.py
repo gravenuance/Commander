@@ -232,14 +232,23 @@ def test_sync_prints_the_ideas_it_closed_because_the_deck_holds_them(
 ) -> None:
     def finished(*_: object, **__: object) -> SyncOutcome:
         skipped = CardStatus(CardState.SKIPPED, "--no-cards")
-        return SyncOutcome([], skipped, None, closed={"Magda": ["Disruptor Flute", "Sol Ring"]})
+        return SyncOutcome(
+            [],
+            skipped,
+            None,
+            closed={"Magda": ["Disruptor Flute", "Sol Ring"]},
+            counts_cleared={"Magda": ["Mountain 4 → 6"]},
+        )
 
     monkeypatch.setattr(cli, "run_sync", finished)
 
     result = sync(tmp_path, archidekt)
 
-    [line] = [line for line in result.out.splitlines() if "board:" in line]
-    assert line == "Magda board: closed Disruptor Flute, Sol Ring (already in the deck)"
+    lines = [line for line in result.out.splitlines() if "board:" in line]
+    assert lines == [
+        "Magda board: closed Disruptor Flute, Sol Ring (already in the deck)",
+        "Magda board: cleared Mountain 4 → 6 (the deck already meets it)",
+    ]
 
 
 def test_sync_json_gives_the_removed_status(

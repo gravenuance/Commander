@@ -54,3 +54,24 @@ Option 4, chosen by the owner, with these rules (all in `sync._settle_missing`):
   risk, bounded by the signed-in and owner rules.
 - Without a login nothing is ever deleted, as before.
 - Revisit if Archidekt documents deletion semantics or the owner wants a trash folder.
+
+## Amendment (2026-10-21): rename, then delete, under the board lock
+
+A bare `rmtree` stops half-way at a file another program holds open (an indexer, antivirus, an editor on
+`notes.md`). With `deck.json` already gone, the folder is no deck to `load_all`, so no later sync looked at it
+again and nothing said so. `remove_deck` also ignored the board's cross-process lock, so `cmdr sync` could
+delete a deck while the app wrote its board.
+
+- `Workspace.remove_deck` takes the deck's board lock (`board_lock`, the lock `BoardService` uses) and renames
+  the folder to `.removing-<folder name>`, then deletes that. A rename is atomic and fails whole when a file
+  inside is held, leaving the deck folder intact for the next sync. `deck_folders`, `load_all` and
+  `folder_for` read only names that start with the deck id, so the set-aside folder is never loaded as a
+  deck and no grace table is written into it.
+- A held lock skips the removal for this sync: the result stays `missing`, with "its board is in use" in its
+  error and a warning in the log.
+- A delete that fails after the rename is `failed`, names the set-aside folder, and does not call
+  `on_removed`; the owner's files are still on disk under that name. Every sync first retries the leftovers
+  (`Workspace.leftover_removals`): it reports `removed` and calls `on_removed` when the delete now works, a
+  `failed` result naming the folder when it does not, and `would remove` on a dry run.
+- A set-aside folder of the same name that is still there blocks a second removal with a message to delete
+  it; the retry runs before any new removal, so that only follows a retry that failed.

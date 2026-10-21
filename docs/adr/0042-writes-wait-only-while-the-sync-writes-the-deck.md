@@ -83,3 +83,18 @@ Option 3, approved by the owner.
   wait for a save, which is as long as Archidekt takes.
 - `cmdr sync` passes no lock and no priority: the CLI runs alone in its process, and the board's lock file
   still guards each board write against the app.
+
+## Amendment (2026-10-21): the writes that read no card data do not hold it
+
+Decide, remove and a label change were let through during the download because they "read at most the card
+data already there, and briefly". The code did not keep that promise:
+
+- A label change opened the card database before its Archidekt round trip and held it open until the activity
+  line was written, which can make the download's rename over the file fail on Windows. It now logs through
+  `BoardNotes`, which appends to the activity log under the board lock and needs no card data, so it opens
+  none.
+- With no card database yet, or one of an older schema, the database cannot be opened, and decide and remove
+  failed with "run `cmdr sync`" while that sync was the thing downloading it. While a sync runs and its card
+  data is not in place, they now answer with the same refusal as a write that looks cards up: "Wait for the
+  card data to finish downloading, then decide." Once the download is done, or when no sync runs, the original
+  error stands.

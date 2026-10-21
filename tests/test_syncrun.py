@@ -733,6 +733,29 @@ def test_a_sync_closes_the_open_ideas_the_main_deck_holds_and_keeps_the_others(
     assert fake.writes == []
 
 
+def test_a_sync_clears_the_count_changes_the_deck_already_meets_and_keeps_the_others(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake, stored = populated(tmp_path, raw_deck, card_db_file)
+    # Queued while the deck held four Mountains and one Disruptor Flute; it holds six Mountains now.
+    earlier = copy.deepcopy(raw_deck)
+    for entry_ in earlier["cards"]:
+        if entry_["card"]["oracleCard"]["name"] == "Mountain":
+            entry_["quantity"] = 4
+    with CardDb(card_db_file) as db:
+        service = BoardService(stored.folder, parse_deck(earlier), db, now=lambda: NOW)
+        service.set_count("Mountain", 6, Actor.YOU)
+        service.set_count("Disruptor Flute", 0, Actor.YOU)
+
+    outcome = sync_outcome(tmp_path, fake, monkeypatch, lists_with("High-Speed Hoverbike", 9))
+
+    assert [c.name for c in read_board(stored.folder).counts] == ["Disruptor Flute"]
+    assert outcome.counts_cleared == {stored.deck.short_name: ["Mountain 4 → 6"]}
+    [entry_] = [a for a in read_activity(stored.folder) if a.action == "count change done"]
+    assert (entry_.actor, entry_.card, entry_.detail) == (Actor.CMDR, "Mountain", "4 → 6; the deck holds 6")
+    assert fake.writes == []
+
+
 def test_a_sync_leaves_a_queued_card_the_deck_now_holds_for_review_to_mark_applied(
     tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

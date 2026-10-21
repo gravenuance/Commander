@@ -101,6 +101,7 @@ class ArchidektClient:
         url: str | None = f"{self._base_url}/decks/v3/"
         params: Mapping[str, str | int] | None = {"ownerUsername": user, "pageSize": PAGE_SIZE}
         decks: list[DeckSummary] = []
+        seen: set[int] = set()
         for _ in range(MAX_PAGES):
             if url is None:
                 return decks
@@ -111,7 +112,11 @@ class ArchidektClient:
                 raise ArchidektError(f"unexpected deck list from Archidekt: {error}") from error
             # The "next" link already carries the query string.
             params = None
-            decks.extend(page)
+            # A deck edited between two page reads can be on both pages; the first row is the one kept.
+            for deck in page:
+                if deck.id not in seen:
+                    seen.add(deck.id)
+                    decks.append(deck)
         raise ArchidektError(f"deck list for {user} is longer than {MAX_PAGES} pages")
 
     def get_deck(self, deck_id: int) -> Deck:

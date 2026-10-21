@@ -147,7 +147,8 @@ def _done_lines(live: LiveDeck, board: Board) -> tuple[str, ...]:
         for card in already_added(live.deck, board)
     )
     return added + tuple(
-        f"{change.name}: already {change.count} in the deck on Archidekt; saving clears the change"
+        f"{change.name}: the deck on Archidekt already meets the change to {change.count}; "
+        "saving clears the change"
         for change in counts_met(live.deck, board)
     )
 

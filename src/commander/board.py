@@ -20,6 +20,7 @@ from datetime import datetime
 from enum import Enum
 from functools import cached_property
 from pathlib import Path
+from typing import Protocol
 
 from commander.answers import card_key
 from commander.carddb import CardDb, CardInfo
@@ -201,6 +202,11 @@ class CountChange:
             raise ValueError(f"{self.name}: copies must be 0-{MAX_COPIES}, from 1-{MAX_COPIES}")
         if self.count == self.was:
             raise ValueError(f"{self.name}: a count change must change the count")
+
+    def met_by(self, held: int) -> bool:
+        """Whether a deck holding `held` copies needs nothing more: a decrease is at most `count` copies, an
+        increase at least `count`, so a copy cut or added on Archidekt meanwhile never turns one around."""
+        return held <= self.count if self.count < self.was else held >= self.count
 
 
 @dataclass(slots=True, frozen=True)
@@ -445,12 +451,12 @@ def board_plan(deck: Deck, board: Board) -> Plan | None:
 
     It adds every queued card, under its category when it has one, and removes its chosen cut. A cut the
     deck holds more copies of, such as a basic land, loses one copy for each copy a card adds (most add one)
-    instead. Each count change asks for its count: at least that many when it is more than the deck holds,
-    at most that many when it is fewer.
+    instead. Each count change asks for its count: at least that many when it raises the count, at most that
+    many when it lowers it.
 
     The counts come from deck, so it should be the deck as it is on Archidekt now: a queued card that deck
     already holds (other than a basic land) is done, and neither adds nor cuts; so is a count change the
-    deck already meets.
+    deck already meets (`CountChange.met_by`), including a decrease of a card the deck no longer holds.
     """
     held = _held(deck)
     done = already_added(deck, board)
@@ -462,7 +468,7 @@ def board_plan(deck: Deck, board: Board) -> Plan | None:
     adds = [AddCard(card.name, _add_target(held, card), category=card.category) for card in queued]
     cuts = list(_cuts(held, queued))
     for change in counts:
-        if change.count > held[card_key(change.name)]:
+        if change.count > change.was:
             adds.append(AddCard(change.name, change.count))
         else:
             cuts.append(RemoveCard(change.name, keep=change.count))
@@ -470,9 +476,9 @@ def board_plan(deck: Deck, board: Board) -> Plan | None:
 
 
 def counts_met(deck: Deck, board: Board) -> tuple[CountChange, ...]:
-    """The count changes deck already meets: nothing is left to do for them."""
+    """The count changes deck already meets (`CountChange.met_by`): nothing is left to do for them."""
     held = _held(deck)
-    return tuple(change for change in board.counts if held[card_key(change.name)] == change.count)
+    return tuple(change for change in board.counts if change.met_by(held[card_key(change.name)]))
 
 
 def already_added(deck: Deck, board: Board) -> tuple[BoardCard, ...]:
@@ -520,6 +526,37 @@ def _cuts(held: Counter[str], queued: Sequence[BoardCard]) -> tuple[RemoveCard, 
             left = held[key] - named[key]
             cuts[key] = RemoveCard(card.choice, keep=max(left, 0))
     return tuple(cuts.values())
+
+
+class ActivityNotes(Protocol):
+    """What logs something that happened to a deck without changing its board."""
+
+    def note(self, actor: Actor, action: str, detail: str, card: str | None = None) -> None: ...
+
+
+class BoardNotes:
+    """Writes lines to one deck's activity log under the board lock, and needs no card data, so a write that
+    reads none (a label change) can log without holding the card database (ADR 0042)."""
+
+    def __init__(self, folder: Path, *, now: Callable[[], datetime]) -> None:
+        self._folder = folder
+        self._now = now
+
+    def note(self, actor: Actor, action: str, detail: str, card: str | None = None) -> None:
+        entry = Activity(
+            self._now().isoformat(timespec="seconds"),
+            actor,
+            action,
+            card,
+            _bounded(detail, MAX_NOTE, "the detail"),
+        )
+        with board_lock(self._folder):
+            try:
+                _append_activity(self._folder, entry)
+            except OSError as error:
+                log.exception("activity line was not written (%s)", entry.action)
+                saved = "its activity line could not be written"
+                raise BoardIOError(f"{entry.action}: {saved} ({error})") from error
 
 
 class BoardService:
@@ -835,6 +872,26 @@ class BoardService:
             save(_swap(board, updated), Activity(stamp, Actor.CMDR, "closed", card.name, ALREADY_IN_THE_DECK))
             return updated
 
+    def clear_met_counts(self) -> list[CountChange]:
+        """Drop every queued count change the main deck already meets (`CountChange.met_by`), noting each on
+        the activity log: a done change would show on, and block, a card the deck no longer needs it for
+        (ADR 0043). Returns the changes cleared, in board order."""
+        met = counts_met(self._deck, read_board(self._folder))
+        cleared = (self._clear_count_if_met(change.name) for change in met)
+        return [change for change in cleared if change is not None]
+
+    def _clear_count_if_met(self, name: str) -> CountChange | None:
+        held = _held(self._deck)[card_key(name)]
+        with self._editing() as (board, save):
+            change = board.count_of(name)
+            if change is None or not change.met_by(held):
+                return None
+            stamp = self._stamp()
+            others = tuple(c for c in board.counts if c is not change)
+            detail = f"{change.was} → {change.count}; the deck holds {held}"
+            save(Board(board.cards, others), Activity(stamp, Actor.CMDR, "count change done", name, detail))
+            return change
+
     def relabel_open(self, key: str, label: Relabel) -> BoardCard | None:
         """Give an open idea from the old Maybeboard pick-up the label today's lists make of it, as an idea
         cmdr compiled: None when the card was decided or removed meanwhile, or no list names a source."""
@@ -974,7 +1031,7 @@ class BoardService:
 
     @contextmanager
     def _editing(self) -> Generator[tuple[Board, Callable[[Board, Activity], None]]]:
-        with _board_lock(self._folder):
+        with board_lock(self._folder):
             board, stored_version = _read_stored(self._folder)
 
             def save(updated: Board, entry: Activity) -> None:
@@ -1084,8 +1141,9 @@ def _migrate(raw: Mapping[str, object]) -> Mapping[str, object]:
 
 
 @contextmanager
-def _board_lock(folder: Path) -> Generator[None]:
-    """Hold the deck's board lock: one thread here, and one process across the CLI and the app."""
+def board_lock(folder: Path) -> Generator[None]:
+    """Hold the deck's board lock: one thread here, and one process across the CLI and the app. Raises
+    BoardIOError when another holds it for longer than LOCK_TIMEOUT_SECONDS."""
     path = folder / LOCK_FILE
     with _THREAD_LOCK:
         deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS

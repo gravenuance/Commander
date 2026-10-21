@@ -102,6 +102,8 @@ class SyncOutcome:
         default_factory=dict[str, dict[Origin, list[BoardCard]]]
     )
     closed: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
+    # Per deck, by short name: the queued count changes ("Mountain 4 → 6") cleared as the deck meets them.
+    counts_cleared: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
     # What went wrong without stopping the sync, one sentence each.
     warnings: list[str] = field(default_factory=list[str])
 
@@ -175,7 +177,7 @@ def run_sync(
     if options.dry_run:
         return SyncOutcome(results, cards, labels, warnings=warnings)
     _add_grace_tables(workspace, warnings, deck_lock)
-    ideas, turned_down, closed = (
+    phase = (
         _compile_ideas(
             workspace,
             user,
@@ -188,9 +190,18 @@ def run_sync(
             deck_lock=deck_lock,
         )
         if options.ideas
-        else ({}, {}, {})
+        else _IdeasPhase()
     )
-    return SyncOutcome(results, cards, labels, turned_down, ideas, closed, warnings)
+    return SyncOutcome(
+        results,
+        cards,
+        labels,
+        phase.turned_down,
+        phase.ideas,
+        phase.closed,
+        phase.counts_cleared,
+        warnings,
+    )
 
 
 def _add_grace_tables(workspace: Workspace, warnings: list[str], deck_lock: DeckLock) -> None:
@@ -281,6 +292,18 @@ def _card_status(job: Future[CardRefresh] | None, options: SyncOptions) -> CardS
     return CardStatus(CardState.UPDATED, f"{source}, {refresh.printings or 0:,} printings")
 
 
+@dataclass(slots=True)
+class _IdeasPhase:
+    """What the ideas phase did, per deck by short name; the fields of the same names in `SyncOutcome`."""
+
+    ideas: dict[str, dict[Origin, list[BoardCard]]] = field(
+        default_factory=dict[str, dict[Origin, list[BoardCard]]]
+    )
+    turned_down: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
+    closed: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
+    counts_cleared: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
+
+
 def _compile_ideas(
     workspace: Workspace,
     user: str,
@@ -292,10 +315,11 @@ def _compile_ideas(
     priority: FetchPriority | None,
     on_deck: DeckProgress,
     deck_lock: DeckLock,
-) -> tuple[dict[str, dict[Origin, list[BoardCard]]], dict[str, list[str]], dict[str, list[str]]]:
+) -> _IdeasPhase:
     """Each deck's new ideas from the meta and recent Archidekt decks (ADR 0028), by short name, the open
-    ideas turned down on the way for no longer passing the idea test, and the open cards closed first
-    because the main deck holds them (ADR 0046).
+    ideas turned down on the way for no longer passing the idea test, the open cards closed first
+    because the main deck holds them (ADR 0046) and the queued count changes it already meets, cleared
+    (ADR 0043).
 
     Answers under a day old come from the cache. A deck whose sources fail keeps its board as it was.
     The decks go in the order of how often the user opens them, and the one the priority names goes
@@ -306,11 +330,9 @@ def _compile_ideas(
         db = CardDb(services.cache / CARD_DB_FILE)
     except CardDataError as error:
         warnings.append(f"ideas not compiled: {error}")
-        return {}, {}, {}
-    found: dict[str, dict[Origin, list[BoardCard]]] = {}
+        return _IdeasPhase()
+    phase = _IdeasPhase()
     key_noted = False
-    turned_down: dict[str, list[str]] = {}
-    closed: dict[str, list[str]] = {}
     with db, services.client_factory() as http:
         sources = meta_sources(http, services.pacer_factory, user, settings, services.cache)
         waiting = _most_viewed_first(workspace.load_all(), services)
@@ -344,9 +366,13 @@ def _compile_ideas(
                         on_deck(deck.id, FetchState.INCOMPLETE)
                         continue
                     # Before the re-judge, so a held card is closed and not turned down for its share.
-                    held = BoardService(current.folder, current.deck, db, now=services.now).close_held()
+                    board_service = BoardService(current.folder, current.deck, db, now=services.now)
+                    held = board_service.close_held()
                     if held:
-                        closed[deck.short_name] = [card.name for card in held]
+                        phase.closed[deck.short_name] = [card.name for card in held]
+                    met = board_service.clear_met_counts()
+                    if met:
+                        phase.counts_cleared[deck.short_name] = [f"{c.name} {c.was} → {c.count}" for c in met]
                     dropped = rejudge_ideas(
                         current,
                         data,
@@ -356,9 +382,9 @@ def _compile_ideas(
                         tagged=pools.tagged,
                     )
                     if dropped:
-                        turned_down[deck.short_name] = [card.name for card in dropped]
+                        phase.turned_down[deck.short_name] = [card.name for card in dropped]
                     relabel_legacy_ideas(current, data, db, now=services.now)
-                    found[deck.short_name] = compile_ideas(
+                    phase.ideas[deck.short_name] = compile_ideas(
                         current, data, db, now=services.now, adjacent=pools.decks, tagged=pools.tagged
                     )
             except (BoardError, ProfileError) as error:
@@ -374,7 +400,7 @@ def _compile_ideas(
                 key_noted = True
             incomplete = len(warnings) > warned or data.peers.data is None or no_key
             on_deck(deck.id, FetchState.INCOMPLETE if incomplete else FetchState.DONE)
-    return found, turned_down, closed
+    return phase
 
 
 _GONE = "the deck left its folder or changed its commander while its ideas were fetched"

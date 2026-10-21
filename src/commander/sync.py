@@ -6,6 +6,7 @@ from concurrent.futures import Future, as_completed
 from dataclasses import dataclass, replace
 from enum import Enum
 from functools import partial
+from pathlib import Path
 
 from commander.archidekt import ArchidektClient, ArchidektError, AuthError, SignInRequiredError
 from commander.background import run_all
@@ -14,7 +15,14 @@ from commander.diff import DeckDiff, diff_decks
 from commander.fetchpriority import FetchPriority
 from commander.models import Deck, DeckSummary
 from commander.net import NetworkError
-from commander.store import StoredDeck, Workspace, WorkspaceError, folder_name
+from commander.store import (
+    REMOVING_PREFIX,
+    DeckInUseError,
+    StoredDeck,
+    Workspace,
+    WorkspaceError,
+    folder_name,
+)
 
 log = logging.getLogger(__name__)
 
@@ -140,6 +148,10 @@ def sync_decks(
 
     upstream_ids = {summary.id for summary in summaries}
     results += [
+        _finish_removal(workspace, deck_id, folder, dry_run, watch)
+        for deck_id, folder in workspace.leftover_removals()
+    ]
+    results += [
         _settle_missing(client, workspace, user, stored, dry_run, watch)
         for stored in workspace.load_all()
         if stored.deck.id not in upstream_ids and (client.signed_in or not stored.deck.needs_login)
@@ -184,9 +196,23 @@ def _settle_missing(  # noqa: PLR0917 — the one step of sync_decks' tail
         )
     if dry_run:
         return replace(missing, status=SyncStatus.WOULD_REMOVE)
+    return _remove_gone(workspace, deck, missing, watch)
+
+
+def _remove_gone(workspace: Workspace, deck: Deck, missing: SyncResult, watch: PullWatch) -> SyncResult:
+    """Delete the folder of a deck Archidekt has confirmed deleted: REMOVED, FAILED when the delete did not
+    finish (the folder is set aside for the next sync), or `missing` when its board is in use."""
     try:
         with watch.deck_lock(deck.id):
             folder = workspace.remove_deck(deck.id)
+    except DeckInUseError as error:
+        log.warning(
+            "deck %d (%s): deleted on Archidekt, but not removed this sync: %s", deck.id, deck.name, error
+        )
+        return replace(
+            missing,
+            error=f"deleted on Archidekt, but {error}; not removed, the next sync retries",
+        )
     except (OSError, WorkspaceError) as error:
         log.warning("deck %d (%s): could not remove its folder: %s", deck.id, deck.name, error)
         return replace(
@@ -197,6 +223,30 @@ def _settle_missing(  # noqa: PLR0917 — the one step of sync_decks' tail
     log.info("deck %d (%s) was deleted on Archidekt; removed its folder %s", deck.id, deck.name, folder.name)
     watch.on_removed(deck.id)
     return replace(missing, status=SyncStatus.REMOVED)
+
+
+def _finish_removal(
+    workspace: Workspace,
+    deck_id: int,
+    set_aside: Path,
+    dry_run: bool,  # noqa: FBT001
+    watch: PullWatch,
+) -> SyncResult:
+    """Retry the delete of a folder an earlier sync set aside once Archidekt had confirmed its deck gone
+    (ADR 0045); the name is the folder's, as the deck.json inside may be half deleted."""
+    name = set_aside.name.removeprefix(REMOVING_PREFIX)
+    leftover = SyncResult(deck_id, name, SyncStatus.FAILED)
+    if dry_run:
+        return replace(leftover, status=SyncStatus.WOULD_REMOVE)
+    try:
+        with watch.deck_lock(deck_id):
+            workspace.finish_removal(set_aside)
+    except WorkspaceError as error:
+        log.warning("deck %d: could not finish deleting %s: %s", deck_id, set_aside.name, error)
+        return replace(leftover, error=f"deleted on Archidekt, but its folder was not removed: {error}")
+    log.info("deck %d: finished deleting the folder %s set aside earlier", deck_id, set_aside.name)
+    watch.on_removed(deck_id)
+    return replace(leftover, status=SyncStatus.REMOVED)
 
 
 def _write(  # noqa: PLR0917 — the one step of sync_decks' loop

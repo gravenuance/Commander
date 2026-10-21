@@ -65,3 +65,18 @@ Option 2, holding a target count, and an add without a cut stays a board card.
   board (only the deck's cards tell it); Review shows it as outside the deck. The app offers only the deck's
   own categories.
 - An older `cmdr` refuses a version 3 board rather than dropping its count changes on its next write.
+
+## Amendment (2026-10-21): the direction of a count change, and sync clears the ones the deck meets
+
+- **A decrease is "at most", an increase "at least".** The save plan compared the queued count with the live
+  deck's, so a decrease queued from 5 to 3 turned into an add of 3 once the deck held fewer than 3, or the
+  card had left it, on Archidekt. The direction is the change's own (`count` below or above `was`): a
+  decrease is met when the deck holds `count` or fewer copies, an increase when it holds `count` or more
+  (`CountChange.met_by`), and `counts_met` and `board_plan` both go by it. A decrease of a card the deck no
+  longer holds is met, so nothing is sent for it. An increase of such a card still asks for `count` copies.
+- **Sync clears met changes.** A change the deck met, because the owner edited it on Archidekt, kept showing
+  "×10 → 12" on a deck holding 12, counted as pending and blocked choosing the card as a cut. The ideas-phase
+  merge now drops them under the deck's lock next to `close_held` (ADR 0046), logs "count change done" for
+  each, and reports them in `SyncOutcome.counts_cleared` and as `<deck> board: cleared ...` on `cmdr sync`.
+  Like `close_held` it runs only with the ideas phase, so `--no-ideas` leaves them for the next save, which
+  clears them as before.

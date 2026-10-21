@@ -9,6 +9,8 @@ from pathlib import Path
 import httpx
 import pytest
 
+from commander import board as board_module
+from commander import store as store_module
 from commander.archidekt import ArchidektClient, parse_deck
 from commander.net import Fetcher, NetworkError
 from commander.store import SNAPSHOT_FILE, StoredDeck, Workspace
@@ -267,3 +269,99 @@ def test_a_folder_of_someone_elses_deck_is_not_removed(tmp_path: Path, raw_deck:
     assert by_id(results)[GONE_ID] is SyncStatus.MISSING_UPSTREAM
     assert (stranger_folder / SNAPSHOT_FILE).is_file()
     assert f"/api/decks/{GONE_ID}/" not in fake.requests
+
+
+MARKED = ".removing-222-other"
+
+
+def rmtree_failing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Deleting a folder stops half-way, as when an indexer or an editor holds one of its files open."""
+
+    def refuse(path: Path, *_: object, **__: object) -> None:
+        (Path(path) / SNAPSHOT_FILE).unlink()
+        raise PermissionError(f"{path}: held open by another program")
+
+    monkeypatch.setattr(store_module.shutil, "rmtree", refuse)
+
+
+def test_a_folder_that_cannot_be_deleted_is_set_aside_with_the_users_files_and_reported_failed(
+    tmp_path: Path, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = synced_then_deleted_upstream(tmp_path, raw_deck)
+    removed: list[int] = []
+    rmtree_failing(monkeypatch)
+
+    results = pull(tmp_path, fake, watch=PullWatch(on_removed=removed.append))
+
+    [result] = [r for r in results if r.deck_id == GONE_ID]
+    assert result.status is SyncStatus.FAILED
+    assert result.error is not None
+    assert MARKED in result.error
+    assert removed == []
+    assert not folder(tmp_path).exists()
+    assert (folder(tmp_path, MARKED) / "notes.md").is_file()
+    # The set-aside folder is no deck: nothing lists it, loads it or writes a grace table into it.
+    workspace = Workspace(tmp_path / "decks")
+    assert [deck_id for deck_id, _ in workspace.deck_folders()] == [DECK_ID]
+    assert [s.deck.id for s in workspace.load_all()] == [DECK_ID]
+    assert workspace.folder_for(GONE_ID) is None
+
+
+def test_the_next_sync_finishes_deleting_a_folder_set_aside_and_tells_the_caller(
+    tmp_path: Path, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = synced_then_deleted_upstream(tmp_path, raw_deck)
+    with monkeypatch.context() as broken:
+        rmtree_failing(broken)
+        pull(tmp_path, fake)
+    removed: list[int] = []
+
+    results = pull(tmp_path, fake, watch=PullWatch(on_removed=removed.append))
+
+    assert by_id(results) == {DECK_ID: SyncStatus.UNCHANGED, GONE_ID: SyncStatus.REMOVED}
+    assert not folder(tmp_path, MARKED).exists()
+    assert removed == [GONE_ID]
+
+
+def test_a_folder_set_aside_that_still_cannot_be_deleted_is_reported_again_and_a_dry_run_only_says_so(
+    tmp_path: Path, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = synced_then_deleted_upstream(tmp_path, raw_deck)
+    with monkeypatch.context() as broken:
+        rmtree_failing(broken)
+        pull(tmp_path, fake)
+        (folder(tmp_path, MARKED) / SNAPSHOT_FILE).write_text("{}", encoding="utf-8")
+
+        dry = pull(tmp_path, fake, dry_run=True)
+        again = pull(tmp_path, fake)
+
+    assert by_id(dry)[GONE_ID] is SyncStatus.WOULD_REMOVE
+    [result] = [r for r in again if r.deck_id == GONE_ID]
+    assert result.status is SyncStatus.FAILED
+    assert result.error is not None
+    assert MARKED in result.error
+    assert (folder(tmp_path, MARKED) / "notes.md").is_file()
+
+
+def test_a_deck_whose_board_is_in_use_by_the_app_is_kept_this_sync_with_a_warning(
+    tmp_path: Path, raw_deck: Json, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake = synced_then_deleted_upstream(tmp_path, raw_deck)
+    monkeypatch.setattr(board_module, "LOCK_TIMEOUT_SECONDS", 0.0)
+    lock = folder(tmp_path) / board_module.LOCK_FILE
+    lock.write_text("123", encoding="utf-8")
+    removed: list[int] = []
+
+    with caplog.at_level(logging.WARNING, logger=SYNC_LOG):
+        results = pull(tmp_path, fake, watch=PullWatch(on_removed=removed.append))
+
+    [kept] = [r for r in results if r.deck_id == GONE_ID]
+    assert kept.status is SyncStatus.MISSING_UPSTREAM
+    assert kept.error is not None
+    assert "board is in use" in kept.error
+    assert (folder(tmp_path) / SNAPSHOT_FILE).is_file()
+    assert removed == []
+    assert any("board is in use" in message for message in caplog.messages)
+
+    lock.unlink()
+    assert by_id(pull(tmp_path, fake))[GONE_ID] is SyncStatus.REMOVED

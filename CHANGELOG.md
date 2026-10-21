@@ -42,6 +42,22 @@
   which it pulls first when it is the one open, and changes that look cards up also wait while the card data
   downloads (ADR 0042). Each deck's new ideas are merged under that deck's lock, around what you changed
   meanwhile.
+- The decklist's stats and + and − count a card Archidekt holds as two entries (two printings, or foil and
+  not) by its copies in all: six Forests and four more were counted as four after a queued change, and a
+  split Seven Dwarves offered + on both entries until the board refused.
+- A queued count decrease means "at most that many" (ADR 0043): when the card was cut on Archidekt after
+  "5 → 3" was queued, the save no longer adds three copies back. A queued increase means "at least". `sync`
+  clears the count changes the deck already meets and prints `<deck> board: cleared ...`, so they no longer
+  count as pending or block choosing the card as a cut.
+- A label change no longer holds the card data open across its Archidekt call, and a decision or a removal
+  made while a first sync is still downloading the card data says to wait for it instead of "run cmdr sync"
+  (ADR 0042).
+- A deck folder deleted by `sync` is renamed to `.removing-<name>` under the board lock and then deleted, so a
+  file held open by another program no longer leaves a half-deleted folder that is never looked at again: the
+  next sync retries it and a failure names the folder. A deck whose board the app is writing is kept for
+  that sync (ADR 0045).
+- A deck listed twice by Archidekt's paged listing (one edited between two page reads) is fetched and
+  reported once.
 
 ### Added
 - − and + on the decklist's cards (ADR 0043): − takes one copy out (at one copy, the card), + adds one to a

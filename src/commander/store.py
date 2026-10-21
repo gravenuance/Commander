@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from commander.board import BoardIOError, board_lock
 from commander.fsutil import write_text_atomic
 from commander.jsonshape import (
     ShapeError,
@@ -34,11 +35,17 @@ NOTES_FILE = "notes.md"
 # The account's card labels (ADR 0012), shared by every deck; beside the deck folders.
 LABELS_FILE = "labels.json"
 LABELS_VERSION = 1
+# A deck folder being deleted is renamed to this plus its name first; it is no deck folder to anything else.
+REMOVING_PREFIX = ".removing-"
 _MAX_SLUG = 60
 
 
 class WorkspaceError(Exception):
     """The deck folder is in a state this tool will not guess its way out of."""
+
+
+class DeckInUseError(WorkspaceError):
+    """The deck's board lock is held, by the app or another cmdr, so its folder is left alone this time."""
 
 
 @dataclass(slots=True, frozen=True)
@@ -129,14 +136,53 @@ class Workspace:
 
     def remove_deck(self, deck_id: int) -> Path:
         """Delete the deck's whole folder and return it; refuses anything that is not a plain deck folder
-        directly inside the workspace root (a link, or a path that resolves elsewhere)."""
+        directly inside the workspace root (a link, or a path that resolves elsewhere).
+
+        The folder is first renamed to REMOVING_PREFIX + its name, under the deck's board lock: a rename is
+        atomic and fails whole when a program holds a file in the folder, where a delete would stop half-way
+        and leave a folder with no deck.json that no later sync looks at. A delete that fails after the
+        rename leaves the set-aside folder for `leftover_removals` (ADR 0045). Raises DeckInUseError when
+        the board lock is held.
+        """
         folder = self.folder_for(deck_id)
         if folder is None:
             raise WorkspaceError(f"deck {deck_id} has no folder in {self.root}")
         if folder.is_symlink() or folder.is_junction() or folder.resolve().parent != self.root.resolve():
             raise WorkspaceError(f"{folder} is outside the workspace {self.root}; not removed")
-        shutil.rmtree(folder)
+        set_aside = self.root / f"{REMOVING_PREFIX}{folder.name}"
+        if set_aside.exists():
+            raise WorkspaceError(f"{set_aside.name} is left from an earlier removal; delete it, then sync")
+        try:
+            with board_lock(folder):
+                folder.rename(set_aside)
+        except BoardIOError as error:
+            raise DeckInUseError(f"its board is in use ({error})") from error
+        self.finish_removal(set_aside)
         return folder
+
+    def leftover_removals(self) -> list[tuple[int, Path]]:
+        """The folders set aside by a removal that did not finish, each with its deck's id."""
+        if not self.root.is_dir():
+            return []
+        found = [
+            (_folder_deck_id(p.name.removeprefix(REMOVING_PREFIX)), p)
+            for p in sorted(self.root.iterdir())
+            if p.name.startswith(REMOVING_PREFIX)
+            and p.is_dir()
+            and not p.is_symlink()
+            and not p.is_junction()
+        ]
+        return [(deck_id, folder) for deck_id, folder in found if deck_id is not None]
+
+    def finish_removal(self, set_aside: Path) -> None:
+        """Delete a folder set aside by `remove_deck`; WorkspaceError, naming it, when that fails."""
+        try:
+            shutil.rmtree(set_aside)
+        except OSError as error:
+            raise WorkspaceError(
+                f"its folder is set aside as {set_aside.name} and could not be deleted yet ({error}); "
+                "the next sync retries"
+            ) from error
 
     def save(self, deck: Deck) -> Path:
         """Write deck.json and list.md, renaming the folder to match the deck name; never touches notes.md."""
