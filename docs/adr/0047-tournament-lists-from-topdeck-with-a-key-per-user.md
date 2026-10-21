@@ -73,8 +73,9 @@ Option 4, behind the provider seam that stood in front of EDHTop16 (`tournaments
   the app's Meta and Considering panels and the TopDeck panel.
 - **Removed:** spice (spicy picks, the spice of `meta --card`, the `spice` JSON fields), the unknown-standing
   rule of the weighted share, and the tournament name and player results, which nothing read.
-- `[meta] min_event_size` runs from 16 and defaults to it, as with EDHTop16. The first build fetched 64+
-  only; on TopDeck's last 30 days to 2026-10-21 that gave Magda 22 lists, Etali 20, Glarb 12 and Ellivere
+- `[meta] min_event_size` runs from 16 and defaults to it, as with EDHTop16; a smaller value in the config
+  is raised to 16 with a logged warning, not refused (the floor was 0 before this ADR). The first build
+  fetched 64+ only; on TopDeck's last 30 days to 2026-10-21 that gave Magda 22 lists, Etali 20, Glarb 12 and Ellivere
   2, against 115, 101, 31 and 8 at 16+, too few for the idea test's lower bound (owner's call, 2026-10-21).
   Small events stay small voices through the event-size factor (ADR 0026). The store went to version 2 so
   a store filled at 64+ is fetched again.

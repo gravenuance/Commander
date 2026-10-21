@@ -1,6 +1,7 @@
 """Settings resolved from flags, then environment, then the config file."""
 
 import json
+import logging
 import os
 import tomllib
 from collections.abc import Mapping
@@ -15,6 +16,8 @@ from tomlkit.items import Table
 from commander.analysis import ANALYZED_ROLES
 from commander.carddb import Role
 from commander.fsutil import write_text_atomic
+
+log = logging.getLogger(__name__)
 
 CONFIG_VERSION = 1
 ENV_USER = "CMDR_USER"
@@ -281,15 +284,24 @@ def parse_meta(table: object, path: str) -> MetaSettings:
     if not isinstance(table, dict):
         raise ConfigError(f"{path}: 'meta' must be a table, like [meta] with window_days = 60")
     values: dict[str, int] = {}
-    for key, value in cast("dict[str, object]", table).items():
+    for key, given in cast("dict[str, object]", table).items():
         limits = META_LIMITS.get(key)
         if limits is None:
             raise ConfigError(f"{path}: unknown key {key!r} in [meta]; use {', '.join(META_LIMITS)}")
         low, high = limits
+        value = _raise_to_floor(given, low, path) if key == "min_event_size" else given
         if not isinstance(value, int) or isinstance(value, bool) or not low <= value <= high:
             raise ConfigError(f"{path}: meta.{key} must be a whole number from {low} to {high}")
         values[key] = value
     return MetaSettings(**values)
+
+
+def _raise_to_floor(value: object, floor: int, path: str) -> object:
+    """The smallest event size was 0 before TopDeck's floor of 16, so a lower value is raised, not refused."""
+    if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value < floor:
+        return value
+    log.warning("%s: meta.min_event_size = %d is below %d and is raised to it", path, value, floor)
+    return floor
 
 
 def _toml_string(value: str) -> str:
