@@ -11,9 +11,6 @@ from datetime import UTC, datetime, timedelta
 PEER_FRESH_FOR = timedelta(days=3)
 # An answer younger than this is never refreshed, so a second sync soon after the first asks for nothing.
 MIN_FRESH_FOR = timedelta(hours=24)
-# Between full searches a refresh only looks for new and edited decks, so the view counts of the rest go
-# stale; each group is paged in full about this often to bring them up to date.
-FULL_SEARCH_EVERY = timedelta(days=7)
 
 
 def stable_offset(item: str, salt: str, modulus: int) -> int:
@@ -27,12 +24,6 @@ def fresh_for(item: str, now: datetime) -> timedelta:
     recent refresh day, one in every PEER_FRESH_FOR.days, but never under a day. An answer fetched since then
     is fresh; an older one is refreshed on that day or, if no sync ran, at the next sync."""
     return max(now - _latest_day_start(item, "refresh", PEER_FRESH_FOR, now), MIN_FRESH_FOR)
-
-
-def full_search_due(item: str, last_full_at: datetime, now: datetime) -> bool:
-    """Whether the group's last full search predates the start of its latest full-search day, one in every
-    FULL_SEARCH_EVERY.days; the search runs at the first refresh after that day begins."""
-    return last_full_at < _latest_day_start(item, "full", FULL_SEARCH_EVERY, now)
 
 
 def _latest_day_start(item: str, salt: str, period: timedelta, now: datetime) -> datetime:

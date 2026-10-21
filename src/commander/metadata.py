@@ -22,7 +22,7 @@ from collections import Counter
 from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from concurrent.futures import Future
 from contextlib import contextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from functools import partial
 from pathlib import Path
@@ -30,7 +30,6 @@ from pathlib import Path
 import httpx
 
 from commander.archidekt import (
-    MAX_SEARCH_PAGES,
     MIN_DECKS,
     SEARCH_INTERVAL_SECONDS,
     TAG_READ_DIVISOR,
@@ -54,7 +53,6 @@ from commander.deckcache import (
     NotFetchedError,
     cache_item,
     cached_answer,
-    request_key,
 )
 from commander.deckreads import FOLDER as DECK_READS_FOLDER
 from commander.deckreads import DeckRead, DeckReads, decode_multiples, read_of
@@ -74,7 +72,6 @@ from commander.jsonshape import (
 from commander.models import Deck, short_commander_name
 from commander.net import Fetcher, HttpStatusError, NetworkError, Pacer, WaitListener
 from commander.peerschedule import fresh_for as peer_fresh_for
-from commander.peersearch import SearchHits, update_hits
 from commander.spellbook import FRESH_FOR as SPELLBOOK_FRESH_FOR
 from commander.spellbook import (
     META_REQUEST_INTERVAL_SECONDS,
@@ -105,6 +102,9 @@ _DECK_GONE_STATUSES = frozenset({403, 404, 410})
 FRESH_FOR = timedelta(hours=24)
 CACHE_VERSION = 2
 CACHE_FOLDER = "meta"
+# The page cap that a commander's cached Archidekt answer was keyed with before ADR 0050. The key stays as it
+# was so those answers stay valid and each is refreshed on its own day, not all in the next sync.
+_COMMANDER_REQUEST_PAGES = 20
 # Meta answers of the retired EDHTop16 provider (ADR 0047), which no run reads again.
 _RETIRED_PREFIX = "edhtop16"
 # The cEDH bracket: the only one the tournaments cover.
@@ -154,8 +154,6 @@ class PeerLists:
     decks: tuple[PeerList, ...]
     # Decks the search listed but whose card list could not be read.
     skipped: int
-    # Every deck the search listed in the window, kept so the next refresh pages only through new ones.
-    search: SearchHits | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -774,7 +772,7 @@ def _group_peers(
     request: Mapping[str, object] = {
         "commander": name,
         "brackets": list(brackets_to_read(bracket)),
-        "pages": MAX_SEARCH_PAGES,
+        "pages": _COMMANDER_REQUEST_PAGES,
         "decks": settings.peer_decks,
         "viewFloors": list(VIEW_FLOORS),
         "minDecks": MIN_DECKS,
@@ -782,8 +780,6 @@ def _group_peers(
         "user": sources.user.casefold(),
     }
     item = cache_item("archidekt", name, str(bracket))
-    cache = _peer_cache(folder, "Archidekt decks")
-    request_fingerprint = request_key(request)
     with sources.searches.hold(item):
         return cached_answer(
             item,
@@ -799,10 +795,9 @@ def _group_peers(
                     since=since,
                     now=now,
                     item=item,
-                    previous=_previous_search(cache, item, request_fingerprint),
                 ),
             ),
-            cache,
+            _peer_cache(folder, "Archidekt decks"),
             now=now,
             refresh=refresh,
             fresh_for=peer_fresh_for(item, now()),
@@ -852,8 +847,6 @@ def _tag_peers(
         "user": sources.user.casefold(),
     }
     item = cache_item("archidekt-tag", key, str(bracket))
-    cache = _peer_cache(folder, "Archidekt tagged decks")
-    request_fingerprint = request_key(request)
     with sources.searches.hold(item):
         return cached_answer(
             item,
@@ -868,10 +861,9 @@ def _tag_peers(
                     since=since,
                     now=now,
                     item=item,
-                    previous=_previous_search(cache, item, request_fingerprint),
                 ),
             ),
-            cache,
+            _peer_cache(folder, "Archidekt tagged decks"),
             now=now,
             refresh=refresh,
             fresh_for=peer_fresh_for(item, now()),
@@ -1002,31 +994,25 @@ def _peer_lists(
     since: date,
     now: Clock,
     item: str,
-    previous: SearchHits | None,
 ) -> PeerLists:
     settings = sources.settings
     if settings.peer_decks == 0:
         return PeerLists((), 0)
-    brackets = brackets_to_read(bracket)
-    start = _start_of(since)
-
-    def search(stop_at: Mapping[int | None, datetime] | None) -> list[PeerDeck]:
-        return sources.archidekt.recent_decks(group[0], brackets=brackets, since=start, stop_at=stop_at)
-
-    hits = update_hits(previous, search, item=item, brackets=brackets, since=start, now=now())
+    found = sources.archidekt.popular_decks(
+        group[0], brackets=brackets_to_read(bracket), since=_start_of(since), label=item
+    )
     wanted = {name.casefold() for name in group}
     # The search finds one commander: decks pairing it with a partner or Background are read and dropped, and
     # so are decks led by only one of a pair.
-    peers = _read_peers(
+    return _read_peers(
         sources,
         reads,
-        hits.decks,
+        found,
         settings.peer_decks,
         own_id=own_id,
         now=now,
         keep=lambda read: wanted == {name.casefold() for name in read.commanders},
     )
-    return replace(peers, search=hits)
 
 
 def _tag_peer_lists(
@@ -1038,32 +1024,19 @@ def _tag_peer_lists(
     since: date,
     now: Clock,
     item: str,
-    previous: SearchHits | None,
 ) -> PeerLists:
     limit = tag_reads(sources.settings.peer_decks)
     if limit == 0:
         return PeerLists((), 0)
-    brackets = brackets_to_read(bracket)
-    start = _start_of(since)
-
-    def search(stop_at: Mapping[int | None, datetime] | None) -> list[PeerDeck]:
-        found: dict[int, PeerDeck] = {}
-        # One search per bracket, so a busy tag at the first cannot use up the pages of the next.
-        for each in brackets:
-            for peer in sources.archidekt.recent_decks(
-                None,
-                brackets=(each,),
-                since=start,
-                tag=tag,
-                max_pages=TAG_SEARCH_PAGES_PER_BRACKET,
-                stop_at=stop_at,
-            ):
-                found.setdefault(peer.id, peer)
-        return list(found.values())
-
-    hits = update_hits(previous, search, item=item, brackets=brackets, since=start, now=now())
-    peers = _read_peers(sources, reads, hits.decks, limit, own_id=None, now=now, keep=lambda _: True)
-    return replace(peers, search=hits)
+    found = sources.archidekt.popular_decks(
+        None,
+        brackets=brackets_to_read(bracket),
+        since=_start_of(since),
+        label=item,
+        tag=tag,
+        max_pages=TAG_SEARCH_PAGES_PER_BRACKET,
+    )
+    return _read_peers(sources, reads, found, limit, own_id=None, now=now, keep=lambda _: True)
 
 
 def _start_of(day: date) -> datetime:
@@ -1121,14 +1094,7 @@ def _cache[T](
 
 
 def _peer_cache(folder: Path, what: str) -> DeckCache[PeerLists]:
-    # An answer from before the search hits has none: it serves as it is, and its refresh searches in full.
     return _cache(folder, what, _encode_peers, _decode_peers)
-
-
-def _previous_search(cache: DeckCache[PeerLists], item: str, key: str) -> SearchHits | None:
-    """The search hits stored for this very request, whatever the age of the answer holding them."""
-    stored = cache.load(item, key)
-    return stored.data.search if stored is not None else None
 
 
 def _encode_entry(entry: Entry) -> object:
@@ -1245,7 +1211,7 @@ def _decode_peer_deck(d: Mapping[str, object], where: str) -> PeerDeck:
 
 
 def _encode_peers(peers: PeerLists) -> object:
-    encoded: dict[str, object] = {
+    return {
         "skipped": peers.skipped,
         "decks": [
             {
@@ -1258,15 +1224,10 @@ def _encode_peers(peers: PeerLists) -> object:
             for p in peers.decks
         ],
     }
-    if peers.search is not None:
-        encoded["search"] = {
-            "fullAt": peers.search.full_at.isoformat(),
-            "decks": [_encode_peer_deck(deck) for deck in peers.search.decks],
-        }
-    return encoded
 
 
 def _decode_peers(raw: object) -> PeerLists:
+    # Answers stored before ADR 0050 also hold a "search" field, which nothing reads any more.
     obj = as_object(raw, "answer")
     decks: list[PeerList] = []
     for index, item in enumerate(req_list(obj, "decks", "answer")):
@@ -1286,23 +1247,7 @@ def _decode_peers(raw: object) -> PeerLists:
                 str_list(d, "commanders", where) if "commanders" in d else (),
             )
         )
-    return PeerLists(tuple(decks), req_int(obj, "skipped", "answer"), _decode_search(obj))
-
-
-def _decode_search(obj: Mapping[str, object]) -> SearchHits | None:
-    """The stored search hits; an answer of a search that was never made (no decks to read) has none."""
-    if "search" not in obj:
-        return None
-    where = "answer.search"
-    search = req_object(obj, "search", "answer")
-    hits = tuple(
-        _decode_peer_deck(as_object(item, f"{where}.decks[{index}]"), f"{where}.decks[{index}]")
-        for index, item in enumerate(req_list(search, "decks", where))
-    )
-    full_at = datetime.fromisoformat(req_str(search, "fullAt", where))
-    if full_at.tzinfo is None:
-        raise ShapeError(f"{where}.fullAt: no time zone")
-    return SearchHits(hits, full_at)
+    return PeerLists(tuple(decks), req_int(obj, "skipped", "answer"))
 
 
 def _multiples(d: Mapping[str, object], where: str) -> tuple[tuple[str, int], ...] | None:
