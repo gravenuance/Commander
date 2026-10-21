@@ -297,7 +297,7 @@ class Desk:
         # How often each deck is opened, and the deck open now; the sync fetches by both (ADR 0034).
         self._views = ViewScores(settings.cache / VIEWS_FILE, now)
         self._open_deck: int | None = None
-        # Set while a sync runs, so a deck opened meanwhile goes next; guarded by _sync_lock like the sync.
+        # Set while a sync runs, so a deck opened meanwhile goes first; guarded by _sync_lock like the sync.
         self._priority: FetchPriority | None = None
         # What each running write to the decks or Archidekt is called; guarded by _sync_lock like the sync.
         self._writes: list[str] = []

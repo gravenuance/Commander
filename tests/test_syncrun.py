@@ -5,7 +5,7 @@ import shutil
 import threading
 from collections.abc import Callable
 from concurrent.futures import Future
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,7 +15,7 @@ import httpx
 import pytest
 
 from commander import syncrun
-from commander.archidekt import parse_deck
+from commander.archidekt import ArchidektSearch, parse_deck
 from commander.board import (
     Actor,
     BoardCard,
@@ -31,7 +31,7 @@ from commander.config import MetaSettings
 from commander.deckcache import Answer, AnswerSource
 from commander.deckprofile import Profile, profile_template, read_profile
 from commander.deckreads import DeckReads
-from commander.fetchpriority import FetchPriority
+from commander.fetchpriority import FetchPriority, fetching_deck
 from commander.ideas import gather_idea_pools, rejudge_ideas, relabel_legacy_ideas
 from commander.metadata import (
     TOURNAMENT_BRACKETS,
@@ -42,7 +42,7 @@ from commander.metadata import (
     start_tournament_refresh,
 )
 from commander.models import Deck
-from commander.net import NetworkError
+from commander.net import Fetcher, NetworkError, Pacer
 from commander.scryfall import CardRefresh, RefreshStatus
 from commander.store import LABELS_FILE, StoredDeck, Workspace
 from commander.sync import SyncResult
@@ -150,14 +150,29 @@ def stub_gather(monkeypatch: pytest.MonkeyPatch, gather: Callable[..., object]) 
     monkeypatch.setattr(syncrun, "start_gather_for", start)
 
 
+@dataclass(slots=True)
+class StubbedReads:
+    """What the replaced reads of the ideas phase were asked."""
+
+    # The decks gathered for, in the order their reads happened to start: every deck reads at once.
+    gathered: list[int] = field(default_factory=list[int])
+    # The ranking the sync gave the Archidekt pacer, by which it serves the decks' requests.
+    rank: Callable[[int], int] | None = None
+
+    def request_order(self) -> list[int]:
+        """The gathered decks in the order the pacer serves their Archidekt requests, as of this call."""
+        assert self.rank is not None
+        return sorted(self.gathered, key=self.rank)
+
+
 def stub_meta(
     monkeypatch: pytest.MonkeyPatch, after_gather: Callable[[int], None] = lambda _: None
-) -> list[int]:
-    """Replace the network reads of the ideas phase; the ids of the decks gathered for come back in order."""
-    gathered: list[int] = []
+) -> StubbedReads:
+    """Replace the network reads of the ideas phase; `after_gather` runs on each deck's read thread."""
+    reads = StubbedReads()
 
     def gather(deck: Deck, *_: object, **__: object) -> MetaData:
-        gathered.append(deck.id)
+        reads.gathered.append(deck.id)
         after_gather(deck.id)
         return cast(
             "MetaData",
@@ -166,7 +181,8 @@ def stub_meta(
             ),
         )
 
-    def sources(*_: object, **__: object) -> object:
+    def sources(*_: object, rank: Callable[[int], int] | None = None, **__: object) -> object:
+        reads.rank = rank
         return object()
 
     def compile_nothing(*_: object, **__: object) -> dict[Origin, list[BoardCard]]:
@@ -185,7 +201,7 @@ def stub_meta(
     monkeypatch.setattr(syncrun, "compile_ideas", compile_nothing)
     monkeypatch.setattr(syncrun, "rejudge_ideas", judge_nothing)
     monkeypatch.setattr(syncrun, "relabel_legacy_ideas", judge_nothing)
-    return gathered
+    return reads
 
 
 def write_views(tmp_path: Path, scores: dict[int, tuple[float, str]]) -> None:
@@ -215,23 +231,23 @@ def sync_ideas(tmp_path: Path, fake: FakeArchidekt, priority: FetchPriority | No
     )
 
 
-def test_ideas_come_in_the_workspace_order_when_no_deck_was_viewed(
+def test_archidekt_requests_go_in_the_workspace_order_when_no_deck_was_viewed(
     tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake = three_decks(tmp_path, raw_deck, card_db_file)
-    gathered = stub_meta(monkeypatch)
+    reads = stub_meta(monkeypatch)
     sync_ideas(tmp_path, fake)
-    assert gathered == [101, 102, 103]
+    assert reads.request_order() == [101, 102, 103]
 
 
-def test_ideas_come_for_the_most_viewed_decks_first(
+def test_archidekt_requests_go_for_the_most_viewed_decks_first(
     tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake = three_decks(tmp_path, raw_deck, card_db_file)
     write_views(tmp_path, VIEWS)
-    gathered = stub_meta(monkeypatch)
+    reads = stub_meta(monkeypatch)
     sync_ideas(tmp_path, fake)
-    assert gathered == [103, 101, 102]
+    assert reads.request_order() == [103, 101, 102]
 
 
 def test_decks_with_the_same_score_keep_the_workspace_order(
@@ -239,9 +255,9 @@ def test_decks_with_the_same_score_keep_the_workspace_order(
 ) -> None:
     fake = three_decks(tmp_path, raw_deck, card_db_file)
     write_views(tmp_path, {103: (2.0, "2026-10-15T12:00:00Z")})
-    gathered = stub_meta(monkeypatch)
+    reads = stub_meta(monkeypatch)
     sync_ideas(tmp_path, fake)
-    assert gathered == [103, 101, 102]
+    assert reads.request_order() == [103, 101, 102]
 
 
 def test_the_selected_deck_goes_first_and_the_rest_follow_by_score(
@@ -249,9 +265,9 @@ def test_the_selected_deck_goes_first_and_the_rest_follow_by_score(
 ) -> None:
     fake = three_decks(tmp_path, raw_deck, card_db_file)
     write_views(tmp_path, VIEWS)
-    gathered = stub_meta(monkeypatch)
+    reads = stub_meta(monkeypatch)
     sync_ideas(tmp_path, fake, FetchPriority(selected=102))
-    assert gathered == [102, 103, 101]
+    assert reads.request_order() == [102, 103, 101]
 
 
 def test_a_selected_deck_that_is_not_in_the_workspace_changes_nothing(
@@ -259,41 +275,27 @@ def test_a_selected_deck_that_is_not_in_the_workspace_changes_nothing(
 ) -> None:
     fake = three_decks(tmp_path, raw_deck, card_db_file)
     write_views(tmp_path, VIEWS)
-    gathered = stub_meta(monkeypatch)
+    reads = stub_meta(monkeypatch)
     sync_ideas(tmp_path, fake, FetchPriority(selected=999))
-    assert gathered == [103, 101, 102]
+    assert reads.request_order() == [103, 101, 102]
 
 
-def test_a_deck_opened_while_another_is_fetched_goes_next_and_each_deck_is_fetched_once(
+def test_a_deck_opened_while_the_decks_read_goes_first_at_once_and_each_deck_is_read_once(
     tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake = three_decks(tmp_path, raw_deck, card_db_file)
     write_views(tmp_path, VIEWS)
     priority = FetchPriority(selected=103)
 
-    def opened_during_the_first_fetch(deck_id: int) -> None:
+    def opened_during_a_read(deck_id: int) -> None:
         if deck_id == 103:
             priority.prefer(102)
 
-    gathered = stub_meta(monkeypatch, opened_during_the_first_fetch)
+    reads = stub_meta(monkeypatch, opened_during_a_read)
     sync_ideas(tmp_path, fake, priority)
-    # 103 finishes first; 102, opened meanwhile, goes before 101, which scores higher.
-    assert gathered == [103, 102, 101]
-
-
-def test_a_deck_opened_after_it_was_fetched_is_not_fetched_again(
-    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    fake = three_decks(tmp_path, raw_deck, card_db_file)
-    priority = FetchPriority()
-
-    def reopened_after_it_was_fetched(deck_id: int) -> None:
-        if deck_id == 102:
-            priority.prefer(101)
-
-    gathered = stub_meta(monkeypatch, reopened_after_it_was_fetched)
-    sync_ideas(tmp_path, fake, priority)
-    assert gathered == [101, 102, 103]
+    # 102, opened meanwhile, goes before 103, which was open, and before 101, which scores higher.
+    assert reads.request_order() == [102, 103, 101]
+    assert sorted(reads.gathered) == DECK_IDS
 
 
 def test_cmdr_sync_fetches_ideas_in_view_order_without_a_selected_deck(
@@ -301,9 +303,9 @@ def test_cmdr_sync_fetches_ideas_in_view_order_without_a_selected_deck(
 ) -> None:
     fake = three_decks(tmp_path, raw_deck, card_db_file)
     write_views(tmp_path, VIEWS)
-    gathered = stub_meta(monkeypatch)
+    reads = stub_meta(monkeypatch)
     assert run(["sync", "--no-cards", "--workspace", str(tmp_path / "decks")], tmp_path, fake).code == 0
-    assert gathered == [103, 101, 102]
+    assert reads.request_order() == [103, 101, 102]
 
 
 def sync_states(tmp_path: Path, fake: FakeArchidekt) -> list[tuple[int, str]]:
@@ -320,23 +322,18 @@ def sync_states(tmp_path: Path, fake: FakeArchidekt) -> list[tuple[int, str]]:
     return events
 
 
-def test_each_deck_is_queued_then_fetching_then_done_in_the_order_it_is_fetched(
+def test_each_deck_is_queued_in_the_order_of_its_requests_then_fetching_then_done(
     tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake = three_decks(tmp_path, raw_deck, card_db_file)
     write_views(tmp_path, VIEWS)
     stub_meta(monkeypatch)
-    assert sync_states(tmp_path, fake) == [
-        (103, "queued"),
-        (101, "queued"),
-        (102, "queued"),
-        (103, "fetching"),
-        (103, "done"),
-        (101, "fetching"),
-        (101, "done"),
-        (102, "fetching"),
-        (102, "done"),
-    ]
+    events = sync_states(tmp_path, fake)
+    assert events[:3] == [(103, "queued"), (101, "queued"), (102, "queued")]
+    # The decks read at once, so only each deck's own steps have an order.
+    for deck_id in DECK_IDS:
+        assert [state for deck, state in events if deck == deck_id] == ["queued", "fetching", "done"]
+    assert len(events) == 9
 
 
 def test_a_deck_whose_ideas_fail_is_incomplete_and_the_others_carry_on(
@@ -359,6 +356,145 @@ def test_a_deck_whose_ideas_fail_is_incomplete_and_the_others_carry_on(
     monkeypatch.setattr(syncrun, "compile_ideas", compile_ideas)
     final = dict(sync_states(tmp_path, fake))
     assert final == {101: "incomplete", 102: "incomplete", 103: "done"}
+
+
+def test_a_deck_whose_reads_are_done_merges_while_the_first_deck_is_still_reading(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = three_decks(tmp_path, raw_deck, card_db_file)
+    stub_meta(monkeypatch)
+    merged_another = threading.Event()
+    first_deck_waited_for_a_merge: list[bool] = []
+    merged: list[int] = []
+
+    def gather_pools(stored: StoredDeck, *_: object, **__: object) -> AdjacentDecks:
+        if stored.deck.id == DECK_IDS[0]:
+            # Its Archidekt read stays out until another deck has been merged.
+            first_deck_waited_for_a_merge.append(merged_another.wait(timeout=5))
+        return AdjacentDecks((), ())
+
+    def compile_ideas(stored: StoredDeck, *_: object, **__: object) -> dict[Origin, list[BoardCard]]:
+        merged.append(stored.deck.id)
+        merged_another.set()
+        return {}
+
+    monkeypatch.setattr(syncrun, "gather_idea_pools", gather_pools)
+    monkeypatch.setattr(syncrun, "compile_ideas", compile_ideas)
+    events = sync_states(tmp_path, fake)
+    assert first_deck_waited_for_a_merge == [True]
+    assert sorted(merged[:2]) == DECK_IDS[1:]
+    assert merged[2] == DECK_IDS[0]
+    # Every deck shows as fetching before the first deck, which was held up, is done.
+    assert [e for e in events if e[0] == 101] == [(101, "queued"), (101, "fetching"), (101, "done")]
+    assert events.index((101, "done")) > max(events.index((d, "fetching")) for d in DECK_IDS)
+
+
+def merge_order_when_the_others_are_ready_together(
+    tmp_path: Path, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch, priority: FetchPriority
+) -> list[int]:
+    """The order the decks merge in when deck 101's reads end first and the other two end while it merges."""
+    # The most viewed first: 103, 101, 102.
+    write_views(tmp_path, VIEWS)
+    stub_meta(monkeypatch)
+    first_is_merging = threading.Event()
+    merged: list[int] = []
+
+    def gather_pools(stored: StoredDeck, *_: object, **__: object) -> AdjacentDecks:
+        if stored.deck.id != DECK_IDS[0]:
+            # Held back, so only deck 101 is ready to merge first.
+            assert first_is_merging.wait(timeout=5)
+        return AdjacentDecks((), ())
+
+    def compile_ideas(stored: StoredDeck, *_: object, **__: object) -> dict[Origin, list[BoardCard]]:
+        merged.append(stored.deck.id)
+        if stored.deck.id == DECK_IDS[0]:
+            first_is_merging.set()
+            # The other two finish their reads while the first is merged, so both are ready to follow it.
+            for thread in threading.enumerate():
+                if thread.name.startswith(syncrun.READ_THREAD):
+                    thread.join(timeout=5)
+        return {}
+
+    monkeypatch.setattr(syncrun, "gather_idea_pools", gather_pools)
+    monkeypatch.setattr(syncrun, "compile_ideas", compile_ideas)
+    sync_ideas(tmp_path, fake, priority)
+    return merged
+
+
+def test_of_the_decks_whose_reads_are_done_the_open_one_merges_first(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = three_decks(tmp_path, raw_deck, card_db_file)
+    priority = FetchPriority(selected=102)
+    # 102 is open, and ahead of 103, which has more views.
+    assert merge_order_when_the_others_are_ready_together(tmp_path, fake, monkeypatch, priority) == [
+        101,
+        102,
+        103,
+    ]
+
+
+def test_of_the_decks_whose_reads_are_done_the_most_viewed_merges_first_when_none_is_open(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = three_decks(tmp_path, raw_deck, card_db_file)
+    priority = FetchPriority()
+    assert merge_order_when_the_others_are_ready_together(tmp_path, fake, monkeypatch, priority) == [
+        101,
+        103,
+        102,
+    ]
+
+
+def test_a_deck_whose_read_fails_is_incomplete_with_its_warnings_and_the_others_carry_on(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = three_decks(tmp_path, raw_deck, card_db_file)
+    stub_meta(monkeypatch)
+    merged: list[int] = []
+
+    def gather_pools(stored: StoredDeck, *_: object, warn: Callable[[str], None], **__: object) -> object:
+        if stored.deck.id == 102:
+            warn("a source was unavailable")
+            raise BoardError("board.json is damaged")
+        return AdjacentDecks((), ())
+
+    def compile_ideas(stored: StoredDeck, *_: object, **__: object) -> dict[Origin, list[BoardCard]]:
+        merged.append(stored.deck.id)
+        return {}
+
+    monkeypatch.setattr(syncrun, "gather_idea_pools", gather_pools)
+    monkeypatch.setattr(syncrun, "compile_ideas", compile_ideas)
+    states: dict[int, str] = {}
+    outcome = run_sync(
+        services(tmp_path, fake),
+        Workspace(tmp_path / "decks"),
+        "TESTER",
+        MetaSettings(),
+        SyncOptions(cards=False),
+        on_deck=lambda deck_id, state: states.__setitem__(deck_id, state.value),
+        on_progress=lambda _: None,
+    )
+    assert states == {101: "done", 102: "incomplete", 103: "done"}
+    assert sorted(merged) == [101, 103]
+    # The deck goes by its commander's short name; the three decks share Magda.
+    assert outcome.warnings == ["a source was unavailable", "Magda ideas not compiled: board.json is damaged"]
+
+
+def test_an_unexpected_error_in_a_decks_read_ends_the_sync_instead_of_being_lost(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = three_decks(tmp_path, raw_deck, card_db_file)
+    stub_meta(monkeypatch)
+
+    def gather_pools(stored: StoredDeck, *_: object, **__: object) -> AdjacentDecks:
+        if stored.deck.id == 102:
+            raise RuntimeError("the read broke")
+        return AdjacentDecks((), ())
+
+    monkeypatch.setattr(syncrun, "gather_idea_pools", gather_pools)
+    with pytest.raises(RuntimeError, match="the read broke"):
+        sync_ideas(tmp_path, fake)
 
 
 def test_decks_whose_tournament_lists_hit_a_key_problem_are_incomplete_and_the_sync_warns_once(
@@ -430,7 +566,8 @@ def test_a_deck_below_bracket_4_merges_without_waiting_for_topdeck_and_one_at_br
     monkeypatch.setattr(syncrun, "compile_ideas", compile_ideas)
     sync_ideas(tmp_path, fake)
     # The two decks below bracket 4 merge while TopDeck is still out; the bracket 4 deck goes on after it.
-    assert merged == [102, 103, 101]
+    assert sorted(merged[:2]) == [102, 103]
+    assert merged[2] == 101
     assert waited_for_release == [True]
 
 
@@ -526,9 +663,40 @@ def test_a_sync_prunes_the_cached_deck_reads_once_after_all_the_decks_are_read(
     monkeypatch.setattr(syncrun, "compile_ideas", compile_ideas)
     monkeypatch.setattr(DeckReads, "prune", counting_prune)
     sync_ideas(tmp_path, fake)
-    assert merged == DECK_IDS
+    assert sorted(merged) == DECK_IDS
     # Once, with every merge over: another deck's peers are still being read until then.
-    assert pruned == [DECK_IDS]
+    assert [sorted(ids) for ids in pruned] == [DECK_IDS]
+
+
+def test_the_archidekt_requests_of_every_deck_name_the_deck_even_from_the_threads_the_read_starts(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = three_decks(tmp_path, raw_deck, card_db_file)
+    # Another bracket for each, since decks of one commander and bracket share one search.
+    for deck_id, bracket in zip(DECK_IDS, (1, 2, 3), strict=True):
+        fake.decks[deck_id]["edhBracket"] = bracket
+    stub_meta(monkeypatch)
+    rig = Rig(tmp_path)
+    rig.archidekt.commander = MAGDA
+    asked_for: list[int | None] = []
+
+    class NamingPacer(Pacer):
+        def wait(self) -> None:
+            asked_for.append(fetching_deck.get())
+            super().wait()
+
+    def real_sources(*_: object, **__: object) -> MetaSources:
+        client = httpx.Client(transport=httpx.MockTransport(rig.archidekt.handler))
+        search = ArchidektSearch(Fetcher(client, max_attempts=1), NamingPacer(0))
+        return replace(rig.sources(), archidekt=search)
+
+    monkeypatch.setattr(syncrun, "meta_sources", real_sources)
+    monkeypatch.setattr(syncrun, "start_gather_for", start_gather_for)
+    monkeypatch.setattr(syncrun, "gather_idea_pools", gather_idea_pools)
+    sync_ideas(tmp_path, fake)
+    # The deck's own peers are searched on a thread its read starts, and its alike decks on its own.
+    assert asked_for
+    assert set(asked_for) == set(DECK_IDS)
 
 
 def populated(tmp_path: Path, raw_deck: Json, card_db_file: Path) -> tuple[FakeArchidekt, StoredDeck]:
