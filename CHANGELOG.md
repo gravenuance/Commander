@@ -5,6 +5,9 @@
 ## 0.8.0 - 2026-10-21
 
 ### Fixed
+- `sync` fetches TopDeck's events once, in the background, while it reads every deck's Archidekt and
+  Spellbook sources, and only each deck's tournament lists wait for them (ADR 0047). Before, the first deck
+  of a first sync waited for the whole fetch, minutes for a 60-day window, before anything else was read.
 - Testing a TopDeck key no longer fails with HTTP 400: the check now names the game and format, which TopDeck
   requires.
 

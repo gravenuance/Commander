@@ -271,6 +271,32 @@ def test_two_readers_at_once_fetch_the_window_once(tmp_path: Path) -> None:
     assert results[0] == results[1]
 
 
+# Loading the window up front
+
+
+def test_loading_the_window_fetches_it_once_for_the_reads_that_follow(tmp_path: Path) -> None:
+    fake = FakeTopdeck()
+    client = client_for(fake, tmp_path)
+    client.load(since=SINCE, until=UNTIL)
+    assert len(fake.requests) == 9
+    assert len(ask(client)) == 3
+    assert len(ask(client, KINNAN)) == 2
+    assert len(fake.requests) == 9
+
+
+def test_a_failed_load_raises_nothing_and_the_reads_that_follow_get_the_failure_unsent(
+    tmp_path: Path,
+) -> None:
+    fake = FakeTopdeck()
+    fake.status = 503
+    client = client_for(fake, tmp_path)
+    client.load(since=SINCE, until=UNTIL)
+    assert len(fake.requests) == 1
+    with pytest.raises(NetworkError):
+        ask(client)
+    assert len(fake.requests) == 1
+
+
 # Rate limit
 
 

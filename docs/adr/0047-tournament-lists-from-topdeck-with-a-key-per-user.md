@@ -49,6 +49,14 @@ Option 4, behind the provider seam that stood in front of EDHTop16 (`tournaments
   halves, down to one day, logged at INFO; a single day still over the cap is skipped with a WARNING and the
   coverage moves past it, so one huge day cannot block the window. Its events are missing until the day
   leaves the window.
+- **Up front** (`metadata.start_tournament_refresh`, `syncrun`). A sync with a deck at bracket 4 or 5 starts the
+  window's fetch on its own thread before the first deck, through `TournamentSource.load`, which keeps a
+  failure for the reads that follow instead of raising it. Each deck's Archidekt and Spellbook reads
+  (`metadata.start_gather_for`) start and finish without waiting for it; only the step that reads the deck's
+  tournament lists, which then find the events stored, waits for it. Decks are merged as soon as the window is
+  in (at once when it was already stored), so while a first fetch runs, every deck's other sources are read
+  and the merges follow; the client's lock keeps the fetch to one per sync. The deck shows as fetching from
+  the start of its reads. Before this a first 60-day sync held the first deck for over three minutes.
 - **Keeping** (`topdeckstore.py`). One compact JSON file per event in `<cache>\topdeck\events\` holding the
   commander (partners joined in alphabetical order, as before), each deck's finish (its place in the standings)
   and cards, and `coverage.json`, the span of start dates that is complete. A run asks only for days outside

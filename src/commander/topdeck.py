@@ -124,6 +124,12 @@ class TopdeckClient:
         with self._lock:
             return None if self._loaded is None else self._loaded[2]
 
+    def load(self, *, since: date, until: date) -> None:
+        try:
+            self._events(since, until, 0)
+        except (TopdeckError, NetworkError) as error:
+            log.warning("TopDeck events for %s to %s not fetched: %s", since, until, error)
+
     def top_commanders(
         self, *, since: date, until: date, min_event_size: int, count: int
     ) -> tuple[CommanderStats, ...]:
