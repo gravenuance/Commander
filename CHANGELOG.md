@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Changed
+- `sync` now deletes the folder of a deck deleted on Archidekt (ADR 0045), where it only reported it before: a
+  signed-in sync does so when the deck is missing from the complete listing and its own page answers 404, and
+  reports `removed: <name>`; `--dry-run` says `would remove`. Anything else keeps the folder and reports
+  `missing`. The app closes the open deck with a notice if it was the one removed.
 - The board file is version 3 (count changes); an older one is kept as `board.v2.bak` on its first save.
 - The side panels' titles look like the Meta panel's sub-toggles, with the same markers on one line, and both
   turn green under the pointer instead of taking a background. The Activity and Mana rail is hidden while no
