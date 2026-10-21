@@ -105,14 +105,14 @@ _DESCRIPTION = """\
 Track your Archidekt Commander decks and research changes to them.
 
 examples:
-  cmdr init --user MAKKIS --workspace decks   save your username and deck folder
+  cmdr init --user TESTER --workspace decks   save your username and deck folder
   cmdr sync                                   pull every public Commander deck, show what changed
   cmdr sync --dry-run                         show what would change without writing anything
   cmdr list --json                            local decks as JSON
   cmdr analyze                                curve, lands and roles of every deck side by side
   cmdr analyze magda --details                one deck in full, with role differences card by card
   cmdr price                                  value of every deck in EUR
-  cmdr price 10004639 --top 0                 every card of one deck, most valuable first
+  cmdr price 10000001 --top 0                every card of one deck, most valuable first
   cmdr bracket                                estimated bracket of every deck beside the one on Archidekt
   cmdr bracket magda --details                game changers, tutors and combos of one deck
   cmdr suggest                                combo pieces and roles short of target, every deck

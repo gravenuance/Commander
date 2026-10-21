@@ -39,7 +39,7 @@ uv run cmdr list                                    # show the decks saved local
 uv run cmdr analyze                                 # curve, lands and roles of every deck side by side
 uv run cmdr analyze magda --details                 # one deck in full, by id or part of its name or commander
 uv run cmdr price                                   # value of every deck in EUR
-uv run cmdr price 10004639 --top 0                  # every card in one deck, most valuable first
+uv run cmdr price 10000001 --top 0                  # every card in one deck, most valuable first
 uv run cmdr bracket                                 # estimated bracket of every deck beside the one on Archidekt
 uv run cmdr bracket gator --details                 # one deck: game changers, tutors, combos with links
 uv run cmdr suggest                                 # combo pieces and short roles of every deck side by side
