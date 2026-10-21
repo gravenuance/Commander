@@ -1,5 +1,6 @@
 """The one HTTP client: timeouts, capped retries with backoff, size limits, JSON and file downloads."""
 
+import itertools
 import json
 import logging
 import math
@@ -7,6 +8,7 @@ import random
 import threading
 import time
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Protocol
@@ -14,6 +16,7 @@ from typing import Protocol
 import httpx
 
 from commander import __version__
+from commander.fetchpriority import fetching_deck
 from commander.jsonshape import as_object, opt_float
 
 log = logging.getLogger(__name__)
@@ -289,9 +292,20 @@ class Fetcher:
         self._sleep(delay)
 
 
+@dataclass(slots=True, frozen=True)
+class _Waiter:
+    arrival: int
+    deck: int | None
+
+
 class Pacer:
     """Spaces calls at least `interval` seconds apart, across threads, for services that ask for unhurried
-    requests."""
+    requests.
+
+    Callers go in the order they asked, unless `rank_by` names a ranking: then each slot goes to the waiting
+    caller whose deck (`fetchpriority.fetching_deck`) ranks lowest, the order they asked within a deck, and
+    callers with no deck go ahead of every deck.
+    """
 
     def __init__(
         self,
@@ -307,25 +321,88 @@ class Pacer:
         self._monotonic = monotonic
         self._last: float | None = None
         self._not_before = -math.inf
-        self._lock = threading.Lock()
+        self._turns = threading.Condition()
+        self._queue: list[_Waiter] = []
+        self._arrivals = itertools.count()
+        # The one caller sleeping until the next slot opens, and when; it wakes the others when it does.
+        self._sleeper: _Waiter | None = None
+        self._opens_at = -math.inf
+        # When the last sleeper's slot opened, which counts as now if the clock reads less.
+        self._floor = -math.inf
+        self._rank: Callable[[int], int] | None = None
+
+    def rank_by(self, rank: Callable[[int], int]) -> None:
+        """Serve the waiting decks by `rank`, lowest first, read afresh as each slot opens."""
+        with self._turns:
+            self._rank = rank
+
+    @property
+    def waiting(self) -> int:
+        """How many callers are in `wait`, sleeping or queued."""
+        with self._turns:
+            return len(self._queue)
 
     def wait(self) -> None:
         """Block until the next call may go out, then count it as sent."""
-        # Sleeping under the lock queues the other threads behind this call, each its interval later.
-        with self._lock:
-            now = self._monotonic()
+        me = _Waiter(next(self._arrivals), fetching_deck.get())
+        with self._turns:
+            self._queue.append(me)
+        try:
+            while (remaining := self._turn(me)) is not None:
+                if remaining > 0:
+                    self._sleep(remaining)
+                    self._slot_opened()
+        except BaseException:
+            with self._turns:
+                # A sleeper left in place would keep every other caller waiting for its wake-up.
+                if self._sleeper is me:
+                    self._sleeper = None
+                if me in self._queue:
+                    self._leave(me)
+            raise
+
+    def _turn(self, me: _Waiter) -> float | None:
+        """None once `me` has the slot, else how long it sleeps for it (0: it only waited for its turn)."""
+        with self._turns:
+            if self._sleeper is not None or self._best() is not me:
+                self._turns.wait()
+                return 0.0
+            now = max(self._monotonic(), self._floor)
             ready = self._not_before
             if self._last is not None:
                 ready = max(ready, self._last + self._interval)
             remaining = ready - now
             if remaining > 0:
-                self._sleep(remaining)
-                now += remaining
+                self._sleeper = me
+                self._opens_at = now + remaining
+                return remaining
             self._last = now
+            self._leave(me)
+            return None
+
+    def _slot_opened(self) -> None:
+        with self._turns:
+            self._sleeper = None
+            self._floor = max(self._floor, self._opens_at)
+            self._turns.notify_all()
+
+    def _best(self) -> _Waiter:
+        rank = self._rank
+
+        def order(waiter: _Waiter) -> tuple[int, int]:
+            if rank is None:
+                return 0, waiter.arrival
+            return (-1 if waiter.deck is None else rank(waiter.deck)), waiter.arrival
+
+        return min(self._queue, key=order)
+
+    def _leave(self, waiter: _Waiter) -> None:
+        self._queue.remove(waiter)
+        self._turns.notify_all()
 
     def cool_down(self, seconds: float) -> None:
         """Hold every call from now until `seconds` have passed, for a service that asked for quiet."""
-        with self._lock:
+        with self._turns:
             self._not_before = max(self._not_before, self._monotonic() + max(seconds, 0.0))
 
 

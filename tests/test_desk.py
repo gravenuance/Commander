@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import shutil
+import threading
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -47,7 +48,7 @@ from test_cli_meta import kinnan_events, magda_events
 from test_cli_meta import meta as cli_meta
 from test_ideas import ALIKE, tag_pool
 from test_meta import meta_data, peer
-from test_syncrun import DOWNLOADED, stub_meta
+from test_syncrun import DOWNLOADED, StubbedReads, stub_meta
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 DECK = 10000001
@@ -1273,9 +1274,9 @@ def sync_with_stubs(
     pending: list[Callable[[], None]],
     monkeypatch: pytest.MonkeyPatch,
     after_gather: Callable[[int], None] = lambda _: None,
-) -> list[int]:
+) -> StubbedReads:
     """Run the sync the desk is holding back, with the network reads of the ideas phase replaced."""
-    gathered = stub_meta(monkeypatch, after_gather)
+    reads = stub_meta(monkeypatch, after_gather)
 
     def download(*_: object, **__: object) -> CardRefresh:
         return DOWNLOADED
@@ -1285,7 +1286,7 @@ def sync_with_stubs(
     [start] = pending
     start()
     assert desk.sync_status()["failed"] is False
-    return gathered
+    return reads
 
 
 def test_a_sync_fetches_the_deck_open_in_the_app_first_then_the_rest_by_views(
@@ -1297,7 +1298,7 @@ def test_a_sync_fetches_the_deck_open_in_the_app_first_then_the_rest_by_views(
     desk.open_deck(20003)
     desk.open_deck(20002)
     # 20002 is open, so it goes first; 20003 has two views and the others none.
-    assert sync_with_stubs(desk, pending, monkeypatch) == [20002, 20003, DECK, 20001]
+    assert sync_with_stubs(desk, pending, monkeypatch).request_order() == [20002, 20003, DECK, 20001]
 
 
 def test_a_sync_without_an_open_deck_goes_by_views(
@@ -1306,7 +1307,7 @@ def test_a_sync_without_an_open_deck_goes_by_views(
     with_extra_decks(settings, fake, raw_deck)
     desk, pending = deferred_desk(settings, fake)
     ViewScores(settings.cache / "views.json", lambda: NOW).record_open(20001)
-    assert sync_with_stubs(desk, pending, monkeypatch) == [20001, DECK, 20002, 20003]
+    assert sync_with_stubs(desk, pending, monkeypatch).request_order() == [20001, DECK, 20002, 20003]
 
 
 def test_the_apps_sync_pulls_a_private_deck_and_a_later_signed_out_one_warns_and_keeps_it(
@@ -1339,7 +1340,7 @@ def test_the_apps_sync_pulls_a_private_deck_and_a_later_signed_out_one_warns_and
     assert Workspace(settings.workspace).load(private_id) is not None
 
 
-def test_a_deck_opened_during_the_sync_is_fetched_after_the_one_in_progress(
+def test_a_deck_opened_during_the_sync_goes_first_for_the_requests_still_waiting(
     settings: DeskSettings, fake: FakeArchidekt, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     with_extra_decks(settings, fake, raw_deck)
@@ -1350,30 +1351,31 @@ def test_a_deck_opened_during_the_sync_is_fetched_after_the_one_in_progress(
         if deck_id == 20001:
             desk.open_deck(20003)
 
-    gathered = sync_with_stubs(desk, pending, monkeypatch, open_another_during_the_first_fetch)
-    assert gathered == [20001, 20003, DECK, 20002]
+    reads = sync_with_stubs(desk, pending, monkeypatch, open_another_during_the_first_fetch)
+    # 20003 was opened last, so it goes ahead of 20001, which was open when the sync started.
+    assert reads.request_order() == [20003, 20001, DECK, 20002]
     assert view_scores(settings) == {20001: 1.0, 20003: 1.0}
 
 
-def test_the_sync_status_shows_each_deck_waiting_then_fetching_then_fetched_and_nothing_after(
+def test_the_sync_status_shows_every_deck_fetching_while_they_read_and_nothing_after(
     settings: DeskSettings, fake: FakeArchidekt, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     with_extra_decks(settings, fake, raw_deck)
     desk, pending = deferred_desk(settings, fake)
     desk.open_deck(20002)
     seen: list[object] = []
+    # Each read waits for the other three to be under way, and for the snapshot, so none is done by then.
+    all_reading = threading.Barrier(4, timeout=30)
+    snapshot_taken = threading.Barrier(4, timeout=30)
 
-    def snapshot(_: int) -> None:
-        seen.append(desk.sync_status()["decks"])
+    def snapshot(deck_id: int) -> None:
+        all_reading.wait()
+        if deck_id == DECK:
+            seen.append(desk.sync_status()["decks"])
+        snapshot_taken.wait()
 
     sync_with_stubs(desk, pending, monkeypatch, snapshot)
-    first = str(DECK)
-    assert seen == [
-        {"20002": "fetching", first: "queued", "20001": "queued", "20003": "queued"},
-        {"20002": "done", first: "fetching", "20001": "queued", "20003": "queued"},
-        {"20002": "done", first: "done", "20001": "fetching", "20003": "queued"},
-        {"20002": "done", first: "done", "20001": "done", "20003": "fetching"},
-    ]
+    assert seen == [{str(deck_id): "fetching" for deck_id in (DECK, *EXTRA_DECKS)}]
     assert desk.sync_status()["decks"] == {}
 
 

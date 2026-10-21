@@ -117,9 +117,10 @@ def test_archidekt_is_read_for_every_deck_while_topdeck_is_still_answering_and_t
     # Each chunk of the window once, not once for every deck.
     spans = [(r["start"], r["end"]) for r in rig.topdeck.requests]
     assert len(spans) == len(set(spans)) == 9
-    merges = [e for e in gate.events if e.startswith("merge")]
+    # The reads end together once TopDeck answers, so the merges come in whatever order they finish.
+    merges = sorted(e for e in gate.events if e.startswith("merge"))
     assert merges == ["merge 101", "merge 102", "merge 103"]
-    assert gate.events.index("released") < gate.events.index("merge 101")
+    assert gate.events.index("released") < min(gate.events.index(m) for m in merges)
 
 
 def test_the_progress_line_names_the_429_wait_while_it_lasts_and_drops_it_after(

@@ -246,11 +246,18 @@ def meta_sources(
     cache_root: Path,
     *,
     waits: WaitListener | None = None,
+    rank: Callable[[int], int] | None = None,
 ) -> MetaSources:
-    """TopDeck, Archidekt search and Spellbook clients over one HTTP client, each at its own pace."""
+    """TopDeck, Archidekt search and Spellbook clients over one HTTP client, each at its own pace.
+
+    With `rank`, Archidekt's requests for several decks at once go out by the deck's rank, lowest first
+    (`Pacer.rank_by`)."""
+    archidekt_pacer = pacer_factory(SEARCH_INTERVAL_SECONDS)
+    if rank is not None:
+        archidekt_pacer.rank_by(rank)
     return MetaSources(
         topdeck_client(http, pacer_factory, cache_root, waits=waits),
-        ArchidektSearch(Fetcher(http), pacer_factory(SEARCH_INTERVAL_SECONDS)),
+        ArchidektSearch(Fetcher(http), archidekt_pacer),
         SpellbookClient(Fetcher(http)),
         pacer_factory(META_REQUEST_INTERVAL_SECONDS),
         user,

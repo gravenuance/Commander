@@ -1,11 +1,13 @@
 import json
 import logging
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 
 import httpx
 import pytest
 
+from commander.fetchpriority import fetching_deck
 from commander.net import (
     ERROR_DETAIL_BYTES,
     MAX_RESPONSE_BYTES,
@@ -408,6 +410,166 @@ def test_pacer_cool_down_holds_the_next_call_for_the_longer_of_it_and_the_interv
     pacer.cool_down(0.5)
     pacer.wait()
     assert sleeps == [180.0, 2.0, 2.0]
+
+
+class PacerRig:
+    """A pacer on a fake clock whose every sleep waits for the test, so each slot is handed over one at a
+    time; each requester is a thread asking as the deck it is given (None: no deck)."""
+
+    def __init__(self, ranks: dict[int, int] | None = None, *, interval: float = 2.0) -> None:
+        self.now = 0.0
+        self.sleeps: list[float] = []
+        self.granted: list[tuple[int | str | None, float]] = []
+        self.ranks = ranks or {}
+        self._entered = threading.Semaphore(0)
+        self._proceed = threading.Semaphore(0)
+        self.threads: dict[int | str | None, threading.Thread] = {}
+        self.pacer = Pacer(interval, sleep=self._sleep, monotonic=lambda: self.now)
+        if ranks is not None:
+            self.pacer.rank_by(lambda deck: self.ranks[deck])
+
+    def _sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self._entered.release()
+        assert self._proceed.acquire(timeout=30)
+        self.now += seconds
+
+    def request(self, deck: int | None, *, label: str | None = None) -> None:
+        name = deck if label is None else label
+
+        def ask() -> None:
+            fetching_deck.set(deck)
+            self.pacer.wait()
+            self.granted.append((name, self.now))
+
+        self.threads[name] = threading.Thread(target=ask, daemon=True)
+        self.threads[name].start()
+
+    def until_a_requester_sleeps(self) -> None:
+        assert self._entered.acquire(timeout=30)
+
+    def until_waiting(self, count: int) -> None:
+        for _ in range(100_000):
+            if self.pacer.waiting == count:
+                return
+            threading.Event().wait(0.001)
+        raise AssertionError(f"{self.pacer.waiting} waiting, not {count}")
+
+    def wake_the_sleeper(self) -> None:
+        self._proceed.release()
+
+    def wake_the_sleeper_and_wait_for(self, name: int | str | None) -> None:
+        """Let the sleeper wake; the requester `name` is the one that should take the slot."""
+        self.wake_the_sleeper()
+        self.threads[name].join(timeout=30)
+        assert not self.threads[name].is_alive()
+
+
+def holding_three(rig: PacerRig) -> None:
+    """The first slot taken by a caller with no deck, then decks 1, 2 and 3 asking in that order, the first
+    one sleeping for the next slot while the other two queue."""
+    rig.pacer.wait()
+    rig.request(1)
+    rig.until_a_requester_sleeps()
+    rig.request(2)
+    rig.request(3)
+    rig.until_waiting(3)
+
+
+def test_pacer_hands_each_slot_to_the_best_ranked_waiter_not_the_first_to_ask() -> None:
+    rig = PacerRig({1: 3, 2: 1, 3: 2})
+    holding_three(rig)
+    rig.wake_the_sleeper_and_wait_for(2)
+    rig.until_a_requester_sleeps()
+    rig.wake_the_sleeper_and_wait_for(3)
+    rig.until_a_requester_sleeps()
+    rig.wake_the_sleeper_and_wait_for(1)
+    # Each slot a full interval after the last, whoever takes it.
+    assert rig.granted == [(2, 2.0), (3, 4.0), (1, 6.0)]
+    assert rig.sleeps == [2.0, 2.0, 2.0]
+
+
+def test_pacer_ranks_the_waiters_again_when_the_ranking_changes() -> None:
+    rig = PacerRig({1: 3, 2: 1, 3: 2})
+    holding_three(rig)
+    # Deck 2 was the best; now deck 3 is, then deck 1, then deck 2.
+    rig.ranks = {1: 2, 2: 3, 3: 1}
+    rig.wake_the_sleeper_and_wait_for(3)
+    rig.until_a_requester_sleeps()
+    rig.wake_the_sleeper_and_wait_for(1)
+    rig.until_a_requester_sleeps()
+    rig.wake_the_sleeper_and_wait_for(2)
+    assert [name for name, _ in rig.granted] == [3, 1, 2]
+
+
+def test_pacer_serves_callers_with_no_deck_ahead_of_decks_and_in_the_order_they_asked() -> None:
+    rig = PacerRig({1: 1})
+    rig.pacer.wait()
+    rig.request(1)
+    rig.until_a_requester_sleeps()
+    rig.request(None, label="first")
+    rig.request(None, label="second")
+    rig.until_waiting(3)
+    rig.wake_the_sleeper_and_wait_for("first")
+    rig.until_a_requester_sleeps()
+    rig.wake_the_sleeper_and_wait_for("second")
+    rig.until_a_requester_sleeps()
+    rig.wake_the_sleeper_and_wait_for(1)
+    assert rig.granted == [("first", 2.0), ("second", 4.0), (1, 6.0)]
+
+
+def test_pacer_without_a_ranking_serves_everyone_in_the_order_they_asked() -> None:
+    rig = PacerRig(None)
+    holding_three(rig)
+    rig.wake_the_sleeper_and_wait_for(1)
+    rig.until_a_requester_sleeps()
+    rig.wake_the_sleeper_and_wait_for(2)
+    rig.until_a_requester_sleeps()
+    rig.wake_the_sleeper_and_wait_for(3)
+    assert [name for name, _ in rig.granted] == [1, 2, 3]
+    assert rig.sleeps == [2.0, 2.0, 2.0]
+
+
+def test_pacer_cool_down_holds_every_waiter_whatever_its_rank() -> None:
+    rig = PacerRig({1: 3, 2: 1, 3: 2})
+    holding_three(rig)
+    # A 429 arrives while deck 1 sleeps for its slot at 2.0: nothing goes out before 10.0.
+    rig.pacer.cool_down(10.0)
+    rig.wake_the_sleeper()
+    # Deck 2 is next, and sleeps what is left of the cool-down; the slots after it are an interval apart.
+    rig.until_a_requester_sleeps()
+    rig.wake_the_sleeper_and_wait_for(2)
+    rig.until_a_requester_sleeps()
+    rig.wake_the_sleeper_and_wait_for(3)
+    rig.until_a_requester_sleeps()
+    rig.wake_the_sleeper_and_wait_for(1)
+    assert rig.granted == [(2, 10.0), (3, 12.0), (1, 14.0)]
+    assert rig.sleeps == [2.0, 8.0, 2.0, 2.0]
+
+
+def test_a_caller_interrupted_while_sleeping_for_its_slot_does_not_hold_up_the_next() -> None:
+    def interrupted(_: float) -> None:
+        raise KeyboardInterrupt
+
+    pacer = Pacer(5.0, sleep=interrupted, monotonic=lambda: 0.0)
+    pacer.wait()
+    # The second call has to sleep 5 s for its slot, and is interrupted while it does.
+    with pytest.raises(KeyboardInterrupt):
+        pacer.wait()
+    outcomes: list[str] = []
+
+    def call() -> None:
+        try:
+            pacer.wait()
+        except KeyboardInterrupt:
+            outcomes.append("slept for its slot")
+
+    third = threading.Thread(target=call, daemon=True)
+    third.start()
+    third.join(timeout=2.0)
+    # Without the sleeper cleared, the third call would wait forever for a wake-up that never comes.
+    assert not third.is_alive()
+    assert outcomes == ["slept for its slot"]
 
 
 def test_pacer_refuses_a_negative_interval() -> None:

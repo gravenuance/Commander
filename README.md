@@ -462,13 +462,15 @@ day takes a few minutes and the rest are quick. If a commander's or tag's decks 
 and carries on; if every source for a deck fails, its board stays as it was and the sync still succeeds.
 `sync --no-ideas` skips this step.
 
-The ideas come deck by deck, the deck open in the app first and the rest by how often you open them: each
-open adds 1 to a deck's score, and a score halves every 30 days. The scores are kept in `views.json` in
-`%LOCALAPPDATA%\Commander`, on your machine only; delete the file to start again from the folder order. A deck
-you open while a sync runs goes next, once the commander being fetched is done. The app opens no deck by
-itself, so the main area stays blank until you pick one, and with none picked Sync goes by the scores alone.
-While a sync runs each deck in the list shows its step beside it: waiting, fetching, fetched, or a warning
-sign when a source failed ([ADR 0034](docs/adr/0034-fetch-the-decks-you-look-at-first.md)).
+Every deck's ideas are read at once, and Archidekt's requests go out in an order: the deck open in the app
+first and the rest by how often you open them: each open adds 1 to a deck's score, and a score halves every 30
+days. The scores are kept in `views.json` in `%LOCALAPPDATA%\Commander`, on your machine only; delete the file
+to start again from the folder order. A deck you open while a sync runs moves to the front of the requests
+still waiting, and its ideas are merged first when several are ready. The app opens no deck by itself, so the
+main area stays blank until you pick one, and with none picked Sync goes by the scores alone.
+While a sync runs each deck in the list shows its step beside it: waiting, fetching (several decks at once),
+fetched, or a warning sign when a source failed
+([ADR 0034](docs/adr/0034-fetch-the-decks-you-look-at-first.md), [ADR 0049](docs/adr/0049-sync-reads-decks-side-by-side-in-priority-order.md)).
 You can keep working on a deck while a sync runs: proposing, deciding, the counts, the settings and saving to
 Archidekt go through, and a deck's new ideas are merged around your changes. The sync pulls the deck open in
 the app first, and the app asks you to wait only while the sync may still rewrite that deck ("Wait for

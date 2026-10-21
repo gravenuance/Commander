@@ -11,7 +11,7 @@ each failure comes back as a warning to show the way the caller shows things.
 
 import logging
 from collections.abc import Callable, Generator
-from concurrent.futures import Future, wait
+from concurrent.futures import FIRST_COMPLETED, Future, wait
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
@@ -21,7 +21,7 @@ import httpx
 
 from commander.archidekt import ArchidektClient, ArchidektError, AuthError
 from commander.archidekt_edit import ArchidektAuth, ArchidektEditor
-from commander.background import in_background
+from commander.background import in_background, run_all
 from commander.board import BoardCard, BoardError, BoardService, Origin
 from commander.carddb import CARD_DB_FILE, CardDataError, CardDb
 from commander.config import MetaSettings
@@ -29,13 +29,13 @@ from commander.credentials import CredentialError, TokenStore
 from commander.deckcache import Clock
 from commander.decklocks import DeckLock
 from commander.deckprofile import ProfileError, profile_path, write_profile_template
-from commander.fetchpriority import FetchPriority
+from commander.fetchpriority import FetchPriority, fetching_deck
 from commander.ideas import compile_ideas, gather_idea_pools, rejudge_ideas, relabel_legacy_ideas
 from commander.metadata import (
     TOURNAMENT_BRACKETS,
     TOURNAMENTS_STEP,
     AdjacentDecks,
-    FinishMeta,
+    MetaData,
     MetaSources,
     Progress,
     meta_sources,
@@ -335,9 +335,11 @@ def _compile_ideas(
     (ADR 0043).
 
     Answers under a day old come from the cache. A deck whose sources fail keeps its board as it was.
-    The decks go in the order of how often the user opens them, and the one the priority names goes
-    ahead of those (ADR 0034). The reads hold no lock; the merge holds the deck's lock and works from the
-    deck and board as they are then, so a change the user made meanwhile stays (ADR 0042).
+    Every deck's reads start at once, each on its own thread, and the sync thread merges them as they finish.
+    The reads' Archidekt requests go out in the order of how often the user opens the decks, the one the
+    priority names ahead of those (ADR 0034, ADR 0049), and so does the merge when several are ready. The
+    reads hold no lock; the merge holds the deck's lock and works from the deck and board as they are then,
+    so a change the user made meanwhile stays (ADR 0042).
     """
     try:
         db = CardDb(services.cache / CARD_DB_FILE)
@@ -347,13 +349,21 @@ def _compile_ideas(
     phase = _IdeasPhase()
     # Reads run side by side, so the line names each one that is under way.
     phases = ActivePhases(progress, idle=_COMPILING)
+    waiting = _most_viewed_first(workspace.load_all(), services)
+    order = [s.deck.id for s in waiting]
+    next_up = priority or FetchPriority()
     with db, services.client_factory() as http:
         sources = meta_sources(
-            http, services.pacer_factory, user, settings, services.cache, waits=_TopdeckWaits(phases)
+            http,
+            services.pacer_factory,
+            user,
+            settings,
+            services.cache,
+            waits=_TopdeckWaits(phases),
+            rank=lambda deck_id: next_up.rank(deck_id, order),
         )
-        waiting = _most_viewed_first(workspace.load_all(), services)
         # TopDeck's window is fetched once, on its own thread, while every deck's Archidekt and Spellbook
-        # reads go ahead; only the merge of a deck at a bracket that reads tournament lists waits for it.
+        # reads go ahead; only a deck at a bracket that reads tournament lists waits for it to finish.
         tournaments = start_tournament_refresh(
             (s.deck for s in waiting),
             sources,
@@ -361,49 +371,25 @@ def _compile_ideas(
             on_progress=phases.start,
             on_done=phases.done,
         )
-        next_up = priority or FetchPriority()
         for queued in waiting:
             on_deck(queued.deck.id, FetchState.QUEUED)
-        reading: list[_ReadingDeck] = []
-
-        def ready_reads() -> list[_ReadingDeck]:
-            """The reads whose merge needs no wait for TopDeck: it is over, or the deck never uses it."""
-            topdeck_over = tournaments is None or tournaments.done()
-            return [r for r in reading if topdeck_over or r.stored.deck.bracket not in TOURNAMENT_BRACKETS]
-
-        def merge_next(candidates: list[_ReadingDeck]) -> None:
-            read = next_up.pick(candidates, lambda r: r.stored.deck.id)
-            reading.remove(read)
-            _merge_deck(
-                read,
-                workspace,
-                db,
-                services,
-                phase,
-                warnings=warnings,
-                on_deck=on_deck,
-                deck_lock=deck_lock,
-            )
-
         with _settled(tournaments):
-            while waiting:
-                stored = next_up.pick(waiting, lambda s: s.deck.id)
-                waiting.remove(stored)
-                on_deck(stored.deck.id, FetchState.FETCHING)
-                read_warnings: list[str] = []
-                try:
-                    reading.append(
-                        _start_reading(stored, db, sources, services, warnings=read_warnings, phases=phases)
-                    )
-                except (BoardError, ProfileError) as error:
-                    warnings.extend(read_warnings)
-                    warnings.append(f"{stored.deck.short_name} ideas not compiled: {error}")
-                    on_deck(stored.deck.id, FetchState.INCOMPLETE)
-                    continue
-                while ready := ready_reads():
-                    merge_next(ready)
+            reading = _start_reading(
+                waiting, sources, services, tournaments=tournaments, phases=phases, on_deck=on_deck
+            )
             while reading:
-                merge_next(ready_reads() or reading)
+                read = next_up.pick(_finished(reading), lambda r: r.stored.deck.id)
+                reading.remove(read)
+                _merge_deck(
+                    read,
+                    workspace,
+                    db,
+                    services,
+                    phase,
+                    warnings=warnings,
+                    on_deck=on_deck,
+                    deck_lock=deck_lock,
+                )
             if tournaments is not None:
                 # The client closes with this block, so TopDeck's thread must be over first.
                 _wait_for(tournaments)
@@ -439,6 +425,8 @@ def _wait_for(future: Future[None], *, up_to: float | None = None) -> None:
         waited += _POLL_SECONDS
 
 
+# The name of the threads that read the decks, followed by a number.
+READ_THREAD = "deck-read"
 # Shown when no read is under way, as the ideas are merged.
 _COMPILING = "Compiling ideas"
 
@@ -464,26 +452,70 @@ class _TopdeckWaits:
             self._phases.done(self._text)
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
+class _DeckRead:
+    """What a deck's reads found: the decks of its alike commanders and tags, and the meta."""
+
+    pools: AdjacentDecks
+    data: MetaData
+
+
+@dataclass(slots=True, eq=False)
 class _ReadingDeck:
-    """A deck whose Archidekt and Spellbook reads are done or under way; TopDeck's come at the merge."""
+    """A deck whose reads run on a thread of their own."""
 
     stored: StoredDeck
-    finish: FinishMeta
-    pools: AdjacentDecks
-    # What went wrong reading it, one sentence each.
+    read: Future[_DeckRead]
+    # What went wrong reading it, one sentence each; complete once `read` is.
     warnings: list[str]
 
 
 def _start_reading(
-    stored: StoredDeck,
-    db: CardDb,
+    waiting: list[StoredDeck],
     sources: MetaSources,
     services: SyncServices,
     *,
-    warnings: list[str],
+    tournaments: Future[None] | None,
     phases: ActivePhases,
-) -> _ReadingDeck:
+    on_deck: DeckProgress,
+) -> list[_ReadingDeck]:
+    """Start every deck's reads at once, each on its own thread; the decks come back in their order."""
+    warnings: list[list[str]] = [[] for _ in waiting]
+
+    def job(stored: StoredDeck, read_warnings: list[str]) -> Callable[[], _DeckRead]:
+        return lambda: _read_deck(
+            stored,
+            sources,
+            services,
+            tournaments=tournaments,
+            phases=phases,
+            on_deck=on_deck,
+            warnings=read_warnings,
+        )
+
+    jobs = [job(stored, found) for stored, found in zip(waiting, warnings, strict=True)]
+    futures = run_all(jobs, limit=max(len(jobs), 1), name=READ_THREAD)
+    return [
+        _ReadingDeck(stored, future, found)
+        for stored, future, found in zip(waiting, futures, warnings, strict=True)
+    ]
+
+
+def _read_deck(
+    stored: StoredDeck,
+    sources: MetaSources,
+    services: SyncServices,
+    *,
+    tournaments: Future[None] | None,
+    phases: ActivePhases,
+    on_deck: DeckProgress,
+    warnings: list[str],
+) -> _DeckRead:
+    """All of one deck's reads, on the thread that runs it. Its Archidekt requests name the deck, which is how
+    the pacer ranks them against the other decks'; the thread keeps its own read of the card data, as a
+    sqlite connection belongs to the thread that opened it."""
+    fetching_deck.set(stored.deck.id)
+    on_deck(stored.deck.id, FetchState.FETCHING)
     finish = start_gather_for(
         stored.deck,
         sources,
@@ -494,19 +526,32 @@ def _start_reading(
         on_done=phases.done,
         prune=False,
     )
-    pools = gather_idea_pools(
-        stored,
-        db,
-        sources,
-        services.cache,
-        now=services.now,
-        refresh=False,
-        warn=warnings.append,
-        on_progress=phases.start,
-        on_done=phases.done,
-        prune=False,
-    )
-    return _ReadingDeck(stored, finish, pools, warnings)
+    with CardDb(services.cache / CARD_DB_FILE) as db:
+        pools = gather_idea_pools(
+            stored,
+            db,
+            sources,
+            services.cache,
+            now=services.now,
+            refresh=False,
+            warn=warnings.append,
+            on_progress=phases.start,
+            on_done=phases.done,
+            prune=False,
+        )
+    if tournaments is not None and stored.deck.bracket in TOURNAMENT_BRACKETS:
+        # Only TopDeck's own thread asks it for events; the lists are read from what it stored.
+        wait([tournaments])
+    return _DeckRead(pools, finish())
+
+
+def _finished(reading: list[_ReadingDeck]) -> list[_ReadingDeck]:
+    """The reads that are over, once there is one, in the decks' order."""
+    while True:
+        done = [r for r in reading if r.read.done()]
+        if done:
+            return done
+        wait([r.read for r in reading], timeout=_POLL_SECONDS, return_when=FIRST_COMPLETED)
 
 
 def _merge_deck(
@@ -520,10 +565,11 @@ def _merge_deck(
     on_deck: DeckProgress,
     deck_lock: DeckLock,
 ) -> None:
-    """Wait for the deck's meta (TopDeck's lists last), then merge its ideas under its lock."""
-    deck, pools = read.stored.deck, read.pools
+    """Merge the deck's finished read into its board, under its lock."""
+    deck = read.stored.deck
     try:
-        data = read.finish()
+        finished = read.read.result()
+        pools, data = finished.pools, finished.data
         with deck_lock(deck.id):
             current = _current(workspace, read.stored)
             if current is None:
