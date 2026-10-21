@@ -366,6 +366,8 @@ def _cmd_sync(args: argparse.Namespace, ctx: Context) -> int:
             print(f"{short} board: turned down {', '.join(names)} ({NO_LONGER_MAKES_THE_CUT})", file=ctx.out)
         for short, names in outcome.closed.items():
             print(f"{short} board: closed {', '.join(names)} ({ALREADY_IN_THE_DECK})", file=ctx.out)
+        for short, names in outcome.counts_cleared.items():
+            print(f"{short} board: cleared {', '.join(names)} (the deck already meets it)", file=ctx.out)
         for short, added in outcome.ideas.items():
             if any(added.values()):
                 print(f"{short} ideas: {ideas_summary(added)}", file=ctx.out)

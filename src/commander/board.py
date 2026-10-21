@@ -840,6 +840,26 @@ class BoardService:
             save(_swap(board, updated), Activity(stamp, Actor.CMDR, "closed", card.name, ALREADY_IN_THE_DECK))
             return updated
 
+    def clear_met_counts(self) -> list[CountChange]:
+        """Drop every queued count change the main deck already meets (`CountChange.met_by`), noting each on
+        the activity log: a done change would show on, and block, a card the deck no longer needs it for
+        (ADR 0043). Returns the changes cleared, in board order."""
+        met = counts_met(self._deck, read_board(self._folder))
+        cleared = (self._clear_count_if_met(change.name) for change in met)
+        return [change for change in cleared if change is not None]
+
+    def _clear_count_if_met(self, name: str) -> CountChange | None:
+        held = _held(self._deck)[card_key(name)]
+        with self._editing() as (board, save):
+            change = board.count_of(name)
+            if change is None or not change.met_by(held):
+                return None
+            stamp = self._stamp()
+            others = tuple(c for c in board.counts if c is not change)
+            detail = f"{change.was} → {change.count}; the deck holds {held}"
+            save(Board(board.cards, others), Activity(stamp, Actor.CMDR, "count change done", name, detail))
+            return change
+
     def relabel_open(self, key: str, label: Relabel) -> BoardCard | None:
         """Give an open idea from the old Maybeboard pick-up the label today's lists make of it, as an idea
         cmdr compiled: None when the card was decided or removed meanwhile, or no list names a source."""
