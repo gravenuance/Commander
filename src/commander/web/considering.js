@@ -132,6 +132,10 @@ function tileFor(card) {
   return node;
 }
 
+// A card's controls, and the rows that hold them, so a click in the gap beside one doesn't drop the selection.
+const TILE_CONTROLS = "button, a, summary, select, option, input, textarea, label, .share-pop, .add-plain, "
+  + ".targets, .reject-form";
+
 function buildTile(card) {
   const queued = card.status === "add";
   const pick = el("button", {
@@ -186,8 +190,9 @@ function buildTile(card) {
     cardImage(card.image, card.name, "art"), body, reject);
   tile.addEventListener("mouseenter", () => hover(card.id));
   tile.addEventListener("mouseleave", () => hover(null));
+  // The whole card selects it, except its own controls: a click on one is for that control alone.
   tile.addEventListener("click", (event) => {
-    if (!event.target.closest("button, a, summary, details, form, .share-pop")) select(card.id);
+    if (!event.target.closest(TILE_CONTROLS)) select(card.id);
   });
   return tile;
 }

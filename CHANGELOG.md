@@ -9,6 +9,10 @@
 ### Fixed
 - A deck card whose + or − was clicked tucks back under the next row as soon as the pointer leaves it, instead
   of staying lifted, with its buttons showing, until another card was picked. Keyboard focus still lifts it.
+- A Considering card selects from a click anywhere on it outside its buttons, lists and links, including beside
+  its Rules text and Reasoning folds, which ignored clicks before.
+- Picking a category for "Add without a cut" no longer closes the list at once: the click reached the card,
+  which took its own selection away and hid the list.
 
 ## 0.9.0 - 2026-10-21
 

@@ -350,6 +350,49 @@ def test_the_side_panels_start_folded_on_every_launch_and_opening_one_stores_not
     ]
 
 
+def test_a_click_anywhere_on_a_considering_card_outside_its_controls_selects_it() -> None:
+    # The Rules text and Reasoning folds span the card's width; a click beside their summary did nothing.
+    seen = run("""
+    const idea = card({ text: "Add {C}{C}.", reason: "Most lists play it" });
+    state.view = { cards: [idea] };
+    renderConsidering(state.view.cards);
+    const tile = $("list-considering").children[0];
+    const folds = tile.querySelectorAll("details");
+    await fire(folds[0], "click");
+    const afterRules = state.selected;
+    await fire(folds[1].querySelector("p"), "click");
+    return { folds: folds.length, afterRules, afterReasoning: state.selected };
+    """)
+    # The first click selects the card; the second, on the open fold's text, is a second click on it.
+    assert seen == {"folds": 2, "afterRules": "c1", "afterReasoning": None}
+
+
+def test_a_folds_summary_opens_it_without_selecting_the_card() -> None:
+    selected = run("""
+    state.view = { cards: [card({ text: "Add {C}{C}." })] };
+    renderConsidering(state.view.cards);
+    await fire($("list-considering").children[0].querySelector("summary"), "click");
+    return state.selected;
+    """)
+    assert selected is None
+
+
+def test_picking_a_category_for_a_plain_add_keeps_the_card_selected() -> None:
+    # The category list closed at once: the click reached the card, which toggled its own selection off.
+    seen = run("""
+    const idea = card({ targets: [] });
+    state.view = { cards: [idea], categories: ["Ramp", "Draw"] };
+    renderConsidering(state.view.cards);
+    select("c1");
+    const tile = state.tiles.get("c1").node;
+    await fire(tile.querySelector(".add-plain select"), "click");
+    await fire(tile.querySelector(".add-plain select option"), "click");
+    await fire(tile.querySelector(".add-plain"), "click");
+    return { selected: state.selected, shown: !tile.querySelector(".add-plain").hidden };
+    """)
+    assert seen == {"selected": "c1", "shown": True}
+
+
 def test_proposing_a_card_with_no_cut_opens_its_folded_panel() -> None:
     seen = run("""
     setupPanels();
