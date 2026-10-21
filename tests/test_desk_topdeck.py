@@ -43,7 +43,8 @@ def test_the_panel_knows_whether_a_key_is_saved(env: Env, memory_keyring: Memory
 def test_a_typed_key_is_tested_without_being_saved(env: Env, memory_keyring: MemoryKeyring) -> None:
     assert env.desk.test_topdeck_key(f"  {TOPDECK_KEY} ") == {"ok": True}
     assert memory_keyring.secrets == {}
-    assert env.fake.topdeck.requests == [{"last": 1, "participantMin": 100_000}]
+    [body] = env.fake.topdeck.requests
+    assert body["participantMin"] == 100_000
 
 
 def test_without_a_typed_key_the_saved_one_is_tested(env: Env, memory_keyring: MemoryKeyring) -> None:

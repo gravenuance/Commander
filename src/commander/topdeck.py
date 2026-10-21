@@ -98,7 +98,8 @@ class TopdeckClient:
 
     def check_key(self, key: str) -> None:
         """Ask TopDeck for events no one reached; TopdeckKeyError when it refuses the key."""
-        self._post({"last": 1, "participantMin": _KEY_CHECK_PARTICIPANTS}, key)
+        body = {"game": GAME, "format": FORMAT, "last": 1, "participantMin": _KEY_CHECK_PARTICIPANTS}
+        self._post(body, key)
 
     def entries(
         self, commander: str, *, since: date, until: date, min_event_size: int, sort: EntrySort, limit: int

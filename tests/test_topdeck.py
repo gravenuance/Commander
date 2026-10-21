@@ -433,7 +433,7 @@ def test_checking_a_key_asks_for_no_events(tmp_path: Path) -> None:
     fake = FakeTopdeck()
     client_for(fake, tmp_path).check_key(TOPDECK_KEY)
     [body] = fake.requests
-    assert body == {"last": 1, "participantMin": 100_000}
+    assert body == {"game": "Magic: The Gathering", "format": "EDH", "last": 1, "participantMin": 100_000}
     with pytest.raises(TopdeckKeyError):
         client_for(fake, tmp_path).check_key("wrong")
 

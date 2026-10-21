@@ -370,8 +370,8 @@ def topdeck_fixture_events() -> list[Json]:
 class FakeTopdeck:
     """Answers TopDeck's tournament search from `events`, as the real API does: by start date and size.
 
-    Every request body is recorded. A request without the key gets 401; `status` makes every answer that
-    status instead.
+    Every request body is recorded. A request without the key gets 401, and one without `game` and `format`
+    400 (as TopDeck answers on 2026-10-21); `status` makes every answer that status instead.
     """
 
     def __init__(self) -> None:
@@ -391,6 +391,8 @@ class FakeTopdeck:
             return httpx.Response(self.status)
         if request.headers.get("Authorization") != self.key:
             return httpx.Response(401, json={"error": "invalid key"})
+        if not body.get("game") or not body.get("format"):
+            return httpx.Response(400, json={"error": 'Both "game" and "format" fields are required.'})
         found = [
             event
             for event in self.events
