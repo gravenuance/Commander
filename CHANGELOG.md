@@ -11,8 +11,8 @@
   days not seen yet, and kept per event in the cache folder; the commander's lists and the most-played
   commanders and their shares are worked out from them, and player names and ids are never stored. `[meta]
   min_event_size` runs from 16 (also its default): a smaller value in the config is raised to 16 with a
-  logged warning. Every place the data shows, the app's Meta and Considering panels and the CLI output,
-  credits and links TopDeck.gg.
+  logged warning that says how to silence it. Every place the data shows, the app's Meta and Considering
+  panels and the CLI output, credits and links TopDeck.gg.
 - `sync` now deletes the folder of a deck deleted on Archidekt (ADR 0045), where it only reported it before: a
   signed-in sync does so when the deck is missing from the complete listing and its own page answers 404, and
   reports `removed: <name>`; `--dry-run` says `would remove`. Anything else keeps the folder and reports

@@ -143,6 +143,7 @@ def test_a_min_event_size_under_the_floor_is_raised_to_it_with_a_warning(
         meta = read_config(path).meta
     assert meta.min_event_size == 16
     assert f"meta.min_event_size = {size} is below 16" in caplog.text
+    assert "set min_event_size to 16 (or remove it) to silence this" in caplog.text
 
 
 def test_a_min_event_size_at_or_over_the_floor_is_kept_without_a_warning(

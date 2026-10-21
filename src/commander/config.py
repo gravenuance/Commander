@@ -300,7 +300,14 @@ def _raise_to_floor(value: object, floor: int, path: str) -> object:
     """The smallest event size was 0 before TopDeck's floor of 16, so a lower value is raised, not refused."""
     if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value < floor:
         return value
-    log.warning("%s: meta.min_event_size = %d is below %d and is raised to it", path, value, floor)
+    log.warning(
+        "%s: meta.min_event_size = %d is below %d and is raised to it; "
+        "set min_event_size to %d (or remove it) to silence this",
+        path,
+        value,
+        floor,
+        floor,
+    )
     return floor
 
 
