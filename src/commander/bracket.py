@@ -146,12 +146,17 @@ def with_effective_bracket(deck: Deck, estimate: BracketEstimate | None) -> Deck
 
 
 def estimated_decks(
-    decks: Sequence[Deck], client: SpellbookClient, cache: DeckCache[BracketEstimate], *, now: Clock
+    decks: Sequence[Deck],
+    client: SpellbookClient,
+    cache: DeckCache[BracketEstimate],
+    *,
+    now: Clock,
+    refresh: bool = False,
 ) -> list[Deck]:
     """The decks in order with the effective bracket; asks Spellbook (or the cache) only for the decks with
     no bracket set, and a deck whose estimate fails stays unset."""
     unset = [deck for deck in decks if deck.bracket is None]
-    results = estimate_decks(unset, client, cache, now=now, refresh=False)
+    results = estimate_decks(unset, client, cache, now=now, refresh=refresh)
     estimates = {deck.id: result.data for deck, result in zip(unset, results, strict=True)}
     return [with_effective_bracket(deck, estimates.get(deck.id)) for deck in decks]
 

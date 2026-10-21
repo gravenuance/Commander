@@ -272,6 +272,60 @@ def test_every_bracket_5_deck_side_by_side(home: Path, fake: FakeArchidekt) -> N
     ]
 
 
+def set_the_bracket(home: Path, fake: FakeArchidekt, bracket: int | None) -> None:
+    """Change the deck's bracket on Archidekt (None takes it off) and pull it."""
+    if bracket is None:
+        del fake.decks[DECK_ID]["edhBracket"]
+    else:
+        fake.decks[DECK_ID]["edhBracket"] = bracket
+    fake.decks[DECK_ID]["updatedAt"] = "2026-10-16T10:00:00.000000Z"
+    assert sync(home, fake, "--no-ideas").code == 0
+
+
+def test_every_bracket_4_and_5_deck_side_by_side_includes_an_unset_deck_estimated_4(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    set_the_bracket(home, fake, None)
+    result = meta(home, fake)
+    # The fake Spellbook estimates Ruthless 4+, so the deck with no bracket is read as bracket 4.
+    assert result.code == 0, result.err
+    assert result.out.splitlines()[1].split()[0] == "Magda"
+    assert len(fake.spellbook.bodies) == 1
+
+
+def test_a_bracket_4_deck_reads_its_lists_and_recent_decks_but_not_the_most_played_commanders(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    set_the_bracket(home, fake, None)
+    result = meta(home, fake, "magda", "--json")
+    # Bracket 4 reads no field and no combos, which is no failure: nothing is reported as unavailable.
+    assert result.code == 0, result.err
+    assert result.err == ""
+    [report] = json.loads(result.out)["reports"]
+    assert report["field"] == []
+    assert report["combos"] == []
+    assert [m["name"] for m in report["missing"]] == ["Mind Stone", "Jeska's Will"]
+    assert [p["id"] for p in report["peers"]] == [PEER_ID]
+
+
+def test_an_unset_deck_estimated_below_4_is_left_out_of_the_side_by_side_view(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    set_the_bracket(home, fake, None)
+    fake.spellbook.answer["bracketTag"] = "P"
+    result = meta(home, fake)
+    assert (result.code, result.err) == (2, "cmdr: no bracket 4 or 5 decks; name a deck to check it anyway\n")
+
+
+def test_an_unset_deck_without_an_estimate_is_named_as_having_no_bracket(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    set_the_bracket(home, fake, None)
+    fake.spellbook.status = 403
+    result = meta(home, fake, "magda")
+    assert "cmdr: Magda has no bracket; the tournament lists in this report are cEDH\n" in result.err
+
+
 def test_a_turbo_deck_races_the_meta_combos_instead_of_answering_them(
     home: Path, fake: FakeArchidekt
 ) -> None:

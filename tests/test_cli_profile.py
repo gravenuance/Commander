@@ -1,9 +1,20 @@
 import json
 from pathlib import Path
+from typing import Any
 
+import pytest
+
+from commander import cli_profile
+from commander.archidekt import parse_deck
+from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
+from commander.bracket import estimate_cache, estimate_deck
 from commander.deckprofile import PROFILE_FILE
-from conftest import Json
-from test_cli import run, suggest, synced
+from commander.metadata import MetaData
+from commander.models import Deck
+from commander.net import Fetcher
+from commander.spellbook import SpellbookClient
+from conftest import FakeSpellbook, Json
+from test_cli import NOW, run, suggest, synced
 
 PROFILE = """\
 archetype = "Dwarf aggro"
@@ -183,6 +194,33 @@ def test_profile_json(tmp_path: Path, raw_deck: Json, own_cache: Path) -> None:
     assert (data["broadTags"], data["unmatchedDeckTags"], data["vagueCategories"]) == (["cEDH"], [], [])
     assert (data["themes"]["ignore"], data["unknownIgnores"]) == ([], [])
     assert data["ideas"]["tagSearch"] is True
+
+
+def test_profile_reads_the_cached_meta_at_an_unset_decks_estimated_bracket(
+    tmp_path: Path, raw_deck: Json, own_cache: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    unset = {key: value for key, value in raw_deck.items() if key != "edhBracket"}
+    synced(tmp_path, unset)
+    with FakeSpellbook().client() as http:
+        estimate_deck(
+            parse_deck(unset),
+            SpellbookClient(Fetcher(http, max_attempts=1)),
+            estimate_cache(own_cache / SPELLBOOK_CACHE_FOLDER),
+            now=lambda: NOW,
+            refresh=False,
+        )
+    read: list[int | None] = []
+    real = cli_profile.gather_for
+
+    def spying(deck: Deck, *args: Any, **kwargs: Any) -> MetaData:  # noqa: ANN401 - passed on as it came
+        read.append(deck.bracket)
+        return real(deck, *args, **kwargs)
+
+    monkeypatch.setattr(cli_profile, "gather_for", spying)
+    code, _, err = profile(["magda"], tmp_path, own_cache)
+    assert code == 0, err
+    # The fake Spellbook says Ruthless 4+, the deck has no bracket, and no estimate is asked for.
+    assert read == [4]
 
 
 def test_invalid_profile_is_a_usage_error(tmp_path: Path, raw_deck: Json, own_cache: Path) -> None:

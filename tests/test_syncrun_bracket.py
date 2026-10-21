@@ -59,7 +59,7 @@ def sync_one(
     shutil.copy(card_db_file, cache / CARD_DB_FILE)
     spellbook = FakeSpellbook()
     if answer is None:
-        spellbook.status = 500
+        spellbook.status = 403
     else:
         spellbook.answer["bracketTag"] = answer
     if seed:
@@ -72,7 +72,7 @@ def sync_one(
                 refresh=False,
             )
         spellbook.bodies.clear()
-        spellbook.status = 500
+        spellbook.status = 403
     rig = Rig(tmp_path)
     rig.archidekt.commander = MAGDA
     compiled: list[int | None] = []

@@ -3,6 +3,8 @@
 import argparse
 from collections.abc import Callable, Sequence
 
+from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
+from commander.bracket import cached_effective_deck, estimate_cache
 from commander.cli_meta import meta_sources
 from commander.cli_output import write_json
 from commander.clibase import EXIT_OK, Context, one_deck, open_card_db, workspace
@@ -55,9 +57,11 @@ def _cmd_profile(args: argparse.Namespace, ctx: Context) -> int:
         data = None
         if stored.deck.commanders:
             sources = meta_sources(http, ctx, file.user or "", file.meta)
-            data = gather_for(
-                stored.deck, sources, cache_dir(ctx.env), now=ctx.now, refresh=False, offline=True
+            # The cached answers are keyed by the effective bracket (ADR 0051), read from the cache too.
+            playing = cached_effective_deck(
+                stored.deck, estimate_cache(cache_dir(ctx.env) / SPELLBOOK_CACHE_FOLDER), now=ctx.now
             )
+            data = gather_for(playing, sources, cache_dir(ctx.env), now=ctx.now, refresh=False, offline=True)
         leanings = deck_cut_rules(
             stored.deck, db.resolve(stored.deck.main_cards), profile, db, data, now=ctx.now
         ).leanings
