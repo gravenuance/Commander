@@ -27,7 +27,7 @@ from commander.jsonshape import (
     req_object,
     req_str,
 )
-from commander.net import Fetcher, HttpStatusError, NetworkError, Pacer
+from commander.net import Fetcher, HttpStatusError, NetworkError, Pacer, ResponseTooLargeError
 from commander.topdeckstore import Coverage, DeckEntry, TournamentRecord, TournamentStore
 from commander.tournaments import (
     CommanderStats,
@@ -191,7 +191,7 @@ class TopdeckClient:
             return
         while cursor <= need_last:
             end = min(cursor + CHUNK_DAYS * _DAY - 1, need_last)
-            for record in self._fetch(cursor, end):
+            for record in self._fetch_fitting(cursor, end):
                 self._store.save(record)
             self._loaded = None
             covered = max(covered, min(end, settled))
@@ -200,6 +200,24 @@ class TopdeckClient:
         removed = self._store.prune(window.since)
         if removed:
             log.info("dropped %d cached TopDeck events older than %s", removed, window.since)
+
+    def _fetch_fitting(self, start: int, end: int) -> list[TournamentRecord]:
+        """The events started from `start` to `end`. An answer over the size cap is asked for again in two
+        halves, down to one day; a day that is still too big is skipped, so it cannot block the coverage."""
+        try:
+            return self._fetch(start, end)
+        except ResponseTooLargeError:
+            days = -(-(end - start + 1) // _DAY)
+            if days <= 1:
+                log.warning(
+                    "TopDeck's answer for %s is over the size cap even for one day; skipping it", _day(start)
+                )
+                return []
+            log.info(
+                "TopDeck's answer for %s to %s is over the size cap; asking in halves", _day(start), _day(end)
+            )
+            middle = start + days // 2 * _DAY
+            return [*self._fetch_fitting(start, middle - 1), *self._fetch_fitting(middle, end)]
 
     def _fetch(self, start: int, end: int) -> list[TournamentRecord]:
         body: dict[str, object] = {

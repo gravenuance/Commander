@@ -38,7 +38,10 @@ Option 4, behind the provider seam that stood in front of EDHTop16 (`tournaments
   fetched by start date in three-day chunks (about 6 MB each, under the client's 20 MB cap), oldest first,
   two seconds apart through the client's `Pacer`, saving each chunk as it arrives, so a failure part-way keeps what came before it. Reads that need the same missing days
   (the commander's lists and the meta field run side by side) wait on one lock and the second finds the events
-  stored.
+  stored. A chunk whose answer runs past the cap (`net.ResponseTooLargeError`) is asked for again in two
+  halves, down to one day, logged at INFO; a single day still over the cap is skipped with a WARNING and the
+  coverage moves past it, so one huge day cannot block the window. Its events are missing until the day
+  leaves the window.
 - **Keeping** (`topdeckstore.py`). One compact JSON file per event in `<cache>\topdeck\events\` holding the
   commander (partners joined in alphabetical order, as before), each deck's finish (its place in the standings)
   and cards, and `coverage.json`, the span of start dates that is complete. A run asks only for days outside

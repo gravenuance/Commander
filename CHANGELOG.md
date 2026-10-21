@@ -38,6 +38,8 @@
   deck: the first failure stands for the rest of the run.
 - `sync` now says when TopDeck refused the key, not only when there is none ("tournament lists skipped:
   missing or refused TopDeck key"), once per sync, and marks the decks incomplete either way.
+- A TopDeck answer over the 20 MB cap no longer blocks the window for weeks: that span is asked for again in
+  halves, down to one day, and a single day still too big is skipped with a logged warning.
 - `cmdr board plan` keeps quantities and kept copies (a basic land swap printed plain names before).
 - The Mana tab may suggest a land that only waits on the Maybeboard.
 - EDHTop16 errors are readable again: a refused query (EDHTop16 now answers with plain-text errors) is logged

@@ -1,13 +1,16 @@
 """The TopDeck client over a fake of the API: what it asks for, keeps and works out from the answers."""
 
+import json
 import logging
 import threading
+from collections.abc import Callable
 from datetime import UTC, date, datetime
 from pathlib import Path
 
 import httpx
 import pytest
 
+from commander import net
 from commander.net import Fetcher, NetworkError, Pacer
 from commander.topdeck import (
     API_URL,
@@ -268,6 +271,88 @@ def test_two_readers_at_once_fetch_the_window_once(tmp_path: Path) -> None:
         thread.join()
     assert len(fake.requests) == 21
     assert results[0] == results[1]
+
+
+# Answers over the size cap
+
+
+CAP = 200_000
+
+
+def capped_client(
+    fake: FakeTopdeck, root: Path, monkeypatch: pytest.MonkeyPatch, too_big: Callable[[int, int], bool]
+) -> TopdeckClient:
+    """A client whose HTTP cap is CAP bytes, over a fake that answers a span with CAP + 1 bytes when
+    `too_big(start, end)` says so."""
+    monkeypatch.setattr(net, "MAX_RESPONSE_BYTES", CAP)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body: Json = json.loads(request.content)
+        if too_big(body["start"], body["end"]):
+            fake.requests.append(body)
+            return httpx.Response(200, content=b"x" * (CAP + 1))
+        return fake.handler(request)
+
+    return TopdeckClient(
+        Fetcher(httpx.Client(transport=httpx.MockTransport(handler)), max_attempts=1),
+        Pacer(0),
+        TournamentStore(root),
+        MemoryKeyStore(),
+    )
+
+
+def test_an_answer_over_the_cap_is_asked_for_again_in_halves_down_to_what_fits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake = FakeTopdeck()
+    # Nothing longer than a day fits.
+    client = capped_client(fake, tmp_path, monkeypatch, lambda start, end: end - start + 1 > DAY)
+    with caplog.at_level(logging.INFO):
+        found = ask(client)
+    assert found == ((date(2026, 10, 4), 12), (date(2026, 9, 13), 5), (date(2026, 8, 16), 21))
+    # The first three days: the whole span, then its first day, then the other two, then one day each.
+    spans = [(r["start"], r["end"]) for r in fake.requests[:5]]
+    assert spans == [
+        (stamp(2026, 8, 16), stamp(2026, 8, 18, last_second=True)),
+        (stamp(2026, 8, 16), stamp(2026, 8, 16, last_second=True)),
+        (stamp(2026, 8, 17), stamp(2026, 8, 18, last_second=True)),
+        (stamp(2026, 8, 17), stamp(2026, 8, 17, last_second=True)),
+        (stamp(2026, 8, 18), stamp(2026, 8, 18, last_second=True)),
+    ]
+    assert "over the size cap" in caplog.text
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    # The window is covered: a second run asks for nothing.
+    asked = len(fake.requests)
+    assert ask(client_for(fake, tmp_path)) == found
+    assert len(fake.requests) == asked
+
+
+def test_a_day_that_alone_is_over_the_cap_is_skipped_and_coverage_moves_past_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake = FakeTopdeck()
+    day = stamp(2026, 9, 13)
+    client = capped_client(
+        fake, tmp_path, monkeypatch, lambda start, end: start <= day + DAY - 1 and end >= day
+    )
+    with caplog.at_level(logging.INFO):
+        found = ask(client)
+    # The 13 September event is lost; the rest of the window stands.
+    assert found == ((date(2026, 10, 4), 12), (date(2026, 8, 16), 21))
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "2026-09-13" in warnings[0]
+    asked = len(fake.requests)
+    assert ask(client_for(fake, tmp_path)) == found
+    assert len(fake.requests) == asked
+
+
+def test_another_network_error_is_not_split(tmp_path: Path) -> None:
+    fake = FakeTopdeck()
+    fake.status = 503
+    with pytest.raises(NetworkError):
+        ask(client_for(fake, tmp_path))
+    assert len(fake.requests) == 1
 
 
 # Keys
