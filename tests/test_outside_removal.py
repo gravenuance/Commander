@@ -100,6 +100,17 @@ def test_a_card_outside_the_deck_can_only_come_off_and_only_from_a_category_that
         service.step_count(HOVERBIKE, -1, Actor.YOU, category="Maybeboard")
 
 
+def test_a_count_between_none_and_all_of_the_copies_outside_the_deck_is_refused(
+    tmp_path: Path, raw: Json, db: CardDb
+) -> None:
+    raw["cards"].append(card_entry(7_000_000_002, "Ponder", ["Maybeboard"], 3))
+    service = BoardService(tmp_path, parse_deck(raw), db, now=lambda: NOW)
+
+    with pytest.raises(BoardError, match="Ponder on Maybeboard can only be taken off"):
+        service.set_count("Ponder", 1, Actor.YOU, category="Maybeboard")
+    assert read_board(tmp_path).counts == ()
+
+
 def test_a_card_in_the_deck_and_on_the_maybeboard_keeps_its_two_changes_apart(
     tmp_path: Path, deck: Deck, db: CardDb, service: BoardService
 ) -> None:

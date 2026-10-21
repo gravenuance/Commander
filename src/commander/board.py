@@ -832,7 +832,8 @@ class BoardService:
         with self._editing() as (board, save):
             queued = board.count_of(held, filed)
             count = target(queued.count if queued is not None else was, was)
-            if filed is not None and count > was:
+            # Copies outside the deck come off all at once or stay: no count between.
+            if filed is not None and 0 < count != was:
                 raise BoardError(f"{held} on {filed} can only be taken off")
             self._check_count(board, held, was, count, outside=filed is not None)
             others = tuple(c for c in board.counts if c is not queued)
