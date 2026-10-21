@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.0 - 2026-10-21
+
 ### Changed
 - Tournament lists now come from TopDeck.gg instead of EDHTop16, whose API has needed a key since 2026-10-19
   (ADR 0047). Each user needs a free TopDeck key: `cmdr topdeck` asks for it (never on the command line), or
