@@ -3,7 +3,7 @@
 import logging
 from collections.abc import Callable, Collection
 from concurrent.futures import Future, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from functools import partial
 
@@ -14,7 +14,7 @@ from commander.diff import DeckDiff, diff_decks
 from commander.fetchpriority import FetchPriority
 from commander.models import Deck, DeckSummary
 from commander.net import NetworkError
-from commander.store import Workspace, WorkspaceError, folder_name
+from commander.store import StoredDeck, Workspace, WorkspaceError, folder_name
 
 log = logging.getLogger(__name__)
 
@@ -28,6 +28,8 @@ class SyncStatus(Enum):
     UPDATED = "updated"
     UNCHANGED = "unchanged"
     MISSING_UPSTREAM = "missing"
+    REMOVED = "removed"
+    WOULD_REMOVE = "would remove"
     FAILED = "failed"
 
 
@@ -60,13 +62,15 @@ class PullWatch:
 
     `on_listed` gets the decks the pull will still write, once it knows them; `on_done` gets each of those
     as the pull is done with it (written, or failed). Each is written under `deck_lock`, and the next deck
-    fetched is the one `priority` names if it still waits.
+    fetched is the one `priority` names if it still waits. `on_removed` gets each deck whose folder was
+    deleted because Archidekt deleted the deck (ADR 0045), after the removal and outside the lock.
     """
 
     priority: FetchPriority | None = None
     deck_lock: DeckLock = no_deck_lock
     on_listed: Callable[[Collection[int]], None] = _ignore_ids
     on_done: Callable[[int], None] = _ignore_id
+    on_removed: Callable[[int], None] = _ignore_id
 
 
 def sync_decks(
@@ -84,8 +88,10 @@ def sync_decks(
 
     A signed-in client whose listing Archidekt refuses carries on without the login and says so to warn.
     Decks on disk that the listing lacks come back as MISSING_UPSTREAM, except private and unlisted ones when
-    the listing was anonymous, which could not show them (ADR 0040). The results are in listing order; each
-    fetched deck is written as soon as it arrives.
+    the listing was anonymous, which could not show them (ADR 0040). A signed-in sync removes the folder of
+    such a deck whose own page answers 404 (REMOVED, or WOULD_REMOVE on a dry run) and keeps the others,
+    reported as missing (ADR 0045). The results are in listing order; each fetched deck is written as soon
+    as it arrives.
     """
     try:
         summaries = client.list_commander_decks(user)
@@ -134,11 +140,63 @@ def sync_decks(
 
     upstream_ids = {summary.id for summary in summaries}
     results += [
-        SyncResult(stored.deck.id, stored.deck.name, SyncStatus.MISSING_UPSTREAM)
+        _settle_missing(client, workspace, user, stored, dry_run, watch)
         for stored in workspace.load_all()
         if stored.deck.id not in upstream_ids and (client.signed_in or not stored.deck.needs_login)
     ]
     return results
+
+
+def _settle_missing(  # noqa: PLR0917 — the one step of sync_decks' tail
+    client: ArchidektClient,
+    workspace: Workspace,
+    user: str,
+    stored: StoredDeck,
+    dry_run: bool,  # noqa: FBT001
+    watch: PullWatch,
+) -> SyncResult:
+    """A deck on disk that the listing lacks: removed only once Archidekt itself says it is gone (ADR 0045).
+
+    That needs a signed-in client, because an anonymous listing cannot show private decks and an anonymous
+    page read may answer 404 for one; the listing then was complete, as an incomplete one raises or falls
+    back to an anonymous client. Anything but a 404 on the deck's own page keeps the folder.
+    """
+    deck = stored.deck
+    missing = SyncResult(deck.id, deck.name, SyncStatus.MISSING_UPSTREAM)
+    if not client.signed_in or deck.owner.casefold() != user.casefold():
+        return missing
+    try:
+        gone = client.deck_is_gone(deck.id)
+    except (NetworkError, ArchidektError, AuthError) as error:
+        log.info(
+            "deck %d (%s) is not in the listing; its page was not confirmed gone: %s",
+            deck.id,
+            deck.name,
+            error,
+        )
+        return replace(
+            missing,
+            error=f"not in the listing, and Archidekt did not say it was deleted ({error}); not removed",
+        )
+    if not gone:
+        return replace(
+            missing, error="not in the listing, but its page still reads on Archidekt; not removed"
+        )
+    if dry_run:
+        return replace(missing, status=SyncStatus.WOULD_REMOVE)
+    try:
+        with watch.deck_lock(deck.id):
+            folder = workspace.remove_deck(deck.id)
+    except (OSError, WorkspaceError) as error:
+        log.warning("deck %d (%s): could not remove its folder: %s", deck.id, deck.name, error)
+        return replace(
+            missing,
+            status=SyncStatus.FAILED,
+            error=f"deleted on Archidekt, but its folder was not removed: {error}",
+        )
+    log.info("deck %d (%s) was deleted on Archidekt; removed its folder %s", deck.id, deck.name, folder.name)
+    watch.on_removed(deck.id)
+    return replace(missing, status=SyncStatus.REMOVED)
 
 
 def _write(  # noqa: PLR0917 — the one step of sync_decks' loop

@@ -232,7 +232,7 @@ def test_a_signed_in_listing_that_fails_otherwise_is_not_a_fallback(tmp_path: Pa
     assert fake.listing_auth == [SIGNED_IN]
 
 
-def test_a_deck_gone_from_the_signed_in_listing_is_still_reported_missing_and_kept(
+def test_a_deck_gone_from_the_signed_in_listing_and_deleted_on_archidekt_is_removed(
     tmp_path: Path, raw_deck: Json
 ) -> None:
     fake = archidekt_with_hidden_decks(raw_deck)
@@ -242,8 +242,9 @@ def test_a_deck_gone_from_the_signed_in_listing_is_still_reported_missing_and_ke
 
     outcome = sync(tmp_path, fake, signed_in())
 
-    assert statuses(outcome)[PRIVATE_ID] is SyncStatus.MISSING_UPSTREAM
-    assert (tmp_path / "decks" / PRIVATE_FOLDER / SNAPSHOT_FILE).is_file()
+    assert statuses(outcome)[PRIVATE_ID] is SyncStatus.REMOVED
+    assert not (tmp_path / "decks" / PRIVATE_FOLDER).exists()
+    assert (tmp_path / "decks" / UNLISTED_FOLDER / SNAPSHOT_FILE).is_file()
 
 
 def test_a_public_deck_gone_from_an_anonymous_listing_is_still_reported_missing_and_kept(

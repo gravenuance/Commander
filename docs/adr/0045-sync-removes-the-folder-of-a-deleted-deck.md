@@ -1,0 +1,56 @@
+# 0045: Sync removes the folder of a deck deleted on Archidekt
+
+**Status:** Accepted · **Date:** 2026-10-21 · Amends the "a shorter list is not a deletion" rule of
+[ADR 0040](0040-sync-private-and-unlisted-decks.md)
+
+## Context
+
+`sync` has only reported a deck on disk that the listing lacks (`missing`) and kept its folder. The owner
+wants the folder gone when the deck was deleted on Archidekt. The folder holds the owner's own files
+(`notes.md`, `profile.toml`, `board.json`, `activity.jsonl`), so a wrong deletion loses work that is not on
+Archidekt. A deck can also be absent from a listing without being deleted: the anonymous fallback of ADR 0040
+lists public decks only, a login can expire partway through, and the API is undocumented.
+
+## Options
+
+1. **Keep reporting only.** Safe; stale folders pile up and the app lists decks that no longer exist.
+2. **Archive the folder.** Recoverable, but the owner chose deletion over an archive.
+3. **Delete on absence from the listing.** Simple, and wrong whenever the listing is short.
+4. **Delete only when Archidekt confirms it.** The listing lacks the deck and a read of the deck's own page
+   answers 404.
+
+## Decision
+
+Option 4, chosen by the owner, with these rules (all in `sync._settle_missing`):
+
+- The client must be signed in. An anonymous listing cannot show private decks, and the page of a private deck
+  may answer 404 or 403 to an anonymous read, so an anonymous 404 proves nothing. This covers the fallback
+  after a refused or expired login (the client becomes anonymous), a login that was never saved, and a
+  listing that failed partway (it falls back, or raises; nothing is deleted either way).
+- `ArchidektClient.deck_is_gone` is True only for HTTP 404. A 401 or 403 (`SignInRequiredError`), 429, 5xx
+  (after the fetcher's retries), a network error or a page that reads all keep the folder; the result stays
+  `missing` with the reason in `error`.
+- The deck's `owner` must be the sync's user; otherwise it is only reported.
+- `Workspace.remove_deck` deletes only the folder `folder_for` finds by its `<id>-<slug>` name, and refuses
+  a symlink, a junction or a folder whose resolved parent is not the workspace root.
+- `dry_run` removes nothing and returns `WOULD_REMOVE`.
+- The removal runs under the deck's `DeckLocks` lock (`PullWatch.deck_lock`), so it waits for a write in
+  flight; a write that starts after fails with the existing "deck is not in the workspace; press Sync".
+- Each removal is logged at INFO with the deck id, name and folder. The activity log lives inside the deck
+  folder, so there is no workspace-level entry. The result is `SyncStatus.REMOVED`; the CLI prints it like
+  other statuses and the app summary adds ", N removed".
+- `PullWatch.on_removed` lets the app drop its per-deck caches and forget the open deck. The page closes an
+  open deck that leaves the deck list, with a notice, instead of asking for it.
+- Other per-deck data outside the folder is left alone: `views.json` scores for the id are ignored (the
+  ideas phase walks the decks on disk) and decay out, and cached meta answers are keyed by commander and
+  expire by age.
+
+## Consequences
+
+- The deletion is permanent. `decks/` is a local git repo of its own, so the owner can recover a removed
+  folder from its history if they committed it; the README says so.
+- A deck made private while the sync runs signed in is still listed, so it is never removed. A deck that
+  Archidekt answers 404 for though it exists would be lost; the API is undocumented, so this is the residual
+  risk, bounded by the signed-in and owner rules.
+- Without a login nothing is ever deleted, as before.
+- Revisit if Archidekt documents deletion semantics or the owner wants a trash folder.

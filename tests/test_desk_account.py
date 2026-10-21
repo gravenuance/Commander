@@ -226,6 +226,10 @@ def test_the_summary_counts_decks_in_the_singular_and_the_plural() -> None:
         sync_summary(_outcome([SyncStatus.UPDATED, SyncStatus.UNCHANGED], SKIPPED))
         == "Synced 2 decks, 1 changed."
     )
+    removed = sync_summary(_outcome([SyncStatus.UPDATED, SyncStatus.REMOVED], SKIPPED))
+    assert removed == "Synced 1 deck, 1 changed, 1 removed."
+    two_removed = sync_summary(_outcome([SyncStatus.REMOVED, SyncStatus.REMOVED], SKIPPED))
+    assert two_removed == "Synced 0 decks, 0 changed, 2 removed."
     one = sync_summary(_outcome([SyncStatus.FAILED, SyncStatus.UNCHANGED], SKIPPED))
     assert one == "Sync finished with problems: 1 deck failed; see the log."
     two = sync_summary(_outcome([SyncStatus.FAILED, SyncStatus.FAILED], SKIPPED))

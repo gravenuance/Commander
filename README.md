@@ -663,8 +663,13 @@ Labels set on the Archidekt website come back with the next `sync`. See
 `decks/` is gitignored, because it holds your own decks and notes. To keep their history, make it a git
 repository of its own (`git init decks`) and commit there after each sync.
 
-When a deck is renamed on Archidekt, `sync` renames its folder to match. When a deck disappears from
-Archidekt (deleted, or made private while you were signed out), `sync` reports it and keeps the local copy.
+When a deck is renamed on Archidekt, `sync` renames its folder to match. When a deck is deleted on
+Archidekt, a signed-in `sync` deletes its folder too (notes, profile and board included, so commit `decks/` first
+if you keep its history) and reports it as `removed`; `sync --dry-run` says `would remove` and deletes nothing.
+It does so only when the deck is missing from a complete signed-in listing and Archidekt answers 404 for the
+deck itself ([ADR 0045](docs/adr/0045-sync-removes-the-folder-of-a-deleted-deck.md)). Any other case (not signed
+in, a refused login, a private deck, a network error or any other status) reports the deck as `missing` and keeps
+the folder. In the app, a removed open deck closes with a short notice.
 
 #### Private and unlisted decks
 

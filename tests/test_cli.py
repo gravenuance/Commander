@@ -9,10 +9,12 @@ import pytest
 
 from commander import __version__
 from commander.cli import main
-from conftest import CARDS_URL, FakeArchidekt, Json, card_entry
+from commander.credentials import SERVICE
+from conftest import CARDS_URL, REFRESH_TOKEN, FakeArchidekt, Json, MemoryKeyring, card_entry
 
 NO_CARDS = "card data: skipped, --no-cards\n"
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
+LABELS_NONE = "card labels: none (from your Archidekt account)\n"
 
 
 class Run:
@@ -189,6 +191,49 @@ def test_one_failing_deck_does_not_stop_the_others(
         "1 new, 1 failed\n" + NO_CARDS
     )
     assert (tmp_path / "decks" / "222-other").is_dir()
+
+
+def deleted_on_archidekt(tmp_path: Path, archidekt: FakeArchidekt, keyring: MemoryKeyring) -> None:
+    """Two decks synced while signed in, then one of them deleted on Archidekt."""
+    keyring.secrets[(SERVICE, "makkis")] = REFRESH_TOKEN
+    archidekt.put({**archidekt.decks[10004639], "id": 222, "name": "Other"})
+    sync(tmp_path, archidekt)
+    del archidekt.decks[222]
+
+
+def test_sync_lists_a_deck_deleted_on_archidekt_as_removed_and_deletes_its_folder(
+    tmp_path: Path, archidekt: FakeArchidekt, memory_keyring: MemoryKeyring
+) -> None:
+    deleted_on_archidekt(tmp_path, archidekt, memory_keyring)
+
+    result = sync(tmp_path, archidekt)
+
+    assert result.out == "removed         222  Other\n1 unchanged, 1 removed\n" + NO_CARDS + LABELS_NONE
+    assert not (tmp_path / "decks" / "222-other").exists()
+
+
+def test_sync_dry_run_says_what_it_would_remove(
+    tmp_path: Path, archidekt: FakeArchidekt, memory_keyring: MemoryKeyring
+) -> None:
+    deleted_on_archidekt(tmp_path, archidekt, memory_keyring)
+
+    result = sync(tmp_path, archidekt, "--dry-run")
+
+    assert result.out == (
+        "would remove       222  Other\n1 unchanged, 1 would remove (dry run, nothing written)\n"
+        "card data: skipped, dry run\n"
+    )
+    assert (tmp_path / "decks" / "222-other" / "deck.json").is_file()
+
+
+def test_sync_json_gives_the_removed_status(
+    tmp_path: Path, archidekt: FakeArchidekt, memory_keyring: MemoryKeyring
+) -> None:
+    deleted_on_archidekt(tmp_path, archidekt, memory_keyring)
+
+    rows = json.loads(sync(tmp_path, archidekt, "--json").out)["decks"]
+
+    assert {row["id"]: row["status"] for row in rows} == {10004639: "unchanged", 222: "removed"}
 
 
 def test_sync_json_output(tmp_path: Path, archidekt: FakeArchidekt) -> None:
