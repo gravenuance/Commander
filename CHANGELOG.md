@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+- Commander.exe carries its name, version and copyright, which Explorer's Properties → Details tab showed
+  empty: the build stamps a version resource written from pyproject.toml (`tools/version_info.py`).
+
 ## 1.0.0 - 2026-10-21
 
 ### Added
