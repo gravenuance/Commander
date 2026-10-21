@@ -10,8 +10,9 @@
   on with Archidekt's decks. Events of 16+ players are fetched three days at a time, two seconds apart, only for
   days not seen yet, and kept per event in the cache folder; the commander's lists and the most-played
   commanders and their shares are worked out from them, and player names and ids are never stored. `[meta]
-  min_event_size` keeps its floor and default of 16. Every place the data shows, the app's Meta and
-  Considering panels and the CLI output, credits and links TopDeck.gg.
+  min_event_size` runs from 16 (also its default): a smaller value in the config is raised to 16 with a
+  logged warning. Every place the data shows, the app's Meta and Considering panels and the CLI output,
+  credits and links TopDeck.gg.
 - `sync` now deletes the folder of a deck deleted on Archidekt (ADR 0045), where it only reported it before: a
   signed-in sync does so when the deck is missing from the complete listing and its own page answers 404, and
   reports `removed: <name>`; `--dry-run` says `would remove`. Anything else keeps the folder and reports
@@ -31,6 +32,15 @@
   rating. The EDHTop16 client, its fixtures and its cached answers (deleted on the next run).
 
 ### Fixed
+- A TopDeck window kept in the cache still answers on a later day when there is no key, TopDeck refuses it
+  or is down: the lists come from the stored events, marked as a stale copy with the reason, where the first
+  day after the last fetch showed nothing.
+- After TopDeck fails (no key, a refused key, down), a sync or `meta` run no longer asks it again for every
+  deck: the first failure stands for the rest of the run.
+- `sync` now says when TopDeck refused the key, not only when there is none ("tournament lists skipped:
+  missing or refused TopDeck key"), once per sync, and marks the decks incomplete either way.
+- A TopDeck answer over the 20 MB cap no longer blocks the window for weeks: that span is asked for again in
+  halves, down to one day, and a single day still too big is skipped with a logged warning.
 - `cmdr board plan` keeps quantities and kept copies (a basic land swap printed plain names before).
 - The Mana tab may suggest a land that only waits on the Maybeboard.
 - EDHTop16 errors are readable again: a refused query (EDHTop16 now answers with plain-text errors) is logged

@@ -13,6 +13,7 @@ from commander.net import (
     NetworkError,
     Pacer,
     RateLimitedError,
+    ResponseTooLargeError,
 )
 
 URL = "https://archidekt.com/api/decks/1/"
@@ -148,7 +149,7 @@ def test_rejects_html_with_200() -> None:
 
 def test_rejects_oversized_response() -> None:
     script = Script(httpx.Response(200, content=b"[" + b" " * MAX_RESPONSE_BYTES + b"]"))
-    with pytest.raises(NetworkError, match="more than 20 MB"):
+    with pytest.raises(ResponseTooLargeError, match="more than 20 MB"):
         fetcher(script, []).get_json(URL)
 
 
@@ -210,7 +211,7 @@ def test_a_write_with_an_undecodable_answer_is_a_network_error() -> None:
 
 def test_download_refuses_more_than_the_cap(tmp_path: Path) -> None:
     script = Script(httpx.Response(200, content=b"x" * (2 * 1024 * 1024 + 1)))
-    with pytest.raises(NetworkError, match="more than 2 MB"):
+    with pytest.raises(ResponseTooLargeError, match="more than 2 MB"):
         fetcher(script, []).download(URL, tmp_path / "bulk.gz", max_bytes=2 * 1024 * 1024)
 
 

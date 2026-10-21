@@ -34,6 +34,10 @@ class NetworkError(Exception):
     """A request failed in a way the user should hear about (offline, server error, bad response)."""
 
 
+class ResponseTooLargeError(NetworkError):
+    """The answer ran past the size cap; asking again would get the same answer, so it is not retried."""
+
+
 class HttpStatusError(NetworkError):
     """The server answered with a status outside 2xx that retrying would not change; callers map some
     statuses to advice (a refused login, a rejected write).
@@ -309,7 +313,7 @@ def _read_capped(response: httpx.Response, url: str, max_bytes: int) -> bytes:
     for chunk in response.iter_bytes():
         size += len(chunk)
         if size > max_bytes:
-            raise NetworkError(f"{url} sent more than {_megabytes(max_bytes)} MB")
+            raise ResponseTooLargeError(f"{url} sent more than {_megabytes(max_bytes)} MB")
         chunks.append(chunk)
     return b"".join(chunks)
 
@@ -320,7 +324,7 @@ def _write_capped(response: httpx.Response, url: str, dest: Path, max_bytes: int
         for chunk in response.iter_bytes():
             size += len(chunk)
             if size > max_bytes:
-                raise NetworkError(f"{url} sent more than {_megabytes(max_bytes)} MB")
+                raise ResponseTooLargeError(f"{url} sent more than {_megabytes(max_bytes)} MB")
             handle.write(chunk)
     return size
 

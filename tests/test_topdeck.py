@@ -1,13 +1,16 @@
 """The TopDeck client over a fake of the API: what it asks for, keeps and works out from the answers."""
 
+import json
 import logging
 import threading
+from collections.abc import Callable
 from datetime import UTC, date, datetime
 from pathlib import Path
 
 import httpx
 import pytest
 
+from commander import net
 from commander.net import Fetcher, NetworkError, Pacer
 from commander.topdeck import (
     API_URL,
@@ -270,6 +273,88 @@ def test_two_readers_at_once_fetch_the_window_once(tmp_path: Path) -> None:
     assert results[0] == results[1]
 
 
+# Answers over the size cap
+
+
+CAP = 200_000
+
+
+def capped_client(
+    fake: FakeTopdeck, root: Path, monkeypatch: pytest.MonkeyPatch, too_big: Callable[[int, int], bool]
+) -> TopdeckClient:
+    """A client whose HTTP cap is CAP bytes, over a fake that answers a span with CAP + 1 bytes when
+    `too_big(start, end)` says so."""
+    monkeypatch.setattr(net, "MAX_RESPONSE_BYTES", CAP)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body: Json = json.loads(request.content)
+        if too_big(body["start"], body["end"]):
+            fake.requests.append(body)
+            return httpx.Response(200, content=b"x" * (CAP + 1))
+        return fake.handler(request)
+
+    return TopdeckClient(
+        Fetcher(httpx.Client(transport=httpx.MockTransport(handler)), max_attempts=1),
+        Pacer(0),
+        TournamentStore(root),
+        MemoryKeyStore(),
+    )
+
+
+def test_an_answer_over_the_cap_is_asked_for_again_in_halves_down_to_what_fits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake = FakeTopdeck()
+    # Nothing longer than a day fits.
+    client = capped_client(fake, tmp_path, monkeypatch, lambda start, end: end - start + 1 > DAY)
+    with caplog.at_level(logging.INFO):
+        found = ask(client)
+    assert found == ((date(2026, 10, 4), 12), (date(2026, 9, 13), 5), (date(2026, 8, 16), 21))
+    # The first three days: the whole span, then its first day, then the other two, then one day each.
+    spans = [(r["start"], r["end"]) for r in fake.requests[:5]]
+    assert spans == [
+        (stamp(2026, 8, 16), stamp(2026, 8, 18, last_second=True)),
+        (stamp(2026, 8, 16), stamp(2026, 8, 16, last_second=True)),
+        (stamp(2026, 8, 17), stamp(2026, 8, 18, last_second=True)),
+        (stamp(2026, 8, 17), stamp(2026, 8, 17, last_second=True)),
+        (stamp(2026, 8, 18), stamp(2026, 8, 18, last_second=True)),
+    ]
+    assert "over the size cap" in caplog.text
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    # The window is covered: a second run asks for nothing.
+    asked = len(fake.requests)
+    assert ask(client_for(fake, tmp_path)) == found
+    assert len(fake.requests) == asked
+
+
+def test_a_day_that_alone_is_over_the_cap_is_skipped_and_coverage_moves_past_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake = FakeTopdeck()
+    day = stamp(2026, 9, 13)
+    client = capped_client(
+        fake, tmp_path, monkeypatch, lambda start, end: start <= day + DAY - 1 and end >= day
+    )
+    with caplog.at_level(logging.INFO):
+        found = ask(client)
+    # The 13 September event is lost; the rest of the window stands.
+    assert found == ((date(2026, 10, 4), 12), (date(2026, 8, 16), 21))
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "2026-09-13" in warnings[0]
+    asked = len(fake.requests)
+    assert ask(client_for(fake, tmp_path)) == found
+    assert len(fake.requests) == asked
+
+
+def test_another_network_error_is_not_split(tmp_path: Path) -> None:
+    fake = FakeTopdeck()
+    fake.status = 503
+    with pytest.raises(NetworkError):
+        ask(client_for(fake, tmp_path))
+    assert len(fake.requests) == 1
+
+
 # Keys
 
 
@@ -295,6 +380,55 @@ def test_a_stored_window_needs_no_key(tmp_path: Path) -> None:
     assert len(ask(client_for(fake, tmp_path, MemoryKeyStore(None)))) == 3
 
 
+def test_the_next_day_without_a_key_answers_from_the_store_and_says_why_it_is_stale(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake = FakeTopdeck()
+    ask(client_for(fake, tmp_path))
+    fake.requests.clear()
+    client = client_for(fake, tmp_path, MemoryKeyStore(None))
+    with caplog.at_level(logging.WARNING):
+        found = ask(client, since=date(2026, 8, 17), until=date(2026, 10, 16))
+    assert found == ((date(2026, 10, 4), 12), (date(2026, 9, 13), 5))
+    note = client.stale_note()
+    assert note is not None
+    assert (note.reason, note.key_problem) == (NO_KEY_MESSAGE, True)
+    # The store is complete to the end of 12 October (three days before the end of the 15th).
+    assert note.as_of == datetime(2026, 10, 12, 23, 59, 59, tzinfo=UTC)
+    assert fake.requests == []
+    assert "TopDeck refresh failed" in caplog.text
+
+
+def test_the_next_day_with_a_refused_key_or_a_down_service_answers_from_the_store(tmp_path: Path) -> None:
+    fake = FakeTopdeck()
+    ask(client_for(fake, tmp_path))
+    refused = client_for(fake, tmp_path, MemoryKeyStore("not-the-key"))
+    assert len(ask(refused, since=date(2026, 8, 17), until=date(2026, 10, 16))) == 2
+    refusal = refused.stale_note()
+    assert refusal is not None
+    assert refusal.key_problem
+    fake.status = 503
+    down = client_for(fake, tmp_path)
+    assert len(ask(down, since=date(2026, 8, 17), until=date(2026, 10, 16))) == 2
+    note = down.stale_note()
+    assert note is not None
+    assert not note.key_problem
+    assert "503" in note.reason
+
+
+def test_a_window_the_store_never_saw_still_fails_without_a_key(tmp_path: Path) -> None:
+    ask(client_for(FakeTopdeck(), tmp_path))
+    client = client_for(FakeTopdeck(), tmp_path, MemoryKeyStore(None))
+    with pytest.raises(TopdeckKeyError):
+        ask(client, since=date(2026, 1, 1), until=date(2026, 1, 31))
+
+
+def test_a_fresh_store_has_no_stale_note(tmp_path: Path) -> None:
+    client = client_for(FakeTopdeck(), tmp_path)
+    ask(client)
+    assert client.stale_note() is None
+
+
 def test_checking_a_key_asks_for_no_events(tmp_path: Path) -> None:
     fake = FakeTopdeck()
     client_for(fake, tmp_path).check_key(TOPDECK_KEY)
@@ -309,6 +443,42 @@ def test_a_server_error_is_a_network_error(tmp_path: Path) -> None:
     fake.status = 500
     with pytest.raises(NetworkError):
         ask(client_for(fake, tmp_path))
+
+
+def test_after_a_network_failure_the_client_sends_nothing_more(tmp_path: Path) -> None:
+    fake = FakeTopdeck()
+    fake.status = 503
+    client = client_for(fake, tmp_path)
+    with pytest.raises(NetworkError):
+        ask(client)
+    assert len(fake.requests) == 1
+    # Another commander, another window and the meta field all read through the same client.
+    with pytest.raises(NetworkError):
+        ask(client, KINNAN)
+    with pytest.raises(NetworkError):
+        ask(client, since=date(2026, 9, 1))
+    with pytest.raises(NetworkError):
+        client.top_commanders(since=SINCE, until=UNTIL, min_event_size=64, count=3)
+    assert len(fake.requests) == 1
+
+
+def test_after_a_refused_key_the_client_sends_nothing_more(tmp_path: Path) -> None:
+    fake = FakeTopdeck()
+    client = client_for(fake, tmp_path, MemoryKeyStore("not-the-key"))
+    with pytest.raises(TopdeckKeyError, match="refused the key"):
+        ask(client)
+    with pytest.raises(TopdeckKeyError, match="refused the key"):
+        ask(client, KINNAN)
+    assert len(fake.requests) == 1
+
+
+def test_a_failure_is_forgotten_with_the_client(tmp_path: Path) -> None:
+    fake = FakeTopdeck()
+    fake.status = 503
+    with pytest.raises(NetworkError):
+        ask(client_for(fake, tmp_path))
+    fake.status = 200
+    assert len(ask(client_for(fake, tmp_path))) == 3
 
 
 def test_an_answer_that_is_not_a_list_is_refused(tmp_path: Path) -> None:

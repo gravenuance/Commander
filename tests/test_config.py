@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 import pytest
@@ -132,9 +133,35 @@ def test_meta_settings_default_and_read_from_the_file(tmp_path: Path) -> None:
     assert MetaSettings() == MetaSettings(60, 16, 60, 10, 30)
 
 
+@pytest.mark.parametrize("size", [0, 1, 15])
+def test_a_min_event_size_under_the_floor_is_raised_to_it_with_a_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, size: int
+) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(f"version = 1\n[meta]\nmin_event_size = {size}\n", encoding="utf-8")
+    with caplog.at_level(logging.WARNING):
+        meta = read_config(path).meta
+    assert meta.min_event_size == 16
+    assert f"meta.min_event_size = {size} is below 16" in caplog.text
+
+
+def test_a_min_event_size_at_or_over_the_floor_is_kept_without_a_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text("version = 1\n[meta]\nmin_event_size = 16\n", encoding="utf-8")
+    with caplog.at_level(logging.WARNING):
+        assert read_config(path).meta.min_event_size == 16
+        path.write_text("version = 1\n[meta]\nmin_event_size = 64\n", encoding="utf-8")
+        assert read_config(path).meta.min_event_size == 64
+    assert caplog.text == ""
+
+
 @pytest.mark.parametrize(
     ("body", "message"),
     [
+        ("[meta]\nmin_event_size = -1", "meta.min_event_size must be a whole number from 16 to 1000"),
+        ("[meta]\nmin_event_size = 1001", "meta.min_event_size must be a whole number from 16 to 1000"),
         ("meta = 3", "'meta' must be a table"),
         ("[meta]\nwindow = 30", r"unknown key 'window' in \[meta\]"),
         ("[meta]\nwindow_days = 91", "meta.window_days must be a whole number from 7 to 90"),

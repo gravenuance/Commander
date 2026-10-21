@@ -16,6 +16,7 @@ from datetime import UTC, date, datetime
 
 from commander.config import MIN_EVENT_SIZE
 from commander.credentials import CredentialError, KeyStore
+from commander.deckcache import ServiceKeyError, StaleNote
 from commander.jsonshape import (
     ShapeError,
     as_list,
@@ -26,7 +27,7 @@ from commander.jsonshape import (
     req_object,
     req_str,
 )
-from commander.net import Fetcher, HttpStatusError, Pacer
+from commander.net import Fetcher, HttpStatusError, NetworkError, Pacer, ResponseTooLargeError
 from commander.topdeckstore import Coverage, DeckEntry, TournamentRecord, TournamentStore
 from commander.tournaments import (
     CommanderStats,
@@ -70,7 +71,7 @@ class TopdeckError(Exception):
     """TopDeck answered with something this tool cannot use."""
 
 
-class TopdeckKeyError(TopdeckError):
+class TopdeckKeyError(TopdeckError, ServiceKeyError):
     """There is no key, or TopDeck refused it."""
 
 
@@ -90,7 +91,9 @@ class TopdeckClient:
         self._keys = keys
         # Lists and the meta field read side by side: one fetches, the other waits and reads what it stored.
         self._lock = threading.Lock()
-        self._loaded: tuple[_Window, list[TournamentRecord]] | None = None
+        self._loaded: tuple[_Window, list[TournamentRecord], StaleNote | None] | None = None
+        # The first key or network failure: a sync reads once per deck, so later reads give up unsent.
+        self._failure: TopdeckKeyError | NetworkError | None = None
 
     def check_key(self, key: str) -> None:
         """Ask TopDeck for events no one reached; TopdeckKeyError when it refuses the key."""
@@ -111,6 +114,11 @@ class TopdeckClient:
         else:
             found.sort(key=lambda e: (-e.tournament.held_on.toordinal(), e.tournament.tid, e.standing))
         return tuple(found[:limit])
+
+    def stale_note(self) -> StaleNote | None:
+        """Set when the window last read was answered from the store because fetching the rest failed."""
+        with self._lock:
+            return None if self._loaded is None else self._loaded[2]
 
     def top_commanders(
         self, *, since: date, until: date, min_event_size: int, count: int
@@ -143,10 +151,30 @@ class TopdeckClient:
         window = _Window(since, until)
         with self._lock:
             if self._loaded is None or self._loaded[0] != window:
-                self._ensure(window)
-                self._loaded = (window, self._store.load_window(since, until))
+                note = self._refresh(window)
+                self._loaded = (window, self._store.load_window(since, until), note)
             events = self._loaded[1]
         return [e for e in events if e.tournament.size >= min_event_size]
+
+    def _refresh(self, window: _Window) -> StaleNote | None:
+        """Fetch what the store lacks; if that fails and an earlier run stored part of the window, say why the
+        stored events stand in. Without stored events the error goes to the caller."""
+        before = self._store.coverage()
+        try:
+            if self._failure is not None:
+                raise self._failure
+            self._ensure(window)
+        except (TopdeckError, NetworkError) as error:
+            if isinstance(error, TopdeckKeyError | NetworkError):
+                self._failure = error
+            if before is None or not _overlaps(before, window):
+                raise
+            log.warning("TopDeck refresh failed, answering from the stored events: %s", error)
+            reached = self._store.coverage() or before
+            return StaleNote(
+                str(error), datetime.fromtimestamp(reached.last, UTC), isinstance(error, ServiceKeyError)
+            )
+        return None
 
     def _ensure(self, window: _Window) -> None:
         """Fetch the days of the window the store has not seen, oldest first, saving as each week arrives."""
@@ -163,7 +191,7 @@ class TopdeckClient:
             return
         while cursor <= need_last:
             end = min(cursor + CHUNK_DAYS * _DAY - 1, need_last)
-            for record in self._fetch(cursor, end):
+            for record in self._fetch_fitting(cursor, end):
                 self._store.save(record)
             self._loaded = None
             covered = max(covered, min(end, settled))
@@ -172,6 +200,24 @@ class TopdeckClient:
         removed = self._store.prune(window.since)
         if removed:
             log.info("dropped %d cached TopDeck events older than %s", removed, window.since)
+
+    def _fetch_fitting(self, start: int, end: int) -> list[TournamentRecord]:
+        """The events started from `start` to `end`. An answer over the size cap is asked for again in two
+        halves, down to one day; a day that is still too big is skipped, so it cannot block the coverage."""
+        try:
+            return self._fetch(start, end)
+        except ResponseTooLargeError:
+            days = -(-(end - start + 1) // _DAY)
+            if days <= 1:
+                log.warning(
+                    "TopDeck's answer for %s is over the size cap even for one day; skipping it", _day(start)
+                )
+                return []
+            log.info(
+                "TopDeck's answer for %s to %s is over the size cap; asking in halves", _day(start), _day(end)
+            )
+            middle = start + days // 2 * _DAY
+            return [*self._fetch_fitting(start, middle - 1), *self._fetch_fitting(middle, end)]
 
     def _fetch(self, start: int, end: int) -> list[TournamentRecord]:
         body: dict[str, object] = {
@@ -206,6 +252,10 @@ class TopdeckClient:
                     f"TopDeck refused the key (HTTP {error.status}); check it in the TopDeck panel"
                 ) from error
             raise
+
+
+def _overlaps(coverage: Coverage, window: _Window) -> bool:
+    return coverage.first < _start_of(window.until) + _DAY and coverage.last >= _start_of(window.since)
 
 
 def _start_of(day: date) -> int:

@@ -295,6 +295,7 @@ def gather(
             refresh=refresh,
             fresh_for=FRESH_FOR,
             errors=_ERRORS,
+            stale=sources.tournaments.stale_note,
         )
 
     def peers() -> Answer[PeerLists]:
@@ -362,6 +363,7 @@ def _commander_lists(
         refresh=refresh,
         fresh_for=FRESH_FOR,
         errors=_ERRORS,
+        stale=sources.tournaments.stale_note,
     )
 
 

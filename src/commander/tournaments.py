@@ -9,6 +9,8 @@ from datetime import date
 from enum import Enum
 from typing import Protocol
 
+from commander.deckcache import StaleNote
+
 
 class EntrySort(Enum):
     """The orders a commander's entries are read in: newest event first, or best placings first."""
@@ -78,4 +80,8 @@ class TournamentSource(Protocol):
         self, *, since: date, until: date, min_event_size: int, count: int
     ) -> tuple[CommanderStats, ...]:
         """The `count` most-played commanders in events from `since` to `until`."""
+        ...
+
+    def stale_note(self) -> StaleNote | None:
+        """Set when the events last read came from storage because fetching new ones failed."""
         ...

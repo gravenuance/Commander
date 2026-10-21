@@ -38,7 +38,10 @@ Option 4, behind the provider seam that stood in front of EDHTop16 (`tournaments
   fetched by start date in three-day chunks (about 6 MB each, under the client's 20 MB cap), oldest first,
   two seconds apart through the client's `Pacer`, saving each chunk as it arrives, so a failure part-way keeps what came before it. Reads that need the same missing days
   (the commander's lists and the meta field run side by side) wait on one lock and the second finds the events
-  stored.
+  stored. A chunk whose answer runs past the cap (`net.ResponseTooLargeError`) is asked for again in two
+  halves, down to one day, logged at INFO; a single day still over the cap is skipped with a WARNING and the
+  coverage moves past it, so one huge day cannot block the window. Its events are missing until the day
+  leaves the window.
 - **Keeping** (`topdeckstore.py`). One compact JSON file per event in `<cache>\topdeck\events\` holding the
   commander (partners joined in alphabetical order, as before), each deck's finish (its place in the standings)
   and cards, and `coverage.json`, the span of start dates that is complete. A run asks only for days outside
@@ -58,15 +61,21 @@ Option 4, behind the provider seam that stood in front of EDHTop16 (`tournaments
 - **The key** is one per user in Windows Credential Manager, service `Commander (cmdr) TopDeck`, user
   `api-key` (`credentials.KeyringKeyStore`). `cmdr topdeck` asks for it with no echo, never from the command
   line (`--key-stdin` for scripts); the app's TopDeck panel has the steps, **Test key** and **Save key**.
-  Both ask TopDeck whether it takes the key before saving it. Without a key nothing is requested, a stored
-  window still answers, and `meta`, `sync` and the app say why the lists are missing
-  (`topdeck.NO_KEY_MESSAGE`); a refused key says so without showing it.
+  Both ask TopDeck whether it takes the key before saving it. Without a key nothing is requested, and `meta`,
+  `sync` and the app say why the lists are missing (`topdeck.NO_KEY_MESSAGE`); a refused key says so without
+  showing it. A window the store already covers in part still answers when a refresh fails (no key, a refused
+  key, TopDeck down): the stored events answer as a stale copy that carries the reason and the day the store
+  is complete to (`TopdeckClient.stale_note`, `deckcache.StaleNote`), and is not cached as a fresh answer. A
+  window the store never held fails with the error. A client remembers its first key or network failure for
+  its lifetime (one sync, one `meta` run, one app read) and gives it again without sending, so a sync does not
+  try TopDeck again for every deck.
 - **The credit** is a line in every CLI output that shows the data (`meta`, its JSON, `topdeck`), and a link in
   the app's Meta and Considering panels and the TopDeck panel.
 - **Removed:** spice (spicy picks, the spice of `meta --card`, the `spice` JSON fields), the unknown-standing
   rule of the weighted share, and the tournament name and player results, which nothing read.
-- `[meta] min_event_size` runs from 16 and defaults to it, as with EDHTop16. The first build fetched 64+
-  only; on TopDeck's last 30 days to 2026-10-21 that gave Magda 22 lists, Etali 20, Glarb 12 and Ellivere
+- `[meta] min_event_size` runs from 16 and defaults to it, as with EDHTop16; a smaller value in the config
+  is raised to 16 with a logged warning, not refused (the floor was 0 before this ADR). The first build
+  fetched 64+ only; on TopDeck's last 30 days to 2026-10-21 that gave Magda 22 lists, Etali 20, Glarb 12 and Ellivere
   2, against 115, 101, 31 and 8 at 16+, too few for the idea test's lower bound (owner's call, 2026-10-21).
   Small events stay small voices through the event-size factor (ADR 0026). The store went to version 2 so
   a store filled at 64+ is fetched again.
@@ -82,5 +91,9 @@ Option 4, behind the provider seam that stood in front of EDHTop16 (`tournaments
   tuned on lists from events of 16+, the same floor, so they stand unchanged. Revisit if the ideas drift.
 - TopDeck's answer has no `standing` field; the finish is the place in the list, which the API documents as
   the standings order. If it ever sorts otherwise, finishes and top cuts are wrong without an error.
+- Two processes that read at once (`cmdr meta` and an app sync) can fetch the same chunks, and the slower
+  one's `set_coverage` can move the coverage back. Event files are written atomically, so the cost is extra
+  fetching until a later run's coverage catches up. Accepted: no lock between processes (owner's call,
+  2026-10-21).
 - The 3-day re-ask means an event that finishes later than that is missed until the window moves past it;
   none of the sampled events ran longer.
