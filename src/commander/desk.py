@@ -464,7 +464,7 @@ class Desk:
                 self._elapsed(started_at),
                 phase,
             )
-            yield {"error": self._wait_text(wait, then, phase, target)}
+            yield {"error": self._wait_text(wait, then, target)}
             return
         try:
             if target is None:
@@ -476,12 +476,13 @@ class Desk:
             with self._sync_lock:
                 self._writes.remove(doing)
 
-    def _wait_text(self, wait: _Wait, then: str, phase: str, deck_id: int | None) -> str:
+    def _wait_text(self, wait: _Wait, then: str, deck_id: int | None) -> str:
+        """The refusal shown to the user, within the 12-word budget (ui.md); the log line has the phase."""
         if wait is _Wait.CARDS:
             return f"Wait for the card data to finish downloading, then {then}."
         if wait is _Wait.DECK and deck_id is not None:
             return f"Wait for {self._deck_name(deck_id)} to finish syncing, then {then}."
-        return f"Wait for the sync to finish, then {then}{f' (now: {phase})' if phase else ''}."
+        return f"Wait for the sync to finish, then {then}."
 
     def _deck_name(self, deck_id: int) -> str:
         """The deck's short name for a message, read without its lock: the pull writes deck.json atomically,
@@ -1173,11 +1174,10 @@ class Desk:
         except CardDataError as error:
             with self._sync_lock:
                 downloading = self._sync.running and not self._sync.cards_ready
-                phase = self._sync.progress
             if not downloading:
                 raise
             log.info("refused the write for deck %d (%s): %s", deck_id, _Wait.CARDS.value, error)
-            raise CardDataDownloadingError(self._wait_text(_Wait.CARDS, then, phase, deck_id)) from error
+            raise CardDataDownloadingError(self._wait_text(_Wait.CARDS, then, deck_id)) from error
         with db:
             yield db
 
@@ -1315,7 +1315,7 @@ def _log_save(deck_id: int, saved: BoardSave) -> None:
                 "deck %d on Archidekt differs from the save: %s", deck_id, "; ".join(saved.result.mismatches)
             )
     elif resolution.problems:
-        log.info("save of deck %d not made: %s", deck_id, "; ".join(resolution.problems))
+        log.warning("save of deck %d not made: %s", deck_id, "; ".join(resolution.problems))
     else:
         log.info(
             "save of deck %d sent nothing: %d board card(s) already in the deck", deck_id, len(saved.applied)

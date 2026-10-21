@@ -205,7 +205,10 @@ class CountChange:
 
     def met_by(self, held: int) -> bool:
         """Whether a deck holding `held` copies needs nothing more: a decrease is at most `count` copies, an
-        increase at least `count`, so a copy cut or added on Archidekt meanwhile never turns one around."""
+        increase at least `count`, so a copy cut or added on Archidekt meanwhile never turns one around. A
+        card the deck no longer holds is met either way: bringing it back is a separate choice."""
+        if held == 0:
+            return True
         return held <= self.count if self.count < self.was else held >= self.count
 
 
@@ -456,7 +459,7 @@ def board_plan(deck: Deck, board: Board) -> Plan | None:
 
     The counts come from deck, so it should be the deck as it is on Archidekt now: a queued card that deck
     already holds (other than a basic land) is done, and neither adds nor cuts; so is a count change the
-    deck already meets (`CountChange.met_by`), including a decrease of a card the deck no longer holds.
+    deck already meets (`CountChange.met_by`), including a change to a card the deck no longer holds.
     """
     held = _held(deck)
     done = already_added(deck, board)

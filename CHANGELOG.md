@@ -46,7 +46,8 @@
 - EDHTop16 errors are readable again: a refused query (EDHTop16 now answers with plain-text errors) is logged
   with EDHTop16's own message, and the Meta panel says why its data is missing instead of only "not fetched
   yet". A cache read with nothing fetched is logged at DEBUG, so the log no longer fills with it.
-- A card change refused while a sync runs now says which sync phase it is waiting for, and is logged.
+- A card change refused while a sync runs is logged with the sync's phase, and the message the app shows
+  keeps to 12 words: "Wait for the sync to finish, then sign in." (the phase is no longer in it).
 - Card changes, settings and saves to Archidekt no longer wait for the whole sync, which on a first sync of
   many decks could take most of an hour: a deck's changes wait only while the sync may still rewrite that deck,
   which it pulls first when it is the one open, and changes that look cards up also wait while the card data
@@ -59,13 +60,16 @@
   "5 → 3" was queued, the save no longer adds three copies back. A queued increase means "at least". `sync`
   clears the count changes the deck already meets and prints `<deck> board: cleared ...`, so they no longer
   count as pending or block choosing the card as a cut.
+- A queued count increase of a card the deck no longer holds is dropped like a decrease: when the card was cut
+  on Archidekt after "3 → 5" was queued, the next save no longer adds five copies back (ADR 0043).
 - A label change no longer holds the card data open across its Archidekt call, and a decision or a removal
   made while a first sync is still downloading the card data says to wait for it instead of "run cmdr sync"
   (ADR 0042).
 - A deck folder deleted by `sync` is renamed to `.removing-<name>` under the board lock and then deleted, so a
   file held open by another program no longer leaves a half-deleted folder that is never looked at again: the
-  next sync retries it and a failure names the folder. A deck whose board the app is writing is kept for
-  that sync (ADR 0045).
+  next sync retries it. A folder that still cannot be deleted is only a warning naming it (reported as
+  `missing`, logged at WARNING): `cmdr sync` still exits zero. A deck whose board the app is writing is kept
+  for that sync (ADR 0045).
 - A deck listed twice by Archidekt's paged listing (one edited between two page reads) is fetched and
   reported once.
 

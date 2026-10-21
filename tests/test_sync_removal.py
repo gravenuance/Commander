@@ -284,19 +284,21 @@ def rmtree_failing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(store_module.shutil, "rmtree", refuse)
 
 
-def test_a_folder_that_cannot_be_deleted_is_set_aside_with_the_users_files_and_reported_failed(
-    tmp_path: Path, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+def test_a_folder_that_cannot_be_deleted_is_set_aside_with_the_users_files_and_only_warned_about(
+    tmp_path: Path, raw_deck: Json, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     fake = synced_then_deleted_upstream(tmp_path, raw_deck)
     removed: list[int] = []
     rmtree_failing(monkeypatch)
 
-    results = pull(tmp_path, fake, watch=PullWatch(on_removed=removed.append))
+    with caplog.at_level(logging.WARNING, logger=SYNC_LOG):
+        results = pull(tmp_path, fake, watch=PullWatch(on_removed=removed.append))
 
     [result] = [r for r in results if r.deck_id == GONE_ID]
-    assert result.status is SyncStatus.FAILED
+    assert result.status is SyncStatus.MISSING_UPSTREAM
     assert result.error is not None
     assert MARKED in result.error
+    assert any(MARKED in r.getMessage() and r.levelno == logging.WARNING for r in caplog.records)
     assert removed == []
     assert not folder(tmp_path).exists()
     assert (folder(tmp_path, MARKED) / "notes.md").is_file()
@@ -323,8 +325,8 @@ def test_the_next_sync_finishes_deleting_a_folder_set_aside_and_tells_the_caller
     assert removed == [GONE_ID]
 
 
-def test_a_folder_set_aside_that_still_cannot_be_deleted_is_reported_again_and_a_dry_run_only_says_so(
-    tmp_path: Path, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+def test_a_folder_set_aside_that_still_cannot_be_deleted_is_warned_about_again_and_a_dry_run_only_says_so(
+    tmp_path: Path, raw_deck: Json, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     fake = synced_then_deleted_upstream(tmp_path, raw_deck)
     with monkeypatch.context() as broken:
@@ -333,13 +335,16 @@ def test_a_folder_set_aside_that_still_cannot_be_deleted_is_reported_again_and_a
         (folder(tmp_path, MARKED) / SNAPSHOT_FILE).write_text("{}", encoding="utf-8")
 
         dry = pull(tmp_path, fake, dry_run=True)
-        again = pull(tmp_path, fake)
+        with caplog.at_level(logging.WARNING, logger=SYNC_LOG):
+            again = pull(tmp_path, fake)
 
     assert by_id(dry)[GONE_ID] is SyncStatus.WOULD_REMOVE
     [result] = [r for r in again if r.deck_id == GONE_ID]
-    assert result.status is SyncStatus.FAILED
+    assert result.status is SyncStatus.MISSING_UPSTREAM
     assert result.error is not None
     assert MARKED in result.error
+    assert not any(r.status is SyncStatus.FAILED for r in again)
+    assert any(MARKED in r.getMessage() and r.levelno == logging.WARNING for r in caplog.records)
     assert (folder(tmp_path, MARKED) / "notes.md").is_file()
 
 

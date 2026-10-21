@@ -281,6 +281,15 @@ def test_a_decrease_is_at_most_its_count_and_an_increase_at_least_so_either_is_m
     assert counts_met(deck, board) == board.counts
 
 
+def test_an_increase_of_a_card_the_deck_no_longer_holds_is_dropped_like_a_decrease(raw: Json) -> None:
+    # Rats 3 -> 5 queued, then the card was cut on Archidekt: re-adding it is a separate, explicit choice.
+    deck = mountains_held(raw, 0)
+    board = Board((), (CountChange("Mountain", 3, 5, Actor.YOU, STAMP),))
+
+    assert board_plan(deck, board) is None
+    assert counts_met(deck, board) == board.counts
+
+
 @pytest.mark.parametrize(("count", "held", "plan"), [(4, 6, "cut"), (8, 6, "add"), (0, 6, "cut")])
 def test_a_count_change_the_deck_has_not_reached_still_cuts_or_adds(
     raw: Json, count: int, held: int, plan: str

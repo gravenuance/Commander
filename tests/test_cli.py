@@ -7,7 +7,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from commander import __version__, cli
+from commander import __version__, cli, store
 from commander.cli import main
 from commander.credentials import SERVICE
 from commander.syncrun import CardState, CardStatus, SyncOutcome
@@ -209,6 +209,24 @@ def test_sync_lists_a_deck_deleted_on_archidekt_as_removed_and_deletes_its_folde
 
     assert result.out == "removed         222  Other\n1 unchanged, 1 removed\n" + NO_CARDS + LABELS_NONE
     assert not (tmp_path / "decks" / "222-other").exists()
+
+
+def test_sync_with_a_folder_it_cannot_delete_yet_warns_and_succeeds(
+    tmp_path: Path, archidekt: FakeArchidekt, memory_keyring: MemoryKeyring, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    deleted_on_archidekt(tmp_path, archidekt, memory_keyring)
+
+    def refuse(path: Path, *_: object, **__: object) -> None:
+        raise PermissionError(f"{path}: held open by another program")
+
+    monkeypatch.setattr(store.shutil, "rmtree", refuse)
+
+    result = sync(tmp_path, archidekt)
+
+    assert result.code == 0
+    assert result.out.startswith("missing         222  Other\n    ")
+    assert ".removing-222-other" in result.out
+    assert (tmp_path / "decks" / ".removing-222-other" / "deck.json").is_file()
 
 
 def test_sync_dry_run_says_what_it_would_remove(

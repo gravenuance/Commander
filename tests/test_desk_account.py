@@ -180,12 +180,12 @@ def test_no_second_sync_and_no_account_change_while_one_runs(env: Env) -> None:
     assert sync_of(answer)["progress"] == "Starting the sync"
     desk.sync()
     assert len(env.pending) == 1
-    assert desk.sign_in("TESTER", PASSWORD) == {
-        "error": "Wait for the sync to finish, then sign in (now: Starting the sync)."
-    }
-    assert desk.sign_out() == {
-        "error": "Wait for the sync to finish, then sign out (now: Starting the sync)."
-    }
+    refused_in = desk.sign_in("TESTER", PASSWORD)
+    refused_out = desk.sign_out()
+    assert refused_in == {"error": "Wait for the sync to finish, then sign in."}
+    assert refused_out == {"error": "Wait for the sync to finish, then sign out."}
+    # The status text is at most 12 words (ui.md); the phase the sync is in goes to the log instead.
+    assert all(len(str(answer["error"]).split()) <= 12 for answer in (refused_in, refused_out))
     env.pending.pop()()
     assert sync_of(desk.account())["running"] is False
 

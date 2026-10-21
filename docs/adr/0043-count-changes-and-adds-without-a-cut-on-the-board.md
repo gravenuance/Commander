@@ -73,10 +73,17 @@ Option 2, holding a target count, and an add without a cut stays a board card.
   card had left it, on Archidekt. The direction is the change's own (`count` below or above `was`): a
   decrease is met when the deck holds `count` or fewer copies, an increase when it holds `count` or more
   (`CountChange.met_by`), and `counts_met` and `board_plan` both go by it. A decrease of a card the deck no
-  longer holds is met, so nothing is sent for it. An increase of such a card still asks for `count` copies.
+  longer holds is met, so nothing is sent for it.
 - **Sync clears met changes.** A change the deck met, because the owner edited it on Archidekt, kept showing
   "×10 → 12" on a deck holding 12, counted as pending and blocked choosing the card as a cut. The ideas-phase
   merge now drops them under the deck's lock next to `close_held` (ADR 0046), logs "count change done" for
   each, and reports them in `SyncOutcome.counts_cleared` and as `<deck> board: cleared ...` on `cmdr sync`.
   Like `close_held` it runs only with the ideas phase, so `--no-ideas` leaves them for the next save, which
   clears them as before.
+
+## Amendment (2026-10-21): an increase of a card the deck no longer holds is dropped too
+
+The owner decided that a card cut on Archidekt after a count increase was queued (Rats 3 → 5) is not added back
+by the next save: the increase is met like a decrease of such a card, and the save and the sync both drop it.
+Putting the card back in the deck is a separate, explicit choice (an add on the board). `CountChange.met_by`
+is true for a deck holding none of the card, whichever way the change goes.

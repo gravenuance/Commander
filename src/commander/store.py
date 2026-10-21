@@ -48,6 +48,10 @@ class DeckInUseError(WorkspaceError):
     """The deck's board lock is held, by the app or another cmdr, so its folder is left alone this time."""
 
 
+class RemovalPendingError(WorkspaceError):
+    """A deck folder set aside for deletion could not be deleted yet; the next sync retries."""
+
+
 @dataclass(slots=True, frozen=True)
 class StoredDeck:
     folder: Path
@@ -175,11 +179,11 @@ class Workspace:
         return [(deck_id, folder) for deck_id, folder in found if deck_id is not None]
 
     def finish_removal(self, set_aside: Path) -> None:
-        """Delete a folder set aside by `remove_deck`; WorkspaceError, naming it, when that fails."""
+        """Delete a folder set aside by `remove_deck`; RemovalPendingError, naming it, when that fails."""
         try:
             shutil.rmtree(set_aside)
         except OSError as error:
-            raise WorkspaceError(
+            raise RemovalPendingError(
                 f"its folder is set aside as {set_aside.name} and could not be deleted yet ({error}); "
                 "the next sync retries"
             ) from error
