@@ -29,7 +29,6 @@ from commander.metadata import (
 )
 from commander.models import Deck, DeckCard
 from commander.net import HTTP_OK, Fetcher, Pacer
-from commander.peersearch import SearchHits
 from commander.spellbook import SpellbookClient
 from commander.topdeck import NO_KEY_MESSAGE, TopdeckClient
 from commander.topdeckstore import TournamentStore
@@ -207,10 +206,9 @@ def test_the_decks_read_step_down_the_view_bar_until_enough_pass(rig: Rig) -> No
     rig.settings = replace(SETTINGS, peer_decks=60)
     peers = rig.gather().peers.data
     assert peers is not None
-    # Three decks have 1000 views and five 500: under ten each time, so all twelve are read.
-    assert len(peers.decks) == 12
-    assert [p.deck.views for p in peers.decks][:3] == [2131, 1847, 1782]
-    assert min(p.deck.views for p in peers.decks) == 20
+    # Three decks have 1000 views and five 500: under ten each time, so those five are read and no deck
+    # under 500 views is.
+    assert [p.deck.views for p in peers.decks] == [2131, 1847, 1782, 673, 607]
 
 
 def bracketed(rig: Rig, bracket: int) -> MetaData:
@@ -533,7 +531,116 @@ def test_a_search_that_finds_no_decks_gives_an_empty_answer_not_an_error(rig: Ri
     rig.archidekt.page = {"count": 0, "next": None, "results": []}
     peers = rig.gather().peers
     assert peers.source is AnswerSource.FETCHED
-    assert peers.data == PeerLists((), 0, SearchHits((), NOW))
+    assert peers.data == PeerLists((), 0)
+
+
+def popular_page(count: int, *, first_id: int = 30_000_000, more: bool = False) -> Json:
+    """A view-ordered search page of `count` decks, each owned by someone else, from 9000 views down by one
+    and updated inside the window; with `more` it links to a next page."""
+    row = load_fixture("archidekt_search_ellivere.json")["results"][0]
+    results = [
+        {**row, "id": first_id + n, "owner": {"id": 1, "username": "someone"}, "viewCount": 9000 - n}
+        for n in range(count)
+    ]
+    link = "http://archidekt.com/api/decks/v3/?commanderName=x&formats=3&orderBy=-viewCount&page=2"
+    return {"count": 500, "next": link if more else None, "results": results}
+
+
+def test_the_commander_search_asks_for_the_most_viewed_decks(rig: Rig) -> None:
+    bracketed(rig, 4)
+    assert [(q["orderBy"], q["edhBracket"]) for q in rig.archidekt.searches] == [
+        ("-viewCount", "4"),
+        ("-viewCount", "5"),
+    ]
+
+
+def test_seventy_matching_decks_give_the_sixty_most_viewed_to_read(rig: Rig) -> None:
+    rig.settings = replace(SETTINGS, peer_decks=60)
+    rig.archidekt.page = popular_page(70)
+    peers = rig.gather().peers.data
+    assert peers is not None
+    assert [p.deck.id for p in peers.decks] == list(range(30_000_000, 30_000_060))
+    assert len(rig.archidekt.deck_reads) == 60
+
+
+def test_each_bracket_of_a_commander_is_searched_to_the_fifth_page_at_most(rig: Rig) -> None:
+    rig.archidekt.page = popular_page(10, more=True)
+    bracketed(rig, 3)
+    # Every page links to another over the floor: five requests a bracket, 3 and then 4.
+    assert [q.get("page") for q in rig.archidekt.searches] == [None, "2", "2", "2", "2"] * 2
+
+
+def test_a_tag_search_pages_each_bracket_to_the_third_page_by_views(rig: Rig) -> None:
+    rig.settings = replace(SETTINGS, peer_decks=12)
+    rig.archidekt.page = popular_page(10, more=True)
+    gather_adjacent(
+        replace(ellivere_deck(), bracket=3),
+        [],
+        rig.sources(),
+        rig.cache,
+        now=lambda: rig.now,
+        refresh=False,
+        tags=("Landfall",),
+    )
+    searches = rig.archidekt.searches
+    assert {q["orderBy"] for q in searches} == {"-viewCount"}
+    assert [q.get("page") for q in searches] == [None, "2", "2"] * 2
+    firsts = [q for q in searches if "page" not in q]
+    assert [(q["deckTagName"], q["edhBracket"]) for q in firsts] == [("Landfall", "3"), ("Landfall", "4")]
+
+
+def old_answer_with_search(rig: Rig, search: object) -> None:
+    """Make the stored answer the one the version before the view-ordered search wrote: under the request key
+    of that version (written out here, with its page cap of 20) and holding a `search` field."""
+    [path] = (rig.cache / CACHE_FOLDER).glob("archidekt-ellivere*.json")
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["answer"]["search"] = search
+    raw["key"] = request_key(
+        {
+            "commander": ELLIVERE,
+            "brackets": [5],
+            "pages": 20,
+            "decks": 3,
+            "viewFloors": [1000, 750, 500],
+            "minDecks": 10,
+            "windowDays": 60,
+            "user": "tester",
+        }
+    )
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+
+OLD_SEARCH = {
+    "fullAt": "2026-10-14T00:00:00+00:00",
+    "decks": [
+        {
+            "id": 5553433,
+            "name": "Deck",
+            "owner": "player7",
+            "views": 2131,
+            "updatedAt": "2026-09-08T19:23:58+00:00",
+            "bracket": 5,
+        }
+    ],
+}
+
+
+@pytest.mark.parametrize("search", [OLD_SEARCH, "not what an old answer held"])
+def test_an_answer_stored_with_the_old_search_hits_still_serves_and_is_not_refetched(
+    rig: Rig, search: object
+) -> None:
+    first = rig.gather().peers
+    old_answer_with_search(rig, search)
+    rig.now = NOW + timedelta(hours=23)
+    asked = len(rig.archidekt.requests)
+    again = rig.gather().peers
+    assert again.source is AnswerSource.CACHED
+    assert again.data == first.data
+    assert len(rig.archidekt.requests) == asked
+    offline = gather(
+        ellivere_deck(), rig.sources(), rig.cache, now=lambda: rig.now, refresh=False, offline=True
+    )
+    assert offline.peers.data == first.data
 
 
 def test_a_cache_from_before_the_view_bars_reads_as_not_fetched(rig: Rig) -> None:
@@ -759,12 +866,14 @@ def adjacent(rig: Rig, *groups: tuple[str, ...]) -> AdjacentDecks:
 
 
 def test_a_partner_pair_keeps_only_decks_led_by_both(rig: Rig) -> None:
-    # The 3rd, 5th and 11th most viewed pair Magda with Kodama; all twelve hits are read to find them.
+    # The 3rd and 5th most viewed of the five decks over 500 views pair Magda with Kodama; the 27-view deck
+    # that also does is under the bar and never read.
     rig.archidekt.commander = MAGDA
     rig.archidekt.partnered = {7432856, 23074747, 26605393}
     rig.settings = replace(SETTINGS, peer_decks=12)
     found = adjacent(rig, (MAGDA, KODAMA))
-    assert [p.deck.id for p in found.decks] == [7432856, 23074747, 26605393]
+    assert [p.deck.id for p in found.decks] == [7432856, 23074747]
+    assert 26605393 not in rig.archidekt.deck_reads
     assert found.errors == ()
 
 

@@ -78,7 +78,7 @@ def peer_row(deck_id: int, owner: str, views: int) -> Json:
 def fake(raw_deck: Json) -> FakeArchidekt:
     archidekt = FakeArchidekt()
     archidekt.put(raw_deck)
-    archidekt.peer_page = deck_page([peer_row(DECK_ID, "TESTER", 900), peer_row(PEER_ID, "someone", 120)])
+    archidekt.peer_page = deck_page([peer_row(DECK_ID, "TESTER", 900), peer_row(PEER_ID, "someone", 600)])
     archidekt.topdeck.events = [*magda_events(), *kinnan_events()]
     archidekt.spellbook.combos = load_fixture("spellbook_meta_kinnan.json")
     return archidekt
@@ -134,7 +134,7 @@ def test_the_report_compares_the_deck_with_performing_lists(home: Path, fake: Fa
     ]
     assert section(result.out, "Your own picks") == ["    0% · 1/1  Disruptor Flute"]
     assert section(result.out, "Most-viewed Archidekt decks") == [
-        "     120 views  2026-10-01  Peer 777  https://archidekt.com/decks/777"
+        "     600 views  2026-10-01  Peer 777  https://archidekt.com/decks/777"
     ]
     assert section(result.out, "Your key cards") == [
         "  Magda, Brazen Outlaw: your commander",
@@ -404,7 +404,7 @@ def test_sync_below_bracket_5_learns_from_recent_archidekt_decks_alone(
         fake.put({**fake.decks[PEER_ID], "id": peer_id})
     for peer_id in peers:
         fake.decks[peer_id]["cards"].append(card_entry(9_100, "Arcane Signet", ["Ramp"]))
-    fake.peer_page = deck_page([{**peer_row(p, "someone", 120), "edhBracket": 3} for p in peers])
+    fake.peer_page = deck_page([{**peer_row(p, "someone", 600), "edhBracket": 3} for p in peers])
     result = sync(home, fake)
     assert result.code == 0, result.err
     assert "Magda ideas: +1 from archidekt decks\n" in result.out, result.err
@@ -465,7 +465,7 @@ def put_ygra_decks(fake: FakeArchidekt) -> None:
         fake.put({**led_by_ygra, "id": deck_id})
     for deck_id in ygra[:2]:
         fake.decks[deck_id]["cards"].append(card_entry(9_100, "Arcane Signet", ["Ramp"]))
-    fake.peer_pages[YGRA] = deck_page([peer_row(d, "someone", 50) for d in ygra])
+    fake.peer_pages[YGRA] = deck_page([peer_row(d, "someone", 600) for d in ygra])
 
 
 TAG_PROFILE = "version = 1\n[ideas]\ntag_search = true\n"
@@ -487,7 +487,7 @@ def put_tag_decks(fake: FakeArchidekt, tag: str, commander: str, *, first_id: in
         fake.put({**led, "id": deck_id})
     for deck_id in ids[:2]:
         fake.decks[deck_id]["cards"].append(card_entry(9_100, "Arcane Signet", ["Ramp"]))
-    fake.tag_pages[tag.casefold()] = deck_page([peer_row(d, "someone", 50) for d in ids])
+    fake.tag_pages[tag.casefold()] = deck_page([peer_row(d, "someone", 600) for d in ids])
     return ids
 
 

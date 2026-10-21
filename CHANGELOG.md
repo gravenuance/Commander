@@ -8,8 +8,16 @@
   type line end in "…", and the name no longer slides under the turn-down button.
 - Archidekt reads keep under its limit of about ten requests a minute: 6.5 s apart instead of 5 s, and a 429
   pauses them for a minute instead of three, since the limit lifts within the minute (ADR 0048). A sync no
-  longer sends a `pageSize`, which Archidekt ignores (its pages hold 60 decks), and a search that its page cap
-  cuts short says in the log how far back it reached.
+  longer sends a `pageSize`, which Archidekt ignores (its pages hold 60 decks).
+
+### Changed
+- Other players' Archidekt decks are found by view count instead of by last edit (ADR 0050). A commander's
+  search now pages down its decks most viewed first, up to five pages per bracket, until it is under 1000
+  views, or under 750 or 500 when fewer than ten decks in the window reach the higher bar, and never below 500.
+  Before, it saw only the newest 1200 decks, which on a busy commander missed many of the popular ones. A
+  commander with fewer than ten decks at 500 views reads just those, and the recent decks with fewer views are
+  no longer read. A refresh searches again instead of paging only to the newest deck it held, and the weekly
+  full search is gone; answers cached by the earlier version still serve until their own refresh day.
 
 ## 0.8.0 - 2026-10-21
 

@@ -1,5 +1,6 @@
 import copy
 import logging
+from collections.abc import Collection, Iterable
 from datetime import UTC, datetime
 
 import httpx
@@ -21,10 +22,39 @@ from conftest import DECK_ID, Json, load_fixture
 
 SINCE = datetime(2026, 8, 16, tzinfo=UTC)
 ELLIVERE = "Ellivere of the Wild Court"
+IN_WINDOW = "2026-10-01T00:00:00.000000Z"
+BEFORE_WINDOW = "2026-06-01T00:00:00.000000Z"
+FIRST_ID = 20_000_000
+NEXT_LINK = (
+    "http://archidekt.com/api/decks/v3/?commanderName=Ellivere+of+the+Wild+Court"
+    "&formats=3&orderBy=-viewCount&page=2"
+)
 
 
 def search_page() -> Json:
     return copy.deepcopy(load_fixture("archidekt_search_ellivere.json"))
+
+
+def listing(
+    views: Iterable[int], *, first_id: int = FIRST_ID, old: Collection[int] = (), more: bool = True
+) -> Json:
+    """A view-ordered search page: copies of the fixture's first row with these view counts, numbered from
+    first_id, those at the `old` positions last updated before the window."""
+    row = search_page()["results"][0]
+    results = [
+        {
+            **row,
+            "id": first_id + n,
+            "viewCount": count,
+            "updatedAt": BEFORE_WINDOW if n in old else IN_WINDOW,
+        }
+        for n, count in enumerate(views)
+    ]
+    return {"count": 500, "next": NEXT_LINK if more else None, "results": results}
+
+
+def ids(first_id: int, count: int) -> list[int]:
+    return list(range(first_id, first_id + count))
 
 
 class FakeSearch:
@@ -37,10 +67,19 @@ class FakeSearch:
     def handler(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
         if request.url.path == "/api/decks/v3/":
-            return httpx.Response(200, json=self.pages.pop(0))
+            return httpx.Response(200, json=self.next_page_linked(request))
         if request.url.path == f"/api/decks/{DECK_ID}/":
             return httpx.Response(200, json=load_fixture(f"deck_{DECK_ID}.json"))
         return httpx.Response(404)
+
+    def next_page_linked(self, request: httpx.Request) -> Json:
+        """The next queued page, its link made to carry this request's filters, as Archidekt's does."""
+        page = self.pages.pop(0)
+        if not str(page["next"]).startswith("http://archidekt.com/"):
+            return page
+        number = int(request.url.params.get("page", "1")) + 1
+        link = str(request.url.copy_set_param("page", number)).replace("https://", "http://", 1)
+        return {**page, "next": link}
 
 
 def search_for(fake: FakeSearch, sleeps: list[float] | None = None) -> ArchidektSearch:
@@ -54,6 +93,23 @@ def search_for(fake: FakeSearch, sleeps: list[float] | None = None) -> Archidekt
     return ArchidektSearch(fetcher, Pacer(2.0, sleep=sleep, monotonic=lambda: clock[0]))
 
 
+def found_by(
+    fake: FakeSearch,
+    *brackets: int | None,
+    commander: str | None = ELLIVERE,
+    tag: str | None = None,
+    max_pages: int = MAX_SEARCH_PAGES,
+) -> list[PeerDeck]:
+    return search_for(fake).popular_decks(
+        commander,
+        brackets=brackets or (5,),
+        since=SINCE,
+        label="ellivere",
+        tag=tag,
+        max_pages=max_pages,
+    )
+
+
 def test_parses_a_search_page() -> None:
     decks, next_url = parse_search_page(search_page())
     assert len(decks) == 15
@@ -65,54 +121,166 @@ def test_parses_a_search_page() -> None:
     assert next_url.startswith("https://archidekt.com/api/decks/v3/?")
 
 
-def test_recent_decks_stop_at_the_page_reaching_past_the_window() -> None:
-    fake = FakeSearch([search_page()])
-    decks = search_for(fake).recent_decks(ELLIVERE, brackets=(5,), since=SINCE)
-    # The last two on the page were updated in July and June.
-    assert [d.id for d in decks][-2:] == [25161352, 23074747]
-    assert len(decks) == 13
-    assert len(fake.requests) == 1
+def test_the_search_asks_for_the_most_viewed_decks_of_each_bracket() -> None:
+    fake = FakeSearch([listing(range(2000, 1990, -1), more=False)])
+    decks = found_by(fake)
+    assert len(decks) == 10
     assert dict(fake.requests[0].url.params) == {
         "commanderName": ELLIVERE,
         "formats": "3",
-        "orderBy": "-updatedAt",
+        "orderBy": "-viewCount",
         "edhBracket": "5",
     }
 
 
-def test_recent_decks_follow_the_next_link_over_https() -> None:
-    first = search_page()
-    first["results"] = first["results"][:5]
-    fake = FakeSearch([first, search_page()])
-    decks = search_for(fake).recent_decks(ELLIVERE, brackets=(None,), since=SINCE)
-    # The second page repeats the first five, which count once.
+def test_only_decks_updated_in_the_window_are_kept() -> None:
+    fake = FakeSearch([listing([3000, 2000, 1500, 1200, 1100, 1050], old={3}, more=False)])
+    kept = [FIRST_ID, FIRST_ID + 1, FIRST_ID + 2, FIRST_ID + 4, FIRST_ID + 5]
+    assert [d.id for d in found_by(fake)] == kept
+
+
+def test_a_deck_updated_exactly_at_the_window_start_is_kept() -> None:
+    page = listing([3000], more=False)
+    page["results"][0]["updatedAt"] = "2026-08-16T00:00:00.000000Z"
+    assert len(found_by(FakeSearch([page]))) == 1
+
+
+FIRST_PAGE_OF_EIGHT = [5000, 4000, 3000, 2500, 2000, 1800, 1600, 1400]
+
+
+def test_ten_decks_at_1000_views_end_the_search_at_the_page_that_drops_below_1000() -> None:
+    fake = FakeSearch(
+        [listing(FIRST_PAGE_OF_EIGHT), listing([1200, 1000, 900], first_id=FIRST_ID + 100, more=True)]
+    )
+    decks = found_by(fake)
+    # Ten reach 1000, so the search stops without a third page (the fake has none to give).
+    assert len(fake.requests) == 2
+    assert len(decks) == 11
+
+
+def test_nine_decks_at_1000_views_keep_paging_down_to_750() -> None:
+    fake = FakeSearch(
+        [
+            listing(FIRST_PAGE_OF_EIGHT),
+            listing([1200, 900, 800], first_id=FIRST_ID + 100),
+            listing([700, 600], first_id=FIRST_ID + 200),
+        ]
+    )
+    decks = found_by(fake)
+    # Nine reach 1000 and the second page ends at 800, still over 750, so a third page is asked for; it ends
+    # at 600 with eleven decks over 750.
+    assert len(fake.requests) == 3
+    assert fake.requests[2].url.params["page"] == "3"
     assert len(decks) == 13
+
+
+def test_a_page_ending_exactly_at_the_floor_is_followed_by_the_next() -> None:
+    fake = FakeSearch([listing([1000] * 10), listing([999], first_id=FIRST_ID + 100, more=False)])
+    assert len(found_by(fake)) == 11
+    assert len(fake.requests) == 2
+
+
+def test_under_ten_at_750_the_search_goes_on_to_500() -> None:
+    fake = FakeSearch(
+        [
+            listing([1500, 1200, 900, 800, 700, 650, 600, 550]),
+            listing([520, 510, 505, 490], first_id=FIRST_ID + 100),
+        ]
+    )
+    decks = found_by(fake)
+    # The first page ends at 550, over 500, and holds three decks under ten at 750: the next page is read, and
+    # eleven reach 500.
+    assert len(fake.requests) == 2
+    assert len(decks) == 12
+
+
+def test_the_search_never_goes_below_500_views() -> None:
+    fake = FakeSearch([listing([1500, 900, 600, 100]), listing([50], first_id=FIRST_ID + 100)])
+    decks = found_by(fake)
+    # The first page ends at 100: the three reaching 500 are all there are, and no second page is asked for.
+    assert len(fake.requests) == 1
+    assert [r.url.params["orderBy"] for r in fake.requests] == ["-viewCount"]
+    assert len(decks) == 4
+
+
+def test_the_search_follows_the_next_link_over_https() -> None:
+    last = listing([900], first_id=FIRST_ID + 100, more=False)
+    fake = FakeSearch([listing(range(5000, 4000, -100)), last])
+    found_by(fake, None)
     assert "edhBracket" not in fake.requests[0].url.params
     assert fake.requests[1].url.scheme == "https"
     assert fake.requests[1].url.params["page"] == "2"
 
 
+def test_the_brackets_page_down_the_floors_together_without_starting_over() -> None:
+    fake = FakeSearch(
+        [
+            listing([3000, 2500, 2000, 1800, 1200, 800], first_id=FIRST_ID),
+            listing([2200, 2100, 900, 700], first_id=FIRST_ID + 100, more=False),
+            listing([760, 500], first_id=FIRST_ID + 200, more=False),
+        ]
+    )
+    decks = found_by(fake, 4, 5)
+    # Seven reach 1000 over both brackets, so the search steps down to 750: bracket 4's page 1 ended at 800
+    # and goes on to its page 2, while bracket 5's ended at 700 and is done; ten then reach 750.
+    assert [(r.url.params.get("edhBracket"), r.url.params.get("page")) for r in fake.requests] == [
+        ("4", None),
+        ("5", None),
+        ("4", "2"),
+    ]
+    assert len(decks) == 12
+
+
+def test_a_deck_found_in_two_brackets_counts_once() -> None:
+    fake = FakeSearch(
+        [listing([900, 800, 700], more=False), listing([700, 650, 600], first_id=FIRST_ID + 2, more=False)]
+    )
+    decks = found_by(fake, 4, 5)
+    assert [r.url.params["edhBracket"] for r in fake.requests] == ["4", "5"]
+    assert [d.id for d in decks] == ids(FIRST_ID, 5)
+
+
+def test_seventy_matching_decks_are_all_found() -> None:
+    fake = FakeSearch(
+        [
+            listing(range(9000, 8940, -1)),
+            listing([1500] * 10, first_id=FIRST_ID + 100, more=False),
+        ]
+    )
+    assert len(found_by(fake)) == 70
+
+
 def test_searches_and_deck_reads_are_paced() -> None:
-    fake = FakeSearch([search_page()])
+    fake = FakeSearch([listing(range(2000, 1990, -1), more=False)])
     sleeps: list[float] = []
     search = search_for(fake, sleeps)
-    search.recent_decks(ELLIVERE, brackets=(5,), since=SINCE)
+    search.popular_decks(ELLIVERE, brackets=(5,), since=SINCE, label="ellivere")
     deck = search.deck(DECK_ID)
     assert deck.id == DECK_ID
     assert sleeps == [2.0]
 
 
 def test_every_request_logs_its_target_and_time_at_debug(caplog: pytest.LogCaptureFixture) -> None:
-    search = search_for(FakeSearch([search_page()]))
+    search = search_for(FakeSearch([listing(range(2000, 1990, -1), more=False)]))
     with caplog.at_level(logging.DEBUG, logger="commander.archidekt"):
-        search.recent_decks(ELLIVERE, brackets=(5,), since=SINCE)
+        search.popular_decks(ELLIVERE, brackets=(5,), since=SINCE, label="ellivere")
         search.deck(DECK_ID)
     messages = [r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG]
     timings = [m for m in messages if " took " in m]
     assert len(timings) == 2
     assert timings[0].startswith("Archidekt request https://archidekt.com/api/decks/v3/?")
     assert "edhBracket=5" in timings[0]
+    assert "orderBy=-viewCount" in timings[0]
     assert timings[1].startswith(f"Archidekt request https://archidekt.com/api/decks/{DECK_ID}/ took ")
+
+
+def test_a_search_logs_its_order_pages_and_decks_in_the_window(caplog: pytest.LogCaptureFixture) -> None:
+    fake = FakeSearch([listing(range(5000, 4000, -100)), listing([900], first_id=FIRST_ID + 100, old={0})])
+    with caplog.at_level(logging.INFO, logger="commander.archidekt"):
+        found_by(fake)
+    assert [r.getMessage() for r in caplog.records if r.levelno == logging.INFO] == [
+        "Archidekt search for ellivere by views: 2 pages, 10 decks in the window"
+    ]
 
 
 def test_a_deck_read_with_the_wrong_shape_is_an_archidekt_error() -> None:
@@ -126,17 +294,17 @@ def test_a_deck_read_with_the_wrong_shape_is_an_archidekt_error() -> None:
 
 
 def test_a_time_without_a_zone_is_refused() -> None:
-    page = search_page()
+    page = listing([2000], more=False)
     page["results"][0]["updatedAt"] = "2026-10-15T20:22:13"
     with pytest.raises(ArchidektError, match=r"updatedAt: no time zone"):
-        search_for(FakeSearch([page])).recent_decks(ELLIVERE, brackets=(5,), since=SINCE)
+        found_by(FakeSearch([page]))
 
 
 def test_a_next_link_off_archidekt_is_refused() -> None:
-    page = search_page()
+    page = listing([2000])
     page["next"] = "https://evil.example/api/decks/v3/?page=2"
     with pytest.raises(ArchidektError, match="outside the Archidekt API"):
-        search_for(FakeSearch([page])).recent_decks(ELLIVERE, brackets=(5,), since=SINCE)
+        found_by(FakeSearch([page]))
 
 
 def viewed(*views: int) -> list[PeerDeck]:
@@ -166,13 +334,14 @@ def test_under_ten_at_1000_views_the_bar_steps_down_to_750_then_500() -> None:
     assert view_counts(most_viewed(at_500)) == [1000] * 9 + [500]
 
 
-def test_under_ten_at_500_views_every_deck_is_read_most_viewed_first() -> None:
-    assert view_counts(most_viewed(viewed(120, 40, 560, 300))) == [560, 300, 120, 40]
-    assert view_counts(most_viewed(viewed(0, 7))) == [7, 0]
+def test_under_ten_at_500_views_only_those_at_500_are_read_most_viewed_first() -> None:
+    assert view_counts(most_viewed(viewed(120, 40, 560, 300, 500))) == [560, 500]
+    assert view_counts(most_viewed(viewed(*[500] * 9, 499, 3))) == [500] * 9
 
 
-def test_all_decks_below_500_views_still_give_data() -> None:
-    assert view_counts(most_viewed(viewed(499, 12, 3))) == [499, 12, 3]
+def test_decks_under_500_views_are_never_read() -> None:
+    assert most_viewed(viewed(499, 12, 3)) == []
+    assert most_viewed(viewed(0, 7)) == []
 
 
 def test_at_most_sixty_decks_are_read_most_viewed_first() -> None:
@@ -181,13 +350,11 @@ def test_at_most_sixty_decks_are_read_most_viewed_first() -> None:
     assert MAX_DECK_READS == 60
     assert len(chosen) == 60
     assert view_counts(chosen) == list(range(1069, 1009, -1))
-    # The stepped-down and the all-decks cases are capped alike.
-    assert len(most_viewed(viewed(*range(70)))) == 60
-    assert len(most_viewed(viewed(*range(70)), limit=5)) == 5
+    assert len(most_viewed(decks, limit=5)) == 5
 
 
 def test_decks_with_the_same_views_come_in_id_order() -> None:
-    assert [d.id for d in most_viewed(viewed(5, 5, 5))] == [1, 2, 3]
+    assert [d.id for d in most_viewed(viewed(500, 500, 500))] == [1, 2, 3]
 
 
 def test_a_deck_reads_its_own_bracket_and_the_one_above() -> None:
@@ -199,85 +366,45 @@ def test_a_deck_reads_its_own_bracket_and_the_one_above() -> None:
     assert brackets_to_read(None) == (None,)
 
 
-def test_each_bracket_is_searched_once_and_a_deck_found_twice_counts_once() -> None:
-    first = search_page()
-    first["results"] = first["results"][:3]
-    first["next"] = None
-    second = copy.deepcopy(first)
-    second["results"] = [second["results"][1], search_page()["results"][2]]
-    fake = FakeSearch([first, second])
-    decks = search_for(fake).recent_decks(ELLIVERE, brackets=(4, 5), since=SINCE)
-    assert [r.url.params["edhBracket"] for r in fake.requests] == ["4", "5"]
-    assert [d.id for d in decks] == [10000002, 23204858, 7432856]
+def full_pages(count: int) -> list[Json]:
+    """Pages of ten decks all far over the floors, each linking to a next one, so nothing ends a search."""
+    return [listing([9000] * 10, first_id=FIRST_ID + 100 * n) for n in range(count)]
 
 
-def test_a_commander_is_searched_at_most_20_pages_across_its_brackets() -> None:
-    def full_page() -> Json:
-        page = search_page()
-        page["results"] = page["results"][:2]
-        return page
-
-    fake = FakeSearch([full_page() for _ in range(2 * MAX_SEARCH_PAGES)])
-    decks = search_for(fake).recent_decks(ELLIVERE, brackets=(3, 4), since=SINCE)
-    assert MAX_SEARCH_PAGES == 20
-    # The first bracket takes all twenty, as every page links to a next one still inside the window.
-    assert len(fake.requests) == MAX_SEARCH_PAGES
-    assert fake.requests[0].url.params["edhBracket"] == "3"
-    assert {r.url.params.get("page") for r in fake.requests[1:]} == {"2"}
-    assert len(decks) == 2
-
-
-def test_a_search_cut_short_by_the_page_cap_says_how_far_back_it_reached(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    # A window from 2020 holds every deck on the fixture page, the oldest updated 2026-06-08, and the page
-    # links to a next one.
-    fake = FakeSearch([search_page(), search_page()])
-    since = datetime(2020, 1, 1, tzinfo=UTC)
+def test_each_bracket_of_a_commander_is_searched_at_most_5_pages(caplog: pytest.LogCaptureFixture) -> None:
+    fake = FakeSearch(full_pages(12))
     with caplog.at_level(logging.INFO, logger="commander.archidekt"):
-        search_for(fake).recent_decks(ELLIVERE, brackets=(5,), since=since, max_pages=2)
-    assert len(fake.requests) == 2
-    assert caplog.messages == [
-        f"Archidekt search for {ELLIVERE} bracket 5 stopped at its 2-page cap; it reaches back to 2026-06-08"
-    ]
+        decks = found_by(fake, 3, 4)
+    assert MAX_SEARCH_PAGES == 5
+    # Every page links to another one over the floor, so each bracket stops at its fifth.
+    assert [r.url.params.get("edhBracket") for r in fake.requests] == ["3"] * 5 + ["4"] * 5
+    assert [r.url.params.get("page") for r in fake.requests] == [None, "2", "3", "4", "5"] * 2
+    assert len(decks) == 100
+    messages = [r.getMessage() for r in caplog.records]
+    assert "Archidekt search for ellivere by views was cut short at 5 pages a bracket" in messages
 
 
-def test_a_search_that_reaches_the_window_start_within_its_pages_logs_no_cap(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    fake = FakeSearch([search_page()])
-    with caplog.at_level(logging.INFO, logger="commander.archidekt"):
-        search_for(fake).recent_decks(ELLIVERE, brackets=(5,), since=SINCE, max_pages=1)
-    assert len(fake.requests) == 1
-    assert caplog.messages == []
+def test_a_search_takes_a_page_limit_of_its_own_for_each_bracket() -> None:
+    fake = FakeSearch(full_pages(10))
+    decks = found_by(fake, 3, 4, commander=None, tag="Landfall", max_pages=3)
+    assert [r.url.params["edhBracket"] for r in fake.requests] == ["3", "3", "3", "4", "4", "4"]
+    assert len(decks) == 60
 
 
 def test_the_deck_tag_filter_is_sent_as_deck_tag_name() -> None:
-    fake = FakeSearch([search_page(), search_page()])
-    search = search_for(fake)
-    search.recent_decks(ELLIVERE, brackets=(5,), since=SINCE, tag="Stax")
-    search.recent_decks(ELLIVERE, brackets=(5,), since=SINCE)
+    fake = FakeSearch([listing([2000], more=False), listing([2000], more=False)])
+    found_by(fake, tag="Stax")
+    found_by(fake)
     assert fake.requests[0].url.params["deckTagName"] == "Stax"
     assert "deckTagName" not in fake.requests[1].url.params
 
 
 def test_a_tag_search_without_a_commander_sends_no_commander_name() -> None:
-    fake = FakeSearch([search_page()])
-    search_for(fake).recent_decks(None, brackets=(3,), since=SINCE, tag="Landfall")
+    fake = FakeSearch([listing([2000], more=False)])
+    found_by(fake, 3, commander=None, tag="Landfall")
     params = fake.requests[0].url.params
     assert params["deckTagName"] == "Landfall"
     assert "commanderName" not in params
-
-
-def test_a_search_takes_a_page_limit_of_its_own() -> None:
-    def full_page() -> Json:
-        page = search_page()
-        page["results"] = page["results"][:2]
-        return page
-
-    fake = FakeSearch([full_page() for _ in range(10)])
-    search_for(fake).recent_decks(None, brackets=(3, 4), since=SINCE, tag="Landfall", max_pages=3)
-    assert len(fake.requests) == 3
 
 
 class Limited:
@@ -345,7 +472,7 @@ def test_a_second_429_gives_up_for_the_rest_of_the_run_without_another_request_o
     with pytest.raises(RateLimitedError):
         search.deck(DECK_ID)
     with pytest.raises(RateLimitedError):
-        search.recent_decks(ELLIVERE, brackets=(5,), since=SINCE)
+        search.popular_decks(ELLIVERE, brackets=(5,), since=SINCE, label="ellivere")
     assert limited.at == [0.0, 60.0]
     assert limited.sleeps == slept
 
@@ -358,7 +485,8 @@ def test_a_new_search_after_a_give_up_starts_fresh() -> None:
 
 
 def test_a_search_page_is_retried_after_a_429_too() -> None:
-    limited = Limited(httpx.Response(429), httpx.Response(200, json=search_page()))
-    decks = limited.search().recent_decks(ELLIVERE, brackets=(5,), since=SINCE)
+    page = listing(range(2000, 1987, -1), more=False)
+    limited = Limited(httpx.Response(429), httpx.Response(200, json=page))
+    decks = limited.search().popular_decks(ELLIVERE, brackets=(5,), since=SINCE, label="ellivere")
     assert limited.at == [0.0, 60.0]
     assert len(decks) == 13
