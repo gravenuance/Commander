@@ -1,4 +1,5 @@
 import json
+import logging
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -99,6 +100,19 @@ def test_a_caller_that_asks_sees_the_429_and_its_retry_after_unretried() -> None
     with pytest.raises(RateLimitedError) as unsaid:
         fetcher(bare, sleeps).get_json(URL, surface_rate_limit=True)
     assert unsaid.value.retry_after is None
+
+
+def test_a_surfaced_429_logs_the_servers_retry_after_with_the_url(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.INFO, logger="commander.net"):
+        for headers in ({"Retry-After": "300"}, {"Retry-After": "Thu, 15 Oct 2026 12:00:10 GMT"}, {}):
+            script = Script(httpx.Response(429, headers=headers))
+            with pytest.raises(RateLimitedError):
+                fetcher(script, []).get_json(URL, surface_rate_limit=True)
+    assert [r.getMessage() for r in caplog.records if r.levelno == logging.INFO] == [
+        f"rate limited: {URL} (Retry-After: 300)",
+        f"rate limited: {URL} (Retry-After: Thu, 15 Oct 2026 12:00:10 GMT)",
+        f"rate limited: {URL} (Retry-After: none)",
+    ]
 
 
 def test_a_caller_that_asks_for_the_429_still_gets_other_failures_retried() -> None:

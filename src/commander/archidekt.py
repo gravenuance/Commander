@@ -1,9 +1,12 @@
 """Read access to Archidekt's undocumented JSON API; every response is shape-checked before use."""
 
 import logging
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
+
+import httpx
 
 from commander.jsonshape import (
     ShapeError,
@@ -257,6 +260,7 @@ class ArchidektSearch:
             raise RateLimitedError(str(self._gave_up), self._gave_up.retry_after)
         for attempt in range(RATE_LIMIT_RETRIES + 1):
             self._pacer.wait()
+            started = time.perf_counter()
             try:
                 return self._fetcher.get_json(url, params, surface_rate_limit=True)
             except RateLimitedError as error:
@@ -267,7 +271,15 @@ class ArchidektSearch:
                 pause = max(RATE_LIMIT_PAUSE_SECONDS, error.retry_after or 0.0)
                 log.warning("Archidekt asked for quiet; waiting %.0fs before the next request", pause)
                 self._pacer.cool_down(pause)
+            finally:
+                log.debug(
+                    "Archidekt request %s took %.2fs", _target(url, params), time.perf_counter() - started
+                )
         raise AssertionError("unreachable: the last attempt raises")  # pragma: no cover
+
+
+def _target(url: str, params: Mapping[str, str | int] | None) -> str:
+    return f"{url}?{httpx.QueryParams(params)}" if params else url
 
 
 def brackets_to_read(bracket: int | None) -> tuple[int | None, ...]:

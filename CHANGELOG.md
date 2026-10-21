@@ -33,6 +33,9 @@
 - The side panels' titles look like the Meta panel's sub-toggles, with the same markers on one line, and both
   turn green under the pointer instead of taking a background. The Activity and Mana rail is hidden while no
   deck is open.
+- The log now records the `Retry-After` Archidekt sends with a 429 (or `none`) beside the URL, and, at DEBUG,
+  how long each Archidekt request took, so the 180 s cooldown can be judged from real answers (ADR 0027). The
+  cooldown itself is unchanged.
 
 ### Removed
 - Spicy picks, the spice figure of `meta --card` and the `spice` fields of `meta --json`: TopDeck has no spice

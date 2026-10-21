@@ -48,7 +48,9 @@ Option 3 for the sample and option 2 for the cache, in `commander.archidekt`, `c
   seconds, or the `Retry-After` if longer, and the limited request is tried once more after that. A second
   429 fails the source, whose last good answer stands in with a warning, and ends Archidekt for the rest
   of the run: every later request fails at once, so the other commanders fall back to their caches
-  without more waiting. A deck found in the cache costs no request and no wait. A deck read that answers
+  without more waiting. Each 429 is logged with the `Retry-After` the server sent (or `none`) and the URL,
+  and every request with its time at DEBUG, so the 180 seconds can be judged against real answers; it
+  stays until they say otherwise. A deck found in the cache costs no request and no wait. A deck read that answers
   403, 404 or 410 (the deck went private or was deleted) is skipped with a log line and is not a failed
   source. The other services keep their pace (EDHTop16 1.5 s, Spellbook 1 s).
 - **The per-deck cache:** `peer-decks` in the meta cache folder holds each deck's commanders, cards, plan

@@ -218,7 +218,7 @@ class Fetcher:
             if value is not None:
                 return value
             if status == HTTP_TOO_MANY_REQUESTS and surface_rate_limit:
-                log.info("rate limited: %s", url)
+                log.info("rate limited: %s (Retry-After: %s)", url, retry_after or "none")
                 raise RateLimitedError(
                     f"{url} returned HTTP {status}", _retry_after_seconds(retry_after, self._wall_clock())
                 )

@@ -1,4 +1,5 @@
 import copy
+import logging
 from datetime import UTC, datetime
 
 import httpx
@@ -100,6 +101,19 @@ def test_searches_and_deck_reads_are_paced() -> None:
     deck = search.deck(DECK_ID)
     assert deck.id == DECK_ID
     assert sleeps == [2.0]
+
+
+def test_every_request_logs_its_target_and_time_at_debug(caplog: pytest.LogCaptureFixture) -> None:
+    search = search_for(FakeSearch([search_page()]))
+    with caplog.at_level(logging.DEBUG, logger="commander.archidekt"):
+        search.recent_decks(ELLIVERE, brackets=(5,), since=SINCE)
+        search.deck(DECK_ID)
+    messages = [r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG]
+    timings = [m for m in messages if " took " in m]
+    assert len(timings) == 2
+    assert timings[0].startswith("Archidekt request https://archidekt.com/api/decks/v3/?")
+    assert "edhBracket=5" in timings[0]
+    assert timings[1].startswith(f"Archidekt request https://archidekt.com/api/decks/{DECK_ID}/ took ")
 
 
 def test_a_deck_read_with_the_wrong_shape_is_an_archidekt_error() -> None:
