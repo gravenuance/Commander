@@ -43,9 +43,6 @@
   halves, down to one day, and a single day still too big is skipped with a logged warning.
 - `cmdr board plan` keeps quantities and kept copies (a basic land swap printed plain names before).
 - The Mana tab may suggest a land that only waits on the Maybeboard.
-- EDHTop16 errors are readable again: a refused query (EDHTop16 now answers with plain-text errors) is logged
-  with EDHTop16's own message, and the Meta panel says why its data is missing instead of only "not fetched
-  yet". A cache read with nothing fetched is logged at DEBUG, so the log no longer fills with it.
 - A card change refused while a sync runs is logged with the sync's phase, and the message the app shows
   keeps to 12 words: "Wait for the sync to finish, then sign in." (the phase is no longer in it).
   That holds for a decision refused while the card data downloads too, which is logged once, at INFO.
