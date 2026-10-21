@@ -34,9 +34,13 @@ function renderBracket(deck, b, newDeck) {
   detail.hidden = !gap || chip.getAttribute("aria-expanded") !== "true";
   detail.replaceChildren(
     ...b.notes.map((note) => el("p", { class: "bracket-note", text: note })),
-    b.causes.length ? el("ul", { class: "causes", "aria-label": "What lifts the estimate" }, ...b.causes.map(causeItem)) : null,
+    // replaceChildren would write a null child out as the text "null".
+    ...(b.causes.length ? [el("ul", { class: "causes", "aria-label": "What lifts the estimate" }, ...b.causes.map(causeItem))] : []),
   );
   paintBracket();
+  // The deck view was built before this estimate was cached, so it still has the deck unset (ADR 0051).
+  const open = state.view && state.view.id === deck && deck === state.current;
+  if (open && b.effectiveBracket !== undefined && b.effectiveBracket !== state.view.effectiveBracket) loadDeck();
 }
 
 function causeItem(cause) {

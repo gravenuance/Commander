@@ -12,9 +12,13 @@ from commander.bracket import (
     BracketReport,
     EstimateResult,
     bracket_cards,
+    cached_effective_deck,
+    effective_bracket,
     estimate_cache,
     estimate_deck,
     estimate_decks,
+    estimated_decks,
+    with_effective_bracket,
 )
 from commander.carddb import CardDb
 from commander.deckcache import Answer, AnswerSource
@@ -225,3 +229,67 @@ def test_bracket_cards_come_from_the_card_data(raw_deck: Json, card_db_file: Pat
     assert cards.mass_land_denial is None
     assert cards.game_changers == ()
     assert cards.not_legal == ()
+
+
+@pytest.mark.parametrize(
+    ("set_bracket", "tag", "expected"),
+    [
+        (2, BracketTag.RUTHLESS, 2),
+        (5, BracketTag.EXHIBITION, 5),
+        (3, None, 3),
+        (None, BracketTag.RUTHLESS, 4),
+        (None, BracketTag.SPICY, 3),
+        (None, BracketTag.POWERFUL, 3),
+        (None, BracketTag.ODDBALL, 2),
+        (None, BracketTag.CORE, 2),
+        (None, BracketTag.EXHIBITION, 1),
+        (None, BracketTag.BANNED, None),
+        (None, None, None),
+    ],
+)
+def test_the_effective_bracket_is_the_set_one_else_the_estimates_lowest(
+    set_bracket: int | None, tag: BracketTag | None, expected: int | None
+) -> None:
+    estimate = BracketEstimate(tag, ()) if tag is not None else None
+    deck = Deck(1, "deck", "TESTER", set_bracket, "2026-10-15T00:00:00Z", ())
+    assert effective_bracket(deck, estimate) == expected
+    assert with_effective_bracket(deck, estimate).bracket == expected
+
+
+def test_a_deck_with_its_bracket_set_comes_back_as_it_is(env: Env) -> None:
+    deck = replace(env.deck, bracket=3)
+    assert with_effective_bracket(deck, BracketEstimate(BracketTag.RUTHLESS, ())) is deck
+
+
+def test_an_unset_deck_takes_the_estimates_lowest_bracket_and_keeps_the_rest(env: Env) -> None:
+    unset = replace(env.deck, bracket=None)
+    taken = with_effective_bracket(unset, BracketEstimate(BracketTag.POWERFUL, ()))
+    assert taken == replace(unset, bracket=3)
+
+
+def test_estimated_decks_fetch_only_for_unset_decks_and_leave_a_failure_unset(env: Env) -> None:
+    unset = replace(env.deck, id=1, bracket=None)
+    set_ = replace(env.deck, id=2, bracket=2)
+    with env.fake.client() as http:
+        client = SpellbookClient(Fetcher(http, max_attempts=1))
+        decks = estimated_decks([unset, set_], client, env.cache, now=lambda: NOW)
+        assert [d.bracket for d in decks] == [4, 2]
+        # One request, for the unset deck; the next call comes from the cache.
+        assert len(env.fake.bodies) == 1
+        estimated_decks([unset], client, env.cache, now=lambda: NOW)
+        assert len(env.fake.bodies) == 1
+        env.fake.status = 500
+        down = replace(env.deck, id=3, bracket=None)
+        assert [d.bracket for d in estimated_decks([down], client, env.cache, now=lambda: NOW)] == [None]
+
+
+def test_the_cached_effective_deck_never_asks_and_takes_a_stale_answer(env: Env) -> None:
+    unset = replace(env.deck, bracket=None)
+    assert cached_effective_deck(unset, env.cache, now=lambda: NOW) is unset
+    assert env.fake.bodies == []
+    env.estimate(unset)
+    later = NOW + timedelta(days=30)
+    assert cached_effective_deck(unset, env.cache, now=lambda: later).bracket == 4
+    other_cards = replace(unset, cards=tuple(c for c in unset.cards if c is not unset.main_cards[-1]))
+    assert cached_effective_deck(other_cards, env.cache, now=lambda: NOW).bracket is None
+    assert len(env.fake.bodies) == 1

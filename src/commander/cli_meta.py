@@ -7,6 +7,8 @@ from typing import TextIO
 
 import httpx
 
+from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
+from commander.bracket import estimate_cache, estimated_decks
 from commander.carddb import CardDb
 from commander.cli_output import progress_printer, write_json
 from commander.clibase import EXIT_FAILURE, EXIT_OK, Context, UsageError, one_deck, open_card_db, workspace
@@ -23,11 +25,20 @@ from commander.meta import (
     check_card,
 )
 from commander.metacombos import AnswerRole, ComboAnswer, MetaCombo, group_combos
-from commander.metadata import CEDH_BRACKET, MetaData, MetaSources, Progress, gather
+from commander.metadata import (
+    NOT_READ,
+    TOURNAMENT_BRACKETS,
+    MetaData,
+    MetaSources,
+    Progress,
+    gather,
+    gather_for,
+)
 from commander.metadata import meta_sources as shared_meta_sources
 from commander.metajson import report_json
 from commander.models import short_commander_name
 from commander.playstyle import Fit
+from commander.spellbook import SpellbookClient
 from commander.store import StoredDeck, Workspace
 from commander.topdeck import CREDIT, SITE_URL
 
@@ -38,7 +49,7 @@ META_CREDIT = (
 THREATS_PER_KIND = 5
 COMBO_ANSWERS_SHOWN = 6
 _DESCRIPTION = """examples:
-  cmdr meta                                       every bracket 5 deck side by side
+  cmdr meta                                       every bracket 4 and 5 deck side by side
   cmdr meta magda                                 the full report for one deck
   cmdr meta ellivere --card "Sylvan Safekeeper"   how lists use one card
   cmdr meta etali --to-board                      put the staples it misses on its board
@@ -50,6 +61,9 @@ cards with: the commander, its combos, the cards filed under a combo or win cate
 other players), cards costing far above the deck's curve, and what profile.toml keeps. Answers are
 cached for a day (Spellbook's combos for a week); the window and sample sizes are set in the config's
 [meta] table.
+
+A deck with no bracket set counts as the lowest bracket of its Commander Spellbook estimate. Bracket 4 decks
+read their commander's tournament lists and recent Archidekt decks, not the most-played commanders.
 """
 
 
@@ -61,7 +75,9 @@ def add_meta_command(add_parser: Callable[..., argparse.ArgumentParser]) -> None
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     meta.add_argument(
-        "deck", nargs="?", help="deck id, or part of its name or commander; omit for every bracket 5 deck"
+        "deck",
+        nargs="?",
+        help="deck id, or part of its name or commander; omit for every bracket 4 and 5 deck",
     )
     meta.add_argument("--workspace", help="folder that holds the deck folders")
     meta.add_argument("--user", help="Archidekt username whose own decks are left out")
@@ -84,19 +100,21 @@ def _cmd_meta(args: argparse.Namespace, ctx: Context) -> int:
     file = read_config(config_path(args.config, ctx.env))
     user = resolve_user(args.user, ctx.env, file)
     space = workspace(args, ctx)
-    stored = _decks(space, args.deck)
     progress = progress_printer(ctx.err)
     results: list[tuple[StoredDeck, MetaData, MetaReport]] = []
     with open_card_db(ctx) as db, ctx.client_factory() as http:
         sources = meta_sources(http, ctx, user, file.meta)
-        for deck in stored:
-            if deck.deck.bracket != CEDH_BRACKET:
+        for deck in _decks(space, args.deck, sources.spellbook, ctx, refresh=args.refresh):
+            bracket = deck.deck.bracket
+            if bracket not in TOURNAMENT_BRACKETS:
+                held = "has no bracket" if bracket is None else f"is bracket {bracket}"
                 print(
-                    f"cmdr: {deck.deck.short_name} is bracket {deck.deck.bracket}; "
-                    "the tournament lists in this report are cEDH",
+                    f"cmdr: {deck.deck.short_name} {held}; the tournament lists in this report are cEDH",
                     file=ctx.err,
                 )
-            data = gather(
+            # Bracket 4 reads its lists and Archidekt decks only (ADR 0027); a deck named below 4, all.
+            read = gather_for if bracket in TOURNAMENT_BRACKETS else gather
+            data = read(
                 deck.deck,
                 sources,
                 cache_dir(ctx.env),
@@ -111,7 +129,11 @@ def _cmd_meta(args: argparse.Namespace, ctx: Context) -> int:
     for _, _, report in results:
         _warn_sources(report, ctx.err)
     _print_results(args, results, ctx.out)
-    unavailable = any(s.source is AnswerSource.UNAVAILABLE for _, _, r in results for s in r.sources)
+    unavailable = any(
+        s.source is AnswerSource.UNAVAILABLE and s.error not in NOT_READ
+        for _, _, r in results
+        for s in r.sources
+    )
     return EXIT_FAILURE if unavailable else EXIT_OK
 
 
@@ -147,12 +169,20 @@ def _print_results(
     print(META_CREDIT, file=out)
 
 
-def _decks(space: Workspace, query: str | None) -> list[StoredDeck]:
+def _decks(
+    space: Workspace, query: str | None, client: SpellbookClient, ctx: Context, *, refresh: bool
+) -> list[StoredDeck]:
+    """The named deck, or every deck at bracket 4 or 5, each with its effective bracket (ADR 0051): a deck
+    with none set is asked of Spellbook's estimate, which is cached."""
+    found = [one_deck(space, query)] if query is not None else space.load_all()
+    cache = estimate_cache(cache_dir(ctx.env) / SPELLBOOK_CACHE_FOLDER)
+    decks = estimated_decks([s.deck for s in found], client, cache, now=ctx.now, refresh=refresh)
+    chosen = [StoredDeck(s.folder, deck) for s, deck in zip(found, decks, strict=True)]
     if query is not None:
-        return [one_deck(space, query)]
-    chosen = [s for s in space.load_all() if s.deck.bracket == CEDH_BRACKET]
+        return chosen
+    chosen = [s for s in chosen if s.deck.bracket in TOURNAMENT_BRACKETS]
     if not chosen:
-        raise UsageError("no bracket 5 decks; name a deck to check it anyway")
+        raise UsageError("no bracket 4 or 5 decks; name a deck to check it anyway")
     return chosen
 
 
@@ -185,6 +215,8 @@ def _to_board(
 
 def _warn_sources(report: MetaReport, err: TextIO) -> None:
     for state in report.sources:
+        if state.error in NOT_READ:
+            continue
         if state.source is AnswerSource.STALE and state.fetched_at is not None:
             print(
                 f"cmdr: {report.deck}: {state.name} failed ({state.error}); "

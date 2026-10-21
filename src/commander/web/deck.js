@@ -184,7 +184,7 @@ function renderDeck() {
   const review = $("review");
   review.disabled = pending === 0;
   review.textContent = pending ? `Review ${pending} change${pending === 1 ? "" : "s"}` : "Review changes";
-  $("meta").hidden = view.bracket !== META_BRACKET;
+  $("meta").hidden = !META_BRACKETS.includes(view.effectiveBracket);
 
   renderStats(view.stats);
   renderGrid(view.grid);

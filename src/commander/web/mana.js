@@ -11,7 +11,7 @@ const manaPanel = panel((deck) => api("mana", deck), renderMana, { wanted: () =>
 function renderMana(deck, m) {
   const l = m.lands;
   const c = m.comparison;
-  const cedh = state.view && state.view.bracket === META_BRACKET;
+  const cedh = state.view && state.view.effectiveBracket === CEDH_BRACKET;
   const fmt = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
   const lands = el("section", { class: "mana-section" },
     el("h3", { text: "Lands" }),

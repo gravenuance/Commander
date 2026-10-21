@@ -42,9 +42,10 @@ from conftest import (
     MemoryKeyring,
     MemoryTokenStore,
     card_entry,
+    deck_page,
 )
 from test_cli_apply import run
-from test_cli_meta import kinnan_events, magda_events
+from test_cli_meta import PEER_ID, kinnan_events, magda_events, peer_row
 from test_cli_meta import meta as cli_meta
 from test_ideas import ALIKE, tag_pool
 from test_meta import meta_data, peer
@@ -1181,6 +1182,8 @@ def test_meta_reads_only_the_cache_and_a_sync_fills_it(
     assert [m["name"] for m in cast("list[Json]", report["missing"])] == ["Mind Stone", "Jeska's Will"]
     assert len(fake.topdeck.requests) == asked
     assert {"keys", "stoppers", "untouched", "comboGroups"} <= set(fresh)
+    # The fixture deck is bracket 5, whose meta includes the most-played commanders and their combos.
+    assert fresh.get("cedh") is True
     assert [k["name"] for k in cast("list[Json]", fresh["keys"])][:1] == ["Magda, Brazen Outlaw"]
     board = items(desk.deck(DECK), "cards")
     # Jeska's Will, in 2 of the 6 lists, is under the Wilson bar.
@@ -1596,6 +1599,60 @@ def test_the_meta_panel_says_when_no_topdeck_key_is_saved(
 
 def test_the_meta_panel_names_no_reason_when_nothing_was_fetched_yet(desk: Desk) -> None:
     assert desk.meta(DECK) == {"report": None}
+
+
+def unset_the_bracket(settings: DeskSettings, fake: FakeArchidekt, tmp_path: Path, *sync_flags: str) -> None:
+    """Take the bracket off the deck on Archidekt and pull it, with the ideas phase unless told not to."""
+    del fake.decks[DECK]["edhBracket"]
+    fake.decks[DECK]["updatedAt"] = "2026-10-16T10:00:00.000000Z"
+    command = ["sync", "--no-cards", *sync_flags, "--workspace", str(settings.workspace)]
+    assert run(command, tmp_path, fake).code == 0
+
+
+def test_the_deck_view_of_an_unset_deck_carries_its_estimates_lowest_bracket_from_the_cache_alone(
+    desk: Desk, settings: DeskSettings, fake: FakeArchidekt, tmp_path: Path
+) -> None:
+    unset_the_bracket(settings, fake, tmp_path, "--no-ideas")
+    before = desk.deck(DECK)
+    # No estimate is cached, and a deck view never asks Spellbook for one: the deck stays unset.
+    assert (before["bracket"], before.get("effectiveBracket")) == (None, None)
+    assert fake.spellbook.bodies == []
+    # The bracket panel asks (the fake says Ruthless 4+) and caches; the next view reads that.
+    asked = desk.bracket(DECK)
+    assert asked.get("effectiveBracket") == 4
+    after = desk.deck(DECK)
+    assert (after["bracket"], after.get("effectiveBracket")) == (None, 4)
+    assert len(fake.spellbook.bodies) == 1
+
+
+def test_a_set_bracket_is_the_decks_effective_bracket_whatever_the_estimate_says(
+    desk: Desk, fake: FakeArchidekt
+) -> None:
+    asked = desk.bracket(DECK)
+    view = desk.deck(DECK)
+    # The fixture deck is set to 5 on Archidekt and the fake estimate is Ruthless 4+.
+    assert asked.get("effectiveBracket") == 5
+    assert (view["bracket"], view.get("effectiveBracket")) == (5, 5)
+    assert len(fake.spellbook.bodies) == 1
+
+
+def test_the_meta_panel_of_an_unset_deck_estimated_4_shows_its_lists_and_recent_decks_not_the_field(
+    desk: Desk, settings: DeskSettings, fake: FakeArchidekt, raw_deck: Json, tmp_path: Path
+) -> None:
+    fake.topdeck.events = [*magda_events(), *kinnan_events()]
+    fake.peer_page = deck_page([peer_row(PEER_ID, "someone", 600)])
+    fake.put({**copy.deepcopy(raw_deck), "id": PEER_ID, "owner": {"id": 5, "username": "someone"}})
+    unset_the_bracket(settings, fake, tmp_path)
+    answer = desk.meta(DECK)
+    report = cast("Json", answer["report"])
+    # Bracket 4 reads the commander's tournament lists and its recent Archidekt decks (ADR 0027).
+    assert [m["name"] for m in cast("list[Json]", report["missing"])] == ["Mind Stone", "Jeska's Will"]
+    assert [p["id"] for p in cast("list[Json]", report["peers"])] == [PEER_ID]
+    # Not the most-played commanders or their combos, which bracket 5 reads; that is no failure to report.
+    assert answer.get("cedh") is False
+    assert "unavailable" not in answer
+    assert answer["comboGroups"] == []
+    assert answer["stoppers"] == []
 
 
 DESK_LOG = "commander.desk"

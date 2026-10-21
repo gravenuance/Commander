@@ -44,7 +44,7 @@ uv run cmdr bracket                                 # estimated bracket of every
 uv run cmdr bracket gator --details                 # one deck: game changers, tutors, combos with links
 uv run cmdr suggest                                 # combo pieces and short roles of every deck side by side
 uv run cmdr suggest magda --max-price 5             # one deck: cards to add up to EUR 5, cards to consider cutting
-uv run cmdr meta                                    # every bracket 5 deck against the cEDH meta, side by side
+uv run cmdr meta                                    # every bracket 4 and 5 deck against the meta, side by side
 uv run cmdr meta magda                              # one deck: staples it misses, meta threats, meta combos
 uv run cmdr meta ellivere --card "Sylvan Safekeeper" # how performing lists use one card
 uv run cmdr card "Sylvan Safekeeper"                # a card's rules text, price, roles and Tagger tags
@@ -126,6 +126,14 @@ Each answer is kept for 7 days in `%LOCALAPPDATA%\Commander\spellbook`, and aske
 cards change or with `--refresh`. If Spellbook cannot be reached, an older answer for the same cards is
 shown with a warning; with none, the estimate shows as unavailable and `bracket` exits with 1.
 
+A deck with no bracket set on Archidekt is read as the lowest bracket of its estimate
+([ADR 0051](docs/adr/0051-an-unset-bracket-follows-the-estimate.md)): Ruthless as 4, Spicy and Powerful as 3,
+Oddball and Core as 2, Exhibition as 1. With no estimate, or a Banned one, it stays unset. A bracket that is
+set always wins. That decides which Archidekt brackets `sync` searches for the deck, whether it reads the
+commander's tournament lists, and which meta the app and `meta` show. `sync` asks Spellbook for such a deck's
+estimate (from the cache while under 7 days old); the app and `profile` only read the cache, however old, so a
+deck view never waits for Spellbook. The app's header still names only a bracket set on Archidekt.
+
 ### Suggestions
 
 `suggest` gives each deck four lists. Prices are each card's cheapest printing in EUR.
@@ -179,11 +187,13 @@ them together.
 
 ### cEDH meta
 
-`meta` compares a bracket 5 deck with what performs in cEDH: its commander's tournament lists from
-[TopDeck.gg](https://topdeck.gg) from the last two months (top cuts first), and the most-viewed Archidekt
-decks for that commander updated in the same window (see *Which Archidekt decks are read* below). The
-tournament lists need a free TopDeck key (see *TopDeck key* below); without one, `meta` and the app say so and
-carry on with the Archidekt decks. It lists:
+`meta` compares a bracket 4 or 5 deck (set, or estimated for a deck with none set) with what performs in
+tournaments: its commander's tournament lists from [TopDeck.gg](https://topdeck.gg) from the last two months
+(top cuts first), and the most-viewed Archidekt decks for that commander updated in the same window (see
+*Which Archidekt decks are read* below). The tournament lists need a free TopDeck key (see *TopDeck key*
+below); without one, `meta` and the app say so and carry on with the Archidekt decks. A bracket 4 deck reads
+only those two sources, so its report has no answers or combos from the most-played commanders. For bracket 5
+it lists:
 
 - **Staples you don't play:** cards in at least 40% of the lists read, or in half the Archidekt decks, that
   the deck lacks.
@@ -278,7 +288,9 @@ updated in the window reach 1000, or 500 when fewer than ten reach 750, and neve
 of 60 decks are read per bracket, and the log says when a busy commander hits that limit. It reads the decks
 at or over the bar that were updated in the window, at most `peer_decks` of them, most viewed first; when
 fewer than ten reach even 500 views, it reads those few, or none. Your own decks are never read. A bracket 4
-deck also reads its commander's tournament lists, which bracket 5 decks always do.
+deck also reads its commander's tournament lists, which bracket 5 decks always do. A deck with no bracket set
+goes by its estimate's lowest bracket here too (see *Brackets*): estimated Powerful 3+, it searches brackets 3
+and 4.
 
 Searches and deck reads are 6.5 seconds apart, just under the ten requests a minute Archidekt answers, and
 after a 429 nothing goes out for a minute (or the `Retry-After`, if longer) before the request is tried once
@@ -586,8 +598,10 @@ base against Frank Karsten's published numbers
   account's labels in their colours, read on each signed-in `sync` and before each label change
   ([ADR 0012](docs/adr/0012-card-labels-from-the-archidekt-account.md)). A change is written to
   Archidekt at once.
-- **Meta** (bracket 5 decks) lists each key card with the meta cards that stop it, then the meta's combos
-  with your answers, each tagged with the meta decks that play them. The panel reads the cache, during a sync
+- **Meta** (bracket 4 and 5 decks, set or estimated) lists the deck's key cards. For bracket 5 each comes with
+  the meta cards that stop it, then the meta's combos with your answers, each tagged with the meta decks that
+  play them; a bracket 4 deck shows the key cards and the number of tournament lists read, as the
+  most-played commanders are not read for it. The panel reads the cache, during a sync
   too; **Sync** fetches new data (the panel says it is updating only while this deck is queued or being
   fetched, then rereads) and puts the meta's staples into Considering. A card you turned down
   comes back once its weighted share has risen 20 points.

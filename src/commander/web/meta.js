@@ -5,14 +5,14 @@ const THREATS_SHOWN = 4;
 const STOPS_SHOWN = 4;
 const ANSWERS_SHOWN = 6;
 
-/* Meta (bracket 5): what in the meta stops the deck's key cards, and what stops the meta's combos */
+/* Meta (bracket 4 and 5): the deck's key cards; at bracket 5 also what in the meta stops them and their combos */
 
 // The open deck, and whether its own fetch in a running sync was pending at the last look.
 const metaState = { deck: null, updating: false };
 const PENDING_STEPS = ["queued", "fetching"];
 
 function metaWanted() {
-  return state.view && state.view.id === state.current && state.view.bracket === META_BRACKET
+  return state.view && state.view.id === state.current && META_BRACKETS.includes(state.view.effectiveBracket)
     && $("h-meta").getAttribute("aria-expanded") === "true";
 }
 
@@ -51,7 +51,11 @@ function renderMeta(deck, answer) {
     s.known ? `${s.withLists} lists since ${report.since}` : "No TopDeck lists",
     fetched ? new Date(fetched).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "",
   ].filter(Boolean).join(" · ");
-  $("meta-body").replaceChildren(metaKeys(answer.keys), metaStoppers(answer.stoppers, answer.untouched), metaCombos(answer.comboGroups, answer.racing));
+  // The meta's stoppers and combos come from the most-played commanders, which only bracket 5 reads (ADR 0027).
+  const field = answer.cedh
+    ? [metaStoppers(answer.stoppers, answer.untouched), metaCombos(answer.comboGroups, answer.racing)]
+    : [];
+  $("meta-body").replaceChildren(metaKeys(answer.keys), ...field);
 }
 
 function deckChips(decks) {

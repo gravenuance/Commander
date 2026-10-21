@@ -1,7 +1,7 @@
 """Bracket reports: a deck's bracket-relevant cards, and Commander Spellbook's estimate cached per deck."""
 
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
 
@@ -9,7 +9,15 @@ from commander.analysis import game_changers, not_legal, tagged
 from commander.background import run_all
 from commander.bracketcheck import BracketCheck, check_bracket
 from commander.carddb import ResolvedCard, Role
-from commander.deckcache import Answer, AnswerSource, Clock, DeckCache, cached_answer
+from commander.deckcache import (
+    NOT_FETCHED,
+    Answer,
+    AnswerSource,
+    Clock,
+    DeckCache,
+    NotFetchedError,
+    cached_answer,
+)
 from commander.jsonshape import as_object, req_int, req_list, req_str, str_list
 from commander.models import Deck
 from commander.net import NetworkError
@@ -121,6 +129,62 @@ def estimate_deck(
         fresh_for=FRESH_FOR,
         errors=(NetworkError, SpellbookError),
     )
+
+
+def effective_bracket(deck: Deck, estimate: BracketEstimate | None) -> int | None:
+    """The bracket the app and the CLI act on (ADR 0051): the one set on Archidekt, else the lowest the
+    estimate allows; None when neither tells it (no estimate, or a Banned one)."""
+    if deck.bracket is not None:
+        return deck.bracket
+    return estimate.tag.minimum if estimate is not None else None
+
+
+def with_effective_bracket(deck: Deck, estimate: BracketEstimate | None) -> Deck:
+    """The deck as the app and the CLI act on it: its bracket is the effective one. Not a deck to save."""
+    bracket = effective_bracket(deck, estimate)
+    return deck if bracket == deck.bracket else replace(deck, bracket=bracket)
+
+
+def estimated_decks(
+    decks: Sequence[Deck],
+    client: SpellbookClient,
+    cache: DeckCache[BracketEstimate],
+    *,
+    now: Clock,
+    refresh: bool = False,
+) -> list[Deck]:
+    """The decks in order with the effective bracket; asks Spellbook (or the cache) only for the decks with
+    no bracket set, and a deck whose estimate fails stays unset."""
+    unset = [deck for deck in decks if deck.bracket is None]
+    results = estimate_decks(unset, client, cache, now=now, refresh=refresh)
+    estimates = {deck.id: result.data for deck, result in zip(unset, results, strict=True)}
+    return [with_effective_bracket(deck, estimates.get(deck.id)) for deck in decks]
+
+
+def cached_effective_deck(deck: Deck, cache: DeckCache[BracketEstimate], *, now: Clock) -> Deck:
+    """`with_effective_bracket` from the cache alone, however old its answer: a view must not wait for
+    Spellbook, and the next sync brings the answer up to date."""
+    if deck.bracket is not None:
+        return deck
+    try:
+        request = deck_request(deck)
+    except SpellbookError:
+        return deck
+    answer = cached_answer(
+        deck.id,
+        request,
+        _not_fetched,
+        cache,
+        now=now,
+        refresh=False,
+        fresh_for=FRESH_FOR,
+        errors=(NotFetchedError,),
+    )
+    return with_effective_bracket(deck, answer.data)
+
+
+def _not_fetched(_request: Mapping[str, object]) -> BracketEstimate:
+    raise NotFetchedError(NOT_FETCHED)
 
 
 def _estimate_to_json(estimate: BracketEstimate) -> dict[str, object]:

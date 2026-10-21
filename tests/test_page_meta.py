@@ -9,14 +9,14 @@ PRELUDE = """
 const REPORT = {
   report: { sample: { known: true, withLists: 5, thin: false }, since: "2026-08-16",
     sources: [{ fetchedAt: null }] },
-  keys: [], stoppers: [], untouched: { combos: [], keys: [] }, comboGroups: [], racing: false,
+  keys: [], stoppers: [], untouched: { combos: [], keys: [] }, comboGroups: [], racing: false, cedh: true,
 };
 const NOTHING = { report: null };
 const syncing = (decks) => ({ user: "TESTER", signedIn: true,
   sync: { running: true, progress: "Fetching", summary: "", failed: false, decks } });
 accountState.active = true;
 state.current = 1;
-state.view = { id: 1, bracket: 5 };
+state.view = { id: 1, bracket: 5, effectiveBracket: 5 };
 state.decks = [
   { id: 1, short: "Magda", name: "A", queued: 0 },
   { id: 2, short: "Ellivere", name: "B", queued: 0 },
@@ -47,7 +47,7 @@ def test_every_reload_of_the_deck_rereads_its_meta_so_a_saved_list_is_reflected(
     # the panel was read only when the deck was opened, the panel unfolded or the meta cache changed.
     seen = run("""
     stub.meta = async () => REPORT;
-    stub.deck = async () => ({ id: 1, bracket: 5, stamp: "after the save" });
+    stub.deck = async () => ({ id: 1, bracket: 5, effectiveBracket: 5, stamp: "after the save" });
     renderDeck = () => {};
     await loadDeck();
     const once = metaCalls();
@@ -114,6 +114,26 @@ def test_a_poll_that_leaves_the_fetch_state_alone_does_not_reread_the_meta() -> 
     return metaCalls();
     """)
     assert calls == 1
+
+
+def test_a_bracket_4_meta_shows_the_key_cards_and_not_the_sections_it_does_not_read() -> None:
+    seen = run("""
+    const keys = [{ name: "Magda, Brazen Outlaw", reasons: ["your commander"] }];
+    const titles = () => $("meta-body").querySelectorAll("h3").map((h) => h.textContent);
+    state.view = { id: 1, bracket: null, effectiveBracket: 4 };
+    stub.meta = async () => ({ ...REPORT, keys, cedh: false });
+    await metaPanel.load();
+    const four = titles();
+    state.view = { id: 1, bracket: 5, effectiveBracket: 5 };
+    stub.meta = async () => ({ ...REPORT, keys, cedh: true });
+    metaPanel.forget();
+    await metaPanel.load();
+    return { four, five: titles() };
+    """)
+    assert seen == {
+        "four": ["Key cards"],
+        "five": ["Key cards", "What stops you", "Meta combos"],
+    }
 
 
 def test_a_rising_combo_carries_a_rising_badge_and_the_others_do_not() -> None:
