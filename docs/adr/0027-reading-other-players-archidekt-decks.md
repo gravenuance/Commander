@@ -61,9 +61,19 @@ Option 3 for the sample and option 2 for the cache, in `commander.archidekt`, `c
   search answer, one per commander at a bracket and one per deck tag, is now refreshed every third day, on a
   day of its own: `commander.peerschedule` takes the day from a hash of the answer's cache item name, so a sync
   refreshes about a third of them and no answer is older than about three days (the owner accepted that
-  ideas may lag Archidekt by that much). An answer is fresh while it was fetched since the start (UTC) of its latest
-  day and is never refreshed under 24 hours old; after a gap in syncing, everything past its day is refreshed
-  at once. The other meta answers keep their day.
+  ideas may lag Archidekt by that much). An answer is fresh while it was fetched since the start (UTC) of its
+  latest day and is never refreshed under 24 hours old; after a gap in syncing, everything past its day is
+  refreshed at once. The other meta answers keep their day.
+- **Incremental search:** the search is sorted by `updatedAt`, newest first (`orderBy=-updatedAt`), so every
+  deck listed above the newest one already held is new or edited. Each search answer therefore keeps its raw
+  hits (id, name, owner, views, `updatedAt`, bracket: `PeerLists.search`, cache version 3, so older answers
+  are fetched again). A refresh pages, per searched bracket, only to the page that reaches a deck updated at
+  or before the newest cached hit *of that bracket* (a stop at the newest hit of any bracket would cut the
+  other bracket's search short), lays what it found over the cached hits by deck id, and drops hits older
+  than the window. Between full searches the view counts of unedited decks go stale, and a deck that left
+  the searched brackets or the site is only noticed by a full search, so each group is paged in full about
+  weekly: on the first refresh after the start of a weekly day that a hash of its cache item name gives it,
+  so the full searches are spread over the week too. The 20 and 3 page caps apply to each search as before.
 - **Pruning:** a gather that fetches (never a cache-only read) deletes the deck files not used for 30 days,
   those whose deck was last updated before the window (no search lists them again) and those that no longer
   parse. A file's modification time is its last use, set when it is written or hit.
@@ -71,9 +81,9 @@ Option 3 for the sample and option 2 for the cache, in `commander.archidekt`, `c
 
 ## Consequences
 
-- A busy commander's refresh, one in three days, makes up to 20 search requests and 60 deck reads, five
-  seconds apart, so several minutes; later syncs read only the decks edited since. A commander with few decks
-  costs less.
+- A busy commander's full search, about weekly, makes up to 20 search requests; its other refreshes, one in
+  three days, make the one or two pages that reach the newest cached deck, plus a deck read, five seconds
+  apart, for each deck new or edited since. A commander with few decks costs less.
 - The sample is larger, so the thresholds and the weights of ADR 0026 mean something; a commander with fewer
   than ten decks reads all of them and is thin.
 - `peer_decks` is now the read cap, not a sample size: lowering it is the first thing to do if Archidekt

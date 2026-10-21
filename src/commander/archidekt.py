@@ -219,15 +219,19 @@ class ArchidektSearch:
         since: datetime,
         tag: str | None = None,
         max_pages: int = MAX_SEARCH_PAGES,
+        stop_at: Mapping[int | None, datetime] | None = None,
     ) -> list[PeerDeck]:
         """Commander decks led by `commander` (full name; None for any commander) and updated at or after
         `since`, newest first per bracket, optionally only those with the deck tag.
 
-        One search per bracket (None searches every bracket), all sharing max_pages pages.
+        One search per bracket (None searches every bracket), all sharing max_pages pages. A bracket in
+        `stop_at` ends at the page that reaches a deck updated at or before its time, since the listing is
+        newest-updated first and the caller already has the decks from there on.
         """
         found: dict[int, PeerDeck] = {}
         pages_left = max_pages
         for bracket in brackets:
+            stop = stop_at.get(bracket) if stop_at is not None else None
             url: str | None = f"{self._base_url}/decks/v3/"
             params: Mapping[str, str | int] | None = (
                 {"formats": COMMANDER_FORMAT, "orderBy": "-updatedAt", "pageSize": PAGE_SIZE}
@@ -245,6 +249,8 @@ class ArchidektSearch:
                 params = None
                 found.update((deck.id, deck) for deck in page if deck.updated_at >= since)
                 if any(deck.updated_at < since for deck in page):
+                    break
+                if stop is not None and any(deck.updated_at <= stop for deck in page):
                     break
         return list(found.values())
 

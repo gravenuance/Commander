@@ -27,6 +27,7 @@ from commander.metadata import (
 )
 from commander.models import Deck, DeckCard
 from commander.net import HTTP_OK, Fetcher, Pacer
+from commander.peersearch import SearchHits
 from commander.spellbook import SpellbookClient
 from commander.topdeck import NO_KEY_MESSAGE, TopdeckClient
 from commander.topdeckstore import TournamentStore
@@ -434,7 +435,7 @@ def test_a_search_that_finds_no_decks_gives_an_empty_answer_not_an_error(rig: Ri
     rig.archidekt.page = {"count": 0, "next": None, "results": []}
     peers = rig.gather().peers
     assert peers.source is AnswerSource.FETCHED
-    assert peers.data == PeerLists((), 0)
+    assert peers.data == PeerLists((), 0, SearchHits((), NOW))
 
 
 def test_a_cache_from_before_the_view_bars_reads_as_not_fetched(rig: Rig) -> None:
