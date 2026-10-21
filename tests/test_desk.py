@@ -1710,7 +1710,7 @@ def test_a_save_refused_for_a_changed_board_is_logged(desk: Desk, caplog: pytest
     assert logged(caplog) == [f"refused the save of deck {DECK}: the board changed after the preview"]
 
 
-def test_a_save_that_comes_back_unsaved_logs_its_problems(
+def test_a_save_that_comes_back_unsaved_logs_its_problems_at_warning(
     desk: Desk, settings: DeskSettings, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     deck = Workspace(settings.workspace).load(DECK)
@@ -1730,6 +1730,7 @@ def test_a_save_that_comes_back_unsaved_logs_its_problems(
     assert logged(caplog) == [
         f"save of deck {DECK} not made: Arcane Signet: not found; Sol Ring: outside the identity"
     ]
+    assert {r.levelno for r in caplog.records if r.name == DESK_LOG} == {logging.WARNING}
 
 
 def test_a_page_error_is_logged_at_warning_with_message_source_line_and_stack(

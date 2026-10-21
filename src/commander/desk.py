@@ -1315,7 +1315,7 @@ def _log_save(deck_id: int, saved: BoardSave) -> None:
                 "deck %d on Archidekt differs from the save: %s", deck_id, "; ".join(saved.result.mismatches)
             )
     elif resolution.problems:
-        log.info("save of deck %d not made: %s", deck_id, "; ".join(resolution.problems))
+        log.warning("save of deck %d not made: %s", deck_id, "; ".join(resolution.problems))
     else:
         log.info(
             "save of deck %d sent nothing: %d board card(s) already in the deck", deck_id, len(saved.applied)
