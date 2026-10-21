@@ -352,7 +352,7 @@ def test_decks_whose_tournament_lists_hit_a_key_problem_are_incomplete_and_the_s
     outcome = run_sync(
         services(tmp_path, fake),
         Workspace(tmp_path / "decks"),
-        "MAKKIS",
+        "TESTER",
         MetaSettings(),
         SyncOptions(cards=False),
         on_deck=lambda deck_id, state: states.__setitem__(deck_id, state.value),
