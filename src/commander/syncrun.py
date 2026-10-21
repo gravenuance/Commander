@@ -31,6 +31,7 @@ from commander.deckprofile import ProfileError, profile_path, write_profile_temp
 from commander.fetchpriority import FetchPriority
 from commander.ideas import compile_ideas, gather_idea_pools, rejudge_ideas, relabel_legacy_ideas
 from commander.metadata import (
+    TOURNAMENT_BRACKETS,
     TOURNAMENTS_STEP,
     AdjacentDecks,
     FinishMeta,
@@ -350,7 +351,7 @@ def _compile_ideas(
         )
         waiting = _most_viewed_first(workspace.load_all(), services)
         # TopDeck's window is fetched once, on its own thread, while every deck's Archidekt and Spellbook
-        # reads go ahead; only the merge of a deck's tournament lists waits for it.
+        # reads go ahead; only the merge of a deck at a bracket that reads tournament lists waits for it.
         tournaments = start_tournament_refresh(
             (s.deck for s in waiting),
             sources,
@@ -363,8 +364,13 @@ def _compile_ideas(
             on_deck(queued.deck.id, FetchState.QUEUED)
         reading: list[_ReadingDeck] = []
 
-        def merge_next() -> None:
-            read = next_up.pick(reading, lambda r: r.stored.deck.id)
+        def ready_reads() -> list[_ReadingDeck]:
+            """The reads whose merge needs no wait for TopDeck: it is over, or the deck never uses it."""
+            topdeck_over = tournaments is None or tournaments.done()
+            return [r for r in reading if topdeck_over or r.stored.deck.bracket not in TOURNAMENT_BRACKETS]
+
+        def merge_next(candidates: list[_ReadingDeck]) -> None:
+            read = next_up.pick(candidates, lambda r: r.stored.deck.id)
             reading.remove(read)
             _merge_deck(
                 read,
@@ -391,10 +397,10 @@ def _compile_ideas(
                 warnings.append(f"{stored.deck.short_name} ideas not compiled: {error}")
                 on_deck(stored.deck.id, FetchState.INCOMPLETE)
                 continue
-            while reading and (tournaments is None or tournaments.done()):
-                merge_next()
+            while ready := ready_reads():
+                merge_next(ready)
         while reading:
-            merge_next()
+            merge_next(ready_reads() or reading)
         if tournaments is not None:
             # The client closes with this block, so TopDeck's thread must be over first.
             tournaments.result()

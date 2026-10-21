@@ -53,10 +53,12 @@ Option 4, behind the provider seam that stood in front of EDHTop16 (`tournaments
   window's fetch on its own thread before the first deck, through `TournamentSource.load`, which keeps a
   failure for the reads that follow instead of raising it. Each deck's Archidekt and Spellbook reads
   (`metadata.start_gather_for`) start and finish without waiting for it; only the step that reads the deck's
-  tournament lists, which then find the events stored, waits for it. Decks are merged as soon as the window is
-  in (at once when it was already stored), so while a first fetch runs, every deck's other sources are read
-  and the merges follow; the client's lock keeps the fetch to one per sync. The deck shows as fetching from
-  the start of its reads. Before this a first 60-day sync held the first deck for over three minutes.
+  tournament lists, which then find the events stored, waits for it. A deck is merged as soon as its reads
+  are ready: a deck below bracket 4 never uses TopDeck, so its merge goes ahead while the fetch runs, and a
+  deck at bracket 4 or 5 is merged once the window is in (at once when it was already stored). Among the
+  ready reads the usual order holds, and the sync blocks on TopDeck only when nothing else is left to merge;
+  the client's lock keeps the fetch to one per sync. The deck shows as fetching from the start of its reads.
+  Before this a first 60-day sync held the first deck for over three minutes.
 - **Saying where the sync is** (`phases.ActivePhases`). The reads of a sync run side by side, so the progress
   line lists every one that is under way, in the order they started, joined with " · " (for example
   "TopDeck: recent tournaments · Archidekt: recent Edgar Markov decks"); a read leaves the line when it ends,

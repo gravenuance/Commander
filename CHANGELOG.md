@@ -6,8 +6,9 @@
 
 ### Fixed
 - `sync` fetches TopDeck's events once, in the background, while it reads every deck's Archidekt and
-  Spellbook sources, and only each deck's tournament lists wait for them (ADR 0047). Before, the first deck
-  of a first sync waited for the whole fetch, minutes for a 60-day window, before anything else was read.
+  Spellbook sources, and only the decks at bracket 4 or 5, whose tournament lists need them, wait for them
+  (ADR 0047). Before, the first deck of a first sync waited for the whole fetch, minutes for a 60-day window,
+  before anything else was read, and every deck's merge waited for it.
 - The sync's progress line names every read under way ("TopDeck: recent tournaments · Archidekt: recent
   Edgar Markov decks"), drops each as it ends and shows a wait for TopDeck's rate limit ("TopDeck: waiting 30 s
   (rate limit)"). Before, it showed the last one that started, and said Archidekt while TopDeck waited.

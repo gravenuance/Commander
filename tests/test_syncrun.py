@@ -4,6 +4,7 @@ import logging
 import shutil
 import threading
 from collections.abc import Callable
+from concurrent.futures import Future
 from dataclasses import replace
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -30,7 +31,7 @@ from commander.deckcache import Answer, AnswerSource
 from commander.deckprofile import Profile, profile_template, read_profile
 from commander.fetchpriority import FetchPriority
 from commander.ideas import rejudge_ideas, relabel_legacy_ideas
-from commander.metadata import AdjacentDecks, MetaData
+from commander.metadata import TOURNAMENT_BRACKETS, AdjacentDecks, MetaData
 from commander.models import Deck
 from commander.net import NetworkError
 from commander.scryfall import CardRefresh, RefreshStatus
@@ -379,6 +380,48 @@ def test_decks_whose_tournament_lists_hit_a_key_problem_are_incomplete_and_the_s
         "add one in the app's TopDeck panel or with `cmdr topdeck`"
     )
     assert [w for w in outcome.warnings if "TopDeck key" in w] == [warning]
+
+
+def test_a_deck_below_bracket_4_merges_without_waiting_for_topdeck_and_one_at_bracket_4_does_wait(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = three_decks(tmp_path, raw_deck, card_db_file)
+    for deck_id, bracket in zip(DECK_IDS, (4, 3, 3), strict=True):
+        fake.decks[deck_id]["edhBracket"] = bracket
+    stub_meta(monkeypatch)
+    topdeck: Future[None] = Future()
+    released = threading.Event()
+    merged: list[int] = []
+    # What the bracket 4 deck's meta read saw: whether TopDeck had been released by the time it could go on.
+    waited_for_release: list[bool] = []
+
+    def start_gather(deck: Deck, *_: object, **__: object) -> Callable[[], object]:
+        def finish() -> object:
+            if deck.bracket in TOURNAMENT_BRACKETS:
+                waited_for_release.append(released.wait(timeout=2))
+            return SimpleNamespace(
+                lists=SimpleNamespace(data=1, error=None, key_problem=False), peers=SimpleNamespace(data=1)
+            )
+
+        return finish
+
+    def compile_ideas(stored: StoredDeck, *_: object, **__: object) -> dict[Origin, list[BoardCard]]:
+        merged.append(stored.deck.id)
+        if {102, 103} <= set(merged) and not released.is_set():
+            released.set()
+            topdeck.set_result(None)
+        return {}
+
+    def start_topdeck(*_: object, **__: object) -> Future[None]:
+        return topdeck
+
+    monkeypatch.setattr(syncrun, "start_tournament_refresh", start_topdeck)
+    monkeypatch.setattr(syncrun, "start_gather_for", start_gather)
+    monkeypatch.setattr(syncrun, "compile_ideas", compile_ideas)
+    sync_ideas(tmp_path, fake)
+    # The two decks below bracket 4 merge while TopDeck is still out; the bracket 4 deck goes on after it.
+    assert merged == [102, 103, 101]
+    assert waited_for_release == [True]
 
 
 def populated(tmp_path: Path, raw_deck: Json, card_db_file: Path) -> tuple[FakeArchidekt, StoredDeck]:
