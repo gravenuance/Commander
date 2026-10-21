@@ -47,6 +47,7 @@ from commander.cli_output import (
 from commander.cli_profile import add_profile_commands
 from commander.cli_suggest import add_suggest_command
 from commander.cli_toget import add_toget_commands
+from commander.cli_topdeck import add_topdeck_command
 from commander.clibase import (
     EXIT_FAILURE,
     EXIT_INTERRUPTED,
@@ -78,7 +79,6 @@ from commander.config import (
 from commander.credentials import CredentialError, KeyringTokenStore, TokenStore
 from commander.deckprofile import read_profile
 from commander.diff import DeckDiff
-from commander.edhtop16 import Edhtop16Error
 from commander.ideas import NO_LONGER_MAKES_THE_CUT, ideas_summary
 from commander.labels import LabelError
 from commander.net import Fetcher, NetworkError, Pacer, make_client
@@ -92,6 +92,7 @@ from commander.suggest import (
 )
 from commander.sync import SyncResult, SyncStatus
 from commander.syncrun import SyncOptions, SyncServices, run_sync
+from commander.topdeck import TopdeckError
 
 MAX_PASSWORD_BYTES = 1024
 
@@ -117,6 +118,7 @@ examples:
   cmdr suggest                                combo pieces and roles short of target, every deck
   cmdr suggest magda --max-price 5            ideas and cut candidates for one deck, cards up to EUR 5
   cmdr login                                  sign in to Archidekt once, so `apply --save` can edit decks
+  cmdr topdeck                                save your TopDeck.gg API key, so `meta` can read events
   cmdr apply plan.toml                        preview a plan's changes against the deck on Archidekt
   cmdr apply plan.toml --save                 make them, after saving a snapshot of the deck there
 """
@@ -129,7 +131,8 @@ card data from Scryfall is kept in %LOCALAPPDATA%\\Commander (or {ENV_CACHE}); `
 for 7 days.
 role targets for `cmdr suggest` (default {_DEFAULT_TARGETS_TEXT}) can be changed
 in a [targets] table in the config file.
-`cmdr login` keeps an Archidekt login token in Windows Credential Manager, never the password.
+`cmdr login` keeps an Archidekt login token in Windows Credential Manager, never the password; `cmdr topdeck`
+keeps your TopDeck.gg API key there too.
 exit codes: 0 success, 1 failure, 2 usage error, 130 interrupted.
 """
 
@@ -212,7 +215,7 @@ def main(  # noqa: PLR0911 — one exit code per failure class, mapped in one pl
         SaveError,
         ScryfallError,
         SpellbookError,
-        Edhtop16Error,
+        TopdeckError,
         CardDataError,
         WorkspaceError,
         LabelError,
@@ -288,6 +291,7 @@ def _build_parser() -> argparse.ArgumentParser:
     add_board_commands(commands.add_parser)
     add_meta_command(commands.add_parser)
     add_app_command(commands.add_parser)
+    add_topdeck_command(commands.add_parser)
     _add_edit_commands(commands.add_parser)
     return parser
 

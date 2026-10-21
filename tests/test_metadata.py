@@ -12,7 +12,6 @@ from commander.config import MetaSettings
 from commander.deckcache import AnswerSource, request_key
 from commander.deckreads import FOLDER as DECK_READS_FOLDER
 from commander.deckreads import DeckRead, DeckReads
-from commander.edhtop16 import Edhtop16Client
 from commander.metadata import (
     CACHE_FOLDER,
     AdjacentDecks,
@@ -28,13 +27,24 @@ from commander.metadata import (
 from commander.models import Deck, DeckCard
 from commander.net import HTTP_OK, Fetcher, Pacer
 from commander.spellbook import SpellbookClient
-from conftest import DECK_ID, FakeEdhtop16, FakeSpellbook, Json, card_entry, load_fixture
+from commander.topdeck import TopdeckClient
+from commander.topdeckstore import TournamentStore
+from conftest import (
+    DECK_ID,
+    FakeSpellbook,
+    FakeTopdeck,
+    Json,
+    MemoryKeyStore,
+    card_entry,
+    load_fixture,
+    topdeck_event,
+)
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 ELLIVERE = "Ellivere of the Wild Court"
 MAGDA = "Magda, Brazen Outlaw"
 KODAMA = "Kodama of the East Tree"
-SETTINGS = MetaSettings(window_days=60, min_event_size=16, peer_decks=3, meta_commanders=2, meta_lists=30)
+SETTINGS = MetaSettings(window_days=60, min_event_size=64, peer_decks=3, meta_commanders=2, meta_lists=30)
 
 
 class FakeArchidektSearch:
@@ -104,9 +114,13 @@ def ellivere_deck(*commanders: str) -> Deck:
     )
 
 
+# The 61 days of the window from 16 August to 15 October, asked for in weeks.
+WINDOW_REQUESTS = 9
+
+
 class Rig:
     def __init__(self, tmp_path: Path) -> None:
-        self.edhtop16 = FakeEdhtop16()
+        self.topdeck = FakeTopdeck()
         self.archidekt = FakeArchidektSearch()
         self.spellbook = FakeSpellbook()
         self.spellbook.combos = load_fixture("spellbook_meta_kinnan.json")
@@ -114,11 +128,17 @@ class Rig:
         # The pauses Archidekt's pacer would have slept.
         self.sleeps: list[float] = []
         self.now = NOW
+        self.keys = MemoryKeyStore()
         self.settings = SETTINGS
 
     def sources(self) -> MetaSources:
         return MetaSources(
-            Edhtop16Client(Fetcher(self.edhtop16.client(), max_attempts=1), Pacer(0)),
+            TopdeckClient(
+                Fetcher(self.topdeck.client(), max_attempts=1),
+                Pacer(0),
+                TournamentStore(self.cache),
+                self.keys,
+            ),
             ArchidektSearch(
                 Fetcher(httpx.Client(transport=httpx.MockTransport(self.archidekt.handler)), max_attempts=1),
                 Pacer(0, sleep=self.sleeps.append),
@@ -160,11 +180,8 @@ def test_gathers_the_commander_lists_the_meta_and_archidekt_decks(rig: Rig) -> N
     ]
     field = data.field.data
     assert field is not None
-    assert [(c.stats.name, len(c.entries)) for c in field] == [
-        ("Kinnan, Bonder Prodigy", 2),
-        # EDHTop16 has no entries query answer for this pair in the fake, so it counts as unknown and empty.
-        ("Kraum, Ludevic's Opus / Tymna the Weaver", 0),
-    ]
+    # The two most-played commanders of the fake events: three Ellivere decks and two Kinnan decks.
+    assert [(c.stats.name, len(c.entries)) for c in field] == [(ELLIVERE, 3), ("Kinnan, Bonder Prodigy", 2)]
     peers = data.peers.data
     assert peers is not None
     # The three most viewed, the user's own deck left out.
@@ -200,7 +217,7 @@ def bracketed(rig: Rig, bracket: int) -> MetaData:
 def test_a_bracket_3_deck_reads_brackets_3_and_4_of_archidekt_and_no_tournament_lists(rig: Rig) -> None:
     data = bracketed(rig, 3)
     assert [q["edhBracket"] for q in rig.archidekt.searches] == ["3", "4"]
-    assert rig.edhtop16.requests == []
+    assert rig.topdeck.requests == []
     assert data.lists.source is AnswerSource.UNAVAILABLE
     assert data.peers.source is AnswerSource.FETCHED
 
@@ -211,7 +228,7 @@ def test_a_bracket_4_deck_reads_brackets_4_and_5_of_archidekt_and_the_commanders
     data = bracketed(rig, 4)
     assert [q["edhBracket"] for q in rig.archidekt.searches] == ["4", "5"]
     # Only the commander's own lists: not the most-played commanders, nor Spellbook.
-    assert len(rig.edhtop16.requests) == 1
+    assert len(rig.topdeck.requests) == WINDOW_REQUESTS
     assert rig.spellbook.combo_bodies == []
     assert data.lists.source is AnswerSource.FETCHED
     assert data.lists.data is not None
@@ -223,7 +240,7 @@ def test_a_bracket_4_deck_reads_brackets_4_and_5_of_archidekt_and_the_commanders
 def test_a_bracket_4_deck_offline_asks_nothing(rig: Rig) -> None:
     deck = replace(ellivere_deck(), bracket=4)
     data = gather_for(deck, rig.sources(), rig.cache, now=lambda: NOW, refresh=False, offline=True)
-    assert (rig.edhtop16.requests, rig.archidekt.requests) == ([], [])
+    assert (rig.topdeck.requests, rig.archidekt.requests) == ([], [])
     assert (data.lists.source, data.peers.source) == (AnswerSource.UNAVAILABLE, AnswerSource.UNAVAILABLE)
     assert data.lists.error == "not fetched yet"
 
@@ -434,10 +451,10 @@ def test_a_cache_from_before_the_view_bars_reads_as_not_fetched(rig: Rig) -> Non
 
 def test_a_second_run_the_same_day_reads_the_cache(rig: Rig) -> None:
     first = rig.gather()
-    asked = (len(rig.edhtop16.requests), len(rig.archidekt.requests))
+    asked = (len(rig.topdeck.requests), len(rig.archidekt.requests))
     rig.now = NOW + timedelta(hours=23)
     second = rig.gather()
-    assert (len(rig.edhtop16.requests), len(rig.archidekt.requests)) == asked
+    assert (len(rig.topdeck.requests), len(rig.archidekt.requests)) == asked
     assert {second.lists.source, second.field.source, second.peers.source} == {AnswerSource.CACHED}
     assert (second.lists.data, second.field.data, second.peers.data) == (
         first.lists.data,
@@ -465,25 +482,26 @@ def test_peer_caches_from_before_counts_and_categories_still_read(rig: Rig) -> N
 def test_a_changed_window_does_not_read_the_cache_of_the_old_one(rig: Rig) -> None:
     rig.gather()
     rig.settings = replace(SETTINGS, window_days=30)
-    asked = (len(rig.edhtop16.requests), len(rig.archidekt.requests))
+    asked = (len(rig.topdeck.requests), len(rig.archidekt.requests))
     data = rig.gather()
-    assert (len(rig.edhtop16.requests), len(rig.archidekt.requests)) > asked
+    assert (len(rig.topdeck.requests), len(rig.archidekt.requests)) > asked
     assert {data.lists.source, data.field.source, data.peers.source} == {AnswerSource.FETCHED}
     assert data.since == date(2026, 9, 15)
 
 
-def test_refresh_fetches_again(rig: Rig) -> None:
+def test_refresh_works_the_answers_out_again_but_asks_tournaments_only_for_unseen_days(rig: Rig) -> None:
     rig.gather()
-    asked = len(rig.edhtop16.requests)
+    asked = (len(rig.topdeck.requests), len(rig.archidekt.requests))
     again = rig.gather(refresh=True)
-    assert len(rig.edhtop16.requests) > asked
     assert again.lists.source is AnswerSource.FETCHED
+    assert len(rig.archidekt.requests) > asked[1]
+    assert len(rig.topdeck.requests) == asked[0]
 
 
 def test_a_failing_service_falls_back_to_the_last_good_answer(rig: Rig) -> None:
     rig.gather()
     rig.now = NOW + timedelta(days=2)
-    rig.edhtop16.status = 503
+    rig.topdeck.status = 503
     rig.archidekt.status = 503
     data = rig.gather()
     assert data.lists.source is AnswerSource.STALE
@@ -509,7 +527,7 @@ def test_an_unreadable_deck_is_skipped_and_counted(rig: Rig) -> None:
     assert peers.skipped == 1
 
 
-def test_a_commander_edhtop16_does_not_know_is_marked_unknown(rig: Rig) -> None:
+def test_a_commander_no_event_had_is_marked_unknown(rig: Rig) -> None:
     deck = ellivere_deck()
     other = DeckCard("Nobody, the Missing", 1, ("Commander",), True, "x", 9, 9, "tst", "1", "Normal")  # noqa: FBT003 — positional like the model
     lists = rig.gather(deck=Deck(deck.id, deck.name, deck.owner, 5, deck.updated_at, (other,))).lists.data
@@ -521,7 +539,7 @@ def test_a_commander_edhtop16_does_not_know_is_marked_unknown(rig: Rig) -> None:
 def test_zero_peer_decks_and_meta_commanders_ask_nothing(rig: Rig) -> None:
     sources = rig.sources()
     quiet = MetaSources(
-        sources.edhtop16,
+        sources.tournaments,
         sources.archidekt,
         sources.spellbook,
         sources.spellbook_pacer,
@@ -531,47 +549,52 @@ def test_zero_peer_decks_and_meta_commanders_ask_nothing(rig: Rig) -> None:
     data = gather(ellivere_deck(), quiet, rig.cache, now=lambda: NOW, refresh=False)
     assert rig.archidekt.requests == []
     assert data.field.data == ()
-    assert len(rig.edhtop16.requests) == 1
+    assert len(rig.topdeck.requests) == WINDOW_REQUESTS
 
 
 def test_offline_reads_only_the_cache_whatever_its_age(rig: Rig) -> None:
     empty = gather(ellivere_deck(), rig.sources(), rig.cache, now=lambda: NOW, refresh=False, offline=True)
     assert empty.lists.source is AnswerSource.UNAVAILABLE
-    assert rig.edhtop16.requests == []
+    assert rig.topdeck.requests == []
     assert rig.archidekt.requests == []
     rig.gather()
-    asked = len(rig.edhtop16.requests)
+    asked = len(rig.topdeck.requests)
     later = NOW + timedelta(days=3)
     old = gather(ellivere_deck(), rig.sources(), rig.cache, now=lambda: later, refresh=False, offline=True)
     assert old.lists.source is AnswerSource.STALE
     assert old.lists.data is not None
-    assert len(rig.edhtop16.requests) == asked
+    assert len(rig.topdeck.requests) == asked
 
 
 def test_combos_are_looked_for_in_each_top_commanders_core_cards(rig: Rig) -> None:
     data = rig.gather()
     combos = data.combos.data
     assert combos is not None
-    # Kraum and Tymna have no lists in the fake, so only Kinnan's core is asked about.
+    # The fake Spellbook gives the same three combos for any request.
+    ids = ["513-5034--46", "129-4131", "4222-5168"]
     assert [(c.commander, [d.id for d in c.combos]) for c in combos] == [
-        ("Kinnan, Bonder Prodigy", ["513-5034--46", "129-4131", "4222-5168"])
+        (ELLIVERE, ids),
+        ("Kinnan, Bonder Prodigy", ids),
     ]
     # The meta's cores first, then the deck's own list, whose combos the meta's answers are checked against.
-    request, own = rig.spellbook.combo_bodies
-    assert request["commanders"] == [{"card": "Kinnan, Bonder Prodigy", "quantity": 1}]
-    assert own["commanders"] == [{"card": "Ellivere of the Wild Court", "quantity": 1}]
+    ellivere, kinnan, own = rig.spellbook.combo_bodies
+    assert ellivere["commanders"] == [{"card": ELLIVERE, "quantity": 1}]
+    assert kinnan["commanders"] == [{"card": "Kinnan, Bonder Prodigy", "quantity": 1}]
+    assert own["commanders"] == [{"card": ELLIVERE, "quantity": 1}]
     assert data.own_combos.source is AnswerSource.FETCHED
-    # Every card of the two lists is in at least half of them, so all are core.
-    assert {"card": "Basalt Monolith", "quantity": 1} in request["main"]
-    assert {"card": "Circle of Dreams Druid", "quantity": 1} in request["main"]
+    # Every card of the two Kinnan lists is in at least a fifth of them, so all are core; so is every
+    # card of the three Ellivere lists, which is in a third.
+    assert {"card": "Basalt Monolith", "quantity": 1} in kinnan["main"]
+    assert {"card": "Circle of Dreams Druid", "quantity": 1} in kinnan["main"]
+    assert {"card": "Gaea's Cradle", "quantity": 1} in ellivere["main"]
     again = rig.gather()
     assert again.combos.source is AnswerSource.CACHED
     assert again.own_combos.source is AnswerSource.CACHED
-    assert len(rig.spellbook.combo_bodies) == 2
+    assert len(rig.spellbook.combo_bodies) == 3
 
 
 def test_combos_without_meta_lists_are_unavailable(rig: Rig) -> None:
-    rig.edhtop16.status = 403
+    rig.topdeck.status = 403
     data = rig.gather()
     assert data.combos.source is AnswerSource.UNAVAILABLE
     # The deck's own combos need no meta lists.
@@ -808,17 +831,10 @@ def test_an_adjacent_group_that_cannot_be_read_is_named(rig: Rig) -> None:
     assert "HTTP 500" in why
 
 
-def test_a_future_dated_and_a_malformed_entry_leave_the_commander_lists_readable(rig: Rig) -> None:
-    page = load_fixture("edhtop16_entries_ellivere.json")
-    node_edges = page["data"]["commander"]["entries"]["edges"]
-    future = json.loads(json.dumps(node_edges[0]))
-    future["node"]["tournament"].update(
-        {"TID": "future-test-event", "tournamentDate": "2030-10-26T10:00:00.000Z"}
-    )
-    broken = json.loads(json.dumps(node_edges[0]))
-    broken["node"]["decklistItems"][0]["spice"] = None
-    node_edges[:0] = [future, broken]
-    rig.edhtop16.pages[ELLIVERE] = [page]
+def test_a_future_dated_and_a_malformed_event_leave_the_commander_lists_readable(rig: Rig) -> None:
+    deck = (2, [ELLIVERE], ["Sol Ring"])
+    future = topdeck_event("future-test-event", "2030-10-26T10:00:00+00:00", 64, 8, [deck])
+    rig.topdeck.extra = [future, {"TID": "broken-test-event", "standings": "none"}]
 
     lists = rig.gather().lists.data
 
@@ -830,16 +846,11 @@ def test_a_future_dated_and_a_malformed_entry_leave_the_commander_lists_readable
     ]
 
 
-REFUSAL = (
-    "EDHTop16 refused the query: Only persisted queries are allowed in production. "
-    "Plain text queries are disabled."
-)
+REFUSAL = "TopDeck refused the key (HTTP 401); check it in the TopDeck panel"
 
 
-def test_a_cache_only_read_after_edhtop16_refused_the_fetch_says_why_not_not_fetched_yet(rig: Rig) -> None:
-    refused = load_fixture("edhtop16_refused.json")
-    rig.edhtop16.pages[ELLIVERE] = [refused]
-    rig.edhtop16.commanders = refused
+def test_a_cache_only_read_after_topdeck_refused_the_key_says_why_not_not_fetched_yet(rig: Rig) -> None:
+    rig.keys.put("a-wrong-key")
     fetched = rig.gather()
     assert (fetched.lists.source, fetched.lists.error) == (AnswerSource.UNAVAILABLE, REFUSAL)
     assert fetched.field.error == REFUSAL

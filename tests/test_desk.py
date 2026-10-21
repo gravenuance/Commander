@@ -31,10 +31,19 @@ from commander.net import Pacer
 from commander.scryfall import CardRefresh
 from commander.store import StoredDeck, Workspace
 from commander.syncrun import CardState, CardStatus, FetchState, SyncOutcome
+from commander.topdeck import NO_KEY_MESSAGE
 from commander.viewscore import ViewScores
-from conftest import REFRESH_TOKEN, FakeArchidekt, Json, MemoryTokenStore, card_entry, load_fixture
+from conftest import (
+    REFRESH_TOKEN,
+    TOPDECK_SERVICE,
+    FakeArchidekt,
+    Json,
+    MemoryKeyring,
+    MemoryTokenStore,
+    card_entry,
+)
 from test_cli_apply import run
-from test_cli_meta import MAGDA, magda_page
+from test_cli_meta import kinnan_events, magda_events
 from test_cli_meta import meta as cli_meta
 from test_ideas import ALIKE, tag_pool
 from test_meta import meta_data, peer
@@ -306,7 +315,7 @@ def legacy_card(settings: DeskSettings, name: str) -> str:
 def test_reconsidering_a_turned_down_maybeboard_card_relabels_it_from_the_cached_lists(
     desk: Desk, settings: DeskSettings, fake: FakeArchidekt
 ) -> None:
-    fake.edhtop16.pages[MAGDA] = [magda_page()]
+    fake.topdeck.events = [*magda_events(), *kinnan_events()]
     fetch_meta(settings, fake)
     card_id = legacy_card(settings, "Mind Stone")
 
@@ -314,7 +323,7 @@ def test_reconsidering_a_turned_down_maybeboard_card_relabels_it_from_the_cached
 
     stone = next(c for c in items(desk.deck(DECK), "cards") if c["id"] == card_id)
     assert (stone["status"], stone["source"], stone["origin"]) == ("open", "cmdr", "meta")
-    assert stone["reason"] == "in 5 of 6 Magda lists on EDHTop16 since 2026-08-16"
+    assert stone["reason"] == "in 5 of 6 Magda lists on TopDeck since 2026-08-16"
     # Newest first: the reopen stays on the activity line, by the user.
     latest = items(desk.deck(DECK), "activity")[0]
     assert (latest["action"], latest["actor"], latest["card"]) == ("reopened", "you", "Mind Stone")
@@ -335,7 +344,7 @@ def test_reconsidering_a_card_no_cached_list_plays_keeps_it_neutral_and_says_so(
 def test_undoing_a_queued_swap_leaves_an_old_pick_up_as_it_was(
     desk: Desk, settings: DeskSettings, fake: FakeArchidekt
 ) -> None:
-    fake.edhtop16.pages[MAGDA] = [magda_page()]
+    fake.topdeck.events = [*magda_events(), *kinnan_events()]
     fetch_meta(settings, fake)
     card_id = legacy_card(settings, "Mind Stone")
     desk.decide(DECK, card_id, "add", "Disruptor Flute", "")
@@ -506,7 +515,7 @@ def test_a_bad_grace_factor_shows_as_the_panels_error_and_leaves_the_file_alone(
 def test_a_grace_save_refreshes_the_decks_grace_line_and_shares_at_once(
     desk: Desk, settings: DeskSettings, fake: FakeArchidekt
 ) -> None:
-    fake.edhtop16.pages[MAGDA] = [magda_page()]
+    fake.topdeck.events = [*magda_events(), *kinnan_events()]
     fetch_meta(settings, fake)
     plain = desk.deck(DECK)
     assert plain["grace"] == {"cards": [], "holding": 0, "lists": 6}
@@ -518,12 +527,12 @@ def test_a_grace_save_refreshes_the_decks_grace_line_and_shares_at_once(
     save(desk, [], [], tag_search=False, grace=[("Arcane Signet", 4)])
     graced = desk.deck(DECK)
     assert graced["grace"] == {"cards": [{"name": "Arcane Signet", "factor": 4.0}], "holding": 1, "lists": 6}
-    assert golem_share(graced)["share"] == pytest.approx(4.75 / 6.85, abs=1e-4)
+    assert golem_share(graced)["share"] == pytest.approx(310 / 490, abs=1e-4)
     # The same file size: the shares cache follows the file's time, not only its size.
     save(desk, [], [], tag_search=False, grace=[("Arcane Signet", 5)])
     heavier = desk.deck(DECK)
     assert heavier["grace"] == {"cards": [{"name": "Arcane Signet", "factor": 5.0}], "holding": 1, "lists": 6}
-    assert golem_share(heavier)["share"] == pytest.approx(4.75 / 7.375, abs=1e-4)
+    assert golem_share(heavier)["share"] == pytest.approx(310 / 535, abs=1e-4)
     save(desk, [], [], tag_search=False)
     assert desk.deck(DECK)["grace"] == {"cards": [], "holding": 0, "lists": 6}
     assert golem_share(desk.deck(DECK))["share"] == golem_share(plain)["share"]
@@ -745,17 +754,18 @@ def test_without_cached_lists_no_card_carries_a_share(desk: Desk) -> None:
 def test_the_deck_view_carries_each_cards_combined_share_on_deck_and_board_cards(
     desk: Desk, settings: DeskSettings, fake: FakeArchidekt
 ) -> None:
-    fake.edhtop16.pages[MAGDA] = [magda_page()]
+    fake.topdeck.events = [*magda_events(), *kinnan_events()]
     fetch_meta(settings, fake)
     view = desk.deck(DECK)
     grid = {c["name"]: c for g in items(view, "grid") for c in cast("list[Json]", g["cards"])}
     golem = cast("Json", grid["Battered Golem"]["share"])
-    # In the first five of the six lists with a decklist; the sixth weighs 0.525 of the others' 4.75.
-    assert (golem["count"], golem["total"], golem["label"]) == (5, 6, "90%")
-    assert golem["share"] == pytest.approx(4.75 / 5.275, abs=1e-4)
+    # In the first five of the six lists with a decklist. In 64ths, 1st to 5th of 64 weigh 64+63+62+61+60
+    # = 310 and the sixth, 20th of 64, weighs 45.
+    assert (golem["count"], golem["total"], golem["label"]) == (5, 6, "87%")
+    assert golem["share"] == pytest.approx(310 / 355, abs=1e-4)
     assert golem["meta"] == {"share": golem["share"], "count": 5, "total": 6}
     assert golem["archidekt"] is None
-    assert golem["tip"] == "meta 90% (5/6 lists)"
+    assert golem["tip"] == "meta 87% (5/6 lists)"
     # A card no list plays is 0%, not missing; the commander is in every deck by definition.
     mountain = cast("Json", grid["Mountain"]["share"])
     assert (mountain["count"], mountain["total"], mountain["label"]) == (0, 6, "0%")
@@ -764,36 +774,36 @@ def test_the_deck_view_carries_each_cards_combined_share_on_deck_and_board_cards
     hoverbike = cast("Json", grid["High-Speed Hoverbike"]["share"])
     assert hoverbike["total"] == 6
     stone = next(c for c in items(view, "cards") if c["name"] == "Mind Stone")
-    assert cast("Json", stone["share"])["label"] == "90%"
+    assert cast("Json", stone["share"])["label"] == "87%"
 
 
 def test_grace_cards_weight_the_decks_shares_and_the_view_counts_the_lists_holding_one(
     desk: Desk, settings: DeskSettings, fake: FakeArchidekt
 ) -> None:
-    fake.edhtop16.pages[MAGDA] = [magda_page()]
+    fake.topdeck.events = [*magda_events(), *kinnan_events()]
     fetch_meta(settings, fake)
     assert desk.deck(DECK)["grace"] == {"cards": [], "holding": 0, "lists": 6}
     profile = settings.workspace / "10004639-honestly-though" / "profile.toml"
-    # Only the sixth list, which weighs 0.525 of the others' 4.75, runs the Signet: x4 makes it 2.1 of 6.85.
+    # Only the sixth list (45 of the others' 310) runs the Signet: x4 makes it 180 of 490.
     profile.write_text('[grace]\n"Arcane Signet" = 4\n', encoding="utf-8")
     view = desk.deck(DECK)
     assert view["grace"] == {"cards": [{"name": "Arcane Signet", "factor": 4.0}], "holding": 1, "lists": 6}
     grid = {c["name"]: c for g in items(view, "grid") for c in cast("list[Json]", g["cards"])}
     golem = cast("Json", grid["Battered Golem"]["share"])
-    assert (golem["count"], golem["total"], golem["label"]) == (5, 6, "69%")
-    assert golem["share"] == pytest.approx(4.75 / 6.85, abs=1e-4)
+    assert (golem["count"], golem["total"], golem["label"]) == (5, 6, "63%")
+    assert golem["share"] == pytest.approx(310 / 490, abs=1e-4)
     stone = next(c for c in items(view, "cards") if c["name"] == "Mind Stone")
-    assert cast("Json", stone["share"])["label"] == "69%"
+    assert cast("Json", stone["share"])["label"] == "63%"
     # Taking the grace card out of the profile brings the plain shares back at once.
     profile.write_text("version = 1\n", encoding="utf-8")
     again = desk.deck(DECK)
     assert again["grace"] == {"cards": [], "holding": 0, "lists": 6}
     assert [c["share"] for c in items(again, "cards") if c["name"] == "Mind Stone"] == [
         cast("Json", stone["share"])
-        | {"share": pytest.approx(4.75 / 5.275, abs=1e-4), "label": "90%"}
+        | {"share": pytest.approx(310 / 355, abs=1e-4), "label": "87%"}
         | {
-            "tip": "meta 90% (5/6 lists)",
-            "meta": {"share": pytest.approx(4.75 / 5.275, abs=1e-4), "count": 5, "total": 6},
+            "tip": "meta 87% (5/6 lists)",
+            "meta": {"share": pytest.approx(310 / 355, abs=1e-4), "count": 5, "total": 6},
         }
     ]
 
@@ -801,7 +811,7 @@ def test_grace_cards_weight_the_decks_shares_and_the_view_counts_the_lists_holdi
 def test_the_meta_breakdown_ignores_the_decks_grace_cards(
     desk: Desk, settings: DeskSettings, fake: FakeArchidekt
 ) -> None:
-    fake.edhtop16.pages[MAGDA] = [magda_page()]
+    fake.topdeck.events = [*magda_events(), *kinnan_events()]
     fetch_meta(settings, fake)
     before = desk.meta(DECK)
     assert before["report"] is not None
@@ -1160,26 +1170,26 @@ def test_settings_without_a_username_still_open(tmp_path: Path) -> None:
 def test_meta_reads_only_the_cache_and_a_sync_fills_it(
     desk: Desk, settings: DeskSettings, fake: FakeArchidekt
 ) -> None:
-    fake.edhtop16.pages[MAGDA] = [magda_page()]
+    fake.topdeck.events = [*magda_events(), *kinnan_events()]
     assert desk.meta(DECK) == {"report": None}
-    assert fake.edhtop16.requests == []
+    assert fake.topdeck.requests == []
     fetch_meta(settings, fake)
-    asked = len(fake.edhtop16.requests)
+    asked = len(fake.topdeck.requests)
     fresh = desk.meta(DECK)
     report = cast("Json", fresh["report"])
     assert [m["name"] for m in cast("list[Json]", report["missing"])] == ["Mind Stone", "Jeska's Will"]
-    assert len(fake.edhtop16.requests) == asked
+    assert len(fake.topdeck.requests) == asked
     assert {"keys", "stoppers", "untouched", "comboGroups"} <= set(fresh)
     assert [k["name"] for k in cast("list[Json]", fresh["keys"])][:1] == ["Magda, Brazen Outlaw"]
     board = items(desk.deck(DECK), "cards")
     # Jeska's Will, in 2 of the 6 lists, is under the Wilson bar.
     assert sorted((c["name"], c["source"], c["origin"]) for c in board) == [("Mind Stone", "cmdr", "meta")]
     # Its share, for ordering Considering: of the six lists with a decklist, Mind Stone is in the first five;
-    # the sixth, 20th of 40, weighs 0.525 against 1 to 0.9 for the others.
+    # the sixth, 20th of 64, weighs 45 against the others' 310 (64+63+62+61+60).
     [stone] = board
     share = cast("Json", stone["share"])
     assert (share["count"], share["total"]) == (5, 6)
-    assert share["share"] == pytest.approx(4.75 / 5.275, abs=1e-4)
+    assert share["share"] == pytest.approx(310 / 355, abs=1e-4)
     desk.meta(DECK)
     assert len(items(desk.deck(DECK), "cards")) == len(board)
 
@@ -1510,22 +1520,32 @@ def test_panel_titles_and_their_sub_toggles_share_one_marker_and_a_green_hover_w
     assert html.count('<span class="disclosure" aria-hidden="true"></span>') == 3
 
 
-REFUSED_BODY_TEXT = "Only persisted queries are allowed in production. Plain text queries are disabled."
+REFUSAL = "TopDeck refused the key (HTTP 401); check it in the TopDeck panel"
 
 
-def test_the_meta_panel_gets_edhtop16s_reason_after_a_refused_fetch(
-    desk: Desk, settings: DeskSettings, fake: FakeArchidekt
+def test_the_meta_panel_gets_topdecks_reason_after_a_refused_fetch(
+    desk: Desk, settings: DeskSettings, fake: FakeArchidekt, memory_keyring: MemoryKeyring
 ) -> None:
-    refused = load_fixture("edhtop16_refused.json")
-    fake.edhtop16.pages[MAGDA] = [refused]
-    fake.edhtop16.commanders = refused
+    memory_keyring.secrets[(TOPDECK_SERVICE, "api-key")] = "a-wrong-key"
     deck = Workspace(settings.workspace).load(DECK)
     assert deck is not None
     with fake.client() as http:
-        sources = meta_sources(http, lambda _: Pacer(0), "MAKKIS", MetaSettings())
+        sources = meta_sources(http, lambda _: Pacer(0), "MAKKIS", MetaSettings(), settings.cache)
         gather_for(deck, sources, settings.cache, now=lambda: NOW, refresh=False)
     answer = desk.meta(DECK)
-    assert answer["unavailable"] == f"EDHTop16 refused the query: {REFUSED_BODY_TEXT}"
+    assert answer["unavailable"] == REFUSAL
+
+
+def test_the_meta_panel_says_when_no_topdeck_key_is_saved(
+    desk: Desk, settings: DeskSettings, fake: FakeArchidekt, memory_keyring: MemoryKeyring
+) -> None:
+    memory_keyring.secrets.clear()
+    deck = Workspace(settings.workspace).load(DECK)
+    assert deck is not None
+    with fake.client() as http:
+        sources = meta_sources(http, lambda _: Pacer(0), "MAKKIS", MetaSettings(), settings.cache)
+        gather_for(deck, sources, settings.cache, now=lambda: NOW, refresh=False)
+    assert desk.meta(DECK)["unavailable"] == NO_KEY_MESSAGE
 
 
 def test_the_meta_panel_names_no_reason_when_nothing_was_fetched_yet(desk: Desk) -> None:

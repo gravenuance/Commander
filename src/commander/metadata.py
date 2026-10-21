@@ -1,10 +1,11 @@
 """What other players run with a commander, gathered for `cmdr meta` and for the ideas `cmdr sync` compiles.
 
-Each answer is cached in the cache folder (never the repo, as EDHTop16's terms forbid redistributing its
-statistics), for a day unless stated, and the sources are fetched in parallel, each at its own service's pace:
+Each answer is cached in the cache folder (never the repo: the tournament data is not ours to redistribute),
+for a day unless stated, and the sources are fetched in parallel, each at its own service's pace:
 
-- the commander's EDHTop16 entries with decklists, for decks at bracket 4 and 5,
-- the most-played commanders and their best-placed EDHTop16 lists (bracket 5 only),
+- the commander's tournament entries with decklists, from TopDeck.gg, for decks at bracket 4 and 5,
+- the most-played commanders and their best-placed tournament lists (bracket 5 only), worked out from the same
+  stored events,
 - the most-viewed recent Archidekt decks for the commander at the deck's bracket and the one above, other
   players' only, each deck read kept until its owner edits it (ADR 0027),
 - the combos inside each top commander's core cards, from Commander Spellbook (a week; bracket 5 only),
@@ -39,6 +40,7 @@ from commander.archidekt import (
 )
 from commander.background import in_background
 from commander.config import MetaSettings
+from commander.credentials import KeyringKeyStore, KeyStore
 from commander.deckcache import (
     NOT_FETCHED,
     Answer,
@@ -51,24 +53,11 @@ from commander.deckcache import (
 )
 from commander.deckreads import FOLDER as DECK_READS_FOLDER
 from commander.deckreads import DeckRead, DeckReads, decode_multiples, read_of
-from commander.edhtop16 import (
-    REQUEST_INTERVAL_SECONDS,
-    SLOW_QUERY_SECONDS,
-    CommanderStats,
-    DecklistCard,
-    Edhtop16Client,
-    Edhtop16Error,
-    Entry,
-    EntrySort,
-    Tournament,
-    commander_name,
-)
 from commander.jsonshape import (
     ShapeError,
     as_list,
     as_object,
     opt_int,
-    opt_str,
     req_bool,
     req_float,
     req_int,
@@ -88,6 +77,17 @@ from commander.spellbook import (
     SpellbookError,
     deck_request,
 )
+from commander.topdeck import REQUEST_INTERVAL_SECONDS, SLOW_QUERY_SECONDS, TopdeckClient, TopdeckError
+from commander.topdeckstore import TournamentStore
+from commander.tournaments import (
+    CommanderStats,
+    DecklistCard,
+    Entry,
+    EntrySort,
+    Tournament,
+    TournamentSource,
+    commander_name,
+)
 
 log = logging.getLogger(__name__)
 
@@ -96,17 +96,19 @@ log = logging.getLogger(__name__)
 _DECK_GONE_STATUSES = frozenset({403, 404, 410})
 
 FRESH_FOR = timedelta(hours=24)
-CACHE_VERSION = 1
+CACHE_VERSION = 2
 CACHE_FOLDER = "meta"
-# The cEDH bracket: the only one EDHTop16 tournaments cover.
+# Meta answers of the retired EDHTop16 provider (ADR 0047), which no run reads again.
+_RETIRED_PREFIX = "edhtop16"
+# The cEDH bracket: the only one the tournaments cover.
 CEDH_BRACKET = 5
-# Decks at these brackets learn from the commander's EDHTop16 lists too: bracket 4 plays near cEDH.
-EDHTOP16_BRACKETS = frozenset({4, CEDH_BRACKET})
-# Enough for the busiest commanders' two months; the client stops at its page cap before this anyway.
+# Decks at these brackets learn from the commander's tournament lists too: bracket 4 plays near cEDH.
+TOURNAMENT_BRACKETS = frozenset({4, CEDH_BRACKET})
+# Enough for the busiest commanders' two months.
 MAX_OWN_ENTRIES = 400
 
 
-_ERRORS = (NetworkError, Edhtop16Error, ArchidektError, SpellbookError, NotFetchedError)
+_ERRORS = (NetworkError, TopdeckError, ArchidektError, SpellbookError, NotFetchedError)
 # A card in this share of a commander's lists is part of its core, where its combos are looked for.
 COMBO_CORE_SHARE = 0.2
 
@@ -116,7 +118,7 @@ Progress = Callable[[str], None]
 @dataclass(slots=True, frozen=True)
 class CommanderEntries:
     commander: str
-    # False when EDHTop16 has no commander by that name, which differs from one with no recent entries.
+    # False when no event in the window had the commander.
     known: bool
     entries: tuple[Entry, ...]
 
@@ -179,7 +181,7 @@ class CommanderCombos:
 
 @dataclass(slots=True, frozen=True)
 class MetaSources:
-    edhtop16: Edhtop16Client
+    tournaments: TournamentSource
     archidekt: ArchidektSearch
     spellbook: SpellbookClient
     # Spellbook asks for a few calls per interaction; the core of each top commander is one.
@@ -189,12 +191,31 @@ class MetaSources:
     settings: MetaSettings
 
 
+def topdeck_client(
+    http: httpx.Client,
+    pacer_factory: Callable[[float], Pacer],
+    cache_root: Path,
+    keys: KeyStore | None = None,
+) -> TopdeckClient:
+    """The TopDeck client over the cache folder's stored events, with the key from the secret store."""
+    return TopdeckClient(
+        Fetcher(http, slow_after=SLOW_QUERY_SECONDS),
+        pacer_factory(REQUEST_INTERVAL_SECONDS),
+        TournamentStore(cache_root),
+        keys or KeyringKeyStore(),
+    )
+
+
 def meta_sources(
-    http: httpx.Client, pacer_factory: Callable[[float], Pacer], user: str, settings: MetaSettings
+    http: httpx.Client,
+    pacer_factory: Callable[[float], Pacer],
+    user: str,
+    settings: MetaSettings,
+    cache_root: Path,
 ) -> MetaSources:
-    """EDHTop16, Archidekt search and Spellbook clients over one HTTP client, each at its own pace."""
+    """TopDeck, Archidekt search and Spellbook clients over one HTTP client, each at its own pace."""
     return MetaSources(
-        Edhtop16Client(Fetcher(http, slow_after=SLOW_QUERY_SECONDS), pacer_factory(REQUEST_INTERVAL_SECONDS)),
+        topdeck_client(http, pacer_factory, cache_root),
         ArchidektSearch(Fetcher(http), pacer_factory(SEARCH_INTERVAL_SECONDS)),
         SpellbookClient(Fetcher(http)),
         pacer_factory(META_REQUEST_INTERVAL_SECONDS),
@@ -252,13 +273,13 @@ def gather(
             on_progress(step)
 
     def lists() -> Answer[CommanderEntries]:
-        report(f"EDHTop16: {name} lists")
+        report(f"TopDeck: {name} lists")
         return _commander_lists(
             name, sources, folder, since, until, now=now, refresh=refresh, offline=offline
         )
 
     def field() -> Answer[tuple[MetaCommander, ...]]:
-        report("EDHTop16: the most-played commanders")
+        report("TopDeck: the most-played commanders")
         request: Mapping[str, object] = {
             "minEventSize": settings.min_event_size,
             "commanders": settings.meta_commanders,
@@ -266,10 +287,10 @@ def gather(
             "windowDays": settings.window_days,
         }
         return cached_answer(
-            "edhtop16-meta",
+            "tournament-meta",
             request,
-            _live(offline, lambda: _meta_field(sources.edhtop16, since, until, settings)),
-            _cache(folder, "EDHTop16 meta", _encode_field, _decode_field),
+            _live(offline, lambda: _meta_field(sources.tournaments, since, until, settings)),
+            _cache(folder, "tournament meta", _encode_field, _decode_field),
             now=now,
             refresh=refresh,
             fresh_for=FRESH_FOR,
@@ -333,10 +354,10 @@ def _commander_lists(
         "windowDays": settings.window_days,
     }
     return cached_answer(
-        cache_item("edhtop16", name),
+        cache_item("tournaments", name),
         request,
-        _live(offline, lambda: _own_entries(sources.edhtop16, name, since, until, settings)),
-        _cache(folder, "EDHTop16 lists", _encode_entries, _decode_entries),
+        _live(offline, lambda: _own_entries(sources.tournaments, name, since, until, settings)),
+        _cache(folder, "tournament lists", _encode_entries, _decode_entries),
         now=now,
         refresh=refresh,
         fresh_for=FRESH_FOR,
@@ -355,8 +376,8 @@ def gather_peers(
     on_progress: Progress | None = None,
 ) -> MetaData:
     """The recent Archidekt decks for the commander at the deck's bracket and the one above, for decks below
-    bracket 5, plus the commander's EDHTop16 lists at bracket 4. The rest of what EDHTop16 covers (the most
-    played commanders and their combos) is left unavailable."""
+    bracket 5, plus the commander's tournament lists at bracket 4. The rest of what the tournaments cover (the
+    most played commanders and their combos) is left unavailable."""
     if not deck.commanders:
         raise ValueError(f"{deck.name} has no commander")
     name = commander_name(deck.commanders)
@@ -364,11 +385,11 @@ def gather_peers(
     since = window_start(now_utc, sources.settings)
     until = utc_today(now_utc)
     folder = cache_root / CACHE_FOLDER
-    read_lists = deck.bracket in EDHTOP16_BRACKETS
+    read_lists = deck.bracket in TOURNAMENT_BRACKETS
     if on_progress is not None:
         on_progress(f"Archidekt: recent {name} decks")
         if read_lists:
-            on_progress(f"EDHTop16: {name} lists")
+            on_progress(f"TopDeck: {name} lists")
     # Different services, so the two run side by side.
     own = (
         in_background(
@@ -491,10 +512,25 @@ def _prune_reads(folder: Path, since: date, *, now: Clock, offline: bool) -> Non
     """Drop cached deck reads no run can use again; a cache-only run leaves the cache as it found it."""
     if offline:
         return
+    _drop_retired(folder)
     window_start = datetime(since.year, since.month, since.day, tzinfo=UTC)
     removed = DeckReads(folder / DECK_READS_FOLDER).prune(now=now(), window_start=window_start)
     if removed:
         log.info("dropped %d cached Archidekt decks nothing will read again", removed)
+
+
+def _drop_retired(folder: Path) -> None:
+    """Delete the cached answers of the EDHTop16 provider, which no run reads again."""
+    try:
+        retired = list(folder.glob(f"{_RETIRED_PREFIX}*.json"))
+    except OSError as error:
+        log.warning("could not list the retired EDHTop16 answers in %s: %s", folder, error)
+        return
+    for path in retired:
+        try:
+            path.unlink()
+        except OSError as error:
+            log.warning("could not remove the retired EDHTop16 answer %s: %s", path.name, error)
 
 
 def _peers(
@@ -697,9 +733,9 @@ def _live[T](offline: bool, fetch: Callable[[], T]) -> Callable[[Mapping[str, ob
 
 
 def _own_entries(
-    client: Edhtop16Client, name: str, since: date, until: date, settings: MetaSettings
+    source: TournamentSource, name: str, since: date, until: date, settings: MetaSettings
 ) -> CommanderEntries:
-    found = client.entries(
+    found = source.entries(
         name,
         since=since,
         until=until,
@@ -711,16 +747,16 @@ def _own_entries(
 
 
 def _meta_field(
-    client: Edhtop16Client, since: date, until: date, settings: MetaSettings
+    source: TournamentSource, since: date, until: date, settings: MetaSettings
 ) -> tuple[MetaCommander, ...]:
     if settings.meta_commanders == 0:
         return ()
-    ranked = client.top_commanders(
-        since=since, min_event_size=settings.min_event_size, count=settings.meta_commanders
+    ranked = source.top_commanders(
+        since=since, until=until, min_event_size=settings.min_event_size, count=settings.meta_commanders
     )
     field: list[MetaCommander] = []
     for stats in ranked:
-        entries = client.entries(
+        entries = source.entries(
             stats.name,
             since=since,
             until=until,
@@ -840,18 +876,13 @@ def _encode_entry(entry: Entry) -> object:
     t = entry.tournament
     return {
         "standing": entry.standing,
-        "wins": entry.wins,
-        "losses": entry.losses,
-        "draws": entry.draws,
-        "url": entry.decklist_url,
         "tournament": {
             "tid": t.tid,
-            "name": t.name,
             "date": t.held_on.isoformat(),
             "size": t.size,
             "topCut": t.top_cut,
         },
-        "cards": [[card.name, card.count, card.spice] for card in entry.cards],
+        "cards": [[card.name, card.count] for card in entry.cards],
     }
 
 
@@ -860,19 +891,14 @@ def _decode_entry(raw: object, where: str) -> Entry:
     t = req_object(obj, "tournament", where)
     cards: list[DecklistCard] = []
     for index, item in enumerate(req_list(obj, "cards", where)):
-        name, count, spice = as_list(item, f"{where}.cards[{index}]")
-        if not isinstance(name, str) or not isinstance(count, int) or not isinstance(spice, int):
-            raise ShapeError(f"{where}.cards[{index}]: expected [name, count, spice]")
-        cards.append(DecklistCard(name, count, spice))
+        name, count = as_list(item, f"{where}.cards[{index}]")
+        if not isinstance(name, str) or not isinstance(count, int):
+            raise ShapeError(f"{where}.cards[{index}]: expected [name, count]")
+        cards.append(DecklistCard(name, count))
     return Entry(
         standing=req_int(obj, "standing", where),
-        wins=req_int(obj, "wins", where),
-        losses=req_int(obj, "losses", where),
-        draws=req_int(obj, "draws", where),
-        decklist_url=opt_str(obj, "url", where),
         tournament=Tournament(
             tid=req_str(t, "tid", where),
-            name=req_str(t, "name", where),
             held_on=date.fromisoformat(req_str(t, "date", where)),
             size=req_int(t, "size", where),
             top_cut=req_int(t, "topCut", where),

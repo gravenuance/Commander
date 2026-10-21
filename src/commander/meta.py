@@ -1,5 +1,5 @@
-"""Reading other players' lists against a deck: what performing lists play that the deck doesn't, their spicy
-picks, the deck's own outliers, and which cards the most-played commanders answer the deck's key cards with.
+"""Reading other players' lists against a deck: what performing lists play that the deck doesn't, the deck's
+own outliers, and which cards the most-played commanders answer the deck's key cards with.
 """
 
 from collections import Counter, defaultdict
@@ -13,7 +13,6 @@ from commander.archidekt import PeerDeck
 from commander.carddb import CardDb, CardInfo
 from commander.deckcache import Answer, AnswerSource, Clock
 from commander.deckprofile import Profile
-from commander.edhtop16 import CommanderStats, Entry
 from commander.keycards import KeyCard, key_cards
 from commander.metacombos import AnswerRole, DeckAnswers, MetaCombo, combo_answers, infos_answers, meta_combos
 from commander.metadata import MetaCommander, MetaData, PeerList, entries_since, listed_entries
@@ -21,6 +20,7 @@ from commander.models import COMMANDER_CATEGORY, Deck
 from commander.playstyle import NEUTRAL, Fit, PlayStyle, Weight, deck_play_style, staple_weights
 from commander.spellbook import ComboDetail
 from commander.suggest import deck_identity
+from commander.tournaments import CommanderStats, Entry
 
 # Fewer lists with decklists than this is too few to judge a card by, whatever placed.
 THIN_LISTS = 10
@@ -30,9 +30,6 @@ MIN_STAPLE_LISTS = 2
 # ...or this share of the Archidekt lists, when there are at least three of them.
 PEER_STAPLE_SHARE = 0.5
 MIN_PEER_LISTS = 3
-# EDHTop16's spice runs 0-4; 3 and up is a new or rarely played card.
-SPICY = 3
-MIN_SPICY_LISTS = 2
 # A deck card this few performing lists play is the deck's own pick.
 OUTLIER_SHARE = 0.1
 # A meta card is a threat when this share of one top commander's lists play it.
@@ -68,22 +65,12 @@ class CardShare:
     share: float
     peer_lists: int
     peer_share: float
-    # The highest spice EDHTop16 gave the card in a performing list; None when none plays it.
-    spice: int | None
     # Kept by the profile (for the deck's own cards); never set for a missing card.
     flagged: bool
     # For a missing card: how it sits with the deck's play style (ADR 0031), and the weight its shares are
     # multiplied by to rank it.
     fit: Fit = Fit.NEUTRAL
     multiplier: float = 1.0
-
-
-@dataclass(slots=True, frozen=True)
-class SpicyPick:
-    name: str
-    spice: int
-    lists: int
-    best: Entry
 
 
 @dataclass(slots=True, frozen=True)
@@ -134,7 +121,6 @@ class MetaReport:
     since: date
     sample: Sample
     missing: tuple[CardShare, ...]
-    spicy: tuple[SpicyPick, ...]
     outliers: tuple[CardShare, ...]
     threats: tuple[Threat, ...]
     combos: tuple[MetaCombo, ...]
@@ -161,7 +147,6 @@ class CardCheck:
     mean_placing_without: float | None
     peers: int
     peers_with: int
-    spice: int | None
     meta_lists: int
     meta_lists_with: int
 
@@ -195,7 +180,6 @@ def analyse(deck: Deck, data: MetaData, profile: Profile, db: CardDb, *, now: Cl
         since=data.since,
         sample=sample,
         missing=missing_staples(deck, performing, peer_lists, names, db, style=style),
-        spicy=spicy_picks(deck, performing),
         outliers=outliers(deck, performing, peer_lists, profile, db),
         threats=threats((k.name for k in keys), pool, db),
         combos=meta_combos(
@@ -213,8 +197,8 @@ def analyse(deck: Deck, data: MetaData, profile: Profile, db: CardDb, *, now: Cl
         peers_skipped=data.peers.data.skipped if data.peers.data else 0,
         key_cards=keys,
         sources=(
-            _state("EDHTop16 lists", data.lists),
-            _state("EDHTop16 meta", data.field),
+            _state("TopDeck lists", data.lists),
+            _state("TopDeck meta", data.field),
             _state("Archidekt decks", data.peers),
             _state("Spellbook combos", data.combos),
             _state("Spellbook deck combos", data.own_combos),
@@ -250,7 +234,6 @@ def missing_staples(
     in_deck = {card_key(card.name) for card in deck.main_cards}
     counts = _list_counts(performing)
     peer_counts = _peer_counts(peers)
-    spice = _top_spice(performing)
     basics = _basics(db, names.values())
     rows: list[CardShare] = []
     for key in set(counts) | set(peer_counts):
@@ -271,7 +254,6 @@ def missing_staples(
                     share,
                     peer_counts[key],
                     peer_share,
-                    spice.get(key),
                     flagged=False,
                 )
             )
@@ -307,7 +289,7 @@ class Staples:
     """Every staple the deck misses, and what was read to find them."""
 
     rows: tuple[CardShare, ...]
-    # Lists read from EDHTop16 (top-cut ones when enough made a cut), and Archidekt decks read.
+    # Lists read from TopDeck (top-cut ones when enough made a cut), and Archidekt decks read.
     lists: int
     basis: Basis
     peers: int
@@ -350,26 +332,6 @@ def all_staples(
     return Staples(rows, len(performing), basis, len(peers))
 
 
-def spicy_picks(deck: Deck, performing: Sequence[Entry]) -> tuple[SpicyPick, ...]:
-    in_deck = {card_key(card.name) for card in deck.main_cards}
-    picks: dict[str, SpicyPick] = {}
-    # Best placings first, so the first list seen with a card is its best showing.
-    for entry in sorted(performing, key=lambda e: e.placing):
-        for card in entry.cards:
-            key = card_key(card.name)
-            if card.spice < SPICY or key in in_deck:
-                continue
-            seen = picks.get(key)
-            if seen is None:
-                picks[key] = SpicyPick(card.name, card.spice, 1, entry)
-            else:
-                picks[key] = SpicyPick(seen.name, max(seen.spice, card.spice), seen.lists + 1, seen.best)
-    # One list's oddities are noise unless that list made the cut.
-    kept = [p for p in picks.values() if p.lists >= MIN_SPICY_LISTS or p.best.made_top_cut]
-    ranked = sorted(kept, key=lambda p: (-p.lists, p.best.placing, p.name))
-    return tuple(ranked[:MAX_ROWS])
-
-
 def outliers(
     deck: Deck, performing: Sequence[Entry], peers: Sequence[PeerList], profile: Profile, db: CardDb
 ) -> tuple[CardShare, ...]:
@@ -389,7 +351,7 @@ def outliers(
             continue
         kept = profile.keeps(card.name, card.categories)
         peer_share = peer_counts[key] / len(peers) if peers else 0.0
-        rows.append(CardShare(card.name, counts[key], share, peer_counts[key], peer_share, None, kept))
+        rows.append(CardShare(card.name, counts[key], share, peer_counts[key], peer_share, kept))
     rows.sort(key=lambda r: (r.share, r.peer_share, r.name))
     return tuple(rows)
 
@@ -519,7 +481,6 @@ def check_card(name: str, deck: Deck, data: MetaData) -> CardCheck:
         (having if _plays(e, key) else lacking).append(e)
     peers = data.peers.data.decks if data.peers.data else ()
     meta_lists = [e for c in (data.field.data or ()) for e in entries_since(c.entries, data.since) if e.cards]
-    spice = [c.spice for e in lists for c in e.cards if card_key(c.name) == key]
     return CardCheck(
         name=name,
         in_deck=key in {card_key(card.name) for card in deck.main_cards},
@@ -533,7 +494,6 @@ def check_card(name: str, deck: Deck, data: MetaData) -> CardCheck:
         mean_placing_without=_mean(e.placing for e in lacking),
         peers=len(peers),
         peers_with=sum(1 for p in peers if key in {card_key(n) for n in p.cards}),
-        spice=max(spice) if spice else None,
         meta_lists=len(meta_lists),
         meta_lists_with=sum(1 for e in meta_lists if _plays(e, key)),
     )
@@ -553,15 +513,6 @@ def _list_counts(entries: Iterable[Entry]) -> Counter[str]:
 
 def _peer_counts(peers: Iterable[PeerList]) -> Counter[str]:
     return Counter(key for p in peers for key in {card_key(name) for name in p.cards})
-
-
-def _top_spice(entries: Iterable[Entry]) -> dict[str, int]:
-    spice: dict[str, int] = {}
-    for entry in entries:
-        for card in entry.cards:
-            key = card_key(card.name)
-            spice[key] = max(spice.get(key, 0), card.spice)
-    return spice
 
 
 def _display_names(performing: Iterable[Entry], peers: Iterable[PeerList], deck: Deck) -> dict[str, str]:

@@ -7,7 +7,6 @@ import pytest
 from commander.answers import AnswerKind, CardAnswer, Piece, piece_facts, read_modes
 from commander.archidekt import parse_deck
 from commander.carddb import CardDb
-from commander.edhtop16 import CommanderStats, Entry
 from commander.metacombos import (
     MAX_COMBOS,
     MIN_COMBO_EXPOSURE,
@@ -28,6 +27,7 @@ from commander.metacombos import (
 from commander.metadata import CommanderCombos, MetaCommander
 from commander.models import Deck, DeckCard
 from commander.spellbook import ComboDetail, ComboPiece, parse_details
+from commander.tournaments import CommanderStats, Entry
 from conftest import Json, build_card_db, load_fixture
 from test_meta import NOW, REMOVAL_TAGS, entry
 
@@ -243,7 +243,7 @@ KINNAN_SHARE = 0.04
 # 14 and 44 days before NOW: inside the last 30 days, and inside the 30 before them.
 RECENT = date(2026, 10, 1)
 EARLIER = date(2026, 9, 1)
-MONOLITH = [(KINNAN, 0), ("Basalt Monolith", 0)]
+MONOLITH = [KINNAN, "Basalt Monolith"]
 
 
 def commander_field(
@@ -254,9 +254,7 @@ def commander_field(
 
 def kinnan_field(lists: str, meta_share: float = KINNAN_SHARE) -> list[MetaCommander]:
     """Kinnan's lists, one per letter: C holds the Basalt Monolith combo, - doesn't."""
-    entries = [
-        entry(i + 1, 40, 8, MONOLITH if mark == "C" else [("Sol Ring", 0)]) for i, mark in enumerate(lists)
-    ]
+    entries = [entry(i + 1, 40, 8, MONOLITH if mark == "C" else ["Sol Ring"]) for i, mark in enumerate(lists)]
     return commander_field(KINNAN, entries, meta_share)
 
 
@@ -296,7 +294,7 @@ def test_lists_before_the_window_do_not_count(deck: Deck, db: CardDb) -> None:
 
 
 def test_a_list_holds_its_commander_even_when_the_decklist_leaves_it_out(deck: Deck, db: CardDb) -> None:
-    lists = [entry(1, 40, 8, [("Basalt Monolith", 0)])]
+    lists = [entry(1, 40, 8, ["Basalt Monolith"])]
     assert [c.id for c in combos_of(deck, commander_field(KINNAN, lists), db)] == ["129-4131"]
 
 
@@ -328,8 +326,8 @@ def many_combos() -> list[CommanderCombos]:
 
 def test_at_most_a_hundred_combos_are_listed_the_most_exposed_first(deck: Deck, db: CardDb) -> None:
     # The first 100 are in every one of Kinnan's 10 lists, the last 5 in 3 of them.
-    everything = [(KINNAN, 0), *((f"Card {n:03d}", 0) for n in range(105))]
-    most = [(KINNAN, 0), *((f"Card {n:03d}", 0) for n in range(100))]
+    everything = [KINNAN, *(f"Card {n:03d}" for n in range(105))]
+    most = [KINNAN, *(f"Card {n:03d}" for n in range(100))]
     lists = [entry(i + 1, 40, 8, everything if i < 3 else most) for i in range(10)]
     field = commander_field(KINNAN, lists, 0.5)
     listed = meta_combos(deck, field, many_combos(), SINCE, db, now=lambda: NOW, meta_total=0.5)
@@ -341,7 +339,7 @@ def test_at_most_a_hundred_combos_are_listed_the_most_exposed_first(deck: Deck, 
 def test_an_old_list_counts_less_so_a_recent_combo_passes_the_fifth(deck: Deck, db: CardDb) -> None:
     # One fresh list holds it; five from 60 days ago (a quarter the weight each) do not: 1 / 2.25, not 1 / 6.
     fresh = entry(1, 40, 8, MONOLITH, held_on=date(2026, 10, 15))
-    stale = [entry(n, 40, 8, [("Sol Ring", 0)], held_on=date(2026, 8, 16)) for n in range(2, 7)]
+    stale = [entry(n, 40, 8, ["Sol Ring"], held_on=date(2026, 8, 16)) for n in range(2, 7)]
     [kinnan] = combos_of(deck, commander_field(KINNAN, [fresh, *stale]), db)
     assert kinnan.played_by[0][1] == pytest.approx(1 / 2.25)
 
@@ -349,24 +347,24 @@ def test_an_old_list_counts_less_so_a_recent_combo_passes_the_fifth(deck: Deck, 
 def test_an_old_list_holding_the_combo_can_pull_it_under_the_fifth(deck: Deck, db: CardDb) -> None:
     # One list from 60 days ago holds it, three fresh ones do not: 0.25 / 3.25 is 8%, though 1 of 4 is 25%.
     stale = entry(1, 40, 8, MONOLITH, held_on=date(2026, 8, 16))
-    fresh = [entry(n, 40, 8, [("Sol Ring", 0)], held_on=date(2026, 10, 15)) for n in range(2, 5)]
+    fresh = [entry(n, 40, 8, ["Sol Ring"], held_on=date(2026, 10, 15)) for n in range(2, 5)]
     assert combos_of(deck, commander_field(KINNAN, [stale, *fresh]), db) == ()
 
 
 def test_a_bigger_event_weighs_more_by_its_size_factor(deck: Deck, db: CardDb) -> None:
     # Same day: 64 players weigh 1 + log2(4) = 3 and 16 players weigh 1, so the 64-player list is 3 of 4.
     big = entry(1, 64, 8, MONOLITH)
-    small = entry(2, 16, 4, [("Sol Ring", 0)])
+    small = entry(2, 16, 4, ["Sol Ring"])
     [kinnan] = combos_of(deck, commander_field(KINNAN, [big, small]), db)
     assert kinnan.played_by[0][1] == pytest.approx(0.75)
 
 
 def halves(recent: str, earlier: str, name: str = KINNAN) -> list[Entry]:
     """A commander's lists, one per letter, the recent ones first: C holds the Monolith combo, - doesn't."""
-    cards = [(name, 0), ("Basalt Monolith", 0), (KINNAN, 0)]
+    cards = [name, "Basalt Monolith", KINNAN]
     days = [(mark, RECENT) for mark in recent] + [(mark, EARLIER) for mark in earlier]
     return [
-        entry(i, 40, 8, cards if mark == "C" else [("Sol Ring", 0)], held_on=day)
+        entry(i, 40, 8, cards if mark == "C" else ["Sol Ring"], held_on=day)
         for i, (mark, day) in enumerate(days, start=1)
     ]
 
@@ -412,10 +410,8 @@ def test_a_combo_is_rising_when_the_recent_lists_hold_it_twice_as_often(
 def test_the_halves_split_at_30_and_60_days(
     deck: Deck, db: CardDb, *, extra: str, age: int, recent: str, earlier: str, rising: bool
 ) -> None:
-    cards = [(KINNAN, 0), ("Basalt Monolith", 0)]
-    old = entry(
-        99, 40, 8, cards if extra == "C" else [("Sol Ring", 0)], held_on=NOW.date() - timedelta(days=age)
-    )
+    cards = [KINNAN, "Basalt Monolith"]
+    old = entry(99, 40, 8, cards if extra == "C" else ["Sol Ring"], held_on=NOW.date() - timedelta(days=age))
     lists = [*halves(recent, earlier), old]
     [kinnan] = combos_of(deck, commander_field(KINNAN, lists), db)
     assert kinnan.rising is rising

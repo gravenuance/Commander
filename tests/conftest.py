@@ -3,7 +3,8 @@ import functools
 import gzip
 import json
 import shutil
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -302,39 +303,101 @@ class FakeSpellbook:
         return httpx.Response(200, json=answer) if status == HTTP_OK else httpx.Response(status)
 
 
-EDHTOP16_API = "https://edhtop16.com/api/graphql"
+TOPDECK_API = "https://topdeck.gg/api/v2/tournaments"
+# The key the memory keyring holds for every test, and the one the fake TopDeck accepts.
+TOPDECK_KEY = "test-topdeck-key"
+TOPDECK_SERVICE = "Commander (cmdr) TopDeck"
 
 
-class FakeEdhtop16:
-    """Answers EDHTop16 GraphQL queries with made-up answers, one queued page per entries request.
+def topdeck_event(
+    tid: str, start: str, size: int, top_cut: int, decks: Sequence[tuple[int, Sequence[str], Sequence[str]]]
+) -> Json:
+    """A made-up event in the shape of TopDeck's answer, standings in placement order.
 
-    `pages` maps a commander name to the answers its entries requests get, in order; an unknown commander gets
-    the real "no rows" answer. Every request's variables are recorded.
+    `decks` are (standing, commanders, cards) triples; every other seat is a player with no decklist. The
+    players' names and ids are made up too, so the tests can check that none of them is kept.
+    """
+    by_place = {standing: (commanders, cards) for standing, commanders, cards in decks}
+    standings: list[Json] = []
+    for place in range(1, size + 1):
+        row: Json = {
+            "name": f"Player {place} of {tid}",
+            "id": f"player-{tid}-{place}",
+            "decklist": None,
+            "deckObj": None,
+            "wins": 0,
+            "draws": 0,
+            "losses": 0,
+        }
+        if place in by_place:
+            commanders, cards = by_place[place]
+            row["decklist"] = "~~Commanders~~\n" + "\n".join(f"1 {name}" for name in commanders)
+            row["leader"] = " / ".join(commanders)
+            row["deckObj"] = {
+                "Commanders": {name: {"id": f"id-{name}", "count": 1} for name in commanders},
+                "Mainboard": {name: {"id": f"id-{name}", "count": 1} for name in cards},
+                "metadata": {"game": "Magic: The Gathering", "format": "EDH"},
+            }
+        standings.append(row)
+    stamp = int(datetime.fromisoformat(start).timestamp())
+    return {
+        "TID": tid,
+        "tournamentName": f"Event {tid}",
+        "swissNum": 5,
+        "startDate": stamp,
+        "game": "Magic: The Gathering",
+        "format": "EDH",
+        "topCut": top_cut,
+        "standings": standings,
+    }
+
+
+def topdeck_fixture_events() -> list[Json]:
+    """The made-up events of `topdeck_events.json`: Ellivere decks in four events, Kinnan decks in two."""
+    spec: list[Json] = json.loads((FIXTURES / "topdeck_events.json").read_text(encoding="utf-8"))
+    return [
+        topdeck_event(
+            event["tid"],
+            event["start"],
+            event["size"],
+            event["topCut"],
+            [(deck["standing"], deck["commanders"], deck["cards"]) for deck in event["decks"]],
+        )
+        for event in spec
+    ]
+
+
+class FakeTopdeck:
+    """Answers TopDeck's tournament search from `events`, as the real API does: by start date and size.
+
+    Every request body is recorded. A request without the key gets 401; `status` makes every answer that
+    status instead.
     """
 
     def __init__(self) -> None:
-        self.pages: dict[str, list[Json]] = {
-            "Ellivere of the Wild Court": [load_fixture("edhtop16_entries_ellivere.json")],
-            "Kinnan, Bonder Prodigy": [load_fixture("edhtop16_entries_kinnan_top.json")],
-        }
-        self.commanders: Json = load_fixture("edhtop16_commanders.json")
+        self.events: list[Json] = topdeck_fixture_events()
         self.status = HTTP_OK
+        self.key = TOPDECK_KEY
         self.requests: list[Json] = []
+        # Added to every answer whatever the window, as a misbehaving API might: out of range or broken.
+        self.extra: list[Json] = []
 
     def handler(self, request: httpx.Request) -> httpx.Response:
-        if request.method != "POST" or str(request.url) != EDHTOP16_API:
+        if request.method != "POST" or str(request.url) != TOPDECK_API:
             return httpx.Response(404)
         body: Json = json.loads(request.content)
-        variables: Json = body["variables"]
-        self.requests.append(variables)
+        self.requests.append(body)
         if self.status != HTTP_OK:
             return httpx.Response(self.status)
-        if "query Commanders" in body["query"]:
-            return httpx.Response(200, json=self.commanders)
-        queued = self.pages.get(variables["name"])
-        if not queued:
-            return httpx.Response(200, json=load_fixture("edhtop16_missing.json"))
-        return httpx.Response(200, json=queued.pop(0) if len(queued) > 1 else queued[0])
+        if request.headers.get("Authorization") != self.key:
+            return httpx.Response(401, json={"error": "invalid key"})
+        found = [
+            event
+            for event in self.events
+            if body.get("start", 0) <= event["startDate"] <= body.get("end", 2**62)
+            and len(event["standings"]) >= body.get("participantMin", 0)
+        ]
+        return httpx.Response(200, json=[*found, *self.extra])
 
     def client(self) -> httpx.Client:
         return httpx.Client(transport=httpx.MockTransport(self.handler))
@@ -348,6 +411,10 @@ class MemoryKeyring(keyring.backend.KeyringBackend):
     def __init__(self) -> None:
         super().__init__()
         self.secrets: dict[tuple[str, str], str] = {}
+
+    def held(self, service: str) -> dict[tuple[str, str], str]:
+        """The secrets saved under one service."""
+        return {key: secret for key, secret in self.secrets.items() if key[0] == service}
 
     def get_password(self, service: str, username: str) -> str | None:
         return self.secrets.get((service, username))
@@ -364,9 +431,28 @@ class MemoryKeyring(keyring.backend.KeyringBackend):
 def memory_keyring() -> Iterator[MemoryKeyring]:
     previous = keyring.get_keyring()
     backend = MemoryKeyring()
+    # A key is saved, as the user's is; a test of the missing key clears it.
+    backend.secrets[(TOPDECK_SERVICE, "api-key")] = TOPDECK_KEY
     keyring.set_keyring(backend)
     yield backend
     keyring.set_keyring(previous)
+
+
+class MemoryKeyStore:
+    """A TopDeck key held in memory, for tests that build the client themselves."""
+
+    def __init__(self, key: str | None = TOPDECK_KEY) -> None:
+        self.key = key
+
+    def get(self) -> str | None:
+        return self.key
+
+    def put(self, key: str) -> None:
+        self.key = key
+
+    def delete(self) -> bool:
+        had, self.key = self.key is not None, None
+        return had
 
 
 class MemoryTokenStore:
@@ -399,7 +485,7 @@ class FakeArchidekt:
 
     It also signs in, looks up cards from the Scryfall fixture, saves snapshots and applies modifyCards
     edits to its decks, recording each write with its JSON body and Authorization header.
-    Requests to Scryfall, Commander Spellbook and EDHTop16 go to its fakes of those, so one client covers any
+    Requests to Scryfall, Commander Spellbook and TopDeck go to its fakes of those, so one client covers any
     command. A deck search by commander answers with its page in `peer_pages`, else `peer_page`; one by
     deck tag with its page in `tag_pages`.
     """
@@ -430,7 +516,7 @@ class FakeArchidekt:
         self.next_entry = 9_000_000_000
         self.scryfall = FakeScryfall()
         self.spellbook = FakeSpellbook()
-        self.edhtop16 = FakeEdhtop16()
+        self.topdeck = FakeTopdeck()
         self.peer_page: Json = deck_page([])
         # Search pages for particular commanders; any other commander gets peer_page.
         self.peer_pages: dict[str, Json] = {}
@@ -454,8 +540,8 @@ class FakeArchidekt:
             return self.scryfall.handler(request)
         if host.endswith("commanderspellbook.com"):
             return self.spellbook.handler(request)
-        if host.endswith("edhtop16.com"):
-            return self.edhtop16.handler(request)
+        if host.endswith("topdeck.gg"):
+            return self.topdeck.handler(request)
         if request.url.path == "/api/decks/colorTags/":
             self.requests.append(request.url.path)
             return self.account_labels(request)

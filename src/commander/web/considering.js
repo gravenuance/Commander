@@ -38,7 +38,7 @@ function originLabel(card) {
 
 function originTitle(card) {
   const from = {
-    "meta": "EDHTop16 tournament lists",
+    "meta": "TopDeck.gg tournament lists",
     "archidekt decks": "recent Archidekt decks of this commander",
     "adjacent decks": "recent Archidekt decks of commanders that play alike",
     "tagged decks": card.originTag ? `recent Archidekt decks tagged ${card.originTag}` : "recent Archidekt decks with a theme tag of the deck",

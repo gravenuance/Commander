@@ -1,4 +1,4 @@
-"""One share per card from every list read about a commander: its EDHTop16 lists and recent Archidekt decks
+"""One share per card from every list read about a commander: its tournament lists and recent Archidekt decks
 (ADR 0026).
 
 Each list or deck gets a weight, recent and well placed ones more. A source's weights are scaled to a mean
@@ -20,17 +20,15 @@ from types import MappingProxyType
 
 from commander.answers import card_key
 from commander.deckcache import Clock
-from commander.edhtop16 import Entry
 from commander.metadata import MetaData, PeerList, listed_entries
+from commander.tournaments import Entry
 
 # A list or deck weighs half as much for every 30 days since its tournament or last update.
 HALF_LIFE_DAYS = 30.0
-# The event size a placement counts once over: the default `min_event_size`.
+# The event size a placement counts once over (ADR 0026).
 EVENT_SIZE_BASE = 16
 # Under about ten players the size factor would reach zero or below; a small event stays a small voice.
 MIN_SIZE_FACTOR = 0.25
-# EDHTop16 gives some entries no standing: they weigh as the middle of the field.
-UNKNOWN_PERCENTILE = 0.5
 # 95% confidence, two-sided.
 WILSON_Z = 1.96
 # The most a grace card's factor, or the product of several, can multiply a list's weight by.
@@ -124,13 +122,10 @@ def size_factor(players: int) -> float:
 
 
 def placement_weight(entry: Entry) -> float:
-    """(N - s + 1) / N for standing s in an event of N players, so 1.0 for the winner and 1/N for last (a
-    standing of 0, unknown, gets UNKNOWN_PERCENTILE), times the event's size factor."""
+    """(N - s + 1) / N for standing s in an event of N players, so 1.0 for the winner and 1/N for last, times
+    the event's size factor."""
     players = max(entry.tournament.size, 1)
-    if entry.standing < 1:
-        percentile = UNKNOWN_PERCENTILE
-    else:
-        percentile = min(max(1 - (entry.standing - 1) / players, 0.0), 1.0)
+    percentile = min(max(1 - (entry.standing - 1) / players, 0.0), 1.0)
     return percentile * size_factor(players)
 
 

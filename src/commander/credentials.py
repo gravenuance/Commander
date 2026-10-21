@@ -1,4 +1,5 @@
-"""Archidekt refresh tokens in the OS secret store (Windows Credential Manager); never in a file."""
+"""Archidekt refresh tokens and the TopDeck API key in the OS secret store (Windows Credential Manager); never
+in a file."""
 
 import importlib
 from typing import Protocol
@@ -62,4 +63,55 @@ class KeyringTokenStore:
             return False
         except _STORE_ERRORS as error:
             raise CredentialError(f"could not remove the saved Archidekt login: {error}") from error
+        return True
+
+
+TOPDECK_SERVICE = "Commander (cmdr) TopDeck"
+TOPDECK_USER = "api-key"
+
+
+class KeyStore(Protocol):
+    """The one API key of a service that issues a key per user."""
+
+    def get(self) -> str | None: ...
+
+    def put(self, key: str) -> None: ...
+
+    def delete(self) -> bool: ...
+
+
+def check_api_key(key: str) -> str:
+    """The key without surrounding whitespace, or CredentialError when it could not be sent as a header."""
+    key = key.strip()
+    if not key or len(key) > MAX_TOKEN_LENGTH:
+        raise CredentialError("an API key is 1 to 1280 characters")
+    if not key.isascii() or not key.isprintable() or " " in key:
+        raise CredentialError("an API key is one run of plain characters, with no spaces")
+    return key
+
+
+class KeyringKeyStore:
+    """The TopDeck API key, in the backend `keyring` picks for this OS."""
+
+    def get(self) -> str | None:
+        try:
+            return keyring.get_password(TOPDECK_SERVICE, TOPDECK_USER)
+        except _STORE_ERRORS as error:
+            raise CredentialError(f"could not read the saved TopDeck key: {error}") from error
+
+    def put(self, key: str) -> None:
+        key = check_api_key(key)
+        try:
+            keyring.set_password(TOPDECK_SERVICE, TOPDECK_USER, key)
+        except _STORE_ERRORS as error:
+            raise CredentialError(f"could not save the TopDeck key: {error}") from error
+
+    def delete(self) -> bool:
+        """Forget the key; False when none was saved."""
+        try:
+            keyring.delete_password(TOPDECK_SERVICE, TOPDECK_USER)
+        except keyring.errors.PasswordDeleteError:
+            return False
+        except _STORE_ERRORS as error:
+            raise CredentialError(f"could not remove the saved TopDeck key: {error}") from error
         return True

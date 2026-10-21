@@ -382,9 +382,7 @@ def test_missing_staples_rank_by_share_times_weight_so_a_well_played_off_plan_ca
     deck: Deck, db: CardDb
 ) -> None:
     played = {"Chaos Warp": 8, "Arcane Signet": 5, "High-Speed Hoverbike": 6}
-    lists = [
-        entry(i, 40, 8, [(name, 0) for name, count in played.items() if i <= count]) for i in range(1, 11)
-    ]
+    lists = [entry(i, 40, 8, [name for name, count in played.items() if i <= count]) for i in range(1, 11)]
     turbo = analyse(replace(deck, tags=("Turbo",)), meta_data(lists), Profile(), db, now=lambda: NOW)
     # 0.8 x 0.8 = 0.64, 0.5 x 1.25 = 0.625 and 0.6: the off-plan card still carries its mark.
     assert [(c.name, c.fit, c.multiplier) for c in turbo.missing] == [

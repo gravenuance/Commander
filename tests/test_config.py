@@ -129,7 +129,7 @@ def test_meta_settings_default_and_read_from_the_file(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
     path.write_text("version = 1\n[meta]\nwindow_days = 30\npeer_decks = 0\n", encoding="utf-8")
     assert read_config(path).meta == MetaSettings(window_days=30, peer_decks=0)
-    assert MetaSettings() == MetaSettings(60, 16, 60, 10, 30)
+    assert MetaSettings() == MetaSettings(60, 64, 60, 10, 30)
 
 
 @pytest.mark.parametrize(

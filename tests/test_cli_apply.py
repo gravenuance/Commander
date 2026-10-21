@@ -127,7 +127,7 @@ def test_login_asks_on_the_terminal_and_keeps_only_the_token(
     assert result.code == 0
     assert result.prompts == ["Archidekt password for MAKKIS: "]
     assert result.out == "signed in to Archidekt as MAKKIS; the login is kept in Windows Credential Manager\n"
-    assert memory_keyring.secrets == {(SERVICE, "makkis"): REFRESH_TOKEN}
+    assert memory_keyring.held(SERVICE) == {(SERVICE, "makkis"): REFRESH_TOKEN}
     assert PASSWORD not in result.out + result.err
 
 
@@ -159,7 +159,7 @@ def test_a_wrong_password_saves_nothing(
 
     assert result.code == 1
     assert result.err == "cmdr: Archidekt refused the login; check the name and password\n"
-    assert memory_keyring.secrets == {}
+    assert memory_keyring.held(SERVICE) == {}
 
 
 def test_logout_forgets_the_login(
@@ -172,7 +172,7 @@ def test_logout_forgets_the_login(
 
     assert (first.code, first.out) == (0, "removed the saved login for MAKKIS\n")
     assert (second.code, second.out) == (0, "no saved login for MAKKIS\n")
-    assert memory_keyring.secrets == {}
+    assert memory_keyring.held(SERVICE) == {}
 
 
 def test_apply_previews_without_signing_in_or_writing(
@@ -337,7 +337,7 @@ def test_a_password_on_stdin_that_is_not_utf8_is_a_usage_error(
     assert result.code == 2
     assert result.err == "cmdr: the password on stdin must be UTF-8 text\n"
     assert archidekt.writes == []
-    assert memory_keyring.secrets == {}
+    assert memory_keyring.held(SERVICE) == {}
 
 
 def test_sync_keeps_the_account_labels_for_the_app_when_signed_in(

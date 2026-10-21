@@ -1,4 +1,4 @@
-"""`cmdr meta` end to end, against the fake Archidekt, which also stands in for EDHTop16."""
+"""`cmdr meta` end to end, against the fake Archidekt, which also stands in for TopDeck."""
 
 import copy
 import io
@@ -6,57 +6,60 @@ import json
 import shutil
 from datetime import date
 from pathlib import Path
-from typing import Any
 
 import pytest
 
 from commander.board import Origin, Status, read_board
 from commander.carddb import CARD_DB_FILE
 from commander.cli_meta import print_report
-from commander.edhtop16 import CommanderStats
 from commander.meta import Basis, MetaReport, Sample
 from commander.metacombos import AnswerRole, ComboAnswer, MetaCombo
-from conftest import DECK_ID, FakeArchidekt, Json, card_entry, deck_page, load_fixture
+from commander.tournaments import CommanderStats
+from conftest import (
+    DECK_ID,
+    TOPDECK_SERVICE,
+    FakeArchidekt,
+    Json,
+    MemoryKeyring,
+    card_entry,
+    deck_page,
+    load_fixture,
+    topdeck_event,
+    topdeck_fixture_events,
+)
 from test_cli_apply import Run, run
 
 FOLDER = "10004639-honestly-though"
 MAGDA = "Magda, Brazen Outlaw"
+KINNAN = "Kinnan, Bonder Prodigy"
 PEER_ID = 777
 
 
-def edge(standing: int, cards: list[tuple[str, int]], held_on: str = "2026-09-01T10:00:00.000Z") -> Json:
-    return {
-        "node": {
-            "standing": standing,
-            "wins": 4,
-            "losses": 1,
-            "draws": 0,
-            "decklistUrl": f"/tournament/t{standing}/decklist/x",
-            "tournament": {
-                "TID": f"t{standing}",
-                "name": "Test   Open",
-                "tournamentDate": held_on,
-                "size": 40,
-                "topCut": 8,
-            },
-            "decklistItems": [{"count": 1, "spice": spice, "card": {"name": name}} for name, spice in cards],
-        }
-    }
-
-
-def magda_page() -> Json:
-    # Five top-cut lists and one that missed the cut; the last is older than the 60-day window.
-    edges = [
-        edge(1, [("Mind Stone", 0), ("Battered Golem", 1), ("Jeska's Will", 4)]),
-        edge(2, [("Mind Stone", 0), ("Battered Golem", 1), ("Jeska's Will", 3)]),
-        edge(3, [("Mind Stone", 0), ("Battered Golem", 1)]),
-        edge(4, [("Mind Stone", 0), ("Battered Golem", 1)]),
-        edge(5, [("Mind Stone", 0), ("Battered Golem", 1)]),
-        edge(20, [("Arcane Signet", 0)]),
-        edge(1, [("Mana Crypt", 4)], held_on="2026-08-01T10:00:00.000Z"),
+def magda_events() -> list[Json]:
+    """Magda decks in two events of 64: on 1 September five top-cut lists (top 8) and one that missed the
+    cut, and on 1 August, before the 60-day window, a winner."""
+    return [
+        topdeck_event(
+            "magda-open",
+            "2026-09-01T10:00:00+00:00",
+            64,
+            8,
+            [
+                (1, [MAGDA], ["Mind Stone", "Battered Golem", "Jeska's Will"]),
+                (2, [MAGDA], ["Mind Stone", "Battered Golem", "Jeska's Will"]),
+                (3, [MAGDA], ["Mind Stone", "Battered Golem"]),
+                (4, [MAGDA], ["Mind Stone", "Battered Golem"]),
+                (5, [MAGDA], ["Mind Stone", "Battered Golem"]),
+                (20, [MAGDA], ["Arcane Signet"]),
+            ],
+        ),
+        topdeck_event("magda-old", "2026-08-01T10:00:00+00:00", 64, 8, [(1, [MAGDA], ["Mana Crypt"])]),
     ]
-    page: dict[str, Any] = {"pageInfo": {"hasNextPage": False, "endCursor": "7"}, "edges": edges}
-    return {"data": {"commander": {"name": MAGDA, "entries": page}}}
+
+
+def kinnan_events() -> list[Json]:
+    """Kinnan's two winning lists of the shared fake events: 5 September (120 players) and 7 October (80)."""
+    return [e for e in topdeck_fixture_events() if e["TID"] in ("test-open-5", "test-open-6")]
 
 
 def peer_row(deck_id: int, owner: str, views: int) -> Json:
@@ -76,7 +79,7 @@ def fake(raw_deck: Json) -> FakeArchidekt:
     archidekt = FakeArchidekt()
     archidekt.put(raw_deck)
     archidekt.peer_page = deck_page([peer_row(DECK_ID, "MAKKIS", 900), peer_row(PEER_ID, "someone", 120)])
-    archidekt.edhtop16.pages[MAGDA] = [magda_page()]
+    archidekt.topdeck.events = [*magda_events(), *kinnan_events()]
     archidekt.spellbook.combos = load_fixture("spellbook_meta_kinnan.json")
     return archidekt
 
@@ -119,19 +122,15 @@ def test_the_report_compares_the_deck_with_performing_lists(home: Path, fake: Fa
     result = meta(home, fake, "magda")
     assert result.code == 0, result.err
     lines = result.out.splitlines()
-    assert lines[:3] == [
+    assert lines[:2] == [
         "Magda: Magda, Brazen Outlaw, events since 2026-08-16",
-        "  EDHTop16: https://edhtop16.com/commander/Magda%2C%20Brazen%20Outlaw",
         "  6 entries, 6 with decklists, 5 top cuts; reading 5 top-cut lists",
     ]
     # Six lists are under the ten it takes to judge a card.
-    assert lines[3] == "  thin data (few lists): read shares as hints, not evidence"
+    assert lines[2] == "  thin data (few lists): read shares as hints, not evidence"
     assert section(result.out, "Staples you don't play") == [
         "  100% · 0/1  Mind Stone",
         "   40% · 0/1  Jeska's Will",
-    ]
-    assert section(result.out, "Spicy picks") == [
-        "  spice 4  2 list(s)  Jeska's Will  best: 1st of 40, Test Open (2026-09-01)"
     ]
     assert section(result.out, "Your own picks") == ["    0% · 1/1  Disruptor Flute"]
     assert section(result.out, "Most-viewed Archidekt decks") == [
@@ -145,25 +144,33 @@ def test_the_report_compares_the_deck_with_performing_lists(home: Path, fake: Fa
     assert section(result.out, "Meta answers to your key cards") == ["  none found"]
     assert section(result.out, "Meta combos and your answers") == [
         # Kinnan's two lists weigh 1.55 (45 days old, 120 players) and 2.76 (8 days, 80 players), so the one
-        # with the combo is 36% of them, not half; 36% of Kinnan's 30% of the meta is 11%.
-        "   11%  Kinnan, Bonder Prodigy + Basalt Monolith: Infinite colorless mana  (Kinnan 36%)",
+        # with the combo is 36% of them, not half; Kinnan is 2 of the 8 decks played, so 36% of 25% is 9%.
+        "    9%  Kinnan, Bonder Prodigy + Basalt Monolith: Infinite colorless mana  (Kinnan 36%)",
         "        stax: Disruptor Flute (stops activated abilities)",
     ]
-    assert lines[-1].startswith(
-        "data from EDHTop16 (edhtop16.com), Archidekt (archidekt.com) and Commander Spellbook"
+    assert lines[-1] == (
+        "Tournament data from TopDeck.gg, https://topdeck.gg; also Archidekt (archidekt.com) and "
+        "Commander Spellbook (commanderspellbook.com); none of them endorses this tool"
     )
 
 
 def test_a_combo_held_by_more_of_the_recent_lists_is_marked_rising(home: Path, fake: FakeArchidekt) -> None:
     # Three lists from 10 days ago hold the combo, none of the three from 40 days ago do.
     recent = [
-        edge(n, [("Sol Ring", 0), ("Basalt Monolith", 0)], "2026-10-05T10:00:00.000Z") for n in (1, 2, 3)
+        topdeck_event(
+            f"recent-{n}",
+            "2026-10-05T10:00:00+00:00",
+            64,
+            8,
+            [(1, [KINNAN], ["Sol Ring", "Basalt Monolith"])],
+        )
+        for n in (1, 2, 3)
     ]
-    earlier = [edge(n, [("Sol Ring", 0)], "2026-09-05T10:00:00.000Z") for n in (4, 5, 6)]
-    page: dict[str, Any] = {"pageInfo": {"hasNextPage": False, "endCursor": "6"}, "edges": recent + earlier}
-    fake.edhtop16.pages["Kinnan, Bonder Prodigy"] = [
-        {"data": {"commander": {"name": "Kinnan, Bonder Prodigy", "entries": page}}}
+    earlier = [
+        topdeck_event(f"earlier-{n}", "2026-09-05T10:00:00+00:00", 64, 8, [(1, [KINNAN], ["Sol Ring"])])
+        for n in (1, 2, 3)
     ]
+    fake.topdeck.events = [*magda_events(), *recent, *earlier]
     result = meta(home, fake, "magda")
     assert result.code == 0, result.err
     # The recent lists weigh twice the earlier ones, so the combo is 2 of 3 parts of Kinnan's lists.
@@ -175,12 +182,14 @@ def test_a_combo_held_by_more_of_the_recent_lists_is_marked_rising(home: Path, f
 def test_queries_follow_the_config_and_leave_out_the_users_own_deck(home: Path, fake: FakeArchidekt) -> None:
     config = home / "appdata" / "Commander" / "config.toml"
     config.parent.mkdir(parents=True, exist_ok=True)
-    config.write_text("version = 1\n[meta]\nmin_event_size = 32\nmeta_commanders = 1\n", encoding="utf-8")
-    assert meta(home, fake, "magda").code == 0
-    sizes = {r.get("minEventSize", r.get("minSize")) for r in fake.edhtop16.requests}
-    assert sizes == {32}
-    # One meta commander asked for, with room to re-rank: two.
-    assert {"first": 2, "minDate": "2026-08-16", "minSize": 32} in fake.edhtop16.requests
+    config.write_text("version = 1\n[meta]\nmin_event_size = 100\nmeta_commanders = 1\n", encoding="utf-8")
+    result = meta(home, fake, "magda")
+    assert result.code == 0, result.err
+    # TopDeck is asked for events of 64 players or more whatever the config says; the config's 100 is
+    # applied to what was stored, so Magda's two events of 64 do not count and only Kinnan's 120 does.
+    assert {r["participantMin"] for r in fake.topdeck.requests} == {64}
+    assert "  TopDeck has no lists for this commander" in result.out.splitlines()
+    assert [s.split()[0] for s in section(result.out, "Most-played commanders")] == ["1"]
     assert f"/api/decks/{DECK_ID}/" not in fake.requests
     assert f"/api/decks/{PEER_ID}/" in fake.requests
 
@@ -188,14 +197,13 @@ def test_queries_follow_the_config_and_leave_out_the_users_own_deck(home: Path, 
 def test_a_card_check_counts_lists_with_and_without_it(home: Path, fake: FakeArchidekt) -> None:
     result = meta(home, fake, "magda", "--card", "mind stone")
     assert result.code == 0, result.err
-    assert result.out.splitlines()[:8] == [
+    assert result.out.splitlines()[:7] == [
         "mind stone for Magda (events since 2026-08-16)",
         "  in your deck: no",
-        "  EDHTop16: in 5 of 5 top-cut lists, 5 of 6 lists in all",
-        "  top cuts: 5 with it, 0 without; average finish top 5% with it, top 48% without",
-        "  spice: up to 0 of 4",
+        "  tournaments: in 5 of 5 top-cut lists, 5 of 6 lists in all",
+        "  top cuts: 5 with it, 0 without; average finish top 3% with it, top 30% without",
         "  Archidekt: in 0 of 1 recent decks",
-        "  meta: in 0 of 2 top commanders' lists",
+        "  meta: in 5 of 8 top commanders' lists",
         "  thin data: read these counts as hints, not evidence",
     ]
 
@@ -218,7 +226,6 @@ def test_json_carries_the_report_and_card_checks(home: Path, fake: FakeArchidekt
         ("Mind Stone", 5, 1.0),
         ("Jeska's Will", 2, 0.4),
     ]
-    assert report["spicy"][0]["best"]["decklist"] == "https://edhtop16.com/tournament/t1/decklist/x"
     assert [s["source"] for s in report["sources"]] == ["fetched", "fetched", "fetched", "fetched", "fetched"]
     assert data["cards"][0]["inDeck"] is True
     assert data["cards"][0]["readWith"] == 5
@@ -248,7 +255,7 @@ def test_to_board_suggests_the_missing_staples_once(home: Path, fake: FakeArchid
     assert card is not None
     assert card.origin is Origin.META
     assert card.reason == (
-        "in 5 of 6 Magda lists on EDHTop16 since 2026-08-16; in 0 of 1 most-viewed recent Archidekt decks"
+        "in 5 of 6 Magda lists on TopDeck since 2026-08-16; in 0 of 1 most-viewed recent Archidekt decks"
     )
     # Replacement targets come from the card's role in the app, not from one cut list for every idea.
     assert card.replace == ()
@@ -295,23 +302,60 @@ def test_a_second_run_reads_the_cache_and_an_outage_keeps_the_last_answer(
     home: Path, fake: FakeArchidekt
 ) -> None:
     assert meta(home, fake, "magda").code == 0
-    asked = len(fake.edhtop16.requests)
-    fake.edhtop16.status = 403
+    asked = len(fake.topdeck.requests)
+    fake.topdeck.status = 403
     cached = meta(home, fake, "magda")
     assert cached.code == 0
-    assert len(fake.edhtop16.requests) == asked
+    assert len(fake.topdeck.requests) == asked
+    # A refresh works the answers out again from the stored events, which need no request.
     refreshed = meta(home, fake, "magda", "--refresh")
     assert refreshed.code == 0
-    assert "EDHTop16 lists failed" in refreshed.err
-    assert "showing the copy from 2026-10-15 12:00 UTC" in refreshed.err
+    assert len(fake.topdeck.requests) == asked
+    # With the stored events gone, a refresh has to ask, and the outage leaves the last answer standing.
+    shutil.rmtree(home / "cache" / "topdeck")
+    gone = meta(home, fake, "magda", "--refresh")
+    assert gone.code == 0
+    assert "TopDeck lists failed" in gone.err
+    assert "showing the copy from 2026-10-15 12:00 UTC" in gone.err
 
 
 def test_an_outage_with_nothing_cached_fails(home: Path, fake: FakeArchidekt) -> None:
-    fake.edhtop16.status = 403
+    fake.topdeck.status = 500
     result = meta(home, fake, "magda")
     assert result.code == 1
-    assert "cmdr: Magda: EDHTop16 lists unavailable:" in result.err
+    assert "cmdr: Magda: TopDeck lists unavailable:" in result.err
     assert "  6 entries" not in result.out
+
+
+def test_without_a_key_the_report_says_why_the_tournament_lists_are_missing(
+    home: Path, fake: FakeArchidekt, memory_keyring: MemoryKeyring
+) -> None:
+    memory_keyring.secrets.clear()
+    result = meta(home, fake, "magda")
+    assert result.code == 1
+    assert fake.topdeck.requests == []
+    assert (
+        "cmdr: Magda: TopDeck lists unavailable: no TopDeck key saved; add one in the app's TopDeck panel "
+        "or with `cmdr topdeck`\n"
+    ) in result.err
+    # The Archidekt side of the report still comes out, with the credit.
+    assert "Most-viewed Archidekt decks" in result.out
+    assert result.out.splitlines()[-1].startswith("Tournament data from TopDeck.gg, https://topdeck.gg")
+
+
+def test_a_refused_key_is_named_without_being_shown(
+    home: Path, fake: FakeArchidekt, memory_keyring: MemoryKeyring
+) -> None:
+    memory_keyring.secrets[(TOPDECK_SERVICE, "api-key")] = "a-wrong-key"
+    result = meta(home, fake, "magda")
+    assert result.code == 1
+    assert "TopDeck refused the key (HTTP 401)" in result.err
+    assert "a-wrong-key" not in result.out + result.err
+
+
+def test_json_carries_the_credit(home: Path, fake: FakeArchidekt) -> None:
+    credit = json.loads(meta(home, fake, "magda", "--json").out)["credit"]
+    assert credit.startswith("Tournament data from TopDeck.gg, https://topdeck.gg")
 
 
 def sync(home: Path, fake: FakeArchidekt, *args: str) -> Run:
@@ -345,7 +389,7 @@ def test_sync_no_ideas_leaves_the_board_and_the_meta_alone(home: Path, fake: Fak
     result = sync(home, fake, "--no-ideas")
     assert result.code == 0, result.err
     assert "ideas" not in result.out
-    assert fake.edhtop16.requests == []
+    assert fake.topdeck.requests == []
     assert read_board(home / "decks" / FOLDER).find("Mind Stone") is None
 
 
@@ -364,19 +408,30 @@ def test_sync_below_bracket_5_learns_from_recent_archidekt_decks_alone(
     result = sync(home, fake)
     assert result.code == 0, result.err
     assert "Magda ideas: +1 from archidekt decks\n" in result.out, result.err
-    assert fake.edhtop16.requests == []
+    assert fake.topdeck.requests == []
     card = read_board(home / "decks" / FOLDER).find("Arcane Signet")
     assert card is not None
     assert card.origin is Origin.DECKS
 
 
 def test_sync_with_every_source_down_keeps_the_board_and_succeeds(home: Path, fake: FakeArchidekt) -> None:
-    fake.edhtop16.status = 403
+    fake.topdeck.status = 403
     fake.peer_page = {"unexpected": True}
     result = sync(home, fake)
     assert result.code == 0, result.err
     assert "cmdr: Magda: no meta or Archidekt decks to learn from (" in result.err
     assert "ideas:" not in result.out
+    assert read_board(home / "decks" / FOLDER).find("Mind Stone") is None
+
+
+def test_sync_without_a_topdeck_key_says_so_once_and_asks_nothing(
+    home: Path, fake: FakeArchidekt, memory_keyring: MemoryKeyring
+) -> None:
+    memory_keyring.secrets.clear()
+    result = sync(home, fake)
+    assert result.code == 0, result.err
+    assert result.err.count("tournament lists skipped: no TopDeck key saved") == 1
+    assert fake.topdeck.requests == []
     assert read_board(home / "decks" / FOLDER).find("Mind Stone") is None
 
 
@@ -595,7 +650,6 @@ def report_of(combos: tuple[MetaCombo, ...]) -> MetaReport:
         since=date(2026, 10, 19),
         sample=sample,
         missing=(),
-        spicy=(),
         outliers=(),
         threats=(),
         combos=combos,

@@ -36,6 +36,7 @@ from commander.profileedit import ensure_grace_table
 from commander.scryfall import CardRefresh, RefreshStatus, ScryfallClient, ScryfallError, refresh_card_db
 from commander.store import StoredDeck, Workspace
 from commander.sync import PRIVATE_NOT_UPDATED, PullWatch, SyncResult, SyncStatus, sync_decks
+from commander.topdeck import NO_KEY_MESSAGE
 from commander.viewscore import VIEWS_FILE, ViewScores
 
 log = logging.getLogger(__name__)
@@ -307,10 +308,11 @@ def _compile_ideas(
         warnings.append(f"ideas not compiled: {error}")
         return {}, {}, {}
     found: dict[str, dict[Origin, list[BoardCard]]] = {}
+    key_noted = False
     turned_down: dict[str, list[str]] = {}
     closed: dict[str, list[str]] = {}
     with db, services.client_factory() as http:
-        sources = meta_sources(http, services.pacer_factory, user, settings)
+        sources = meta_sources(http, services.pacer_factory, user, settings, services.cache)
         waiting = _most_viewed_first(workspace.load_all(), services)
         next_up = priority or FetchPriority()
         for queued in waiting:
@@ -366,7 +368,11 @@ def _compile_ideas(
             if data.lists.data is None and data.peers.data is None:
                 why = data.peers.error or data.lists.error
                 warnings.append(f"{deck.short_name}: no meta or Archidekt decks to learn from ({why})")
-            incomplete = len(warnings) > warned or data.peers.data is None
+            no_key = data.lists.error == NO_KEY_MESSAGE
+            if no_key and not key_noted:
+                warnings.append(f"tournament lists skipped: {NO_KEY_MESSAGE}")
+                key_noted = True
+            incomplete = len(warnings) > warned or data.peers.data is None or no_key
             on_deck(deck.id, FetchState.INCOMPLETE if incomplete else FetchState.DONE)
     return found, turned_down, closed
 

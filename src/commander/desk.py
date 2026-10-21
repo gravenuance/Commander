@@ -55,14 +55,13 @@ from commander.budget import resolved_budget
 from commander.carddb import CardDataError, CardDb, ResolvedCard
 from commander.changetext import change_mark, change_text
 from commander.config import ConfigError, MetaSettings, forget_account, switch_account, validate_user
-from commander.credentials import CredentialError, TokenStore
+from commander.credentials import CredentialError, KeyringKeyStore, KeyStore, TokenStore, check_api_key
 from commander.deckcache import NOT_FETCHED
 from commander.deckexport import cardmarket_wants_text, topdeck_text
 from commander.decklocks import DeckLocks
 from commander.deckprofile import MAX_ADJACENT, MAX_LIST, MAX_TEXT, Profile, ProfileError, read_profile
 from commander.deckthemes import merge_themes
 from commander.deckview import card_image, decklist_json
-from commander.edhtop16 import Edhtop16Error
 from commander.fetchpriority import FetchPriority
 from commander.ideas import idea_labels
 from commander.labels import LabelError, label_options, set_label
@@ -79,6 +78,7 @@ from commander.metadata import (
     gather,
     gather_for,
     meta_sources,
+    topdeck_client,
 )
 from commander.metajson import report_json
 from commander.metapanel import combo_groups, key_card_rows, stopper_rows, untouched
@@ -91,6 +91,7 @@ from commander.suggest import deck_identity
 from commander.sync import PullWatch, SyncStatus
 from commander.syncrun import CardState, FetchState, SyncOutcome, SyncServices, run_sync
 from commander.targets import CutRules, Target, deck_cut_rules, targets_for, with_ideas
+from commander.topdeck import DEVELOPERS_URL, NO_KEY_MESSAGE, TopdeckError, TopdeckKeyError
 from commander.viewscore import VIEWS_FILE, ViewScores
 from commander.weightedshare import (
     MAX_GRACE,
@@ -111,7 +112,7 @@ _EXPECTED = (
     ConfigError,
     NetworkError,
     ArchidektError,
-    Edhtop16Error,
+    TopdeckError,
     AuthError,
     CredentialError,
     SaveError,
@@ -268,6 +269,7 @@ class Desk:
         self._workspace = Workspace(settings.workspace)
         self._client_factory = client_factory
         self._token_store = token_store
+        self._topdeck_keys: KeyStore = KeyringKeyStore()
         self._now = now
         # Per deck: the meta cache stamp the answers were read at, and what was made of them.
         self._pools: dict[int, tuple[str, MetaData]] = {}
@@ -346,6 +348,43 @@ class Desk:
     @_guarded
     def sync_status(self) -> Json:
         return self._sync_json()
+
+    @_guarded
+    def topdeck(self) -> Json:
+        """Whether a TopDeck key is saved, and where the free per-user keys are issued."""
+        return {"hasKey": self._topdeck_keys.get() is not None, "developers": DEVELOPERS_URL}
+
+    @_guarded_secret
+    def test_topdeck_key(self, key: str) -> Json:
+        """Ask TopDeck whether it accepts the typed key, or the saved one when none is typed."""
+        typed = key.strip()
+        key = check_api_key(typed) if typed else self._saved_topdeck_key()
+        with self._client_factory() as http:
+            topdeck_client(http, self._pacer_factory, self._settings.cache, self._topdeck_keys).check_key(key)
+        log.info("TopDeck accepted the %s key", "typed" if typed else "saved")
+        return {"ok": True}
+
+    @_guarded_secret
+    def save_topdeck_key(self, key: str) -> Json:
+        """Save the typed key once TopDeck accepts it."""
+        key = check_api_key(key)
+        with self._client_factory() as http:
+            topdeck_client(http, self._pacer_factory, self._settings.cache, self._topdeck_keys).check_key(key)
+        self._topdeck_keys.put(key)
+        log.info("saved the TopDeck key")
+        return self.topdeck()
+
+    @_guarded
+    def remove_topdeck_key(self) -> Json:
+        removed = self._topdeck_keys.delete()
+        log.info("removed the saved TopDeck key" if removed else "no TopDeck key was saved")
+        return self.topdeck()
+
+    def _saved_topdeck_key(self) -> str:
+        key = self._topdeck_keys.get()
+        if key is None:
+            raise TopdeckKeyError(NO_KEY_MESSAGE)
+        return key
 
     @_guarded
     def log_page_error(self, message: str, source: str, line: int, stack: str) -> Json:
@@ -1085,7 +1124,9 @@ class Desk:
             )
 
     def _meta_sources(self, http: httpx.Client) -> MetaSources:
-        return meta_sources(http, self._pacer_factory, self._settings.user or "", self._settings.meta)
+        return meta_sources(
+            http, self._pacer_factory, self._settings.user or "", self._settings.meta, self._settings.cache
+        )
 
     def _stored(self, deck_id: int) -> StoredDeck:
         folder = self._workspace.folder_for(int(deck_id))

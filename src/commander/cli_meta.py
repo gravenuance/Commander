@@ -1,5 +1,5 @@
-"""`cmdr meta`: what performing EDHTop16 lists and recent Archidekt decks play with the deck's commander, and
-which of the meta's cards answer its key cards."""
+"""`cmdr meta`: what performing tournament lists and recent Archidekt decks play with the deck's commander,
+and which of the meta's cards answer its key cards."""
 
 import argparse
 from collections.abc import Callable, Sequence
@@ -13,7 +13,6 @@ from commander.clibase import EXIT_FAILURE, EXIT_OK, Context, UsageError, one_de
 from commander.config import MetaSettings, cache_dir, config_path, read_config, resolve_user
 from commander.deckcache import AnswerSource
 from commander.deckprofile import read_profile
-from commander.edhtop16 import commander_url
 from commander.ideas import compile_ideas_with_adjacent, ideas_summary
 from commander.meta import (
     Basis,
@@ -30,13 +29,13 @@ from commander.metajson import report_json
 from commander.models import short_commander_name
 from commander.playstyle import Fit
 from commander.store import StoredDeck, Workspace
+from commander.topdeck import CREDIT, SITE_URL
 
 META_CREDIT = (
-    "data from EDHTop16 (edhtop16.com), Archidekt (archidekt.com) and Commander Spellbook "
+    f"{CREDIT}, {SITE_URL}; also Archidekt (archidekt.com) and Commander Spellbook "
     "(commanderspellbook.com); none of them endorses this tool"
 )
 THREATS_PER_KIND = 5
-EVENT_NAME_WIDTH = 48
 COMBO_ANSWERS_SHOWN = 6
 _DESCRIPTION = """examples:
   cmdr meta                                       every bracket 5 deck side by side
@@ -44,7 +43,8 @@ _DESCRIPTION = """examples:
   cmdr meta ellivere --card "Sylvan Safekeeper"   how lists use one card
   cmdr meta etali --to-board                      put the staples it misses on its board
 
-Compares a deck with its commander's EDHTop16 lists (top cuts first, else every list) and the
+Compares a deck with its commander's tournament lists from TopDeck.gg (top cuts first, else every list; needs
+a TopDeck key, which `cmdr topdeck` saves) and the
 most-viewed recent Archidekt decks, and lists the cards the most-played commanders answer its key
 cards with: the commander, its combos, the cards filed under a combo or win category (by you or by
 other players), cards costing far above the deck's curve, and what profile.toml keeps. Answers are
@@ -93,7 +93,7 @@ def _cmd_meta(args: argparse.Namespace, ctx: Context) -> int:
             if deck.deck.bracket != CEDH_BRACKET:
                 print(
                     f"cmdr: {deck.deck.short_name} is bracket {deck.deck.bracket}; "
-                    "the EDHTop16 lists in this report are cEDH",
+                    "the tournament lists in this report are cEDH",
                     file=ctx.err,
                 )
             data = gather(
@@ -116,8 +116,8 @@ def _cmd_meta(args: argparse.Namespace, ctx: Context) -> int:
 
 
 def meta_sources(http: httpx.Client, ctx: Context, user: str, settings: MetaSettings) -> MetaSources:
-    """EDHTop16, Archidekt search and Spellbook clients over one HTTP client, each at its own pace."""
-    return shared_meta_sources(http, ctx.pacer_factory, user, settings)
+    """TopDeck, Archidekt search and Spellbook clients over one HTTP client, each at its own pace."""
+    return shared_meta_sources(http, ctx.pacer_factory, user, settings, cache_dir(ctx.env))
 
 
 def _print_results(
@@ -126,7 +126,11 @@ def _print_results(
     if args.json:
         checks = [check_card(name, s.deck, data) for s, data, _ in results for name in args.card]
         write_json(
-            {"reports": [report_json(r) for _, _, r in results], "cards": [check_json(c) for c in checks]},
+            {
+                "reports": [report_json(r) for _, _, r in results],
+                "cards": [check_json(c) for c in checks],
+                "credit": META_CREDIT,
+            },
             out,
         )
         return
@@ -195,17 +199,11 @@ def _percent(share: float) -> str:
     return f"{round(share * 100):>3}%"
 
 
-def _ordinal(n: int) -> str:
-    suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")  # noqa: PLR2004 — English ordinals
-    return f"{n}{suffix}"
-
-
 def print_report(report: MetaReport, out: TextIO) -> None:
     sample = report.sample
     print(f"{report.deck}: {report.commander}, events since {report.since}", file=out)
-    print(f"  EDHTop16: {commander_url(report.commander)}", file=out)
     if not sample.known:
-        print("  EDHTop16 has no lists for this commander", file=out)
+        print("  TopDeck has no lists for this commander", file=out)
     else:
         print(
             f"  {sample.entries} entries, {sample.with_lists} with decklists, {sample.top_cuts} top cuts; "
@@ -216,7 +214,6 @@ def print_report(report: MetaReport, out: TextIO) -> None:
         reason = "no top cuts" if sample.basis is Basis.ALL else "few lists"
         print(f"  thin data ({reason}): read shares as hints, not evidence", file=out)
     _print_missing(report, out)
-    _print_spicy(report, out)
     _print_outliers(report, out)
     _print_threats(report, out)
     _print_own_combos(report, out)
@@ -240,18 +237,6 @@ def _print_missing(report: MetaReport, out: TextIO) -> None:
         print(
             f"  {_percent(card.share)} · {card.peer_lists}/{len(report.peers)}  {card.name}{note}", file=out
         )
-
-
-def _print_spicy(report: MetaReport, out: TextIO) -> None:
-    print("\nSpicy picks in those lists (spice 3-4: new or rarely played)", file=out)
-    if not report.spicy:
-        print("  none", file=out)
-    for pick in report.spicy:
-        best = pick.best
-        event = best.tournament
-        name = " ".join(event.name.split())
-        place = f"{_ordinal(best.standing)} of {event.size}, {name[:EVENT_NAME_WIDTH]} ({event.held_on})"
-        print(f"  spice {pick.spice}  {pick.lists} list(s)  {pick.name}  best: {place}", file=out)
 
 
 def _print_outliers(report: MetaReport, out: TextIO) -> None:
@@ -388,7 +373,7 @@ def print_check(check: CardCheck, report: MetaReport, out: TextIO) -> None:
     print(f"{check.name} for {report.deck} (events since {report.since})", file=out)
     print(f"  in your deck: {'yes' if check.in_deck else 'no'}", file=out)
     print(
-        f"  EDHTop16: in {check.performing_with} of {check.performing} {report.sample.basis.value}, "
+        f"  tournaments: in {check.performing_with} of {check.performing} {report.sample.basis.value}, "
         f"{check.lists_with} of {check.lists} lists in all",
         file=out,
     )
@@ -399,8 +384,6 @@ def print_check(check: CardCheck, report: MetaReport, out: TextIO) -> None:
             f"{_finish(check.mean_placing_without)} without",
             file=out,
         )
-    if check.spice is not None:
-        print(f"  spice: up to {check.spice} of 4", file=out)
     print(f"  Archidekt: in {check.peers_with} of {check.peers} recent decks", file=out)
     print(f"  meta: in {check.meta_lists_with} of {check.meta_lists} top commanders' lists", file=out)
     if report.sample.thin:
@@ -438,7 +421,6 @@ def check_json(check: CardCheck) -> dict[str, object]:
         "meanPlacingWithout": check.mean_placing_without,
         "peers": check.peers,
         "peersWith": check.peers_with,
-        "spice": check.spice,
         "metaLists": check.meta_lists,
         "metaListsWith": check.meta_lists_with,
     }

@@ -136,7 +136,10 @@ def stub_meta(
     def gather(deck: Deck, *_: object, **__: object) -> MetaData:
         gathered.append(deck.id)
         after_gather(deck.id)
-        return cast("MetaData", SimpleNamespace(lists=SimpleNamespace(data=1), peers=SimpleNamespace(data=1)))
+        return cast(
+            "MetaData",
+            SimpleNamespace(lists=SimpleNamespace(data=1, error=None), peers=SimpleNamespace(data=1)),
+        )
 
     def sources(*_: object, **__: object) -> object:
         return object()
@@ -360,7 +363,7 @@ def lists_with(card: str, playing: int, of: int = 10) -> MetaData:
     """`of` recent top-cut lists, `playing` of which run `card`; all run a Mountain."""
     return meta_data(
         [
-            entry(i, 40, 16, [("Mountain", 0), *([(card, 0)] if i <= playing else [])], date(2026, 10, 10))
+            entry(i, 40, 16, ["Mountain", *([card] if i <= playing else [])], date(2026, 10, 10))
             for i in range(1, of + 1)
         ]
     )
@@ -563,7 +566,7 @@ def test_a_passing_idea_of_the_old_pick_up_is_relabelled_as_a_compiled_one(
     assert hoverbike is not None
     assert (hoverbike.status, hoverbike.source, hoverbike.origin) == (Status.OPEN, Actor.CMDR, Origin.META)
     assert hoverbike.reason == (
-        f"in 9 of 10 top-cut {stored.deck.short_name} lists on EDHTop16 since 2026-08-16"
+        f"in 9 of 10 top-cut {stored.deck.short_name} lists on TopDeck since 2026-08-16"
     )
     # The cards that were turned down, queued, or by someone else keep their source and reason.
     kept = {

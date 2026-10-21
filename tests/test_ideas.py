@@ -20,7 +20,6 @@ from commander.board import (
 )
 from commander.carddb import CardDb
 from commander.deckcache import Answer, AnswerSource
-from commander.edhtop16 import Entry
 from commander.ideas import (
     Idea,
     adjacent_ideas,
@@ -36,6 +35,7 @@ from commander.meta import Basis, CardShare, Staples
 from commander.metadata import MetaData, PeerList, TaggedDecks
 from commander.models import Deck
 from commander.store import StoredDeck
+from commander.tournaments import Entry
 from commander.weightedshare import ShareTable, SourceShare, WeightedShare, weighted_shares
 from test_meta import NOW, SINCE, db, deck, entry, meta_data, peer
 
@@ -44,7 +44,7 @@ __all__ = ["db", "deck"]  # fixtures shared with test_meta
 
 def share(name: str, lists: int, of_lists: int, peers: int, of_peers: int) -> CardShare:
     return CardShare(
-        name, lists, lists / of_lists if of_lists else 0.0, peers, peers / of_peers, spice=None, flagged=False
+        name, lists, lists / of_lists if of_lists else 0.0, peers, peers / of_peers, flagged=False
     )
 
 
@@ -60,7 +60,7 @@ def test_a_source_caps_its_ideas_by_weighted_share_not_plain_share(
             2,
             40,
             8,
-            [*([("Mind Stone", 0)] if i <= 8 else []), *([("Jeska's Will", 0)] if i >= 4 else [])],
+            [*(["Mind Stone"] if i <= 8 else []), *(["Jeska's Will"] if i >= 4 else [])],
             old if i <= 3 else recent,
         )
         for i in range(1, 11)
@@ -82,7 +82,7 @@ def test_staples_become_ideas_of_the_source_playing_them_more_most_played_first(
         ("Lotus Petal", Origin.DECKS),
     ]
     assert found[2].reason == (
-        "in 1 of 5 top-cut Magda lists on EDHTop16 since 2026-08-16;"
+        "in 1 of 5 top-cut Magda lists on TopDeck since 2026-08-16;"
         " in 3 of 4 most-viewed recent Archidekt decks"
     )
 
@@ -107,7 +107,7 @@ def test_each_source_keeps_its_top_ideas_and_settles(
     monkeypatch.setattr(ideas_module, "MAX_PER_SOURCE", 1)
     stored = StoredDeck(tmp_path, deck)
     lists = [
-        entry(i, 40, 8, [("Mind Stone", 0), ("Jeska's Will", 0), *([("Arcane Signet", 0)] if i <= 4 else [])])
+        entry(i, 40, 8, ["Mind Stone", "Jeska's Will", *(["Arcane Signet"] if i <= 4 else [])])
         for i in range(1, 11)
     ]
     # Mana Crypt is as played as any, but banned: the board refuses it, so it takes no place.
@@ -203,7 +203,7 @@ def compiled_names(folder: Path, deck: Deck, db: CardDb, profile: str) -> dict[O
     folder.mkdir()
     (folder / "profile.toml").write_text(profile, encoding="utf-8")
     lists = [
-        entry(i, 40, 8, [("Mind Stone", 0), ("Jeska's Will", 0), *([("Arcane Signet", 0)] if i <= 4 else [])])
+        entry(i, 40, 8, ["Mind Stone", "Jeska's Will", *(["Arcane Signet"] if i <= 4 else [])])
         for i in range(1, 11)
     ]
     peers = [peer(i, ["Arcane Signet", "Mind Stone", "Jeska's Will"]) for i in range(1, 11)]
@@ -485,7 +485,7 @@ def test_a_sync_gives_an_idea_already_on_the_board_without_a_pool_its_pool(
 
 def same_weight_lists(card: str, playing: int, of: int = 10) -> list[Entry]:
     """`of` equally weighted lists, `playing` of which run `card`; all run a Mind Stone."""
-    return [entry(1, 40, 16, [("Mind Stone", 0), *([(card, 0)] if i < playing else [])]) for i in range(of)]
+    return [entry(1, 40, 16, ["Mind Stone", *([card] if i < playing else [])]) for i in range(of)]
 
 
 def seed(
@@ -531,7 +531,7 @@ def judge(
 
 
 def unavailable_lists(data: MetaData) -> MetaData:
-    """The data with the EDHTop16 lists not read."""
+    """The data with the tournament lists not read."""
     return replace(data, lists=Answer(None, AnswerSource.UNAVAILABLE, None, "offline"))
 
 
@@ -542,7 +542,7 @@ def test_a_compiled_idea_that_fails_the_idea_test_is_turned_down_and_a_passing_o
     weak = seed(tmp_path, deck, db, "Jeska's Will", Actor.CMDR, origin=origin)
     strong = seed(tmp_path, deck, db, "Arcane Signet", Actor.CMDR, origin=origin)
     # Of ten equally weighted lists, one plays the Jeska's Will and nine the Signet.
-    lists = [entry(1, 40, 16, [("Jeska's Will" if i < 1 else "Arcane Signet", 0)]) for i in range(10)]
+    lists = [entry(1, 40, 16, ["Jeska's Will" if i < 1 else "Arcane Signet"]) for i in range(10)]
     peers = [peer(i, ["Jeska's Will" if i < 1 else "Arcane Signet"]) for i in range(10)]
     data = meta_data(lists) if origin is Origin.META else meta_data([], peers)
 
@@ -628,7 +628,7 @@ def labels_of(
 
 
 LISTS_AND_DECKS = (
-    "in {lists} of 10 top-cut Magda lists on EDHTop16 since 2026-08-16;"
+    "in {lists} of 10 top-cut Magda lists on TopDeck since 2026-08-16;"
     " in {decks} of 10 most-viewed recent Archidekt decks"
 )
 
@@ -770,9 +770,9 @@ def commander_data() -> MetaData:
             40,
             16,
             [
-                ("Mind Stone", 0),
-                *([("Arcane Signet", 0)] if i < 9 else []),
-                *([("Jeska's Will", 0)] if i < 1 else []),
+                "Mind Stone",
+                *(["Arcane Signet"] if i < 9 else []),
+                *(["Jeska's Will"] if i < 1 else []),
             ],
         )
         for i in range(10)
@@ -922,10 +922,10 @@ def test_a_card_only_lower_lists_play_is_an_idea_with_the_counts_of_every_list_r
     deck: Deck, db: CardDb, tmp_path: Path
 ) -> None:
     # Two top-cut lists lack Mind Stone, 24 lower ones play it: the idea test counts every list (ADR 0026).
-    top = [entry(i, 40, 8, [("Jeska's Will", 0)]) for i in (1, 2)]
-    lower = [entry(10 + i, 40, 8, [("Mind Stone", 0)]) for i in range(24)]
+    top = [entry(i, 40, 8, ["Jeska's Will"]) for i in (1, 2)]
+    lower = [entry(10 + i, 40, 8, ["Mind Stone"]) for i in range(24)]
     data = meta_data([*top, *lower])
-    reason = "in 24 of 26 Magda lists on EDHTop16 since 2026-08-16"
+    reason = "in 24 of 26 Magda lists on TopDeck since 2026-08-16"
 
     [stone] = compile_ideas(StoredDeck(tmp_path, deck), data, db, now=lambda: NOW)[Origin.META]
 
@@ -988,8 +988,8 @@ def test_the_decks_grace_cards_decide_which_idea_a_source_keeps(
             40,
             8,
             [
-                *([("Mind Stone", 0)] if i <= 8 else []),
-                *([("Jeska's Will", 0), ("Battered Golem", 0)] if i >= 4 else []),
+                *(["Mind Stone"] if i <= 8 else []),
+                *(["Jeska's Will", "Battered Golem"] if i >= 4 else []),
             ],
         )
         for i in range(1, 11)
@@ -1008,8 +1008,7 @@ def test_the_decks_grace_cards_decide_which_idea_a_source_keeps(
 def signet_lists() -> list[Entry]:
     """Ten equally weighted lists: the first three run the Signet with the deck's Battered Golem."""
     return [
-        entry(2, 40, 8, [("Arcane Signet", 0), ("Battered Golem", 0)] if i < 3 else [("Mind Stone", 0)])
-        for i in range(10)
+        entry(2, 40, 8, ["Arcane Signet", "Battered Golem"] if i < 3 else ["Mind Stone"]) for i in range(10)
     ]
 
 

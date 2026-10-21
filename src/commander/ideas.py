@@ -1,6 +1,6 @@
 """Ideas for Considering, compiled on every sync (ADR 0028).
 
-Decks at brackets 4 and 5 get the staples of their commander's EDHTop16 lists ("meta") and of its most-viewed
+Decks at brackets 4 and 5 get the staples of their commander's TopDeck lists ("meta") and of its most-viewed
 recent Archidekt decks ("archidekt decks"), the latter at the deck's own bracket and the one above; lower
 brackets get the Archidekt ones only. A card is one of these ideas when the lower bound of its weighted
 share, over every list read, reaches IDEA_LOWER_BOUND (ADR 0026); it belongs to the source that plays it
@@ -107,7 +107,7 @@ def _source_share(table: ShareTable, name: str, origin: Origin, plain: float) ->
 
 def staple_ideas(deck: Deck, staples: Staples, since: date, table: ShareTable = NO_SHARES) -> list[Idea]:
     """The missing staples as ideas, each from the source whose weighted share of it is larger (the plain
-    share when `table` holds none): "meta" for the EDHTop16 lists (also on a tie), else "archidekt decks".
+    share when `table` holds none): "meta" for the TopDeck lists (also on a tie), else "archidekt decks".
     The rows are staples already: `compile_ideas` picks them by the weighted share's lower bound, and an idea
     carries the chosen source's weighted share from `table`."""
     # What the deck's play style doesn't need (a Turbo deck's interaction) is no idea for it (ADR 0031).
@@ -121,7 +121,7 @@ def _staple_idea(deck: Deck, row: CardShare, staples: Staples, since: date, tabl
     lists = f"{deck.short_name} lists" if staples.basis is Basis.ALL else f"top-cut {deck.short_name} lists"
     parts: list[str] = []
     if staples.lists:
-        parts.append(f"in {row.lists} of {staples.lists} {lists} on EDHTop16 since {since}")
+        parts.append(f"in {row.lists} of {staples.lists} {lists} on TopDeck since {since}")
     if staples.peers:
         parts.append(f"in {row.peer_lists} of {staples.peers} most-viewed recent Archidekt decks")
     reason = "; ".join(parts)
@@ -321,7 +321,7 @@ def rejudge_ideas(
     ideas pass; what it turned down, with the reason on the activity line (ADR 0028).
 
     Meta and Archidekt-deck ideas, and old pick-ups with no origin, are tested with `ShareTable.is_idea`,
-    but only against sources read now: none without a list, no meta idea without the EDHTop16 lists and no
+    but only against sources read now: none without a list, no meta idea without the TopDeck lists and no
     deck idea without the Archidekt decks. An alike idea is tested by the half of the pooled decks that
     plays it, a tagged one by its own tag's pool; `adjacent` is None when a group's decks could not be
     read, and a pool too small to name staples judges nothing. An alike idea whose commander groups the

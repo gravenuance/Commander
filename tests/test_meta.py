@@ -11,7 +11,6 @@ from commander.archidekt import PeerDeck, parse_deck
 from commander.carddb import CardDb, Theme
 from commander.deckcache import Answer, AnswerSource
 from commander.deckprofile import Profile
-from commander.edhtop16 import CommanderStats, DecklistCard, Entry, Tournament
 from commander.meta import (
     AnswerKind,
     Basis,
@@ -26,6 +25,7 @@ from commander.metacombos import AnswerRole, Stop
 from commander.metadata import CommanderEntries, MetaCommander, MetaData, PeerList, PeerLists
 from commander.models import Deck
 from commander.spellbook import ComboDetail, ComboPiece
+from commander.tournaments import CommanderStats, DecklistCard, Entry, Tournament
 from conftest import CHAOS_WARP, FILLER_CARDS, LIGHTNING_BOLT, Json, build_card_db, filler_card
 from test_scryfall import REMOVAL_ARTIFACT, removal_tag
 
@@ -87,16 +87,12 @@ def deck(raw_deck: Json) -> Deck:
 
 
 def entry(
-    standing: int, size: int, top_cut: int, cards: list[tuple[str, int]], held_on: date = date(2026, 9, 1)
+    standing: int, size: int, top_cut: int, cards: list[str], held_on: date = date(2026, 9, 1)
 ) -> Entry:
     return Entry(
         standing=standing,
-        wins=0,
-        losses=0,
-        draws=0,
-        decklist_url=None,
-        tournament=Tournament(f"t{standing}-{size}", "Event", held_on, size, top_cut),
-        cards=tuple(DecklistCard(name, 1, spice) for name, spice in cards),
+        tournament=Tournament(f"t{standing}-{size}", held_on, size, top_cut),
+        cards=tuple(DecklistCard(name, 1) for name in cards),
     )
 
 
@@ -126,18 +122,16 @@ def meta_data(
 
 # Five top-cut lists (placings 1st..5th of 40, top 8), best first.
 TOP_CUT_LISTS = [
-    entry(
-        1, 40, 8, [("Mind Stone", 0), ("Battered Golem", 1), ("High-Speed Hoverbike", 3), ("Jeska's Will", 4)]
-    ),
-    entry(2, 40, 8, [("Mind Stone", 0), ("Battered Golem", 1), ("Mountain", 0), ("Jeska's Will", 3)]),
-    entry(3, 40, 8, [("Mind Stone", 1), ("Battered Golem", 1), ("High-Speed Hoverbike", 2)]),
-    entry(4, 40, 8, [("Arcane Signet", 0), ("Rhystic Study", 2)]),
-    entry(5, 40, 8, [("Arcane Signet", 0), ("Magda, Brazen Outlaw", 0), ("Disruptor Flute", 4)]),
+    entry(1, 40, 8, ["Mind Stone", "Battered Golem", "High-Speed Hoverbike", "Jeska's Will"]),
+    entry(2, 40, 8, ["Mind Stone", "Battered Golem", "Mountain", "Jeska's Will"]),
+    entry(3, 40, 8, ["Mind Stone", "Battered Golem", "High-Speed Hoverbike"]),
+    entry(4, 40, 8, ["Arcane Signet", "Rhystic Study"]),
+    entry(5, 40, 8, ["Arcane Signet", "Magda, Brazen Outlaw", "Disruptor Flute"]),
 ]
 
 
 def test_top_cut_lists_perform_when_there_are_enough() -> None:
-    off_cut = entry(30, 40, 8, [("Mind Stone", 0)])
+    off_cut = entry(30, 40, 8, ["Mind Stone"])
     no_list = entry(1, 40, 8, [])
     lists, basis = performing_lists([off_cut, no_list, *reversed(TOP_CUT_LISTS)])
     assert basis is Basis.TOP_CUT
@@ -145,15 +139,15 @@ def test_top_cut_lists_perform_when_there_are_enough() -> None:
 
 
 def test_a_single_top_cut_list_is_enough_to_perform() -> None:
-    off_cut = entry(30, 40, 8, [("Mind Stone", 0)])
+    off_cut = entry(30, 40, 8, ["Mind Stone"])
     lists, basis = performing_lists([off_cut, TOP_CUT_LISTS[0]])
     assert basis is Basis.TOP_CUT
     assert [e.standing for e in lists] == [1]
 
 
 def test_without_any_top_cut_every_list_performs_best_first() -> None:
-    first = entry(30, 40, 8, [("Mind Stone", 0)])
-    second = entry(12, 40, 8, [("Mind Stone", 0)])
+    first = entry(30, 40, 8, ["Mind Stone"])
+    second = entry(12, 40, 8, ["Mind Stone"])
     no_list = entry(1, 40, 8, [])
     lists, basis = performing_lists([first, no_list, second])
     assert basis is Basis.ALL
@@ -161,7 +155,7 @@ def test_without_any_top_cut_every_list_performs_best_first() -> None:
 
 
 def test_sample_counts_only_the_window_and_flags_thin_data(deck: Deck, db: CardDb) -> None:
-    old = entry(1, 40, 8, [("Mind Stone", 0)], held_on=date(2026, 8, 15))
+    old = entry(1, 40, 8, ["Mind Stone"], held_on=date(2026, 8, 15))
     report = analyse(deck, meta_data([old, *TOP_CUT_LISTS]), Profile(), db, now=lambda: NOW)
     sample = report.sample
     assert (sample.entries, sample.with_lists, sample.top_cuts, sample.performing) == (5, 5, 5, 5)
@@ -173,20 +167,20 @@ def test_sample_counts_only_the_window_and_flags_thin_data(deck: Deck, db: CardD
 def test_missing_staples_come_from_performing_and_archidekt_lists(deck: Deck, db: CardDb) -> None:
     peers = [peer(1, ["Chaos Warp", "Mind Stone"]), peer(2, ["Chaos Warp"]), peer(3, ["Lightning Bolt"])]
     report = analyse(deck, meta_data(TOP_CUT_LISTS, peers), Profile(), db, now=lambda: NOW)
-    assert [(c.name, c.lists, c.peer_lists, c.spice, c.flagged) for c in report.missing] == [
-        ("Mind Stone", 3, 1, 1, False),
+    assert [(c.name, c.lists, c.peer_lists, c.flagged) for c in report.missing] == [
+        ("Mind Stone", 3, 1, False),
         # Two of five is the 40% line; the Hoverbike on the deck's Maybeboard counts as missing.
-        ("Arcane Signet", 2, 0, 0, False),
-        ("High-Speed Hoverbike", 2, 0, 3, False),
-        ("Jeska's Will", 2, 0, 4, False),
-        ("Chaos Warp", 0, 2, None, False),
+        ("Arcane Signet", 2, 0, False),
+        ("High-Speed Hoverbike", 2, 0, False),
+        ("Jeska's Will", 2, 0, False),
+        ("Chaos Warp", 0, 2, False),
     ]
     assert report.missing[0].share == pytest.approx(0.6)
     assert report.missing[4].peer_share == pytest.approx(2 / 3)
 
 
 def test_missing_staples_leave_out_banned_and_off_colour_cards(deck: Deck, db: CardDb) -> None:
-    played = [("Mind Stone", 0), (BANNED_CARD, 0), (BLUE_CARD, 0), ("Too New To Know", 0)]
+    played = ["Mind Stone", BANNED_CARD, BLUE_CARD, "Too New To Know"]
     lists = [entry(i, 40, 8, played) for i in range(1, 6)]
     peers = [peer(i, [BANNED_CARD, BLUE_CARD]) for i in range(1, 4)]
     report = analyse(deck, meta_data(lists, peers), Profile(), db, now=lambda: NOW)
@@ -194,16 +188,8 @@ def test_missing_staples_leave_out_banned_and_off_colour_cards(deck: Deck, db: C
     assert [c.name for c in report.missing] == ["Mind Stone", "Too New To Know"]
 
 
-def test_spicy_picks_skip_deck_cards_and_mild_ones(deck: Deck, db: CardDb) -> None:
-    report = analyse(deck, meta_data(TOP_CUT_LISTS), Profile(), db, now=lambda: NOW)
-    assert [(p.name, p.spice, p.lists, p.best.standing) for p in report.spicy] == [
-        ("Jeska's Will", 4, 2, 1),
-        ("High-Speed Hoverbike", 3, 1, 1),
-    ]
-
-
 def test_outliers_are_deck_cards_few_performing_lists_play(deck: Deck, db: CardDb) -> None:
-    lists = [*TOP_CUT_LISTS[:4], entry(5, 40, 8, [("Arcane Signet", 0)])]
+    lists = [*TOP_CUT_LISTS[:4], entry(5, 40, 8, ["Arcane Signet"])]
     report = analyse(deck, meta_data(lists), Profile(keep_categories=("Stax",)), db, now=lambda: NOW)
     # Battered Golem is in three of five; Magda is the commander and Mountain a basic.
     assert [(c.name, c.lists, c.flagged) for c in report.outliers] == [("Disruptor Flute", 0, True)]
@@ -222,13 +208,13 @@ def field() -> list[MetaCommander]:
     big = MetaCommander(
         CommanderStats("Big Commander", 400, 100, 0.25, 0.04),
         (
-            entry(1, 40, 8, [("Lightning Bolt", 0), ("Chaos Warp", 0), ("Mind Stone", 0)]),
-            entry(2, 40, 8, [("Lightning Bolt", 0), ("Mind Stone", 0)]),
+            entry(1, 40, 8, ["Lightning Bolt", "Chaos Warp", "Mind Stone"]),
+            entry(2, 40, 8, ["Lightning Bolt", "Mind Stone"]),
         ),
     )
     small = MetaCommander(
         CommanderStats("Small Commander", 200, 40, 0.2, 0.02),
-        tuple(entry(i, 40, 8, [("Chaos Warp", 0)] if i == 1 else [("Mind Stone", 0)]) for i in range(1, 5)),
+        tuple(entry(i, 40, 8, ["Chaos Warp"] if i == 1 else ["Mind Stone"]) for i in range(1, 5)),
     )
     return [big, small]
 
@@ -296,7 +282,7 @@ def test_a_sweeper_with_unreadable_text_reaches_creatures_only_as_a_board_wipe(t
 
 
 def test_a_card_check_compares_lists_with_and_without_the_card(deck: Deck) -> None:
-    off_cut = entry(20, 40, 8, [("Arcane Signet", 0)])
+    off_cut = entry(20, 40, 8, ["Arcane Signet"])
     peers = [peer(1, ["Mind Stone"]), peer(2, ["Chaos Warp"])]
     data = meta_data([*TOP_CUT_LISTS, off_cut], peers, field())
     check = check_card("mind stone", deck, data)
@@ -306,7 +292,7 @@ def test_a_card_check_compares_lists_with_and_without_the_card(deck: Deck) -> No
     # Placings 0, 1/40, 2/40 with it; 3/40, 4/40 and 19/40 without.
     assert check.mean_placing_with == pytest.approx(1 / 40)
     assert check.mean_placing_without == pytest.approx((3 + 4 + 19) / 3 / 40)
-    assert (check.peers, check.peers_with, check.spice) == (2, 1, 1)
+    assert (check.peers, check.peers_with) == (2, 1)
     assert (check.meta_lists, check.meta_lists_with) == (6, 5)
 
 
@@ -340,16 +326,6 @@ def test_two_faced_cards_compare_by_their_front_face() -> None:
 def test_the_report_names_the_deck_by_its_commander(deck: Deck, db: CardDb, tmp_path: Path) -> None:
     assert analyse(deck, meta_data([]), Profile(), db, now=lambda: NOW).deck == "Magda"
     assert tmp_path.exists()
-
-
-def test_a_spicy_card_in_one_list_off_the_cut_is_left_out(deck: Deck, db: CardDb) -> None:
-    lists = [
-        entry(20, 40, 8, [("Mana Crypt", 4)]),
-        entry(30, 40, 8, [("Jeska's Will", 4)]),
-        entry(31, 40, 8, [("Jeska's Will", 3)]),
-    ]
-    report = analyse(deck, meta_data(lists), Profile(), db, now=lambda: NOW)
-    assert [(p.name, p.lists) for p in report.spicy] == [("Jeska's Will", 2)]
 
 
 GOLEM_COMBO = ComboDetail(

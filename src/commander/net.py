@@ -115,9 +115,14 @@ class Fetcher:
         )
         return _decode_json(url, body)
 
-    def post_json(self, url: str, payload: object) -> object:
-        """POST a JSON query and read the JSON answer; only for read-only queries, as it retries like GET."""
-        body = self._send("POST", url, None, payload, lambda r: _read_capped(r, url, MAX_RESPONSE_BYTES))
+    def post_json(self, url: str, payload: object, *, headers: Mapping[str, str] | None = None) -> object:
+        """POST a JSON query and read the JSON answer; only for read-only queries, as it retries like GET.
+
+        The headers may hold a key, which is never logged or put in an error message.
+        """
+        body = self._send(
+            "POST", url, None, payload, lambda r: _read_capped(r, url, MAX_RESPONSE_BYTES), headers=headers
+        )
         return _decode_json(url, body)
 
     def send_json(

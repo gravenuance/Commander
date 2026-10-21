@@ -41,6 +41,8 @@ window.addEventListener("pywebviewready", async () => {
   setupActivity();
   setupBracket();
   setupAccount();
+  setupTopdeck();
+  loadTopdeck();
   $("status-close").addEventListener("click", hideStatus);
   try {
     const account = await loadAccount();

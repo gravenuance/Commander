@@ -20,6 +20,7 @@
         </button>
         <p id="sync-status" class="muted small sync-status" role="status" aria-live="polite"></p>
         <button id="copy-to-buy" class="button small" type="button" title="Copy Don't Have cards for a Cardmarket wants list" hidden>Copy cards to buy</button>
+        <button id="topdeck-open" class="button small" type="button" aria-haspopup="dialog">TopDeck</button>
         <button id="sign-out" class="button small" type="button" hidden>Sign out</button>
         <button id="sign-in" class="button primary small" type="button" hidden>Sign in</button>
       </div>
@@ -101,6 +102,7 @@
                 <summary>Turned down <span class="count" id="count-rejected"></span></summary>
                 <ul id="list-rejected" class="rejected-list"></ul>
               </details>
+              <p class="credit muted small">Tournament lists from <a href="https://topdeck.gg" target="_blank" rel="noopener">TopDeck.gg</a></p>
             </div>
           </section>
 
@@ -132,6 +134,7 @@
               <p id="meta-empty" class="empty" hidden><span aria-hidden="true">📊</span> No meta data yet. Sync to fetch it.</p>
               <p id="meta-why" class="muted small" hidden></p>
               <div id="meta-body" class="meta-body"></div>
+              <p class="credit muted small">Tournament data from <a href="https://topdeck.gg" target="_blank" rel="noopener">TopDeck.gg</a></p>
             </div>
           </section>
         </div>
@@ -174,6 +177,29 @@
       <button id="signin-cancel" class="button" type="button">Not now</button>
       <button id="signin-submit" class="button primary" type="submit">Sign in</button>
     </div>
+  </form>
+</dialog>
+
+<dialog id="topdeck-dialog" class="dialog signin" aria-labelledby="topdeck-title">
+  <form id="topdeck-form" class="signin-form">
+    <h2 id="topdeck-title">TopDeck.gg key</h2>
+    <ol class="steps small">
+      <li>Sign in at <a href="https://topdeck.gg/developers" target="_blank" rel="noopener">topdeck.gg/developers</a></li>
+      <li>Create a free API key</li>
+      <li>Paste it here and save</li>
+    </ol>
+    <label class="field">API key
+      <input id="topdeck-key" name="key" type="password" autocomplete="off" spellcheck="false">
+    </label>
+    <p id="topdeck-state" class="muted small" role="status" aria-live="polite"></p>
+    <p id="topdeck-error" class="field-error" role="alert" hidden></p>
+    <div class="dialog-actions">
+      <button id="topdeck-remove" class="button" type="button" hidden>Remove key</button>
+      <button id="topdeck-test" class="button" type="button">Test key</button>
+      <button id="topdeck-close" class="button" type="button">Close</button>
+      <button id="topdeck-save" class="button primary" type="submit">Save key</button>
+    </div>
+    <p class="credit muted small">Tournament data from <a href="https://topdeck.gg" target="_blank" rel="noopener">TopDeck.gg</a></p>
   </form>
 </dialog>
 
@@ -260,6 +286,7 @@
 <script src="review.js"></script>
 <script src="meta.js"></script>
 <script src="account.js"></script>
+<script src="topdeck.js"></script>
 <script src="main.js"></script>
 </body>
 </html>

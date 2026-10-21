@@ -105,7 +105,7 @@ class ReplaceOption:
 class Origin(Enum):
     """Where an idea compiled for Considering came from (ADR 0028); None for anything else."""
 
-    # Staples of the commander's EDHTop16 lists (brackets 4 and 5).
+    # Staples of the commander's tournament lists (brackets 4 and 5).
     META = "meta"
     # Staples of the most-viewed recent Archidekt decks for the commander, at the deck's bracket and above.
     DECKS = "archidekt decks"

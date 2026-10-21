@@ -33,8 +33,8 @@ class MetaSettings:
 
     # Only events and deck updates this many days back count.
     window_days: int = 60
-    # Smaller events say little about a list; EDHTop16 itself defaults to 16 players.
-    min_event_size: int = 16
+    # Smaller events say little about a list, and TopDeck is asked for none under MIN_EVENT_SIZE players.
+    min_event_size: int = 64
     # The most-viewed recent Archidekt decks read in full per commander, at most; 0 reads none.
     peer_decks: int = 60
     # Most-played commanders whose lists are searched for answers to the deck's key cards.
@@ -43,10 +43,13 @@ class MetaSettings:
     meta_lists: int = 30
 
 
-# Each [meta] key with its smallest and largest allowed value; the window can't exceed the API's three months.
+# The smallest event the tournament source is asked for (ADR 0047).
+MIN_EVENT_SIZE = 64
+# Each [meta] key with its smallest and largest allowed value; the window is kept to three months so the
+# stored tournaments stay a few tens of megabytes.
 META_LIMITS: Mapping[str, tuple[int, int]] = {
     "window_days": (7, 90),
-    "min_event_size": (0, 1000),
+    "min_event_size": (MIN_EVENT_SIZE, 1000),
     "peer_decks": (0, 60),
     "meta_commanders": (0, 25),
     "meta_lists": (1, 50),

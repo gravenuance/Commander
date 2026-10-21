@@ -49,7 +49,7 @@ def board_card(name: str, replace: tuple[ReplaceOption, ...] = (), source: Actor
 
 
 def table(shares: dict[str, float], *, meta: bool = True, both: bool = False) -> ShareTable:
-    """Shares of 20 lists, from the meta's EDHTop16 lists, else from recent decks, or from 10 of each."""
+    """Shares of 20 lists, from the meta's tournament lists, else from recent decks, or from 10 of each."""
 
     def made(share: float, total: int) -> SourceShare:
         return SourceShare(share, round(share * total), total)

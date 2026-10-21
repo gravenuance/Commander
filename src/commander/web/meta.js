@@ -48,7 +48,7 @@ function renderMeta(deck, answer) {
   const s = report.sample;
   const fetched = report.sources.map((src) => src.fetchedAt).filter(Boolean).sort()[0];
   $("meta-sample").textContent = [
-    s.known ? `${s.withLists} lists since ${report.since}` : "No EDHTop16 lists",
+    s.known ? `${s.withLists} lists since ${report.since}` : "No TopDeck lists",
     fetched ? new Date(fetched).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "",
   ].filter(Boolean).join(" · ");
   $("meta-body").replaceChildren(metaKeys(answer.keys), metaStoppers(answer.stoppers, answer.untouched), metaCombos(answer.comboGroups, answer.racing));

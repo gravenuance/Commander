@@ -340,7 +340,7 @@ def test_keyring_token_store_round_trip(memory_keyring: MemoryKeyring) -> None:
     store.put("MAKKIS", "token")
 
     assert store.get("makkis") == "token"
-    assert memory_keyring.secrets == {(SERVICE, "makkis"): "token"}
+    assert memory_keyring.held(SERVICE) == {(SERVICE, "makkis"): "token"}
     assert store.delete("MAKKIS") is True
     assert store.delete("MAKKIS") is False
     assert store.get("MAKKIS") is None

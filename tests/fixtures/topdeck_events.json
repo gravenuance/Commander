@@ -1,0 +1,86 @@
+[
+  {
+    "tid": "test-open-1",
+    "name": "Test Open 1",
+    "start": "2026-10-04T10:00:00Z",
+    "size": 70,
+    "topCut": 8,
+    "decks": [
+      {
+        "standing": 12,
+        "commanders": ["Ellivere of the Wild Court"],
+        "cards": ["Smothering Tithe", "Mana Vault", "Oblivion Ring", "Sol Ring", "Esper Sentinel", "Fable of the Mirror-Breaker // Reflection of Kiki-Jiki", "Selesnya Sanctuary"]
+      }
+    ]
+  },
+  {
+    "tid": "test-open-2",
+    "name": "Test Open 2",
+    "start": "2026-09-13T00:00:00Z",
+    "size": 64,
+    "topCut": 0,
+    "decks": [
+      {
+        "standing": 5,
+        "commanders": ["Ellivere of the Wild Court"],
+        "cards": ["Mana Vault", "Smothering Tithe", "Rest in Peace", "Sol Ring", "Elspeth, Sun's Champion", "Lotus Petal", "Treasure Vault"]
+      }
+    ]
+  },
+  {
+    "tid": "test-open-3",
+    "name": "Test Open 3",
+    "start": "2026-08-16T12:00:00Z",
+    "size": 72,
+    "topCut": 4,
+    "decks": [
+      {
+        "standing": 21,
+        "commanders": ["Ellivere of the Wild Court"],
+        "cards": ["Gaea's Cradle", "Parallel Lives", "Sol Ring", "Heroic Intervention", "Mirari's Wake", "Wild Growth"]
+      }
+    ]
+  },
+  {
+    "tid": "test-open-4",
+    "name": "Test Open 4",
+    "start": "2026-07-19T15:00:00Z",
+    "size": 80,
+    "topCut": 8,
+    "decks": [
+      {
+        "standing": 18,
+        "commanders": ["Ellivere of the Wild Court"],
+        "cards": ["Mana Vault", "Sol Ring", "Mother of Runes", "Smothering Tithe", "Sunpetal Grove", "Dryad Arbor", "Windswept Heath"]
+      }
+    ]
+  },
+  {
+    "tid": "test-open-5",
+    "name": "Test Open 5",
+    "start": "2026-09-05T08:00:00Z",
+    "size": 120,
+    "topCut": 32,
+    "decks": [
+      {
+        "standing": 1,
+        "commanders": ["Kinnan, Bonder Prodigy"],
+        "cards": ["Mana Crypt", "Sol Ring", "Basalt Monolith", "Rhystic Study", "Mystic Remora", "Walking Ballista", "Misty Rainforest", "Lotus Petal"]
+      }
+    ]
+  },
+  {
+    "tid": "test-open-6",
+    "name": "Test Open 6",
+    "start": "2026-10-07T16:00:00Z",
+    "size": 80,
+    "topCut": 16,
+    "decks": [
+      {
+        "standing": 1,
+        "commanders": ["Kinnan, Bonder Prodigy"],
+        "cards": ["Mana Crypt", "Sol Ring", "Rhystic Study", "Mystic Remora", "Aluren", "Gemstone Caverns", "Circle of Dreams Druid", "Lotus Petal"]
+      }
+    ]
+  }
+]
