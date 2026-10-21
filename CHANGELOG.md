@@ -48,6 +48,7 @@
   yet". A cache read with nothing fetched is logged at DEBUG, so the log no longer fills with it.
 - A card change refused while a sync runs is logged with the sync's phase, and the message the app shows
   keeps to 12 words: "Wait for the sync to finish, then sign in." (the phase is no longer in it).
+  That holds for a decision refused while the card data downloads too, which is logged once, at INFO.
 - Card changes, settings and saves to Archidekt no longer wait for the whole sync, which on a first sync of
   many decks could take most of an hour: a deck's changes wait only while the sync may still rewrite that deck,
   which it pulls first when it is the one open, and changes that look cards up also wait while the card data

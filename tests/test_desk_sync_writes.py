@@ -554,6 +554,42 @@ def test_a_decision_and_a_removal_without_card_data_wait_for_the_download_and_a_
     assert board_cards(settings)["Arcane Signet"] == (Actor.YOU, Status.OPEN)
 
 
+def test_a_decision_refused_for_the_card_data_download_is_logged_once_with_the_phase(
+    settings: DeskSettings,
+    fake: FakeArchidekt,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    sync = SyncThread()
+    desk = make_desk(settings, fake, sync.start)
+    desk.propose(DECK, "Arcane Signet")
+    card_id = first_card_id(desk)
+    settings.card_db.unlink()
+    download = HeldDownload(monkeypatch)
+    stub_meta(monkeypatch)
+    try:
+        desk.sync()
+        assert download.downloading.wait(WAIT_SECONDS)
+        assert download.pulled.wait(WAIT_SECONDS)
+        caplog.clear()
+        with caplog.at_level(logging.INFO, logger=DESK_LOG):
+            decided = desk.decide(DECK, card_id, "add", None, "")
+    finally:
+        download.release.set()
+        sync.join()
+    assert decided == {"error": "Wait for the card data to finish downloading, then decide."}
+    # The sync thread logs its own lines meanwhile; only the refusal's are the subject.
+    records = [
+        (r.levelno, r.getMessage())
+        for r in caplog.records
+        if r.name == DESK_LOG and ("refused the" in r.getMessage() or "decide failed" in r.getMessage())
+    ]
+    assert [level for level, _ in records] == [logging.INFO]
+    prefix = f"refused the write for deck {DECK} (card data downloading): "
+    assert records[0][1].startswith(prefix)
+    assert ", now at: " in records[0][1]
+
+
 def test_without_card_data_and_no_sync_a_decision_still_says_to_sync(
     settings: DeskSettings, fake: FakeArchidekt
 ) -> None:

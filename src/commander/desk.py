@@ -151,6 +151,9 @@ def _guard[**P](method: Callable[P, Json], *, show_args: bool) -> Callable[P, Js
         log.debug("bridge call %s %s", method.__name__, args[1:] if show_args else "(arguments withheld)")
         try:
             return method(*args, **kwargs)
+        except CardDataDownloadingError as error:
+            # A routine wait, already logged where it was raised.
+            return {"error": _app_text(error)}
         except _EXPECTED as error:
             log.warning("%s failed: %s", method.__name__, error)
             return {"error": _app_text(error)}
@@ -1178,9 +1181,17 @@ class Desk:
         except CardDataError as error:
             with self._sync_lock:
                 downloading = self._sync.running and not self._sync.cards_ready
+                phase, started_at = self._sync.progress, self._sync.started_at
             if not downloading:
                 raise
-            log.info("refused the write for deck %d (%s): %s", deck_id, _Wait.CARDS.value, error)
+            log.info(
+                "refused the write for deck %d (%s): %s; the sync has run for %s, now at: %s",
+                deck_id,
+                _Wait.CARDS.value,
+                error,
+                self._elapsed(started_at),
+                phase,
+            )
             raise CardDataDownloadingError(self._wait_text(_Wait.CARDS, then, deck_id)) from error
         with db:
             yield db
