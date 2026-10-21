@@ -23,7 +23,7 @@ from pathlib import Path
 
 from commander.answers import card_key
 from commander.carddb import CardDb, CardInfo
-from commander.copylimit import copy_limit
+from commander.copylimit import copy_limit, copy_limits
 from commander.fsutil import write_text_atomic
 from commander.jsonshape import (
     ShapeError,
@@ -480,10 +480,12 @@ def already_added(deck: Deck, board: Board) -> tuple[BoardCard, ...]:
     return tuple(card for card in board.queued if _holds(deck, card))
 
 
-def held_keys(deck: Deck) -> frozenset[str]:
-    """The `card_key` of every card the main deck holds, except basic lands, which are always added to: an
-    open card of one of these is no idea, so Considering never lists it (ADR 0046)."""
-    return frozenset(key for key in _held(deck) if not _is_basic_land(key))
+def held_keys(deck: Deck, db: CardDb) -> frozenset[str]:
+    """The `card_key` of every card the main deck holds that a deck may run only one of: an open card of one
+    of these is no idea, so Considering never lists it (ADR 0046). Basic lands and cards whose rules text
+    allows more copies stay ideas, since the mana tab and the decklist adjust their counts."""
+    limits = copy_limits(db.resolve(deck.main_cards), db)
+    return frozenset(key for key in _held(deck) if limits.get(key, None if _is_basic_land(key) else 1) == 1)
 
 
 def _holds(deck: Deck, card: BoardCard) -> bool:
@@ -812,7 +814,7 @@ class BoardService:
         it on the board and even when the user reopened it: such a card is no idea (ADR 0046). A card that
         leaves the deck again comes back as an idea at the next sync (`feed_ideas`). Returns the cards closed,
         in board order; queued cards are left to Review's mark-applied path."""
-        held = held_keys(self._deck)
+        held = held_keys(self._deck, self._db)
         open_held = [
             card.id
             for card in read_board(self._folder).cards

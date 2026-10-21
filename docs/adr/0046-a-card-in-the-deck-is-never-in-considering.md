@@ -56,8 +56,10 @@ Option 3 for the closing status and option 3 for where.
 - **Queued cards are untouched.** A queued card the deck holds stays in Considering and keeps Review's
   mark-applied path (14cac59); sync does not close it, because the owner decided it and the preview, which
   reads the live deck, is the word on what a save would do.
-- **Not counted as held:** the Sideboard and Maybeboard (outside the deck, ADR 0044) and basic lands, which
-  a deck is always added to (the same exception as `_holds`). A basic land the owner proposes stays open.
+- **Not counted as held:** the Sideboard and Maybeboard (outside the deck, ADR 0044), and every card a deck
+  may run more than one of: basic lands and cards whose rules text allows more copies (`copy_limit`, as
+  Relentless Rats and Seven Dwarves). The owner adjusts their counts from the mana tab and the decklist, so
+  such a card on the board stays open (owner's call, 2026-10-21).
 
 ## Consequences
 
@@ -68,7 +70,7 @@ Option 3 for the closing status and option 3 for where.
   play it.
 - A pull that moves a card into the deck mid-sync is closed by that same sync when the deck's merge comes
   after its pull write; otherwise by the next one.
-- `held` costs one pass over the deck's cards per view; the closing reads the board once and writes once per
-  closed card.
-- Revisit if the owner wants a held basic land closed too, or a queued held card marked applied by the sync
-  instead of by Review.
+- `held` costs one pass over the deck's cards and one card-data lookup of their rules texts per view; the
+  closing reads the board once and writes once per closed card. Before the first sync there is no card
+  data, and the deck list counts every open card.
+- Revisit if the owner wants a queued held card marked applied by the sync instead of by Review.

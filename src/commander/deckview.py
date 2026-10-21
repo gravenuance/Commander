@@ -1,14 +1,14 @@
 """The app's decklist as the page draws it: the grid groups with each card's queued change and its + and -,
 the cards outside the deck, the deck's categories for an add, and the stats above it (ADR 0043, 0044)."""
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
 from commander.answers import card_key
 from commander.board import MAX_COPIES, Board, CountChange
-from commander.carddb import CardDb, CardInfo, ResolvedCard
-from commander.copylimit import copy_limit
+from commander.carddb import CardDb, CardInfo
+from commander.copylimit import copy_limits
 from commander.deckgrid import GridCard, GridGroup, PendingAdd, aside_grid, deck_grid, image_url
 from commander.deckstats import deck_stats, stat_cards, stats_after
 from commander.models import COMMANDER_CATEGORY, Deck
@@ -45,7 +45,7 @@ def decklist_json(
     held = {card_key(card.name) for card in deck.main_cards}
     edits = _Edits(
         board,
-        _copy_limits(main, db),
+        copy_limits(main, db),
         frozenset(card_key(name) for card in board.queued for name in (card.name, card.choice) if name),
     )
     groups = [
@@ -98,15 +98,6 @@ def _pending_adds(board: Board, db: CardDb, held: set[str]) -> list[PendingAdd]:
         for card in queued
         if (info := infos.get(card.oracle_id)) is not None
     ]
-
-
-def _copy_limits(main: Sequence[ResolvedCard], db: CardDb) -> dict[str, int | None]:
-    texts = db.card_texts(r.info.oracle_id for r in main if r.info is not None)
-    return {
-        card_key(r.card.name): copy_limit(r.info, text.text if (text := texts.get(r.info.oracle_id)) else "")
-        for r in main
-        if r.info is not None
-    }
 
 
 def _group_json(

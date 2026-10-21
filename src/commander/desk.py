@@ -565,6 +565,15 @@ class Desk:
 
     @_guarded
     def decks(self) -> Json:
+        try:
+            with self._db() as db:
+                return self._deck_rows(db)
+        except CardDataError as error:
+            # Before the first sync there is no card data: count every open card.
+            log.info("deck list without card data: %s", error)
+            return self._deck_rows(None)
+
+    def _deck_rows(self, db: CardDb | None) -> Json:
         rows: list[Json] = []
         for stored in self._workspace.load_all():
             row: Json = {
@@ -582,7 +591,7 @@ class Desk:
                 row["error"] = str(error)
             else:
                 row["queued"] = board.pending
-                held = held_keys(stored.deck)
+                held = held_keys(stored.deck, db) if db else frozenset[str]()
                 row["open"] = sum(
                     1 for c in board.cards if c.status is Status.OPEN and card_key(c.name) not in held
                 )
@@ -610,7 +619,7 @@ class Desk:
             rules = with_ideas(self._deck_rules(stored, main, profile, db), infos.values(), db)
             budget = resolved_budget(stored.deck.bracket, main, profile.max_card_cents)
             shares = self._shares(stored)
-            held = held_keys(stored.deck)
+            held = held_keys(stored.deck, db)
             cards = [
                 {
                     **self._card_view(db, card),

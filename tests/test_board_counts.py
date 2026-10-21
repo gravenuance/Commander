@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from commander.answers import card_key
 from commander.archidekt import parse_deck
 from commander.archidekt_edit import ArchidektEditor
 from commander.board import (
@@ -18,6 +19,7 @@ from commander.board import (
     CountChange,
     Status,
     board_plan,
+    held_keys,
     read_activity,
     read_board,
 )
@@ -121,6 +123,14 @@ def test_the_copy_limit_comes_from_the_type_line_and_the_rules_text(db: CardDb) 
     assert limit("Dragon's Approach") is None
     assert limit("Seven Dwarves") == 7
     assert limit("Battered Golem") == 1
+
+
+def test_only_cards_a_deck_may_run_one_of_count_as_held(deck: Deck, db: CardDb) -> None:
+    # The others stay ideas, since the mana tab and the decklist adjust their counts (ADR 0046).
+    held = held_keys(deck, db)
+
+    assert card_key("Battered Golem") in held
+    assert not {card_key(n) for n in ("Mountain", "Dragon's Approach", "Seven Dwarves")} & held
 
 
 def test_plus_on_a_basic_land_queues_one_more_and_logs_it(tmp_path: Path, service: BoardService) -> None:

@@ -3,8 +3,10 @@ says otherwise, as Relentless Rats ("A deck can have any number of cards named .
 ("A deck can have up to seven cards named ...") do."""
 
 import re
+from collections.abc import Sequence
 
-from commander.carddb import CardInfo
+from commander.answers import card_key
+from commander.carddb import CardDb, CardInfo, ResolvedCard
 
 _ANY_NUMBER = re.compile(r"\ba deck can have any number of cards named\b", re.IGNORECASE)
 _UP_TO = re.compile(r"\ba deck can have up to (\w+) cards named\b", re.IGNORECASE)
@@ -32,3 +34,13 @@ def copy_limit(info: CardInfo, text: str) -> int | None:
         return 1
     word = found.group(1).casefold()
     return int(word) if word.isdigit() else _NUMBERS.get(word, 1)
+
+
+def copy_limits(cards: Sequence[ResolvedCard], db: CardDb) -> dict[str, int | None]:
+    """Each card's copy limit by `card_key`, for the cards the card data knows."""
+    texts = db.card_texts(r.info.oracle_id for r in cards if r.info is not None)
+    return {
+        card_key(r.card.name): copy_limit(r.info, text.text if (text := texts.get(r.info.oracle_id)) else "")
+        for r in cards
+        if r.info is not None
+    }

@@ -9,7 +9,8 @@
   `missing`. The app closes the open deck with a notice if it was the one removed.
 - A card in the deck is never in Considering (ADR 0046): `sync` closes every open card the deck's main list
   now holds as applied ("already in the deck") and prints `<deck> board: closed ...`, and the app hides such a
-  card without waiting for the sync. Sideboard and Maybeboard cards and basic lands stay ideas. A queued card
+  card without waiting for the sync. Sideboard and Maybeboard cards, basic lands and cards a deck may run more
+  than one of stay ideas. A queued card
   the deck holds stays queued for Review's "Mark N card(s) applied".
 - The board file is version 3 (count changes); an older one is kept as `board.v2.bak` on its first save.
 - The side panels' titles look like the Meta panel's sub-toggles, with the same markers on one line, and both
