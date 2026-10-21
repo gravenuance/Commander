@@ -245,6 +245,45 @@ def test_no_cut_yet_ideas_fill_their_own_panel_and_hide_it_when_there_are_none()
     assert shown["none"] == {"panel": True, "count": ""}
 
 
+def test_considering_and_no_cut_yet_never_list_a_card_the_deck_holds() -> None:
+    shown = run("""
+    renderConsidering([
+      card({ id: "a", name: "Held With Cut", held: true }),
+      card({ id: "b", name: "Held No Cut", held: true, targets: [] }),
+      card({ id: "c", name: "Sideboard Card", held: false }),
+      card({ id: "d", name: "Waiting", held: false, targets: [] }),
+    ]);
+    return { considering: texts($("list-considering"), ".card-name"),
+      uncut: texts($("list-uncut"), ".card-name"),
+      count: $("count-considering").textContent, uncutCount: $("count-uncut").textContent };
+    """)
+    assert shown == {
+        "considering": ["Sideboard Card"],
+        "uncut": ["Waiting"],
+        "count": "(1)",
+        "uncutCount": "(1)",
+    }
+
+
+def test_a_queued_card_the_deck_holds_stays_in_considering_for_review_to_mark_applied() -> None:
+    names = run("""
+    renderConsidering([card({ id: "q", name: "Queued", status: "add", choice: "Sol Ring", held: true })]);
+    return texts($("list-considering"), ".card-name");
+    """)
+    assert names == ["Queued"]
+
+
+def test_a_card_leaves_considering_when_the_reloaded_view_has_it_in_the_deck() -> None:
+    seen = run("""
+    renderConsidering([card({ id: "a", name: "Bolt", held: false })]);
+    const before = texts($("list-considering"), ".card-name");
+    renderConsidering([card({ id: "a", name: "Bolt", held: true })]);
+    return { before, after: texts($("list-considering"), ".card-name"),
+      empty: $("empty-considering").hidden };
+    """)
+    assert seen == {"before": ["Bolt"], "after": [], "empty": False}
+
+
 def test_opening_another_deck_shows_only_its_own_no_cut_yet_ideas() -> None:
     """Deck A's no-cut tiles must not stay in the panel once deck B is open."""
     shown = run("""

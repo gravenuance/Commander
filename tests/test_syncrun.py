@@ -4,6 +4,7 @@ import logging
 import shutil
 import threading
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -688,3 +689,63 @@ def test_a_sync_judges_an_alike_idea_only_when_every_commander_group_was_read(
 
     whole = sync_outcome(tmp_path, fake, monkeypatch, data, AdjacentDecks(pool, ()))
     assert whole.turned_down == {stored.deck.short_name: ["Arcane Signet"]}
+
+
+HELD_LATER = ("Disruptor Flute", "Battered Golem")
+
+
+def test_a_sync_closes_the_open_ideas_the_main_deck_holds_and_keeps_the_others(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake, stored = populated(tmp_path, raw_deck, card_db_file)
+    # Proposed while the deck lacked the first two; a save or the user on Archidekt put them in since.
+    earlier = replace(stored.deck, cards=tuple(c for c in stored.deck.cards if c.name not in HELD_LATER))
+    with CardDb(card_db_file) as db:
+        service = BoardService(stored.folder, earlier, db, now=lambda: NOW)
+        flute = service.propose("Disruptor Flute", Actor.CMDR, origin=Origin.META)
+        golem = service.propose("Battered Golem", Actor.YOU)
+        # In the Sideboard, in the Maybeboard, and a basic land the deck can always take more of.
+        warp = service.propose("Chaos Warp", Actor.YOU)
+        hoverbike = service.propose("High-Speed Hoverbike", Actor.CMDR, origin=Origin.META)
+        mountain = service.propose("Mountain", Actor.YOU)
+
+    outcome = sync_outcome(tmp_path, fake, monkeypatch, lists_with("High-Speed Hoverbike", 9))
+
+    cards = {"flute": flute, "golem": golem, "warp": warp, "hoverbike": hoverbike, "mountain": mountain}
+    assert {name: status_of(stored.folder, card.id) for name, card in cards.items()} == {
+        "flute": Status.APPLIED,
+        "golem": Status.APPLIED,
+        "warp": Status.OPEN,
+        "hoverbike": Status.OPEN,
+        "mountain": Status.OPEN,
+    }
+    closed = read_board(stored.folder).find(flute.id)
+    assert closed is not None
+    assert closed.note == "already in the deck"
+    assert outcome.closed == {stored.deck.short_name: ["Disruptor Flute", "Battered Golem"]}
+    assert outcome.turned_down == {}
+    [first, second] = [a for a in read_activity(stored.folder) if a.action == "closed"]
+    assert (first.actor, first.card, first.detail) == (Actor.CMDR, "Disruptor Flute", "already in the deck")
+    assert second.card == "Battered Golem"
+    assert fake.writes == []
+
+
+def test_a_sync_leaves_a_queued_card_the_deck_now_holds_for_review_to_mark_applied(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake, stored = populated(tmp_path, raw_deck, card_db_file)
+    with CardDb(card_db_file) as db:
+        service = BoardService(stored.folder, stored.deck, db, now=lambda: NOW)
+        warp = service.propose("Chaos Warp", Actor.YOU)
+        service.decide(warp.id, Status.ADD, Actor.YOU, choice="Disruptor Flute")
+    # The deck as a later pull finds it: Chaos Warp moved from the Sideboard into a category in the deck.
+    moved = copy.deepcopy(raw_deck)
+    for entry_ in moved["cards"]:
+        if entry_["card"]["oracleCard"]["name"] == "Chaos Warp":
+            entry_["categories"] = ["Stax"]
+    Workspace(tmp_path / "decks").save(parse_deck(moved))
+
+    outcome = sync_outcome(tmp_path, fake, monkeypatch, lists_with("High-Speed Hoverbike", 9))
+
+    assert status_of(stored.folder, warp.id) is Status.ADD
+    assert outcome.closed == {}

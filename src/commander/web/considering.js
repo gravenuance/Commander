@@ -4,8 +4,13 @@
 
 /* Considering: every board card with somewhere to go, plus those already queued */
 
+// An open card the main deck holds is no idea (ADR 0046); a queued one stays for Review to mark applied.
+function isOpenIdea(card) {
+  return card.status === "open" && !card.held;
+}
+
 function considering(cards) {
-  return sortSuggestions(cards.filter((c) => c.status === "add" || (c.status === "open" && c.targets.length)));
+  return sortSuggestions(cards.filter((c) => c.status === "add" || (isOpenIdea(c) && c.targets.length)));
 }
 
 // Your cards, then Claude's, then meta ideas, then the deck's own commander's Archidekt decks, then alike
@@ -73,7 +78,7 @@ function sortSuggestions(cards) {
 
 // Ideas with no deck card named to replace yet; selecting one offers every deck card as its cut.
 function uncut(cards) {
-  return sortSuggestions(cards.filter((c) => c.status === "open" && !c.targets.length));
+  return sortSuggestions(cards.filter((c) => isOpenIdea(c) && !c.targets.length));
 }
 
 function renderConsidering(cards) {

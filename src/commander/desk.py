@@ -42,6 +42,7 @@ from commander.board import (
     card_json,
     count_json,
     files_stamp,
+    held_keys,
     read_activity,
     read_board,
 )
@@ -581,7 +582,10 @@ class Desk:
                 row["error"] = str(error)
             else:
                 row["queued"] = board.pending
-                row["open"] = sum(1 for c in board.cards if c.status is Status.OPEN)
+                held = held_keys(stored.deck)
+                row["open"] = sum(
+                    1 for c in board.cards if c.status is Status.OPEN and card_key(c.name) not in held
+                )
             rows.append(row)
         rows.sort(key=lambda row: str(row["short"]).casefold())
         return {"decks": rows}
@@ -606,9 +610,11 @@ class Desk:
             rules = with_ideas(self._deck_rules(stored, main, profile, db), infos.values(), db)
             budget = resolved_budget(stored.deck.bracket, main, profile.max_card_cents)
             shares = self._shares(stored)
+            held = held_keys(stored.deck)
             cards = [
                 {
                     **self._card_view(db, card),
+                    "held": card_key(card.name) in held,
                     "withinBudget": None
                     if budget.working is None
                     else budget.within(info.cheapest_cents if (info := infos.get(card.oracle_id)) else None),

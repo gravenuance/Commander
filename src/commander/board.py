@@ -58,6 +58,8 @@ LOCK_TIMEOUT_SECONDS = 10.0
 STALE_LOCK_SECONDS = 60.0
 # How far a turned-down card's share of the lists read must rise before it is offered again.
 RETURN_RISE = 0.20
+# Why a sync closes an open card the main deck holds.
+ALREADY_IN_THE_DECK = "already in the deck"
 _LOCK_POLL_SECONDS = 0.05
 # Basic land names, Wastes included, for telling a basic swap; manabase and manaplan list only the five
 # coloured basics, by type or colour, because Wastes has no land type and makes no colour.
@@ -478,6 +480,12 @@ def already_added(deck: Deck, board: Board) -> tuple[BoardCard, ...]:
     return tuple(card for card in board.queued if _holds(deck, card))
 
 
+def held_keys(deck: Deck) -> frozenset[str]:
+    """The `card_key` of every card the main deck holds, except basic lands, which are always added to: an
+    open card of one of these is no idea, so Considering never lists it (ADR 0046)."""
+    return frozenset(key for key in _held(deck) if not _is_basic_land(key))
+
+
 def _holds(deck: Deck, card: BoardCard) -> bool:
     """Whether deck already holds every copy the card adds; a basic land is always added to."""
     return not _is_basic_land(card.name) and _held(deck)[card_key(card.name)] >= card.copies
@@ -797,6 +805,32 @@ class BoardService:
                 _swap(board, updated),
                 Activity(stamp, Actor.CMDR, _DECISIONS[Status.REJECTED], card.name, note),
             )
+            return updated
+
+    def close_held(self) -> list[BoardCard]:
+        """Close every open card the main deck now holds as applied, noting "already in the deck", whoever put
+        it on the board and even when the user reopened it: such a card is no idea (ADR 0046). A card that
+        leaves the deck again comes back as an idea at the next sync (`feed_ideas`). Returns the cards closed,
+        in board order; queued cards are left to Review's mark-applied path."""
+        held = held_keys(self._deck)
+        open_held = [
+            card.id
+            for card in read_board(self._folder).cards
+            if card.status is Status.OPEN and card_key(card.name) in held
+        ]
+        closed = (self._close_if_open(card_id) for card_id in open_held)
+        return [card for card in closed if card is not None]
+
+    def _close_if_open(self, key: str) -> BoardCard | None:
+        with self._editing() as (board, save):
+            card = board.find(key)
+            if card is None or card.status is not Status.OPEN:
+                return None
+            stamp = self._stamp()
+            updated = replace(
+                card, status=Status.APPLIED, note=ALREADY_IN_THE_DECK, updated_at=stamp, reconsidered=False
+            )
+            save(_swap(board, updated), Activity(stamp, Actor.CMDR, "closed", card.name, ALREADY_IN_THE_DECK))
             return updated
 
     def relabel_open(self, key: str, label: Relabel) -> BoardCard | None:

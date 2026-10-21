@@ -6,6 +6,7 @@ import logging
 import re
 import shutil
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from importlib import resources
 from pathlib import Path
@@ -226,6 +227,43 @@ def test_a_proposed_card_shows_with_its_card_facts(desk: Desk) -> None:
     assert "Magda, Brazen Outlaw" not in names(view, "deckCards")
     assert "Battered Golem" in names(view, "deckCards")
     assert [e["action"] for e in items(view, "activity")] == ["proposed (considering)"]
+
+
+def test_the_view_flags_the_cards_the_main_deck_holds_and_not_those_in_the_maybeboard(
+    desk: Desk, settings: DeskSettings
+) -> None:
+    workspace = Workspace(settings.workspace)
+    saved = workspace.load(DECK)
+    folder = workspace.folder_for(DECK)
+    assert saved is not None
+    assert folder is not None
+    # Proposed while the deck lacked the Golem, which a save or Archidekt put in since.
+    earlier = replace(saved, cards=tuple(c for c in saved.cards if c.name != "Battered Golem"))
+    with CardDb(settings.card_db) as db:
+        BoardService(folder, earlier, db, now=lambda: NOW).propose("Battered Golem", Actor.YOU)
+    for name in ("Lightning Bolt", "High-Speed Hoverbike"):
+        desk.propose(DECK, name)
+
+    held = {str(c["name"]): c["held"] for c in items(desk.deck(DECK), "cards")}
+
+    assert held == {"Battered Golem": True, "Lightning Bolt": False, "High-Speed Hoverbike": False}
+
+
+def test_a_card_a_save_just_put_in_the_deck_is_flagged_held_before_any_sync(
+    desk: Desk, settings: DeskSettings
+) -> None:
+    desk.propose(DECK, "Lightning Bolt")
+    assert [c["held"] for c in items(desk.deck(DECK), "cards")] == [False]
+    workspace = Workspace(settings.workspace)
+    saved = workspace.load(DECK)
+    assert saved is not None
+    bolt = replace(saved.main_cards[0], name="Lightning Bolt", categories=("Ramp",), entry_id=1)
+    workspace.save(replace(saved, cards=(*saved.cards, bolt)))
+
+    [card] = items(desk.deck(DECK), "cards")
+
+    assert card["held"] is True
+    assert items(desk.decks(), "decks")[0]["open"] == 0
 
 
 def test_decisions_and_removal_round_trip(desk: Desk) -> None:

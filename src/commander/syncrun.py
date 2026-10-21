@@ -21,7 +21,7 @@ import httpx
 from commander.archidekt import ArchidektClient, ArchidektError, AuthError
 from commander.archidekt_edit import ArchidektAuth, ArchidektEditor
 from commander.background import in_background
-from commander.board import BoardCard, BoardError, Origin
+from commander.board import BoardCard, BoardError, BoardService, Origin
 from commander.carddb import CARD_DB_FILE, CardDataError, CardDb
 from commander.config import MetaSettings
 from commander.credentials import CredentialError, TokenStore
@@ -94,11 +94,13 @@ class SyncOutcome:
     cards: CardStatus
     # The account's card labels, None when not signed in, on a dry run or when the read failed.
     labels: list[tuple[str, str]] | None
-    # Per deck, by short name: the ideas turned down for no longer passing the idea test, and those compiled.
+    # Per deck, by short name: the ideas turned down for no longer passing the idea test, those compiled and
+    # the open cards closed because the main deck holds them (ADR 0046).
     turned_down: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
     ideas: dict[str, dict[Origin, list[BoardCard]]] = field(
         default_factory=dict[str, dict[Origin, list[BoardCard]]]
     )
+    closed: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
     # What went wrong without stopping the sync, one sentence each.
     warnings: list[str] = field(default_factory=list[str])
 
@@ -172,7 +174,7 @@ def run_sync(
     if options.dry_run:
         return SyncOutcome(results, cards, labels, warnings=warnings)
     _add_grace_tables(workspace, warnings, deck_lock)
-    ideas, turned_down = (
+    ideas, turned_down, closed = (
         _compile_ideas(
             workspace,
             user,
@@ -185,9 +187,9 @@ def run_sync(
             deck_lock=deck_lock,
         )
         if options.ideas
-        else ({}, {})
+        else ({}, {}, {})
     )
-    return SyncOutcome(results, cards, labels, turned_down, ideas, warnings)
+    return SyncOutcome(results, cards, labels, turned_down, ideas, closed, warnings)
 
 
 def _add_grace_tables(workspace: Workspace, warnings: list[str], deck_lock: DeckLock) -> None:
@@ -289,9 +291,10 @@ def _compile_ideas(
     priority: FetchPriority | None,
     on_deck: DeckProgress,
     deck_lock: DeckLock,
-) -> tuple[dict[str, dict[Origin, list[BoardCard]]], dict[str, list[str]]]:
-    """Each deck's new ideas from the meta and recent Archidekt decks (ADR 0028), by short name, and the open
-    ideas turned down on the way for no longer passing the idea test.
+) -> tuple[dict[str, dict[Origin, list[BoardCard]]], dict[str, list[str]], dict[str, list[str]]]:
+    """Each deck's new ideas from the meta and recent Archidekt decks (ADR 0028), by short name, the open
+    ideas turned down on the way for no longer passing the idea test, and the open cards closed first
+    because the main deck holds them (ADR 0046).
 
     Answers under a day old come from the cache. A deck whose sources fail keeps its board as it was.
     The decks go in the order of how often the user opens them, and the one the priority names goes
@@ -302,9 +305,10 @@ def _compile_ideas(
         db = CardDb(services.cache / CARD_DB_FILE)
     except CardDataError as error:
         warnings.append(f"ideas not compiled: {error}")
-        return {}, {}
+        return {}, {}, {}
     found: dict[str, dict[Origin, list[BoardCard]]] = {}
     turned_down: dict[str, list[str]] = {}
+    closed: dict[str, list[str]] = {}
     with db, services.client_factory() as http:
         sources = meta_sources(http, services.pacer_factory, user, settings)
         waiting = _most_viewed_first(workspace.load_all(), services)
@@ -337,6 +341,10 @@ def _compile_ideas(
                         warnings.append(f"{deck.short_name} ideas not merged: {_GONE}")
                         on_deck(deck.id, FetchState.INCOMPLETE)
                         continue
+                    # Before the re-judge, so a held card is closed and not turned down for its share.
+                    held = BoardService(current.folder, current.deck, db, now=services.now).close_held()
+                    if held:
+                        closed[deck.short_name] = [card.name for card in held]
                     dropped = rejudge_ideas(
                         current,
                         data,
@@ -360,7 +368,7 @@ def _compile_ideas(
                 warnings.append(f"{deck.short_name}: no meta or Archidekt decks to learn from ({why})")
             incomplete = len(warnings) > warned or data.peers.data is None
             on_deck(deck.id, FetchState.INCOMPLETE if incomplete else FetchState.DONE)
-    return found, turned_down
+    return found, turned_down, closed
 
 
 _GONE = "the deck left its folder or changed its commander while its ideas were fetched"

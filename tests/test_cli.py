@@ -7,9 +7,10 @@ from pathlib import Path
 import httpx
 import pytest
 
-from commander import __version__
+from commander import __version__, cli
 from commander.cli import main
 from commander.credentials import SERVICE
+from commander.syncrun import CardState, CardStatus, SyncOutcome
 from conftest import CARDS_URL, REFRESH_TOKEN, FakeArchidekt, Json, MemoryKeyring, card_entry
 
 NO_CARDS = "card data: skipped, --no-cards\n"
@@ -224,6 +225,21 @@ def test_sync_dry_run_says_what_it_would_remove(
         "card data: skipped, dry run\n"
     )
     assert (tmp_path / "decks" / "222-other" / "deck.json").is_file()
+
+
+def test_sync_prints_the_ideas_it_closed_because_the_deck_holds_them(
+    tmp_path: Path, archidekt: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def finished(*_: object, **__: object) -> SyncOutcome:
+        skipped = CardStatus(CardState.SKIPPED, "--no-cards")
+        return SyncOutcome([], skipped, None, closed={"Magda": ["Disruptor Flute", "Sol Ring"]})
+
+    monkeypatch.setattr(cli, "run_sync", finished)
+
+    result = sync(tmp_path, archidekt)
+
+    [line] = [line for line in result.out.splitlines() if "board:" in line]
+    assert line == "Magda board: closed Disruptor Flute, Sol Ring (already in the deck)"
 
 
 def test_sync_json_gives_the_removed_status(

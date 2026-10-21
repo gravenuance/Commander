@@ -117,13 +117,15 @@ def test_a_second_swap_after_a_saved_one_is_reviewed_and_saved(env: Env, cut: st
     assert desk.deck(DECK)["pending"] == 0
 
 
-def test_queueing_a_card_the_synced_deck_already_holds_is_refused(env: Env) -> None:
+def test_an_idea_the_synced_deck_holds_is_closed_and_cannot_be_queued(env: Env) -> None:
     desk = signed_in(env)
     desk.propose(DECK, "Arcane Signet")
     add_on_archidekt(env.fake, "Arcane Signet")
     env.fake.decks[DECK]["updatedAt"] = "2026-10-16T12:00:00.000000Z"
     desk.sync()
 
-    answer = desk.decide(DECK, card_id(desk, "Arcane Signet"), "add", "Disruptor Flute", "")
+    signet = next(c for c in cast("list[Json]", desk.deck(DECK)["cards"]) if c["name"] == "Arcane Signet")
+    answer = desk.decide(DECK, str(signet["id"]), "add", "Disruptor Flute", "")
 
-    assert answer == {"error": "Arcane Signet is already in the deck; remove it from the board"}
+    assert (signet["status"], signet["note"], signet["held"]) == ("applied", "already in the deck", True)
+    assert answer == {"error": "Arcane Signet is already in the deck"}
