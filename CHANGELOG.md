@@ -49,6 +49,8 @@
   "5 → 3" was queued, the save no longer adds three copies back. A queued increase means "at least". `sync`
   clears the count changes the deck already meets and prints `<deck> board: cleared ...`, so they no longer
   count as pending or block choosing the card as a cut.
+- A queued count increase of a card the deck no longer holds is dropped like a decrease: when the card was cut
+  on Archidekt after "3 → 5" was queued, the next save no longer adds five copies back (ADR 0043).
 - A label change no longer holds the card data open across its Archidekt call, and a decision or a removal
   made while a first sync is still downloading the card data says to wait for it instead of "run cmdr sync"
   (ADR 0042).
