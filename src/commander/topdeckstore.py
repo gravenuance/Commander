@@ -19,7 +19,8 @@ from commander.tournaments import DecklistCard, Entry, Tournament
 
 log = logging.getLogger(__name__)
 
-STORE_VERSION = 1
+# 2: events of 16+ players; a store filled at 64+ is fetched again, since its coverage misses smaller events.
+STORE_VERSION = 2
 FOLDER = "topdeck"
 _EVENTS = "events"
 _COVERAGE = "coverage.json"

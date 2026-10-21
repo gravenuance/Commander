@@ -7,10 +7,10 @@
   (ADR 0047). Each user needs a free TopDeck key: `cmdr topdeck` asks for it (never on the command line), or
   the app's new **TopDeck** button has the steps, a **Test key** and a **Save key**; it is kept in Windows
   Credential Manager. Without one, `meta`, `sync` and the app say why the tournament lists are missing and carry
-  on with Archidekt's decks. Events of 64+ players are fetched a week at a time, two seconds apart, only for
+  on with Archidekt's decks. Events of 16+ players are fetched three days at a time, two seconds apart, only for
   days not seen yet, and kept per event in the cache folder; the commander's lists and the most-played
   commanders and their shares are worked out from them, and player names and ids are never stored. `[meta]
-  min_event_size` now runs from 64 and defaults to it. Every place the data shows, the app's Meta and
+  min_event_size` keeps its floor and default of 16. Every place the data shows, the app's Meta and
   Considering panels and the CLI output, credits and links TopDeck.gg.
 - `sync` now deletes the folder of a deck deleted on Archidekt (ADR 0045), where it only reported it before: a
   signed-in sync does so when the deck is missing from the complete listing and its own page answers 404, and

@@ -125,13 +125,13 @@ def test_partners_are_filed_under_both_names_in_alphabetical_order(tmp_path: Pat
 # What is asked for, and when
 
 
-def test_the_first_run_asks_for_every_week_of_the_window_oldest_first(tmp_path: Path) -> None:
+def test_the_first_run_asks_for_every_chunk_of_the_window_oldest_first(tmp_path: Path) -> None:
     fake = FakeTopdeck()
     ask(client_for(fake, tmp_path))
     starts = [r["start"] for r in fake.requests]
     ends = [r["end"] for r in fake.requests]
-    # 61 days from 16 August to 15 October: eight weeks and five days, back to back.
-    assert len(fake.requests) == 9
+    # 61 days from 16 August to 15 October: twenty chunks of three days and one of one, back to back.
+    assert len(fake.requests) == 21
     assert starts[0] == stamp(2026, 8, 16)
     assert ends[-1] == stamp(2026, 10, 15, last_second=True)
     assert all(end - start + 1 <= CHUNK_DAYS * DAY for start, end in zip(starts, ends, strict=True))
@@ -140,7 +140,7 @@ def test_the_first_run_asks_for_every_week_of_the_window_oldest_first(tmp_path: 
     assert (body["game"], body["format"], body["participantMin"], body["columns"]) == (
         "Magic: The Gathering",
         "EDH",
-        64,
+        16,
         ["decklist"],
     )
 
@@ -173,15 +173,29 @@ def test_asking_again_the_same_day_asks_nothing(tmp_path: Path) -> None:
     assert len(fake.requests) == asked
 
 
+def test_a_store_from_another_version_is_fetched_again(tmp_path: Path) -> None:
+    fake = FakeTopdeck()
+    first = ask(client_for(fake, tmp_path))
+    asked = len(fake.requests)
+    # A store filled at 64+ players (version 1) does not cover the smaller events.
+    coverage = tmp_path / FOLDER / "coverage.json"
+    coverage.write_text(coverage.read_text(encoding="utf-8").replace('"version":2', '"version":1'), "utf-8")
+
+    assert ask(client_for(fake, tmp_path)) == first
+    assert len(fake.requests) == 2 * asked
+
+
 def test_the_next_day_asks_only_from_the_last_settled_day(tmp_path: Path) -> None:
     fake = FakeTopdeck()
     ask(client_for(fake, tmp_path))
     fake.requests.clear()
     ask(client_for(fake, tmp_path), since=date(2026, 8, 17), until=date(2026, 10, 16))
     # The first run settled up to the end of 12 October (three days before the end of the 15th); events
-    # that started later may still have been playing.
-    [body] = fake.requests
-    assert (body["start"], body["end"]) == (stamp(2026, 10, 13), stamp(2026, 10, 16, last_second=True))
+    # that started later may still have been playing. Four days take two chunks.
+    assert [(r["start"], r["end"]) for r in fake.requests] == [
+        (stamp(2026, 10, 13), stamp(2026, 10, 15, last_second=True)),
+        (stamp(2026, 10, 16), stamp(2026, 10, 16, last_second=True)),
+    ]
 
 
 def test_an_event_that_finished_after_the_last_run_arrives_with_its_decks(tmp_path: Path) -> None:
@@ -215,7 +229,7 @@ def test_events_older_than_the_window_are_dropped_from_the_folder(tmp_path: Path
     assert len(list((tmp_path / FOLDER / "events").glob("*.json"))) == 4
 
 
-def test_a_failed_week_keeps_what_came_before_it(tmp_path: Path) -> None:
+def test_a_failed_chunk_keeps_what_came_before_it(tmp_path: Path) -> None:
     fake = FakeTopdeck()
     calls = 0
 
@@ -234,8 +248,8 @@ def test_a_failed_week_keeps_what_came_before_it(tmp_path: Path) -> None:
         ask(broken)
     fake.requests.clear()
     ask(client_for(fake, tmp_path))
-    # Three weeks were stored; the rest of the nine is asked for, starting where the stored ones end.
-    assert len(fake.requests) == 6
+    # Three chunks were stored; the rest of the 21 is asked for, starting where the stored ones end.
+    assert len(fake.requests) == 18
     assert fake.requests[0]["start"] == stamp(2026, 8, 16) + 3 * CHUNK_DAYS * DAY
 
 
@@ -252,7 +266,7 @@ def test_two_readers_at_once_fetch_the_window_once(tmp_path: Path) -> None:
         thread.start()
     for thread in threads:
         thread.join()
-    assert len(fake.requests) == 9
+    assert len(fake.requests) == 21
     assert results[0] == results[1]
 
 

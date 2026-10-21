@@ -185,9 +185,9 @@ def test_queries_follow_the_config_and_leave_out_the_users_own_deck(home: Path, 
     config.write_text("version = 1\n[meta]\nmin_event_size = 100\nmeta_commanders = 1\n", encoding="utf-8")
     result = meta(home, fake, "magda")
     assert result.code == 0, result.err
-    # TopDeck is asked for events of 64 players or more whatever the config says; the config's 100 is
+    # TopDeck is asked for events of 16 players or more whatever the config says; the config's 100 is
     # applied to what was stored, so Magda's two events of 64 do not count and only Kinnan's 120 does.
-    assert {r["participantMin"] for r in fake.topdeck.requests} == {64}
+    assert {r["participantMin"] for r in fake.topdeck.requests} == {16}
     assert "  TopDeck has no lists for this commander" in result.out.splitlines()
     assert [s.split()[0] for s in section(result.out, "Most-played commanders")] == ["1"]
     assert f"/api/decks/{DECK_ID}/" not in fake.requests

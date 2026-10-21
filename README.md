@@ -242,7 +242,7 @@ a few minutes, because requests are spaced out. The sample sizes are set in the 
 ```toml
 [meta]
 window_days = 60       # 7 to 90
-min_event_size = 64    # smallest tournament counted, 64 to 1000
+min_event_size = 16    # smallest tournament counted, 16 to 1000
 peer_decks = 60        # most Archidekt decks read per commander, 0 to 60 (0 reads none)
 meta_commanders = 10   # most-played commanders searched for answers and combos
 meta_lists = 30        # best-placed lists read per meta commander
@@ -262,7 +262,7 @@ saved in Windows Credential Manager (service `Commander (cmdr) TopDeck`, user `a
 command line, into a file or into the log. `cmdr topdeck --key-stdin` reads it from stdin for scripts,
 `--no-check` saves it without asking TopDeck, and `--remove` forgets it.
 
-Events of 64 players or more are fetched a week at a time, two seconds apart (TopDeck allows 100 requests a
+Events of 16 players or more are fetched three days at a time, two seconds apart (TopDeck allows 100 requests a
 minute, fewer for bulk queries), and each is kept in the cache folder (`topdeck\`) as the commander and the
 cards of each deck with its finish, so a day later only the new days are asked for, and the last three days
 again because an event that started then may not have finished. Players' names and ids are dropped as the
@@ -726,7 +726,7 @@ defaults.
 | Config file | `--config` | `CMDR_CONFIG` | n/a | `%APPDATA%\Commander\config.toml` |
 | Cache folder: card data, meta answers, other players' decks, view scores (`views.json`), logs | n/a | `CMDR_CACHE_DIR` | n/a | `%LOCALAPPDATA%\Commander` |
 | Role targets for `suggest` | n/a | n/a | `[targets]` table | ramp 10, draw 10, removal 8, board_wipe 2 |
-| Sample sizes for `meta` and `sync` | n/a | n/a | `[meta]` table | 60 days, events of 64+, up to 60 Archidekt decks, 10 commanders, 30 lists each |
+| Sample sizes for `meta` and `sync` | n/a | n/a | `[meta]` table | 60 days, events of 16+, up to 60 Archidekt decks, 10 commanders, 30 lists each |
 | Archidekt login for `apply --save`, and for `sync` to read private and unlisted decks | `cmdr login` | n/a | n/a | none; the token is kept in Windows Credential Manager |
 | TopDeck.gg API key for the tournament lists | `cmdr topdeck`, or the app's TopDeck button | n/a | n/a | none; the key is kept in Windows Credential Manager |
 | App log detail | n/a | `CMDR_LOG_LEVEL` | n/a | `INFO` |
@@ -749,7 +749,7 @@ Tests use recorded fixture data and never touch the network.
 | Archidekt (`archidekt.com/api`) | Reading decks; changing them with `apply --save` | Public decks need no login; changes, and `sync` of your private and unlisted decks, need `cmdr login`, whose token lives in Windows Credential Manager and is refreshed on each save and each sync. The API is undocumented, so every response's shape is checked and a clear message names what changed. A save makes a handful of requests, never retried. Its written terms forbid automated requests; its co-founder has said on its forum that the API is open to use. See [ADR 0004](docs/adr/0004-deck-changes-through-archidekts-site-api.md). |
 | Scryfall (`api.scryfall.com/bulk-data`, files on `data.scryfall.io`; card images from `cards.scryfall.io` in the app) | Card facts, rules text, EUR prices, Tagger tags for roles and profiles, card art | One API call per `sync` for the file list; the files themselves have no rate limit. Scryfall updates prices once a day and asks for bulk files rather than per-card calls for lookups like these. Tag data is community-maintained and can change. See [ADR 0001](docs/adr/0001-scryfall-bulk-card-data.md). |
 | Commander Spellbook (`backend.commanderspellbook.com`: `estimate-bracket`, `find-my-combos`) | Bracket estimates, combos, and combos one card short | One request per deck and command, at most four at a time, and none while a cached answer is under 7 days old. Spellbook asks tools to name themselves in the User-Agent, keep to a few calls per user action, stay under about 80 requests a minute, handle 429, and credit and link back to commanderspellbook.com, which `bracket` and `suggest` do in their output. Only card names and quantities are sent. See [ADR 0002](docs/adr/0002-bracket-estimates-from-commander-spellbook.md) and [ADR 0003](docs/adr/0003-suggestions-from-spellbook-and-scryfall.md). |
-| TopDeck.gg (`topdeck.gg/api/v2/tournaments`) | Commander tournaments with decklists, for the commander's lists and the most-played commanders in `meta` and `sync`'s ideas | A free key for each user (`cmdr topdeck`, or the app), sent in the `Authorization` header and kept in Windows Credential Manager; it does not expire unless TopDeck revokes it. 100 requests a minute, fewer for bulk queries: events of 64+ players are asked for a week at a time, 2 s apart, only for days not seen yet, and kept per event in the cache folder; malformed events and decks are skipped and logged. Player names and ids are dropped as the answer is read. Any output that shows the data credits and links TopDeck.gg, as its terms ask. See [ADR 0047](docs/adr/0047-tournament-lists-from-topdeck-with-a-key-per-user.md). |
+| TopDeck.gg (`topdeck.gg/api/v2/tournaments`) | Commander tournaments with decklists, for the commander's lists and the most-played commanders in `meta` and `sync`'s ideas | A free key for each user (`cmdr topdeck`, or the app), sent in the `Authorization` header and kept in Windows Credential Manager; it does not expire unless TopDeck revokes it. 100 requests a minute, fewer for bulk queries: events of 16+ players are asked for three days at a time, 2 s apart, only for days not seen yet, and kept per event in the cache folder; malformed events and decks are skipped and logged. Player names and ids are dropped as the answer is read. Any output that shows the data credits and links TopDeck.gg, as its terms ask. See [ADR 0047](docs/adr/0047-tournament-lists-from-topdeck-with-a-key-per-user.md). |
 | Archidekt deck search (`archidekt.com/api/decks/v3/`) | Other players' recent decks for `meta` and `sync`'s ideas | Searches and deck reads 5 s apart, after a 429 a pause of at least 3 minutes, and a second 429 ends Archidekt for the run; at most 20 search pages and `peer_decks` (60) deck reads per commander, and a quarter of that per deck tag, for decks that search by tag. Search results are cached for a day, each deck read until its owner edits it. Your own decks are left out. Under the same informal permission as the rest of Archidekt's API (ADR 0004). See [ADR 0027](docs/adr/0027-reading-other-players-archidekt-decks.md). |
 | Commander Spellbook (`find-my-combos`, for `meta`) | The combos the most-played commanders' lists run | One request per meta commander, 1 s apart, cached for 7 days. |
 | EDHREC (via Scryfall's `edhrec_rank`) | Popularity ranks for `suggest` | Never contacted: the rank comes inside Scryfall's bulk files. EDHREC's terms forbid automated requests to its site. |

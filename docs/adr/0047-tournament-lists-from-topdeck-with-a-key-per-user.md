@@ -15,7 +15,7 @@ bulk queries), and terms that ask for a visible credit with a link to TopDeck.gg
 
 TopDeck gives events, not per-commander answers: each standing carries the decklist and a structured deck
 (`deckObj`: commanders, mainboard) in placement order, for about 86% of the entries. A 30-day answer for events
-of 64+ players is about 13 MB, so the answer has to be fetched in pieces and kept. It also has no spice rating
+of 16+ players is about 58 MB (13 MB at 64+), so the answer has to be fetched in pieces and kept. It also has no spice rating
 and no commander statistics, and each standing carries a player's name and id, which this tool has no use for.
 
 ## Options
@@ -25,18 +25,18 @@ and no commander statistics, and each standing carries a player's name and id, w
    automated requests.
 3. **TopDeck, one request per commander.** Its API cannot filter by commander, so every read would fetch the
    whole window again.
-4. **TopDeck, events fetched once and kept; lists and shares worked out locally.** One request per week of new
-   events, answers for any commander from the same files.
+4. **TopDeck, events fetched once and kept; lists and shares worked out locally.** One request per three days of
+   new events, answers for any commander from the same files.
 
 ## Decision
 
 Option 4, behind the provider seam that stood in front of EDHTop16 (`tournaments.TournamentSource`;
 `topdeck.TopdeckClient` is its one implementation), with these rules:
 
-- **Fetching** (`topdeck.py`). Only events of at least 64 players (`participantMin`, the floor of
+- **Fetching** (`topdeck.py`). Only events of at least 16 players (`participantMin`, the floor of
   `[meta] min_event_size`) and only the `decklist` column, so no names or ids are asked for. A window is
-  fetched by start date in weeks, oldest first, two seconds apart through the client's `Pacer`, saving each
-  week as it arrives, so a failure part-way keeps what came before it. Reads that need the same missing days
+  fetched by start date in three-day chunks (about 6 MB each, under the client's 20 MB cap), oldest first,
+  two seconds apart through the client's `Pacer`, saving each chunk as it arrives, so a failure part-way keeps what came before it. Reads that need the same missing days
   (the commander's lists and the meta field run side by side) wait on one lock and the second finds the events
   stored.
 - **Keeping** (`topdeckstore.py`). One compact JSON file per event in `<cache>\topdeck\events\` holding the
@@ -65,18 +65,21 @@ Option 4, behind the provider seam that stood in front of EDHTop16 (`tournaments
   the app's Meta and Considering panels and the TopDeck panel.
 - **Removed:** spice (spicy picks, the spice of `meta --card`, the `spice` JSON fields), the unknown-standing
   rule of the weighted share, and the tournament name and player results, which nothing read.
-- `[meta] min_event_size` runs from 64 and defaults to it, because smaller events are not fetched.
+- `[meta] min_event_size` runs from 16 and defaults to it, as with EDHTop16. The first build fetched 64+
+  only; on TopDeck's last 30 days to 2026-10-21 that gave Magda 22 lists, Etali 20, Glarb 12 and Ellivere
+  2, against 115, 101, 31 and 8 at 16+, too few for the idea test's lower bound (owner's call, 2026-10-21).
+  Small events stay small voices through the event-size factor (ADR 0026). The store went to version 2 so
+  a store filled at 64+ is fetched again.
 
 ## Consequences
 
 - The tool depends on a key each user issues; a user without one gets Archidekt's decks alone, as the report
   already allowed for a source that fails.
-- A first run for a 60-day window is nine requests (about 20 seconds paced); later runs are one small one a
-  day. The cache folder holds a few tens of megabytes of events for a 90-day window.
-- Meta shares are over decks with a structured list inside events of 64+, not EDHTop16's figures, so they
-  differ from what its site shows. The weighted share's event-size factor (ADR 0026) is still centred on 16
-  players although none now comes in under 64: every list weighs more, and the proportion to Archidekt decks
-  is unchanged only because each source's weights are scaled to a mean of one. Revisit if the ideas drift.
+- A first run for a 60-day window is about 21 requests and 115 MB (a minute or two, paced); later runs are
+  two small ones a day. The cache folder holds the compact events, far smaller than the answers.
+- Meta shares are over decks with a structured list inside events of 16+, not EDHTop16's figures, so they
+  differ from what its site shows. The event-size factor (ADR 0026) and the idea test's 0.30 bound were
+  tuned on lists from events of 16+, the same floor, so they stand unchanged. Revisit if the ideas drift.
 - TopDeck's answer has no `standing` field; the finish is the place in the list, which the API documents as
   the standings order. If it ever sorts otherwise, finishes and top cuts are wrong without an error.
 - The 3-day re-ask means an event that finishes later than that is missed until the window moves past it;

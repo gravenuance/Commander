@@ -14,6 +14,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
+from commander.config import MIN_EVENT_SIZE
 from commander.credentials import CredentialError, KeyStore
 from commander.jsonshape import (
     ShapeError,
@@ -47,11 +48,12 @@ FORMAT = "EDH"
 # Only the decklists are asked for: no player names or ids, and no results the tool does not read.
 COLUMNS = ("decklist",)
 # Events with fewer players say little about a list, and are not fetched at all.
-PARTICIPANT_MIN = 64
+PARTICIPANT_MIN = MIN_EVENT_SIZE
 # 100 requests a minute, fewer for bulk queries whose answers run to megabytes: one every two seconds.
 REQUEST_INTERVAL_SECONDS = 2.0
-# A week of Commander events is a few megabytes; the HTTP client caps an answer at 20.
-CHUNK_DAYS = 7
+# Three days of Commander events of 16+ players are about 6 MB (13.5 MB a week on 2026-10-21); the HTTP
+# client caps an answer at 20.
+CHUNK_DAYS = 3
 # Events that started in the last days may still be playing, so those days are asked for again next time.
 GRACE_DAYS = 3
 SLOW_QUERY_SECONDS = 30.0

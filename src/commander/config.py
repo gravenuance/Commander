@@ -34,7 +34,7 @@ class MetaSettings:
     # Only events and deck updates this many days back count.
     window_days: int = 60
     # Smaller events say little about a list, and TopDeck is asked for none under MIN_EVENT_SIZE players.
-    min_event_size: int = 64
+    min_event_size: int = 16
     # The most-viewed recent Archidekt decks read in full per commander, at most; 0 reads none.
     peer_decks: int = 60
     # Most-played commanders whose lists are searched for answers to the deck's key cards.
@@ -43,8 +43,10 @@ class MetaSettings:
     meta_lists: int = 30
 
 
-# The smallest event the tournament source is asked for (ADR 0047).
-MIN_EVENT_SIZE = 64
+# The smallest event the tournament source is asked for (ADR 0047). At 64, Magda, Etali and Glarb got a fifth
+# of the lists they get at 16 (TopDeck, 30 days to 2026-10-21), too few for the idea test; the event-size
+# factor (ADR 0026) already makes a small event a small voice.
+MIN_EVENT_SIZE = 16
 # Each [meta] key with its smallest and largest allowed value; the window is kept to three months so the
 # stored tournaments stay a few tens of megabytes.
 META_LIMITS: Mapping[str, tuple[int, int]] = {

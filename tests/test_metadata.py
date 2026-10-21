@@ -114,8 +114,8 @@ def ellivere_deck(*commanders: str) -> Deck:
     )
 
 
-# The 61 days of the window from 16 August to 15 October, asked for in weeks.
-WINDOW_REQUESTS = 9
+# The 61 days of the window from 16 August to 15 October, asked for three days at a time.
+WINDOW_REQUESTS = 21
 
 
 class Rig:
