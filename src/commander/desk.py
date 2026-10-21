@@ -107,6 +107,7 @@ from commander.weightedshare import (
 log = logging.getLogger(__name__)
 
 ACTIVITY_SHOWN = 60
+_MAX_MESSAGE_WORDS = 12  # ui.md
 _EXPECTED = (
     BoardError,
     CardDataError,
@@ -488,7 +489,10 @@ class Desk:
         if wait is _Wait.CARDS:
             return f"Wait for the card data to finish downloading, then {then}."
         if wait is _Wait.DECK and deck_id is not None:
-            return f"Wait for {self._deck_name(deck_id)} to finish syncing, then {then}."
+            text = f"Wait for {self._deck_name(deck_id)} to finish syncing, then {then}."
+            if len(text.split()) > _MAX_MESSAGE_WORDS:  # a deck known by a long name of its own
+                text = f"Wait for this deck to finish syncing, then {then}."
+            return text
         return f"Wait for the sync to finish, then {then}."
 
     def _deck_name(self, deck_id: int) -> str:

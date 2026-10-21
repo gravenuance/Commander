@@ -7,6 +7,7 @@ import shutil
 import threading
 from collections.abc import Callable, Collection, Generator
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from types import TracebackType
 from typing import cast
@@ -24,7 +25,7 @@ from commander.decklocks import DeckLocks
 from commander.desk import Desk, DeskSettings
 from commander.ideas import compile_ideas
 from commander.metadata import MetaData
-from commander.models import Deck
+from commander.models import COMMANDER_CATEGORY, Deck
 from commander.net import Fetcher, Pacer
 from commander.scryfall import CardRefresh
 from commander.store import StoredDeck, Workspace
@@ -253,6 +254,32 @@ def test_a_write_before_the_sync_has_listed_the_decks_is_refused_and_logged(
     )
     assert not fake.card_writes()
     assert "Arcane Signet" not in board_cards(settings)
+
+
+def test_a_refusal_for_a_deck_with_a_long_name_stays_within_twelve_words(
+    settings: DeskSettings, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = Workspace(settings.workspace)
+    deck = workspace.load(DECK)
+    assert deck is not None
+    # Without a commander the deck is known by its own name.
+    cards = tuple(
+        replace(card, categories=tuple(c for c in card.categories if c != COMMANDER_CATEGORY))
+        for card in deck.cards
+    )
+    workspace.save(
+        replace(deck, name="Mono Green Elves Tribal Ramp Into Overrun Combat Finishers", cards=cards)
+    )
+    pending: list[Callable[[], None]] = []
+    desk = make_desk(settings, fake, pending.append)
+    stub_meta(monkeypatch)
+    no_download(monkeypatch)
+    answers: list[Json] = []
+    monkeypatch.setattr(
+        syncrun, "sync_decks", probing(syncrun.sync_decks, lambda: answers.append(propose(desk)))
+    )
+    inline_sync(desk, pending)
+    assert answers == [{"error": "Wait for this deck to finish syncing, then propose the card."}]
 
 
 def test_a_deck_gone_from_the_workspace_while_its_ideas_were_fetched_gets_no_merge_and_a_warning(
