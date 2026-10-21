@@ -392,6 +392,12 @@ source that plays it more, the meta on a tie; with no list playing it, only the 
 `sync` does the same for the open ones that pass the test. `suggest --to-board` and `meta --to-board` put their ideas on the board,
 and a card turned down there is not suggested again by `suggest`.
 
+A card in the deck is never in Considering ([ADR 0046](docs/adr/0046-a-card-in-the-deck-is-never-in-considering.md)):
+`sync` closes every open card the deck's main list now holds (a card you added on Archidekt, say) as applied,
+"already in the deck", and prints `<deck> board: closed ...`; the app hides such a card at once, without
+waiting for the sync. A card in the Sideboard or Maybeboard, or a basic land, still counts as an idea. A card
+queued to add that the deck on Archidekt already holds stays queued: Review offers **Mark N card(s) applied**.
+
 Each `sync` also compiles ideas from other players into Considering
 ([ADR 0028](docs/adr/0028-ideas-from-four-sources.md)), up to 50 per source, and only for cards the deck
 lacks that its profile, bracket ceiling and budget allow:
