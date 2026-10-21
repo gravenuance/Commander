@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Changed
+- A deck with no bracket set on Archidekt now goes by the lowest bracket of its Commander Spellbook estimate
+  (ADR 0051): `sync` searches Archidekt at that bracket and the one above and reads tournament lists for
+  4 and up, the app shows the Meta panel for it, and `cmdr meta` includes it. A bracket that is set always
+  wins, and without an estimate the deck stays unset. The header still names only a set bracket.
+- The Meta panel now shows for bracket 4 as well as 5. At bracket 4 it shows the key cards and the number of
+  tournament lists read, since the most-played commanders and combos are read for bracket 5 only; `cmdr meta`
+  lists bracket 4 decks too, and no longer reports the sources a bracket does not read as unavailable.
 - The deck grid's stacked rows show more of each card (three tenths of its height instead of about a quarter),
   so the pointer lands on the card it was aimed at rather than the one a row below, as a usability test found.
 
