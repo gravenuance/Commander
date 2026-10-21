@@ -332,7 +332,6 @@ def _compile_ideas(
         warnings.append(f"ideas not compiled: {error}")
         return _IdeasPhase()
     phase = _IdeasPhase()
-    key_noted = False
     with db, services.client_factory() as http:
         sources = meta_sources(http, services.pacer_factory, user, settings, services.cache)
         waiting = _most_viewed_first(workspace.load_all(), services)
@@ -394,16 +393,23 @@ def _compile_ideas(
             if data.lists.data is None and data.peers.data is None:
                 why = data.peers.error or data.lists.error
                 warnings.append(f"{deck.short_name}: no meta or Archidekt decks to learn from ({why})")
-            no_key = data.lists.error == NO_KEY_MESSAGE
-            if no_key and not key_noted:
-                warnings.append(f"tournament lists skipped: {NO_KEY_MESSAGE}")
-                key_noted = True
+            no_key = _note_no_key(data.lists.error, warnings)
             incomplete = len(warnings) > warned or data.peers.data is None or no_key
             on_deck(deck.id, FetchState.INCOMPLETE if incomplete else FetchState.DONE)
     return phase
 
 
 _GONE = "the deck left its folder or changed its commander while its ideas were fetched"
+_NO_KEY_WARNING = f"tournament lists skipped: {NO_KEY_MESSAGE}"
+
+
+def _note_no_key(lists_error: str | None, warnings: list[str]) -> bool:
+    """Whether the tournament lists were skipped for want of a TopDeck key; warns once per sync."""
+    if lists_error != NO_KEY_MESSAGE:
+        return False
+    if _NO_KEY_WARNING not in warnings:
+        warnings.append(_NO_KEY_WARNING)
+    return True
 
 
 def _current(workspace: Workspace, fetched: StoredDeck) -> StoredDeck | None:
