@@ -337,10 +337,12 @@ def start_gather(
     offline: bool = False,
     on_progress: Progress | None = None,
     on_done: Progress | None = None,
+    prune: bool = True,
 ) -> FinishMeta:
     """Start `gather`'s reads that need no TopDeck (the Archidekt decks and the deck's own combos) in the
     background and return at once; calling what it returns reads the tournament lists, the meta field and its
-    combos, which wait for TopDeck, and joins all of it."""
+    combos, which wait for TopDeck, and joins all of it. A caller that reads several decks side by side
+    passes prune=False and prunes once, when they are all read (`prune_deck_reads`)."""
     if not deck.commanders:
         raise ValueError(f"{deck.name} has no commander")
     name = commander_name(deck.commanders)
@@ -409,7 +411,8 @@ def start_gather(
         meta = in_background(field_and_combos, name="meta-field")
         field_answer, combos = meta.result()
         data = MetaData(name, since, own.result(), field_answer, peer.result(), combos, deck_combos.result())
-        _prune_reads(folder, since, now=now, offline=offline)
+        if prune:
+            _prune_reads(folder, since, now=now, offline=offline)
         return data
 
     return finish
@@ -481,6 +484,7 @@ def start_gather_peers(
     offline: bool = False,
     on_progress: Progress | None = None,
     on_done: Progress | None = None,
+    prune: bool = True,
 ) -> FinishMeta:
     """Start `gather_peers`'s Archidekt read in the background and return at once; calling what it returns
     reads the tournament lists (bracket 4), which wait for TopDeck, and joins both."""
@@ -520,7 +524,8 @@ def start_gather_peers(
         combos: Answer[tuple[CommanderCombos, ...]] = Answer(None, AnswerSource.UNAVAILABLE, None, why)
         own_combos: Answer[tuple[ComboDetail, ...]] = Answer(None, AnswerSource.UNAVAILABLE, None, why)
         peers_answer = peer.result()
-        _prune_reads(folder, since, now=now, offline=offline)
+        if prune:
+            _prune_reads(folder, since, now=now, offline=offline)
         return MetaData(name, since, tournament_lists, field, peers_answer, combos, own_combos)
 
     return finish
@@ -560,6 +565,7 @@ def start_gather_for(
     offline: bool = False,
     on_progress: Progress | None = None,
     on_done: Progress | None = None,
+    prune: bool = True,
 ) -> FinishMeta:
     """`gather_for` in two steps, so a caller can read the other sources while TopDeck is still answering:
     the Archidekt and Spellbook reads start now, and calling what comes back waits for TopDeck's."""
@@ -573,6 +579,7 @@ def start_gather_for(
         offline=offline,
         on_progress=on_progress,
         on_done=on_done,
+        prune=prune,
     )
 
 
@@ -651,6 +658,7 @@ def gather_adjacent(
     tags: Sequence[str] = (),
     on_progress: Progress | None = None,
     on_done: Progress | None = None,
+    prune: bool = True,
 ) -> AdjacentDecks:
     """Each group's recent Archidekt decks at the deck's bracket, cached as a deck's own peers are; and for
     each deck tag, those of any other commander than the deck's own."""
@@ -692,8 +700,14 @@ def gather_adjacent(
             continue
         others = tuple(p for p in answer.data.decks if own.isdisjoint(c.casefold() for c in p.commanders))
         tagged.append(TaggedDecks(tag, others))
-    _prune_reads(folder, since, now=now, offline=offline)
+    if prune:
+        _prune_reads(folder, since, now=now, offline=offline)
     return AdjacentDecks(tuple(decks.values()), tuple(errors), tuple(tagged), groups_failed)
+
+
+def prune_deck_reads(cache_root: Path, settings: MetaSettings, *, now: Clock) -> None:
+    """Prune once the reads of several decks are all over, as they may share cached deck reads meanwhile."""
+    _prune_reads(cache_root / CACHE_FOLDER, window_start(now(), settings), now=now, offline=False)
 
 
 def _prune_reads(folder: Path, since: date, *, now: Clock, offline: bool) -> None:

@@ -77,7 +77,10 @@ Option 3 for the sample and option 2 for the cache, in `commander.archidekt`, `c
   so the full searches are spread over the week too. The 20 and 3 page caps apply to each search as before.
 - **Pruning:** a gather that fetches (never a cache-only read) deletes the deck files not used for 30 days,
   those whose deck was last updated before the window (no search lists them again) and those that no longer
-  parse. A file's modification time is its last use, set when it is written or hit.
+  parse. A file's modification time is its last use, set when it is written or hit. A sync reads its decks
+  side by side, so it prunes once, after every deck's reads are over (`metadata.prune_deck_reads`), and not
+  as each deck finishes, when another deck's reads may still be using a file; the gathers it starts take
+  `prune=False` for that.
 - **One search at a time per answer:** a sync reads several decks side by side, so two of them can want the
   same commander group or tag at once. Each search answer has a lock (`MetaSources.searches`, by cache item
   name, made on first use and kept for the sources' life): the second caller waits for the first and then

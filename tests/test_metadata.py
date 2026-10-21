@@ -369,6 +369,24 @@ def test_an_adjacent_gather_prunes_too(rig: Rig) -> None:
     assert not unused.exists()
 
 
+def test_gathers_told_not_to_prune_leave_the_deck_reads_alone(rig: Rig) -> None:
+    unused = plant(rig, 101, updated_days_ago=5, unused_days=31)
+    deck = ellivere_deck()
+    for bracket in (5, 3):
+        start_gather_for(
+            replace(deck, bracket=bracket),
+            rig.sources(),
+            rig.cache,
+            now=lambda: NOW,
+            refresh=False,
+            prune=False,
+        )()
+    gather_adjacent(
+        deck, ((ELLIVERE,),), rig.sources(), rig.cache, now=lambda: NOW, refresh=False, prune=False
+    )
+    assert unused.exists()
+
+
 def test_a_deck_hit_by_a_run_is_not_pruned_for_having_sat_unused(rig: Rig) -> None:
     rig.gather()
     for path in deck_files(rig):

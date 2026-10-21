@@ -39,6 +39,7 @@ from commander.metadata import (
     MetaSources,
     Progress,
     meta_sources,
+    prune_deck_reads,
     start_gather_for,
     start_tournament_refresh,
 )
@@ -407,6 +408,8 @@ def _compile_ideas(
                 # The client closes with this block, so TopDeck's thread must be over first.
                 _wait_for(tournaments)
                 tournaments.result()
+        # Every deck's reads are over, so none is using a cached deck read the prune could remove.
+        prune_deck_reads(services.cache, settings, now=services.now)
     return phase
 
 
@@ -489,6 +492,7 @@ def _start_reading(
         refresh=False,
         on_progress=phases.start,
         on_done=phases.done,
+        prune=False,
     )
     pools = gather_idea_pools(
         stored,
@@ -500,6 +504,7 @@ def _start_reading(
         warn=warnings.append,
         on_progress=phases.start,
         on_done=phases.done,
+        prune=False,
     )
     return _ReadingDeck(stored, finish, pools, warnings)
 

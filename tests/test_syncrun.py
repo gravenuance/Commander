@@ -30,9 +30,17 @@ from commander.carddb import CARD_DB_FILE, CardDataMeta, CardDb
 from commander.config import MetaSettings
 from commander.deckcache import Answer, AnswerSource
 from commander.deckprofile import Profile, profile_template, read_profile
+from commander.deckreads import DeckReads
 from commander.fetchpriority import FetchPriority
-from commander.ideas import rejudge_ideas, relabel_legacy_ideas
-from commander.metadata import TOURNAMENT_BRACKETS, AdjacentDecks, MetaData, start_tournament_refresh
+from commander.ideas import gather_idea_pools, rejudge_ideas, relabel_legacy_ideas
+from commander.metadata import (
+    TOURNAMENT_BRACKETS,
+    AdjacentDecks,
+    MetaData,
+    MetaSources,
+    start_gather_for,
+    start_tournament_refresh,
+)
 from commander.models import Deck
 from commander.net import NetworkError
 from commander.scryfall import CardRefresh, RefreshStatus
@@ -42,6 +50,7 @@ from commander.syncrun import CardState, SyncOptions, SyncOutcome, SyncServices,
 from conftest import REFRESH_TOKEN, FakeArchidekt, Json, MemoryTokenStore, put_on_sideboard
 from test_cli_apply import run
 from test_meta import entry, meta_data, peer
+from test_metadata import MAGDA, Rig
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 DOWNLOADED = CardRefresh(RefreshStatus.UPDATED, CardDataMeta("2026-10-15T09:00:00Z", "t", "b"), 12_345)
@@ -486,6 +495,40 @@ def test_an_error_mid_sync_waits_for_topdeck_before_the_client_closes_and_logs_w
     assert "TopDeck" in record.getMessage()
     assert record.exc_info is not None
     assert str(record.exc_info[1]) == "TopDeck's thread broke"
+
+
+def test_a_sync_prunes_the_cached_deck_reads_once_after_all_the_decks_are_read(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = three_decks(tmp_path, raw_deck, card_db_file)
+    stub_meta(monkeypatch)
+    rig = Rig(tmp_path)
+    rig.archidekt.commander = MAGDA
+    merged: list[int] = []
+    pruned: list[list[int]] = []
+    prune = DeckReads.prune
+
+    def counting_prune(self: DeckReads, *, now: datetime, window_start: datetime) -> int:
+        pruned.append(list(merged))
+        return prune(self, now=now, window_start=window_start)
+
+    def compile_ideas(stored: StoredDeck, *_: object, **__: object) -> dict[Origin, list[BoardCard]]:
+        merged.append(stored.deck.id)
+        return {}
+
+    def real_sources(*_: object, **__: object) -> MetaSources:
+        return rig.sources()
+
+    # The reads of the decks are the real ones, over the fake services of the metadata tests.
+    monkeypatch.setattr(syncrun, "meta_sources", real_sources)
+    monkeypatch.setattr(syncrun, "start_gather_for", start_gather_for)
+    monkeypatch.setattr(syncrun, "gather_idea_pools", gather_idea_pools)
+    monkeypatch.setattr(syncrun, "compile_ideas", compile_ideas)
+    monkeypatch.setattr(DeckReads, "prune", counting_prune)
+    sync_ideas(tmp_path, fake)
+    assert merged == DECK_IDS
+    # Once, with every merge over: another deck's peers are still being read until then.
+    assert pruned == [DECK_IDS]
 
 
 def populated(tmp_path: Path, raw_deck: Json, card_db_file: Path) -> tuple[FakeArchidekt, StoredDeck]:

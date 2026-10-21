@@ -12,6 +12,8 @@
 - The sync's progress line names every read under way ("TopDeck: recent tournaments · Archidekt: recent
   Edgar Markov decks"), drops each as it ends and shows a wait for TopDeck's rate limit ("TopDeck: waiting 30 s
   (rate limit)"). Before, it showed the last one that started, and said Archidekt while TopDeck waited.
+- `sync` prunes the cached Archidekt deck reads once, after every deck's reads are over, instead of as each deck
+  finishes while other decks are still reading them (ADR 0027).
 - Testing or saving a TopDeck key no longer hangs for up to five minutes when TopDeck answers 429: the app and
   `cmdr topdeck` stop at once with "TopDeck is busy; try again in N s" (ADR 0047).
 - An unexpected error while a sync reads the ideas no longer closes the HTTP client under TopDeck's running
