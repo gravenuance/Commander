@@ -550,7 +550,7 @@ class BoardNotes:
             card,
             _bounded(detail, MAX_NOTE, "the detail"),
         )
-        with _board_lock(self._folder):
+        with board_lock(self._folder):
             try:
                 _append_activity(self._folder, entry)
             except OSError as error:
@@ -1031,7 +1031,7 @@ class BoardService:
 
     @contextmanager
     def _editing(self) -> Generator[tuple[Board, Callable[[Board, Activity], None]]]:
-        with _board_lock(self._folder):
+        with board_lock(self._folder):
             board, stored_version = _read_stored(self._folder)
 
             def save(updated: Board, entry: Activity) -> None:
@@ -1141,8 +1141,9 @@ def _migrate(raw: Mapping[str, object]) -> Mapping[str, object]:
 
 
 @contextmanager
-def _board_lock(folder: Path) -> Generator[None]:
-    """Hold the deck's board lock: one thread here, and one process across the CLI and the app."""
+def board_lock(folder: Path) -> Generator[None]:
+    """Hold the deck's board lock: one thread here, and one process across the CLI and the app. Raises
+    BoardIOError when another holds it for longer than LOCK_TIMEOUT_SECONDS."""
     path = folder / LOCK_FILE
     with _THREAD_LOCK:
         deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
