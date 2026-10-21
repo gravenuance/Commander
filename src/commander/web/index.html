@@ -91,11 +91,11 @@
         <div class="side">
           <section class="panel" aria-labelledby="h-considering">
             <h2 class="panel-title">
-              <button id="h-considering" class="panel-toggle" type="button" aria-expanded="true" aria-controls="considering-body">
-                <span class="disclosure" aria-hidden="true"></span>Considering <span class="count" id="count-considering"></span>
+              <button id="h-considering" class="panel-toggle" type="button" aria-expanded="false" aria-controls="considering-body">
+                Considering <span class="count" id="count-considering"></span>
               </button>
             </h2>
-            <div id="considering-body" class="panel-body">
+            <div id="considering-body" class="panel-body" hidden>
               <div id="list-considering" class="cards" role="list"></div>
               <p id="empty-considering" class="empty" hidden><span aria-hidden="true">🃏</span> Nothing to consider. Propose a card above.</p>
               <details id="rejected" class="fold-group" hidden>
@@ -108,22 +108,22 @@
 
           <section id="uncut" class="panel" aria-labelledby="h-uncut" hidden>
             <h2 class="panel-title">
-              <button id="h-uncut" class="panel-toggle" type="button" aria-expanded="true" aria-controls="uncut-body">
-                <span class="disclosure" aria-hidden="true"></span>No cut yet <span class="count" id="count-uncut"></span>
+              <button id="h-uncut" class="panel-toggle" type="button" aria-expanded="false" aria-controls="uncut-body">
+                No cut yet <span class="count" id="count-uncut"></span>
               </button>
             </h2>
-            <div id="uncut-body" class="panel-body">
+            <div id="uncut-body" class="panel-body" hidden>
               <div id="list-uncut" class="cards" role="list"></div>
             </div>
           </section>
 
           <section id="meta" class="panel" aria-labelledby="h-meta" hidden>
             <h2 class="panel-title">
-              <button id="h-meta" class="panel-toggle" type="button" aria-expanded="true" aria-controls="meta-panel">
-                <span class="disclosure" aria-hidden="true"></span>Meta
+              <button id="h-meta" class="panel-toggle" type="button" aria-expanded="false" aria-controls="meta-panel">
+                Meta
               </button>
             </h2>
-            <div id="meta-panel" class="panel-body">
+            <div id="meta-panel" class="panel-body" hidden>
               <div class="meta-head">
                 <p id="meta-sample" class="muted"></p>
                 <span id="meta-thin" class="badge status thin" title="Few top cuts or lists: shares are hints" hidden>Thin data</span>

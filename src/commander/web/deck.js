@@ -297,15 +297,12 @@ function showPanel(toggle, open) {
   $(toggle.getAttribute("aria-controls")).hidden = !open;
 }
 
-// Each panel remembers whether it was folded, per viewer.
+// The panels start folded on every launch (index.html), so nothing about them is stored.
 function setupPanels() {
   for (const toggle of document.querySelectorAll(".panel-toggle")) {
-    const key = `${PANEL_KEY}.${toggle.id}`;
-    try { if (localStorage.getItem(key) === "0") showPanel(toggle, false); } catch { /* storage is a convenience */ }
     toggle.addEventListener("click", () => {
       const open = toggle.getAttribute("aria-expanded") !== "true";
       showPanel(toggle, open);
-      try { localStorage.setItem(key, open ? "1" : "0"); } catch { /* as above */ }
       if (open && toggle.id === "h-meta") metaPanel.load();
     });
   }

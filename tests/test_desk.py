@@ -1429,10 +1429,10 @@ def test_no_cut_yet_is_a_side_panel_between_considering_and_meta_not_a_fold() ->
     assert '<details id="uncut"' not in html
     panel = html.split('<section id="uncut" class="panel" aria-labelledby="h-uncut" hidden>', 1)[1]
     panel = panel.split("</section>", 1)[0]
-    toggle = 'id="h-uncut" class="panel-toggle" type="button" aria-expanded="true" aria-controls="uncut-body"'
-    assert toggle in panel
+    toggle = 'id="h-uncut" class="panel-toggle" type="button" aria-expanded="false"'
+    assert toggle + ' aria-controls="uncut-body"' in panel
     assert 'No cut yet <span class="count" id="count-uncut"></span>' in panel
-    assert '<div id="uncut-body" class="panel-body">' in panel
+    assert '<div id="uncut-body" class="panel-body" hidden>' in panel
     assert '<div id="list-uncut" class="cards" role="list"></div>' in panel
     assert html.index('id="h-considering"') < html.index('id="h-uncut"') < html.index('id="h-meta"')
 
@@ -1502,22 +1502,42 @@ def test_a_count_moves_one_copy_at_a_time(desk: Desk) -> None:
     assert desk.count(DECK, "Mountain", 2) == {"error": "a count moves by one copy, not 2"}
 
 
-def test_panel_titles_and_their_sub_toggles_share_one_marker_and_a_green_hover_without_a_background() -> None:
+def css_rule(selector: str) -> str:
+    """The body of the app.css rule whose selector list holds `selector`."""
     css = (resources.files("commander") / "web" / "app.css").read_text(encoding="utf-8")
-    light, dark = css.split("@media (prefers-color-scheme: dark)", 1)
-    assert "--accent-hover: #237a64;" in light
-    assert "--accent-hover: #79d4ba;" in dark.split("}", 1)[0]
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
     rules = dict(re.findall(r"([^{}]+)\{([^{}]*)\}", css))
+    return next(body for name, body in rules.items() if selector in [s.strip() for s in name.split(",")])
 
-    def rule(selector: str) -> str:
-        return next(body for name, body in rules.items() if selector in [s.strip() for s in name.split(",")])
 
-    assert rule(".panel-toggle:hover") == rule(".meta-section > summary:hover")
-    assert "color: var(--accent-hover)" in rule(".panel-toggle:hover")
-    assert "background" not in rule(".panel-toggle:hover")
-    assert rule(".panel-toggle > .disclosure::before") == rule(".meta-section > summary::before")
-    html = (resources.files("commander") / "web" / "index.html").read_text(encoding="utf-8")
-    assert html.count('<span class="disclosure" aria-hidden="true"></span>') == 3
+def test_panel_titles_are_full_width_boxes_without_a_marker_and_the_meta_sub_toggles_keep_theirs() -> None:
+    toggle = css_rule(".panel-toggle")
+    assert "width: 100%" in toggle
+    assert "border: 1px solid var(--border)" in toggle
+    assert "justify-content: center" in toggle
+    assert "text-transform: uppercase" in toggle
+    # The grid's group toggles light up the same way under the pointer.
+    assert "background: var(--surface-2)" in css_rule(".panel-toggle:hover")
+    assert "background: var(--surface-2)" in css_rule(".group-toggle:hover")
+    assert "color: var(--accent-hover)" in css_rule(".meta-section > summary:hover")
+    assert 'content: "▸"' in css_rule(".meta-section > summary::before")
+    html = page_html()
+    assert 'class="disclosure"' not in html
+    for toggle_id, body_id in [
+        ("h-considering", "considering-body"),
+        ("h-uncut", "uncut-body"),
+        ("h-meta", "meta-panel"),
+    ]:
+        assert (
+            f'id="{toggle_id}" class="panel-toggle" type="button" aria-expanded="false" '
+            f'aria-controls="{body_id}"'
+        ) in html
+        assert f'<div id="{body_id}" class="panel-body" hidden>' in html
+
+
+def test_scrollbars_are_hidden_everywhere_while_scrolling_stays() -> None:
+    assert "scrollbar-width: none" in css_rule("*")
+    assert "display: none" in css_rule("::-webkit-scrollbar")
 
 
 REFUSAL = "TopDeck refused the key (HTTP 401); check it in the TopDeck panel"

@@ -133,7 +133,9 @@
   }
 }
 
-* { box-sizing: border-box; }
+/* Scrollbars are hidden everywhere; wheel, trackpad and keyboard still scroll. */
+* { box-sizing: border-box; scrollbar-width: none; }
+::-webkit-scrollbar { display: none; }
 html, body { height: 100%; margin: 0; }
 body {
   background: var(--bg);
@@ -441,14 +443,14 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   background: var(--sunk);
   border-radius: var(--radius) var(--radius) 0 0;
 }
-/* Top padding matches the grid pane's, so the first panel title lines up with the card size row. */
+/* No top padding, so the first panel's box lines up with the grid pane's. */
 .side {
   min-height: 0;
   overflow-y: auto;
   display: grid;
-  gap: var(--space-5);
+  gap: var(--space-2);
   align-content: start;
-  padding: var(--space-3) 0 var(--space-5);
+  padding: 0 0 var(--space-5);
 }
 @media (width < 1100px) {
   .main { overflow-y: auto; }
@@ -666,8 +668,9 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 }
 
 /* Side panels */
-/* Flex, so the h2's larger font adds no line box above the toggle and the title lines up with the card size row. */
-.panel-title { display: flex; margin: 0 0 var(--space-3); }
+/* Flex, so the h2's larger font adds no line box around the toggle. */
+.panel-title { display: flex; margin: 0; }
+.panel-body { margin-top: var(--space-3); padding: 0 var(--space-5) var(--space-3); }
 .add-plain { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin-top: var(--space-2); }
 .add-plain select {
   min-height: 28px;
@@ -679,33 +682,32 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   font: inherit;
   font-size: var(--text-s);
 }
-/* Styled as the sub-toggles (.meta-section > summary) and flush left, so both markers share one x. */
+/* A full-width box with a centred title; it lights up under the pointer as the grid's group toggles do. */
 .panel-toggle {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: var(--space-1);
-  min-height: 28px;
-  padding: 0;
-  border: 0;
+  justify-content: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-5) var(--space-4);
+  border: 1px solid var(--border);
   border-radius: var(--radius-s);
   background: transparent;
   color: var(--text);
   font: inherit;
-  font-size: var(--text-m);
-  font-weight: 700;
+  font-size: var(--text-l);
+  font-weight: 400;
+  line-height: 1.2;
+  text-transform: uppercase;
   cursor: pointer;
 }
+.panel-toggle:hover { background: var(--surface-2); }
 .panel-toggle:focus-visible { outline-offset: -2px; }
-/* The panel titles and their sub-toggles fold alike: one marker, and text turning green under the pointer. */
-.panel-toggle > .disclosure { width: 1em; }
+.panel-toggle .count { font-weight: 400; }
 .meta-section > summary { list-style: none; }
 .meta-section > summary::-webkit-details-marker { display: none; }
-.meta-section > summary::before,
-.panel-toggle > .disclosure::before { content: "▸"; display: inline-block; width: 1em; }
-.meta-section > summary::before { margin-right: var(--space-1); }
-.meta-section[open] > summary::before,
-.panel-toggle[aria-expanded="true"] > .disclosure::before { content: "▾"; }
-.panel-toggle:hover,
+.meta-section > summary::before { content: "▸"; display: inline-block; width: 1em; margin-right: var(--space-1); }
+.meta-section[open] > summary::before { content: "▾"; }
 .meta-section > summary:hover { color: var(--accent-hover); }
 .count { font-weight: 500; }
 .cards { display: grid; gap: var(--space-3); }

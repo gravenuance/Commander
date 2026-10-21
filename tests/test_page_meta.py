@@ -22,6 +22,7 @@ state.decks = [
   { id: 2, short: "Ellivere", name: "B", queued: 0 },
 ];
 renderDecks();
+showPanel($("h-meta"), true);
 const metaCalls = () => calls.filter((c) => c[0] === "meta").length;
 const sample = () => $("meta-sample").textContent;
 """

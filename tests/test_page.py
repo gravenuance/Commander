@@ -325,9 +325,33 @@ def test_a_deck_view_renders_when_a_pooled_idea_has_no_combined_share() -> None:
     assert shown == {"tiles": 1, "empty": True}
 
 
-def test_proposing_a_card_with_no_cut_opens_its_folded_panel_without_saving_that_choice() -> None:
+def test_the_side_panels_start_folded_on_every_launch_and_opening_one_stores_nothing() -> None:
     seen = run("""
-    storage["commander.panelOpen.h-uncut"] = "0";
+    for (const id of ["h-considering", "h-uncut", "h-meta"]) storage[`commander.panelOpen.${id}`] = "1";
+    setupPanels();
+    const panels = () => ["considering-body", "uncut-body", "meta-panel"].map((id) => ({
+      expanded: document.querySelector(`[aria-controls="${id}"]`).getAttribute("aria-expanded"),
+      bodyHidden: $(id).hidden }));
+    const start = panels();
+    $("h-considering").click();
+    const opened = panels();
+    $("h-considering").click();
+    return { start, opened, refolded: panels(), stored: Object.keys(storage).sort() };
+    """)
+    folded = {"expanded": "false", "bodyHidden": True}
+    assert seen["start"] == [folded, folded, folded]
+    assert seen["opened"] == [{"expanded": "true", "bodyHidden": False}, folded, folded]
+    assert seen["refolded"] == [folded, folded, folded]
+    # Only the stale keys set above: the page neither reads nor writes a panel's fold any more.
+    assert seen["stored"] == [
+        "commander.panelOpen.h-considering",
+        "commander.panelOpen.h-meta",
+        "commander.panelOpen.h-uncut",
+    ]
+
+
+def test_proposing_a_card_with_no_cut_opens_its_folded_panel() -> None:
+    seen = run("""
     setupPanels();
     const folded = { expanded: $("h-uncut").getAttribute("aria-expanded"),
       bodyHidden: $("uncut-body").hidden };
@@ -338,14 +362,11 @@ def test_proposing_a_card_with_no_cut_opens_its_folded_panel_without_saving_that
     stub.decks = async () => ({ decks: [] });
     await propose("New");
     return { folded, expanded: $("h-uncut").getAttribute("aria-expanded"), bodyHidden: $("uncut-body").hidden,
-      stored: storage["commander.panelOpen.h-uncut"], selected: state.selected,
-      status: $("status-text").textContent };
+      selected: state.selected, status: $("status-text").textContent };
     """)
     assert seen["folded"] == {"expanded": "false", "bodyHidden": True}
     assert seen["expanded"] == "true"
     assert seen["bodyHidden"] is False
-    # Folding it again next time stays the user's call: the stored choice is untouched.
-    assert seen["stored"] == "0"
     assert seen["selected"] == "n"
     assert seen["status"] == "New: pick the deck card it replaces, or add it without one"
 
