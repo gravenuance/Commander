@@ -36,7 +36,8 @@
 - EDHTop16 errors are readable again: a refused query (EDHTop16 now answers with plain-text errors) is logged
   with EDHTop16's own message, and the Meta panel says why its data is missing instead of only "not fetched
   yet". A cache read with nothing fetched is logged at DEBUG, so the log no longer fills with it.
-- A card change refused while a sync runs now says which sync phase it is waiting for, and is logged.
+- A card change refused while a sync runs is logged with the sync's phase, and the message the app shows
+  keeps to 12 words: "Wait for the sync to finish, then sign in." (the phase is no longer in it).
 - Card changes, settings and saves to Archidekt no longer wait for the whole sync, which on a first sync of
   many decks could take most of an hour: a deck's changes wait only while the sync may still rewrite that deck,
   which it pulls first when it is the one open, and changes that look cards up also wait while the card data

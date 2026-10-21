@@ -98,3 +98,10 @@ data already there, and briefly". The code did not keep that promise:
   data is not in place, they now answer with the same refusal as a write that looks cards up: "Wait for the
   card data to finish downloading, then decide." Once the download is done, or when no sync runs, the original
   error stands.
+
+## Amendment (2026-10-21): the refusal text keeps to the 12-word budget
+
+A refusal while the whole sync runs ended in the sync's phase, "Wait for the sync to finish, then sign in (now:
+Starting the sync).", which is 13 words and longer with a longer phase; the UI budget for status text is 12
+(`ui.md`). The text is now "Wait for the sync to finish, then sign in." The phase stays in the log line of the
+refusal, with the deck and how long the sync has run.
