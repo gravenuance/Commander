@@ -700,8 +700,8 @@ deck itself ([ADR 0045](docs/adr/0045-sync-removes-the-folder-of-a-deleted-deck.
 in, a refused login, a private deck, a network error or any other status) reports the deck as `missing` and keeps
 the folder. In the app, a removed open deck closes with a short notice. The folder is first renamed to
 `.removing-<name>`, and a deck whose board the app is writing is kept for that sync; if the delete then fails
-(a program holds a file open), the renamed folder keeps your files, the sync reports it as `failed` by name and
-the next sync retries.
+(a program holds a file open), the renamed folder keeps your files, the sync warns about it by name (reported as `missing`;
+the sync still succeeds) and the next sync retries.
 
 #### Private and unlisted decks
 

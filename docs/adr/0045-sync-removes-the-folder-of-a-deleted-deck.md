@@ -75,3 +75,13 @@ delete a deck while the app wrote its board.
   `failed` result naming the folder when it does not, and `would remove` on a dry run.
 - A set-aside folder of the same name that is still there blocks a second removal with a message to delete
   it; the retry runs before any new removal, so that only follows a retry that failed.
+
+## Amendment (2026-10-21): a folder that cannot be deleted yet is a warning
+
+The owner decided that a set-aside `.removing-<name>` folder that cannot be deleted must not fail the sync: a
+held file clears by itself, and the owner's files are safe in the folder meanwhile. A delete that fails after the
+rename (`RemovalPendingError`), at the removal itself or in the retry of every later sync, is logged at WARNING
+and reported as `missing` with the folder named in `error`, which `cmdr sync` prints; the exit code stays zero
+and the next sync retries. `failed` is kept for a folder the workspace refuses (outside the root, a link, an
+earlier leftover of the same name) and for a rename that fails. The retry and the app's `on_removed` are as
+before.
