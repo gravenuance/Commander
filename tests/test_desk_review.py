@@ -1,4 +1,5 @@
-"""Review for an account other than MAKKIS when the deck on Archidekt already holds the queued card."""
+"""Review for an account other than MAKKIS: when the deck on Archidekt already holds the queued card, and
+for a second swap after a saved one."""
 
 import logging
 from pathlib import Path
@@ -79,6 +80,41 @@ def test_a_preview_with_changes_has_nothing_done_and_no_empty_reason(env: Env) -
 
     assert [c["name"] for c in cast("list[Json]", preview["changes"])] == ["Disruptor Flute", "Arcane Signet"]
     assert (preview["done"], preview["nothingToSend"]) == ([], None)
+
+
+def on_archidekt(fake: FakeArchidekt) -> set[str]:
+    return {entry["card"]["oracleCard"]["name"] for entry in fake.decks[DECK]["cards"]}
+
+
+# The tester's sequence: a swap saved, then a second swap; the second may cut the card the first added.
+@pytest.mark.parametrize("cut", ["Battered Golem", "Arcane Signet"])
+def test_a_second_swap_after_a_saved_one_is_reviewed_and_saved(env: Env, cut: str) -> None:
+    desk = signed_in(env)
+    desk.propose(DECK, "Arcane Signet")
+    desk.decide(DECK, card_id(desk, "Arcane Signet"), "add", "Disruptor Flute", "")
+    first = desk.commit(DECK, str(desk.preview(DECK)["stamp"]))
+    assert (first["saved"], first["applied"]) == (True, ["Arcane Signet"])
+    view = desk.deck(DECK)
+    assert view["pending"] == 0
+    assert "Arcane Signet" in cast("list[str]", view["deckCards"])
+    assert "Disruptor Flute" not in cast("list[str]", view["deckCards"])
+    desk.propose(DECK, "Lightning Bolt")
+    desk.decide(DECK, card_id(desk, "Lightning Bolt"), "add", cut, "")
+    assert desk.deck(DECK)["pending"] == 1
+
+    preview = desk.preview(DECK)
+
+    assert [(c["mark"], c["name"]) for c in cast("list[Json]", preview["changes"])] == [
+        ("-", cut),
+        ("+", "Lightning Bolt"),
+    ]
+    assert (preview["problems"], preview["skipped"], preview["done"]) == ([], [], [])
+    assert preview["nothingToSend"] is None
+    second = desk.commit(DECK, str(preview["stamp"]))
+    assert (second["saved"], second["applied"]) == (True, ["Lightning Bolt"])
+    assert "Lightning Bolt" in on_archidekt(env.fake)
+    assert not {"Disruptor Flute", cut} & on_archidekt(env.fake)
+    assert desk.deck(DECK)["pending"] == 0
 
 
 def test_queueing_a_card_the_synced_deck_already_holds_is_refused(env: Env) -> None:
