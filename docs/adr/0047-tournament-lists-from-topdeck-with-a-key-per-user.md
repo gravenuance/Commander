@@ -91,5 +91,9 @@ Option 4, behind the provider seam that stood in front of EDHTop16 (`tournaments
   tuned on lists from events of 16+, the same floor, so they stand unchanged. Revisit if the ideas drift.
 - TopDeck's answer has no `standing` field; the finish is the place in the list, which the API documents as
   the standings order. If it ever sorts otherwise, finishes and top cuts are wrong without an error.
+- Two processes that read at once (`cmdr meta` and an app sync) can fetch the same chunks, and the slower
+  one's `set_coverage` can move the coverage back. Event files are written atomically, so the cost is extra
+  fetching until a later run's coverage catches up. Accepted: no lock between processes (owner's call,
+  2026-10-21).
 - The 3-day re-ask means an event that finishes later than that is missed until the window moves past it;
   none of the sampled events ran longer.
