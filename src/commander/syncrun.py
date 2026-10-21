@@ -22,7 +22,7 @@ import httpx
 from commander.archidekt import ArchidektClient, ArchidektError, AuthError
 from commander.archidekt_edit import ArchidektAuth, ArchidektEditor
 from commander.background import in_background, run_all
-from commander.board import BoardCard, BoardError, BoardService, Origin
+from commander.board import BoardCard, BoardError, BoardService, Origin, count_text
 from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
 from commander.bracket import estimate_cache, estimated_decks
 from commander.carddb import CARD_DB_FILE, CardDataError, CardDb
@@ -612,7 +612,7 @@ def _merge_deck(
                 phase.closed[deck.short_name] = [card.name for card in held]
             met = board_service.clear_met_counts()
             if met:
-                phase.counts_cleared[deck.short_name] = [f"{c.name} {c.was} → {c.count}" for c in met]
+                phase.counts_cleared[deck.short_name] = [count_text(c) for c in met]
             dropped = rejudge_ideas(
                 current,
                 data,

@@ -734,9 +734,10 @@ def test_the_deck_view_carries_the_card_grid(desk: Desk) -> None:
     ]
     assert grid[-1]["key"] == "outside:Maybeboard"
     aside = cast("list[Json]", grid[-1]["cards"])
+    # Only - on a card outside the deck: it takes the card off the Maybeboard (ADR 0052).
     assert [(c["name"], c["more"], c["less"]) for c in aside] == [
-        ("High-Speed Hoverbike", False, False),
-        ("Tempestra, Dame of Games", False, False),
+        ("High-Speed Hoverbike", False, True),
+        ("Tempestra, Dame of Games", False, True),
     ]
     golem = cast("list[Json]", grid[1]["cards"])[0]
     assert (golem["name"], golem["label"], golem["category"]) == ("Battered Golem", "", "Combo Pieces")
@@ -1471,7 +1472,14 @@ def test_the_decklist_shows_queued_count_changes_and_adds_with_the_stats_before_
     assert view["categories"] == ["Combo Pieces", "Land", "Stax"]
 
     assert desk.count(DECK, "Mountain", 1) == {
-        "change": {"name": "Mountain", "was": 6, "count": 7, "by": "you", "at": "2026-10-15T12:00:00+00:00"}
+        "change": {
+            "name": "Mountain",
+            "was": 6,
+            "count": 7,
+            "by": "you",
+            "at": "2026-10-15T12:00:00+00:00",
+            "category": None,
+        }
     }
     desk.count(DECK, "Battered Golem", -1)
     signet = str(cast("Json", desk.propose(DECK, "Arcane Signet")["card"])["id"])
@@ -1505,6 +1513,37 @@ def test_the_decklist_shows_queued_count_changes_and_adds_with_the_stats_before_
 
 def test_a_count_moves_one_copy_at_a_time(desk: Desk) -> None:
     assert desk.count(DECK, "Mountain", 2) == {"error": "a count moves by one copy, not 2"}
+
+
+def test_minus_on_a_maybeboard_card_queues_it_to_come_off_and_plus_puts_it_back(desk: Desk) -> None:
+    def hoverbike() -> Json:
+        aside = next(g for g in items(desk.deck(DECK), "grid") if g["key"] == "outside:Maybeboard")
+        return next(c for c in cast("list[Json]", aside["cards"]) if c["name"] == "High-Speed Hoverbike")
+
+    assert desk.count(DECK, "High-Speed Hoverbike", -1, "Maybeboard") == {
+        "change": {
+            "name": "High-Speed Hoverbike",
+            "was": 1,
+            "count": 0,
+            "by": "you",
+            "at": "2026-10-15T12:00:00+00:00",
+            "category": "Maybeboard",
+        }
+    }
+    view = desk.deck(DECK)
+    assert view["pending"] == 1
+    card = hoverbike()
+    assert (card["pending"], card["more"], card["less"]) == (
+        {"kind": "count", "was": 1, "count": 0},
+        True,
+        False,
+    )
+    # The deck's own grid knows nothing of it: no card in the deck has a change.
+    deck_cards = [c for g in items(view, "grid") if g["inDeck"] for c in cast("list[Json]", g["cards"])]
+    assert all(c["pending"] is None for c in deck_cards)
+
+    assert desk.count(DECK, "High-Speed Hoverbike", 1, "Maybeboard") == {"change": None}
+    assert (hoverbike()["pending"], desk.deck(DECK)["pending"]) == (None, 0)
 
 
 def css_rule(selector: str) -> str:

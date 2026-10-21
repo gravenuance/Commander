@@ -387,6 +387,28 @@ def test_count_refuses_more_of_a_singleton_and_back_to_the_deck_drops_the_change
     assert read_board(folder(home)).counts == ()
 
 
+def test_count_with_a_category_takes_a_card_off_the_maybeboard_and_the_plan_says_where(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    off = board(home, fake, "count", "magda", "High-Speed Hoverbike", "0", "--category", "Maybeboard")
+    assert (off.code, off.out) == (0, "High-Speed Hoverbike: remove from Maybeboard\n")
+    refused = board(home, fake, "count", "magda", "Tempestra, Dame of Games", "2", "--category", "Maybeboard")
+    assert (refused.code, refused.err) == (
+        2,
+        "cmdr: Tempestra, Dame of Games on Maybeboard can only be taken off\n",
+    )
+
+    shown = board(home, fake, "show", "magda").out.splitlines()
+    assert shown[2:4] == ["count changes", "  High-Speed Hoverbike: remove from Maybeboard  (by you)"]
+    plan = board(home, fake, "plan", "magda")
+    assert plan.out == (
+        'deck = "10000001"\nremove = [{name = "High-Speed Hoverbike", category = "Maybeboard"}]\n'
+    )
+    back = board(home, fake, "count", "magda", "High-Speed Hoverbike", "1", "--category", "Maybeboard")
+    assert back.out == "High-Speed Hoverbike: no count change queued; Maybeboard holds that many\n"
+    assert read_board(folder(home)).counts == ()
+
+
 def test_category_goes_with_add_only(home: Path, fake: FakeArchidekt) -> None:
     board(home, fake, "add", "magda", "Arcane Signet")
     result = board(home, fake, "decide", "magda", "Arcane Signet", "reject", "--category", "Ramp")

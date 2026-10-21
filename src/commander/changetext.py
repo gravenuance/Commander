@@ -27,8 +27,14 @@ def change_text(change: Change) -> str:
         return f"{mark} {copies}{change.name} ({printing}) in {change.category}{raise_text(change.raises)}"
     if change.kind is ChangeKind.REMOVE:
         copies = f"{change.before} " if change.before > 1 else ""
-        return f"{mark} {copies}{change.name}{board}"
+        where = "" if change.in_deck else f" from {_category_name(change.category)}"
+        return f"{mark} {copies}{change.name}{where}"
     return f"{mark} {change.name}{board}: {change.before} -> {change.after} copies"
+
+
+def _category_name(category: str) -> str:
+    """Archidekt's own boards read as "the Maybeboard"; a category of the user's keeps its bare name."""
+    return f"the {category}" if category.casefold() in {"maybeboard", "sideboard"} else category
 
 
 def raise_text(raises: BracketRaise | None) -> str:

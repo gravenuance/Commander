@@ -990,16 +990,17 @@ class Desk:
         return {"card": card_json(card)}
 
     @_guarded
-    def count(self, deck_id: int, name: str, step: int) -> Json:
-        """Queue one copy more (step 1) or fewer (step -1) of a deck card: the decklist's + and -."""
+    def count(self, deck_id: int, name: str, step: int, category: str | None = None) -> Json:
+        """Queue one copy more (step 1) or fewer (step -1) of a deck card: the decklist's + and -. With a
+        category outside the deck, - takes the card off it and + puts it back (ADR 0052)."""
         if step not in {1, -1}:
             return {"error": f"a count moves by one copy, not {step!r}"}
         with self._writing("count change", "change the count", deck_id) as busy:
             if busy:
                 return busy
             with self._service(deck_id) as service:
-                change = service.step_count(name, step, Actor.YOU)
-            log.info("board: count %+d for %s on deck %d", step, name, deck_id)
+                change = service.step_count(name, step, Actor.YOU, category=category or None)
+            log.info("board: count %+d for %s (%s) on deck %d", step, name, category or "deck", deck_id)
         return {"change": count_json(change) if change else None}
 
     @_guarded

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+- A card on the Sideboard, the Maybeboard or another category outside the deck can be taken off it: − on the
+  card in the app (+ undoes it), `cmdr board count <deck> <card> 0 --category Maybeboard`, or a plan's
+  `remove = [{name = "...", category = "Maybeboard"}]`. Review lists it as "*card* from the Maybeboard", and
+  the save removes that entry only, leaving the rest outside the deck alone. Boards are now version 4; the
+  first change keeps the old file as `board.v3.bak` (ADR 0052).
+
 ### Changed
 - A deck with no bracket set on Archidekt now goes by the lowest bracket of its Commander Spellbook estimate
   (ADR 0051): `sync` searches Archidekt at that bracket and the one above and reads tournament lists for

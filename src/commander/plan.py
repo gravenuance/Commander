@@ -12,7 +12,7 @@ MAX_NAME_LENGTH = 200
 MAX_QUANTITY = 99
 MAX_CATEGORY_LENGTH = 100
 _ADD_KEYS = frozenset({"name", "quantity", "set", "category"})
-_REMOVE_KEYS = frozenset({"name", "keep"})
+_REMOVE_KEYS = frozenset({"name", "keep", "category"})
 _TOP_KEYS = frozenset({"deck", "add", "remove"})
 
 EXAMPLE = """\
@@ -40,6 +40,8 @@ class RemoveCard:
     name: str
     # The deck ends with at most this many copies; 0 removes the card.
     keep: int = 0
+    # A category outside the deck, such as the Maybeboard: its entries lose the copies instead (ADR 0052).
+    category: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -87,8 +89,10 @@ def parse_plan(raw: dict[str, object]) -> Plan:
     if len(add) + len(remove) > MAX_CHANGES:
         raise PlanError(f"{len(add) + len(remove)} changes; a plan holds at most {MAX_CHANGES}")
     _check_unique([c.name for c in add], "add")
-    _check_unique([c.name for c in remove], "remove")
-    both = {c.name.casefold() for c in add} & {c.name.casefold() for c in remove}
+    _check_unique([c.name for c in remove if c.category is None], "remove")
+    _check_unique([f"{c.name} on {c.category}" for c in remove if c.category is not None], "remove")
+    # Taking a card off the Maybeboard while adding it to the deck is no contradiction.
+    both = {c.name.casefold() for c in add} & {c.name.casefold() for c in remove if c.category is None}
     if both:
         raise PlanError(f"{min(both)!r} is in both add and remove")
     return Plan(deck.strip(), add, remove)
@@ -118,7 +122,11 @@ def _remove(item: object, where: str) -> RemoveCard:
     if isinstance(item, str):
         return RemoveCard(_name(item, where))
     table = _table(item, where, _REMOVE_KEYS)
-    return RemoveCard(_name(table.get("name"), where), _whole(table, "keep", where, 0) or 0)
+    return RemoveCard(
+        _name(table.get("name"), where),
+        _whole(table, "keep", where, 0) or 0,
+        _optional_text(table, "category", where, MAX_CATEGORY_LENGTH),
+    )
 
 
 def _table(item: object, where: str, keys: frozenset[str]) -> dict[str, object]:

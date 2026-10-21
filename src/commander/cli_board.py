@@ -113,6 +113,9 @@ def add_board_commands(add_parser: Callable[..., argparse.ArgumentParser]) -> No
     )
     count.add_argument("card", help="a card in the deck")
     count.add_argument("copies", type=int, help="copies wanted; 0 takes the card out")
+    count.add_argument(
+        "--category", help="a category outside the deck, such as Maybeboard: 0 takes the card off it"
+    )
     count.set_defaults(handler=_cmd_count)
 
     remove = _deck_action(actions.add_parser, "remove", "take a card off the board", by=True)
@@ -220,9 +223,10 @@ def _cmd_decide(args: argparse.Namespace, ctx: Context) -> int:
 
 def _cmd_count(args: argparse.Namespace, ctx: Context) -> int:
     with _board(args, ctx) as (_, service, _):
-        change = service.set_count(args.card, args.copies, _ACTORS[args.by])
+        change = service.set_count(args.card, args.copies, _ACTORS[args.by], category=args.category)
     if change is None:
-        print(f"{args.card.strip()}: no count change queued; the deck holds that many", file=ctx.out)
+        where = args.category.strip() if args.category else "the deck"
+        print(f"{args.card.strip()}: no count change queued; {where} holds that many", file=ctx.out)
     else:
         print(f"{change.name}: {_count_text(change)}", file=ctx.out)
     return EXIT_OK
@@ -342,6 +346,8 @@ def print_board(stored: StoredDeck, board: Board, out: TextIO) -> None:
 
 
 def _count_text(change: CountChange) -> str:
+    if change.category is not None:
+        return f"remove from {change.category}"
     return "remove" if change.count == 0 else f"{change.was} → {change.count}"
 
 
@@ -385,7 +391,12 @@ def _add_toml(card: AddCard) -> str:
 
 
 def _remove_toml(card: RemoveCard) -> str:
-    return f"{{name = {_toml(card.name)}, keep = {card.keep}}}" if card.keep else _toml(card.name)
+    fields = [f"name = {_toml(card.name)}"]
+    if card.keep:
+        fields.append(f"keep = {card.keep}")
+    if card.category:
+        fields.append(f"category = {_toml(card.category)}")
+    return _toml(card.name) if len(fields) == 1 else "{" + ", ".join(fields) + "}"
 
 
 def _options(values: Sequence[str] | None) -> list[ReplaceOption]:

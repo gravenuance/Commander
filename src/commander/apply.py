@@ -114,6 +114,9 @@ class _Resolver:
     removed_entries: set[int] = field(default_factory=set[int])
 
     def remove(self, wanted: RemoveCard) -> None:
+        if wanted.category is not None:
+            self._remove_outside(wanted, wanted.category)
+            return
         # Only cards counted in the deck; a Maybeboard copy stays.
         entries = [e for e in _entries_named(self.deck, wanted.name) if e.in_deck]
         if any(COMMANDER_CATEGORY in e.categories for e in entries):
@@ -126,6 +129,24 @@ class _Resolver:
         held = sum(e.quantity for e in entries)
         if held <= wanted.keep:
             what = "not in the deck" if not entries else f"already {held}"
+            self.skipped.append(f"remove {wanted.name}: {what}")
+            return
+        self.changes.extend(_cut_to(entries, held - wanted.keep))
+
+    def _remove_outside(self, wanted: RemoveCard, category: str) -> None:
+        """Cut the copies filed under a category outside the deck; the deck's own copies stay."""
+        entries = [
+            e
+            for e in _entries_named(self.deck, wanted.name)
+            if not e.in_deck and e.primary_category.casefold() == category.casefold()
+        ]
+        if any(e.entry_id in self.removed_entries for e in entries):
+            self.problems.append(f"remove {wanted.name}: the plan already removes it from {category}")
+            return
+        self.removed_entries.update(e.entry_id for e in entries)
+        held = sum(e.quantity for e in entries)
+        if held <= wanted.keep:
+            what = f"not on {category}" if not entries else f"already {held} on {category}"
             self.skipped.append(f"remove {wanted.name}: {what}")
             return
         self.changes.extend(_cut_to(entries, held - wanted.keep))
@@ -395,8 +416,14 @@ def verify(changes: Sequence[Change], before: Deck, after: Deck) -> list[str]:
         entry = next((c for c in after.cards if c.entry_id == change.entry_id), None)
         found = entry.quantity if entry else 0
         if found != change.after:
-            mismatches.append(f"{change.name}: expected {change.after}, Archidekt shows {found}")
+            mismatches.append(f"{change_label(change)}: expected {change.after}, Archidekt shows {found}")
     return mismatches
+
+
+def change_label(change: Change) -> str:
+    """How a mismatch names the change: the card, and for copies outside the deck, their category too, so
+    the deck's own copies and the Maybeboard's are told apart."""
+    return change.name if change.in_deck else f"{change.name} on {change.category}"
 
 
 class NotYourDeckError(Exception):

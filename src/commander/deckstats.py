@@ -86,7 +86,8 @@ def stats_after(deck: Deck, main: Sequence[ResolvedCard], board: Board, db: Card
         entries.setdefault(card_key(card.name), []).append(card)
     plan = board_plan(deck, board)
     for cut in plan.remove if plan else ():
-        if cards := entries.get(card_key(cut.name)):
+        # A card coming off the Maybeboard was in no figure of the deck's.
+        if cut.category is None and (cards := entries.get(card_key(cut.name))):
             _cut_to(cards, cut.keep)
     for add in plan.add if plan else ():
         key = card_key(add.name)

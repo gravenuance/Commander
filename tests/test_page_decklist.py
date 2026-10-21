@@ -118,6 +118,55 @@ def test_a_group_outside_the_deck_is_marked_and_its_cards_have_no_controls() -> 
     }
 
 
+def test_minus_on_a_maybeboard_card_queues_it_to_come_off_its_category() -> None:
+    seen = run("""
+    state.current = 7;
+    renderGrid([group("Maybeboard", [deckCard({ name: "Hoverbike", quantity: 1, more: false, less: true })],
+      { key: "outside:Maybeboard", inDeck: false })]);
+    const minus = $("grid").querySelector(".count-step");
+    const label = minus.getAttribute("aria-label");
+    stub.count = async () => ({ change: { name: "Hoverbike", was: 1, count: 0, by: "you", at: "t",
+      category: "Maybeboard" } });
+    stub.decks = async () => ({ decks: [] });
+    stub.deck = async () => ({ id: 99 });
+    await fire(minus, "click");
+    return { label, steps: $("grid").querySelectorAll(".count-step").length,
+      calls: calls.filter((c) => c[0] === "count"), status: $("status-text").textContent };
+    """)
+    assert seen == {
+        "label": "Remove Hoverbike from the Maybeboard",
+        "steps": 1,
+        "calls": [["count", 7, "Hoverbike", -1, "Maybeboard"]],
+        "status": "Hoverbike: queued to come off the Maybeboard",
+    }
+
+
+def test_a_card_queued_off_a_category_of_the_users_shows_out_and_plus_keeps_it_there() -> None:
+    seen = run("""
+    state.current = 7;
+    renderGrid([group("TO ADD", [deckCard({ name: "Chaos Warp", quantity: 1, more: true, less: false,
+      pending: { kind: "count", was: 1, count: 0 } })], { key: "outside:TO ADD", inDeck: false })]);
+    const node = $("grid").querySelector(".gcard");
+    const plus = node.querySelector(".count-step");
+    const label = plus.getAttribute("aria-label");
+    stub.count = async () => ({ change: null });
+    stub.decks = async () => ({ decks: [] });
+    stub.deck = async () => ({ id: 99 });
+    await fire(plus, "click");
+    return { qty: texts(node, ".qty"), note: texts(node, ".pending-note"),
+      leaving: node.classList.contains("leaving"), label,
+      calls: calls.filter((c) => c[0] === "count"), status: $("status-text").textContent };
+    """)
+    assert seen == {
+        "qty": ["Out"],
+        "note": ["Coming out"],
+        "leaving": True,
+        "label": "Keep Chaos Warp on TO ADD",
+        "calls": [["count", 7, "Chaos Warp", 1, "TO ADD"]],
+        "status": "Chaos Warp: stays on TO ADD",
+    }
+
+
 def test_the_stats_show_the_saved_deck_and_what_review_would_change() -> None:
     seen = run("""
     const saved = { cards: 100, dontHave: 2, dontHaveCents: 450, dontHaveUnpriced: 0, averageManaValue: 2.5 };

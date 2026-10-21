@@ -86,7 +86,7 @@ function buildGroup(group) {
     group.cents ? el("span", { class: "group-price", text: euro(group.cents) }) : null,
     inDeck ? null : el("span", { class: "badge status outside-badge", text: "Not in deck" }));
   const stack = el("ul", { class: "stack", id: stackId, "aria-label": inDeck ? group.name : `${group.name}, not in the deck`, hidden: !open },
-    ...group.cards.map((card) => buildGridCard(card, inDeck)));
+    ...group.cards.map((card) => buildGridCard(card, inDeck ? null : group.name)));
   toggle.addEventListener("click", () => {
     const opening = stack.hidden;
     stack.hidden = !opening;
@@ -108,14 +108,25 @@ function copiesBadge(card) {
   return card.quantity > 1 ? el("span", { class: "qty", text: `×${card.quantity}`, "aria-label": `${card.quantity} copies` }) : null;
 }
 
-// + and - on a deck card, queued on the board; on a card still to come in, - takes it off the queue.
-function countTools(card) {
+// Archidekt's own boards read as "the Maybeboard"; a category of the user's keeps its bare name.
+const asideName = (category) => (/^(maybeboard|sideboard)$/i.test(category) ? `the ${category}` : category);
+
+// + and - on a deck card, queued on the board; on a card still to come in, - takes it off the queue. On a
+// card outside the deck (aside names its category), - takes it off that category and + keeps it there.
+function countTools(card, aside = null) {
   const incoming = card.pending?.kind === "add";
   const change = card.pending?.kind === "count" ? card.pending : null;
   const now = change ? change.count : card.quantity;
   const button = (text, step, label, onclick) => el("button", {
     class: "count-step", type: "button", text, "data-step": step, "aria-label": label, title: label, onclick,
   });
+  if (aside) {
+    const where = asideName(aside);
+    const off = card.less ? button("−", "-1", `Remove ${card.name} from ${where}`, () => stepCount(card.name, -1, aside)) : null;
+    const keep = card.more ? button("+", "1", `Keep ${card.name} on ${where}`, () => stepCount(card.name, 1, aside)) : null;
+    if (!off && !keep) return null;
+    return el("span", { class: "count-tools", role: "group", "aria-label": `${card.name} on ${where}` }, off, keep);
+  }
   let fewer = null;
   if (incoming) fewer = button("−", "-1", `Don't add ${card.name}`, () => decide({ id: card.pending.id, name: card.name }, "reopen"));
   else if (card.less) fewer = button("−", "-1", now === 1 ? `Take ${card.name} out` : `One fewer ${card.name}`, () => stepCount(card.name, -1));
@@ -125,27 +136,39 @@ function countTools(card) {
   return el("span", { class: "count-tools", role: "group", "aria-label": `Copies of ${card.name}` }, fewer, more);
 }
 
-async function stepCount(name, step) {
-  const tools = state.gridCards.get(name)?.querySelector(".count-tools");
+// A grid card by name: a deck card, or with aside, the card filed under that category outside the deck.
+function gridCard(name, aside) {
+  if (!aside) return state.gridCards.get(name);
+  const group = state.groups.get(`outside:${aside}`)?.node;
+  return group ? [...group.querySelectorAll(".gcard")].find((node) => node.dataset.name === name) : undefined;
+}
+
+async function stepCount(name, step, aside = null) {
+  const tools = gridCard(name, aside)?.querySelector(".count-tools");
   const controls = tools ? [...tools.querySelectorAll("button")] : [];
   await whileBusy(controls, async () => {
     try {
-      const answer = await api("count", state.current, name, step);
+      const answer = aside
+        ? await api("count", state.current, name, step, aside)
+        : await api("count", state.current, name, step);
       const change = answer.change;
-      if (!change) showStatus(`${name}: no change queued`);
+      if (aside) showStatus(change ? `${name}: queued to come off ${asideName(aside)}` : `${name}: stays on ${asideName(aside)}`);
+      else if (!change) showStatus(`${name}: no change queued`);
       else if (change.count === 0) showStatus(`${name}: queued to come out`);
       else showStatus(`${name}: ${change.was} → ${change.count}, queued`);
       await refresh();
     } catch { /* shown in the status line */ }
   });
   // The grid was rebuilt; keep the keyboard on this card's + or -, or the other one when it is gone.
-  const again = state.gridCards.get(name)?.querySelector(".count-tools");
+  const again = gridCard(name, aside)?.querySelector(".count-tools");
   const target = again?.querySelector(`[data-step="${step}"]`) ?? again?.querySelector(".count-step");
   const lost = !document.activeElement || document.activeElement === document.body;
   if (target && lost) target.focus();
 }
 
-function buildGridCard(card, inDeck = true) {
+// aside is the category of a card outside the deck, null for the deck's own.
+function buildGridCard(card, aside = null) {
+  const inDeck = !aside;
   const label = card.label || "";
   const incoming = card.pending?.kind === "add";
   const leaving = card.pending?.kind === "count" && card.pending.count === 0;
@@ -172,7 +195,7 @@ function buildGridCard(card, inDeck = true) {
     note ? el("span", { class: "pending-note", text: note }) : null,
     el("span", { class: "out-note", hidden: true }),
     swap,
-    countTools(card));
+    countTools(card, aside));
   node.addEventListener("click", (event) => {
     if (!event.target.closest("button")) zoom(card);
   });

@@ -1,7 +1,8 @@
 # 0044: The Sideboard and Maybeboard shown again, outside the deck, with stats above the decklist
 
 **Status:** Accepted · **Date:** 2026-10-20 · Amends the app part of
-[ADR 0035](0035-retire-the-maybeboard-and-sideboard.md)
+[ADR 0035](0035-retire-the-maybeboard-and-sideboard.md) · Their cards gain − to take them off, by
+[ADR 0052](0052-take-a-card-off-the-sideboard-or-maybeboard.md)
 
 ## Context
 
