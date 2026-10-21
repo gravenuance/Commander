@@ -12,6 +12,9 @@
 - The sync's progress line names every read under way ("TopDeck: recent tournaments · Archidekt: recent
   Edgar Markov decks"), drops each as it ends and shows a wait for TopDeck's rate limit ("TopDeck: waiting 30 s
   (rate limit)"). Before, it showed the last one that started, and said Archidekt while TopDeck waited.
+- An unexpected error while a sync reads the ideas no longer closes the HTTP client under TopDeck's running
+  fetch (the sync waits for it for up to ten seconds first), and an unexpected error in that fetch is logged
+  with its traceback instead of vanishing (ADR 0047).
 - Two decks that want the same Archidekt search at once (the same commander group or deck tag) no longer both
   make it: the second waits for the first and reads its answer (ADR 0027).
 - Testing a TopDeck key no longer fails with HTTP 400: the check now names the game and format, which TopDeck

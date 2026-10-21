@@ -605,7 +605,17 @@ def start_tournament_refresh(
             if on_done is not None:
                 on_done(TOURNAMENTS_STEP)
 
-    return in_background(load, name="meta-topdeck")
+    def log_unexpected(done: Future[None]) -> None:
+        # `load` keeps TopDeck's own failures; anything else would vanish in a future nobody reads.
+        error = None if done.cancelled() else done.exception()
+        if error is not None:
+            log.warning(
+                "TopDeck events for %s to %s not fetched: unexpected error", since, until, exc_info=error
+            )
+
+    future = in_background(load, name="meta-topdeck")
+    future.add_done_callback(log_unexpected)
+    return future
 
 
 @dataclass(slots=True, frozen=True)

@@ -10,8 +10,9 @@ each failure comes back as a warning to show the way the caller shows things.
 """
 
 import logging
-from collections.abc import Callable
-from concurrent.futures import Future
+from collections.abc import Callable, Generator
+from concurrent.futures import Future, wait
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -383,28 +384,56 @@ def _compile_ideas(
                 deck_lock=deck_lock,
             )
 
-        while waiting:
-            stored = next_up.pick(waiting, lambda s: s.deck.id)
-            waiting.remove(stored)
-            on_deck(stored.deck.id, FetchState.FETCHING)
-            read_warnings: list[str] = []
-            try:
-                reading.append(
-                    _start_reading(stored, db, sources, services, warnings=read_warnings, phases=phases)
-                )
-            except (BoardError, ProfileError) as error:
-                warnings.extend(read_warnings)
-                warnings.append(f"{stored.deck.short_name} ideas not compiled: {error}")
-                on_deck(stored.deck.id, FetchState.INCOMPLETE)
-                continue
-            while ready := ready_reads():
-                merge_next(ready)
-        while reading:
-            merge_next(ready_reads() or reading)
-        if tournaments is not None:
-            # The client closes with this block, so TopDeck's thread must be over first.
-            tournaments.result()
+        with _settled(tournaments):
+            while waiting:
+                stored = next_up.pick(waiting, lambda s: s.deck.id)
+                waiting.remove(stored)
+                on_deck(stored.deck.id, FetchState.FETCHING)
+                read_warnings: list[str] = []
+                try:
+                    reading.append(
+                        _start_reading(stored, db, sources, services, warnings=read_warnings, phases=phases)
+                    )
+                except (BoardError, ProfileError) as error:
+                    warnings.extend(read_warnings)
+                    warnings.append(f"{stored.deck.short_name} ideas not compiled: {error}")
+                    on_deck(stored.deck.id, FetchState.INCOMPLETE)
+                    continue
+                while ready := ready_reads():
+                    merge_next(ready)
+            while reading:
+                merge_next(ready_reads() or reading)
+            if tournaments is not None:
+                # The client closes with this block, so TopDeck's thread must be over first.
+                _wait_for(tournaments)
+                tournaments.result()
     return phase
+
+
+# How long an error in the ideas phase waits for TopDeck's thread before the client closes under it.
+_TOPDECK_GRACE_SECONDS = 10.0
+# A wait in slices, because on Windows Ctrl-C does not interrupt a wait without a timeout.
+_POLL_SECONDS = 0.5
+
+
+@contextmanager
+def _settled(tournaments: Future[None] | None) -> Generator[None]:
+    """After an error, gives TopDeck's thread a moment to end before the client closes under it; it logs its
+    own failure. Ctrl-C is not an Exception, so it ends the run at once."""
+    try:
+        yield
+    except Exception:
+        if tournaments is not None:
+            _wait_for(tournaments, up_to=_TOPDECK_GRACE_SECONDS)
+        raise
+
+
+def _wait_for(future: Future[None], *, up_to: float | None = None) -> None:
+    """Wait until the future is done, or for `up_to` seconds at most."""
+    waited = 0.0
+    while not future.done() and (up_to is None or waited < up_to):
+        wait([future], timeout=_POLL_SECONDS)
+        waited += _POLL_SECONDS
 
 
 # Shown when no read is under way, as the ideas are merged.

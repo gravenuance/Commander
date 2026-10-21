@@ -58,7 +58,10 @@ Option 4, behind the provider seam that stood in front of EDHTop16 (`tournaments
   deck at bracket 4 or 5 is merged once the window is in (at once when it was already stored). Among the
   ready reads the usual order holds, and the sync blocks on TopDeck only when nothing else is left to merge;
   the client's lock keeps the fetch to one per sync. The deck shows as fetching from the start of its reads.
-  Before this a first 60-day sync held the first deck for over three minutes.
+  Before this a first 60-day sync held the first deck for over three minutes. The thread's future logs any
+  error `load` did not keep (a bug, not a TopDeck failure) at WARNING with its traceback, and an error
+  elsewhere in the ideas phase waits up to ten seconds for the thread before the HTTP client closes under it
+  (Ctrl-C does not wait).
 - **Saying where the sync is** (`phases.ActivePhases`). The reads of a sync run side by side, so the progress
   line lists every one that is under way, in the order they started, joined with " · " (for example
   "TopDeck: recent tournaments · Archidekt: recent Edgar Markov decks"); a read leaves the line when it ends,

@@ -9,8 +9,9 @@ from dataclasses import replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
+import httpx
 import pytest
 
 from commander import syncrun
@@ -31,7 +32,7 @@ from commander.deckcache import Answer, AnswerSource
 from commander.deckprofile import Profile, profile_template, read_profile
 from commander.fetchpriority import FetchPriority
 from commander.ideas import rejudge_ideas, relabel_legacy_ideas
-from commander.metadata import TOURNAMENT_BRACKETS, AdjacentDecks, MetaData
+from commander.metadata import TOURNAMENT_BRACKETS, AdjacentDecks, MetaData, start_tournament_refresh
 from commander.models import Deck
 from commander.net import NetworkError
 from commander.scryfall import CardRefresh, RefreshStatus
@@ -422,6 +423,69 @@ def test_a_deck_below_bracket_4_merges_without_waiting_for_topdeck_and_one_at_br
     # The two decks below bracket 4 merge while TopDeck is still out; the bracket 4 deck goes on after it.
     assert merged == [102, 103, 101]
     assert waited_for_release == [True]
+
+
+def test_an_error_mid_sync_waits_for_topdeck_before_the_client_closes_and_logs_what_topdeck_hit(
+    tmp_path: Path,
+    raw_deck: Json,
+    card_db_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    fake = three_decks(tmp_path, raw_deck, card_db_file)
+    fake.decks[DECK_IDS[0]]["edhBracket"] = 4
+    stub_meta(monkeypatch)
+    clients: list[httpx.Client] = []
+    failing, logged = threading.Event(), threading.Event()
+    open_when_topdeck_ended: list[bool] = []
+
+    def load(**_: object) -> None:
+        failing.wait(timeout=30)
+        open_when_topdeck_ended.append(not clients[-1].is_closed)
+        raise RuntimeError("TopDeck's thread broke")
+
+    def sources(*_: object, **__: object) -> object:
+        return SimpleNamespace(settings=MetaSettings(), tournaments=SimpleNamespace(load=load))
+
+    def start_topdeck(*args: Any, **kwargs: Any) -> Future[None]:  # noqa: ANN401 - passed on as it came
+        future = start_tournament_refresh(*args, **kwargs)
+        assert future is not None
+        # Callbacks run in the order added, so this one says the failure was logged.
+        future.add_done_callback(lambda _: logged.set())
+        return future
+
+    def start_gather(deck: Deck, *_: object, **__: object) -> Callable[[], object]:
+        if deck.id == DECK_IDS[1]:
+            failing.set()
+            raise RuntimeError("the second deck's reads broke")
+        return lambda: SimpleNamespace(
+            lists=SimpleNamespace(data=1, error=None, key_problem=False), peers=SimpleNamespace(data=1)
+        )
+
+    def open_client() -> httpx.Client:
+        clients.append(fake.client())
+        return clients[-1]
+
+    monkeypatch.setattr(syncrun, "meta_sources", sources)
+    monkeypatch.setattr(syncrun, "start_tournament_refresh", start_topdeck)
+    monkeypatch.setattr(syncrun, "start_gather_for", start_gather)
+    with caplog.at_level(logging.WARNING, logger="commander.metadata"):
+        with pytest.raises(RuntimeError, match="second deck's reads broke"):
+            run_sync(
+                replace(services(tmp_path, fake), client_factory=open_client),
+                Workspace(tmp_path / "decks"),
+                "TESTER",
+                MetaSettings(),
+                SyncOptions(cards=False),
+                on_progress=lambda _: None,
+            )
+        assert logged.wait(timeout=30)
+    assert open_when_topdeck_ended == [True]
+    [record] = [r for r in caplog.records if r.name == "commander.metadata"]
+    assert record.levelno == logging.WARNING
+    assert "TopDeck" in record.getMessage()
+    assert record.exc_info is not None
+    assert str(record.exc_info[1]) == "TopDeck's thread broke"
 
 
 def populated(tmp_path: Path, raw_deck: Json, card_db_file: Path) -> tuple[FakeArchidekt, StoredDeck]:
