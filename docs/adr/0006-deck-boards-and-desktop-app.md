@@ -62,7 +62,7 @@ Maybeboard is reopened on the board. Turning down a Sideboard or Maybeboard card
 next save. Moves are `modifyCards` edits that send new categories; plans gained `maybeboard = true` on a
 remove line and a `drop` list, but hand-written plans still delete unless they ask.
 
-Live test, 2026-10-15, private test deck 27461808: one save moved Lightning Bolt to the Maybeboard (as
+Live test, 2026-10-15, private test deck: one save moved Lightning Bolt to the Maybeboard (as
 `Maybeboard, Burn`), moved Aggravated Assault in from the Maybeboard (filed as Enchantment) and dropped
 Ruination; the read-back matched. The reverse swap moved Lightning Bolt back in under Burn.
 

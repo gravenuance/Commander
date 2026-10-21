@@ -14,7 +14,7 @@ and to see them arrive, from the app. Archidekt gives every deck entry one label
 eleven decks (2026-10-16) labels were rare: Proxy (16 cards), Getting (8), two others once each; no card
 used "Don't Have".
 
-Tried on the test deck 27461808 (2026-10-16): a label-only `modifyCards` is accepted, and unlike a
+Tried on the private test deck (2026-10-16): a label-only `modifyCards` is accepted, and unlike a
 deck-tag edit it moves the deck's `updatedAt`, so `sync` notices labels changed on the website.
 
 The owner chose (2026-10-16): the steps are Don't Have → Getting → no label; every card coming into a

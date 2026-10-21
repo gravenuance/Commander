@@ -6,12 +6,12 @@
 ## Context
 
 `sync` listed `GET /api/decks/v3/?ownerUsername=<user>&pageSize=50` and read each deck, both without a login, so
-it saw only public decks. The owner has a private deck (the test deck 27461808) and an unlisted one
+it saw only public decks. The owner has a private deck (the private test deck) and an unlisted one
 (27586769) that it never pulled.
 
 A read-only probe on 2026-10-19 showed:
 
-- Without a login the listing for `MAKKIS` held the 11 public decks. With `Authorization: JWT <access token>`,
+- Without a login the owner's listing held the 11 public decks. With `Authorization: JWT <access token>`,
   the header `ArchidektEditor` already sends, it held 13: the private and the unlisted deck were added. No
   other parameter was needed.
 - Every listing entry and the single-deck read `GET /api/decks/{id}/` carry the booleans `private`, `unlisted`

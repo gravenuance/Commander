@@ -96,7 +96,7 @@ Option 1, chosen by the user on 2026-10-15, kept small and careful:
   this decision is revisited; option 2 needs no login and can replace `--save`.
 - Tests run against a fake Archidekt that implements these calls as described above, with an in-memory
   keyring, so no test touches the real Credential Manager or network.
-- Verified against the real site on 2026-10-15, on a private throwaway deck (27461808): the token
+- Verified against the real site on 2026-10-15, on the private test deck: the token
   refresh answered 200, both card lookups found the chosen printing, the snapshot and `modifyCards`
   answered 201, and one request added two cards (one under a new category, which Archidekt created),
   raised a card's copies and removed another; the read-back matched, labels were kept, and running the
