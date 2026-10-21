@@ -49,7 +49,7 @@ from commander.board import (
 )
 from commander.boardsave import BoardSave, preview_board, save_board
 from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
-from commander.bracket import cached_effective_deck, estimate_cache, estimate_deck
+from commander.bracket import cached_effective_deck, effective_bracket, estimate_cache, estimate_deck
 from commander.bracketcheck import check_bracket, check_json
 from commander.bracketpreview import preview_json, spellbook_preview
 from commander.budget import resolved_budget
@@ -911,6 +911,8 @@ class Desk:
             "fetchedAt": result.fetched_at.isoformat() if result.fetched_at else None,
             # Not "error": the page takes that key for a failed call, and the ceiling is still checked.
             "unavailable": result.error,
+            # What the panels act on, so the page can tell its deck view is out of date.
+            "effectiveBracket": effective_bracket(stored.deck, estimate),
             **check_json(check_bracket(stored.deck.bracket, ceiling, estimate)),
         }
 

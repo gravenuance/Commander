@@ -1618,7 +1618,8 @@ def test_the_deck_view_of_an_unset_deck_carries_its_estimates_lowest_bracket_fro
     assert (before["bracket"], before.get("effectiveBracket")) == (None, None)
     assert fake.spellbook.bodies == []
     # The bracket panel asks (the fake says Ruthless 4+) and caches; the next view reads that.
-    desk.bracket(DECK)
+    asked = desk.bracket(DECK)
+    assert asked.get("effectiveBracket") == 4
     after = desk.deck(DECK)
     assert (after["bracket"], after.get("effectiveBracket")) == (None, 4)
     assert len(fake.spellbook.bodies) == 1
@@ -1627,9 +1628,10 @@ def test_the_deck_view_of_an_unset_deck_carries_its_estimates_lowest_bracket_fro
 def test_a_set_bracket_is_the_decks_effective_bracket_whatever_the_estimate_says(
     desk: Desk, fake: FakeArchidekt
 ) -> None:
-    desk.bracket(DECK)
+    asked = desk.bracket(DECK)
     view = desk.deck(DECK)
     # The fixture deck is set to 5 on Archidekt and the fake estimate is Ruthless 4+.
+    assert asked.get("effectiveBracket") == 5
     assert (view["bracket"], view.get("effectiveBracket")) == (5, 5)
     assert len(fake.spellbook.bodies) == 1
 

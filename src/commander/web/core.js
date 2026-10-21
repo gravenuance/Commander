@@ -5,7 +5,11 @@
 // Shared by the page scripts: the open deck's state and the helpers every area uses.
 const SEARCH_DELAY_MS = 150;
 const STATUS_MS = 6000;
-const META_BRACKET = 5;
+// A deck's brackets are its effective ones (ADR 0051): the bracket set on Archidekt, else its estimate's lowest.
+// Decks at these read the commander's tournament lists, so they have a Meta panel.
+const META_BRACKETS = [4, 5];
+// The bracket whose tournament lists are cEDH: its mana base follows them, not Karsten's numbers.
+const CEDH_BRACKET = 5;
 // Grace cards a tooltip names before counting the rest.
 const GRACE_TIP_CARDS = 2;
 

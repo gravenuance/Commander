@@ -37,6 +37,9 @@ function renderBracket(deck, b, newDeck) {
     b.causes.length ? el("ul", { class: "causes", "aria-label": "What lifts the estimate" }, ...b.causes.map(causeItem)) : null,
   );
   paintBracket();
+  // The deck view was built before this estimate was cached, so it still has the deck unset (ADR 0051).
+  const open = state.view && state.view.id === deck && deck === state.current;
+  if (open && b.effectiveBracket !== undefined && b.effectiveBracket !== state.view.effectiveBracket) loadDeck();
 }
 
 function causeItem(cause) {
