@@ -55,7 +55,15 @@ Option 3 for the sample and option 2 for the cache, in `commander.archidekt`, `c
   source. The other services keep their pace (EDHTop16 1.5 s, Spellbook 1 s).
 - **The per-deck cache:** `peer-decks` in the meta cache folder holds each deck's commanders, cards, plan
   categories and card counts above one, under its id and the `updatedAt` it was listed with (cache version
-  2). A changed `updatedAt` is a miss. The search results stay cached for a day, as the other answers do.
+  2). A changed `updatedAt` is a miss.
+- **How often a search is refreshed:** a day was too often, since each refresh re-pages a commander's whole
+  window (a first sync of the day took about 23 minutes for 14 commander groups and 9 tag searches). Each
+  search answer, one per commander at a bracket and one per deck tag, is now refreshed every third day, on a
+  day of its own: `commander.peerschedule` takes the day from a hash of the answer's cache item name, so a sync
+  refreshes about a third of them and no answer is older than about three days (the owner accepted that
+  ideas may lag Archidekt by that much). An answer is fresh while it was fetched since the start (UTC) of its latest
+  day and is never refreshed under 24 hours old; after a gap in syncing, everything past its day is refreshed
+  at once. The other meta answers keep their day.
 - **Pruning:** a gather that fetches (never a cache-only read) deletes the deck files not used for 30 days,
   those whose deck was last updated before the window (no search lists them again) and those that no longer
   parse. A file's modification time is its last use, set when it is written or hit.
@@ -63,9 +71,9 @@ Option 3 for the sample and option 2 for the cache, in `commander.archidekt`, `c
 
 ## Consequences
 
-- A busy commander's first sync of the day makes up to 20 search requests and 60 deck reads, five seconds
-  apart, so several minutes; later syncs read only the decks edited since. A commander with few decks costs
-  less.
+- A busy commander's refresh, one in three days, makes up to 20 search requests and 60 deck reads, five
+  seconds apart, so several minutes; later syncs read only the decks edited since. A commander with few decks
+  costs less.
 - The sample is larger, so the thresholds and the weights of ADR 0026 mean something; a commander with fewer
   than ten decks reads all of them and is thin.
 - `peer_decks` is now the read cap, not a sample size: lowering it is the first thing to do if Archidekt

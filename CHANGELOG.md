@@ -36,6 +36,10 @@
 - The log now records the `Retry-After` Archidekt sends with a 429 (or `none`) beside the URL, and, at DEBUG,
   how long each Archidekt request took, so the 180 s cooldown can be judged from real answers (ADR 0027). The
   cooldown itself is unchanged.
+- Archidekt searches are refreshed every third day instead of daily, each commander and deck tag on a day of
+  its own (a stable hash of its name), so a sync refreshes about a third of them instead of all, with a third of
+  the paced Archidekt requests. The ideas built from them may be up to
+  three days behind Archidekt (ADR 0027).
 
 ### Removed
 - Spicy picks, the spice figure of `meta --card` and the `spice` fields of `meta --json`: TopDeck has no spice

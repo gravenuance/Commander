@@ -7,7 +7,8 @@ for a day unless stated, and the sources are fetched in parallel, each at its ow
 - the most-played commanders and their best-placed tournament lists (bracket 5 only), worked out from the same
   stored events,
 - the most-viewed recent Archidekt decks for the commander at the deck's bracket and the one above, other
-  players' only, each deck read kept until its owner edits it (ADR 0027),
+  players' only (a search answer is refreshed every third day, staggered per commander), each deck read kept
+  until its owner edits it (ADR 0027),
 - the combos inside each top commander's core cards, from Commander Spellbook (a week; bracket 5 only),
 - the deck's own combos, from Commander Spellbook (a week, until the list changes; bracket 5 only),
 - for `sync`, the decks of the commanders the profile names as alike and of other commanders carrying one of
@@ -68,6 +69,7 @@ from commander.jsonshape import (
 )
 from commander.models import Deck
 from commander.net import Fetcher, HttpStatusError, NetworkError, Pacer
+from commander.peerschedule import fresh_for as peer_fresh_for
 from commander.spellbook import FRESH_FOR as SPELLBOOK_FRESH_FOR
 from commander.spellbook import (
     META_REQUEST_INTERVAL_SECONDS,
@@ -576,8 +578,9 @@ def _group_peers(
         "windowDays": settings.window_days,
         "user": sources.user.casefold(),
     }
+    item = cache_item("archidekt", name, str(bracket))
     return cached_answer(
-        cache_item("archidekt", name, str(bracket)),
+        item,
         request,
         _live(
             offline,
@@ -594,7 +597,7 @@ def _group_peers(
         _cache(folder, "Archidekt decks", _encode_peers, _decode_peers),
         now=now,
         refresh=refresh,
-        fresh_for=FRESH_FOR,
+        fresh_for=peer_fresh_for(item, now()),
         errors=_ERRORS,
     )
 
@@ -640,8 +643,9 @@ def _tag_peers(
         "windowDays": settings.window_days,
         "user": sources.user.casefold(),
     }
+    item = cache_item("archidekt-tag", key, str(bracket))
     return cached_answer(
-        cache_item("archidekt-tag", key, str(bracket)),
+        item,
         request,
         _live(
             offline,
@@ -652,7 +656,7 @@ def _tag_peers(
         _cache(folder, "Archidekt tagged decks", _encode_peers, _decode_peers),
         now=now,
         refresh=refresh,
-        fresh_for=FRESH_FOR,
+        fresh_for=peer_fresh_for(item, now()),
         errors=_ERRORS,
     )
 

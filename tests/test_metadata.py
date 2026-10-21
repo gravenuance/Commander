@@ -676,6 +676,37 @@ def test_adjacent_groups_pool_their_decks_once_each(rig: Rig) -> None:
     assert [p.deck.id for p in found.decks] == [5553433, 13668856, 7432856]
 
 
+GROUP_NAMES = tuple(f"Fictional Commander {n:02}" for n in range(1, 13))
+
+
+def searched_groups(rig: Rig, since: int) -> list[str]:
+    return [q["commanderName"] for q in rig.archidekt.searches[since:]]
+
+
+def oldest_group_answer(rig: Rig) -> timedelta:
+    stamps = [
+        datetime.fromisoformat(json.loads(p.read_text(encoding="utf-8"))["fetchedAt"])
+        for p in (rig.cache / CACHE_FOLDER).glob("archidekt-fictional-*")
+    ]
+    return rig.now - min(stamps)
+
+
+def test_each_group_is_refreshed_once_in_three_days_and_none_is_left_older(rig: Rig) -> None:
+    adjacent(rig, *((name,) for name in GROUP_NAMES))
+    for first_day in (1, 4):
+        refreshed: dict[int, list[str]] = {}
+        for day in range(first_day, first_day + 3):
+            rig.now = NOW + timedelta(days=day)
+            before = len(rig.archidekt.searches)
+            adjacent(rig, *((name,) for name in GROUP_NAMES))
+            refreshed[day] = searched_groups(rig, before)
+            assert oldest_group_answer(rig) <= timedelta(days=3)
+        every = sorted(name for names in refreshed.values() for name in names)
+        assert every == sorted(GROUP_NAMES)
+        # About a third of the groups each day, whichever day of the cycle the first one falls on.
+        assert all(1 <= len(names) <= 7 for names in refreshed.values())
+
+
 def tagged(
     rig: Rig, *tags: str, groups: tuple[tuple[str, ...], ...] = (), offline: bool = False
 ) -> AdjacentDecks:
@@ -819,6 +850,18 @@ def test_a_tag_answer_is_cached_for_the_day_and_shared_by_decks_of_other_command
         tags=("landfall",),
     )
     assert magda.tagged[0].decks == ()
+
+
+def test_a_tag_answer_is_refreshed_once_in_three_days(rig: Rig) -> None:
+    tagged(rig, "Landfall")
+    counts: list[int] = []
+    for day in range(1, 7):
+        rig.now = NOW + timedelta(days=day)
+        before = len(tag_searches(rig))
+        tagged(rig, "Landfall")
+        counts.append(len(tag_searches(rig)) - before)
+    assert sum(counts[:3]) == 1
+    assert sum(counts[3:]) == 1
 
 
 def test_offline_a_tag_search_reads_only_the_cache(rig: Rig) -> None:

@@ -121,8 +121,8 @@ is broad enough to want the pools.
 ## Consequences
 
 - A deck that searches by tag learns from every commander that plays alike. Each distinct tag costs up to two
-  searches of three pages and 15 deck reads, paced as in ADR 0027 and cached for a day; decks sharing a tag
-  share the answer.
+  searches of three pages and 15 deck reads, paced and cached as in ADR 0027; decks sharing a tag share
+  the answer.
 - The tagged source is the loosest. It sorts after the others, and its pools are only as good as the tags;
   the breakdown names the tag so a bad pool can be spotted and the tag ignored under `[themes] ignore`.
 - Up to 50 ideas per source put more on the board; the share pill and the order keep the best first.
