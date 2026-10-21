@@ -61,7 +61,8 @@ SLOW_QUERY_SECONDS = 30.0
 # A Commander deck has about a hundred cards; far more is not a deck.
 MAX_DECK_CARDS = 400
 MAX_TID_LENGTH = 200
-NO_KEY_MESSAGE = "no TopDeck key saved; add one in the app's TopDeck panel or with `cmdr topdeck`"
+KEY_REMEDY = "add one in the app's TopDeck panel or with `cmdr topdeck`"
+NO_KEY_MESSAGE = f"no TopDeck key saved; {KEY_REMEDY}"
 _DAY = 24 * 60 * 60
 # A key check asks for events no real one reaches, so the answer is empty.
 _KEY_CHECK_PARTICIPANTS = 100_000

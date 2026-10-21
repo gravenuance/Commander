@@ -36,6 +36,7 @@ from commander.profileedit import ensure_grace_table
 from commander.scryfall import CardRefresh, RefreshStatus, ScryfallClient, ScryfallError, refresh_card_db
 from commander.store import StoredDeck, Workspace
 from commander.sync import PRIVATE_NOT_UPDATED, PullWatch, SyncResult, SyncStatus, sync_decks
+from commander.topdeck import KEY_REMEDY
 from commander.viewscore import VIEWS_FILE, ViewScores
 
 log = logging.getLogger(__name__)
@@ -399,10 +400,7 @@ def _compile_ideas(
 
 
 _GONE = "the deck left its folder or changed its commander while its ideas were fetched"
-_KEY_WARNING = (
-    "tournament lists skipped: missing or refused TopDeck key; "
-    "add one in the app's TopDeck panel or with `cmdr topdeck`"
-)
+_KEY_WARNING = f"tournament lists skipped: missing or refused TopDeck key; {KEY_REMEDY}"
 
 
 def _note_key_problem(key_problem: bool, warnings: list[str]) -> bool:  # noqa: FBT001 — an answer's flag
