@@ -111,6 +111,10 @@ _RETIRED_PREFIX = "edhtop16"
 CEDH_BRACKET = 5
 # Decks at these brackets learn from the commander's tournament lists too: bracket 4 plays near cEDH.
 TOURNAMENT_BRACKETS = frozenset({4, CEDH_BRACKET})
+# What a source answers when the deck's bracket does not read it; a choice, not a failure to report.
+NOT_READ_BELOW_4 = "not read below bracket 4"
+NOT_READ_BELOW_5 = "not read below bracket 5"
+NOT_READ = frozenset({NOT_READ_BELOW_4, NOT_READ_BELOW_5})
 # Enough for the busiest commanders' two months.
 MAX_OWN_ENTRIES = 400
 
@@ -524,12 +528,12 @@ def start_gather_peers(
     def finish() -> MetaData:
         # Different services, so the two run side by side.
         own = in_background(lists, name="meta-lists") if read_lists else None
-        why = "not read below bracket 5"
         tournament_lists: Answer[CommanderEntries] = (
             own.result()
             if own is not None
-            else Answer(None, AnswerSource.UNAVAILABLE, None, "not read below bracket 4")
+            else Answer(None, AnswerSource.UNAVAILABLE, None, NOT_READ_BELOW_4)
         )
+        why = NOT_READ_BELOW_5
         field: Answer[tuple[MetaCommander, ...]] = Answer(None, AnswerSource.UNAVAILABLE, None, why)
         combos: Answer[tuple[CommanderCombos, ...]] = Answer(None, AnswerSource.UNAVAILABLE, None, why)
         own_combos: Answer[tuple[ComboDetail, ...]] = Answer(None, AnswerSource.UNAVAILABLE, None, why)

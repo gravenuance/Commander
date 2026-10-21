@@ -49,7 +49,7 @@ from commander.board import (
 )
 from commander.boardsave import BoardSave, preview_board, save_board
 from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
-from commander.bracket import estimate_cache, estimate_deck
+from commander.bracket import cached_effective_deck, estimate_cache, estimate_deck
 from commander.bracketcheck import check_bracket, check_json
 from commander.bracketpreview import preview_json, spellbook_preview
 from commander.budget import resolved_budget
@@ -73,10 +73,10 @@ from commander.manaplan import BASIC_NAMES, LandOption, ManaPlan, plan_json, sug
 from commander.meta import analyse
 from commander.metadata import (
     CEDH_BRACKET,
+    NOT_READ,
     MetaData,
     MetaSources,
     cache_stamp,
-    gather,
     gather_for,
     meta_sources,
     topdeck_client,
@@ -668,12 +668,13 @@ class Desk:
         stored = self._stored(deck_id)
         board = read_board(stored.folder)
         profile = read_profile(stored.folder)
+        playing = self._effective(stored.deck)
         with self._db() as db:
             main = db.resolve(stored.deck.main_cards)
             identity = deck_identity(main)
             infos = db.cards(card.oracle_id for card in board.cards)
             rules = with_ideas(self._deck_rules(stored, main, profile, db), infos.values(), db)
-            budget = resolved_budget(stored.deck.bracket, main, profile.max_card_cents)
+            budget = resolved_budget(playing.bracket, main, profile.max_card_cents)
             shares = self._shares(stored)
             held = held_keys(stored.deck, db)
             cards = [
@@ -705,7 +706,9 @@ class Desk:
             "short": stored.deck.short_name,
             "name": stored.deck.name,
             "url": stored.deck.url,
+            # What is set on Archidekt, which the header shows; the panels go by the effective bracket.
             "bracket": stored.deck.bracket,
+            "effectiveBracket": playing.bracket,
             "commanders": list(stored.deck.commanders),
             "archetype": profile.archetype,
             "grace": _grace_json(profile, shares),
@@ -1061,14 +1064,17 @@ class Desk:
     def meta(self, deck_id: int) -> Json:
         """The deck's meta report from cached answers only; a sync refreshes them."""
         stored = self._stored(deck_id)
-        data = self._gather(stored.deck)
+        deck = self._effective(stored.deck)
+        data = self._gather(deck)
         with self._db() as db:
-            report = analyse(stored.deck, data, read_profile(stored.folder), db, now=self._now)
+            report = analyse(deck, data, read_profile(stored.folder), db, now=self._now)
         why = _unavailable_reason(data)
         if data.lists.data is None and data.field.data is None and data.peers.data is None:
             return {"report": None, **why}
         return {
             **why,
+            # Whether the most-played commanders and their combos are read: bracket 5 only (ADR 0027).
+            "cedh": deck.bracket == CEDH_BRACKET,
             "report": report_json(report),
             "keys": key_card_rows(report.key_cards),
             "stoppers": stopper_rows(report.own_combos, report.threats),
@@ -1092,7 +1098,7 @@ class Desk:
         deck = stored.deck
         stamp = (
             f"{files_stamp(stored.folder, ('profile.toml',))}"
-            f"|{cache_stamp(self._settings.cache)}|{self._now().date()}"
+            f"|{cache_stamp(self._settings.cache)}|{self._now().date()}|{self._effective(deck).bracket}"
         )
         known = self._tables.get(deck.id)
         if known is not None and known[0] == stamp:
@@ -1108,7 +1114,7 @@ class Desk:
         """The deck's cut rules, kept until its snapshot, its profile or the cached meta answers change."""
         stamp = (
             f"{files_stamp(stored.folder, ('deck.json', 'profile.toml'))}"
-            f"|{cache_stamp(self._settings.cache)}|{self._now().date()}"
+            f"|{cache_stamp(self._settings.cache)}|{self._now().date()}|{self._effective(stored.deck).bracket}"
         )
         known = self._rules.get(stored.deck.id)
         if known is not None and known[0] == stamp:
@@ -1117,22 +1123,29 @@ class Desk:
         self._rules[stored.deck.id] = (stamp, rules)
         return rules
 
+    def _effective(self, deck: Deck) -> Deck:
+        """The deck as the panels act on it (ADR 0051): with no bracket set, its cached estimate's lowest.
+        The cache alone, so a view never waits for Spellbook; the sync asks for the estimate."""
+        cache = estimate_cache(self._settings.cache / SPELLBOOK_CACHE_FOLDER)
+        return cached_effective_deck(deck, cache, now=self._now)
+
     def _pool(self, deck: Deck) -> MetaData | None:
         """What other players do with the deck's commander, from cache only; None for a deck without one."""
         if not deck.commanders:
             return None
-        stamp = cache_stamp(self._settings.cache)
+        playing = self._effective(deck)
+        stamp = f"{cache_stamp(self._settings.cache)}|{playing.bracket}"
         known = self._pools.get(deck.id)
         if known is not None and known[0] == stamp:
             return known[1]
-        data = self._gather(deck, read=gather_for)
+        data = self._gather(playing)
         self._pools[deck.id] = (stamp, data)
         return data
 
-    def _gather(self, deck: Deck, *, read: Callable[..., MetaData] = gather) -> MetaData:
-        """Cached meta answers only: fetching belongs to the sync."""
+    def _gather(self, deck: Deck) -> MetaData:
+        """Cached meta answers only: fetching belongs to the sync. The deck is the effective one."""
         with self._client_factory() as http:
-            return read(
+            return gather_for(
                 deck,
                 self._meta_sources(http),
                 self._settings.cache,
@@ -1315,7 +1328,7 @@ def _unavailable_reason(data: MetaData) -> Json:
     reasons = {
         answer.error
         for answer in (data.lists, data.field, data.peers)
-        if answer.error and answer.error != NOT_FETCHED
+        if answer.error and answer.error != NOT_FETCHED and answer.error not in NOT_READ
     }
     return {"unavailable": "; ".join(sorted(reasons))[:300]} if reasons else {}
 
