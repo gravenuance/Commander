@@ -43,6 +43,32 @@ def test_a_deck_whose_answer_cannot_be_decoded_fails_alone(tmp_path: Path, raw_d
     assert (tmp_path / "decks" / "222-other").is_dir()
 
 
+def test_a_deck_listed_twice_by_a_drifting_listing_is_fetched_and_reported_once(
+    tmp_path: Path, raw_deck: Json
+) -> None:
+    fake = FakeArchidekt()
+    fake.put(raw_deck)
+    fetched: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        response = fake.handler(request)
+        if request.url.path == f"/api/decks/{DECK_ID}/":
+            fetched.append(request.url.path)
+        if request.url.path == "/api/decks/v3/":
+            page = json.loads(response.content)
+            # A deck edited between two page reads can turn up on both pages.
+            return httpx.Response(200, json={**page, "results": [*page["results"], *page["results"]]})
+        return response
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        results = sync_decks(
+            ArchidektClient(Fetcher(client, sleep=lambda _: None)), Workspace(tmp_path / "decks"), "MAKKIS"
+        )
+
+    assert [(r.deck_id, r.status) for r in results] == [(DECK_ID, SyncStatus.NEW)]
+    assert len(fetched) == 1
+
+
 def owned_by(fake: FakeArchidekt, owners: dict[int, str]) -> httpx.Client:
     """A client whose deck answers name the given owner for those decks, as a mislisted deck would."""
 
