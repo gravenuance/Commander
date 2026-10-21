@@ -13,7 +13,7 @@ import logging
 from collections.abc import Callable, Generator
 from concurrent.futures import FIRST_COMPLETED, Future, wait
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 
@@ -23,6 +23,8 @@ from commander.archidekt import ArchidektClient, ArchidektError, AuthError
 from commander.archidekt_edit import ArchidektAuth, ArchidektEditor
 from commander.background import in_background, run_all
 from commander.board import BoardCard, BoardError, BoardService, Origin
+from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
+from commander.bracket import estimate_cache, estimated_decks
 from commander.carddb import CARD_DB_FILE, CardDataError, CardDb
 from commander.config import MetaSettings
 from commander.credentials import CredentialError, TokenStore
@@ -47,6 +49,7 @@ from commander.net import Fetcher, NetworkError, Pacer
 from commander.phases import ActivePhases
 from commander.profileedit import ensure_grace_table
 from commander.scryfall import CardRefresh, RefreshStatus, ScryfallClient, ScryfallError, refresh_card_db
+from commander.spellbook import SpellbookClient
 from commander.store import StoredDeck, Workspace
 from commander.sync import PRIVATE_NOT_UPDATED, PullWatch, SyncResult, SyncStatus, sync_decks
 from commander.topdeck import KEY_REMEDY
@@ -362,6 +365,7 @@ def _compile_ideas(
             waits=_TopdeckWaits(phases),
             rank=lambda deck_id: next_up.rank(deck_id, order),
         )
+        waiting = _with_estimated_brackets(waiting, http, services, phases)
         # TopDeck's window is fetched once, on its own thread, while every deck's Archidekt and Spellbook
         # reads go ahead; only a deck at a bracket that reads tournament lists waits for it to finish.
         tournaments = start_tournament_refresh(
@@ -397,6 +401,30 @@ def _compile_ideas(
         # Every deck's reads are over, so none is using a cached deck read the prune could remove.
         prune_deck_reads(services.cache, settings, now=services.now)
     return phase
+
+
+_ESTIMATES_STEP = "Spellbook: bracket estimates"
+
+
+def _with_estimated_brackets(
+    waiting: list[StoredDeck], http: httpx.Client, services: SyncServices, phases: ActivePhases
+) -> list[StoredDeck]:
+    """The decks as their reads and ideas see them (ADR 0051): one with no bracket set has its estimate's
+    lowest. The estimate comes from the cache while fresh and is otherwise asked of Spellbook; a deck whose
+    estimate fails stays unset, and the failure is logged."""
+    if all(s.deck.bracket is not None for s in waiting):
+        return waiting
+    phases.start(_ESTIMATES_STEP)
+    try:
+        decks = estimated_decks(
+            [s.deck for s in waiting],
+            SpellbookClient(Fetcher(http)),
+            estimate_cache(services.cache / SPELLBOOK_CACHE_FOLDER),
+            now=services.now,
+        )
+    finally:
+        phases.done(_ESTIMATES_STEP)
+    return [StoredDeck(s.folder, deck) for s, deck in zip(waiting, decks, strict=True)]
 
 
 # How long an error in the ideas phase waits for TopDeck's thread before the client closes under it.
@@ -633,7 +661,9 @@ def _current(workspace: Workspace, fetched: StoredDeck) -> StoredDeck | None:
     if deck is None or deck.commanders != fetched.deck.commanders:
         log.info("deck %d: ideas not merged: %s", fetched.deck.id, _GONE)
         return None
-    return StoredDeck(fetched.folder, deck)
+    # The ideas are judged at the bracket the reads used, unless the user has set one since.
+    bracket = deck.bracket if deck.bracket is not None else fetched.deck.bracket
+    return StoredDeck(fetched.folder, replace(deck, bracket=bracket))
 
 
 def _most_viewed_first(decks: list[StoredDeck], services: SyncServices) -> list[StoredDeck]:
