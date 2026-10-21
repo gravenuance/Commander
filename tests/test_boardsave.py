@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from commander.apply import ApplyOutcome, NotYourDeckError
+from commander.apply import NotYourDeckError
 from commander.archidekt import parse_deck
 from commander.archidekt_edit import ArchidektEditor
 from commander.board import Actor, BoardError, BoardService, Status, read_activity, read_board
-from commander.boardsave import BoardSave, preview_board, save_board
+from commander.boardsave import BoardPreview, BoardSave, preview_board, save_board
 from commander.carddb import CardDb
 from commander.net import Fetcher
 from commander.store import StoredDeck, Workspace
@@ -67,8 +67,8 @@ def service(stored: StoredDeck, db: CardDb) -> BoardService:
 
 
 @pytest.fixture
-def preview(editor: ArchidektEditor, stored: StoredDeck, db: CardDb) -> Callable[..., ApplyOutcome]:
-    def run(user: str = "MAKKIS") -> ApplyOutcome:
+def preview(editor: ArchidektEditor, stored: StoredDeck, db: CardDb) -> Callable[..., BoardPreview]:
+    def run(user: str = "MAKKIS") -> BoardPreview:
         return preview_board(editor, stored, db, user=user, now=lambda: NOW)
 
     return run
@@ -105,7 +105,7 @@ def live_quantity(fake: FakeArchidekt, name: str) -> int:
 def test_a_cut_is_planned_from_the_live_copies_not_the_synced_ones(
     fake: FakeArchidekt,
     service: BoardService,
-    preview: Callable[..., ApplyOutcome],
+    preview: Callable[..., BoardPreview],
     commit: Callable[[], BoardSave],
 ) -> None:
     queue(service, "Lightning Bolt", cut="Mountain")
@@ -144,11 +144,14 @@ def test_a_card_already_added_on_archidekt_does_not_cut_its_swap_again(
     assert saved.applied == ("Lightning Bolt", "Arcane Signet")
 
 
-ALREADY = "Lightning Bolt: already in the deck on Archidekt; saving marks it applied"
+ALREADY = (
+    "Lightning Bolt: already in the deck on Archidekt, so its cut Battered Golem stays;"
+    " saving marks it applied"
+)
 
 
 def test_a_preview_of_cards_all_already_in_the_live_deck_changes_nothing_and_says_so(
-    fake: FakeArchidekt, service: BoardService, preview: Callable[..., ApplyOutcome]
+    fake: FakeArchidekt, service: BoardService, preview: Callable[..., BoardPreview]
 ) -> None:
     queue(service, "Lightning Bolt", cut="Battered Golem")
     fake.decks[DECK_ID]["cards"].append(card_entry(7_000_000_001, "Lightning Bolt", ["Burn"]))
@@ -157,12 +160,12 @@ def test_a_preview_of_cards_all_already_in_the_live_deck_changes_nothing_and_say
 
     assert (outcome.resolution.changes, outcome.resolution.problems) == ((), ())
     assert outcome.resolution.skipped == (ALREADY,)
-    assert outcome.result is None
+    assert outcome.done == ("Lightning Bolt",)
     assert fake.writes == []
 
 
 def test_a_preview_names_the_queued_cards_already_there_beside_the_changes(
-    fake: FakeArchidekt, service: BoardService, preview: Callable[..., ApplyOutcome]
+    fake: FakeArchidekt, service: BoardService, preview: Callable[..., BoardPreview]
 ) -> None:
     queue(service, "Lightning Bolt", cut="Battered Golem")
     queue(service, "Arcane Signet")
@@ -263,7 +266,7 @@ def test_a_save_whose_queued_card_is_in_the_deck_already_writes_nothing(
 
 
 def test_an_empty_board_is_still_an_error_to_preview_or_save(
-    preview: Callable[..., ApplyOutcome], commit: Callable[[], BoardSave]
+    preview: Callable[..., BoardPreview], commit: Callable[[], BoardSave]
 ) -> None:
     with pytest.raises(BoardError, match="nothing is queued to change"):
         preview()
@@ -272,7 +275,7 @@ def test_an_empty_board_is_still_an_error_to_preview_or_save(
 
 
 def test_another_users_deck_is_refused_before_anything_is_planned(
-    stored: StoredDeck, service: BoardService, preview: Callable[..., ApplyOutcome]
+    stored: StoredDeck, service: BoardService, preview: Callable[..., BoardPreview]
 ) -> None:
     queue(service, "Lightning Bolt", cut="Battered Golem")
 

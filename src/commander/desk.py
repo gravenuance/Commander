@@ -932,12 +932,14 @@ class Desk:
             auth = ArchidektAuth(fetcher, self._token_store)
             # A preview reads the deck; a public one needs no login, a private one does.
             token = auth.access_token(user) if auth.has_login(user) else None
-            outcome = preview_board(ArchidektEditor(fetcher, token), stored, db, user=user, now=self._now)
+            preview = preview_board(ArchidektEditor(fetcher, token), stored, db, user=user, now=self._now)
             ceiling = read_profile(stored.folder).bracket_ceiling
             bracket = spellbook_preview(
-                outcome.resolution, fetcher, self._settings.cache, ceiling=ceiling, now=self._now
+                preview.resolution, fetcher, self._settings.cache, ceiling=ceiling, now=self._now
             )
-        view = _resolution_json(outcome.resolution)
+        view = _resolution_json(preview.resolution)
+        view["done"] = list(preview.done)
+        view["nothingToSend"] = preview.nothing_to_send
         view["bracket"] = preview_json(bracket)
         view["stamp"] = stamp
         return view

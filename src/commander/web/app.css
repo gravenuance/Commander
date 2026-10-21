@@ -965,6 +965,7 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .problems li::before { content: "Problem: "; font-weight: 600; }
 .warnings li { background: var(--warn-soft); }
 .review-size { margin: 0; }
+.review-empty { margin: var(--space-3) 0 0; font-weight: 600; }
 .review-bracket { margin: var(--space-1) 0 0; font-size: var(--text-s); }
 .review-bracket.warn { color: var(--warn); font-weight: 600; }
 .warnings li::before { content: "Warning: "; font-weight: 600; }

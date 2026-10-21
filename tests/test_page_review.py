@@ -51,3 +51,74 @@ def test_a_save_with_both_a_difference_and_a_warning_says_both() -> None:
     assert status["text"] == (
         f"Saved 2 changes to Archidekt, but Archidekt differs: Arcane Signet is missing; {WARNING}"
     )
+
+
+def reviewed(answer: str) -> Answer:
+    """The review dialog once the bridge answered the preview with this resolution."""
+    return page(f"""
+    state.current = 1;
+    state.view = {{ short: "Kraum & Tymna" }};
+    stub.preview = async () => ({{ deck: 1, problems: [], warnings: [], before: 100, after: 100,
+      bracket: null, stamp: "s", {answer} }});
+    await openReview();
+    const empty = $("review-empty");
+    return {{ empty: empty.hidden ? null : empty.textContent,
+      notes: [...$("review-notes").children].map((li) => li.textContent),
+      save: $("review-save").textContent, disabled: $("review-save").disabled }};
+    """)
+
+
+ALREADY = (
+    "Arcane Signet: already in the deck on Archidekt, so its cut Disruptor Flute stays;"
+    " saving marks it applied"
+)
+NOTHING = "Nothing to send to Archidekt: the deck there already has Arcane Signet."
+
+
+def test_a_preview_with_nothing_to_send_says_why_and_offers_to_mark_the_card_applied() -> None:
+    answer = reviewed(
+        f'changes: [], skipped: ["{ALREADY}"], done: ["Arcane Signet"], nothingToSend: "{NOTHING}"'
+    )
+
+    assert answer == {
+        "empty": NOTHING,
+        "notes": [ALREADY],
+        "save": "Mark 1 card applied",
+        "disabled": False,
+    }
+
+
+def test_a_preview_with_nothing_to_send_and_nothing_done_says_why_and_offers_no_save() -> None:
+    reason = "Nothing to send to Archidekt: remove Mountain: not in the deck"
+    answer = reviewed(
+        f'changes: [], skipped: ["remove Mountain: not in the deck"], done: [], nothingToSend: "{reason}"'
+    )
+
+    assert (answer["empty"], answer["disabled"]) == (reason, True)
+
+
+def test_a_preview_with_changes_shows_no_empty_reason() -> None:
+    answer = reviewed(
+        'changes: [{ kind: "add", mark: "+", name: "Arcane Signet", text: "+ Arcane Signet" }],'
+        " skipped: [], done: [], nothingToSend: null"
+    )
+
+    assert answer == {"empty": None, "notes": [], "save": "Save 1 change to Archidekt", "disabled": False}
+
+
+def test_marking_cards_applied_closes_the_review_and_says_nothing_was_sent() -> None:
+    answer = page("""
+    state.current = null;
+    stub.decks = async () => ({ decks: [] });
+    stub.commit = async () => ({ saved: false, changes: [], problems: [], warnings: [], skipped: [],
+      mismatches: [], applied: ["Arcane Signet"], before: 100, after: 100 });
+    $("review-dialog").showModal();
+    $("review-save").dataset.stamp = "stamp";
+    await saveChanges();
+    return { text: $("status-text").textContent, open: $("review-dialog").open };
+    """)
+
+    assert answer == {
+        "text": "Marked Arcane Signet applied: the deck on Archidekt already had it, so nothing was sent.",
+        "open": False,
+    }

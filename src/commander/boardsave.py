@@ -1,5 +1,6 @@
 """Preview a deck board's queued cards against Archidekt, and save them: apply, refresh the copy, log it."""
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -22,6 +23,8 @@ from commander.carddb import CardDb
 from commander.plan import Plan
 from commander.store import StoredDeck, Workspace
 
+log = logging.getLogger(__name__)
+
 
 @dataclass(slots=True, frozen=True)
 class BoardSave:
@@ -31,16 +34,39 @@ class BoardSave:
     applied: tuple[str, ...]
 
 
+@dataclass(slots=True, frozen=True)
+class BoardPreview:
+    resolution: Resolution
+    # The queued cards and count changes the deck on Archidekt already holds; a save marks them done.
+    done: tuple[str, ...]
+
+    @property
+    def nothing_to_send(self) -> str | None:
+        """Why a save would send nothing to Archidekt; None when it sends changes or problems say why not."""
+        resolution = self.resolution
+        if resolution.changes or resolution.problems:
+            return None
+        if self.done:
+            return f"Nothing to send to Archidekt: the deck there already has {', '.join(self.done)}."
+        if resolution.skipped:
+            return f"Nothing to send to Archidekt: {'; '.join(resolution.skipped)}"
+        return "Nothing to send to Archidekt: no changes are queued for this deck."
+
+
 def preview_board(
     editor: ArchidektEditor, stored: StoredDeck, db: CardDb, *, user: str, now: Callable[[], datetime]
-) -> ApplyOutcome:
+) -> BoardPreview:
     """The changes the queued cards would make to the deck as it is on Archidekt now."""
     live = fetch_own_deck(editor, stored.deck.id, user=user)
     board = read_board(stored.folder)
     plan = live_plan(live, board)
     if plan is None:
-        return ApplyOutcome(_nothing_to_change(live, board), None)
-    return _noting_done(apply_to_live(editor, live, plan, db, save_changes=False, now=now), live, board)
+        resolution = _nothing_to_change(live, board)
+    else:
+        outcome = apply_to_live(editor, live, plan, db, save_changes=False, now=now)
+        resolution = _noting_done(outcome, live, board).resolution
+    _log_dropped(stored.deck.id, resolution, "preview")
+    return BoardPreview(resolution, _done_names(live, board))
 
 
 def save_board(
@@ -69,6 +95,7 @@ def save_board(
     plan = live_plan(live, board)
     if plan is None:
         resolution = _nothing_to_change(live, board)
+        _log_dropped(stored.deck.id, resolution, "save")
         workspace.save(live.deck)
         counts = [change.name for change in board.counts]
         service.mark_applied([card.id for card in board.queued], actor, None, counts=counts)
@@ -97,9 +124,26 @@ def save_board(
     return BoardSave(outcome.resolution, result, (*(card.name for card in applied), *counts))
 
 
+def _log_dropped(deck_id: int, resolution: Resolution, doing: str) -> None:
+    """Log the queued changes the deck on Archidekt leaves nothing to do for; a warning when that is all."""
+    if not resolution.skipped:
+        return
+    left_out = "; ".join(resolution.skipped)
+    if resolution.changes or resolution.problems:
+        log.info("deck %d: the %s leaves out: %s", deck_id, doing, left_out)
+        return
+    log.warning("deck %d: the %s sends nothing to Archidekt: %s", deck_id, doing, left_out)
+
+
+def _done_names(live: LiveDeck, board: Board) -> tuple[str, ...]:
+    added = tuple(card.name for card in already_added(live.deck, board))
+    return added + tuple(change.name for change in counts_met(live.deck, board))
+
+
 def _done_lines(live: LiveDeck, board: Board) -> tuple[str, ...]:
     added = tuple(
-        f"{card.name}: already in the deck on Archidekt; saving marks it applied"
+        f"{card.name}: already in the deck on Archidekt"
+        f"{f', so its cut {card.choice} stays' if card.choice else ''}; saving marks it applied"
         for card in already_added(live.deck, board)
     )
     return added + tuple(

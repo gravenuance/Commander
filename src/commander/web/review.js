@@ -37,6 +37,11 @@ function showResolution(result) {
   $("review-problems").replaceChildren(...result.problems.map((text) => el("li", { text })));
   const warnings = [...result.warnings, ...bracketWarnings(result.bracket)];
   $("review-warnings").replaceChildren(...warnings.map((text) => el("li", { text })));
+  // Queued changes the deck on Archidekt already holds, or that leave it as it is.
+  $("review-notes").replaceChildren(...result.skipped.map((text) => el("li", { text })));
+  const empty = $("review-empty");
+  empty.textContent = result.nothingToSend || "";
+  empty.hidden = !result.nothingToSend;
   showReviewBracket(result.bracket);
 }
 
@@ -62,7 +67,7 @@ function bracketWarnings(bracket) {
 async function openReview() {
   const dialog = $("review-dialog");
   $("review-deck").textContent = state.view.short;
-  showResolution({ before: 0, after: 0, changes: [], problems: [], warnings: [] });
+  showResolution({ before: 0, after: 0, changes: [], problems: [], warnings: [], skipped: [], nothingToSend: null });
   $("review-size").textContent = "";
   const save = $("review-save");
   save.textContent = "Save to Archidekt";
@@ -75,8 +80,12 @@ async function openReview() {
     save.dataset.stamp = result.stamp;
     busy("");
     const count = result.changes.length;
-    save.textContent = `Save ${count} change${count === 1 ? "" : "s"} to Archidekt`;
-    save.disabled = count === 0 || result.problems.length > 0;
+    const done = result.done.length;
+    // With nothing to send, a save only marks the queued cards the deck already holds as applied.
+    save.textContent = count === 0 && done > 0
+      ? `Mark ${done} card${done === 1 ? "" : "s"} applied`
+      : `Save ${count} change${count === 1 ? "" : "s"} to Archidekt`;
+    save.disabled = (count === 0 && done === 0) || result.problems.length > 0;
     (save.disabled ? $("review-cancel") : save).focus();
   } catch (error) {
     busy("");
@@ -91,6 +100,13 @@ async function saveChanges() {
   try {
     const result = await api("commit", state.current, $("review-save").dataset.stamp);
     busy("");
+    if (!result.saved && result.applied.length) {
+      $("review-dialog").close();
+      const one = result.applied.length === 1;
+      showStatus(`Marked ${result.applied.join(", ")} applied: the deck on Archidekt already had ${one ? "it" : "them"}, so nothing was sent.`, false, SAVED_MS);
+      await refresh();
+      return;
+    }
     if (!result.saved) {
       showResolution(result);
       $("review-save").disabled = true;

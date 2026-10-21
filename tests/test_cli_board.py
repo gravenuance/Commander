@@ -278,7 +278,8 @@ def test_commit_marks_cards_already_in_the_deck_on_archidekt_applied_without_wri
     preview = board(home, fake, "commit", "magda")
     assert preview.code == 0, preview.err
     assert (
-        "skipped, Arcane Signet: already in the deck on Archidekt; saving marks it applied\n" in preview.out
+        "skipped, Arcane Signet: already in the deck on Archidekt, so its cut Disruptor Flute stays;"
+        " saving marks it applied\n" in preview.out
     )
 
     saved = board(home, fake, "commit", "magda", "--save")

@@ -475,12 +475,12 @@ def counts_met(deck: Deck, board: Board) -> tuple[CountChange, ...]:
 
 def already_added(deck: Deck, board: Board) -> tuple[BoardCard, ...]:
     """The queued cards that deck already holds, other than basic lands: nothing is left to do for them."""
-    held = _held(deck)
-    return tuple(
-        card
-        for card in board.queued
-        if not _is_basic_land(card.name) and held[card_key(card.name)] >= card.copies
-    )
+    return tuple(card for card in board.queued if _holds(deck, card))
+
+
+def _holds(deck: Deck, card: BoardCard) -> bool:
+    """Whether deck already holds every copy the card adds; a basic land is always added to."""
+    return not _is_basic_land(card.name) and _held(deck)[card_key(card.name)] >= card.copies
 
 
 def _add_target(held: Counter[str], card: BoardCard) -> int:
@@ -652,6 +652,9 @@ class BoardService:
             card = _require(board, key)
             if card.status is Status.APPLIED:
                 raise BoardError(f"{card.name} is already in the deck")
+            # Queued, a card the deck already holds would save nothing and leave its cut in the deck.
+            if status is Status.ADD and _holds(self._deck, card):
+                raise BoardError(f"{card.name} is already in the deck; remove it from the board")
             cut = self._choice(choice) if status is Status.ADD else None
             if cut is not None and (held := self._copies(cut)) < card.copies:
                 raise BoardError(f"{card.name} adds {card.copies} copies; the deck has only {held} {cut}")
