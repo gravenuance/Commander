@@ -11,6 +11,12 @@
   longer sends a `pageSize`, which Archidekt ignores (its pages hold 60 decks), and a search that its page cap
   cuts short says in the log how far back it reached.
 
+### Changed
+- `sync` reads every deck's ideas at the same time instead of one deck after another, which waited minutes per
+  deck for the next to start. Archidekt's requests still go out in order, the deck open in the app first and
+  one you open mid-sync moving to the front, and its ideas are merged first when several are ready. Several
+  decks can show as fetching at once (ADR 0049).
+
 ## 0.8.0 - 2026-10-21
 
 ### Fixed
