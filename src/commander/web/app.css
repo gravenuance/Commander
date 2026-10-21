@@ -734,7 +734,15 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .card.selected { background: var(--selected); border-color: var(--accent); }
 .card.queued { border-left-color: var(--queued); }
 .art { width: var(--art-width); aspect-ratio: 488 / 680; align-self: start; }
-.card-body { position: relative; display: grid; gap: var(--space-1); min-width: 0; align-content: start; }
+/* One column no wider than the body, so a long name or type line truncates instead of widening it. */
+.card-body {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-1);
+  min-width: 0;
+  align-content: start;
+}
 .card-title { display: flex; gap: var(--space-2); align-items: center; justify-content: space-between; min-width: 0; }
 .pick {
   min-width: 0;
@@ -748,7 +756,8 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   cursor: pointer;
 }
 .card-name { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.reject { position: absolute; top: var(--space-2); right: var(--space-2); }
+/* Sized to the room the card keeps for it; a plain .button would be wider and sit against the title. */
+.reject { position: absolute; top: var(--space-2); right: var(--space-2); min-width: var(--icon-button); min-height: var(--icon-button); }
 .cost { display: inline-flex; gap: 2px; flex-shrink: 0; }
 .pip {
   min-width: 18px;

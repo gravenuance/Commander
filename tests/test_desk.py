@@ -1535,6 +1535,15 @@ def test_panel_titles_are_full_width_boxes_without_a_marker_and_the_meta_sub_tog
         assert f'<div id="{body_id}" class="panel-body" hidden>' in html
 
 
+def test_a_considering_tiles_long_name_and_type_line_stay_inside_the_room_left_of_its_reject_button() -> None:
+    # An auto column grows to the type line's unwrapped width (measured in Edge: 279px in a 217px body).
+    assert "grid-template-columns: minmax(0, 1fr)" in css_rule(".card-body")
+    # The card keeps --icon-button plus a gap each side for the button; a plain .button is 36px wide.
+    assert "padding-right: calc(var(--icon-button) + 2 * var(--space-2))" in css_rule(".card")
+    assert "min-width: var(--icon-button)" in css_rule(".reject")
+    assert "right: var(--space-2)" in css_rule(".reject")
+
+
 def test_scrollbars_are_hidden_everywhere_while_scrolling_stays() -> None:
     assert "scrollbar-width: none" in css_rule("*")
     assert "display: none" in css_rule("::-webkit-scrollbar")

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed
+- A Considering or No cut yet card with a long name or type line ("Birgi, God of Storytelling // Harnfel, Horn
+  of Bounty") no longer runs past the card's edge: the name, type line and mana cost stay inside it, the name and
+  type line end in "…", and the name no longer slides under the turn-down button.
+
 ## 0.8.0 - 2026-10-21
 
 ### Fixed
