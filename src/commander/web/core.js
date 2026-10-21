@@ -6,7 +6,6 @@
 const SEARCH_DELAY_MS = 150;
 const STATUS_MS = 6000;
 const META_BRACKET = 5;
-const PANEL_KEY = "commander.panelOpen";
 // Grace cards a tooltip names before counting the rest.
 const GRACE_TIP_CARDS = 2;
 

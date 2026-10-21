@@ -64,14 +64,16 @@ function deckChips(decks) {
   return el("ul", { class: "deck-chips", "aria-label": "Played by" }, ...chips);
 }
 
-// A section folds on its own, and stays folded across decks and refreshes. The viewer's choice is kept by id.
+// Ids of the sections the viewer opened; they start closed on every launch, like the side panels.
+const openSections = new Set();
+
+// A section folds on its own, and stays as the viewer left it across decks and refreshes, by id.
 function foldable(id, className, heading, ...children) {
-  const key = `${PANEL_KEY}.${id}`;
-  let open = true;
-  try { open = localStorage.getItem(key) !== "0"; } catch { /* storage is a convenience */ }
-  const section = el("details", { class: className, open }, el("summary", {}, heading), ...children);
+  const section = el("details", { class: className, open: openSections.has(id) }, el("summary", {}, heading),
+    ...children);
   section.addEventListener("toggle", () => {
-    try { localStorage.setItem(key, section.open ? "1" : "0"); } catch { /* as above */ }
+    if (section.open) openSections.add(id);
+    else openSections.delete(id);
   });
   return section;
 }

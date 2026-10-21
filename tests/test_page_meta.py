@@ -162,88 +162,57 @@ const STOPPING = { ...REPORT, stoppers: [stopper("Swords", "removal"), stopper("
   stopper("Null Rod", "stax"), stopper("Force of Will", "counter")] };
 const groups = () => $("meta-body").querySelectorAll(".role-group");
 const states = () => groups().map((g) => [g.tagName, g.querySelector("summary").textContent, g.open]);
-const KEY = "commander.panelOpen.meta-stops-removal";
+const sections = () => $("meta-body").querySelectorAll(".meta-section");
 """
 
+ALL_CLOSED = [
+    ["DETAILS", "Stax (1)", False],
+    ["DETAILS", "Removal (2)", False],
+    ["DETAILS", "Counters (1)", False],
+]
 
-def test_each_what_stops_you_category_is_an_open_toggle() -> None:
+
+def test_every_meta_section_and_category_starts_closed_even_with_an_old_stored_choice() -> None:
     seen = run(
         STOPPERS
         + """
+    storage["commander.panelOpen.meta-stops-removal"] = "1";
     stub.meta = async () => STOPPING;
     await metaPanel.load();
-    return states();
+    return { categories: states(), sections: sections().length,
+      open: sections().filter((s) => s.open).length };
     """
     )
-    assert seen == [
-        ["DETAILS", "Stax (1)", True],
-        ["DETAILS", "Removal (2)", True],
-        ["DETAILS", "Counters (1)", True],
-    ]
+    assert seen["categories"] == ALL_CLOSED
+    assert seen["sections"] > 3
+    assert seen["open"] == 0
 
 
-def test_a_category_the_viewer_closes_stays_closed_on_a_reload_and_for_other_decks() -> None:
+def test_a_category_the_viewer_opens_stays_open_on_a_reload_and_for_other_decks_unstored() -> None:
     seen = run(
         STOPPERS
         + """
     stub.meta = async () => STOPPING;
     await metaPanel.load();
     const removal = groups()[1];
-    removal.open = false;
+    removal.open = true;
     await fire(removal, "toggle");
-    const kept = storage[KEY];
     renderMeta(1, STOPPING);
     const reloaded = states();
     renderMeta(2, STOPPING);
-    return { kept, reloaded, otherDeck: states() };
-    """
-    )
-    closed = [
-        ["DETAILS", "Stax (1)", True],
-        ["DETAILS", "Removal (2)", False],
-        ["DETAILS", "Counters (1)", True],
-    ]
-    assert seen == {"kept": "0", "reloaded": closed, "otherDeck": closed}
-
-
-def test_reopening_a_category_is_remembered_too() -> None:
-    seen = run(
-        STOPPERS
-        + """
-    storage[KEY] = "0";
-    renderMeta(1, STOPPING);
-    const before = groups()[1].open;
-    groups()[1].open = true;
+    const otherDeck = states();
+    groups()[1].open = false;
     await fire(groups()[1], "toggle");
     renderMeta(1, STOPPING);
-    return { before, after: groups()[1].open, kept: storage[KEY] };
+    return { reloaded, otherDeck, closedAgain: states(), stored: Object.keys(storage) };
     """
     )
-    assert seen == {"before": False, "after": True, "kept": "1"}
-
-
-def test_categories_render_open_and_keep_working_when_storage_is_blocked() -> None:
-    seen = run(
-        STOPPERS
-        + """
-    const blocked = () => { throw new Error("blocked"); };
-    localStorage.getItem = blocked;
-    localStorage.setItem = blocked;
-    renderMeta(1, STOPPING);
-    const removal = groups()[1];
-    removal.open = false;
-    await fire(removal, "toggle");
-    return { states: states(), kept: Object.keys(storage) };
-    """
-    )
-    assert seen == {
-        "states": [
-            ["DETAILS", "Stax (1)", True],
-            ["DETAILS", "Removal (2)", False],
-            ["DETAILS", "Counters (1)", True],
-        ],
-        "kept": [],
-    }
+    opened = [
+        ["DETAILS", "Stax (1)", False],
+        ["DETAILS", "Removal (2)", True],
+        ["DETAILS", "Counters (1)", False],
+    ]
+    assert seen == {"reloaded": opened, "otherDeck": opened, "closedAgain": ALL_CLOSED, "stored": []}
 
 
 def test_a_grouped_combo_made_of_the_shared_pieces_alone_says_so() -> None:

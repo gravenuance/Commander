@@ -28,8 +28,9 @@
 
 ### Changed
 - The app's side panels (Considering, No cut yet, Meta) have full-width title boxes that light up under the
-  pointer, and start closed on every launch instead of remembering whether they were open. Meta still loads
-  when opened. Scrollbars are hidden everywhere; the wheel, trackpad and keyboard still scroll.
+  pointer, and start closed on every launch instead of remembering whether they were open; so do the Meta
+  panel's sections and its "What stops you" categories, which keep the viewer's choice across decks until the
+  app closes. Meta still loads when opened. Scrollbars are hidden everywhere; the wheel, trackpad and keyboard still scroll.
 - Tournament lists now come from TopDeck.gg instead of EDHTop16, whose API has needed a key since 2026-10-19
   (ADR 0047). Each user needs a free TopDeck key: `cmdr topdeck` asks for it (never on the command line), or
   the app's new **TopDeck** button has the steps, a **Test key** and a **Save key**; it is kept in Windows
