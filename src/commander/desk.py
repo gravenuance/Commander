@@ -1138,7 +1138,8 @@ class Desk:
         """The deck's cut rules, kept until its snapshot, its profile or the cached meta answers change."""
         stamp = (
             f"{files_stamp(stored.folder, ('deck.json', 'profile.toml'))}"
-            f"|{cache_stamp(self._settings.cache)}|{self._now().date()}|{self._effective(stored.deck).bracket}"
+            f"|{cache_stamp(self._settings.cache)}|{self._now().date()}"
+            f"|{self._effective(stored.deck).bracket}"
         )
         known = self._rules.get(stored.deck.id)
         if known is not None and known[0] == stamp:
