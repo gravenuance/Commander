@@ -13,7 +13,7 @@ def run(tmp_path: Path, version: str) -> subprocess.CompletedProcess[str]:
     (tmp_path / "pyproject.toml").write_text(f'[project]\nversion = "{version}"\n', encoding="utf-8")
     (tmp_path / "LICENSE").write_text(LICENSE, encoding="utf-8")
     return subprocess.run(  # noqa: S603 - this interpreter and a fixed script, no shell
-        [sys.executable, "-I", str(SCRIPT), "version.txt"],
+        [sys.executable, "-I", str(SCRIPT), "build/version.txt"],
         cwd=tmp_path,
         capture_output=True,
         text=True,
@@ -23,7 +23,7 @@ def run(tmp_path: Path, version: str) -> subprocess.CompletedProcess[str]:
 
 def test_the_version_resource_names_the_app_and_carries_the_projects_version(tmp_path: Path) -> None:
     assert run(tmp_path, "1.2.3").returncode == 0
-    text = (tmp_path / "version.txt").read_text(encoding="utf-8")
+    text = (tmp_path / "build" / "version.txt").read_text(encoding="utf-8")
 
     assert "filevers=(1, 2, 3, 0)" in text
     assert "prodvers=(1, 2, 3, 0)" in text
@@ -43,4 +43,4 @@ def test_a_version_that_is_not_three_numbers_is_refused(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "1.0.0rc1 is not a version like 1.2.3" in result.stderr
-    assert not (tmp_path / "version.txt").exists()
+    assert not (tmp_path / "build" / "version.txt").exists()

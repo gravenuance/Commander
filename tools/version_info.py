@@ -68,7 +68,9 @@ def main(argv: list[str]) -> int:
     except ValueError as error:
         print(f"version_info: {error}", file=sys.stderr)
         return 1
-    Path(argv[0]).write_text(text, encoding="utf-8")
+    out = Path(argv[0])
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(text, encoding="utf-8")
     return 0
 
 
