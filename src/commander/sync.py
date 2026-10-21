@@ -49,6 +49,8 @@ class SyncResult:
     status: SyncStatus
     diff: DeckDiff | None = None
     error: str | None = None
+    # A folder Archidekt confirmed deleted is set aside but could not be deleted yet; the next sync retries.
+    pending_removal: bool = False
 
 
 @dataclass(slots=True, frozen=True)
@@ -217,7 +219,7 @@ def _remove_gone(workspace: Workspace, deck: Deck, missing: SyncResult, watch: P
         )
     except RemovalPendingError as error:
         log.warning("deck %d (%s): could not finish removing its folder: %s", deck.id, deck.name, error)
-        return replace(missing, error=f"deleted on Archidekt, but {error}")
+        return replace(missing, error=f"deleted on Archidekt, but {error}", pending_removal=True)
     except (OSError, WorkspaceError) as error:
         log.warning("deck %d (%s): could not remove its folder: %s", deck.id, deck.name, error)
         return replace(
@@ -248,7 +250,11 @@ def _finish_removal(
             workspace.finish_removal(set_aside)
     except RemovalPendingError as error:
         log.warning("deck %d: could not finish deleting %s: %s", deck_id, set_aside.name, error)
-        return replace(leftover, error=f"deleted on Archidekt, but its folder was not removed: {error}")
+        return replace(
+            leftover,
+            error=f"deleted on Archidekt, but its folder was not removed: {error}",
+            pending_removal=True,
+        )
     log.info("deck %d: finished deleting the folder %s set aside earlier", deck_id, set_aside.name)
     watch.on_removed(deck_id)
     return replace(leftover, status=SyncStatus.REMOVED)

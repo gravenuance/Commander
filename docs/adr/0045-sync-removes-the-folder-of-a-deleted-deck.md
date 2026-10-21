@@ -82,6 +82,7 @@ The owner decided that a set-aside `.removing-<name>` folder that cannot be dele
 held file clears by itself, and the owner's files are safe in the folder meanwhile. A delete that fails after the
 rename (`RemovalPendingError`), at the removal itself or in the retry of every later sync, is logged at WARNING
 and reported as `missing` with the folder named in `error`, which `cmdr sync` prints; the exit code stays zero
-and the next sync retries. `failed` is kept for a folder the workspace refuses (outside the root, a link, an
-earlier leftover of the same name) and for a rename that fails. The retry and the app's `on_removed` are as
-before.
+and the next sync retries. `SyncResult.pending_removal` marks such a row, so the app's status bar says "1 old
+deck folder couldn't be deleted; see the log" and leaves it out of "Synced N decks". `failed` is kept for a
+folder the workspace refuses (outside the root, a link, an earlier leftover of the same name) and for a
+rename that fails. The retry and the app's `on_removed` are as before.

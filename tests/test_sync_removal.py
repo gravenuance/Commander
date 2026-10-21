@@ -298,6 +298,7 @@ def test_a_folder_that_cannot_be_deleted_is_set_aside_with_the_users_files_and_o
     assert result.status is SyncStatus.MISSING_UPSTREAM
     assert result.error is not None
     assert MARKED in result.error
+    assert result.pending_removal is True
     assert any(MARKED in r.getMessage() and r.levelno == logging.WARNING for r in caplog.records)
     assert removed == []
     assert not folder(tmp_path).exists()
@@ -343,6 +344,7 @@ def test_a_folder_set_aside_that_still_cannot_be_deleted_is_warned_about_again_a
     assert result.status is SyncStatus.MISSING_UPSTREAM
     assert result.error is not None
     assert MARKED in result.error
+    assert result.pending_removal is True
     assert not any(r.status is SyncStatus.FAILED for r in again)
     assert any(MARKED in r.getMessage() and r.levelno == logging.WARNING for r in caplog.records)
     assert (folder(tmp_path, MARKED) / "notes.md").is_file()

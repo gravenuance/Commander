@@ -236,6 +236,23 @@ def test_the_summary_counts_decks_in_the_singular_and_the_plural() -> None:
     assert two == "Sync finished with problems: 2 decks failed; see the log."
 
 
+def test_the_summary_says_an_old_deck_folder_could_not_be_deleted_and_does_not_count_it_as_synced() -> None:
+    results = [
+        SyncResult(1, "Deck 1", SyncStatus.UPDATED),
+        SyncResult(2, "gone", SyncStatus.MISSING_UPSTREAM, error="could not delete", pending_removal=True),
+    ]
+    one = sync_summary(SyncOutcome(results, SKIPPED, None))
+    assert one == "1 old deck folder couldn't be deleted; see the log."
+    assert len(one.split()) <= 12
+    results.append(SyncResult(3, "gone too", SyncStatus.MISSING_UPSTREAM, pending_removal=True))
+    two = sync_summary(SyncOutcome(results, SKIPPED, None))
+    assert two == "2 old deck folders couldn't be deleted; see the log."
+    both = sync_summary(SyncOutcome([*results, SyncResult(4, "Deck 4", SyncStatus.FAILED)], SKIPPED, None))
+    assert both == (
+        "Sync finished with problems: 1 deck failed, 2 old deck folders couldn't be deleted; see the log."
+    )
+
+
 def test_the_summary_names_a_card_data_failure() -> None:
     failed = CardStatus(CardState.FAILED, "Scryfall is down; the previous card data is kept")
     card_only = sync_summary(_outcome([SyncStatus.UNCHANGED], failed))

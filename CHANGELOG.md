@@ -68,8 +68,9 @@
 - A deck folder deleted by `sync` is renamed to `.removing-<name>` under the board lock and then deleted, so a
   file held open by another program no longer leaves a half-deleted folder that is never looked at again: the
   next sync retries it. A folder that still cannot be deleted is only a warning naming it (reported as
-  `missing`, logged at WARNING): `cmdr sync` still exits zero. A deck whose board the app is writing is kept
-  for that sync (ADR 0045).
+  `missing`, logged at WARNING): `cmdr sync` still exits zero, and the app's status bar says "1 old deck folder
+  couldn't be deleted; see the log" instead of counting it as a synced deck. A deck whose board the app is
+  writing is kept for that sync (ADR 0045).
 - A deck listed twice by Archidekt's paged listing (one edited between two page reads) is fetched and
   reported once.
 

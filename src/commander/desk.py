@@ -227,6 +227,10 @@ def sync_summary(outcome: SyncOutcome) -> str:
         problems.append(f"{_decks(failed)} failed")
     if outcome.cards.state is CardState.FAILED:
         problems.append(f"card data failed ({outcome.cards.detail})")
+    if pending := sum(1 for r in outcome.results if r.pending_removal):
+        problems.append(f"{pending} old deck {'folder' if pending == 1 else 'folders'} couldn't be deleted")
+    if len(problems) == 1 and pending:
+        return f"{problems[0]}; see the log."
     if problems:
         return f"Sync finished with problems: {', '.join(problems)}; see the log."
     changed = counts[SyncStatus.NEW] + counts[SyncStatus.UPDATED]
