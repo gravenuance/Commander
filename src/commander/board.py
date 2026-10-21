@@ -202,6 +202,11 @@ class CountChange:
         if self.count == self.was:
             raise ValueError(f"{self.name}: a count change must change the count")
 
+    def met_by(self, held: int) -> bool:
+        """Whether a deck holding `held` copies needs nothing more: a decrease is at most `count` copies, an
+        increase at least `count`, so a copy cut or added on Archidekt meanwhile never turns one around."""
+        return held <= self.count if self.count < self.was else held >= self.count
+
 
 @dataclass(slots=True, frozen=True)
 class Relabel:
@@ -445,12 +450,12 @@ def board_plan(deck: Deck, board: Board) -> Plan | None:
 
     It adds every queued card, under its category when it has one, and removes its chosen cut. A cut the
     deck holds more copies of, such as a basic land, loses one copy for each copy a card adds (most add one)
-    instead. Each count change asks for its count: at least that many when it is more than the deck holds,
-    at most that many when it is fewer.
+    instead. Each count change asks for its count: at least that many when it raises the count, at most that
+    many when it lowers it.
 
     The counts come from deck, so it should be the deck as it is on Archidekt now: a queued card that deck
     already holds (other than a basic land) is done, and neither adds nor cuts; so is a count change the
-    deck already meets.
+    deck already meets (`CountChange.met_by`), including a decrease of a card the deck no longer holds.
     """
     held = _held(deck)
     done = already_added(deck, board)
@@ -462,7 +467,7 @@ def board_plan(deck: Deck, board: Board) -> Plan | None:
     adds = [AddCard(card.name, _add_target(held, card), category=card.category) for card in queued]
     cuts = list(_cuts(held, queued))
     for change in counts:
-        if change.count > held[card_key(change.name)]:
+        if change.count > change.was:
             adds.append(AddCard(change.name, change.count))
         else:
             cuts.append(RemoveCard(change.name, keep=change.count))
@@ -470,9 +475,9 @@ def board_plan(deck: Deck, board: Board) -> Plan | None:
 
 
 def counts_met(deck: Deck, board: Board) -> tuple[CountChange, ...]:
-    """The count changes deck already meets: nothing is left to do for them."""
+    """The count changes deck already meets (`CountChange.met_by`): nothing is left to do for them."""
     held = _held(deck)
-    return tuple(change for change in board.counts if held[card_key(change.name)] == change.count)
+    return tuple(change for change in board.counts if change.met_by(held[card_key(change.name)]))
 
 
 def already_added(deck: Deck, board: Board) -> tuple[BoardCard, ...]:

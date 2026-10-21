@@ -20,6 +20,7 @@ from commander.board import (
     CountChange,
     Status,
     board_plan,
+    counts_met,
     held_keys,
     read_activity,
     read_board,
@@ -256,6 +257,44 @@ def test_a_count_change_the_deck_already_meets_is_left_out_of_the_plan(
         if entry["card"]["oracleCard"]["name"] == "Mountain":
             entry["quantity"] = 8
     assert board_plan(parse_deck(raw), read_board(tmp_path)) is None
+
+
+def mountains_held(raw: Json, copies: int) -> Deck:
+    """The fixture deck with `copies` Mountains; none leaves the deck without the card."""
+    if copies == 0:
+        raw["cards"] = [e for e in raw["cards"] if e["card"]["oracleCard"]["name"] != "Mountain"]
+    for entry in raw["cards"]:
+        if entry["card"]["oracleCard"]["name"] == "Mountain":
+            entry["quantity"] = copies
+    return parse_deck(raw)
+
+
+@pytest.mark.parametrize(("was", "count", "held"), [(6, 4, 3), (6, 4, 0), (6, 4, 4), (6, 8, 9), (6, 8, 8)])
+def test_a_decrease_is_at_most_its_count_and_an_increase_at_least_so_either_is_met_past_it(
+    raw: Json, was: int, count: int, held: int
+) -> None:
+    # Cut on Archidekt meanwhile (held below a queued decrease) or raised past a queued increase.
+    deck = mountains_held(raw, held)
+    board = Board((), (CountChange("Mountain", was, count, Actor.YOU, STAMP),))
+
+    assert board_plan(deck, board) is None
+    assert counts_met(deck, board) == board.counts
+
+
+@pytest.mark.parametrize(("count", "held", "plan"), [(4, 6, "cut"), (8, 6, "add"), (0, 6, "cut")])
+def test_a_count_change_the_deck_has_not_reached_still_cuts_or_adds(
+    raw: Json, count: int, held: int, plan: str
+) -> None:
+    deck = mountains_held(raw, held)
+    board = Board((), (CountChange("Mountain", 6, count, Actor.YOU, STAMP),))
+
+    expected = (
+        Plan(str(DECK_ID), (), (RemoveCard("Mountain", keep=count),))
+        if plan == "cut"
+        else Plan(str(DECK_ID), (AddCard("Mountain", count),), ())
+    )
+    assert board_plan(deck, board) == expected
+    assert counts_met(deck, board) == ()
 
 
 def test_a_version_2_board_reads_without_count_changes_and_is_backed_up_on_its_next_save(
