@@ -29,14 +29,15 @@ log = logging.getLogger(__name__)
 API_BASE = "https://archidekt.com/api"
 _PLAIN_API_BASE = "http://archidekt.com/api"
 COMMANDER_FORMAT = 3
-PAGE_SIZE = 50
+# Archidekt's deck listings come 60 to a page whatever `pageSize` asks for (ADR 0048), so none is sent.
 MAX_PAGES = 20
-# Reading other players' decks: newest first, at most this many search pages per commander, one request every
-# five seconds.
+# Reading other players' decks: newest first, at most this many search pages per commander, and a request
+# every 6.5 seconds, just under the ten a minute Archidekt answers before it starts sending 429s (ADR 0048).
 MAX_SEARCH_PAGES = 20
-SEARCH_INTERVAL_SECONDS = 5.0
-# After a 429 Archidekt gets this long without a request, or the Retry-After if that is longer.
-RATE_LIMIT_PAUSE_SECONDS = 180.0
+SEARCH_INTERVAL_SECONDS = 6.5
+# After a 429 Archidekt gets this long without a request, or the Retry-After if that is longer; its limit
+# lifts within the minute.
+RATE_LIMIT_PAUSE_SECONDS = 60.0
 # A request that was rate limited is tried again this many times after the pause.
 RATE_LIMIT_RETRIES = 1
 # The top of Archidekt's bracket scale.
@@ -115,7 +116,7 @@ class ArchidektClient:
         shows twice and another may be missing: the pass then raises _ListingDrifted when `restart_on_repeat`,
         and otherwise keeps the first row of each deck."""
         url: str | None = f"{self._base_url}/decks/v3/"
-        params: Mapping[str, str | int] | None = {"ownerUsername": user, "pageSize": PAGE_SIZE}
+        params: Mapping[str, str | int] | None = {"ownerUsername": user}
         decks: list[DeckSummary] = []
         seen: set[int] = set()
         for _ in range(MAX_PAGES):
@@ -234,12 +235,16 @@ class ArchidektSearch:
             stop = stop_at.get(bracket) if stop_at is not None else None
             url: str | None = f"{self._base_url}/decks/v3/"
             params: Mapping[str, str | int] | None = (
-                {"formats": COMMANDER_FORMAT, "orderBy": "-updatedAt", "pageSize": PAGE_SIZE}
+                {"formats": COMMANDER_FORMAT, "orderBy": "-updatedAt"}
                 | ({"commanderName": commander} if commander is not None else {})
                 | ({"edhBracket": bracket} if bracket is not None else {})
                 | ({"deckTagName": tag} if tag is not None else {})
             )
-            while url is not None and pages_left > 0:
+            oldest: datetime | None = None
+            while url is not None:
+                if pages_left == 0:
+                    _log_cut_short(commander, tag, bracket, max_pages, oldest)
+                    break
                 pages_left -= 1
                 raw = self._get(url, params)
                 try:
@@ -248,6 +253,7 @@ class ArchidektSearch:
                     raise ArchidektError(f"unexpected search answer from Archidekt: {error}") from error
                 params = None
                 found.update((deck.id, deck) for deck in page if deck.updated_at >= since)
+                oldest = min((deck.updated_at for deck in page), default=oldest)
                 if any(deck.updated_at < since for deck in page):
                     break
                 if stop is not None and any(deck.updated_at <= stop for deck in page):
@@ -282,6 +288,26 @@ class ArchidektSearch:
                     "Archidekt request %s took %.2fs", _target(url, params), time.perf_counter() - started
                 )
         raise AssertionError("unreachable: the last attempt raises")  # pragma: no cover
+
+
+def _log_cut_short(
+    commander: str | None, tag: str | None, bracket: int | None, max_pages: int, oldest: datetime | None
+) -> None:
+    """A search that used up its pages with more of the window still listed: its sample is the newest
+    decks only."""
+    what = " ".join(
+        part
+        for part in (
+            commander or "any commander",
+            f"tag {tag}" if tag is not None else "",
+            f"bracket {bracket}" if bracket is not None else "",
+        )
+        if part
+    )
+    reaches = oldest.date().isoformat() if oldest is not None else "nothing"
+    log.info(
+        "Archidekt search for %s stopped at its %d-page cap; it reaches back to %s", what, max_pages, reaches
+    )
 
 
 def _target(url: str, params: Mapping[str, str | int] | None) -> str:

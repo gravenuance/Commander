@@ -392,11 +392,11 @@ def test_the_anonymous_client_sends_the_same_requests_as_a_plain_fetch(raw_deck:
 
     client.list_commander_decks("TESTER")
     client.get_deck(DECK_ID)
-    fetcher.get_json("https://archidekt.com/api/decks/v3/", {"ownerUsername": "TESTER", "pageSize": 50})
+    fetcher.get_json("https://archidekt.com/api/decks/v3/", {"ownerUsername": "TESTER"})
     fetcher.get_json(f"https://archidekt.com/api/decks/{DECK_ID}/")
 
     listing, deck, plain_listing, plain_deck = recorded.sent
-    assert str(listing.url) == "https://archidekt.com/api/decks/v3/?ownerUsername=TESTER&pageSize=50"
+    assert str(listing.url) == "https://archidekt.com/api/decks/v3/?ownerUsername=TESTER"
     assert str(deck.url) == f"https://archidekt.com/api/decks/{DECK_ID}/"
     for sent, plain in ((listing, plain_listing), (deck, plain_deck)):
         assert (sent.method, sent.url, sent.content) == (plain.method, plain.url, plain.content)
@@ -434,7 +434,7 @@ def test_the_header_goes_to_the_listing_and_never_to_a_next_link_outside_the_api
     with pytest.raises(ArchidektError, match="outside the Archidekt API"):
         client.list_commander_decks("TESTER")
 
-    assert seen == [("https://archidekt.com/api/decks/v3/?ownerUsername=TESTER&pageSize=50", SIGNED_IN)]
+    assert seen == [("https://archidekt.com/api/decks/v3/?ownerUsername=TESTER", SIGNED_IN)]
 
 
 def test_a_private_deck_is_refused_without_the_header_and_read_with_it(raw_deck: Json) -> None:

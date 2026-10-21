@@ -6,6 +6,10 @@
 - A Considering or No cut yet card with a long name or type line ("Birgi, God of Storytelling // Harnfel, Horn
   of Bounty") no longer runs past the card's edge: the name, type line and mana cost stay inside it, the name and
   type line end in "…", and the name no longer slides under the turn-down button.
+- Archidekt reads keep under its limit of about ten requests a minute: 6.5 s apart instead of 5 s, and a 429
+  pauses them for a minute instead of three, since the limit lifts within the minute (ADR 0048). A sync no
+  longer sends a `pageSize`, which Archidekt ignores (its pages hold 60 decks), and a search that its page cap
+  cuts short says in the log how far back it reached.
 
 ## 0.8.0 - 2026-10-21
 

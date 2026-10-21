@@ -63,9 +63,8 @@ class PagedArchidekt(FakeArchidektSearch):
         )
         shown = rows[(page - 1) * self.page_size : page * self.page_size]
         more = page * self.page_size < len(rows)
-        link = (
-            "http://archidekt.com/api/decks/v3/?formats=3&orderBy=-updatedAt&pageSize=50"
-            f"&page={page + 1}" + (f"&edhBracket={bracket}" if bracket else "")
+        link = f"http://archidekt.com/api/decks/v3/?formats=3&orderBy=-updatedAt&page={page + 1}" + (
+            f"&edhBracket={bracket}" if bracket else ""
         )
         body = {"count": len(rows), "next": link if more else None, "results": shown}
         return httpx.Response(200, json=body)

@@ -484,11 +484,11 @@ def test_a_deck_cached_in_another_shape_is_a_miss_not_a_crash(
 def test_after_a_rate_limit_the_next_run_reads_only_the_decks_still_missing(rig: Rig) -> None:
     rig.archidekt.limit_reads = 2
     stopped = rig.gather()
-    # Two 429s in a row end the run; the 180 seconds were waited between them.
+    # Two 429s in a row end the run; the minute was waited between them.
     assert stopped.peers.source is AnswerSource.UNAVAILABLE
     assert stopped.peers.error is not None
     assert "HTTP 429" in stopped.peers.error
-    assert rig.sleeps == [pytest.approx(180.0, abs=1.0)]
+    assert rig.sleeps == [pytest.approx(60.0, abs=1.0)]
     assert [p.name for p in deck_files(rig)] == ["13668856.json", "5553433.json"]
     rig.archidekt.limit_reads = None
     rig.now = NOW + timedelta(minutes=10)

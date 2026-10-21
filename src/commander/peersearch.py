@@ -39,7 +39,7 @@ def update_hits(
     the cached hits still in the window with the new and edited decks laid over them by deck id."""
     if previous is None or full_search_due(item, previous.full_at, now):
         decks = tuple(search(None))
-        log.info("Archidekt search for %s paged in full: %d decks", item, len(decks))
+        log.info("Archidekt search for %s: full search, %d decks", item, len(decks))
         return SearchHits(decks, now)
     kept = {deck.id: deck for deck in previous.decks if deck.updated_at >= since}
     fresh = search(newest_per_bracket(kept.values(), brackets))

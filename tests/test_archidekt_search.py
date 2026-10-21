@@ -76,7 +76,6 @@ def test_recent_decks_stop_at_the_page_reaching_past_the_window() -> None:
         "commanderName": ELLIVERE,
         "formats": "3",
         "orderBy": "-updatedAt",
-        "pageSize": "50",
         "edhBracket": "5",
     }
 
@@ -228,6 +227,31 @@ def test_a_commander_is_searched_at_most_20_pages_across_its_brackets() -> None:
     assert len(decks) == 2
 
 
+def test_a_search_cut_short_by_the_page_cap_says_how_far_back_it_reached(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # A window from 2020 holds every deck on the fixture page, the oldest updated 2026-06-08, and the page
+    # links to a next one.
+    fake = FakeSearch([search_page(), search_page()])
+    since = datetime(2020, 1, 1, tzinfo=UTC)
+    with caplog.at_level(logging.INFO, logger="commander.archidekt"):
+        search_for(fake).recent_decks(ELLIVERE, brackets=(5,), since=since, max_pages=2)
+    assert len(fake.requests) == 2
+    assert caplog.messages == [
+        f"Archidekt search for {ELLIVERE} bracket 5 stopped at its 2-page cap; it reaches back to 2026-06-08"
+    ]
+
+
+def test_a_search_that_reaches_the_window_start_within_its_pages_logs_no_cap(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    fake = FakeSearch([search_page()])
+    with caplog.at_level(logging.INFO, logger="commander.archidekt"):
+        search_for(fake).recent_decks(ELLIVERE, brackets=(5,), since=SINCE, max_pages=1)
+    assert len(fake.requests) == 1
+    assert caplog.messages == []
+
+
 def test_the_deck_tag_filter_is_sent_as_deck_tag_name() -> None:
     fake = FakeSearch([search_page(), search_page()])
     search = search_for(fake)
@@ -275,26 +299,28 @@ class Limited:
 
     def search(self) -> ArchidektSearch:
         fetcher = Fetcher(httpx.Client(transport=httpx.MockTransport(self.handler)), sleep=self.sleep)
-        return ArchidektSearch(fetcher, Pacer(5.0, sleep=self.sleep, monotonic=lambda: self.clock))
+        return ArchidektSearch(
+            fetcher, Pacer(SEARCH_INTERVAL_SECONDS, sleep=self.sleep, monotonic=lambda: self.clock)
+        )
 
 
 def deck_answer() -> httpx.Response:
     return httpx.Response(200, json=load_fixture(f"deck_{DECK_ID}.json"))
 
 
-def test_requests_are_five_seconds_apart() -> None:
-    assert SEARCH_INTERVAL_SECONDS == 5.0
+def test_requests_are_six_and_a_half_seconds_apart_so_a_minute_holds_fewer_than_ten() -> None:
+    assert SEARCH_INTERVAL_SECONDS == 6.5
     limited = Limited(deck_answer(), deck_answer(), deck_answer())
     search = limited.search()
     for _ in range(3):
         search.deck(DECK_ID)
-    assert limited.at == [0.0, 5.0, 10.0]
+    assert limited.at == [0.0, 6.5, 13.0]
 
 
-def test_after_a_429_without_retry_after_nothing_goes_out_for_180_seconds() -> None:
+def test_after_a_429_without_retry_after_nothing_goes_out_for_a_minute() -> None:
     limited = Limited(httpx.Response(429), deck_answer())
     assert limited.search().deck(DECK_ID).id == DECK_ID
-    assert limited.at == [0.0, 180.0]
+    assert limited.at == [0.0, 60.0]
 
 
 def test_after_a_429_with_a_longer_retry_after_that_is_waited() -> None:
@@ -303,10 +329,10 @@ def test_after_a_429_with_a_longer_retry_after_that_is_waited() -> None:
     assert limited.at == [0.0, 600.0]
 
 
-def test_a_retry_after_under_180_seconds_still_waits_180() -> None:
+def test_a_retry_after_under_a_minute_still_waits_a_minute() -> None:
     limited = Limited(httpx.Response(429, headers={"Retry-After": "20"}), deck_answer())
     limited.search().deck(DECK_ID)
-    assert limited.at == [0.0, 180.0]
+    assert limited.at == [0.0, 60.0]
 
 
 def test_a_second_429_gives_up_for_the_rest_of_the_run_without_another_request_or_wait() -> None:
@@ -314,13 +340,13 @@ def test_a_second_429_gives_up_for_the_rest_of_the_run_without_another_request_o
     search = limited.search()
     with pytest.raises(RateLimitedError):
         search.deck(DECK_ID)
-    assert limited.at == [0.0, 180.0]
+    assert limited.at == [0.0, 60.0]
     slept = list(limited.sleeps)
     with pytest.raises(RateLimitedError):
         search.deck(DECK_ID)
     with pytest.raises(RateLimitedError):
         search.recent_decks(ELLIVERE, brackets=(5,), since=SINCE)
-    assert limited.at == [0.0, 180.0]
+    assert limited.at == [0.0, 60.0]
     assert limited.sleeps == slept
 
 
@@ -334,5 +360,5 @@ def test_a_new_search_after_a_give_up_starts_fresh() -> None:
 def test_a_search_page_is_retried_after_a_429_too() -> None:
     limited = Limited(httpx.Response(429), httpx.Response(200, json=search_page()))
     decks = limited.search().recent_decks(ELLIVERE, brackets=(5,), since=SINCE)
-    assert limited.at == [0.0, 180.0]
+    assert limited.at == [0.0, 60.0]
     assert len(decks) == 13
