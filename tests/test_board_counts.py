@@ -14,6 +14,7 @@ from commander.archidekt_edit import ArchidektEditor
 from commander.board import (
     BOARD_FILE,
     Actor,
+    Board,
     BoardError,
     BoardService,
     CountChange,
@@ -26,6 +27,8 @@ from commander.board import (
 from commander.boardsave import save_board
 from commander.carddb import CardDb
 from commander.copylimit import copy_limit
+from commander.deckstats import stats_after
+from commander.deckview import decklist_json
 from commander.models import Deck
 from commander.net import Fetcher
 from commander.plan import AddCard, Plan, RemoveCard
@@ -268,6 +271,46 @@ def test_a_version_2_board_reads_without_count_changes_and_is_backed_up_on_its_n
     assert saved["version"] == 3
     assert saved["counts"] == [{"name": "Mountain", "was": 6, "count": 7, "by": "you", "at": STAMP}]
     assert (tmp_path / "board.v2.bak").read_text(encoding="utf-8") == original
+
+
+def split_mountains(raw: Json) -> Deck:
+    """The fixture deck with its six Mountains (Don't Have) and four more as a second entry."""
+    for entry in raw["cards"]:
+        if entry["card"]["oracleCard"]["name"] == "Mountain":
+            entry["label"] = "Don't Have,#f47373"
+    raw["cards"].append(card_entry(7_000_000_003, "Mountain", ["Land"], quantity=4))
+    return parse_deck(raw)
+
+
+def test_a_card_held_as_two_entries_counts_all_its_copies_in_the_stats_after(raw: Json, db: CardDb) -> None:
+    deck = split_mountains(raw)
+    board = Board((), (CountChange("Battered Golem", 1, 0, Actor.YOU, STAMP),))
+
+    # 20 cards: Magda, Golem, Flute, Dragon's Approach, six Seven Dwarves and ten Mountains; the Golem leaves.
+    assert stats_after(deck, db.resolve(deck.main_cards), board, db).cards == 19
+
+
+def test_a_cut_of_a_split_card_takes_the_last_entry_first_and_keeps_each_entrys_label(
+    raw: Json, db: CardDb
+) -> None:
+    deck = split_mountains(raw)
+    board = Board((), (CountChange("Mountain", 10, 4, Actor.YOU, STAMP),))
+
+    after = stats_after(deck, db.resolve(deck.main_cards), board, db)
+
+    # The four plain Mountains go, then two of the six Don't Have ones (0.12 each): 14 cards, 4 Don't Have.
+    assert (after.cards, after.dont_have, after.dont_have_cents) == (14, 4, 48)
+
+
+def test_plus_on_a_split_card_follows_the_decks_copies_in_all_not_the_entrys(raw: Json, db: CardDb) -> None:
+    # Seven Dwarves as six and one: the limit of seven is met by the two entries together.
+    raw["cards"].append(card_entry(7_000_000_004, "Seven Dwarves", ["Dwarf"], quantity=1))
+    deck = parse_deck(raw)
+
+    view = decklist_json(deck, Board(()), db, colours={}, share=lambda _: None)
+
+    dwarves = [c for g in view["grid"] for c in g["cards"] if c["name"] == "Seven Dwarves"]
+    assert [(c["quantity"], c["more"], c["less"]) for c in dwarves] == [(6, False, True), (1, False, True)]
 
 
 class TestSave:

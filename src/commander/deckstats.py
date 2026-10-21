@@ -77,26 +77,43 @@ def stat_cards(main: Sequence[ResolvedCard]) -> list[StatCard]:
 
 def stats_after(deck: Deck, main: Sequence[ResolvedCard], board: Board, db: CardDb) -> DeckStats:
     """The stats once the board's queued changes are saved, by the plan a save would send from this deck:
-    an added card arrives as Don't Have (ADR 0010) at its cheapest price, more copies keep their entry's
-    label, and a cut or a count change lowers the copies."""
-    cards = {card_key(card.name): card for card in stat_cards(main)}
+    an added card arrives as Don't Have (ADR 0010) at its cheapest price, more copies go to the card's first
+    entry, and a cut or a count change takes copies from its last entry first, as the save does. A card held
+    as several entries (two printings, foil and not) is one card in the plan, so its entries share its count
+    and each keeps its own label."""
+    entries: dict[str, list[StatCard]] = {}
+    for card in stat_cards(main):
+        entries.setdefault(card_key(card.name), []).append(card)
     plan = board_plan(deck, board)
     for cut in plan.remove if plan else ():
-        key = card_key(cut.name)
-        if key in cards:
-            cards[key] = replace(cards[key], quantity=min(cards[key].quantity, cut.keep))
+        if cards := entries.get(card_key(cut.name)):
+            _cut_to(cards, cut.keep)
     for add in plan.add if plan else ():
         key = card_key(add.name)
-        if key in cards:
-            cards[key] = replace(cards[key], quantity=max(cards[key].quantity, add.quantity))
+        if cards := entries.get(key):
+            held = sum(card.quantity for card in cards)
+            cards[0] = replace(cards[0], quantity=cards[0].quantity + max(add.quantity - held, 0))
             continue
         info = db.card_named(add.name)
-        cards[key] = StatCard(
-            add.name,
-            add.quantity,
-            DONT_HAVE_LABEL,
-            info.cheapest_cents if info else None,
-            info.cmc if info else 0.0,
-            info.is_land if info else False,
-        )
-    return deck_stats(cards.values())
+        entries[key] = [
+            StatCard(
+                add.name,
+                add.quantity,
+                DONT_HAVE_LABEL,
+                info.cheapest_cents if info else None,
+                info.cmc if info else 0.0,
+                info.is_land if info else False,
+            )
+        ]
+    return deck_stats(card for cards in entries.values() for card in cards)
+
+
+def _cut_to(cards: list[StatCard], keep: int) -> None:
+    """Take the copies above keep out of the entries, the last entry first."""
+    extra = sum(card.quantity for card in cards) - keep
+    for index in reversed(range(len(cards))):
+        if extra <= 0:
+            return
+        take = min(cards[index].quantity, extra)
+        cards[index] = replace(cards[index], quantity=cards[index].quantity - take)
+        extra -= take

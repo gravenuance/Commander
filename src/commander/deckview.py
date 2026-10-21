@@ -1,6 +1,7 @@
 """The app's decklist as the page draws it: the grid groups with each card's queued change and its + and -,
 the cards outside the deck, the deck's categories for an add, and the stats above it (ADR 0043, 0044)."""
 
+from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -43,10 +44,15 @@ def decklist_json(
     main = db.resolve(deck.main_cards)
     outside = db.resolve(tuple(card for card in deck.cards if not card.in_deck))
     held = {card_key(card.name) for card in deck.main_cards}
+    copies = Counter[str]()
+    for r in main:
+        if r.card.in_deck:
+            copies[card_key(r.card.name)] += r.card.quantity
     edits = _Edits(
         board,
         copy_limits(main, db),
         frozenset(card_key(name) for card in board.queued for name in (card.name, card.choice) if name),
+        copies,
     )
     groups = [
         _group_json(group, colours, share, edits)
@@ -73,6 +79,9 @@ class _Edits:
     limits: Mapping[str, int | None]
     # The card_keys a queued swap brings in or cuts.
     swapped: frozenset[str]
+    # The copies the deck holds of each card by card_key, over all its entries (printings, foil and not):
+    # a count change is for the card, not for one entry.
+    copies: Mapping[str, int]
 
     def json(self, card: GridCard, group: GridGroup) -> Json:
         if card.board_id is not None:
@@ -82,10 +91,11 @@ class _Edits:
         editable = (
             group.in_deck and group.name != COMMANDER_CATEGORY and card_key(card.name) not in self.swapped
         )
+        held = self.copies.get(card_key(card.name), card.quantity)
         return {
             "pending": pending,
-            "more": editable and _more_allowed(card, queued, self.limits),
-            "less": editable and (queued.count if queued else card.quantity) > 0,
+            "more": editable and _more_allowed(card.name, held, queued, self.limits),
+            "less": editable and (queued.count if queued else held) > 0,
         }
 
 
@@ -128,9 +138,9 @@ def _group_json(
     }
 
 
-def _more_allowed(card: GridCard, queued: CountChange | None, limits: Mapping[str, int | None]) -> bool:
-    current = queued.count if queued else card.quantity
-    if current < card.quantity:
+def _more_allowed(name: str, held: int, queued: CountChange | None, limits: Mapping[str, int | None]) -> bool:
+    current = queued.count if queued else held
+    if current < held:
         return True
-    limit = limits.get(card_key(card.name), 1)
+    limit = limits.get(card_key(name), 1)
     return current < (MAX_COPIES if limit is None else min(limit, MAX_COPIES))
