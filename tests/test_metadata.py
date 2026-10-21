@@ -102,9 +102,9 @@ def ellivere_deck(*commanders: str) -> Deck:
         return DeckCard(name, 1, categories, True, f"id-{entry_id}", entry_id, entry_id, "tst", "1", "Normal")  # noqa: FBT003 — positional like the model
 
     return Deck(
-        10078393,
-        "Let's not play together",
-        "MAKKIS",
+        10000002,
+        "Let's all play nice",
+        "TESTER",
         5,
         "2026-10-15T20:22:13Z",
         (
@@ -145,7 +145,7 @@ class Rig:
             ),
             SpellbookClient(Fetcher(self.spellbook.client(), max_attempts=1)),
             Pacer(0),
-            "makkis",
+            "tester",
             self.settings,
         )
 
@@ -441,7 +441,7 @@ def test_a_cache_from_before_the_view_bars_reads_as_not_fetched(rig: Rig) -> Non
     path = min((rig.cache / CACHE_FOLDER).glob("archidekt-*"))
     raw = json.loads(path.read_text(encoding="utf-8"))
     raw["key"] = request_key(
-        {"commander": ELLIVERE, "bracket": 5, "decks": 3, "windowDays": 60, "user": "makkis"}
+        {"commander": ELLIVERE, "bracket": 5, "decks": 3, "windowDays": 60, "user": "tester"}
     )
     path.write_text(json.dumps(raw), encoding="utf-8")
     old = gather(ellivere_deck(), rig.sources(), rig.cache, now=lambda: NOW, refresh=False, offline=True)

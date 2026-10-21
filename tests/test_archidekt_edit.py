@@ -54,19 +54,19 @@ def fetcher(fake: FakeArchidekt) -> Iterator[Fetcher]:
 def test_login_sends_the_name_and_keeps_only_the_refresh_token(fake: FakeArchidekt, fetcher: Fetcher) -> None:
     store = MemoryTokenStore()
 
-    ArchidektAuth(fetcher, store).login("MAKKIS", "makkis", PASSWORD)
+    ArchidektAuth(fetcher, store).login("TESTER", "tester", PASSWORD)
 
-    assert store.tokens == {"makkis": REFRESH_TOKEN}
+    assert store.tokens == {"tester": REFRESH_TOKEN}
     method, path, body, _ = fake.writes[0]
     assert (method, path, body) == (
         "POST",
         "/api/rest-auth/login/",
-        {"username": "makkis", "password": PASSWORD},
+        {"username": "tester", "password": PASSWORD},
     )
 
 
 def test_login_with_an_email_sends_it_as_email(fake: FakeArchidekt, fetcher: Fetcher) -> None:
-    ArchidektAuth(fetcher, MemoryTokenStore()).login("MAKKIS", "me@example.org", PASSWORD)
+    ArchidektAuth(fetcher, MemoryTokenStore()).login("TESTER", "me@example.org", PASSWORD)
 
     assert fake.writes[0][2] == {"email": "me@example.org", "password": PASSWORD}
 
@@ -75,7 +75,7 @@ def test_a_refused_login_stores_nothing_and_never_echoes_the_password(fetcher: F
     store = MemoryTokenStore()
 
     with pytest.raises(AuthError, match="refused the login") as raised:
-        ArchidektAuth(fetcher, store).login("MAKKIS", "MAKKIS", "wrong password")
+        ArchidektAuth(fetcher, store).login("TESTER", "TESTER", "wrong password")
 
     assert store.tokens == {}
     assert "wrong password" not in str(raised.value)
@@ -85,32 +85,32 @@ def test_a_login_for_another_account_stores_nothing(fake: FakeArchidekt, fetcher
     fake.user = "SomeoneElse"
     store = MemoryTokenStore()
 
-    with pytest.raises(AuthError, match="belongs to SomeoneElse, but cmdr is set up for MAKKIS"):
-        ArchidektAuth(fetcher, store).login("MAKKIS", "SomeoneElse", PASSWORD)
+    with pytest.raises(AuthError, match="belongs to SomeoneElse, but cmdr is set up for TESTER"):
+        ArchidektAuth(fetcher, store).login("TESTER", "SomeoneElse", PASSWORD)
 
     assert store.tokens == {}
 
 
 def test_login_rejects_an_empty_password_without_a_request(fake: FakeArchidekt, fetcher: Fetcher) -> None:
     with pytest.raises(AuthError, match="empty"):
-        ArchidektAuth(fetcher, MemoryTokenStore()).login("MAKKIS", "MAKKIS", "")
+        ArchidektAuth(fetcher, MemoryTokenStore()).login("TESTER", "TESTER", "")
 
     assert fake.writes == []
 
 
 def test_a_login_answer_without_a_token_is_an_archidekt_error() -> None:
     def handler(_: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"token": "x", "user": {"username": "MAKKIS"}})
+        return httpx.Response(200, json={"token": "x", "user": {"username": "TESTER"}})
 
     with (
         httpx.Client(transport=httpx.MockTransport(handler)) as client,
         pytest.raises(ArchidektError, match="refresh_token"),
     ):
-        ArchidektAuth(Fetcher(client), MemoryTokenStore()).login("MAKKIS", "MAKKIS", PASSWORD)
+        ArchidektAuth(Fetcher(client), MemoryTokenStore()).login("TESTER", "TESTER", PASSWORD)
 
 
 def test_access_token_comes_from_the_saved_refresh_token(fake: FakeArchidekt, fetcher: Fetcher) -> None:
-    token = ArchidektAuth(fetcher, MemoryTokenStore({"makkis": REFRESH_TOKEN})).access_token("MAKKIS")
+    token = ArchidektAuth(fetcher, MemoryTokenStore({"tester": REFRESH_TOKEN})).access_token("TESTER")
 
     assert token == ACCESS_TOKEN
     assert fake.writes[0][1:3] == ("/api/rest-auth/token/refresh/", {"refresh": REFRESH_TOKEN})
@@ -120,16 +120,16 @@ def test_without_a_saved_login_access_token_says_so_for_any_front_end(
     fake: FakeArchidekt, fetcher: Fetcher
 ) -> None:
     with pytest.raises(SignInRequiredError) as raised:
-        ArchidektAuth(fetcher, MemoryTokenStore()).access_token("MAKKIS")
+        ArchidektAuth(fetcher, MemoryTokenStore()).access_token("TESTER")
 
-    assert str(raised.value) == "not signed in to Archidekt as MAKKIS"
+    assert str(raised.value) == "not signed in to Archidekt as TESTER"
 
     assert fake.writes == []
 
 
 def test_an_expired_refresh_token_says_the_login_expired(fetcher: Fetcher) -> None:
     with pytest.raises(SignInRequiredError) as raised:
-        ArchidektAuth(fetcher, MemoryTokenStore({"makkis": "old"})).access_token("MAKKIS")
+        ArchidektAuth(fetcher, MemoryTokenStore({"tester": "old"})).access_token("TESTER")
 
     assert str(raised.value) == "the saved Archidekt login has expired"
 
@@ -145,12 +145,12 @@ def test_an_expired_refresh_token_says_the_login_expired(fetcher: Fetcher) -> No
 def test_access_token_reads_either_field_and_keeps_a_rotated_refresh_token(
     answer: Json, token: str, kept: str
 ) -> None:
-    store = MemoryTokenStore({"makkis": "r1"})
+    store = MemoryTokenStore({"tester": "r1"})
 
     with httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200, json=answer))) as client:
-        assert ArchidektAuth(Fetcher(client), store).access_token("MAKKIS") == token
+        assert ArchidektAuth(Fetcher(client), store).access_token("TESTER") == token
 
-    assert store.tokens == {"makkis": kept}
+    assert store.tokens == {"tester": kept}
 
 
 def test_a_token_refresh_is_never_retried() -> None:
@@ -164,7 +164,7 @@ def test_a_token_refresh_is_never_retried() -> None:
         httpx.Client(transport=httpx.MockTransport(handler)) as client,
         pytest.raises(NetworkError, match="HTTP 503"),
     ):
-        ArchidektAuth(Fetcher(client), MemoryTokenStore({"makkis": "r1"})).access_token("MAKKIS")
+        ArchidektAuth(Fetcher(client), MemoryTokenStore({"tester": "r1"})).access_token("TESTER")
 
     assert len(calls) == 1
 
@@ -337,19 +337,19 @@ def test_parse_entry_states_reads_a_custom_mana_value(
 def test_keyring_token_store_round_trip(memory_keyring: MemoryKeyring) -> None:
     store = KeyringTokenStore()
 
-    store.put("MAKKIS", "token")
+    store.put("TESTER", "token")
 
-    assert store.get("makkis") == "token"
-    assert memory_keyring.held(SERVICE) == {(SERVICE, "makkis"): "token"}
-    assert store.delete("MAKKIS") is True
-    assert store.delete("MAKKIS") is False
-    assert store.get("MAKKIS") is None
+    assert store.get("tester") == "token"
+    assert memory_keyring.held(SERVICE) == {(SERVICE, "tester"): "token"}
+    assert store.delete("TESTER") is True
+    assert store.delete("TESTER") is False
+    assert store.get("TESTER") is None
 
 
 @pytest.mark.parametrize("token", ["", "x" * 2001])
 def test_keyring_token_store_refuses_odd_tokens(token: str) -> None:
     with pytest.raises(CredentialError, match="unexpected length"):
-        KeyringTokenStore().put("MAKKIS", token)
+        KeyringTokenStore().put("TESTER", token)
 
 
 def test_a_rejected_change_shows_archidekts_reason_instead_of_login_advice() -> None:
@@ -375,7 +375,7 @@ def test_a_refresh_answered_with_400_shows_the_reason_not_expiry() -> None:
         httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(400, json=answer))) as client,
         pytest.raises(ArchidektError, match="This field is required"),
     ):
-        ArchidektAuth(Fetcher(client), MemoryTokenStore({"makkis": "r1"})).access_token("MAKKIS")
+        ArchidektAuth(Fetcher(client), MemoryTokenStore({"tester": "r1"})).access_token("TESTER")
 
 
 def test_keyring_backend_errors_become_credential_errors(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -388,16 +388,16 @@ def test_keyring_backend_errors_become_credential_errors(monkeypatch: pytest.Mon
     monkeypatch.setattr("keyring.get_password", refuse)
 
     with pytest.raises(CredentialError, match="could not save"):
-        KeyringTokenStore().put("MAKKIS", "token")
+        KeyringTokenStore().put("TESTER", "token")
     with pytest.raises(CredentialError, match="could not read"):
-        KeyringTokenStore().get("MAKKIS")
+        KeyringTokenStore().get("TESTER")
 
 
 def test_keyring_token_store_refuses_tokens_windows_cannot_hold() -> None:
-    KeyringTokenStore().put("MAKKIS", "x" * 1280)
+    KeyringTokenStore().put("TESTER", "x" * 1280)
 
     with pytest.raises(CredentialError, match="unexpected length"):
-        KeyringTokenStore().put("MAKKIS", "x" * 1281)
+        KeyringTokenStore().put("TESTER", "x" * 1281)
 
 
 def test_account_labels_keep_archidekt_order_and_skip_unusable_entries() -> None:
@@ -493,7 +493,7 @@ def test_a_rotated_token_that_cannot_be_saved_is_logged_and_the_access_token_sti
     memory_keyring: MemoryKeyring, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     store = KeyringTokenStore()
-    store.put("MAKKIS", "r1")
+    store.put("TESTER", "r1")
 
     def locked(*_: str) -> None:
         raise keyring.errors.PasswordSetError("vault locked")
@@ -505,29 +505,29 @@ def test_a_rotated_token_that_cannot_be_saved_is_logged_and_the_access_token_sti
         httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200, json=answer))) as client,
         caplog.at_level(logging.WARNING, logger="commander.archidekt_edit"),
     ):
-        token = ArchidektAuth(Fetcher(client), store).access_token("MAKKIS")
+        token = ArchidektAuth(Fetcher(client), store).access_token("TESTER")
 
     assert token == "a2"
-    assert store.get("MAKKIS") == "r1"
+    assert store.get("TESTER") == "r1"
     [warning] = caplog.messages
     assert warning == (
-        "could not save the rotated Archidekt login for MAKKIS: "
+        "could not save the rotated Archidekt login for TESTER: "
         "could not save the Archidekt login: vault locked"
     )
 
 
 def test_a_refused_refresh_is_retried_once_with_the_token_another_process_saved() -> None:
-    store = MemoryTokenStore({"makkis": "r1"})
+    store = MemoryTokenStore({"tester": "r1"})
     seen: list[str] = []
 
     def on_refresh(refresh: str) -> httpx.Response:
         if refresh == "r1":
-            store.put("MAKKIS", "r2")  # the app refreshed and rotated it meanwhile
+            store.put("TESTER", "r2")  # the app refreshed and rotated it meanwhile
             return httpx.Response(401)
         return httpx.Response(200, json={"access": "a3"})
 
     with httpx.Client(transport=httpx.MockTransport(refresh_handler(seen, on_refresh))) as client:
-        assert ArchidektAuth(Fetcher(client), store).access_token("MAKKIS") == "a3"
+        assert ArchidektAuth(Fetcher(client), store).access_token("TESTER") == "a3"
 
     assert seen == ["r1", "r2"]
 
@@ -541,23 +541,23 @@ def test_a_refused_refresh_is_not_retried_when_the_saved_token_is_unchanged() ->
         ) as client,
         pytest.raises(AuthError, match="has expired"),
     ):
-        ArchidektAuth(Fetcher(client), MemoryTokenStore({"makkis": "r1"})).access_token("MAKKIS")
+        ArchidektAuth(Fetcher(client), MemoryTokenStore({"tester": "r1"})).access_token("TESTER")
 
     assert seen == ["r1"]
 
 
 def test_the_retry_with_a_newer_token_happens_once_only() -> None:
-    store = MemoryTokenStore({"makkis": "r1"})
+    store = MemoryTokenStore({"tester": "r1"})
     seen: list[str] = []
 
     def on_refresh(refresh: str) -> httpx.Response:
-        store.put("MAKKIS", "r2" if refresh == "r1" else "r3")
+        store.put("TESTER", "r2" if refresh == "r1" else "r3")
         return httpx.Response(401)
 
     with (
         httpx.Client(transport=httpx.MockTransport(refresh_handler(seen, on_refresh))) as client,
         pytest.raises(AuthError, match="has expired"),
     ):
-        ArchidektAuth(Fetcher(client), store).access_token("MAKKIS")
+        ArchidektAuth(Fetcher(client), store).access_token("TESTER")
 
     assert seen == ["r1", "r2"]

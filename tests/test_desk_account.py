@@ -82,22 +82,22 @@ def test_a_first_sign_in_saves_the_account_gives_it_a_folder_and_syncs(env: Env)
             "decks": {},
         },
     }
-    answer = desk.sign_in(" MAKKIS ", PASSWORD)
-    assert (answer["user"], answer["signedIn"]) == ("MAKKIS", True)
-    folder = env.documents / "Commander" / "decks-MAKKIS"
+    answer = desk.sign_in(" TESTER ", PASSWORD)
+    assert (answer["user"], answer["signedIn"]) == ("TESTER", True)
+    folder = env.documents / "Commander" / "decks-TESTER"
     config = read_config(env.config)
-    assert (config.user, config.workspace) == ("MAKKIS", folder)
-    assert env.tokens.get("makkis") == REFRESH_TOKEN
+    assert (config.user, config.workspace) == ("TESTER", folder)
+    assert env.tokens.get("tester") == REFRESH_TOKEN
     status = sync_of(answer)
     assert status["running"] is False
     assert str(status["summary"]).startswith("Synced 1 deck, 1 changed")
-    assert (folder / "10004639-honestly-though" / "deck.json").is_file()
+    assert (folder / "10000001-sample-deck" / "deck.json").is_file()
     assert [d["short"] for d in cast("list[Json]", desk.decks()["decks"])] == ["Magda"]
 
 
 def test_a_refused_login_changes_nothing(env: Env) -> None:
     desk = env.desk()
-    answer = desk.sign_in("MAKKIS", "wrong")
+    answer = desk.sign_in("TESTER", "wrong")
     assert "refused the login" in str(answer["error"])
     assert not env.config.exists()
     assert desk.account()["signedIn"] is False
@@ -105,21 +105,21 @@ def test_a_refused_login_changes_nothing(env: Env) -> None:
 
 def test_the_password_never_reaches_the_log(env: Env, caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.DEBUG, logger="commander.desk")
-    env.desk().sign_in("MAKKIS", PASSWORD)
+    env.desk().sign_in("TESTER", PASSWORD)
     assert "bridge call sign_in (arguments withheld)" in caplog.text
     assert PASSWORD not in caplog.text
 
 
 def test_signing_out_removes_the_login_and_forgets_the_account(env: Env) -> None:
     desk = env.desk()
-    desk.sign_in("MAKKIS", PASSWORD)
+    desk.sign_in("TESTER", PASSWORD)
     answer = desk.sign_out()
     assert (answer["user"], answer["signedIn"]) == (None, False)
-    assert env.tokens.get("makkis") is None
+    assert env.tokens.get("tester") is None
     config = read_config(env.config)
     assert config.user is None
     # The folder is remembered for the next sign-in.
-    assert config.workspaces == {"makkis": env.documents / "Commander" / "decks-MAKKIS"}
+    assert config.workspaces == {"tester": env.documents / "Commander" / "decks-TESTER"}
 
 
 def test_signing_in_again_drops_the_shares_kept_for_the_last_account(
@@ -134,7 +134,7 @@ def test_signing_in_again_drops_the_shares_kept_for_the_last_account(
 
     monkeypatch.setattr(desk_module, "weighted_shares", counting)
     desk = env.desk()
-    desk.sign_in("MAKKIS", PASSWORD)
+    desk.sign_in("TESTER", PASSWORD)
     deck_id = int(cast("list[Json]", desk.decks()["decks"])[0]["id"])
 
     desk.deck(deck_id)
@@ -142,7 +142,7 @@ def test_signing_in_again_drops_the_shares_kept_for_the_last_account(
     assert len(computed) == 1
 
     desk.sign_out()
-    desk.sign_in("MAKKIS", PASSWORD)
+    desk.sign_in("TESTER", PASSWORD)
     desk.deck(deck_id)
     assert len(computed) == 2
 
@@ -151,12 +151,12 @@ def test_signing_in_and_out_is_logged_without_the_password(
     env: Env, caplog: pytest.LogCaptureFixture
 ) -> None:
     desk = env.desk()
-    folder = env.documents / "Commander" / "decks-MAKKIS"
+    folder = env.documents / "Commander" / "decks-TESTER"
     with caplog.at_level(logging.INFO, logger="commander.desk"):
-        desk.sign_in("MAKKIS", PASSWORD)
+        desk.sign_in("TESTER", PASSWORD)
         desk.sign_out()
-    assert f"signed in as MAKKIS; decks in {folder}" in caplog.text
-    assert f"signed out MAKKIS; decks stay in {folder}" in caplog.text
+    assert f"signed in as TESTER; decks in {folder}" in caplog.text
+    assert f"signed out TESTER; decks stay in {folder}" in caplog.text
     assert PASSWORD not in caplog.text
     assert REFRESH_TOKEN not in caplog.text
 
@@ -165,8 +165,8 @@ def test_the_first_sync_after_signing_in_says_who_started_it(
     env: Env, caplog: pytest.LogCaptureFixture
 ) -> None:
     with caplog.at_level(logging.INFO, logger="commander.desk"):
-        env.desk(inline=False).sign_in("MAKKIS", PASSWORD)
-    assert "sync started for MAKKIS (first sign-in)" in caplog.messages
+        env.desk(inline=False).sign_in("TESTER", PASSWORD)
+    assert "sync started for TESTER (first sign-in)" in caplog.messages
 
 
 def test_syncing_needs_an_account(env: Env) -> None:
@@ -175,12 +175,12 @@ def test_syncing_needs_an_account(env: Env) -> None:
 
 def test_no_second_sync_and_no_account_change_while_one_runs(env: Env) -> None:
     desk = env.desk(inline=False)
-    answer = desk.sign_in("MAKKIS", PASSWORD)
+    answer = desk.sign_in("TESTER", PASSWORD)
     assert sync_of(answer)["running"] is True
     assert sync_of(answer)["progress"] == "Starting the sync"
     desk.sync()
     assert len(env.pending) == 1
-    assert desk.sign_in("MAKKIS", PASSWORD) == {
+    assert desk.sign_in("TESTER", PASSWORD) == {
         "error": "Wait for the sync to finish, then sign in (now: Starting the sync)."
     }
     assert desk.sign_out() == {
@@ -193,7 +193,7 @@ def test_no_second_sync_and_no_account_change_while_one_runs(env: Env) -> None:
 def test_a_sync_asked_for_while_signing_in_or_out_is_refused_and_the_first_sign_in_still_syncs(
     env: Env, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    env.settings = replace(env.settings, user="MAKKIS")
+    env.settings = replace(env.settings, user="TESTER")
     desk = env.desk(inline=False)
     during: list[Json] = []
     monkeypatch.setattr(
@@ -202,7 +202,7 @@ def test_a_sync_asked_for_while_signing_in_or_out_is_refused_and_the_first_sign_
     monkeypatch.setattr(
         desk_module, "forget_account", probing(desk_module.forget_account, lambda: during.append(desk.sync()))
     )
-    assert sync_of(desk.sign_in("MAKKIS", PASSWORD))["running"] is True
+    assert sync_of(desk.sign_in("TESTER", PASSWORD))["running"] is True
     env.pending.pop()()
     desk.sign_out()
     assert during == [

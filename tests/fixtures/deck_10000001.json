@@ -1,16 +1,16 @@
 {
-  "id": 10004639,
-  "name": "Honestly, though..",
+  "id": 10000001,
+  "name": "Sample, deck..",
   "owner": {
     "id": 1,
-    "username": "MAKKIS"
+    "username": "TESTER"
   },
   "edhBracket": 5,
   "updatedAt": "2026-10-11T20:56:43.155670Z",
   "deckTags": [
-    {"id": 1547700, "tag": 36, "deck": 10004639, "name": "Dwarves", "position": "M-530000"},
-    {"id": 1547701, "tag": 55, "deck": 10004639, "name": "Vehicles", "position": "M-540000"},
-    {"id": 1547702, "tag": 12, "deck": 10004639, "name": "cEDH", "position": "M-550000"}
+    {"id": 1547700, "tag": 36, "deck": 10000001, "name": "Dwarves", "position": "M-530000"},
+    {"id": 1547701, "tag": 55, "deck": 10000001, "name": "Vehicles", "position": "M-540000"},
+    {"id": 1547702, "tag": 12, "deck": 10000001, "name": "cEDH", "position": "M-550000"}
   ],
   "deckFormat": 3,
   "private": false,

@@ -36,7 +36,7 @@ from test_syncrun import DOWNLOADED, lists_with, stub_meta
 
 # Only a safety net against a hung test: every wait below is released by the other side.
 WAIT_SECONDS = 30
-FOLDER = "10004639-honestly-though"
+FOLDER = "10000001-sample-deck"
 
 
 @pytest.fixture
@@ -54,7 +54,7 @@ def settings(tmp_path: Path, card_db_file: Path, fake: FakeArchidekt) -> DeskSet
     workspace = tmp_path / "decks"
     assert run(["sync", "--no-cards", "--no-ideas", "--workspace", str(workspace)], tmp_path, fake).code == 0
     fake.requests.clear()
-    return DeskSettings(workspace, cache / CARD_DB_FILE, "MAKKIS", config=tmp_path / "config.toml")
+    return DeskSettings(workspace, cache / CARD_DB_FILE, "TESTER", config=tmp_path / "config.toml")
 
 
 def make_desk(
@@ -63,7 +63,7 @@ def make_desk(
     return Desk(
         settings,
         client_factory=fake.client,
-        token_store=MemoryTokenStore({"makkis": REFRESH_TOKEN}),
+        token_store=MemoryTokenStore({"tester": REFRESH_TOKEN}),
         now=lambda: NOW,
         pacer_factory=lambda _: Pacer(0),
         background=background,
@@ -328,7 +328,7 @@ def with_decks(settings: DeskSettings, fake: FakeArchidekt, raw_deck: Json, *dec
         fake.put({**copy.deepcopy(raw_deck), "id": deck_id, "name": f"Deck {deck_id}"})
     # Synced here rather than by `cmdr sync`, whose logging setup would drop the test's log capture.
     with fake.client() as http:
-        sync_decks(ArchidektClient(Fetcher(http)), Workspace(settings.workspace), "MAKKIS")
+        sync_decks(ArchidektClient(Fetcher(http)), Workspace(settings.workspace), "TESTER")
     fake.requests.clear()
 
 

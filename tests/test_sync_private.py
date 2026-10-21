@@ -17,7 +17,7 @@ from commander.sync import SyncStatus
 from commander.syncrun import SyncOptions, SyncOutcome, SyncServices, run_sync
 from conftest import ACCESS_TOKEN, DECK_ID, REFRESH_TOKEN, FakeArchidekt, Json, MemoryTokenStore
 
-PRIVATE_ID = 27461808
+PRIVATE_ID = 10000003
 UNLISTED_ID = 27586769
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 NOT_SIGNED_IN = "Not signed in to Archidekt: private and unlisted decks were not updated"
@@ -51,7 +51,7 @@ def sync(
     return run_sync(
         services,
         Workspace(tmp_path / "decks"),
-        "MAKKIS",
+        "TESTER",
         MetaSettings(),
         SyncOptions(cards=False, ideas=False, dry_run=dry_run),
         on_progress=lambda _: None,
@@ -59,7 +59,7 @@ def sync(
 
 
 def signed_in() -> MemoryTokenStore:
-    return MemoryTokenStore({"makkis": REFRESH_TOKEN})
+    return MemoryTokenStore({"tester": REFRESH_TOKEN})
 
 
 def statuses(outcome: SyncOutcome) -> dict[int, SyncStatus]:
@@ -97,7 +97,7 @@ def test_without_a_login_only_the_public_decks_sync_and_nothing_warns(tmp_path: 
 
     assert statuses(outcome) == {DECK_ID: SyncStatus.NEW}
     assert outcome.warnings == []
-    assert [p.name for p in (tmp_path / "decks").iterdir()] == ["10004639-honestly-though"]
+    assert [p.name for p in (tmp_path / "decks").iterdir()] == ["10000001-sample-deck"]
     assert fake.listing_auth == [None]
 
 
@@ -150,7 +150,7 @@ def test_a_credential_store_that_fails_falls_back_with_a_warning(tmp_path: Path,
     outcome = sync(tmp_path, fake, BrokenTokenStore())
 
     assert (
-        "Archidekt login not usable (the credential store is locked for MAKKIS): "
+        "Archidekt login not usable (the credential store is locked for TESTER): "
         "private and unlisted decks were not updated"
     ) in outcome.warnings
     assert statuses(outcome) == {DECK_ID: SyncStatus.NEW}
@@ -200,7 +200,7 @@ def test_a_token_revoked_after_the_listing_fails_the_decks_to_fetch_and_deletes_
     fake = archidekt_with_hidden_decks(raw_deck)
     sync(tmp_path, fake, signed_in())
     before = {folder: snapshot_bytes(tmp_path, folder) for folder in (PRIVATE_FOLDER, UNLISTED_FOLDER)}
-    public_before = snapshot_bytes(tmp_path, "10004639-honestly-though")
+    public_before = snapshot_bytes(tmp_path, "10000001-sample-deck")
     # Edited on Archidekt since the last sync, so both are fetched; the login is refused on those reads.
     for deck_id in (DECK_ID, PRIVATE_ID):
         fake.decks[deck_id]["updatedAt"] = "2026-10-16T08:00:00.000000Z"
@@ -218,7 +218,7 @@ def test_a_token_revoked_after_the_listing_fails_the_decks_to_fetch_and_deletes_
         "Archidekt refused the login (HTTP 401)"
     }
     assert outcome.warnings == []
-    assert snapshot_bytes(tmp_path, "10004639-honestly-though") == public_before
+    assert snapshot_bytes(tmp_path, "10000001-sample-deck") == public_before
     assert {folder: snapshot_bytes(tmp_path, folder) for folder in before} == before
 
 
@@ -315,7 +315,7 @@ def test_a_snapshot_saved_before_the_flags_existed_reads_as_a_public_deck(
     fake = FakeArchidekt()
     fake.put(raw_deck)
     sync(tmp_path, fake)
-    path = tmp_path / "decks" / "10004639-honestly-though" / SNAPSHOT_FILE
+    path = tmp_path / "decks" / "10000001-sample-deck" / SNAPSHOT_FILE
     text = path.read_text(encoding="utf-8")
     assert '"private": false' in text
     flagless = [
@@ -390,13 +390,13 @@ def test_the_anonymous_client_sends_the_same_requests_as_a_plain_fetch(raw_deck:
     fetcher = recorded.fetcher()
     client = ArchidektClient(fetcher)
 
-    client.list_commander_decks("MAKKIS")
+    client.list_commander_decks("TESTER")
     client.get_deck(DECK_ID)
-    fetcher.get_json("https://archidekt.com/api/decks/v3/", {"ownerUsername": "MAKKIS", "pageSize": 50})
+    fetcher.get_json("https://archidekt.com/api/decks/v3/", {"ownerUsername": "TESTER", "pageSize": 50})
     fetcher.get_json(f"https://archidekt.com/api/decks/{DECK_ID}/")
 
     listing, deck, plain_listing, plain_deck = recorded.sent
-    assert str(listing.url) == "https://archidekt.com/api/decks/v3/?ownerUsername=MAKKIS&pageSize=50"
+    assert str(listing.url) == "https://archidekt.com/api/decks/v3/?ownerUsername=TESTER&pageSize=50"
     assert str(deck.url) == f"https://archidekt.com/api/decks/{DECK_ID}/"
     for sent, plain in ((listing, plain_listing), (deck, plain_deck)):
         assert (sent.method, sent.url, sent.content) == (plain.method, plain.url, plain.content)
@@ -410,7 +410,7 @@ def test_the_signed_in_client_sends_the_header_on_every_page_and_deck_read(raw_d
     recorded = Recorder(fake)
     client = ArchidektClient(recorded.fetcher(), token=ACCESS_TOKEN)
 
-    client.list_commander_decks("MAKKIS")
+    client.list_commander_decks("TESTER")
     client.get_deck(DECK_ID)
 
     assert [r.headers.get("Authorization") for r in recorded.sent] == [SIGNED_IN, SIGNED_IN]
@@ -432,9 +432,9 @@ def test_the_header_goes_to_the_listing_and_never_to_a_next_link_outside_the_api
     client = ArchidektClient(Fetcher(http, sleep=lambda _: None), token=ACCESS_TOKEN)
 
     with pytest.raises(ArchidektError, match="outside the Archidekt API"):
-        client.list_commander_decks("MAKKIS")
+        client.list_commander_decks("TESTER")
 
-    assert seen == [("https://archidekt.com/api/decks/v3/?ownerUsername=MAKKIS&pageSize=50", SIGNED_IN)]
+    assert seen == [("https://archidekt.com/api/decks/v3/?ownerUsername=TESTER&pageSize=50", SIGNED_IN)]
 
 
 def test_a_private_deck_is_refused_without_the_header_and_read_with_it(raw_deck: Json) -> None:

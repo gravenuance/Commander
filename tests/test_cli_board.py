@@ -12,7 +12,7 @@ from commander.carddb import CARD_DB_FILE
 from conftest import DECK_ID, FakeArchidekt, Json, MemoryKeyring, card_entry
 from test_cli_apply import SNAPSHOT, Run, run, saved_deck, signed_in
 
-FOLDER = "10004639-honestly-though"
+FOLDER = "10000001-sample-deck"
 
 
 @pytest.fixture
@@ -54,8 +54,8 @@ def test_an_empty_board_says_how_to_fill_it(home: Path, fake: FakeArchidekt) -> 
     result = board(home, fake, "show", "magda")
     assert result.code == 0
     assert result.out == (
-        "Magda: Honestly, though.. (10004639)\n"
-        "the board is empty; `cmdr board add 10004639 <card>` puts a card on it\n"
+        "Magda: Sample, deck.. (10000001)\n"
+        "the board is empty; `cmdr board add 10000001 <card>` puts a card on it\n"
     )
 
 
@@ -89,7 +89,7 @@ def test_research_and_decisions_show_on_the_board(home: Path, fake: FakeArchidek
         f"  [no] Arcane Signet  (by you, id {board_id(home, 'Arcane Signet')})",
         "      note: no room",
         "",
-        "queued: 1 to add, 1 to cut; `cmdr board commit 10004639` previews",
+        "queued: 1 to add, 1 to cut; `cmdr board commit 10000001` previews",
     ]
 
 
@@ -183,7 +183,7 @@ def test_plan_prints_the_queued_cards_for_apply(home: Path, fake: FakeArchidekt)
     board(home, fake, "add", "magda", "Arcane Signet", "--replace", "Disruptor Flute")
     board(home, fake, "decide", "magda", "Arcane Signet", "add", "--cut", "Disruptor Flute")
     result = board(home, fake, "plan", "magda")
-    assert result.out == ('deck = "10004639"\nadd = ["Arcane Signet"]\nremove = ["Disruptor Flute"]\n')
+    assert result.out == ('deck = "10000001"\nadd = ["Arcane Signet"]\nremove = ["Disruptor Flute"]\n')
 
 
 def test_plan_leaves_out_cards_the_deck_on_archidekt_already_holds(home: Path, fake: FakeArchidekt) -> None:
@@ -194,7 +194,7 @@ def test_plan_leaves_out_cards_the_deck_on_archidekt_already_holds(home: Path, f
     fake.decks[DECK_ID]["cards"].append(card_entry(7_000_000_001, "Arcane Signet", ["Artifact"]))
     result = board(home, fake, "plan", "magda")
     assert result.code == 0, result.err
-    assert result.out == 'deck = "10004639"\nadd = ["Lightning Bolt"]\n'
+    assert result.out == 'deck = "10000001"\nadd = ["Lightning Bolt"]\n'
 
 
 def test_plan_of_cards_all_in_the_deck_on_archidekt_is_a_failed_run(home: Path, fake: FakeArchidekt) -> None:
@@ -366,11 +366,11 @@ def test_count_and_an_add_without_a_cut_show_on_the_board_and_go_into_the_plan(
         "  Mountain: 6 → 8  (by you)",
         "  Battered Golem: remove  (by you)",
         "",
-        "queued: 1 to add, 0 to cut, 2 count changes; `cmdr board commit 10004639` previews",
+        "queued: 1 to add, 0 to cut, 2 count changes; `cmdr board commit 10000001` previews",
     ]
     plan = board(home, fake, "plan", "magda")
     assert plan.out == (
-        'deck = "10004639"\n'
+        'deck = "10000001"\n'
         'add = [{name = "Arcane Signet", category = "Ramp"}, {name = "Mountain", quantity = 8}]\n'
         'remove = ["Battered Golem"]\n'
     )

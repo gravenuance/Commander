@@ -28,9 +28,9 @@ def test_the_help_example_is_a_valid_plan() -> None:
 
 
 def test_deck_may_be_a_number_and_names_are_trimmed() -> None:
-    plan = parse_plan({"deck": 10004639, "add": ["  Sol Ring "], "remove": [{"name": "Shock", "keep": 0}]})
+    plan = parse_plan({"deck": 10000001, "add": ["  Sol Ring "], "remove": [{"name": "Shock", "keep": 0}]})
 
-    assert plan.deck == "10004639"
+    assert plan.deck == "10000001"
     assert plan.add == (AddCard("Sol Ring"),)
     assert plan.remove == (RemoveCard("Shock", 0),)
 

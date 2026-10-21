@@ -6,7 +6,7 @@ pytestmark = needs_node
 
 PRELUDE = """
 const decks = [
-  { id: 1, short: "Magda", name: "Honestly, though..", queued: 0 },
+  { id: 1, short: "Magda", name: "Sample, deck..", queued: 0 },
   { id: 2, short: "Ellivere", name: "Second", queued: 0 },
 ];
 accountState.active = true;

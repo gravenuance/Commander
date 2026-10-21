@@ -11,7 +11,7 @@ from commander.carddb import CARD_DB_FILE
 from conftest import FakeArchidekt, Json, MemoryKeyring
 from test_cli_apply import Run, run, saved_deck, signed_in
 
-FOLDER = "10004639-honestly-though"
+FOLDER = "10000001-sample-deck"
 
 
 @pytest.fixture
@@ -49,7 +49,7 @@ def test_lists_the_cards_still_to_get(home: Path, fake: FakeArchidekt) -> None:
     document = json.loads(toget(home, fake, "magda", "--json").out)
     assert document == [
         {
-            "deck": 10004639,
+            "deck": 10000001,
             "short": "Magda",
             "cards": [
                 {"name": "Battered Golem", "quantity": 1, "label": "Don't Have", "category": "Combo Pieces"}

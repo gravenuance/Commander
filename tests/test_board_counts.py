@@ -385,7 +385,7 @@ class TestSave:
                 stored,
                 db,
                 on_board,
-                user="MAKKIS",
+                user="TESTER",
                 actor=Actor.YOU,
                 now=lambda: NOW,
             )

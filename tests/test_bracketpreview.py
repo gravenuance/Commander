@@ -111,9 +111,9 @@ def test_the_estimate_cached_for_the_deck_is_the_before_and_stays_the_decks(
     assert result is not None
     assert result.before is not None
     assert result.before.tag is BracketTag.POWERFUL
-    deck_cache = json.loads((tmp_path / "10004639.json").read_text(encoding="utf-8"))
+    deck_cache = json.loads((tmp_path / "10000001.json").read_text(encoding="utf-8"))
     assert deck_cache["answer"]["tag"] == "P"
-    assert (tmp_path / "10004639-after.json").is_file()
+    assert (tmp_path / "10000001-after.json").is_file()
 
 
 def test_the_same_plan_previewed_again_is_answered_from_the_cache(

@@ -33,7 +33,7 @@ def test_a_deck_whose_answer_cannot_be_decoded_fails_alone(tmp_path: Path, raw_d
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         results = sync_decks(
-            ArchidektClient(Fetcher(client, sleep=lambda _: None)), Workspace(tmp_path / "decks"), "MAKKIS"
+            ArchidektClient(Fetcher(client, sleep=lambda _: None)), Workspace(tmp_path / "decks"), "TESTER"
         )
 
     assert {r.deck_id: r.status for r in results} == {
@@ -62,7 +62,7 @@ def test_a_deck_listed_twice_by_a_drifting_listing_is_fetched_and_reported_once(
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         results = sync_decks(
-            ArchidektClient(Fetcher(client, sleep=lambda _: None)), Workspace(tmp_path / "decks"), "MAKKIS"
+            ArchidektClient(Fetcher(client, sleep=lambda _: None)), Workspace(tmp_path / "decks"), "TESTER"
         )
 
     assert [(r.deck_id, r.status) for r in results] == [(DECK_ID, SyncStatus.NEW)]
@@ -89,14 +89,14 @@ def test_a_deck_owned_by_someone_else_is_skipped_and_reported(tmp_path: Path, ra
     fake.put(raw_deck)
     fake.put({**raw_deck, "id": OTHER_ID, "name": "Other"})
 
-    with owned_by(fake, {DECK_ID: "Somebody", OTHER_ID: "makkis"}) as client:
+    with owned_by(fake, {DECK_ID: "Somebody", OTHER_ID: "tester"}) as client:
         results = sync_decks(
-            ArchidektClient(Fetcher(client, sleep=lambda _: None)), Workspace(tmp_path / "decks"), "MAKKIS"
+            ArchidektClient(Fetcher(client, sleep=lambda _: None)), Workspace(tmp_path / "decks"), "TESTER"
         )
 
     by_id = {r.deck_id: r for r in results}
     assert by_id[DECK_ID].status is SyncStatus.FAILED
-    assert by_id[DECK_ID].error == "belongs to Somebody, not MAKKIS; skipped"
+    assert by_id[DECK_ID].error == "belongs to Somebody, not TESTER; skipped"
     # The owner's name is compared without regard to case, as Archidekt does.
     assert by_id[OTHER_ID].status is SyncStatus.NEW
     assert [p.name for p in (tmp_path / "decks").iterdir()] == ["222-other"]
@@ -126,7 +126,7 @@ def test_an_interrupted_sync_leaves_no_thread_that_keeps_the_process_alive(
             sync_decks(
                 ArchidektClient(Fetcher(client, sleep=lambda _: None)),
                 Workspace(tmp_path / "decks"),
-                "MAKKIS",
+                "TESTER",
                 on_progress=on_progress,
             )
         started = set(threading.enumerate()) - before
@@ -166,7 +166,7 @@ def test_an_interrupted_sync_cancels_the_fetches_still_queued(tmp_path: Path, ra
                 sync_decks(
                     ArchidektClient(Fetcher(client, sleep=lambda _: None)),
                     Workspace(tmp_path / "decks"),
-                    "MAKKIS",
+                    "TESTER",
                     on_progress=on_progress,
                 )
         finally:

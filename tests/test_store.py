@@ -19,7 +19,7 @@ def deck(raw_deck: Json) -> Deck:
     ("name", "slug"),
     [
         ("dainjosos🦖🦖", "dainjosos"),
-        ("Let's not play together 🥂", "let-s-not-play-together"),
+        ("Let's all play nice 🥂", "let-s-all-play-nice"),
         ("Etali, Primal Conqueror // Etali", "etali-primal-conqueror-etali"),
         ("Æther Vial Déjà vu", "ther-vial-deja-vu"),
         ("🦖🦖", ""),
@@ -31,13 +31,13 @@ def test_slugify(name: str, slug: str) -> None:
 
 
 def test_folder_name_falls_back_to_id_when_name_has_no_letters(deck: Deck) -> None:
-    assert folder_name(replace(deck, name="🦖")) == "10004639"
-    assert folder_name(deck) == "10004639-honestly-though"
+    assert folder_name(replace(deck, name="🦖")) == "10000001"
+    assert folder_name(deck) == "10000001-sample-deck"
 
 
 def test_save_writes_three_files(tmp_path: Path, deck: Deck) -> None:
     folder = Workspace(tmp_path).save(deck)
-    assert folder == tmp_path / "10004639-honestly-though"
+    assert folder == tmp_path / "10000001-sample-deck"
     assert sorted(p.name for p in folder.iterdir()) == ["deck.json", "list.md", "notes.md"]
 
 
@@ -64,15 +64,15 @@ def test_save_renames_folder_when_deck_is_renamed(tmp_path: Path, deck: Deck) ->
     workspace = Workspace(tmp_path)
     (workspace.save(deck) / "notes.md").write_text("keep me", encoding="utf-8")
     folder = workspace.save(replace(deck, name="Magda Treasure"))
-    assert folder.name == "10004639-magda-treasure"
-    assert [p.name for p in tmp_path.iterdir()] == ["10004639-magda-treasure"]
+    assert folder.name == "10000001-magda-treasure"
+    assert [p.name for p in tmp_path.iterdir()] == ["10000001-magda-treasure"]
     assert (folder / "notes.md").read_text(encoding="utf-8") == "keep me"
 
 
 def test_two_folders_for_one_deck_is_an_error(tmp_path: Path, deck: Deck) -> None:
-    (tmp_path / "10004639-a").mkdir()
-    (tmp_path / "10004639-b").mkdir()
-    with pytest.raises(WorkspaceError, match="more than one folder for deck 10004639"):
+    (tmp_path / "10000001-a").mkdir()
+    (tmp_path / "10000001-b").mkdir()
+    with pytest.raises(WorkspaceError, match="more than one folder for deck 10000001"):
         Workspace(tmp_path).load(deck.id)
 
 
@@ -174,7 +174,7 @@ def test_load_all_ignores_unrelated_folders(tmp_path: Path, deck: Deck) -> None:
     workspace = Workspace(tmp_path)
     workspace.save(deck)
     (tmp_path / "drafts").mkdir()
-    assert [s.deck.id for s in workspace.load_all()] == [10004639]
+    assert [s.deck.id for s in workspace.load_all()] == [10000001]
 
 
 def test_missing_workspace_is_empty(tmp_path: Path) -> None:
@@ -184,11 +184,11 @@ def test_missing_workspace_is_empty(tmp_path: Path) -> None:
 
 
 def test_deck_folders_come_from_folder_names(tmp_path: Path) -> None:
-    for name in ("10004639-magda", "22344867", "notes", "x-123"):
+    for name in ("10000001-magda", "22344867", "notes", "x-123"):
         (tmp_path / name).mkdir()
     (tmp_path / "123-file.txt").write_text("", encoding="utf-8")
     assert Workspace(tmp_path).deck_folders() == [
-        (10004639, tmp_path / "10004639-magda"),
+        (10000001, tmp_path / "10000001-magda"),
         (22344867, tmp_path / "22344867"),
     ]
     assert Workspace(tmp_path / "missing").deck_folders() == []

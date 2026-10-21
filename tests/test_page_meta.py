@@ -12,7 +12,7 @@ const REPORT = {
   keys: [], stoppers: [], untouched: { combos: [], keys: [] }, comboGroups: [], racing: false,
 };
 const NOTHING = { report: null };
-const syncing = (decks) => ({ user: "MAKKIS", signedIn: true,
+const syncing = (decks) => ({ user: "TESTER", signedIn: true,
   sync: { running: true, progress: "Fetching", summary: "", failed: false, decks } });
 accountState.active = true;
 state.current = 1;
@@ -65,7 +65,7 @@ def test_the_updating_line_goes_when_the_sync_ends_and_follows_the_deck_opened()
     const other = !$("meta-busy").hidden;
     state.current = 1;
     syncMetaUpdating();
-    renderAccount({ user: "MAKKIS", signedIn: true,
+    renderAccount({ user: "TESTER", signedIn: true,
       sync: { running: false, progress: "", summary: "", failed: false, decks: {} } });
     return [mid, other, !$("meta-busy").hidden];
     """)

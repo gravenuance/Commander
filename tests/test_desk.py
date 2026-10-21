@@ -50,7 +50,7 @@ from test_meta import meta_data, peer
 from test_syncrun import DOWNLOADED, stub_meta
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
-DECK = 10004639
+DECK = 10000001
 
 
 @pytest.fixture
@@ -70,11 +70,11 @@ def settings(tmp_path: Path, card_db_file: Path, fake: FakeArchidekt) -> DeskSet
         == 0
     )
     fake.requests.clear()
-    return DeskSettings(tmp_path / "decks", cache / CARD_DB_FILE, "MAKKIS")
+    return DeskSettings(tmp_path / "decks", cache / CARD_DB_FILE, "TESTER")
 
 
 def make_desk(settings: DeskSettings, fake: FakeArchidekt, *, signed_in: bool = True) -> Desk:
-    tokens = MemoryTokenStore({"makkis": REFRESH_TOKEN} if signed_in else {})
+    tokens = MemoryTokenStore({"tester": REFRESH_TOKEN} if signed_in else {})
     return Desk(
         settings,
         client_factory=fake.client,
@@ -196,14 +196,14 @@ def test_no_script_writes_markup(script: Path) -> None:
 
 def test_decks_are_listed_by_commander_short_name(desk: Desk) -> None:
     assert desk.decks() == {
-        "decks": [{"id": DECK, "short": "Magda", "name": "Honestly, though..", "queued": 0, "open": 0}]
+        "decks": [{"id": DECK, "short": "Magda", "name": "Sample, deck..", "queued": 0, "open": 0}]
     }
 
 
 def test_a_deck_with_a_damaged_board_lists_with_an_error_and_the_others_still_load(
     desk: Desk, settings: DeskSettings
 ) -> None:
-    first = settings.workspace / "10004639-honestly-though"
+    first = settings.workspace / "10000001-sample-deck"
     second = settings.workspace / "10004640-second"
     shutil.copytree(first, second)
     snapshot = json.loads((second / "deck.json").read_text(encoding="utf-8"))
@@ -212,9 +212,9 @@ def test_a_deck_with_a_damaged_board_lists_with_an_error_and_the_others_still_lo
     (second / "deck.json").write_text(json.dumps(snapshot), encoding="utf-8")
     (first / "board.json").write_text("{not json", encoding="utf-8")
     listed = items(desk.decks(), "decks")
-    assert [row["id"] for row in listed] == [10004639, 10004640]
+    assert [row["id"] for row in listed] == [10000001, 10004640]
     assert "board.json" in str(listed[0]["error"])
-    assert listed[0]["name"] == "Honestly, though.."
+    assert listed[0]["name"] == "Sample, deck.."
     assert "error" not in listed[1]
     assert (listed[1]["name"], listed[1]["queued"]) == ("Zeta", 0)
 
@@ -380,7 +380,7 @@ def test_searching_decks_by_tag_is_off_in_the_settings_until_saved_on(
     assert desk.settings(DECK)["tagSearch"] is False
     assert save(desk, [], [], tag_search=True)["tagSearch"] is True
     assert desk.settings(DECK)["tagSearch"] is True
-    profile = settings.workspace / "10004639-honestly-though" / "profile.toml"
+    profile = settings.workspace / "10000001-sample-deck" / "profile.toml"
     assert "tag_search = true" in profile.read_text(encoding="utf-8")
     assert save(desk, [], [], tag_search=False)["tagSearch"] is False
     assert desk.settings(DECK)["tagSearch"] is False
@@ -402,7 +402,7 @@ def test_the_settings_dialog_has_a_labelled_tag_search_switch_saved_with_the_res
 
 
 def profile_file(settings: DeskSettings) -> Path:
-    return settings.workspace / "10004639-honestly-though" / "profile.toml"
+    return settings.workspace / "10000001-sample-deck" / "profile.toml"
 
 
 def test_the_settings_list_the_grace_cards_and_a_save_returns_the_new_ones(
@@ -627,7 +627,7 @@ def test_bracket_5_decks_have_no_budget_in_considering(desk: Desk) -> None:
 def test_the_bracket_check_names_what_lifts_the_estimate_above_the_ceiling(
     desk: Desk, settings: DeskSettings, fake: FakeArchidekt
 ) -> None:
-    folder = settings.workspace / "10004639-honestly-though"
+    folder = settings.workspace / "10000001-sample-deck"
     (folder / "profile.toml").write_text("version = 1\nbracket_ceiling = 2\n", encoding="utf-8")
     answer = desk.bracket(DECK)
     assert answer["estimate"] == {"tag": "Ruthless", "brackets": "4+"}
@@ -651,7 +651,7 @@ def test_the_bracket_check_names_what_lifts_the_estimate_above_the_ceiling(
 def test_the_bracket_check_without_spellbook_still_compares_the_ceiling(
     desk: Desk, settings: DeskSettings, fake: FakeArchidekt
 ) -> None:
-    folder = settings.workspace / "10004639-honestly-though"
+    folder = settings.workspace / "10000001-sample-deck"
     (folder / "profile.toml").write_text("version = 1\nbracket_ceiling = 4\n", encoding="utf-8")
     fake.spellbook.status = 403
     answer = desk.bracket(DECK)
@@ -681,7 +681,7 @@ def test_cardmarket_wants_copy_the_dont_have_cards_of_every_deck(desk: Desk) -> 
 
 
 def test_cardmarket_wants_name_the_decks_whose_labels_are_unknown(desk: Desk, settings: DeskSettings) -> None:
-    snapshot = settings.workspace / "10004639-honestly-though" / "deck.json"
+    snapshot = settings.workspace / "10000001-sample-deck" / "deck.json"
     document = json.loads(snapshot.read_text(encoding="utf-8"))
     document["version"] = 2
     for entry in document["cards"]:
@@ -783,7 +783,7 @@ def test_grace_cards_weight_the_decks_shares_and_the_view_counts_the_lists_holdi
     fake.topdeck.events = [*magda_events(), *kinnan_events()]
     fetch_meta(settings, fake)
     assert desk.deck(DECK)["grace"] == {"cards": [], "holding": 0, "lists": 6}
-    profile = settings.workspace / "10004639-honestly-though" / "profile.toml"
+    profile = settings.workspace / "10000001-sample-deck" / "profile.toml"
     # Only the sixth list (45 of the others' 310) runs the Signet: x4 makes it 180 of 490.
     profile.write_text('[grace]\n"Arcane Signet" = 4\n', encoding="utf-8")
     view = desk.deck(DECK)
@@ -815,7 +815,7 @@ def test_the_meta_breakdown_ignores_the_decks_grace_cards(
     fetch_meta(settings, fake)
     before = desk.meta(DECK)
     assert before["report"] is not None
-    profile = settings.workspace / "10004639-honestly-though" / "profile.toml"
+    profile = settings.workspace / "10000001-sample-deck" / "profile.toml"
     profile.write_text('[grace]\n"Arcane Signet" = 4\n"Mind Stone" = 9\n', encoding="utf-8")
     assert desk.meta(DECK) == before
 
@@ -962,7 +962,7 @@ def test_commit_without_a_login_says_how_to_sign_in_in_the_apps_words(
     card_id = first_card_id(desk)
     desk.decide(DECK, card_id, "add", None, "")
     answer = desk.commit(DECK, reviewed(desk))
-    assert answer == {"error": "not signed in to Archidekt as MAKKIS. Sign in to Archidekt."}
+    assert answer == {"error": "not signed in to Archidekt as TESTER. Sign in to Archidekt."}
     assert not fake.card_writes()
 
 
@@ -984,7 +984,7 @@ def deferred_desk(settings: DeskSettings, fake: FakeArchidekt) -> tuple[Desk, li
     desk = Desk(
         settings,
         client_factory=fake.client,
-        token_store=MemoryTokenStore({"makkis": REFRESH_TOKEN}),
+        token_store=MemoryTokenStore({"tester": REFRESH_TOKEN}),
         now=lambda: NOW,
         pacer_factory=lambda _: Pacer(0),
         background=pending.append,
@@ -1008,7 +1008,7 @@ def test_nothing_changes_the_deck_or_board_while_an_update_runs(
     assert len(pending) == 1
     assert call(desk) == {"error": f"Wait for Magda to finish syncing, then {then}."}
     assert not fake.card_writes()
-    assert not (settings.workspace / "10004639-honestly-though" / "board.json").exists()
+    assert not (settings.workspace / "10000001-sample-deck" / "board.json").exists()
 
 
 def _propose(desk: Desk) -> Json:
@@ -1045,7 +1045,7 @@ def test_board_edits_and_settings_wait_while_an_update_runs(
     settings: DeskSettings, fake: FakeArchidekt, call: Callable[[Desk], Json], then: str
 ) -> None:
     desk, pending = deferred_desk(settings, fake)
-    folder = settings.workspace / "10004639-honestly-though"
+    folder = settings.workspace / "10000001-sample-deck"
     desk.sync()
     assert len(pending) == 1
     assert call(desk) == {"error": f"Wait for Magda to finish syncing, then {then}."}
@@ -1312,7 +1312,7 @@ def test_a_sync_without_an_open_deck_goes_by_views(
 def test_the_apps_sync_pulls_a_private_deck_and_a_later_signed_out_one_warns_and_keeps_it(
     settings: DeskSettings, fake: FakeArchidekt, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    private_id = 27461808
+    private_id = 10000003
     fake.put({**raw_deck, "id": private_id, "name": "Private test"})
     fake.private.add(private_id)
     desk, pending = deferred_desk(settings, fake)
@@ -1530,7 +1530,7 @@ def test_the_meta_panel_gets_topdecks_reason_after_a_refused_fetch(
     deck = Workspace(settings.workspace).load(DECK)
     assert deck is not None
     with fake.client() as http:
-        sources = meta_sources(http, lambda _: Pacer(0), "MAKKIS", MetaSettings(), settings.cache)
+        sources = meta_sources(http, lambda _: Pacer(0), "TESTER", MetaSettings(), settings.cache)
         gather_for(deck, sources, settings.cache, now=lambda: NOW, refresh=False)
     answer = desk.meta(DECK)
     assert answer["unavailable"] == REFUSAL
@@ -1543,7 +1543,7 @@ def test_the_meta_panel_says_when_no_topdeck_key_is_saved(
     deck = Workspace(settings.workspace).load(DECK)
     assert deck is not None
     with fake.client() as http:
-        sources = meta_sources(http, lambda _: Pacer(0), "MAKKIS", MetaSettings(), settings.cache)
+        sources = meta_sources(http, lambda _: Pacer(0), "TESTER", MetaSettings(), settings.cache)
         gather_for(deck, sources, settings.cache, now=lambda: NOW, refresh=False)
     assert desk.meta(DECK)["unavailable"] == NO_KEY_MESSAGE
 
@@ -1595,7 +1595,7 @@ def clocked_desk(
     desk = Desk(
         settings,
         client_factory=fake.client,
-        token_store=MemoryTokenStore({"makkis": REFRESH_TOKEN}),
+        token_store=MemoryTokenStore({"tester": REFRESH_TOKEN}),
         now=lambda: clock[0],
         pacer_factory=lambda _: Pacer(0),
         background=pending.append,
@@ -1613,10 +1613,10 @@ def test_a_sync_logs_its_start_each_phase_and_its_end_with_the_duration(
     with caplog.at_level(logging.INFO, logger=DESK_LOG):
         stubbed_sync(desk, pending, monkeypatch, clock)
     assert logged(caplog) == [
-        "sync started for MAKKIS (sync button)",
+        "sync started for TESTER (sync button)",
         "sync phase: Archidekt: recent Magda decks",
         f"sync deck {DECK}: fetching",
-        "sync finished for MAKKIS in 130s: Synced 0 decks, 0 changed.",
+        "sync finished for TESTER in 130s: Synced 0 decks, 0 changed.",
     ]
 
 
@@ -1637,8 +1637,8 @@ def test_a_failed_sync_logs_how_long_it_ran_and_why_it_stopped(
         desk.sync()
         pending[0]()
     assert logged(caplog) == [
-        "sync started for MAKKIS (sync button)",
-        "sync for MAKKIS failed after 7s: Archidekt answered HTTP 429",
+        "sync started for TESTER (sync button)",
+        "sync for TESTER failed after 7s: Archidekt answered HTTP 429",
     ]
 
 

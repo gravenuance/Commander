@@ -68,7 +68,7 @@ def service(stored: StoredDeck, db: CardDb) -> BoardService:
 
 @pytest.fixture
 def preview(editor: ArchidektEditor, stored: StoredDeck, db: CardDb) -> Callable[..., BoardPreview]:
-    def run(user: str = "MAKKIS") -> BoardPreview:
+    def run(user: str = "TESTER") -> BoardPreview:
         return preview_board(editor, stored, db, user=user, now=lambda: NOW)
 
     return run
@@ -80,7 +80,7 @@ def commit(
 ) -> Callable[[], BoardSave]:
     def run() -> BoardSave:
         return save_board(
-            editor, workspace, stored, db, service, user="MAKKIS", actor=Actor.YOU, now=lambda: NOW
+            editor, workspace, stored, db, service, user="TESTER", actor=Actor.YOU, now=lambda: NOW
         )
 
     return run

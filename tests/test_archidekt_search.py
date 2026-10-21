@@ -57,9 +57,9 @@ def test_parses_a_search_page() -> None:
     decks, next_url = parse_search_page(search_page())
     assert len(decks) == 15
     first = decks[0]
-    assert (first.id, first.owner, first.views, first.bracket) == (10078393, "MAKKIS", 1606, 5)
+    assert (first.id, first.owner, first.views, first.bracket) == (10000002, "TESTER", 1606, 5)
     assert first.updated_at == datetime(2026, 10, 15, 20, 22, 13, 8608, tzinfo=UTC)
-    assert first.url == "https://archidekt.com/decks/10078393"
+    assert first.url == "https://archidekt.com/decks/10000002"
     assert next_url is not None
     assert next_url.startswith("https://archidekt.com/api/decks/v3/?")
 
@@ -195,7 +195,7 @@ def test_each_bracket_is_searched_once_and_a_deck_found_twice_counts_once() -> N
     fake = FakeSearch([first, second])
     decks = search_for(fake).recent_decks(ELLIVERE, brackets=(4, 5), since=SINCE)
     assert [r.url.params["edhBracket"] for r in fake.requests] == ["4", "5"]
-    assert [d.id for d in decks] == [10078393, 23204858, 7432856]
+    assert [d.id for d in decks] == [10000002, 23204858, 7432856]
 
 
 def test_a_commander_is_searched_at_most_20_pages_across_its_brackets() -> None:

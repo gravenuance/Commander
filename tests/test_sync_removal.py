@@ -45,7 +45,7 @@ def pull(
             Fetcher(http, sleep=lambda _: None), token=ACCESS_TOKEN if signed_in else None
         )
         return sync_decks(
-            client, workspace or Workspace(root / "decks"), "MAKKIS", dry_run=dry_run, watch=watch
+            client, workspace or Workspace(root / "decks"), "TESTER", dry_run=dry_run, watch=watch
         )
 
 
@@ -76,7 +76,7 @@ def test_a_deck_deleted_on_archidekt_loses_its_folder_and_is_reported_removed(
 
     assert by_id(results) == {DECK_ID: SyncStatus.UNCHANGED, GONE_ID: SyncStatus.REMOVED}
     assert not folder(tmp_path).exists()
-    assert (folder(tmp_path, "10004639-honestly-though") / SNAPSHOT_FILE).is_file()
+    assert (folder(tmp_path, "10000001-sample-deck") / SNAPSHOT_FILE).is_file()
     assert [r.name for r in results if r.status is SyncStatus.REMOVED] == ["Other"]
     assert f"/api/decks/{GONE_ID}/" in fake.requests
     assert [m for m in caplog.messages if "removed" in m] == [
@@ -166,7 +166,7 @@ def test_an_anonymous_listing_after_a_refused_login_deletes_nothing(tmp_path: Pa
 
     with httpx.Client(transport=httpx.MockTransport(fake.handler)) as http:
         client = ArchidektClient(Fetcher(http, sleep=lambda _: None), token=ACCESS_TOKEN)
-        results = sync_decks(client, Workspace(tmp_path / "decks"), "MAKKIS", warn=warnings.append)
+        results = sync_decks(client, Workspace(tmp_path / "decks"), "TESTER", warn=warnings.append)
 
     assert warnings == ["Archidekt refused the login: private and unlisted decks were not updated"]
     assert by_id(results)[GONE_ID] is SyncStatus.MISSING_UPSTREAM

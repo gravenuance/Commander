@@ -53,8 +53,8 @@ def test_config_path_order() -> None:
 def test_write_then_read_round_trips(tmp_path: Path) -> None:
     path = tmp_path / "Commander" / "config.toml"
     workspace = Path(r'D:\Decks "main"\x')
-    write_config(path, "MAKKIS", workspace)
-    assert read_config(path) == FileConfig("MAKKIS", workspace)
+    write_config(path, "TESTER", workspace)
+    assert read_config(path) == FileConfig("TESTER", workspace)
 
 
 def test_missing_file_is_empty_config(tmp_path: Path) -> None:
@@ -120,9 +120,9 @@ def test_bad_targets_are_rejected(tmp_path: Path, toml: str, message: str) -> No
 def test_a_byte_order_mark_is_accepted(tmp_path: Path) -> None:
     # Windows PowerShell 5.1 writes one with Set-Content -Encoding utf8.
     path = tmp_path / "config.toml"
-    path.write_bytes(b"\xef\xbb\xbf" + b'version = 1\nuser = "MAKKIS"\n')
+    path.write_bytes(b"\xef\xbb\xbf" + b'version = 1\nuser = "TESTER"\n')
 
-    assert read_config(path).user == "MAKKIS"
+    assert read_config(path).user == "TESTER"
 
 
 def test_meta_settings_default_and_read_from_the_file(tmp_path: Path) -> None:
@@ -151,7 +151,7 @@ def test_bad_meta_settings_are_refused(tmp_path: Path, body: str, message: str) 
 
 OWNER = """\
 version = 1
-user = "MAKKIS"
+user = "TESTER"
 workspace = "D:/Projects/Commander/decks"
 
 # Wider window for the meta
@@ -167,7 +167,7 @@ def test_a_new_account_gets_a_sibling_folder_and_the_rest_of_the_file_stays(tmp_
     assert folder == Path("D:/Projects/Commander/decks-Friend")
     config = read_config(path)
     assert (config.user, config.workspace) == ("Friend", folder)
-    assert config.workspaces == {"makkis": Path("D:/Projects/Commander/decks"), "friend": folder}
+    assert config.workspaces == {"tester": Path("D:/Projects/Commander/decks"), "friend": folder}
     text = path.read_text(encoding="utf-8")
     assert "# Wider window for the meta" in text
     assert config.meta.window_days == 90
@@ -178,8 +178,8 @@ def test_switching_back_gives_an_account_its_own_folder_again(tmp_path: Path) ->
     path.write_text(OWNER, encoding="utf-8")
     switch_account(path, "Friend", documents=tmp_path / "docs")
     # Usernames compare without case, as Archidekt's do.
-    assert switch_account(path, "makkis", documents=tmp_path / "docs") == Path("D:/Projects/Commander/decks")
-    assert read_config(path).user == "makkis"
+    assert switch_account(path, "tester", documents=tmp_path / "docs") == Path("D:/Projects/Commander/decks")
+    assert read_config(path).user == "tester"
 
 
 def test_the_first_account_without_a_config_gets_a_folder_in_documents(tmp_path: Path) -> None:
@@ -195,8 +195,8 @@ def test_signing_out_forgets_the_account_but_not_its_folder(tmp_path: Path) -> N
     forget_account(path)
     config = read_config(path)
     assert config.user is None
-    assert config.workspaces == {"makkis": Path("D:/Projects/Commander/decks")}
-    assert switch_account(path, "MAKKIS", documents=tmp_path) == Path("D:/Projects/Commander/decks")
+    assert config.workspaces == {"tester": Path("D:/Projects/Commander/decks")}
+    assert switch_account(path, "TESTER", documents=tmp_path) == Path("D:/Projects/Commander/decks")
 
 
 def test_an_invalid_username_leaves_the_config_alone(tmp_path: Path) -> None:

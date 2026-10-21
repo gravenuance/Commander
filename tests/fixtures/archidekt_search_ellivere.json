@@ -3,11 +3,11 @@
  "next": "http://archidekt.com/api/decks/v3/?commanderName=Ellivere+of+the+Wild+Court&edhBracket=5&formats=3&orderBy=-updatedAt&page=2&pageSize=50",
  "results": [
   {
-   "id": 10078393,
-   "name": "Let's not play together 🥂",
+   "id": 10000002,
+   "name": "Let's all play nice 🥂",
    "owner": {
-    "id": 424063,
-    "username": "MAKKIS"
+    "id": 777001,
+    "username": "TESTER"
    },
    "viewCount": 1606,
    "updatedAt": "2026-10-15T20:22:13.008608Z",

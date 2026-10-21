@@ -666,7 +666,7 @@ def test_a_failed_read_back_says_the_changes_were_sent(
 
     assert str(raised.value) == (
         "Archidekt accepted the changes, but reading the deck back failed "
-        "(https://archidekt.com/api/decks/10004639/ returned HTTP 404); the local copy may be behind"
+        "(https://archidekt.com/api/decks/10000001/ returned HTTP 404); the local copy may be behind"
     )
 
     assert len(fake.writes) == 2

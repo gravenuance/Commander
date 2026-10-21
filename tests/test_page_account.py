@@ -7,10 +7,10 @@ pytestmark = needs_node
 # Shared by the programs: two decks as the bridge lists them and an account answer.
 PRELUDE = """
 const decks = [
-  { id: 1, short: "Magda", name: "Honestly, though..", queued: 0 },
+  { id: 1, short: "Magda", name: "Sample, deck..", queued: 0 },
   { id: 2, short: "Ellivere", name: "Second", queued: 0 },
 ];
-const account = (over = {}) => ({ user: "MAKKIS", signedIn: true,
+const account = (over = {}) => ({ user: "TESTER", signedIn: true,
   sync: { running: false, progress: "", summary: "", failed: false, decks: {} }, ...over });
 const icons = () => $("deck-list").querySelectorAll(".fetch-icon");
 const rowLabels = () => $("deck-list").children.map((li) => li.firstChild.getAttribute("aria-label"));
@@ -58,7 +58,7 @@ def test_the_deck_list_paints_a_labelled_icon_per_fetch_state() -> None:
         ("⚠", "Fetch incomplete; see the log"),
     ]
     assert painted["cleared"] == [blank, blank]
-    assert painted["labels"] == ["Magda, Honestly, though..", "Ellivere, Second"]
+    assert painted["labels"] == ["Magda, Sample, deck..", "Ellivere, Second"]
 
 
 def test_a_fetch_state_change_touches_only_its_own_deck_and_a_redraw_keeps_the_icon() -> None:
@@ -75,7 +75,7 @@ def test_a_fetch_state_change_touches_only_its_own_deck_and_a_redraw_keeps_the_i
     return { labels, redrawn: icons().map((i) => i.getAttribute("aria-label")),
       sameRows: $("deck-list").children.every((li, i) => li.firstChild === buttons[i]) };
     """)
-    assert seen["labels"] == ["Magda, Honestly, though.., Fetched", "untouched"]
+    assert seen["labels"] == ["Magda, Sample, deck.., Fetched", "untouched"]
     assert seen["redrawn"] == ["Fetched", "Waiting to fetch"]
     assert seen["sameRows"] is True
 
@@ -124,10 +124,10 @@ def test_a_sign_in_closes_the_dialog_and_lists_the_accounts_decks() -> None:
     setupAccount();
     stub.sign_in = async () => account();
     stub.decks = async () => ({ decks });
-    $("signin-user").value = "MAKKIS";
+    $("signin-user").value = "TESTER";
     $("signin-password").value = "secret";
     openSignIn();
-    $("signin-user").value = "MAKKIS";
+    $("signin-user").value = "TESTER";
     $("signin-password").value = "secret";
     await fire($("signin-form"), "submit");
     await settle();
@@ -219,7 +219,7 @@ def start_page(account_answer: str) -> Answer:
 
 
 def test_starting_signed_out_shows_the_gate_and_the_dialog_and_loads_no_decks() -> None:
-    started = start_page("account({ user: 'MAKKIS', signedIn: false })")
+    started = start_page("account({ user: 'TESTER', signedIn: false })")
     assert started["dialog"] == 1
     assert (started["gate"], started["rows"], started["syncOff"]) == (False, 0, True)
     assert "decks" not in started["called"]

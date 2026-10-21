@@ -53,7 +53,7 @@ def test_first_estimate_is_fetched_and_cached(env: Env) -> None:
     assert (result.source, result.fetched_at, result.error) == (AnswerSource.FETCHED, NOW, None)
     assert result.data is not None
     assert result.data.tag is BracketTag.RUTHLESS
-    assert (env.folder / "10004639.json").is_file()
+    assert (env.folder / "10000001.json").is_file()
 
 
 def test_recent_estimate_comes_from_the_cache(env: Env) -> None:
@@ -132,9 +132,9 @@ def test_older_estimate_for_other_cards_is_not_a_fallback(env: Env) -> None:
 )
 def test_unusable_cache_file_is_fetched_over(env: Env, content: str) -> None:
     env.folder.mkdir()
-    (env.folder / "10004639.json").write_text(content, encoding="utf-8")
+    (env.folder / "10000001.json").write_text(content, encoding="utf-8")
     assert env.estimate().source is AnswerSource.FETCHED
-    saved = json.loads((env.folder / "10004639.json").read_text(encoding="utf-8"))
+    saved = json.loads((env.folder / "10000001.json").read_text(encoding="utf-8"))
     assert saved["version"] == 3
 
 
@@ -142,7 +142,7 @@ def test_cached_estimate_with_a_bad_combo_is_ignored_with_a_warning(
     env: Env, caplog: pytest.LogCaptureFixture
 ) -> None:
     env.estimate()
-    path = env.folder / "10004639.json"
+    path = env.folder / "10000001.json"
     saved = json.loads(path.read_text(encoding="utf-8"))
     saved["answer"]["combos"][0]["twoCard"] = "maybe"
     path.write_text(json.dumps(saved), encoding="utf-8")
@@ -153,7 +153,7 @@ def test_cached_estimate_with_a_bad_combo_is_ignored_with_a_warning(
 
 def test_cache_time_without_a_zone_is_ignored(env: Env) -> None:
     env.estimate()
-    path = env.folder / "10004639.json"
+    path = env.folder / "10000001.json"
     saved = json.loads(path.read_text(encoding="utf-8"))
     saved["fetchedAt"] = "2026-10-15T12:00:00"
     path.write_text(json.dumps(saved), encoding="utf-8")
@@ -170,7 +170,7 @@ def test_unwritable_cache_still_returns_the_estimate(
     with caplog.at_level(logging.WARNING):
         result = env.estimate()
     assert result.source is AnswerSource.FETCHED
-    assert "could not cache the bracket estimate for deck 10004639" in caplog.text
+    assert "could not cache the bracket estimate for deck 10000001" in caplog.text
 
 
 def test_several_decks_come_back_in_deck_order(env: Env) -> None:
@@ -185,7 +185,7 @@ def test_several_decks_come_back_in_deck_order(env: Env) -> None:
 
 
 def report(bracket: int | None, tag: BracketTag | None) -> BracketReport:
-    deck = Deck(1, "deck", "MAKKIS", bracket, "2026-10-15T00:00:00Z", ())
+    deck = Deck(1, "deck", "TESTER", bracket, "2026-10-15T00:00:00Z", ())
     if tag is None:
         result: EstimateResult = Answer(None, AnswerSource.UNAVAILABLE, None, "down")
     else:

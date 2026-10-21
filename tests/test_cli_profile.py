@@ -56,7 +56,7 @@ def test_without_a_profile_says_how_to_start_one(tmp_path: Path, raw_deck: Json,
     code, out, _ = profile(["magda"], tmp_path, own_cache)
     assert code == 0
     assert out.splitlines()[1:] == [
-        "no profile; `cmdr profile 10004639 --init` starts one",
+        "no profile; `cmdr profile 10000001 --init` starts one",
         "from Archidekt:",
         "  Dwarves (deck tag): types Dwarf",
         "  Vehicles (deck tag): types Vehicle",

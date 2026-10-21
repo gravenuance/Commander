@@ -52,7 +52,7 @@ def run(
 def sync(tmp_path: Path, fake: FakeArchidekt, *extra: str, cards: bool = False) -> Run:
     """Deck sync; card data stays out of it unless a test asks, so deck tests read only deck output."""
     flags = [] if cards else ["--no-cards"]
-    args = ["sync", "--user", "MAKKIS", "--workspace", str(tmp_path / "decks"), *flags, *extra]
+    args = ["sync", "--user", "TESTER", "--workspace", str(tmp_path / "decks"), *flags, *extra]
     return run(args, tmp_path, fake)
 
 
@@ -76,8 +76,8 @@ def test_missing_user_is_a_usage_error(tmp_path: Path) -> None:
 def test_first_sync_saves_new_deck(tmp_path: Path, archidekt: FakeArchidekt) -> None:
     result = sync(tmp_path, archidekt)
     assert result.code == 0
-    assert result.out == "new        10004639  Honestly, though..\n1 new\n" + NO_CARDS
-    assert (tmp_path / "decks" / "10004639-honestly-though" / "deck.json").is_file()
+    assert result.out == "new        10000001  Sample, deck..\n1 new\n" + NO_CARDS
+    assert (tmp_path / "decks" / "10000001-sample-deck" / "deck.json").is_file()
 
 
 def test_unchanged_deck_is_not_refetched(tmp_path: Path, archidekt: FakeArchidekt) -> None:
@@ -90,14 +90,14 @@ def test_unchanged_deck_is_not_refetched(tmp_path: Path, archidekt: FakeArchidek
 
 def test_a_deck_saved_before_deck_tags_is_refetched_once(tmp_path: Path, archidekt: FakeArchidekt) -> None:
     sync(tmp_path, archidekt)
-    snapshot = tmp_path / "decks" / "10004639-honestly-though" / "deck.json"
+    snapshot = tmp_path / "decks" / "10000001-sample-deck" / "deck.json"
     document = json.loads(snapshot.read_text(encoding="utf-8"))
     document["version"] = 1
     del document["tags"]
     snapshot.write_text(json.dumps(document), encoding="utf-8")
     archidekt.requests.clear()
     sync(tmp_path, archidekt)
-    assert archidekt.requests == ["/api/decks/v3/", "/api/decks/10004639/"]
+    assert archidekt.requests == ["/api/decks/v3/", "/api/decks/10000001/"]
     assert json.loads(snapshot.read_text(encoding="utf-8"))["tags"] == ["Dwarves", "Vehicles", "cEDH"]
     archidekt.requests.clear()
     assert sync(tmp_path, archidekt).out == "1 unchanged\n" + NO_CARDS
@@ -106,7 +106,7 @@ def test_a_deck_saved_before_deck_tags_is_refetched_once(tmp_path: Path, archide
 
 def test_a_deck_saved_before_card_labels_is_refetched_once(tmp_path: Path, archidekt: FakeArchidekt) -> None:
     sync(tmp_path, archidekt)
-    snapshot = tmp_path / "decks" / "10004639-honestly-though" / "deck.json"
+    snapshot = tmp_path / "decks" / "10000001-sample-deck" / "deck.json"
     document = json.loads(snapshot.read_text(encoding="utf-8"))
     document["version"] = 2
     for card in document["cards"]:
@@ -114,7 +114,7 @@ def test_a_deck_saved_before_card_labels_is_refetched_once(tmp_path: Path, archi
     snapshot.write_text(json.dumps(document), encoding="utf-8")
     archidekt.requests.clear()
     sync(tmp_path, archidekt)
-    assert archidekt.requests == ["/api/decks/v3/", "/api/decks/10004639/"]
+    assert archidekt.requests == ["/api/decks/v3/", "/api/decks/10000001/"]
     assert {c["label"] for c in json.loads(snapshot.read_text(encoding="utf-8"))["cards"]} == {""}
     archidekt.requests.clear()
     assert sync(tmp_path, archidekt).out == "1 unchanged\n" + NO_CARDS
@@ -126,12 +126,12 @@ def test_a_deck_whose_tags_alone_changed_is_refetched(
 ) -> None:
     # Archidekt keeps a deck's edit time when only its tags change; the deck list shows the new tags.
     sync(tmp_path, archidekt)
-    raw_deck["deckTags"] = [{"id": 9, "tag": 69, "deck": 10004639, "name": "Stax", "position": "M-1"}]
+    raw_deck["deckTags"] = [{"id": 9, "tag": 69, "deck": 10000001, "name": "Stax", "position": "M-1"}]
     archidekt.put(raw_deck)
     archidekt.requests.clear()
     sync(tmp_path, archidekt)
-    assert archidekt.requests == ["/api/decks/v3/", "/api/decks/10004639/"]
-    snapshot = tmp_path / "decks" / "10004639-honestly-though" / "deck.json"
+    assert archidekt.requests == ["/api/decks/v3/", "/api/decks/10000001/"]
+    snapshot = tmp_path / "decks" / "10000001-sample-deck" / "deck.json"
     assert json.loads(snapshot.read_text(encoding="utf-8"))["tags"] == ["Stax"]
 
 
@@ -139,7 +139,7 @@ def test_force_refetches(tmp_path: Path, archidekt: FakeArchidekt) -> None:
     sync(tmp_path, archidekt)
     archidekt.requests.clear()
     sync(tmp_path, archidekt, "--force")
-    assert archidekt.requests == ["/api/decks/v3/", "/api/decks/10004639/"]
+    assert archidekt.requests == ["/api/decks/v3/", "/api/decks/10000001/"]
 
 
 def test_edited_deck_reports_its_changes(tmp_path: Path, archidekt: FakeArchidekt, raw_deck: Json) -> None:
@@ -151,19 +151,17 @@ def test_edited_deck_reports_its_changes(tmp_path: Path, archidekt: FakeArchidek
     result = sync(tmp_path, archidekt)
     assert result.code == 0
     assert result.out == (
-        "updated    10004639  Honestly, though..\n    + 1 Ancient Tomb\n    - 1 Disruptor Flute\n1 updated\n"
+        "updated    10000001  Sample, deck..\n    + 1 Ancient Tomb\n    - 1 Disruptor Flute\n1 updated\n"
         + NO_CARDS
     )
-    saved = json.loads((tmp_path / "decks/10004639-honestly-though/deck.json").read_text(encoding="utf-8"))
+    saved = json.loads((tmp_path / "decks/10000001-sample-deck/deck.json").read_text(encoding="utf-8"))
     assert saved["updatedAt"] == "2026-10-14T10:00:00Z"
 
 
 def test_dry_run_writes_nothing(tmp_path: Path, archidekt: FakeArchidekt) -> None:
     result = sync(tmp_path, archidekt, "--dry-run", cards=True)
     assert result.out == (
-        "new        10004639  Honestly, though..\n"
-        "1 new (dry run, nothing written)\n"
-        "card data: skipped, dry run\n"
+        "new        10000001  Sample, deck..\n1 new (dry run, nothing written)\ncard data: skipped, dry run\n"
     )
     assert archidekt.scryfall.requests == []
     assert not (tmp_path / "decks").exists()
@@ -173,8 +171,8 @@ def test_deck_gone_from_archidekt_is_kept_and_reported(tmp_path: Path, archidekt
     sync(tmp_path, archidekt)
     archidekt.decks.clear()
     result = sync(tmp_path, archidekt)
-    assert result.out == "missing    10004639  Honestly, though..\n1 missing\n" + NO_CARDS
-    assert (tmp_path / "decks" / "10004639-honestly-though" / "deck.json").is_file()
+    assert result.out == "missing    10000001  Sample, deck..\n1 missing\n" + NO_CARDS
+    assert (tmp_path / "decks" / "10000001-sample-deck" / "deck.json").is_file()
 
 
 def test_one_failing_deck_does_not_stop_the_others(
@@ -182,13 +180,13 @@ def test_one_failing_deck_does_not_stop_the_others(
 ) -> None:
     other = {**raw_deck, "id": 222, "name": "Other"}
     archidekt.put(other)
-    archidekt.failing[10004639] = 404
+    archidekt.failing[10000001] = 404
     result = sync(tmp_path, archidekt)
     assert result.code == 1
     assert result.out == (
         "new             222  Other\n"
-        "failed     10004639  Honestly, though..\n"
-        "    https://archidekt.com/api/decks/10004639/ returned HTTP 404\n"
+        "failed     10000001  Sample, deck..\n"
+        "    https://archidekt.com/api/decks/10000001/ returned HTTP 404\n"
         "1 new, 1 failed\n" + NO_CARDS
     )
     assert (tmp_path / "decks" / "222-other").is_dir()
@@ -196,8 +194,8 @@ def test_one_failing_deck_does_not_stop_the_others(
 
 def deleted_on_archidekt(tmp_path: Path, archidekt: FakeArchidekt, keyring: MemoryKeyring) -> None:
     """Two decks synced while signed in, then one of them deleted on Archidekt."""
-    keyring.secrets[(SERVICE, "makkis")] = REFRESH_TOKEN
-    archidekt.put({**archidekt.decks[10004639], "id": 222, "name": "Other"})
+    keyring.secrets[(SERVICE, "tester")] = REFRESH_TOKEN
+    archidekt.put({**archidekt.decks[10000001], "id": 222, "name": "Other"})
     sync(tmp_path, archidekt)
     del archidekt.decks[222]
 
@@ -258,7 +256,7 @@ def test_sync_json_gives_the_removed_status(
 
     rows = json.loads(sync(tmp_path, archidekt, "--json").out)["decks"]
 
-    assert {row["id"]: row["status"] for row in rows} == {10004639: "unchanged", 222: "removed"}
+    assert {row["id"]: row["status"] for row in rows} == {10000001: "unchanged", 222: "removed"}
 
 
 def test_sync_json_output(tmp_path: Path, archidekt: FakeArchidekt) -> None:
@@ -266,7 +264,7 @@ def test_sync_json_output(tmp_path: Path, archidekt: FakeArchidekt) -> None:
     assert document["cardData"] == {"status": "skipped", "detail": "--no-cards"}
     rows = document["decks"]
     assert len(rows) == 1
-    assert rows[0]["id"] == 10004639
+    assert rows[0]["id"] == 10000001
     assert rows[0]["status"] == "new"
     assert {"name": "Mountain", "quantity": 6} in rows[0]["added"]
 
@@ -275,7 +273,7 @@ def test_list_after_sync(tmp_path: Path, archidekt: FakeArchidekt) -> None:
     sync(tmp_path, archidekt)
     result = run(["list", "--workspace", str(tmp_path / "decks")], tmp_path)
     assert result.code == 0
-    assert result.out == "10004639\tB5\tHonestly, though..\tMagda, Brazen Outlaw\n"
+    assert result.out == "10000001\tB5\tSample, deck..\tMagda, Brazen Outlaw\n"
 
 
 def test_list_json(tmp_path: Path, archidekt: FakeArchidekt) -> None:
@@ -287,14 +285,14 @@ def test_list_json(tmp_path: Path, archidekt: FakeArchidekt) -> None:
 
 def test_init_then_sync_uses_saved_settings(tmp_path: Path, archidekt: FakeArchidekt) -> None:
     decks = tmp_path / "decks"
-    assert run(["init", "--user", "MAKKIS", "--workspace", str(decks)], tmp_path).code == 0
+    assert run(["init", "--user", "TESTER", "--workspace", str(decks)], tmp_path).code == 0
     result = run(["sync", "--no-cards"], tmp_path, archidekt)
     assert result.code == 0
-    assert (decks / "10004639-honestly-though").is_dir()
+    assert (decks / "10000001-sample-deck").is_dir()
 
 
 def test_init_refuses_to_overwrite_without_force(tmp_path: Path) -> None:
-    args = ["init", "--user", "MAKKIS", "--workspace", str(tmp_path)]
+    args = ["init", "--user", "TESTER", "--workspace", str(tmp_path)]
     run(args, tmp_path)
     second = run(args, tmp_path)
     assert second.code == 2
@@ -311,7 +309,7 @@ def test_maybeboard_only_edit_is_unchanged_but_saved(
     archidekt.put(raw_deck)
     result = sync(tmp_path, archidekt)
     assert result.out == "1 unchanged\n" + NO_CARDS
-    listing = (tmp_path / "decks/10004639-honestly-though/list.md").read_text(encoding="utf-8")
+    listing = (tmp_path / "decks/10000001-sample-deck/list.md").read_text(encoding="utf-8")
     assert "- 1 Sol Ring" in listing
 
 
@@ -333,7 +331,7 @@ def test_failed_card_refresh_fails_the_run_but_keeps_the_decks(
     assert result.out.endswith(
         f"card data: failed, {CARDS_URL} returned HTTP 404; the previous card data is kept\n"
     )
-    assert (tmp_path / "decks" / "10004639-honestly-though" / "deck.json").is_file()
+    assert (tmp_path / "decks" / "10000001-sample-deck" / "deck.json").is_file()
 
 
 def test_sync_json_reports_card_data(tmp_path: Path, archidekt: FakeArchidekt) -> None:
@@ -355,7 +353,7 @@ def research(args: list[str], tmp_path: Path, decks: Path, cache: Path, now: dat
 
 
 ANALYSIS = """\
-Honestly, though.. (10004639)
+Sample, deck.. (10000001)
 Magda, Brazen Outlaw; bracket 5 on Archidekt
 9 cards, 6 lands, average mana value 2.33 (nonland)
 
@@ -394,7 +392,7 @@ def test_analyze_one_deck(tmp_path: Path, decks: Path, card_db_file: Path) -> No
 
 
 def test_analyze_details_lists_role_differences(tmp_path: Path, decks: Path, card_db_file: Path) -> None:
-    result = research(["analyze", "10004639", "--details"], tmp_path, decks, card_db_file.parent)
+    result = research(["analyze", "10000001", "--details"], tmp_path, decks, card_db_file.parent)
     expected = ANALYSIS.replace(
         "  ramp             1     1\n",
         "  ramp             1     1\n"
@@ -424,7 +422,7 @@ def test_analyze_all_decks_is_a_table(tmp_path: Path, decks: Path, card_db_file:
         "name",
     ]
     assert row.split() == [
-        "10004639",
+        "10000001",
         "6",
         "2.33",
         "1",
@@ -436,8 +434,8 @@ def test_analyze_all_decks_is_a_table(tmp_path: Path, decks: Path, card_db_file:
         "0",
         "0",
         "0",
-        "Honestly,",
-        "though..",
+        "Sample,",
+        "deck..",
     ]
     assert note.startswith("role counts come from Scryfall tags")
 
@@ -455,12 +453,12 @@ def test_analyze_json(tmp_path: Path, decks: Path, card_db_file: Path) -> None:
 
 
 def test_price_one_deck(tmp_path: Path, decks: Path, card_db_file: Path) -> None:
-    result = research(["price", "honestly"], tmp_path, decks, card_db_file.parent)
+    result = research(["price", "sample"], tmp_path, decks, card_db_file.parent)
     assert result.code == 0
     assert result.out == (
         "Cardmarket prices in EUR, from Scryfall data of 2026-10-15\n"
         "\n"
-        "Honestly, though.. (10004639)\n"
+        "Sample, deck.. (10000001)\n"
         "value €10.87; with the cheapest printings €9.73\n"
         "       €7.63   1x Magda, Brazen Outlaw\n"
         "       €2.17   1x Disruptor Flute\n"
@@ -470,7 +468,7 @@ def test_price_one_deck(tmp_path: Path, decks: Path, card_db_file: Path) -> None
 
 
 def test_price_top_limits_the_card_list(tmp_path: Path, decks: Path, card_db_file: Path) -> None:
-    result = research(["price", "honestly", "--top", "2"], tmp_path, decks, card_db_file.parent)
+    result = research(["price", "sample", "--top", "2"], tmp_path, decks, card_db_file.parent)
     assert result.out.endswith("       €2.17   1x Disruptor Flute\n  ... 2 more; --top 0 lists them all\n")
 
 
@@ -479,7 +477,7 @@ def test_price_all_decks_is_a_table(tmp_path: Path, decks: Path, card_db_file: P
     assert result.out == (
         "Cardmarket prices in EUR, from Scryfall data of 2026-10-15\n"
         "      value    cheapest  deck\n"
-        "     €10.87       €9.73  Honestly, though.. (10004639)\n"
+        "     €10.87       €9.73  Sample, deck.. (10000001)\n"
         "     €10.87       €9.73  total\n"
     )
 
@@ -526,11 +524,11 @@ def test_unknown_deck_is_a_usage_error(
 def test_ambiguous_deck_lists_the_matches(
     tmp_path: Path, archidekt: FakeArchidekt, raw_deck: Json, card_db_file: Path
 ) -> None:
-    archidekt.put({**raw_deck, "id": 222, "name": "Honestly Again"})
+    archidekt.put({**raw_deck, "id": 222, "name": "Sample Again"})
     sync(tmp_path, archidekt)
-    result = research(["price", "honestly"], tmp_path, tmp_path / "decks", card_db_file.parent)
+    result = research(["price", "sample"], tmp_path, tmp_path / "decks", card_db_file.parent)
     assert result.code == 2
-    assert "matches 2 decks (10004639 Honestly, though..; 222 Honestly Again); use the deck id" in result.err
+    assert "matches 2 decks (10000001 Sample, deck..; 222 Sample Again); use the deck id" in result.err
 
 
 def test_empty_workspace_says_to_sync(tmp_path: Path, card_db_file: Path) -> None:
@@ -550,7 +548,7 @@ def bracket(args: list[str], tmp_path: Path, fake: FakeArchidekt, cache: Path, n
 
 
 BRACKET = """\
-Honestly, though.. (10004639)
+Sample, deck.. (10000001)
 Magda, Brazen Outlaw; bracket 5 on Archidekt
 estimate: bracket 4+ (Ruthless), Commander Spellbook 2026-10-15
 game changers: none
@@ -621,7 +619,7 @@ def test_bracket_table_flags_a_deck_set_below_the_estimate(
         "name",
     ]
     assert row.split() == [
-        "10004639",
+        "10000001",
         "3",
         "4+",
         "Ruthless",
@@ -632,8 +630,8 @@ def test_bracket_table_flags_a_deck_set_below_the_estimate(
         "1",
         "3",
         "!",
-        "Honestly,",
-        "though..",
+        "Sample,",
+        "deck..",
     ]
     assert notes == [
         (
@@ -700,7 +698,7 @@ def test_bracket_without_spellbook_still_lists_the_cards_and_exits_1(
     archidekt.spellbook.status = 404
     result = bracket(["magda"], tmp_path, archidekt, own_cache)
     assert result.code == 1
-    assert result.err.startswith("cmdr: Honestly, though..: no bracket estimate: ")
+    assert result.err.startswith("cmdr: Sample, deck..: no bracket estimate: ")
     assert "HTTP 404" in result.err
     assert "estimate: unavailable\n" in result.out
     assert "tutors (1): Magda, Brazen Outlaw\n" in result.out
@@ -717,7 +715,7 @@ def test_bracket_falls_back_to_an_older_answer_with_a_warning(
     result = bracket(["magda"], tmp_path, archidekt, own_cache, now=later)
     assert result.code == 0
     assert (
-        "cmdr: Honestly, though..: showing the bracket estimate from 2026-10-15; refreshing it failed: "
+        "cmdr: Sample, deck..: showing the bracket estimate from 2026-10-15; refreshing it failed: "
         in result.err
     )
     assert "estimate: bracket 4+ (Ruthless), Commander Spellbook 2026-10-15\n" in result.out
@@ -752,7 +750,7 @@ SUGGEST = (
     """\
 prices: each card's cheapest printing in EUR, Scryfall data of 2026-10-15
 
-Honestly, though.. (10004639)
+Sample, deck.. (10000001)
 Magda, Brazen Outlaw; bracket 5 on Archidekt; colours R
 
 cards that complete a combo (Commander Spellbook 2026-10-15)
@@ -892,7 +890,7 @@ def test_suggest_table(tmp_path: Path, raw_deck: Json, own_cache: Path) -> None:
     result = suggest(["--any-price"], tmp_path, synced(tmp_path, raw_deck), own_cache)
     header, row, *notes = result.out.splitlines()
     assert header.split() == ["id", "set", "combo", "ramp", "draw", "removal", "wipes", "cuts", "name"]
-    assert row.split() == ["10004639", "3", "3", "2/10", "0/10", "1/8", "1/2", "0", "Honestly,", "though.."]
+    assert row.split() == ["10000001", "3", "3", "2/10", "0/10", "1/8", "1/2", "0", "Sample,", "deck.."]
     assert notes == [
         "combo = cards that would complete a combo; roles = nonland cards tagged / target",
         "`cmdr suggest <deck>` lists the cards",
@@ -965,7 +963,7 @@ def test_suggest_without_spellbook_still_suggests_roles_and_exits_1(
     archidekt.spellbook.combos_status = 404
     result = suggest(["magda"], tmp_path, archidekt, own_cache)
     assert result.code == 1
-    assert result.err.startswith("cmdr: Honestly, though..: no combo list: ")
+    assert result.err.startswith("cmdr: Sample, deck..: no combo list: ")
     assert "cards that complete a combo: unknown, Commander Spellbook could not be reached\n" in result.out
     assert "      €0.30  Arcane Signet\n" in result.out
 
@@ -993,7 +991,7 @@ def test_suggest_needs_card_data_before_asking_spellbook(tmp_path: Path, archide
 def test_an_emoji_deck_name_survives_a_redirected_cp1252_stdout(
     tmp_path: Path, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    raw_deck["name"] = "Honestly 🎲 though"
+    raw_deck["name"] = "Sample 🎲 deck"
     fake = FakeArchidekt()
     fake.put(raw_deck)
     assert sync(tmp_path, fake).code == 0
@@ -1004,7 +1002,7 @@ def test_an_emoji_deck_name_survives_a_redirected_cp1252_stdout(
     env = {"APPDATA": str(tmp_path / "appdata"), "LOCALAPPDATA": str(tmp_path / "localappdata")}
     code = main(["list", "--workspace", str(tmp_path / "decks")], env=env, now=lambda: NOW)
     assert code == 0
-    assert "Honestly 🎲 though" in raw_out.getvalue().decode("utf-8")
+    assert "Sample 🎲 deck" in raw_out.getvalue().decode("utf-8")
 
 
 def _broken_client() -> httpx.Client:
@@ -1014,7 +1012,7 @@ def _broken_client() -> httpx.Client:
 def _sync_with_broken_client(tmp_path: Path, *flags: str) -> Run:
     out, err = io.StringIO(), io.StringIO()
     env = {"APPDATA": str(tmp_path / "appdata"), "LOCALAPPDATA": str(tmp_path / "localappdata")}
-    args = [*flags, "sync", "--user", "MAKKIS", "--workspace", str(tmp_path / "decks"), "--no-cards"]
+    args = [*flags, "sync", "--user", "TESTER", "--workspace", str(tmp_path / "decks"), "--no-cards"]
     code = main(args, env=env, client_factory=_broken_client, stdout=out, stderr=err, now=lambda: NOW)
     return Run(code, out.getvalue(), err.getvalue())
 

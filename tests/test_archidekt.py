@@ -30,12 +30,12 @@ def client_for(handler: Handler) -> ArchidektClient:
 
 def test_parse_deck_reads_header_fields(raw_deck: Json) -> None:
     deck = parse_deck(raw_deck)
-    assert deck.id == 10004639
-    assert deck.name == "Honestly, though.."
-    assert deck.owner == "MAKKIS"
+    assert deck.id == 10000001
+    assert deck.name == "Sample, deck.."
+    assert deck.owner == "TESTER"
     assert deck.bracket == 5
     assert deck.updated_at == "2026-10-11T20:56:43.155670Z"
-    assert deck.url == "https://archidekt.com/decks/10004639"
+    assert deck.url == "https://archidekt.com/decks/10000001"
 
 
 def test_parse_deck_reads_the_deck_tags_in_order(raw_deck: Json) -> None:
@@ -153,12 +153,12 @@ def test_get_deck_wraps_bad_data_in_archidekt_error(raw_deck: Json) -> None:
     def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=raw_deck)
 
-    with pytest.raises(ArchidektError, match="deck 10004639"):
-        client_for(handler).get_deck(10004639)
+    with pytest.raises(ArchidektError, match="deck 10000001"):
+        client_for(handler).get_deck(10000001)
 
 
 def test_list_follows_pagination_and_keeps_only_commander_decks() -> None:
-    second = "https://archidekt.com/api/decks/v3/?ownerUsername=MAKKIS&page=2"
+    second = "https://archidekt.com/api/decks/v3/?ownerUsername=TESTER&page=2"
     seen: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -168,7 +168,7 @@ def test_list_follows_pagination_and_keeps_only_commander_decks() -> None:
         rows = [summary_row(1, "First", "t1"), summary_row(2, "Standard deck", "t2", deck_format=1)]
         return httpx.Response(200, json=deck_page(rows, next_url=second))
 
-    decks = client_for(handler).list_commander_decks("MAKKIS")
+    decks = client_for(handler).list_commander_decks("TESTER")
     assert [(d.id, d.name, d.updated_at) for d in decks] == [(1, "First", "t1"), (3, "Third", "t3")]
     assert seen[1] == second
 
@@ -179,7 +179,7 @@ def test_list_rows_carry_the_deck_tags_when_archidekt_sends_them() -> None:
     def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=deck_page([tagged, summary_row(2, "Second", "t2")]))
 
-    first, second = client_for(handler).list_commander_decks("MAKKIS")
+    first, second = client_for(handler).list_commander_decks("TESTER")
     assert (first.tags, second.tags) == (("Stax", "cEDH"), None)
 
 
@@ -188,7 +188,7 @@ def test_list_rejects_next_link_to_another_host() -> None:
         return httpx.Response(200, json=deck_page([], next_url="https://evil.example/api/decks/v3/"))
 
     with pytest.raises(ArchidektError, match="outside the Archidekt API"):
-        client_for(handler).list_commander_decks("MAKKIS")
+        client_for(handler).list_commander_decks("TESTER")
 
 
 def test_list_follows_archidekts_plain_http_next_link_over_https() -> None:
@@ -199,13 +199,13 @@ def test_list_follows_archidekts_plain_http_next_link_over_https() -> None:
         seen.append(str(request.url))
         if request.url.params.get("page") == "2":
             return httpx.Response(200, json=deck_page([summary_row(2, "Second", "t2")]))
-        next_url = "http://archidekt.com/api/decks/v3/?ownerUsername=MAKKIS&page=2"
+        next_url = "http://archidekt.com/api/decks/v3/?ownerUsername=TESTER&page=2"
         return httpx.Response(200, json=deck_page([summary_row(1, "First", "t1")], next_url=next_url))
 
-    decks = client_for(handler).list_commander_decks("MAKKIS")
+    decks = client_for(handler).list_commander_decks("TESTER")
 
     assert [d.id for d in decks] == [1, 2]
-    assert seen[1] == "https://archidekt.com/api/decks/v3/?ownerUsername=MAKKIS&page=2"
+    assert seen[1] == "https://archidekt.com/api/decks/v3/?ownerUsername=TESTER&page=2"
 
 
 @pytest.mark.parametrize(
@@ -222,7 +222,7 @@ def test_list_rejects_lookalike_next_links(next_url: str) -> None:
         return httpx.Response(200, json=deck_page([], next_url=next_url))
 
     with pytest.raises(ArchidektError, match="outside the Archidekt API"):
-        client_for(handler).list_commander_decks("MAKKIS")
+        client_for(handler).list_commander_decks("TESTER")
 
 
 def test_category_flags_say_which_categories_count_in_the_deck(raw_deck: Json) -> None:

@@ -160,7 +160,7 @@ def test_queued_cards_make_a_plan_with_their_chosen_cuts(
     service.decide(bolt.id, Status.ADD, Actor.YOU, choice="battered golem", note="better early")
     service.decide(signet.name, Status.ADD, Actor.YOU)
     assert board_plan(deck, read_board(tmp_path)) == Plan(
-        "10004639",
+        "10000001",
         (AddCard("Lightning Bolt"), AddCard("Arcane Signet")),
         (RemoveCard("Battered Golem"),),
     )
@@ -176,7 +176,7 @@ def test_cutting_a_card_with_several_copies_takes_out_one_per_cut(
     service.decide(bolt.id, Status.ADD, Actor.YOU, choice="Mountain")
     service.decide(signet.id, Status.ADD, Actor.YOU, choice="mountain")
     assert board_plan(deck, read_board(tmp_path)) == Plan(
-        "10004639",
+        "10000001",
         (AddCard("Lightning Bolt"), AddCard("Arcane Signet")),
         (RemoveCard("Mountain", keep=4),),
     )
@@ -722,7 +722,7 @@ def test_a_card_adding_several_copies_cuts_as_many_of_its_choice(
     service.decide(card.id, Status.ADD, Actor.YOU, choice="Mountain")
     # Six held: the add asks for at least 6 + 2, the cut keeps 6 - 2 of the same card.
     plan = board_plan(deck, read_board(tmp_path))
-    assert plan == Plan("10004639", (AddCard("Mountain", 8),), (RemoveCard("Mountain", keep=4),))
+    assert plan == Plan("10000001", (AddCard("Mountain", 8),), (RemoveCard("Mountain", keep=4),))
 
 
 def test_a_card_adding_several_copies_cannot_cut_a_single_card(service: BoardService) -> None:
@@ -742,7 +742,7 @@ def test_a_queued_card_the_deck_already_holds_neither_adds_nor_cuts(
     service.decide(golem.id, Status.ADD, Actor.YOU, choice="Disruptor Flute")
     service.decide(signet.id, Status.ADD, Actor.YOU, choice="Mountain")
     assert board_plan(deck, read_board(tmp_path)) == Plan(
-        "10004639", (AddCard("Arcane Signet"),), (RemoveCard("Mountain", keep=5),)
+        "10000001", (AddCard("Arcane Signet"),), (RemoveCard("Mountain", keep=5),)
     )
 
 

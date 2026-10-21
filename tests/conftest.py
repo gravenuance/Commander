@@ -19,7 +19,7 @@ from commander.net import HTTP_OK
 from commander.scryfall import read_cards, read_tags, role_gates, role_members
 
 FIXTURES = Path(__file__).parent / "fixtures"
-DECK_ID = 10004639
+DECK_ID = 10000001
 
 type Json = dict[str, Any]
 type Handler = Callable[[httpx.Request], httpx.Response]
@@ -490,7 +490,7 @@ class FakeArchidekt:
     deck tag with its page in `tag_pages`.
     """
 
-    def __init__(self, user: str = "MAKKIS") -> None:
+    def __init__(self, user: str = "TESTER") -> None:
         self.user = user
         self.decks: dict[int, Json] = {}
         self.failing: dict[int, int] = {}

@@ -20,7 +20,7 @@ class Env:
         cache = tmp_path / "cache"
         cache.mkdir()
         self.desk = Desk(
-            DeskSettings(tmp_path / "decks", cache / "cards.sqlite", "MAKKIS"),
+            DeskSettings(tmp_path / "decks", cache / "cards.sqlite", "TESTER"),
             client_factory=self.fake.client,
             token_store=MemoryTokenStore(),
             now=lambda: NOW,

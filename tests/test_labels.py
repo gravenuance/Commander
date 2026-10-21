@@ -31,7 +31,7 @@ def desk(tmp_path: Path, card_db_file: Path, fake: FakeArchidekt) -> Desk:
         run(["sync", "--no-cards", "--no-ideas", "--workspace", str(tmp_path / "decks")], tmp_path, fake).code
         == 0
     )
-    return make_desk(DeskSettings(tmp_path / "decks", cache / CARD_DB_FILE, "MAKKIS"), fake)
+    return make_desk(DeskSettings(tmp_path / "decks", cache / CARD_DB_FILE, "TESTER"), fake)
 
 
 def label_of(tmp_path: Path, name: str) -> str:
@@ -99,7 +99,7 @@ def test_a_label_whose_read_back_fails_says_to_press_update(desk: Desk, fake: Fa
 
     assert result == {
         "error": "Archidekt took the change, but reading the deck back failed "
-        "(https://archidekt.com/api/decks/10004639/ returned HTTP 404). Press Sync."
+        "(https://archidekt.com/api/decks/10000001/ returned HTTP 404). Press Sync."
     }
 
 

@@ -45,7 +45,7 @@ DOWNLOADED = CardRefresh(RefreshStatus.UPDATED, CardDataMeta("2026-10-15T09:00:0
 
 
 def services(tmp_path: Path, fake: FakeArchidekt, *, signed_in: bool = False) -> SyncServices:
-    tokens = MemoryTokenStore({"makkis": REFRESH_TOKEN} if signed_in else {})
+    tokens = MemoryTokenStore({"tester": REFRESH_TOKEN} if signed_in else {})
     return SyncServices(fake.client, tokens, tmp_path / "cache", lambda: NOW)
 
 
@@ -75,7 +75,7 @@ def test_a_failed_deck_sync_waits_for_the_card_download_and_logs_its_status(
         run_sync(
             services(tmp_path, fake),
             Workspace(tmp_path / "decks"),
-            "MAKKIS",
+            "TESTER",
             MetaSettings(),
             SyncOptions(ideas=False),
             on_progress=lambda _: None,
@@ -97,7 +97,7 @@ def test_labels_that_cannot_be_saved_are_a_warning_not_a_crash(tmp_path: Path, r
     outcome = run_sync(
         services(tmp_path, fake, signed_in=True),
         workspace,
-        "MAKKIS",
+        "TESTER",
         MetaSettings(),
         SyncOptions(cards=False, ideas=False),
         on_progress=lambda _: None,
@@ -178,7 +178,7 @@ def sync_ideas(tmp_path: Path, fake: FakeArchidekt, priority: FetchPriority | No
     run_sync(
         services(tmp_path, fake),
         Workspace(tmp_path / "decks"),
-        "MAKKIS",
+        "TESTER",
         MetaSettings(),
         SyncOptions(cards=False),
         priority=priority,
@@ -282,7 +282,7 @@ def sync_states(tmp_path: Path, fake: FakeArchidekt) -> list[tuple[int, str]]:
     run_sync(
         services(tmp_path, fake),
         Workspace(tmp_path / "decks"),
-        "MAKKIS",
+        "TESTER",
         MetaSettings(),
         SyncOptions(cards=False),
         on_deck=lambda deck_id, state: events.append((deck_id, state.value)),
@@ -377,7 +377,7 @@ def test_a_sync_ignores_the_maybeboard_and_sideboard_and_writes_nothing_to_archi
     outcome = run_sync(
         services(tmp_path, fake),
         Workspace(tmp_path / "decks"),
-        "MAKKIS",
+        "TESTER",
         MetaSettings(),
         SyncOptions(cards=False, ideas=False),
         on_progress=lambda _: None,
@@ -407,7 +407,7 @@ def test_a_sync_adds_the_empty_grace_table_to_each_profile_that_lacks_one(
         run_sync(
             services(tmp_path, fake),
             Workspace(tmp_path / "decks"),
-            "MAKKIS",
+            "TESTER",
             MetaSettings(),
             options,
             on_progress=lambda _: None,
@@ -438,7 +438,7 @@ def test_a_sync_gives_a_deck_without_a_profile_the_template_with_its_empty_grace
         run_sync(
             services(tmp_path, fake),
             Workspace(tmp_path / "decks"),
-            "MAKKIS",
+            "TESTER",
             MetaSettings(),
             options,
             on_progress=lambda _: None,
@@ -459,7 +459,7 @@ def sync_profiles(tmp_path: Path, fake: FakeArchidekt) -> SyncOutcome:
     return run_sync(
         services(tmp_path, fake),
         Workspace(tmp_path / "decks"),
-        "MAKKIS",
+        "TESTER",
         MetaSettings(),
         SyncOptions(cards=False, ideas=False),
         on_progress=lambda _: None,
@@ -641,7 +641,7 @@ def sync_outcome(
     return run_sync(
         services(tmp_path, fake),
         Workspace(tmp_path / "decks"),
-        "MAKKIS",
+        "TESTER",
         MetaSettings(),
         SyncOptions(cards=False),
         on_progress=lambda _: None,

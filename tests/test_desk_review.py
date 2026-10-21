@@ -1,4 +1,4 @@
-"""Review for an account other than MAKKIS: when the deck on Archidekt already holds the queued card, and
+"""Review for an account other than TESTER: when the deck on Archidekt already holds the queued card, and
 for a second swap after a saved one."""
 
 import logging
@@ -11,7 +11,7 @@ from commander.desk import Desk
 from conftest import PASSWORD, FakeArchidekt, Json, card_entry
 from test_desk_account import Env
 
-DECK = 10004639
+DECK = 10000001
 USER = "arxitektonas"
 BOARDSAVE_LOG = "commander.boardsave"
 

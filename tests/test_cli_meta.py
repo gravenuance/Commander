@@ -29,7 +29,7 @@ from conftest import (
 )
 from test_cli_apply import Run, run
 
-FOLDER = "10004639-honestly-though"
+FOLDER = "10000001-sample-deck"
 MAGDA = "Magda, Brazen Outlaw"
 KINNAN = "Kinnan, Bonder Prodigy"
 PEER_ID = 777
@@ -78,7 +78,7 @@ def peer_row(deck_id: int, owner: str, views: int) -> Json:
 def fake(raw_deck: Json) -> FakeArchidekt:
     archidekt = FakeArchidekt()
     archidekt.put(raw_deck)
-    archidekt.peer_page = deck_page([peer_row(DECK_ID, "MAKKIS", 900), peer_row(PEER_ID, "someone", 120)])
+    archidekt.peer_page = deck_page([peer_row(DECK_ID, "TESTER", 900), peer_row(PEER_ID, "someone", 120)])
     archidekt.topdeck.events = [*magda_events(), *kinnan_events()]
     archidekt.spellbook.combos = load_fixture("spellbook_meta_kinnan.json")
     return archidekt
@@ -275,7 +275,7 @@ def test_every_bracket_5_deck_side_by_side(home: Path, fake: FakeArchidekt) -> N
 def test_a_turbo_deck_races_the_meta_combos_instead_of_answering_them(
     home: Path, fake: FakeArchidekt
 ) -> None:
-    snapshot = next((home / "decks").glob("10004639-*")) / "deck.json"
+    snapshot = next((home / "decks").glob("10000001-*")) / "deck.json"
     saved = json.loads(snapshot.read_text(encoding="utf-8"))
     saved["tags"] = [*saved["tags"], "Turbo"]
     # Without Disruptor Flute, its stax lock, the deck answers none of the meta's combos.

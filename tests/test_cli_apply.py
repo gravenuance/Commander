@@ -24,7 +24,7 @@ add = ["Arcane Signet"]
 remove = ["Disruptor Flute", {name = "Mountain", keep = 5}]
 """
 PREVIEW = f"""\
-Honestly, though.. ({DECK_ID}), bracket 5: {DECK_URL}
+Sample, deck.. ({DECK_ID}), bracket 5: {DECK_URL}
   cards in deck: 9 -> 8
   - Disruptor Flute
   - Mountain: 6 -> 5 copies
@@ -80,7 +80,7 @@ def run(
         "APPDATA": str(home / "appdata"),
         "LOCALAPPDATA": str(home / "localappdata"),
         "CMDR_CACHE_DIR": str(home / "cache"),
-        "CMDR_USER": "MAKKIS",
+        "CMDR_USER": "TESTER",
     }
     code = main(
         args,
@@ -97,7 +97,7 @@ def run(
 
 
 def signed_in(keyring_: MemoryKeyring) -> None:
-    keyring_.secrets[(SERVICE, "makkis")] = REFRESH_TOKEN
+    keyring_.secrets[(SERVICE, "tester")] = REFRESH_TOKEN
 
 
 @pytest.fixture
@@ -115,7 +115,7 @@ def apply(home: Path, fake: FakeArchidekt, decks: Path, *extra: str, plan: str =
 
 
 def saved_deck(decks: Path) -> Json:
-    data: Json = json.loads((decks / "10004639-honestly-though" / "deck.json").read_text(encoding="utf-8"))
+    data: Json = json.loads((decks / "10000001-sample-deck" / "deck.json").read_text(encoding="utf-8"))
     return data
 
 
@@ -125,9 +125,9 @@ def test_login_asks_on_the_terminal_and_keeps_only_the_token(
     result = run(["login"], home, archidekt, stdin=Terminal())
 
     assert result.code == 0
-    assert result.prompts == ["Archidekt password for MAKKIS: "]
-    assert result.out == "signed in to Archidekt as MAKKIS; the login is kept in Windows Credential Manager\n"
-    assert memory_keyring.held(SERVICE) == {(SERVICE, "makkis"): REFRESH_TOKEN}
+    assert result.prompts == ["Archidekt password for TESTER: "]
+    assert result.out == "signed in to Archidekt as TESTER; the login is kept in Windows Credential Manager\n"
+    assert memory_keyring.held(SERVICE) == {(SERVICE, "tester"): REFRESH_TOKEN}
     assert PASSWORD not in result.out + result.err
 
 
@@ -141,7 +141,7 @@ def test_login_reads_the_password_from_stdin_when_asked(
     assert result.code == 0
     assert result.prompts == []
     assert archidekt.writes[0][2] == {"email": "me@example.org", "password": PASSWORD}
-    assert (SERVICE, "makkis") in memory_keyring.secrets
+    assert (SERVICE, "tester") in memory_keyring.secrets
 
 
 def test_login_without_a_terminal_needs_password_stdin(home: Path, archidekt: FakeArchidekt) -> None:
@@ -170,8 +170,8 @@ def test_logout_forgets_the_login(
     first = run(["logout"], home, archidekt)
     second = run(["logout"], home, archidekt)
 
-    assert (first.code, first.out) == (0, "removed the saved login for MAKKIS\n")
-    assert (second.code, second.out) == (0, "no saved login for MAKKIS\n")
+    assert (first.code, first.out) == (0, "removed the saved login for TESTER\n")
+    assert (second.code, second.out) == (0, "no saved login for TESTER\n")
     assert memory_keyring.held(SERVICE) == {}
 
 
@@ -195,7 +195,7 @@ def test_apply_save_needs_a_login(home: Path, archidekt: FakeArchidekt, decks: P
     result = apply(home, archidekt, decks, "--save")
 
     assert result.code == 1
-    assert result.err == "cmdr: not signed in to Archidekt as MAKKIS; run `cmdr login`\n"
+    assert result.err == "cmdr: not signed in to Archidekt as TESTER; run `cmdr login`\n"
     assert archidekt.writes == []
 
 
@@ -210,7 +210,7 @@ def test_apply_save_changes_the_deck_and_the_local_copy_and_is_safe_to_repeat(
     assert result.out == (
         PREVIEW
         + f"saved 3 change(s); snapshot '{SNAPSHOT}' is on Archidekt\n"
-        + f"local copy updated: {decks / '10004639-honestly-though'}\n"
+        + f"local copy updated: {decks / '10000001-sample-deck'}\n"
     )
     assert [(m, p) for m, p, _, _ in archidekt.writes] == [
         ("POST", "/api/rest-auth/token/refresh/"),
@@ -259,7 +259,7 @@ def test_apply_refuses_a_deck_someone_else_owns(
     result = apply(home, archidekt, decks)
 
     assert result.code == 2
-    assert result.err == f"cmdr: deck {DECK_ID} belongs to SomeoneElse, not MAKKIS; cmdr edits only yours\n"
+    assert result.err == f"cmdr: deck {DECK_ID} belongs to SomeoneElse, not TESTER; cmdr edits only yours\n"
 
 
 def test_apply_by_id_works_for_a_private_deck_outside_the_deck_folder(
@@ -278,7 +278,7 @@ def test_apply_by_id_works_for_a_private_deck_outside_the_deck_folder(
 def test_a_preview_with_an_expired_login_goes_on_without_it(
     home: Path, archidekt: FakeArchidekt, decks: Path, memory_keyring: MemoryKeyring
 ) -> None:
-    memory_keyring.secrets[(SERVICE, "makkis")] = "expired"
+    memory_keyring.secrets[(SERVICE, "tester")] = "expired"
 
     result = apply(home, archidekt, decks)
 
@@ -291,7 +291,7 @@ def test_a_preview_with_an_expired_login_goes_on_without_it(
 def test_apply_json(home: Path, archidekt: FakeArchidekt, decks: Path) -> None:
     document = json.loads(apply(home, archidekt, decks, "--json").out)
 
-    assert document["deck"] == {"id": DECK_ID, "name": "Honestly, though..", "url": DECK_URL, "bracket": 5}
+    assert document["deck"] == {"id": DECK_ID, "name": "Sample, deck..", "url": DECK_URL, "bracket": 5}
     assert (document["cardsBefore"], document["cardsAfter"], document["saved"]) == (9, 8, False)
     assert document["changes"][2] == {
         "kind": "add",
