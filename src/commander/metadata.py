@@ -17,8 +17,9 @@ for a day unless stated, and the sources are fetched in parallel, each at its ow
 import logging
 import os
 from collections import Counter
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from concurrent.futures import Future
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from functools import partial
@@ -68,7 +69,7 @@ from commander.jsonshape import (
     str_list,
 )
 from commander.models import Deck
-from commander.net import Fetcher, HttpStatusError, NetworkError, Pacer
+from commander.net import Fetcher, HttpStatusError, NetworkError, Pacer, WaitListener
 from commander.spellbook import FRESH_FOR as SPELLBOOK_FRESH_FOR
 from commander.spellbook import (
     META_REQUEST_INTERVAL_SECONDS,
@@ -201,13 +202,17 @@ def topdeck_client(
     pacer_factory: Callable[[float], Pacer],
     cache_root: Path,
     keys: KeyStore | None = None,
+    *,
+    waits: WaitListener | None = None,
 ) -> TopdeckClient:
-    """The TopDeck client over the cache folder's stored events, with the key from the secret store."""
+    """The TopDeck client over the cache folder's stored events, with the key from the secret store; `waits`
+    hears each wait for a 429."""
     return TopdeckClient(
         Fetcher(http, slow_after=SLOW_QUERY_SECONDS),
         pacer_factory(REQUEST_INTERVAL_SECONDS),
         TournamentStore(cache_root),
         keys or KeyringKeyStore(),
+        waits=waits,
     )
 
 
@@ -217,10 +222,12 @@ def meta_sources(
     user: str,
     settings: MetaSettings,
     cache_root: Path,
+    *,
+    waits: WaitListener | None = None,
 ) -> MetaSources:
     """TopDeck, Archidekt search and Spellbook clients over one HTTP client, each at its own pace."""
     return MetaSources(
-        topdeck_client(http, pacer_factory, cache_root),
+        topdeck_client(http, pacer_factory, cache_root, waits=waits),
         ArchidektSearch(Fetcher(http), pacer_factory(SEARCH_INTERVAL_SECONDS)),
         SpellbookClient(Fetcher(http)),
         pacer_factory(META_REQUEST_INTERVAL_SECONDS),
@@ -251,6 +258,24 @@ def window_start(now: datetime, settings: MetaSettings) -> date:
     return utc_today(now) - timedelta(days=settings.window_days)
 
 
+class _Steps:
+    """Tells a caller where a read is: each step as it starts and as it ends, even when it fails."""
+
+    def __init__(self, on_progress: Progress | None, on_done: Progress | None) -> None:
+        self._on_progress = on_progress
+        self._on_done = on_done
+
+    @contextmanager
+    def running(self, step: str) -> Generator[None]:
+        if self._on_progress is not None:
+            self._on_progress(step)
+        try:
+            yield
+        finally:
+            if self._on_done is not None:
+                self._on_done(step)
+
+
 def gather(
     deck: Deck,
     sources: MetaSources,
@@ -260,13 +285,21 @@ def gather(
     refresh: bool,
     offline: bool = False,
     on_progress: Progress | None = None,
+    on_done: Progress | None = None,
 ) -> MetaData:
     """Everything `cmdr meta` reads about the deck's commander, from cache when it is under a day old.
 
     offline reads only the cache, whatever its age: an older copy comes back stale, none unavailable.
     """
     return start_gather(
-        deck, sources, cache_root, now=now, refresh=refresh, offline=offline, on_progress=on_progress
+        deck,
+        sources,
+        cache_root,
+        now=now,
+        refresh=refresh,
+        offline=offline,
+        on_progress=on_progress,
+        on_done=on_done,
     )()
 
 
@@ -279,6 +312,7 @@ def start_gather(
     refresh: bool,
     offline: bool = False,
     on_progress: Progress | None = None,
+    on_done: Progress | None = None,
 ) -> FinishMeta:
     """Start `gather`'s reads that need no TopDeck (the Archidekt decks and the deck's own combos) in the
     background and return at once; calling what it returns reads the tournament lists, the meta field and its
@@ -291,58 +325,56 @@ def start_gather(
     until = utc_today(now())
     folder = cache_root / CACHE_FOLDER
 
-    def report(step: str) -> None:
-        if on_progress is not None:
-            on_progress(step)
+    steps = _Steps(on_progress, on_done)
 
     def lists() -> Answer[CommanderEntries]:
-        report(f"TopDeck: {name} lists")
-        return _commander_lists(
-            name, sources, folder, since, until, now=now, refresh=refresh, offline=offline
-        )
+        with steps.running(f"TopDeck: {name} lists"):
+            return _commander_lists(
+                name, sources, folder, since, until, now=now, refresh=refresh, offline=offline
+            )
 
     def field() -> Answer[tuple[MetaCommander, ...]]:
-        report("TopDeck: the most-played commanders")
         request: Mapping[str, object] = {
             "minEventSize": settings.min_event_size,
             "commanders": settings.meta_commanders,
             "lists": settings.meta_lists,
             "windowDays": settings.window_days,
         }
-        return cached_answer(
-            "tournament-meta",
-            request,
-            _live(offline, lambda: _meta_field(sources.tournaments, since, until, settings)),
-            _cache(folder, "tournament meta", _encode_field, _decode_field),
-            now=now,
-            refresh=refresh,
-            fresh_for=FRESH_FOR,
-            errors=_ERRORS,
-            stale=sources.tournaments.stale_note,
-        )
+        with steps.running("TopDeck: the most-played commanders"):
+            return cached_answer(
+                "tournament-meta",
+                request,
+                _live(offline, lambda: _meta_field(sources.tournaments, since, until, settings)),
+                _cache(folder, "tournament meta", _encode_field, _decode_field),
+                now=now,
+                refresh=refresh,
+                fresh_for=FRESH_FOR,
+                errors=_ERRORS,
+                stale=sources.tournaments.stale_note,
+            )
 
     def peers() -> Answer[PeerLists]:
-        report(f"Archidekt: recent {name} decks")
-        return _peers(deck, sources, folder, since, now=now, refresh=refresh, offline=offline)
+        with steps.running(f"Archidekt: recent {name} decks"):
+            return _peers(deck, sources, folder, since, now=now, refresh=refresh, offline=offline)
 
     def own_combos() -> Answer[tuple[ComboDetail, ...]]:
-        report(f"Commander Spellbook: {deck.short_name}'s own combos")
         request = deck_request(deck)
-        return cached_answer(
-            cache_item("spellbook-deck", str(deck.id)),
-            request,
-            _live(offline, partial(_paced_details, sources, request)),
-            _cache(folder, "Spellbook deck combos", _encode_combos, _decode_combos),
-            now=now,
-            refresh=refresh,
-            fresh_for=SPELLBOOK_FRESH_FOR,
-            errors=_ERRORS,
-        )
+        with steps.running(f"Commander Spellbook: {deck.short_name}'s own combos"):
+            return cached_answer(
+                cache_item("spellbook-deck", str(deck.id)),
+                request,
+                _live(offline, partial(_paced_details, sources, request)),
+                _cache(folder, "Spellbook deck combos", _encode_combos, _decode_combos),
+                now=now,
+                refresh=refresh,
+                fresh_for=SPELLBOOK_FRESH_FOR,
+                errors=_ERRORS,
+            )
 
     def field_and_combos() -> tuple[Answer[tuple[MetaCommander, ...]], Answer[tuple[CommanderCombos, ...]]]:
         answer = field()
-        report("Commander Spellbook: the top commanders' combos")
-        return answer, _meta_combos(answer, sources, folder, now=now, refresh=refresh, offline=offline)
+        with steps.running("Commander Spellbook: the top commanders' combos"):
+            return answer, _meta_combos(answer, sources, folder, now=now, refresh=refresh, offline=offline)
 
     # Different services, so they run side by side; each client keeps its own pace.
     peer = in_background(peers, name="meta-peers")
@@ -398,12 +430,20 @@ def gather_peers(
     refresh: bool,
     offline: bool = False,
     on_progress: Progress | None = None,
+    on_done: Progress | None = None,
 ) -> MetaData:
     """The recent Archidekt decks for the commander at the deck's bracket and the one above, for decks below
     bracket 5, plus the commander's tournament lists at bracket 4. The rest of what the tournaments cover (the
     most played commanders and their combos) is left unavailable."""
     return start_gather_peers(
-        deck, sources, cache_root, now=now, refresh=refresh, offline=offline, on_progress=on_progress
+        deck,
+        sources,
+        cache_root,
+        now=now,
+        refresh=refresh,
+        offline=offline,
+        on_progress=on_progress,
+        on_done=on_done,
     )()
 
 
@@ -416,6 +456,7 @@ def start_gather_peers(
     refresh: bool,
     offline: bool = False,
     on_progress: Progress | None = None,
+    on_done: Progress | None = None,
 ) -> FinishMeta:
     """Start `gather_peers`'s Archidekt read in the background and return at once; calling what it returns
     reads the tournament lists (bracket 4), which wait for TopDeck, and joins both."""
@@ -428,19 +469,17 @@ def start_gather_peers(
     folder = cache_root / CACHE_FOLDER
     read_lists = deck.bracket in TOURNAMENT_BRACKETS
 
-    def report(step: str) -> None:
-        if on_progress is not None:
-            on_progress(step)
+    steps = _Steps(on_progress, on_done)
 
     def peers() -> Answer[PeerLists]:
-        report(f"Archidekt: recent {name} decks")
-        return _peers(deck, sources, folder, since, now=now, refresh=refresh, offline=offline)
+        with steps.running(f"Archidekt: recent {name} decks"):
+            return _peers(deck, sources, folder, since, now=now, refresh=refresh, offline=offline)
 
     def lists() -> Answer[CommanderEntries]:
-        report(f"TopDeck: {name} lists")
-        return _commander_lists(
-            name, sources, folder, since, until, now=now, refresh=refresh, offline=offline
-        )
+        with steps.running(f"TopDeck: {name} lists"):
+            return _commander_lists(
+                name, sources, folder, since, until, now=now, refresh=refresh, offline=offline
+            )
 
     peer = in_background(peers, name="meta-peers")
 
@@ -472,10 +511,18 @@ def gather_for(
     refresh: bool,
     offline: bool = False,
     on_progress: Progress | None = None,
+    on_done: Progress | None = None,
 ) -> MetaData:
     """What other players do with the deck's commander: `gather` at bracket 5, else `gather_peers`."""
     return start_gather_for(
-        deck, sources, cache_root, now=now, refresh=refresh, offline=offline, on_progress=on_progress
+        deck,
+        sources,
+        cache_root,
+        now=now,
+        refresh=refresh,
+        offline=offline,
+        on_progress=on_progress,
+        on_done=on_done,
     )()
 
 
@@ -488,26 +535,53 @@ def start_gather_for(
     refresh: bool,
     offline: bool = False,
     on_progress: Progress | None = None,
+    on_done: Progress | None = None,
 ) -> FinishMeta:
     """`gather_for` in two steps, so a caller can read the other sources while TopDeck is still answering:
     the Archidekt and Spellbook reads start now, and calling what comes back waits for TopDeck's."""
     start = start_gather if deck.bracket == CEDH_BRACKET else start_gather_peers
     return start(
-        deck, sources, cache_root, now=now, refresh=refresh, offline=offline, on_progress=on_progress
+        deck,
+        sources,
+        cache_root,
+        now=now,
+        refresh=refresh,
+        offline=offline,
+        on_progress=on_progress,
+        on_done=on_done,
     )
 
 
+TOURNAMENTS_STEP = "TopDeck: recent tournaments"
+
+
 def start_tournament_refresh(
-    decks: Iterable[Deck], sources: MetaSources, *, now: Clock
+    decks: Iterable[Deck],
+    sources: MetaSources,
+    *,
+    now: Clock,
+    on_progress: Progress | None = None,
+    on_done: Progress | None = None,
 ) -> Future[None] | None:
     """Start fetching the days of the window TopDeck's store lacks, in the background, when any deck reads
     tournament lists; None when none does. The reads that follow find the events stored, and a failure is
-    remembered by the client for them."""
+    remembered by the client for them. The step is reported started before this returns, so it comes
+    first among the steps of the sync."""
     if not any(deck.bracket in TOURNAMENT_BRACKETS for deck in decks):
         return None
     current = now()
     since, until = window_start(current, sources.settings), utc_today(current)
-    return in_background(lambda: sources.tournaments.load(since=since, until=until), name="meta-topdeck")
+    if on_progress is not None:
+        on_progress(TOURNAMENTS_STEP)
+
+    def load() -> None:
+        try:
+            sources.tournaments.load(since=since, until=until)
+        finally:
+            if on_done is not None:
+                on_done(TOURNAMENTS_STEP)
+
+    return in_background(load, name="meta-topdeck")
 
 
 @dataclass(slots=True, frozen=True)
@@ -542,29 +616,30 @@ def gather_adjacent(
     offline: bool = False,
     tags: Sequence[str] = (),
     on_progress: Progress | None = None,
+    on_done: Progress | None = None,
 ) -> AdjacentDecks:
     """Each group's recent Archidekt decks at the deck's bracket, cached as a deck's own peers are; and for
     each deck tag, those of any other commander than the deck's own."""
     since = window_start(now(), sources.settings)
     folder = cache_root / CACHE_FOLDER
+    steps = _Steps(on_progress, on_done)
     decks: dict[int, PeerList] = {}
     errors: list[tuple[str, str]] = []
     groups_failed = False
     for group in groups:
         name = commander_name(group)
-        if on_progress is not None:
-            on_progress(f"Archidekt: recent {name} decks")
-        answer = _group_peers(
-            group,
-            deck.bracket,
-            sources,
-            folder,
-            since,
-            own_id=None,
-            now=now,
-            refresh=refresh,
-            offline=offline,
-        )
+        with steps.running(f"Archidekt: recent {name} decks"):
+            answer = _group_peers(
+                group,
+                deck.bracket,
+                sources,
+                folder,
+                since,
+                own_id=None,
+                now=now,
+                refresh=refresh,
+                offline=offline,
+            )
         if answer.data is None:
             errors.append((name, answer.error or "unavailable"))
             groups_failed = True
@@ -574,11 +649,10 @@ def gather_adjacent(
     own = {name.casefold() for name in deck.commanders}
     tagged: list[TaggedDecks] = []
     for tag in _distinct_tags(tags):
-        if on_progress is not None:
-            on_progress(f"Archidekt: recent decks tagged {tag}")
-        answer = _tag_peers(
-            tag, deck.bracket, sources, folder, since, now=now, refresh=refresh, offline=offline
-        )
+        with steps.running(f"Archidekt: recent decks tagged {tag}"):
+            answer = _tag_peers(
+                tag, deck.bracket, sources, folder, since, now=now, refresh=refresh, offline=offline
+            )
         if answer.data is None:
             errors.append((f"{tag}-tagged", answer.error or "unavailable"))
             continue

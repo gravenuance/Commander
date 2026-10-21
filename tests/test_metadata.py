@@ -243,6 +243,58 @@ def test_the_tournament_window_is_fetched_up_front_only_when_a_deck_reads_tourna
     assert len(rig.topdeck.requests) == WINDOW_REQUESTS
 
 
+@pytest.mark.parametrize("bracket", [3, 4, 5])
+def test_every_step_that_is_reported_started_is_reported_done(rig: Rig, bracket: int) -> None:
+    started: list[str] = []
+    finished: list[str] = []
+    deck = replace(ellivere_deck(), bracket=bracket)
+    gather_for(
+        deck,
+        rig.sources(),
+        rig.cache,
+        now=lambda: rig.now,
+        refresh=False,
+        on_progress=started.append,
+        on_done=finished.append,
+    )
+    assert f"Archidekt: recent {ELLIVERE} decks" in started
+    assert sorted(started) == sorted(finished)
+
+
+def test_the_adjacent_reads_report_each_step_started_and_done(rig: Rig) -> None:
+    started: list[str] = []
+    finished: list[str] = []
+    gather_adjacent(
+        ellivere_deck(),
+        [(MAGDA,)],
+        rig.sources(),
+        rig.cache,
+        now=lambda: rig.now,
+        refresh=False,
+        tags=["Stax"],
+        on_progress=started.append,
+        on_done=finished.append,
+    )
+    assert started == [f"Archidekt: recent {MAGDA} decks", "Archidekt: recent decks tagged Stax"]
+    assert finished == started
+
+
+def test_the_tournament_refresh_reports_its_step_started_before_it_returns_and_done_after(rig: Rig) -> None:
+    started: list[str] = []
+    finished: list[str] = []
+    refresh = start_tournament_refresh(
+        [replace(ellivere_deck(), bracket=5)],
+        rig.sources(),
+        now=lambda: rig.now,
+        on_progress=started.append,
+        on_done=finished.append,
+    )
+    assert refresh is not None
+    assert started == ["TopDeck: recent tournaments"]
+    refresh.result(timeout=30)
+    assert finished == started
+
+
 def test_a_bracket_3_deck_reads_brackets_3_and_4_of_archidekt_and_no_tournament_lists(rig: Rig) -> None:
     data = bracketed(rig, 3)
     assert [q["edhBracket"] for q in rig.archidekt.searches] == ["3", "4"]

@@ -31,6 +31,7 @@ from commander.deckprofile import ProfileError, profile_path, write_profile_temp
 from commander.fetchpriority import FetchPriority
 from commander.ideas import compile_ideas, gather_idea_pools, rejudge_ideas, relabel_legacy_ideas
 from commander.metadata import (
+    TOURNAMENTS_STEP,
     AdjacentDecks,
     FinishMeta,
     MetaSources,
@@ -40,6 +41,7 @@ from commander.metadata import (
     start_tournament_refresh,
 )
 from commander.net import Fetcher, NetworkError, Pacer
+from commander.phases import ActivePhases
 from commander.profileedit import ensure_grace_table
 from commander.scryfall import CardRefresh, RefreshStatus, ScryfallClient, ScryfallError, refresh_card_db
 from commander.store import StoredDeck, Workspace
@@ -340,12 +342,22 @@ def _compile_ideas(
         warnings.append(f"ideas not compiled: {error}")
         return _IdeasPhase()
     phase = _IdeasPhase()
+    # Reads run side by side, so the line names each one that is under way.
+    phases = ActivePhases(progress, idle=_COMPILING)
     with db, services.client_factory() as http:
-        sources = meta_sources(http, services.pacer_factory, user, settings, services.cache)
+        sources = meta_sources(
+            http, services.pacer_factory, user, settings, services.cache, waits=_TopdeckWaits(phases)
+        )
         waiting = _most_viewed_first(workspace.load_all(), services)
         # TopDeck's window is fetched once, on its own thread, while every deck's Archidekt and Spellbook
         # reads go ahead; only the merge of a deck's tournament lists waits for it.
-        tournaments = start_tournament_refresh((s.deck for s in waiting), sources, now=services.now)
+        tournaments = start_tournament_refresh(
+            (s.deck for s in waiting),
+            sources,
+            now=services.now,
+            on_progress=phases.start,
+            on_done=phases.done,
+        )
         next_up = priority or FetchPriority()
         for queued in waiting:
             on_deck(queued.deck.id, FetchState.QUEUED)
@@ -372,7 +384,7 @@ def _compile_ideas(
             read_warnings: list[str] = []
             try:
                 reading.append(
-                    _start_reading(stored, db, sources, services, warnings=read_warnings, progress=progress)
+                    _start_reading(stored, db, sources, services, warnings=read_warnings, phases=phases)
                 )
             except (BoardError, ProfileError) as error:
                 warnings.extend(read_warnings)
@@ -387,6 +399,31 @@ def _compile_ideas(
             # The client closes with this block, so TopDeck's thread must be over first.
             tournaments.result()
     return phase
+
+
+# Shown when no read is under way, as the ideas are merged.
+_COMPILING = "Compiling ideas"
+
+
+class _TopdeckWaits:
+    """Shows a wait for TopDeck's rate limit in the place of the step that is waiting."""
+
+    def __init__(self, phases: ActivePhases) -> None:
+        self._phases = phases
+        self._text = ""
+        self._replaced = False
+
+    def waiting(self, seconds: float) -> None:
+        self._text = f"TopDeck: waiting {seconds:.0f} s (rate limit)"
+        self._replaced = self._phases.replace(TOURNAMENTS_STEP, self._text)
+        if not self._replaced:
+            self._phases.start(self._text)
+
+    def resumed(self) -> None:
+        if self._replaced:
+            self._phases.replace(self._text, TOURNAMENTS_STEP)
+        else:
+            self._phases.done(self._text)
 
 
 @dataclass(slots=True)
@@ -407,10 +444,16 @@ def _start_reading(
     services: SyncServices,
     *,
     warnings: list[str],
-    progress: Progress,
+    phases: ActivePhases,
 ) -> _ReadingDeck:
     finish = start_gather_for(
-        stored.deck, sources, services.cache, now=services.now, refresh=False, on_progress=progress
+        stored.deck,
+        sources,
+        services.cache,
+        now=services.now,
+        refresh=False,
+        on_progress=phases.start,
+        on_done=phases.done,
     )
     pools = gather_idea_pools(
         stored,
@@ -420,7 +463,8 @@ def _start_reading(
         now=services.now,
         refresh=False,
         warn=warnings.append,
-        on_progress=progress,
+        on_progress=phases.start,
+        on_done=phases.done,
     )
     return _ReadingDeck(stored, finish, pools, warnings)
 

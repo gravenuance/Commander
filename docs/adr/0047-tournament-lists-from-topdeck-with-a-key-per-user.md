@@ -57,6 +57,12 @@ Option 4, behind the provider seam that stood in front of EDHTop16 (`tournaments
   in (at once when it was already stored), so while a first fetch runs, every deck's other sources are read
   and the merges follow; the client's lock keeps the fetch to one per sync. The deck shows as fetching from
   the start of its reads. Before this a first 60-day sync held the first deck for over three minutes.
+- **Saying where the sync is** (`phases.ActivePhases`). The reads of a sync run side by side, so the progress
+  line lists every one that is under way, in the order they started, joined with " · " (for example
+  "TopDeck: recent tournaments · Archidekt: recent Edgar Markov decks"); a read leaves the line when it ends,
+  and `metadata.gather` and the others tell their caller both when a step starts and when it ends. A wait for
+  a 429 shows in place of the TopDeck step ("TopDeck: waiting 30 s (rate limit)") and goes back when the wait
+  is over. Past twelve words (`ui.md`) the line is the first read and "+N more".
 - **Keeping** (`topdeckstore.py`). One compact JSON file per event in `<cache>\topdeck\events\` holding the
   commander (partners joined in alphabetical order, as before), each deck's finish (its place in the standings)
   and cards, and `coverage.json`, the span of start dates that is complete. A run asks only for days outside

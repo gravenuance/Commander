@@ -27,7 +27,15 @@ from commander.jsonshape import (
     req_object,
     req_str,
 )
-from commander.net import Fetcher, HttpStatusError, NetworkError, Pacer, ResponseTooLargeError, send_paced
+from commander.net import (
+    Fetcher,
+    HttpStatusError,
+    NetworkError,
+    Pacer,
+    ResponseTooLargeError,
+    WaitListener,
+    send_paced,
+)
 from commander.topdeckstore import Coverage, DeckEntry, TournamentRecord, TournamentStore
 from commander.tournaments import (
     CommanderStats,
@@ -87,9 +95,19 @@ class _Window:
 class TopdeckClient:
     """The tournament source: fetches the events a window lacks, then answers from the stored ones."""
 
-    def __init__(self, fetcher: Fetcher, pacer: Pacer, store: TournamentStore, keys: KeyStore) -> None:
+    def __init__(
+        self,
+        fetcher: Fetcher,
+        pacer: Pacer,
+        store: TournamentStore,
+        keys: KeyStore,
+        *,
+        waits: WaitListener | None = None,
+    ) -> None:
         self._fetcher = fetcher
         self._pacer = pacer
+        # Hears each wait for a 429, so the sync can say it is waiting.
+        self._waits = waits
         self._store = store
         self._keys = keys
         # Lists and the meta field read side by side: one fetches, the other waits and reads what it stored.
@@ -260,6 +278,7 @@ class TopdeckClient:
                     API_URL, body, headers={"Authorization": key}, surface_rate_limit=True
                 ),
                 what="TopDeck",
+                waits=self._waits,
             )
         except HttpStatusError as error:
             if error.status in (401, 403):

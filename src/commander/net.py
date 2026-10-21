@@ -9,6 +9,7 @@ import time
 from collections.abc import Callable, Mapping
 from email.utils import parsedate_to_datetime
 from pathlib import Path
+from typing import Protocol
 
 import httpx
 
@@ -317,8 +318,25 @@ class Pacer:
             self._not_before = max(self._not_before, self._monotonic() + max(seconds, 0.0))
 
 
+class WaitListener(Protocol):
+    """Told when `send_paced` starts and ends holding off a request for a service that asked for quiet."""
+
+    def waiting(self, seconds: float) -> None:
+        """The request waits for `seconds` before it goes again."""
+        ...
+
+    def resumed(self) -> None:
+        """The wait is over."""
+        ...
+
+
 def send_paced[T](
-    pacer: Pacer, send: Callable[[], T], *, what: str, max_wait: float = MAX_RATE_LIMIT_WAIT_SECONDS
+    pacer: Pacer,
+    send: Callable[[], T],
+    *,
+    what: str,
+    max_wait: float = MAX_RATE_LIMIT_WAIT_SECONDS,
+    waits: WaitListener | None = None,
 ) -> T:
     """Wait the pacer's turn, then `send`; for a service that rations requests and says when to come back.
 
@@ -326,11 +344,15 @@ def send_paced[T](
     server asked for (30 seconds if it named none) and the request goes again, however many times it takes,
     as a 429 means the request was not served and is no failure of its own. The waits of one request add up
     to at most `max_wait`; past that it gives up with a NetworkError, so a service that never lets up cannot
-    hold a run for ever.
+    hold a run for ever. `waits` hears each wait begin and end.
     """
     waited = 0.0
+    holding = False
     while True:
         pacer.wait()
+        if holding and waits is not None:
+            waits.resumed()
+        holding = False
         try:
             return send()
         except RateLimitedError as error:
@@ -342,6 +364,9 @@ def send_paced[T](
             waited += seconds
             log.info("%s rate limited; waiting %.0f s", what, seconds)
             pacer.cool_down(seconds)
+            if waits is not None:
+                waits.waiting(seconds)
+                holding = True
 
 
 def _retry_after_from_body(body: bytes) -> float | None:
