@@ -5,14 +5,17 @@ outcome of every game. The game loop reads small ints and tuples built once per 
 
 Determinism: game `i` of a run uses `game_rng(seed, i)` and nothing else, and its k-th shuffle is the k-th
 `shuffle` of a list of `len(slots)` items on that stream, whatever was played before. A swap that puts a new
-card into a cut card's slots (step 3) therefore replays the same shuffles, and a game whose outcome records
-that the cut slot was never reached (`shuffle_depths`) and no search resolved (`searched`) is unchanged.
+card into a cut card's slots (`compare`) therefore replays the same shuffles, and a game whose outcome
+records that the cut slot was never reached (`reached`), and whose searches (`land_search`,
+`tutor_look`) never looked at a kind of card the swap changes, is unchanged.
 """
 
 import random
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from enum import Enum
 from itertools import combinations
+from math import sqrt
 from typing import NamedTuple
 
 from commander.answers import card_key
@@ -108,10 +111,18 @@ class GameOutcome(NamedTuple):
     combo_fetched: int
     # Per finisher, in `GoldfishReport` order: the first turn it could be cast.
     finisher_turns: tuple[int, ...]
-    # Per shuffle: how many cards from the top were drawn or looked at (a search looks at all of them).
+    # Per shuffle: how far into it the game reached. A card of the last shuffle further down was neither drawn
+    # nor, as the library lost cards to searches, moved up to be drawn.
     shuffle_depths: tuple[int, ...]
-    # Whether a land search or a tutor resolved, which reorders the library of the last shuffle.
+    # Whether a land search or a tutor resolved, which takes cards out of the library of the last shuffle.
     searched: bool
+    # The numbers of the cards (in order of first appearance in the slots) that a hand held or the draws
+    # reached: the cards of every opening hand and of the last shuffle down to its depth.
+    reached: frozenset[int]
+    # Whether a land search ran, which looks at every land left in the library.
+    land_search: bool
+    # Whether a tutor looked in the library for a combo piece or finisher, fetching one or not.
+    tutor_look: bool
 
 
 @dataclass(slots=True, frozen=True)
@@ -535,6 +546,7 @@ class _Game:
         "combo_fetched",
         "combo_turn",
         "creatures",
+        "dealt",
         "drops_left",
         "engines",
         "extra_drops",
@@ -542,6 +554,7 @@ class _Game:
         "fin_turn",
         "hand",
         "hand_size",
+        "land_search",
         "lands_in_play",
         "lib",
         "mana",
@@ -549,6 +562,8 @@ class _Game:
         "open_fins",
         "pending",
         "pool",
+        "pops",
+        "reached",
         "rng",
         "s",
         "screw",
@@ -556,6 +571,7 @@ class _Game:
         "shuffles",
         "top",
         "turn",
+        "tutor_look",
         "units",
     )
 
@@ -581,6 +597,11 @@ class _Game:
         self.cmd_turn = dict.fromkeys(setup.cmd_ids, 0)
         self.fetched: set[int] = set()
         self.searched = False
+        self.pops = 0
+        self.dealt: list[int] = []
+        self.reached: set[int] = set()
+        self.land_search = False
+        self.tutor_look = False
         self.screw = 0
         self.turn = 0
         self.mana: list[int] = []
@@ -598,7 +619,8 @@ class _Game:
         for turn in range(1, s.horizon + 1):
             self.turn = turn
             self._take_turn()
-        depth = len(s.ids) if self.searched else self.top
+        depth = self.top + self.pops
+        self.reached.update(self.dealt[:depth])
         return GameOutcome(
             hand_size=self.hand_size,
             commander_turns=tuple(self.cmd_turn[cid] for cid in s.cmd_ids),
@@ -609,6 +631,9 @@ class _Game:
             finisher_turns=tuple(self.fin_turn),
             shuffle_depths=(*([_HAND] * (self.shuffles - 1)), depth),
             searched=self.searched,
+            reached=frozenset(self.reached),
+            land_search=self.land_search,
+            tutor_look=self.tutor_look,
         )
 
     def _opening(self) -> None:
@@ -621,9 +646,11 @@ class _Game:
             self.shuffles += 1
             bottoms = max(self.shuffles - 1 - _FREE_MULLIGANS, 0)
             hand = lib[:_HAND]
+            self.reached.update(hand)
             kept, bottomed = _split_bottom(s.cards, hand, bottoms)
             if bottoms >= 2 or s.keeps(kept):  # noqa: PLR2004 — five cards, kept whatever they hold
                 break
+        self.dealt = lib[:]
         self.lib = lib
         self.lib.extend(bottomed)
         self.top = len(hand)
@@ -944,13 +971,14 @@ class _Game:
         ramp = card.src.land_ramp
         if ramp is None:
             return
-        self.searched = True
+        self.searched = self.land_search = True
         cards = self.s.cards
         for index in range(ramp.count):
             found = self._find_land(basic_only=ramp.basic_only)
             if found < 0:
                 return
             cid = self.lib.pop(found)
+            self.pops += 1
             if index >= ramp.count - ramp.to_hand:
                 self.hand.append(cid)
                 self.check_land = True
@@ -964,6 +992,7 @@ class _Game:
         tutor = card.src.tutor
         if tutor is None:
             return None
+        self.tutor_look = True
         limit = tutor.max_mana_value
         if tutor.x_limited:
             limit = len(units) - card.cost.total
@@ -1010,6 +1039,7 @@ class _Game:
             return
         self.searched = True
         self.lib.pop(index)
+        self.pops += 1
         self.fetched.add(cid)
         if tutor.destination is TutorDestination.HAND:
             self.hand.append(cid)
@@ -1215,3 +1245,392 @@ def _ways_to_win(
         for i, cid in enumerate(setup.fin_ids)
     )
     return WaysToWin(tuple(figures), finishers, tuple(faster))
+
+
+# --- swaps ------------------------------------------------------------------------------------------------
+
+# A card cut from the deck and the card put in every slot it held.
+type Swap = tuple[GoldfishCard, GoldfishCard]
+
+# A share has moved when its paired difference is more than this many standard errors.
+_SIGMAS = 2
+
+
+class FigureKind(Enum):
+    KEPT_ON_SEVEN = "kept on seven"
+    KEPT_ON_SIX = "kept on six"
+    KEPT_ON_FIVE_OR_FEWER = "kept on five or fewer"
+    COMMANDER_CAST_BY = "commander cast by"
+    COMMANDER_MEDIAN = "commander median turn"
+    MANA_MEDIAN = "median mana"
+    MANA_WORST_TENTH = "worst tenth of mana"
+    COLOUR_SCREW = "colour screw"
+    COMBO_LANDED_BY = "combo landed by"
+    COMBO_FETCHED = "combo pieces fetched"
+    FINISHER_CASTABLE_BY = "finisher castable by"
+
+
+@dataclass(slots=True, frozen=True)
+class FigureChange:
+    """One figure of the report before and after a swap. A figure that only one side has (a finisher put in
+    or cut) is 0 on the other."""
+
+    kind: FigureKind
+    # The commander, combo id or finisher it belongs to; empty for the deck's own figures.
+    subject: str
+    # The turn of a per-turn figure.
+    turn: int | None
+    base: float | None
+    swapped: float | None
+    moved: bool
+
+
+@dataclass(slots=True, frozen=True)
+class GoldfishComparison:
+    base: GoldfishReport
+    swapped: GoldfishReport
+    # Every figure in the order of the report, moved or not.
+    figures: tuple[FigureChange, ...]
+    # The games played again, as their indices.
+    replayed: tuple[int, ...]
+
+    @property
+    def moved(self) -> tuple[FigureChange, ...]:
+        return tuple(figure for figure in self.figures if figure.moved)
+
+    @property
+    def any_moved(self) -> bool:
+        return any(figure.moved for figure in self.figures)
+
+
+def is_real_shift(games: int, total: int, squares: int) -> bool:
+    """Whether the mean of per-game differences is beyond twice its standard error, given their sum and the
+    sum of their squares over all `games` games (a game the swap cannot change differs by 0)."""
+    if total == 0:
+        return False
+    mean = total / games
+    variance = (squares - total * mean) / (games - 1) if games > 1 else 0.0
+    return abs(mean) > _SIGMAS * sqrt(max(variance, 0.0) / games)
+
+
+def _is_spell(card: GoldfishCard) -> bool:
+    return not (card.land is not None and CardKind.LAND in card.kinds)
+
+
+def _is_plain(card: GoldfishCard) -> bool:
+    """A spell the goldfish has nothing to say about: no mana, land, tutor, draw, combo or finisher role."""
+    return (
+        card.modelled
+        and card.land is None
+        and card.mana is None
+        and card.land_ramp is None
+        and card.tutor is None
+        and card.draw is None
+        and not card.combo
+        and not card.finisher
+        and not card.synergy
+        and not card.extra_land_drops
+        and not card.needs_sacrifice
+        and card.entry_cost is None
+    )
+
+
+def _cuts(slots: Sequence[GoldfishCard], swaps: Sequence[Swap]) -> dict[str, GoldfishCard]:
+    """The incoming card for the key of each card cut."""
+    held = {card_key(card.name) for card in slots}
+    cuts: dict[str, GoldfishCard] = {}
+    for cut, incoming in swaps:
+        key = card_key(cut.name)
+        if key not in held:
+            raise ValueError(f"{cut.name} is not in the deck")
+        if key in cuts:
+            raise ValueError(f"{cut.name} is cut twice")
+        cuts[key] = incoming
+    return cuts
+
+
+def swapped_average(slots: Sequence[GoldfishCard], swaps: Sequence[Swap], average_mana_value: float) -> float:
+    """The average mana value of the nonland cards after the swaps, as `manabase.land_count` rounds it."""
+    cuts = _cuts(slots, swaps)
+    spells = sum(1 for card in slots if _is_spell(card))
+    total = average_mana_value * spells
+    for card in slots:
+        incoming = cuts.get(card_key(card.name))
+        if incoming is None:
+            continue
+        if _is_spell(card):
+            spells -= 1
+            total -= card.mana_value
+        if _is_spell(incoming):
+            spells += 1
+            total += incoming.mana_value
+    return round(total / spells, 2) if spells else 0.0
+
+
+def compare(
+    base: GoldfishReport,
+    slots: Sequence[GoldfishCard],
+    swaps: Sequence[Swap],
+    commanders: Sequence[GoldfishCard],
+    combos: Sequence[GoldfishCombo],
+    *,
+    average_mana_value: float,
+    seed: int,
+    skip_irrelevant: bool = True,
+) -> GoldfishComparison:
+    """The figures of the deck with `swaps` made, on the games of `base` (a run of `slots` on `seed`).
+
+    Each incoming card takes every slot its cut held, so a game that never drew a cut slot, and whose
+    searches never looked at a land or a card a tutor wants when the swap puts one in or takes one out,
+    plays out as before; only the others are played again. Their outcomes join the base ones to make the
+    report `simulate` would give for the swapped slots. A swap that changes the keep rule or the numbering
+    of the cards plays every game again. With `skip_irrelevant`, a swap of plain spells for plain spells
+    (`_is_plain`) is taken to change nothing and plays nothing.
+    """
+    cuts = _cuts(slots, swaps)
+    held = {card_key(card.name): card for card in slots}
+    if not cuts or (
+        skip_irrelevant and all(_is_plain(held[key]) and _is_plain(card) for key, card in cuts.items())
+    ):
+        return GoldfishComparison(base, base, _changes(base, base, ()), ())
+    after_slots = [cuts.get(card_key(card.name), card) for card in slots]
+    before = _Setup(slots, commanders, combos, base.bracket, average_mana_value)
+    after = _Setup(
+        after_slots, commanders, combos, base.bracket, swapped_average(slots, swaps, average_mana_value)
+    )
+    if _same_rules(before, after):
+        cut_slots = frozenset(i for i, card in enumerate(slots) if card_key(card.name) in cuts)
+        replayed = _reached(
+            base, frozenset(before.ids[i] for i in cut_slots), _looked_at(before, after, cut_slots)
+        )
+    else:
+        replayed = tuple(range(len(base.outcomes)))
+    fresh = {index: _Game(after, game_rng(seed, index)).play() for index in replayed}
+    old = [before.cards[cid].src.name for cid in before.fin_ids]
+    new = [after.cards[cid].src.name for cid in after.fin_ids]
+    outcomes = tuple(
+        fresh[index] if index in fresh else _carried(outcome, old, new)
+        for index, outcome in enumerate(base.outcomes)
+    )
+    gone = {held[key].name for key in cuts}
+    lacking = {card.name for card in cuts.values() if not card.modelled}
+    not_modelled = tuple(sorted((set(base.not_modelled) - gone) | lacking))
+    swapped = _report(after, base.bracket, outcomes, not_modelled, combos)
+    return GoldfishComparison(base, swapped, _changes(base, swapped, replayed), replayed)
+
+
+def compare_deck(
+    deck: GoldfishDeck,
+    base: GoldfishReport,
+    swaps: Sequence[Swap],
+    *,
+    seed: int,
+    skip_irrelevant: bool = True,
+) -> GoldfishComparison:
+    """`compare` for a compiled deck, `base` being `goldfish(deck, ..., seed=seed)`."""
+    return compare(
+        base,
+        deck_slots(deck),
+        swaps,
+        deck.commanders,
+        deck.combos,
+        average_mana_value=deck.average_mana_value,
+        seed=seed,
+        skip_irrelevant=skip_irrelevant,
+    )
+
+
+def _same_rules(before: _Setup, after: _Setup) -> bool:
+    """Whether the swap leaves the rules every game is played by as they were: the same card number in each
+    slot, the same keep rule and the same free combo pieces."""
+
+    def rules(setup: _Setup) -> tuple[int, int, int, bool, bool]:
+        return (setup.min_lands, setup.max_lands, setup.min_sources, setup.need_win, setup.need_syn)
+
+    return (
+        before.ids == after.ids
+        and len(before.cards) == len(after.cards)
+        and before.combo_free == after.combo_free
+        and rules(before) == rules(after)
+    )
+
+
+class _Looked(NamedTuple):
+    """What the searches of a game look at, so which of them a swap can change."""
+
+    # A cut or incoming card is a land, which a land search looks at.
+    lands: bool
+    # A cut or incoming card is a piece of a combo or a finisher, which a tutor looks for.
+    wanted: bool
+
+
+def _looked_at(before: _Setup, after: _Setup, cut_slots: frozenset[int]) -> _Looked:
+    swapped = {(before.ids[i], after.ids[i]) for i in cut_slots}
+    wanted = {cid for setup in (before, after) for pieces in setup.combo_pieces for cid in pieces or ()}
+    wanted.update(before.fin_ids)
+    wanted.update(after.fin_ids)
+    return _Looked(
+        lands=any(before.cards[a].is_land or after.cards[b].is_land for a, b in swapped),
+        wanted=any(a in wanted or b in wanted for a, b in swapped),
+    )
+
+
+def _reached(base: GoldfishReport, cut_cids: frozenset[int], looked: _Looked) -> tuple[int, ...]:
+    """The games a swap can change: those that drew a cut card, and those whose searches looked at a kind of
+    card that was cut or put in."""
+    return tuple(
+        index
+        for index, outcome in enumerate(base.outcomes)
+        if (looked.lands and outcome.land_search)
+        or (looked.wanted and outcome.tutor_look)
+        or not cut_cids.isdisjoint(outcome.reached)
+    )
+
+
+def _carried(outcome: GameOutcome, old: Sequence[str], new: Sequence[str]) -> GameOutcome:
+    """An outcome of a game the swap cannot change, with a finisher cut or put in: the cut one was never in
+    hand and the new one never will be."""
+    if old == new:
+        return outcome
+    turns = dict(zip(old, outcome.finisher_turns, strict=True))
+    return outcome._replace(finisher_turns=tuple(turns.get(name, 0) for name in new))
+
+
+type _Key = tuple[FigureKind, str, int | None]
+type _Seen = Callable[[GameOutcome], int]
+
+
+class _Figure(NamedTuple):
+    value: float | None
+    # 1 or 0 for a game, for a share; None for a median, a worst tenth and the fetched share.
+    seen: _Seen | None
+    # For the fetched share: the combo it belongs to.
+    combo: int | None = None
+
+
+def _commander_turns(outcome: GameOutcome) -> tuple[int, ...]:
+    return outcome.commander_turns
+
+
+def _combo_turns(outcome: GameOutcome) -> tuple[int, ...]:
+    return outcome.combo_turns
+
+
+def _finisher_turns(outcome: GameOutcome) -> tuple[int, ...]:
+    return outcome.finisher_turns
+
+
+def _screwed(outcome: GameOutcome) -> int:
+    return int(outcome.colour_screw_turn > 0)
+
+
+def _within(turns_of: Callable[[GameOutcome], tuple[int, ...]], index: int, limit: int) -> _Seen:
+    def seen(outcome: GameOutcome) -> int:
+        return int(0 < turns_of(outcome)[index] <= limit)
+
+    return seen
+
+
+def _figures(report: GoldfishReport) -> dict[_Key, _Figure]:
+    figures: dict[_Key, _Figure] = {}
+    kept: tuple[tuple[FigureKind, float, _Seen], ...] = (
+        (FigureKind.KEPT_ON_SEVEN, report.kept_on_seven, lambda o: int(o.hand_size == _HAND)),
+        (FigureKind.KEPT_ON_SIX, report.kept_on_six, lambda o: int(o.hand_size == _HAND - 1)),
+        (
+            FigureKind.KEPT_ON_FIVE_OR_FEWER,
+            report.kept_on_five_or_fewer,
+            lambda o: int(o.hand_size < _HAND - 1),
+        ),
+    )
+    for kind, value, seen in kept:
+        figures[(kind, "", None)] = _Figure(value, seen)
+    for i, commander in enumerate(report.commanders):
+        for turn, value in zip(report.turns, commander.cast_by, strict=True):
+            figures[(FigureKind.COMMANDER_CAST_BY, commander.name, turn)] = _Figure(
+                value, _within(_commander_turns, i, turn)
+            )
+        figures[(FigureKind.COMMANDER_MEDIAN, commander.name, None)] = _Figure(commander.median_turn, None)
+    for turn, median, worst in zip(report.turns, report.mana_median, report.mana_worst_tenth, strict=True):
+        figures[(FigureKind.MANA_MEDIAN, "", turn)] = _Figure(median, None)
+        figures[(FigureKind.MANA_WORST_TENTH, "", turn)] = _Figure(worst, None)
+    figures[(FigureKind.COLOUR_SCREW, "", None)] = _Figure(report.colour_screw, _screwed)
+    ways = report.ways_to_win
+    if ways is not None:
+        for k, combo in enumerate(ways.combos):
+            for turn, value in zip(report.turns, combo.landed_by, strict=True):
+                figures[(FigureKind.COMBO_LANDED_BY, combo.id, turn)] = _Figure(
+                    value, _within(_combo_turns, k, turn)
+                )
+            figures[(FigureKind.COMBO_FETCHED, combo.id, None)] = _Figure(combo.fetched_share, None, k)
+        for i, finisher in enumerate(ways.finishers):
+            for turn, value in zip(report.turns, finisher.castable_by, strict=True):
+                figures[(FigureKind.FINISHER_CASTABLE_BY, finisher.name, turn)] = _Figure(
+                    value, _within(_finisher_turns, i, turn)
+                )
+    return figures
+
+
+def _changes(
+    base: GoldfishReport, swapped: GoldfishReport, replayed: Sequence[int]
+) -> tuple[FigureChange, ...]:
+    """Every figure before and after, and whether it moved: a share by its paired difference over the games,
+    the rest when they differ. Games not replayed differ by 0 in every share."""
+    before, after = _figures(base), _figures(swapped)
+    keys = [*before, *(key for key in after if key not in before)]
+    shares = {
+        key: (before[key].seen if key in before else None, after[key].seen if key in after else None)
+        for key in keys
+        if (key in before and before[key].seen) or (key in after and after[key].seen)
+    }
+    sums: dict[_Key, list[int]] = {}
+    for index in replayed:
+        was, now = base.outcomes[index], swapped.outcomes[index]
+        for key, (old_seen, new_seen) in shares.items():
+            difference = (new_seen(now) if new_seen else 0) - (old_seen(was) if old_seen else 0)
+            if difference:
+                cell = sums.setdefault(key, [0, 0])
+                cell[0] += difference
+                cell[1] += difference * difference
+    changes: list[FigureChange] = []
+    for key in keys:
+        old, new = before.get(key), after.get(key)
+        value_before = old.value if old is not None else 0.0
+        value_after = new.value if new is not None else 0.0
+        if key in shares:
+            total, squares = sums.get(key, (0, 0))
+            moved = is_real_shift(len(base.outcomes), total, squares)
+        elif old is not None and old.combo is not None:
+            moved = _fetched_moved(base, swapped, old.combo)
+        else:
+            moved = value_before != value_after
+        changes.append(FigureChange(key[0], key[1], key[2], value_before, value_after, moved))
+    return tuple(changes)
+
+
+def _fetched_moved(base: GoldfishReport, swapped: GoldfishReport, k: int) -> bool:
+    """Whether the share of landed combos that a tutor helped has moved. It is a ratio of two counts, so its
+    spread comes from each game's pull on the ratio: how far its fetched count is from what its landed
+    count predicts."""
+    games = len(base.outcomes)
+
+    def counts(report: GoldfishReport) -> tuple[list[int], list[int]]:
+        landed = [int(o.combo_turns[k] > 0) for o in report.outcomes]
+        fetched = [int(o.combo_turns[k] > 0 and o.combo_fetched >> k & 1) for o in report.outcomes]
+        return landed, fetched
+
+    landed_before, fetched_before = counts(base)
+    landed_after, fetched_after = counts(swapped)
+    if not sum(landed_before) or not sum(landed_after):
+        return sum(fetched_before) != sum(fetched_after)
+    ratio_before = sum(fetched_before) / sum(landed_before)
+    ratio_after = sum(fetched_after) / sum(landed_after)
+    if ratio_before == ratio_after:
+        return False
+    mean_before = sum(landed_before) / games
+    mean_after = sum(landed_after) / games
+    squares = 0.0
+    for fb, lb, fa, la in zip(fetched_before, landed_before, fetched_after, landed_after, strict=True):
+        pull = (fa - ratio_after * la) / mean_after - (fb - ratio_before * lb) / mean_before
+        squares += pull * pull
+    variance = squares / (games - 1) if games > 1 else 0.0
+    return abs(ratio_after - ratio_before) > _SIGMAS * sqrt(variance / games)

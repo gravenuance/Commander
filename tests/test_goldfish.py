@@ -189,7 +189,8 @@ def test_a_card_in_a_slot_takes_the_same_shuffles_as_the_card_it_replaces() -> N
         if a.shuffle_depths[-1] < 40 and not a.searched
     ]
     assert len(unaffected) > 60
-    assert all(a == b for a, b in unaffected)
+    # The cards reached are numbered apart (the other card has a number of its own), so they are left out.
+    assert all(a._replace(reached=frozenset()) == b._replace(reached=frozenset()) for a, b in unaffected)
 
 
 # --- hands and the keep rule -----------------------------------------------------------------------------
