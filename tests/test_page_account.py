@@ -235,3 +235,23 @@ def test_starting_with_an_unreadable_account_empties_the_page_and_says_why() -> 
     started = start_page("({ error: 'broken' })")
     assert (started["dialog"], started["gate"], started["rows"]) == (0, False, 0)
     assert (started["note"], started["syncOff"]) == ("Could not read the account; see the log", True)
+
+
+def test_a_second_click_on_sync_while_the_first_request_is_out_sends_nothing() -> None:
+    seen = run("""
+    setupAccount();
+    accountState.active = true;
+    const releases = [];
+    const sent = () => calls.filter((c) => c[0] === "sync").length;
+    stub.sync = () => new Promise((resolve) => releases.push(resolve));
+    stub.account = async () => account();
+    const clicks = [fire($("sync-decks"), "click"), fire($("no-decks-sync"), "click")];
+    const whileOut = sent();
+    for (const release of releases) release({});
+    await Promise.all(clicks);
+    const second = fire($("sync-decks"), "click");
+    releases.at(-1)({});
+    await second;
+    return { whileOut, after: sent() };
+    """)
+    assert seen == {"whileOut": 1, "after": 2}

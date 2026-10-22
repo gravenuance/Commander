@@ -21,6 +21,8 @@ const path = require("node:path");
 const vm = require("node:vm");
 
 const VOID_TAGS = new Set(["meta", "link", "br", "hr", "img", "input"]);
+// Events the browser fires on their target alone, so that only a capturing listener above it hears them.
+const NON_BUBBLING = new Set(["mouseenter", "mouseleave", "focus", "blur", "scroll"]);
 const ENTITIES = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'" };
 
 class FakeText {
@@ -43,7 +45,9 @@ class FakeElement {
     this.value = "";
     this.offsetTop = 0;
     this.offsetHeight = 0;
+    this.offsetWidth = 0;
   }
+  getBoundingClientRect() { return { top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0 }; }
 
   // Attributes, and the properties the page uses that reflect them.
   setAttribute(name, value) { this.attrs.set(name, String(value)); }
@@ -129,6 +133,10 @@ class FakeElement {
     child.parentNode = null;
   }
   remove() { this.parentNode?.removeChild(this); }
+  after(node) {
+    const siblings = this.parentNode.childNodes;
+    this.parentNode.insertBefore(node, siblings[siblings.indexOf(this) + 1] ?? null);
+  }
   replaceWith(node) {
     const parent = this.parentNode;
     parent.insertBefore(node, this);
@@ -170,7 +178,7 @@ class FakeElement {
   querySelectorAll(selector) { return walk(this).filter((node) => node.matches(selector)); }
   querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
 
-  // Events bubble to the document, with capture listeners of the document first.
+  // Events bubble to the document (all but NON_BUBBLING), with capture listeners of the ancestors first.
   addEventListener(type, listener, capture = false) {
     const list = this.listeners.get(type) ?? [];
     list.push({ listener, capture: capture === true });
@@ -185,6 +193,7 @@ class FakeElement {
     const fire = (node, capture) => {
       for (const entry of node.listeners.get(event.type) ?? []) {
         if (entry.capture !== capture) continue;
+        event.currentTarget = node;
         const out = entry.listener.call(node, event);
         if (out && typeof out.then === "function") event.pending.push(out);
         if (event.stopped) return false;
@@ -192,7 +201,7 @@ class FakeElement {
       return true;
     };
     if (![...route].reverse().every((node) => fire(node, true))) return !event.defaultPrevented;
-    route.every((node) => fire(node, false));
+    (NON_BUBBLING.has(event.type) ? [this] : route).every((node) => fire(node, false));
     return !event.defaultPrevented;
   }
   focus() {
@@ -300,6 +309,8 @@ async function main() {
   });
   const window = new FakeElement(document, "window");
   window.pywebview = { api: bridge };
+  window.innerWidth = 1280;
+  window.innerHeight = 800;
   const sandbox = {
     document, window, console: { log() {}, warn() {}, error() {} }, navigator: {},
     setTimeout: (fn, ms) => timers.push({ fn, ms }),

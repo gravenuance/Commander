@@ -190,10 +190,11 @@ def test_adding_without_a_cut_offers_the_decks_categories_preset_to_the_cards_ty
     const idea = card({ typeCategory: "Artifact", category: null, targets: [] });
     const tile = buildTile(idea);
     state.tiles.set(idea.id, { key: "", node: tile, card: idea });
-    const select = tile.querySelector(".add-plain select");
-    const options = texts(select, "option");
-    const preset = select.value;
-    select.value = "Ramp";
+    select(idea.id);
+    const category = tile.querySelector(".add-plain select");
+    const options = texts(category, "option");
+    const preset = category.value;
+    category.value = "Ramp";
     stub.decide = async () => ({ card: {} });
     stub.decks = async () => ({ decks: [] });
     stub.deck = async () => ({ id: 99 });
@@ -224,3 +225,18 @@ def test_the_rail_is_hidden_until_a_deck_opens_and_folds_when_the_selection_clea
     assert seen["after"] == {"hidden": True, "mana": True, "expanded": "false"}
     # Folded because no deck is open, not by the viewer: the next deck opens the rail as they left it.
     assert seen["stored"] == "mana"
+
+
+def test_an_unchanged_activity_list_is_kept_and_a_changed_one_is_redrawn() -> None:
+    seen = run("""
+    const entry = (card) => ({
+      at: "2026-10-01T10:00:00Z", actor: "claude", action: "added", card, detail: "" });
+    const rows = () => [...$("activity").children];
+    renderActivity([entry("Sol Ring"), entry("Mana Crypt")]);
+    const first = rows();
+    renderActivity([entry("Sol Ring"), entry("Mana Crypt")]);
+    const same = rows().every((row, i) => row === first[i]);
+    renderActivity([entry("Sol Ring")]);
+    return { same, count: first.length, after: rows().map((row) => row.textContent.includes("Sol Ring")) };
+    """)
+    assert seen == {"same": True, "count": 2, "after": [True]}

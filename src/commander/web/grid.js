@@ -52,41 +52,64 @@ function renderGrid(groups) {
   groups.forEach((group, index) => {
     const id = groupKey(group);
     seen.add(id);
-    const key = JSON.stringify([group, state.view?.grace]);
     let known = state.groups.get(id);
-    if (!known || known.key !== key) {
-      const node = buildGroup(group);
-      if (known) known.node.replaceWith(node);
-      known = { key, node, names: group.cards.map((c) => c.name) };
-      // The commander is never offered as a cut.
-      if (id === "Commander") for (const card of node.querySelectorAll(".gcard")) card.dataset.commander = "1";
+    if (!known) {
+      known = buildGroup(group);
       state.groups.set(id, known);
     }
+    syncHeader(known, group);
+    syncStack(known, group);
     place(grid, known.node, index);
   });
   for (const [id, known] of [...state.groups]) {
     if (!seen.has(id)) { known.node.remove(); state.groups.delete(id); }
   }
   // Only the deck's own cards can be cut or lit as targets: not those outside it, nor those still to come in.
+  const before = new Map(state.gridCards);
   state.gridCards.clear();
-  for (const node of grid.querySelectorAll(".gcard")) {
-    if (!node.classList.contains("incoming") && !node.closest(".outside")) state.gridCards.set(node.dataset.name, node);
+  for (const group of groups) {
+    if (group.inDeck === false) continue;
+    for (const { card, node } of state.groups.get(groupKey(group)).entries) {
+      if (card.pending?.kind !== "add") state.gridCards.set(card.name, node);
+    }
   }
+  for (const [name, node] of state.gridCards) if (before.get(name) !== node) painted.dirty.add(name);
 }
 
+// Numbered so categories whose names slug alike ("Ramp 1", "Ramp-1") never share a stack id.
+let stackCount = 0;
+
+// The group's section with an empty stack; syncHeader and syncStack fill it and keep it up to date.
 function buildGroup(group) {
   const id = groupKey(group);
   const inDeck = group.inDeck !== false;
-  const open = !state.collapsed.has(id);
-  const stackId = `stack-${id.toLowerCase().replace(/[^a-z]+/g, "-")}`;
-  const toggle = el("button", { class: "group-toggle", type: "button", "aria-expanded": String(open), "aria-controls": stackId },
+  const stack = el("ul", {
+    class: "stack", id: `stack-${++stackCount}-${id.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+    hidden: state.collapsed.has(id),
+  });
+  const title = el("h3", { class: "group-title" });
+  return {
+    node: el("section", { class: `group ${inDeck ? "" : "outside"}` }, title, stack),
+    title, stack, head: null, entries: [],
+  };
+}
+
+// The toggle with the group's name, count and price, replaced when one of them changes.
+function syncHeader(known, group) {
+  const head = JSON.stringify([group.name, group.count, group.cents, group.inDeck]);
+  if (head === known.head) return;
+  known.head = head;
+  const id = groupKey(group);
+  const inDeck = group.inDeck !== false;
+  const { stack } = known;
+  const toggle = el("button", {
+    class: "group-toggle", type: "button", "aria-expanded": String(!stack.hidden), "aria-controls": stack.id,
+  },
     el("span", { class: "chevron", "aria-hidden": "true" }),
     el("span", { class: "group-name", text: group.name }),
     el("span", { class: "count", text: `(${group.count})` }),
     group.cents ? el("span", { class: "group-price", text: euro(group.cents) }) : null,
     inDeck ? null : el("span", { class: "badge status outside-badge", text: "Not in deck" }));
-  const stack = el("ul", { class: "stack", id: stackId, "aria-label": inDeck ? group.name : `${group.name}, not in the deck`, hidden: !open },
-    ...group.cards.map((card) => buildGridCard(card, inDeck ? null : group.name)));
   toggle.addEventListener("click", () => {
     const opening = stack.hidden;
     stack.hidden = !opening;
@@ -94,7 +117,37 @@ function buildGroup(group) {
     if (opening) state.collapsed.delete(id);
     else state.collapsed.add(id);
   });
-  return el("section", { class: `group ${inDeck ? "" : "outside"}` }, el("h3", { class: "group-title" }, toggle), stack);
+  const focused = known.title.contains(document.activeElement);
+  known.title.replaceChildren(toggle);
+  if (focused) toggle.focus();
+  stack.setAttribute("aria-label", inDeck ? group.name : `${group.name}, not in the deck`);
+}
+
+// The stack's cards in the group's order; one is rebuilt only when its own data (or, with a share, the
+// grace its tooltip names) changed.
+function syncStack(known, group) {
+  const aside = group.inDeck === false ? group.name : null;
+  const grace = state.view?.grace;
+  const old = new Map(known.entries.map((entry) => [entry.id, entry]));
+  const copies = new Map();
+  known.entries = group.cards.map((card, index) => {
+    const seen = copies.get(card.name) ?? 0;
+    copies.set(card.name, seen + 1);
+    const id = seen ? `${card.name}#${seen}` : card.name;
+    const key = JSON.stringify([card, aside, card.share ? grace : null]);
+    let entry = old.get(id);
+    old.delete(id);
+    if (!entry || entry.key !== key) {
+      const node = buildGridCard(card, aside);
+      // The commander is never offered as a cut.
+      if (groupKey(group) === "Commander") node.dataset.commander = "1";
+      entry?.node.replaceWith(node);
+      entry = { id, key, card, node };
+    }
+    place(known.stack, entry.node, index);
+    return entry;
+  });
+  for (const gone of old.values()) gone.node.remove();
 }
 
 // The copies badge: a queued count change shows as "×6 → 7", or Out when the card is to come out.
@@ -166,6 +219,9 @@ async function stepCount(name, step, aside = null) {
   if (target && lost) target.focus();
 }
 
+// The parts of a grid card that paint() shows or hides, by card.
+const gridParts = new WeakMap();
+
 // aside is the category of a card outside the deck, null for the deck's own.
 function buildGridCard(card, aside = null) {
   const inDeck = !aside;
@@ -176,7 +232,7 @@ function buildGridCard(card, aside = null) {
   // A label is set on an entry in the deck; a card still to come in gets Don't Have when it is saved.
   if (inDeck && !incoming) {
     flag = el("button", {
-      class: `flag ${label ? "set" : ""}`, type: "button", "aria-haspopup": "menu",
+      class: `flag ${label ? "set" : ""}`, type: "button", "aria-haspopup": "menu", "aria-expanded": "false",
       "aria-label": `Label for ${card.name}: ${label || "none"}`, title: label || "Set label",
     });
     if (label && COLOUR.test(card.labelColour)) setLabelColour(flag, card.labelColour);
@@ -184,6 +240,7 @@ function buildGridCard(card, aside = null) {
   }
   const swap = el("button", { class: "swap", type: "button", hidden: true });
   swap.addEventListener("click", () => swapIn(swap.dataset.card, card.name));
+  const outNote = el("span", { class: "out-note", hidden: true });
   const note = incoming ? `New · ${card.category}` : leaving ? "Coming out" : "";
   const classes = ["gcard", incoming ? "incoming" : "", leaving ? "leaving" : ""].filter(Boolean).join(" ");
   const node = el("li", { class: classes, "data-name": card.name, title: card.name },
@@ -193,9 +250,10 @@ function buildGridCard(card, aside = null) {
     card.share ? el("span", { class: "share", text: card.share.label, title: [card.share.tip, graceLine(state.view?.grace, GRACE_TIP_CARDS)].filter(Boolean).join("\n") }) : null,
     flag,
     note ? el("span", { class: "pending-note", text: note }) : null,
-    el("span", { class: "out-note", hidden: true }),
+    outNote,
     swap,
     countTools(card, aside));
+  gridParts.set(node, { note: outNote, swap });
   node.addEventListener("click", (event) => {
     if (!event.target.closest("button")) zoom(card);
   });
@@ -292,7 +350,10 @@ function setupLabelMenu() {
     if (menuState.flag && !menu.contains(event.target) && event.target !== menuState.flag) closeLabelMenu(false);
   });
   window.addEventListener("resize", () => closeLabelMenu(false));
-  $("grid").addEventListener("scroll", () => closeLabelMenu(false), true);
+  // The scroller is the grid's pane (or the main area on a narrow window), and scroll events do not bubble.
+  document.addEventListener("scroll", (event) => {
+    if (!menu.contains(event.target)) closeLabelMenu(false);
+  }, true);
 }
 
 async function chooseLabel(name, current, label) {

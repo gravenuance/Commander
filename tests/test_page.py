@@ -20,6 +20,7 @@ const part = (share, count, total) => ({ share, count, total });
 const combined = (share, count, total, parts = {}) => ({
   share, count, total, label: `${Math.round(share * 100)}%`, meta: null, archidekt: null, ...parts });
 const texts = (node, selector) => node.querySelectorAll(selector).map((n) => n.textContent);
+setupTiles();
 """
 
 

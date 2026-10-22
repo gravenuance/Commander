@@ -25,6 +25,7 @@ const state = {
   collapsed: new Set(),
   tagsKey: null,
   leaningsKey: null,
+  activityKey: null,
   selected: null,
   hovered: null,
   busy: false,
@@ -138,7 +139,7 @@ function graceLine(grace, limit = Infinity) {
 }
 
 // A panel that loads an answer for the open deck and draws it. `load()` drops an answer that arrives after
-// the deck changed; `render(deck, answer)` skips one the panel already shows. The renderer is called with
+// the deck changed or a newer request was sent; `render(deck, answer)` skips one the panel already shows. The renderer is called with
 // (deck, answer, fresh), fresh meaning this deck was not on show before. `wanted` says when a request is
 // worth sending; `keyOf` decides which answers count as the same.
 function panel(loader, renderer, { wanted = () => true, keyOf = JSON.stringify } = {}) {
@@ -151,12 +152,14 @@ function panel(loader, renderer, { wanted = () => true, keyOf = JSON.stringify }
     shown.key = key;
     renderer(deck, answer, fresh);
   }
+  let sent = 0;
   async function load() {
     if (state.current === null || !wanted()) return;
     const deck = state.current;
+    const mine = ++sent;
     try {
       const answer = await loader(deck);
-      if (deck === state.current) render(deck, answer);
+      if (deck === state.current && mine === sent) render(deck, answer);
     } catch { /* shown in the status line */ }
   }
   // Drops what is shown, so the next answer draws even for the deck that was on show.
