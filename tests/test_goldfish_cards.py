@@ -11,6 +11,7 @@ from commander.carddb import CardInfo, CardMana, Role
 from commander.goldfish_cards import (
     CardKind,
     Draw,
+    EntryCost,
     GoldfishCard,
     GoldfishDeck,
     LandDestination,
@@ -623,6 +624,183 @@ ORACLE_OF_MUL_DAYA = real(
 )
 
 
+WILD_GROWTH = real(
+    "Wild Growth",
+    "{G}",
+    1,
+    "Enchantment — Aura",
+    "Enchant land\nWhenever enchanted land is tapped for mana, its controller adds an additional {G}.",
+    produced="G",
+    roles=(RAMP,),
+)
+UTOPIA_SPRAWL = real(
+    "Utopia Sprawl",
+    "{G}",
+    1,
+    "Enchantment — Aura",
+    "Enchant Forest\nAs this Aura enters, choose a color.\nWhenever enchanted Forest is tapped for mana, its "
+    "controller adds an additional one mana of the chosen color.",
+    produced="WUBRG",
+    roles=(RAMP,),
+)
+FERTILE_GROUND = real(
+    "Fertile Ground",
+    "{1}{G}",
+    2,
+    "Enchantment — Aura",
+    "Enchant land\nWhenever enchanted land is tapped for mana, its controller adds an additional one mana of "
+    "any color.",
+    produced="WUBRG",
+    roles=(RAMP,),
+)
+ELVISH_SPIRIT_GUIDE = real(
+    "Elvish Spirit Guide",
+    "{2}{G}",
+    3,
+    "Creature — Elf Spirit",
+    "Exile this card from your hand: Add {G}.",
+    produced="G",
+    roles=(RAMP,),
+)
+EXPLORATION = real(
+    "Exploration",
+    "{G}",
+    1,
+    "Enchantment",
+    "You may play an additional land on each of your turns.",
+    roles=(RAMP,),
+)
+AZUSA = real(
+    "Azusa, Lost but Seeking",
+    "{2}{G}",
+    3,
+    "Legendary Creature — Human Monk",
+    "You may play two additional lands on each of your turns.",
+    roles=(RAMP,),
+)
+SUMMONERS_PACT = real(
+    "Summoner's Pact",
+    "{0}",
+    0,
+    "Instant",
+    "Search your library for a green creature card, reveal it, put it into your hand, then shuffle.\n"
+    "At the beginning of your next upkeep, pay {2}{G}{G}. If you don't, you lose the game.",
+    roles=(TUTOR,),
+    tags=("manaless-value",),
+)
+SLAUGHTER_PACT = real(
+    "Slaughter Pact",
+    "{0}",
+    0,
+    "Instant",
+    "Destroy target nonblack creature.\nAt the beginning of your next upkeep, pay {2}{B}. If you don't, you "
+    "lose the game.",
+    roles=(Role.REMOVAL,),
+    tags=("manaless-value",),
+)
+DIABOLIC_INTENT = real(
+    "Diabolic Intent",
+    "{1}{B}",
+    2,
+    "Sorcery",
+    "As an additional cost to cast this spell, sacrifice a creature.\nSearch your library for a card, put "
+    "that "
+    "card into your hand, then shuffle.",
+    roles=(TUTOR,),
+)
+ELDRITCH_EVOLUTION = real(
+    "Eldritch Evolution",
+    "{1}{G}{G}",
+    3,
+    "Sorcery",
+    "As an additional cost to cast this spell, sacrifice a creature.\nSearch your library for a creature "
+    "card "
+    "with mana value X or less, where X is 2 plus the sacrificed creature's mana value. Put that card onto "
+    "the "
+    "battlefield, then shuffle. Exile Eldritch Evolution.",
+    roles=(TUTOR,),
+)
+CULLING_THE_WEAK = real(
+    "Culling the Weak",
+    "{B}",
+    1,
+    "Instant",
+    "As an additional cost to cast this spell, sacrifice a creature.\nAdd {B}{B}{B}{B}.",
+    produced="B",
+    roles=(RAMP,),
+)
+CULLING_RITUAL = real(
+    "Culling Ritual",
+    "{2}{B}{G}",
+    4,
+    "Sorcery",
+    "Destroy each nonland permanent with mana value 2 or less. Add {B} or {G} for each permanent destroyed "
+    "this way.",
+    produced="BG",
+    roles=(Role.BOARD_WIPE, RAMP, Role.REMOVAL),
+)
+CROP_ROTATION = real(
+    "Crop Rotation",
+    "{G}",
+    1,
+    "Instant",
+    "As an additional cost to cast this spell, sacrifice a land.\nSearch your library for a land card, put "
+    "that "
+    "card onto the battlefield, then shuffle.",
+)
+PATH_TO_EXILE = real(
+    "Path to Exile",
+    "{W}",
+    1,
+    "Instant",
+    "Exile target creature. Its controller may search their library for a basic land card, put that card "
+    "onto "
+    "the battlefield tapped, then shuffle.",
+    roles=(RAMP, Role.REMOVAL),
+)
+FORCE_OF_WILL = real(
+    "Force of Will",
+    "{3}{U}{U}",
+    5,
+    "Instant",
+    "You may pay 1 life and exile a blue card from your hand rather than pay this spell's mana cost.\n"
+    "Counter target spell.",
+    roles=(Role.COUNTERSPELL,),
+)
+JET_MEDALLION = real("Jet Medallion", "{2}", 2, "Artifact", "Black spells you cast cost {1} less to cast.")
+DELIGHTED_HALFLING = real(
+    "Delighted Halfling",
+    "{G}",
+    1,
+    "Creature — Halfling Citizen",
+    "{T}: Add {C}.\n{T}: Add one mana of any color. Spend this mana only to cast a legendary spell, and that "
+    "spell can't be countered.",
+    produced="WUBRGC",
+    roles=(RAMP,),
+)
+CAVERN_OF_SOULS = real(
+    "Cavern of Souls",
+    "",
+    0,
+    "Land",
+    "As this land enters, choose a creature type.\n{T}: Add {C}.\n{T}: Add one mana of any color. Spend this "
+    "mana only to cast a creature spell of the chosen type, and that spell can't be countered.",
+    produced="WUBRGC",
+)
+BOSEIJU = real(
+    "Boseiju, Who Endures",
+    "",
+    0,
+    "Legendary Land",
+    "{T}: Add {G}.\nChannel — {1}{G}, Discard this card: Destroy target artifact, enchantment, or nonbasic "
+    "land an opponent controls. That player may search their library for a land card with a basic land type, "
+    "put it onto the battlefield, then shuffle. This ability costs {1} less to activate for each legendary "
+    "creature you control.",
+    produced="G",
+    roles=(Role.REMOVAL,),
+)
+
+
 def info_of(card: Real) -> CardInfo:
     mana = card.mana
     return CardInfo(
@@ -735,6 +913,18 @@ def test_lands_with_variable_or_bounced_mana_are_not_modelled_but_stay_lands() -
     assert karoo.land is not None
     assert (karoo.land.colours, karoo.land.amount) == (frozenset("WC"), 2)
     assert not karoo.modelled
+
+
+def test_a_land_with_restricted_mana_counts_only_its_unrestricted_mana() -> None:
+    cavern = one(CAVERN_OF_SOULS)
+    assert cavern.land == LandFace(frozenset("C"), tapped=False)
+    assert cavern.modelled
+
+
+def test_a_land_with_an_unrelated_cost_reduction_is_still_a_modelled_land() -> None:
+    boseiju = one(BOSEIJU)
+    assert boseiju.land == LandFace(frozenset("G"), tapped=False)
+    assert boseiju.modelled
 
 
 def test_a_pathway_is_a_land_that_can_be_either_face() -> None:
@@ -877,7 +1067,7 @@ def test_a_search_is_a_tutor_only_when_the_tagger_says_so() -> None:
     assert card.modelled
 
 
-@pytest.mark.parametrize("tutor", [SURVIVAL, ENTOMB, NATURAL_ORDER], ids=lambda t: t.mana.name)
+@pytest.mark.parametrize("tutor", [SURVIVAL, ENTOMB], ids=lambda t: t.mana.name)
 def test_tutors_that_cost_a_card_repeat_or_leave_the_library_are_not_modelled(tutor: Real) -> None:
     card = one(tutor)
     assert card.tutor is None
@@ -1009,24 +1199,152 @@ def test_synergy_marks_the_cards_matching_the_dominant_tags() -> None:
     assert not card_named(deck, "Sol Ring").synergy
 
 
+# --- mana auras, free mana, land drops and sacrifices -------------------------------------------------------
+
+
+def test_a_mana_aura_adds_mana_with_its_land_and_comes_the_turn_it_lands() -> None:
+    growth = one(WILD_GROWTH)
+    assert growth.mana == ManaAbility(1, frozenset("G"), delayed=False, ritual=False, on_land=True)
+    assert growth.modelled
+    assert one(UTOPIA_SPRAWL).mana == ManaAbility(
+        1, frozenset("WUBRG"), delayed=False, ritual=False, on_land=True
+    )
+    assert one(FERTILE_GROUND, commander=MAGDA).mana == ManaAbility(
+        1, frozenset("R"), delayed=False, ritual=False, on_land=True
+    )
+
+
+def test_a_spirit_guide_is_one_shot_mana_from_the_hand() -> None:
+    guide = one(ELVISH_SPIRIT_GUIDE)
+    assert guide.mana == ManaAbility(1, frozenset("G"), delayed=False, ritual=True, from_hand=True)
+    assert guide.mana_value == 3
+    assert guide.modelled
+
+
+def test_chrome_mox_and_mox_diamond_are_free_rocks_costing_a_card() -> None:
+    mox = one(CHROME_MOX)
+    assert mox.mana == ManaAbility(1, frozenset("WUBRG"), delayed=False, ritual=False)
+    assert mox.entry_cost is EntryCost.NONLAND_CARD
+    assert mox.mana_value == 0
+    assert mox.modelled
+    diamond = one(MOX_DIAMOND)
+    assert diamond.mana == ManaAbility(1, frozenset("WUBRG"), delayed=False, ritual=False)
+    assert diamond.entry_cost is EntryCost.LAND_CARD
+    assert diamond.modelled
+    assert one(SOL_RING).entry_cost is None
+
+
+def test_lotus_petal_is_read_whatever_the_taggers_free_cost_tag_says() -> None:
+    assert one(LOTUS_PETAL).modelled
+
+
+def test_a_mana_creature_with_one_restricted_ability_keeps_the_free_one() -> None:
+    halfling = one(DELIGHTED_HALFLING)
+    assert halfling.mana == ManaAbility(1, frozenset("C"), delayed=True, ritual=False)
+    assert halfling.modelled
+
+
+def test_extra_land_drops_are_counted_per_turn() -> None:
+    assert one(EXPLORATION).extra_land_drops == 1
+    assert one(AZUSA).extra_land_drops == 2
+    assert one(ORACLE_OF_MUL_DAYA).extra_land_drops == 1
+    assert one(ORACLE_OF_MUL_DAYA).modelled
+    assert one(SOL_RING).extra_land_drops == 0
+
+
+def test_a_pact_is_a_free_spell() -> None:
+    pact = one(SUMMONERS_PACT)
+    assert pact.mana_value == 0
+    assert pact.tutor == Tutor(frozenset({CardKind.CREATURE}), TutorDestination.HAND)
+    assert pact.modelled
+    assert one(SLAUGHTER_PACT).modelled
+
+
+def test_tutors_and_rituals_with_a_sacrifice_cost_say_so() -> None:
+    intent = one(DIABOLIC_INTENT)
+    assert intent.tutor == Tutor(frozenset(), TutorDestination.HAND)
+    assert intent.needs_sacrifice
+    order = one(NATURAL_ORDER)
+    assert order.tutor == Tutor(frozenset({CardKind.CREATURE}), TutorDestination.BATTLEFIELD)
+    assert order.needs_sacrifice
+    culling = one(CULLING_THE_WEAK)
+    assert culling.mana == ManaAbility(4, frozenset("B"), delayed=False, ritual=True)
+    assert culling.needs_sacrifice
+    assert not one(DEMONIC_TUTOR).needs_sacrifice
+
+
+def test_a_tutor_limited_by_the_sacrificed_creature_carries_the_bonus() -> None:
+    evolution = one(ELDRITCH_EVOLUTION)
+    assert evolution.tutor == Tutor(
+        frozenset({CardKind.CREATURE}), TutorDestination.BATTLEFIELD, value_over_sacrifice=2
+    )
+    assert evolution.needs_sacrifice
+
+
+def test_a_land_search_with_a_sacrifice_cost_is_land_ramp_that_needs_one() -> None:
+    rotation = one(CROP_ROTATION)
+    assert rotation.land_ramp == LandRamp(1, basic_only=False, destination=LandDestination.UNTAPPED)
+    assert rotation.needs_sacrifice
+    assert rotation.modelled
+
+
 # --- cards the reading cannot place ---------------------------------------------------------------
 
 
+def test_cost_reducers_and_alternative_costs_are_plain_modelled_spells_when_they_do_not_matter() -> None:
+    deck = build(SCULPTOR, MEDALLION, FIREBLAST, FORCE_OF_WILL, JET_MEDALLION)
+    assert deck.not_modelled == ()
+    assert card_named(deck, "Etherium Sculptor").pips == {"U": 1}
+    assert card_named(deck, "Force of Will").mana_value == 5
+
+
 @pytest.mark.parametrize("reducer", [SCULPTOR, MEDALLION, FIREBLAST], ids=lambda c: c.mana.name)
-def test_cost_reducers_and_alternative_costs_are_plain_spells_not_modelled(reducer: Real) -> None:
-    deck = build(reducer)
+def test_a_cost_reducer_or_alternative_cost_that_is_a_finisher_is_not_modelled(reducer: Real) -> None:
+    deck = build(reducer, added=[reducer.mana.name])
     card = card_named(deck, reducer.mana.name)
     assert not card.modelled
+    assert card.finisher
     assert card.mana_value == int(reducer.mana.cmc)
     assert (card.mana, card.land, card.land_ramp, card.tutor, card.draw) == (None,) * 5
     assert deck.not_modelled == (reducer.mana.name,)
 
 
-def test_the_cost_keeps_its_pips_when_the_card_is_not_modelled() -> None:
-    assert one(SCULPTOR).pips == {"U": 1}
+def test_a_cost_reducer_that_is_a_combo_piece_is_not_modelled() -> None:
+    combo = ComboDetail(
+        "5-6",
+        (
+            ComboPiece("Etherium Sculptor", "Artifact Creature — Vedalken Artificer", ("B",)),
+            ComboPiece("Sol Ring", "Artifact", ("B",)),
+        ),
+        (),
+        (),
+        "",
+    )
+    deck = build(SCULPTOR, SOL_RING, combos=(combo,))
+    assert deck.not_modelled == ("Etherium Sculptor",)
 
 
-def test_a_tagger_alternative_cost_tag_alone_keeps_a_card_out() -> None:
+def test_a_cost_reducer_the_tagger_calls_ramp_is_not_modelled() -> None:
+    tagged = real("Jet Medallion", "{2}", 2, "Artifact", JET_MEDALLION.mana.oracle_text, roles=(RAMP,))
+    assert not one(tagged).modelled
+
+
+def test_a_free_spell_tag_does_not_keep_a_readable_card_out() -> None:
+    # Lotus Petal and the pacts carry the Tagger's manaless-value tag; they are read all the same.
+    petal = real(
+        "Lotus Petal",
+        LOTUS_PETAL.mana.mana_cost,
+        0,
+        "Artifact",
+        LOTUS_PETAL.mana.oracle_text,
+        roles=(RAMP,),
+        tags=("manaless-value",),
+    )
+    assert one(petal).modelled
+    assert one(petal).mana is not None
+
+
+def test_a_key_card_with_an_alternative_cost_tag_is_not_modelled() -> None:
     tagged = real(
         "Rampant Growth",
         RAMPANT_GROWTH.mana.mana_cost,
@@ -1034,9 +1352,15 @@ def test_a_tagger_alternative_cost_tag_alone_keeps_a_card_out() -> None:
         "Sorcery",
         RAMPANT_GROWTH.mana.oracle_text,
         roles=(RAMP,),
-        tags=("alternative-cost",),
+        tags=("alternative-cost", "overrun"),
     )
     assert not one(tagged).modelled
+
+
+def test_interaction_and_ramp_for_the_opponent_are_plain_modelled_spells() -> None:
+    path = one(PATH_TO_EXILE)
+    assert path.modelled
+    assert (path.mana, path.land_ramp, path.tutor, path.draw) == (None,) * 4
 
 
 @pytest.mark.parametrize(
@@ -1046,9 +1370,7 @@ def test_a_tagger_alternative_cost_tag_alone_keeps_a_card_out() -> None:
         PRIEST_OF_TITANIA,
         DOCKSIDE,
         JEWELED_LOTUS,
-        CHROME_MOX,
-        MOX_DIAMOND,
-        ORACLE_OF_MUL_DAYA,
+        CULLING_RITUAL,
     ],
     ids=lambda c: c.mana.name,
 )
