@@ -228,27 +228,39 @@ partial swaps set. Cultivate in for one of ten Forests plays nine Forests and Cu
 
 The owner's pass over three bracket 5 decks (Etali, Magda, Ribbit) found fast mana undercounted, tutors and
 Treasure engines left out, and Hermit Druid landing a turn early. The owner decided how each is played; the
-reading and the policy now follow, and `POLICY_VERSION` is 3.
+reading and the policy now follow, and `POLICY_VERSION` is 4.
 
-- **One-shot mana.** A creature or artifact that sacrifices itself for mana, a spell that makes Treasures,
-  Rite of Flame and Jeska's Will are rituals; Jeska's Will counts an opponent's hand as seven cards. Mana that
-  may be spent only on some kinds of spell (Geosurge, Open the Omenpaths) pays only for those and is gone
-  once that spell is paid. Mana that needs a creature to tap (Springleaf Drum) or three artifacts (Mox Opal)
-  comes while they are there; mana paid for with life (Treasonous Ogre) is used down to 10 life; Orcish
-  Lumberjack sacrifices a Forest. City of Traitors is sacrificed when the next land is played.
+- **One-shot mana.** A creature or artifact that sacrifices itself for mana, a spell that makes more Treasures
+  than it costs, Rite of Flame and Jeska's Will are rituals; Jeska's Will counts an opponent's hand as seven
+  cards. A spell that nets no mana (Manamorphose, Deadly Dispute with its one Treasure) is no ritual: it is
+  cast for its card, gives back the mana it makes and leaves its Treasures in play. Mana that may be spent
+  only on some kinds of spell (Geosurge, Open the Omenpaths) pays only for those and is gone once that spell
+  is paid. Mana that needs a creature to tap (Springleaf Drum) or three artifacts (Mox Opal) comes while they
+  are there, and a Drum or a crew taps no creature that is tapped for its own mana or whose own ability needs
+  it to tap (a summoning-sick mana creature can be tapped, as it cannot tap for itself); mana paid for with
+  life (Treasonous Ogre) is used down to 10 life; Orcish Lumberjack sacrifices a Forest, and two of them need
+  a Forest each. City of Traitors is sacrificed when the next land is played. "Any combination of colors"
+  (Manamorphose, Sage of the Maze, Dawn's Reflection) is the deck's colours. A nonland card's mana that
+  needs a condition the game cannot follow ("Activate only if ...", Fanatic of Rhonas' ferocious mana;
+  "Activate only once each turn", Kozilek's Translator) is left out, so Fanatic makes one mana and Circle of
+  Elders none; a land's conditional second colour still counts (Hushwood Verge).
 - **Ritual policy.** Rituals, Treasures and the like are spent only on the commander, a mana source, a combo
   piece, a finisher or a tutor that fetches a piece; Lion's Eye Diamond only on a combo landing or the
   commander, as it discards the hand. Life payments pay for anything.
 - **Tutors.** A search for a colour (Natural Order: green), for a creature with power up to a number
   (Imperial Recruiter) or for a subtype (Goblin Matron) finds only such cards; a subtype is read only if a
   card of the deck has it, unless it is the other choice beside a card type ("an artifact or Dragon card").
-  A changeling has every creature type. A tutor to the hand or the top takes the piece the mana could pay for
+  A changeling has every creature type and no other subtype, so a search for an Equipment does not find it.
+  A tutor to the hand or the top takes the piece the mana could pay for
   by the last turn shown, a land a turn, before a dearer one. A combo piece whose ability taps it and makes no
   mana (Hermit Druid) must have been in play since the turn began.
 - **Treasures** wait in play as one-shot mana of any colour and count as artifacts. They come from a permanent
   as it enters (Plundering Barbarian's mode) and from attacks: after the first main phase every creature in
-  play since the turn began attacks, for its own Treasure trigger and for one that a creature becoming tapped
-  sets off (Magda: a Dwarf). No combat damage is followed, so Ragavan and Professional Face-Breaker stay not
+  play since the turn began that the phase left untapped attacks, for its own Treasure trigger and for one
+  that a creature becoming tapped sets off (Magda: a Dwarf). A creature tapped for its own mana or a burst
+  does not attack, and neither does one a Drum or a crew tapped, the summoning-sick ones tapped first and
+  then those with the least to gain from attacking. A Treasure made only if an opponent is ahead (Beza's, on
+  lands) is not counted. No combat damage is followed, so Ragavan and Professional Face-Breaker stay not
   modelled.
 - **Searches paid for by a permanent.** Magda's "sacrifice five Treasures" search is used as each main phase
   begins while there are five, and Treasures are kept for it rather than spent on anything but a win or the
@@ -260,6 +272,6 @@ reading and the policy now follow, and `POLICY_VERSION` is 3.
   to six mana value in all. Flash is not modelled, and nothing tutors for the Hulk, so a deck without an
   outlet and seven mana does not see it.
 
-On the three decks, 10,000 games each: Etali's commander by turn five rose from 25% to 56% and Magda's combos
-by turn five from 9% to 57%; Ribbit's Hermit Druid line fell from 10.5% to 8.9% by turn five. The cards not
-modelled went from 26, 16 and 14 to 12, 8 and 13. A run takes 1.7 to 2.3 seconds, up from 1.4 to 1.5.
+On the three decks, 10,000 games each: Etali's commander by turn five rose from 25% to 59% and Magda's combos
+by turn five from 9% to 55%; Ribbit's Hermit Druid line fell from 10.5% to 8.9% by turn five. The cards not
+modelled went from 26, 16 and 14 to 12, 8 and 13. A run takes 1.8 to 2.6 seconds, up from 1.4 to 1.5.
