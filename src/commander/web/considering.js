@@ -113,13 +113,17 @@ function renderRejected(cards) {
   state.rejectedKey = key;
   $("rejected").hidden = !rejected.length;
   $("count-rejected").textContent = rejected.length ? `(${rejected.length})` : "";
-  $("list-rejected").replaceChildren(...rejected.map((card) => el("li", { class: "rejected-card" },
-    el("p", { class: "rejected-head" },
-      el("span", { class: "card-name", text: card.name }),
-      card.updatedAt ? el("span", { class: "muted small", text: new Date(card.updatedAt).toLocaleDateString(undefined, { dateStyle: "medium" }) }) : null,
-      el("button", { class: "button quiet small", type: "button", text: "Reconsider", "aria-label": `Reconsider ${card.name}`,
-        onclick: () => decide(card, "reopen") })),
-    card.note ? el("p", { class: "muted small rejected-note", text: card.note }) : null)));
+  $("list-rejected").replaceChildren(...rejected.map((card) => {
+    const reconsider = el("button", { class: "button quiet small", type: "button", text: "Reconsider",
+      "aria-label": `Reconsider ${card.name}` });
+    reconsider.addEventListener("click", () => decide(card, "reopen", "", reconsider));
+    return el("li", { class: "rejected-card" },
+      el("p", { class: "rejected-head" },
+        el("span", { class: "card-name", text: card.name }),
+        card.updatedAt ? el("span", { class: "muted small", text: new Date(card.updatedAt).toLocaleDateString(undefined, { dateStyle: "medium" }) }) : null,
+        reconsider),
+      card.note ? el("p", { class: "muted small rejected-note", text: card.note }) : null);
+  }));
 }
 
 function tileFor(card) {
@@ -422,15 +426,38 @@ function rejectForm(card) {
   return form;
 }
 
-async function decide(card, decision, note = "") {
+// Where a row stands in its list, to find the control nearest to it once it is gone.
+function rowSpot(row) {
+  const list = row ? row.parentNode : null;
+  return { list, index: list ? [...list.children].indexOf(row) : -1 };
+}
+
+// The list's toggle, the last stop before the top of the page when a list has emptied; the turned down list
+// hides with its last card, so its stop is the Considering toggle above it.
+const LIST_TOGGLES = { "list-considering": "h-considering", "list-uncut": "h-uncut", "list-rejected": "h-considering" };
+
+// A decision rebuilds or removes the row whose control had focus: keep the keyboard in that list, on the row
+// now at its place or the one before it, and failing that on the list's own toggle.
+function refocusNear({ list, index }) {
+  const active = document.activeElement;
+  if (active && active !== document.body && active.isConnected) return;
+  const rows = list ? [...list.children] : [];
+  const target = rows[Math.min(index, rows.length - 1)]?.querySelector("button")
+    ?? (list && $(LIST_TOGGLES[list.id]));
+  (target ?? $("main")).focus();
+}
+
+// `trigger` is a control outside the card's tile (a rejected card has none) that is held while the call runs.
+async function decide(card, decision, note = "", trigger = null) {
   const tile = state.tiles.get(card.id)?.node;
-  const controls = tile ? [...tile.querySelectorAll("button, input")] : [];
+  const controls = [...(tile ? tile.querySelectorAll("button, input") : []), ...(trigger ? [trigger] : [])];
+  const spot = rowSpot(tile ?? trigger?.closest(".rejected-card"));
   await whileBusy(controls, async () => {
     try {
       await api("decide", state.current, card.id, decision, null, note);
       if (decision === "reject") showStatus(`Turned down ${card.name}`);
       await refresh();
-      $("main").focus();
+      refocusNear(spot);
     } catch { /* shown in the status line */ }
   });
 }
