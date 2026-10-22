@@ -1521,6 +1521,74 @@ def test_a_rock_that_needs_a_legendary_creature_is_not_modelled() -> None:
     assert deck.not_modelled == (MOX_AMBER.mana.name,)
 
 
+FANATIC_OF_RHONAS = real(
+    "Fanatic of Rhonas",
+    "{1}{G}",
+    2,
+    "Creature — Snake Druid",
+    "{T}: Add {G}.\nFerocious — {T}: Add {G}{G}{G}{G}. Activate only if you control a creature with power 4 "
+    "or greater.\nEternalize {2}{G}{G} ({2}{G}{G}, Exile this card from your graveyard: Create a token "
+    "that's a copy of it, except it's a 4/4 black Zombie Snake Druid with no mana cost. Eternalize only as "
+    "a sorcery.)",
+    produced="G",
+    identity="G",
+    roles=(RAMP,),
+)
+GLISTENING_SPHERE = real(
+    "Glistening Sphere",
+    "{3}",
+    3,
+    "Artifact",
+    "This artifact enters tapped.\nWhen this artifact enters, proliferate.\n{T}: Add one mana of any color.\n"
+    "Corrupted — {T}: Add three mana of any one color. Activate only if an opponent has three or more "
+    "poison counters.",
+    produced="WUBRG",
+    roles=(RAMP,),
+)
+CIRCLE_OF_ELDERS = real(
+    "Circle of Elders",
+    "{2}{G}{G}",
+    4,
+    "Creature — Human Shaman",
+    "Vigilance\nFormidable — {T}: Add {C}{C}{C}. Activate only if creatures you control have total power 8 "
+    "or greater.",
+    produced="C",
+    identity="G",
+    roles=(RAMP,),
+)
+KOZILEKS_TRANSLATOR = real(
+    "Kozilek's Translator",
+    "{4}{B}",
+    5,
+    "Creature — Eldrazi Drone",
+    "Devoid (This card has no color.)\nPay 1 life: Add {C}. Activate only once each turn. ({C} represents "
+    "colorless mana.)",
+    produced="C",
+    identity="B",
+    roles=(RAMP,),
+)
+
+
+@pytest.mark.parametrize(
+    ("conditional", "amount", "colours"),
+    [(FANATIC_OF_RHONAS, 1, "G"), (GLISTENING_SPHERE, 1, ALL)],
+    ids=lambda v: v.mana.name if isinstance(v, Real) else None,
+)
+def test_mana_made_only_on_a_condition_is_left_out_and_the_unconditional_mana_stays(
+    conditional: Real, amount: int, colours: str
+) -> None:
+    card = one(conditional)
+    assert card.mana is not None
+    assert (card.mana.amount, card.mana.colours) == (amount, frozenset(colours))
+
+
+@pytest.mark.parametrize("card", [CIRCLE_OF_ELDERS, KOZILEKS_TRANSLATOR], ids=lambda c: c.mana.name)
+def test_a_card_whose_only_mana_is_conditional_makes_none_and_is_not_modelled(card: Real) -> None:
+    compiled = one(card)
+    assert compiled.mana is None
+    assert not compiled.modelled
+
+
 def test_a_rock_that_taps_a_creature_needs_one_and_a_crewed_vehicle_needs_a_turn_too() -> None:
     drum = one(SPRINGLEAF_DRUM)
     assert drum.mana == ManaAbility(1, frozenset(ALL), delayed=False, ritual=False, needs=ManaNeed.CREATURE)

@@ -640,6 +640,9 @@ _AMOUNT_WORDS = re.compile(r"\b(" + "|".join(_NUMBER_WORDS) + r") (?:additional 
 _NOT_FIXED_MANA = re.compile(
     rf"{VARIABLE_MANA.pattern}|among legendary|activate only if (?:this \w+|it) is a creature"
 )
+# What limits an ability beyond the metalcraft and crew conditions the game follows (Fanatic of Rhonas'
+# ferocious mana, Kozilek's Translator): its mana is left out of a nonland card, the rest of the card stays.
+_CONDITION = re.compile(r"activate only if|only once each turn")
 _CREWED = re.compile(r"activate only if this \w+ is a creature\.")
 _CREW = re.compile(r"^crew \d+", re.MULTILINE)
 _METALCRAFT = re.compile(r"activate only if you control three or more artifacts\.")
@@ -704,14 +707,16 @@ def _paid(cost: str) -> _Cost | None:
 
 class _ManaLine(NamedTuple):
     """A line that adds mana: its cost, what it adds, whether that is no fixed amount of any colour (a count,
-    or a colour or use the game cannot tell), the kinds of spell alone it may pay for (empty for any) and what
-    it needs on the battlefield."""
+    or a colour or use the game cannot tell), the kinds of spell alone it may pay for (empty for any), what
+    it needs on the battlefield and whether a condition the game cannot follow limits when it is used (a land
+    with one is still counted, as Hushwood Verge's second colour is)."""
 
     cost: str
     what: str
     varies: bool
     spend_on: frozenset[CardKind]
     needs: ManaNeed | None = None
+    conditional: bool = False
 
 
 def _abilities(text: str) -> list[_ManaLine]:
@@ -739,7 +744,8 @@ def _abilities(text: str) -> list[_ManaLine]:
         elif crewed and _CREWED.search(after):
             needs, after = ManaNeed.CREATURE, _CREWED.sub("", after)
         said = f"{cost}: add {what}.{after}"
-        found.append(_ManaLine(cost, what, _NOT_FIXED_MANA.search(said) is not None, spend_on, needs))
+        varies = _NOT_FIXED_MANA.search(said) is not None
+        found.append(_ManaLine(cost, what, varies, spend_on, needs, _CONDITION.search(after) is not None))
     return found
 
 
@@ -814,7 +820,7 @@ def _land_nets(text: str, identity: frozenset[str]) -> list[tuple[int, frozenset
     """The net mana and colours of a land's abilities that make more than they cost and leave the land."""
     return [
         found
-        for cost, what, varies, spend_on, needs in _abilities(text)
+        for cost, what, varies, spend_on, needs, _ in _abilities(text)
         if not varies
         and not spend_on
         and needs is None
@@ -875,14 +881,15 @@ def _mana(text: str, kinds: frozenset[CardKind], identity: frozenset[str]) -> Ma
     if treasures is not None:
         made = f"{treasures.group('n')} mana of any color"
         abilities.append(_ManaLine("", made, varies=False, spend_on=frozenset()))
-    for cost, what, varies, spend_on, needs in abilities:
+    for cost, what, varies, spend_on, needs, conditional in abilities:
         paid = _paid(cost)
         # An ability with none of these costs could be used again and again (Three Tree Mascot's {1}); life
         # paid without a tap is limited by the life.
         usable = spell or (
             paid is not None and (paid.taps or paid.exiles_from_hand or paid.sacrifices or paid.life > 0)
         )
-        found = None if varies or paid is None or not usable else _net_mana(paid, what, identity)
+        skipped = varies or conditional or paid is None or not usable
+        found = None if skipped or paid is None else _net_mana(paid, what, identity)
         if paid is None or found is None:
             continue
         # Restricted mana is followed only for one shot, spent on the spell it is made for.
