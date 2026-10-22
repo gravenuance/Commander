@@ -84,22 +84,20 @@ _ENTERS_BY_CHOICE = re.compile(
     r"as this (?:land|permanent) enters, you may (?:reveal [^.]+|pay \d+ life)\."
     r" if you don't, (?:it|this land) enters (?:the battlefield )?tapped\."
 )
-_REMINDER_TEXT = re.compile(r"\([^)]*\)")
+REMINDER_TEXT = re.compile(r"\([^)]*\)")
 # A mana ability whose amount varies or is chosen ("for each", "equal to", X): more than one mana.
-_VARIABLE_MANA = re.compile(
-    r"for each|equal to|amount of mana|that much|twice|additional mana|\bx mana|\{x\}"
-)
+VARIABLE_MANA = re.compile(r"for each|equal to|amount of mana|that much|twice|additional mana|\bx mana|\{x\}")
 # Mana symbols side by side after "add" ({C}{C}, {R}{G}): two or more mana from one ability.
 _SEVERAL_PIPS_ADDED = re.compile(r"add [^.]*\{[^}]+\}\{[^}]+\}")
 # A cost of mana beyond the tap: a filter land then turns one mana into two, a net gain of one.
 _MANA_PAID = re.compile(r"\{(?!t\})[^}]+\}")
 # Cavern of Souls and its kind: their coloured mana casts only some spells.
 RESTRICTED = "spend this mana only"
-_PIP = re.compile(r"\{([^}]+)\}")
+PIP = re.compile(r"\{([^}]+)\}")
 _HALF_SEPARATOR = " // "
 # An aftermath card has layout "split" like Fire // Ice; only the Aftermath keyword line of its text tells.
 _AFTERMATH = re.compile(r"^aftermath\b", re.IGNORECASE | re.MULTILINE)
-_BASIC_TYPES = {"plains": "W", "island": "U", "swamp": "B", "mountain": "R", "forest": "G"}
+BASIC_TYPES = {"plains": "W", "island": "U", "swamp": "B", "mountain": "R", "forest": "G"}
 _CHEAP_DRAW = (
     "draw a card",
     "draw two cards",
@@ -353,13 +351,13 @@ class Source:
         text = info.oracle_text.casefold()
         made = set(info.produced)
         if info_is_land(info):
-            colours = _land_colours(info, text, made, deck_colours)
+            colours = land_colours(info, text, made, deck_colours)
             tapped = tapped_share(text, lands)
             return Source(info.name, quantity, land=True, colours=colours, from_mana_value=1, tapped=tapped)
         if back_is_land(info.type_line):
             worth = MYTHIC_MDFC_SOURCE if info.rarity == "mythic" else MDFC_SOURCE
             back = info.oracle_text.split(FACE_SEPARATOR)[-1].casefold()
-            colours = dict.fromkeys(made or _searched(back), worth)
+            colours = dict.fromkeys(made or searched_colours(back), worth)
             tapped = tapped_share(back, lands)
             return Source(info.name, quantity, land=True, colours=colours, from_mana_value=1, tapped=tapped)
         mana_value = int(info.cmc)
@@ -371,7 +369,8 @@ class Source:
                 worth = min(worth, OPPONENT_ROCK)
             colours = dict.fromkeys(made, worth)
             return Source(info.name, quantity, land=False, colours=colours, from_mana_value=mana_value + 1)
-        searched: set[str] = _searched(text) if "search your library" in text and "land" in text else set()
+        searching = "search your library" in text and "land" in text
+        searched: set[str] = searched_colours(text) if searching else set()
         if searched and not permanent:
             worth = CHEAP_LAND_RAMP if mana_value <= CHEAP else LAND_RAMP
             # Karsten: two-mana ramp counts from three-mana spells, three-mana ramp from five.
@@ -395,23 +394,23 @@ def without_commanders(entries: Sequence[tuple[int, CardMana, bool]]) -> list[tu
     return [(quantity, info) for quantity, info, commander in entries if not commander]
 
 
-def _land_colours(info: CardMana, text: str, made: set[str], deck_colours: int) -> dict[str, float]:
+def land_colours(info: CardMana, text: str, made: set[str], deck_colours: int) -> dict[str, float]:
     if "opponent" in text and "could produce" in text:
         return dict.fromkeys("WUBRG", OPPONENT_LAND)
     if made:
         # A Pathway makes one of its two colours, chosen as it is played.
         choosing = " // " in info.type_line and deck_colours >= 3  # noqa: PLR2004 — three colours or more
         return dict.fromkeys(made, CHOOSING_SOURCE if choosing else 1.0)
-    searched = _searched(text)
-    if "basic land card" in text and not any(t in text for t in _BASIC_TYPES):
+    searched = searched_colours(text)
+    if "basic land card" in text and not any(t in text for t in BASIC_TYPES):
         worth = CHOOSING_SOURCE if deck_colours >= 3 else 1.0  # noqa: PLR2004 — as above
         return dict.fromkeys("WUBRG", worth)
     return dict.fromkeys(searched, 1.0)
 
 
-def _searched(text: str) -> set[str]:
+def searched_colours(text: str) -> set[str]:
     """The colours a land search can find, by the basic land types it names; any basic finds every colour."""
-    found = {colour for land_type, colour in _BASIC_TYPES.items() if land_type in text}
+    found = {colour for land_type, colour in BASIC_TYPES.items() if land_type in text}
     if not found and "basic land" in text:
         return set(COLORS)
     return found
@@ -444,7 +443,7 @@ def mana_only_land(info: CardMana) -> bool:
     if not info.oracle_text.strip() or has_nonland_face(info.type_line):
         return False
     front = info.oracle_text.split(FACE_SEPARATOR)[0].casefold()
-    lines = (line.strip() for line in _REMINDER_TEXT.sub("", front).splitlines())
+    lines = (line.strip() for line in REMINDER_TEXT.sub("", front).splitlines())
     return all(
         not line
         or (
@@ -457,7 +456,7 @@ def mana_only_land(info: CardMana) -> bool:
 
 def _makes_several_mana(line: str) -> bool:
     """Whether the mana ability can make more than one mana, a filter land's two for one paid aside."""
-    if _VARIABLE_MANA.search(line):
+    if VARIABLE_MANA.search(line):
         return True
     cost, _, effect = line.partition(":")
     return not _MANA_PAID.search(cost) and _SEVERAL_PIPS_ADDED.search(effect) is not None
@@ -547,7 +546,7 @@ def is_mana_card(info: CardMana) -> bool:
 def fixed_pips(mana_cost: str) -> dict[str, int]:
     """Fixed coloured and colourless pips of the front face; hybrid, Phyrexian and X pips are left out."""
     pips: dict[str, int] = {}
-    for symbol in _PIP.findall(front_face(mana_cost)):
+    for symbol in PIP.findall(front_face(mana_cost)):
         if symbol in COLORS or symbol == "C":
             pips[symbol] = pips.get(symbol, 0) + 1
     return pips
@@ -559,12 +558,12 @@ def castings(info: CardMana) -> list[Casting]:
     202.3c); halves of equal value both count. An aftermath card (Cut // Ribbons), whose second half can only
     be cast from the graveyard, by its first half at that half's own value. Any other card, an adventure
     (Bonecrusher Giant // Stomp) included, by its front face's cost at its mana value."""
-    halves = _cost_halves(info.mana_cost)
+    halves = cost_halves(info.mana_cost)
     if info.layout != "split" or len(halves) == 1:
         return [Casting(max(int(info.cmc), 1), fixed_pips(info.mana_cost))]
     if _AFTERMATH.search(info.oracle_text):
-        return [Casting(max(_cost_value(halves[0]), 1), fixed_pips(halves[0]))]
-    values = [max(_cost_value(half), 1) for half in halves]
+        return [Casting(max(cost_value(halves[0]), 1), fixed_pips(halves[0]))]
+    values = [max(cost_value(half), 1) for half in halves]
     highest = max(values)
     return [
         Casting(value, fixed_pips(half))
@@ -573,15 +572,15 @@ def castings(info: CardMana) -> list[Casting]:
     ]
 
 
-def _cost_halves(mana_cost: str) -> list[str]:
+def cost_halves(mana_cost: str) -> list[str]:
     halves = mana_cost.split(_HALF_SEPARATOR)
     return halves if len(halves) > 1 and all(halves) else [mana_cost]
 
 
-def _cost_value(mana_cost: str) -> int:
+def cost_value(mana_cost: str) -> int:
     """The mana value of a cost; X counts for nothing, a hybrid symbol for its larger side ({2/W} is 2)."""
     total = 0
-    for symbol in _PIP.findall(mana_cost):
+    for symbol in PIP.findall(mana_cost):
         first = symbol.split("/")[0]
         if first.isdigit():
             total += int(first)
@@ -592,13 +591,13 @@ def _cost_value(mana_cost: str) -> int:
 
 def _only_flexible_pips(info: CardMana) -> bool:
     """Coloured mana in the cost, but all of it hybrid or Phyrexian, so no colour has a fixed pip to check."""
-    symbols = _PIP.findall(info.mana_cost)
+    symbols = PIP.findall(info.mana_cost)
     return not _pips_colours(info.mana_cost) and any(set(symbol) & set(COLORS) for symbol in symbols)
 
 
 def _pips_colours(mana_cost: str) -> set[str]:
     """The colours with a fixed pip in any half of the cost."""
-    return {c for half in _cost_halves(mana_cost) for c in fixed_pips(half) if c in COLORS}
+    return {c for half in cost_halves(mana_cost) for c in fixed_pips(half) if c in COLORS}
 
 
 def _identity(deck: Deck, cards: Mapping[str, CardMana]) -> set[str]:
