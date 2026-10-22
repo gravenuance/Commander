@@ -404,18 +404,37 @@ def parse_sets_listing(raw: object) -> list[SetInfo]:
 
 
 def parse_search_page(raw: object, api_base: str = API_BASE) -> SearchPage:
-    """One page of a card search; tokens and digital cards are left out. A next page that is not on
-    Scryfall's API is refused, so a changed answer can never send the probe elsewhere."""
+    """One page of a card search; tokens and digital cards are left out. A card that cannot be read is
+    logged and skipped, so one odd card never costs the rest of its set, but a page of nothing readable is
+    refused as a changed format. A next page that is not on Scryfall's API is refused, so a changed answer
+    can never send the probe elsewhere."""
     obj = as_object(raw, "search")
+    items = req_list(obj, "data", "search")
     cards: list[SetCard] = []
-    for index, item in enumerate(req_list(obj, "data", "search")):
-        card = parse_set_card(item, f"search.data[{index}]")
+    errors: list[ShapeError] = []
+    for index, item in enumerate(items):
+        try:
+            card = parse_set_card(item, f"search.data[{index}]")
+        except ShapeError as error:
+            errors.append(error)
+            log.warning("a searched card (%s) skipped: %s", _name_of(item), error)
+            continue
         if card is not None:
             cards.append(card)
+    if errors and len(errors) == len(items):
+        raise ShapeError(f"no card of the page could be read: {errors[0]}")
     next_page = opt_str(obj, "next_page", "search") if obj.get("has_more") is True else None
     if next_page is not None and not next_page.startswith(f"{api_base.rstrip('/')}/cards/search?"):
         raise ShapeError(f"search.next_page: not a Scryfall search URL: {next_page}")
     return SearchPage(tuple(cards), next_page)
+
+
+def _name_of(item: object) -> object:
+    """A card's name for a log line, whatever shape the card came in."""
+    try:
+        return as_object(item, "card").get("name")
+    except ShapeError:
+        return None
 
 
 def is_scryfall_id(text: str) -> bool:

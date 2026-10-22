@@ -280,6 +280,20 @@ def test_a_failed_probe_keeps_the_last_previews_and_tries_again_later_the_same_d
     assert probe(fake, tmp_path).state is ProbeState.UPDATED
 
 
+def test_one_unreadable_card_is_skipped_and_the_rest_of_the_set_is_kept(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    answer = search_page()
+    del answer["data"][0]["oracle_id"]
+    fake = FakeScryfall()
+    fake.searches = {SEARCH_URL: answer}
+    with caplog.at_level(logging.WARNING, logger="commander.scryfall"):
+        outcome = probe(fake, tmp_path)
+    assert (outcome.state, outcome.cards) == (ProbeState.UPDATED, 7)
+    assert "Captain's Tutelage" not in cached_names(tmp_path)
+    assert [m for m in caplog.messages if "Captain's Tutelage" in m and "no oracle_id" in m]
+
+
 def test_a_cache_of_another_version_or_unreadable_counts_as_none(tmp_path: Path) -> None:
     (tmp_path / PREVIEWS_FILE).write_text(json.dumps({"version": 99, "cards": []}), encoding="utf-8")
     assert read_previews(tmp_path) == PreviewCache(None, ())
