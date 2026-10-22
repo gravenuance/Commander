@@ -44,6 +44,8 @@ uv run cmdr bracket                                 # estimated bracket of every
 uv run cmdr bracket gator --details                 # one deck: game changers, tutors, combos with links
 uv run cmdr suggest                                 # combo pieces and short roles of every deck side by side
 uv run cmdr suggest magda --max-price 5             # one deck: cards to add up to EUR 5, cards to consider cutting
+uv run cmdr goldfish magda                          # play a deck out 10,000 times: hands, commander, mana, combos
+uv run cmdr goldfish magda --swap "Arcane Signet=Wild Growth"  # the same, and what that swap moves
 uv run cmdr meta                                    # every bracket 4 and 5 deck against the meta, side by side
 uv run cmdr meta magda                              # one deck: staples it misses, meta threats, meta combos
 uv run cmdr meta ellivere --card "Sylvan Safekeeper" # how performing lists use one card
@@ -362,6 +364,10 @@ tag_search = true            # also learn from decks carrying the deck's 3 main 
 [grace]                      # lists holding these cards count for more in this deck's shares
 "Basalt Monolith" = 3
 "Rings of Brighthearth" = 2
+
+[goldfish]                   # `cmdr goldfish` plays these as finishers, beside the Tagger-marked ones
+finishers = ["Craterhoof Behemoth"]
+not_finishers = ["Overrun"]  # Tagger-marked cards that do not win this deck
 ```
 
 Every key is optional. `cmdr sync` writes this template for a deck that has no profile yet, and adds an empty
@@ -737,6 +743,25 @@ uv run cmdr toget ellivere "Sylvan Safekeeper" --arrived   # clear its label
 
 Labels set on the Archidekt website come back with the next `sync`. See
 [ADR 0010](docs/adr/0010-buying-cards-through-archidekt-labels.md).
+
+### Goldfish
+
+`cmdr goldfish <deck>` deals and plays the deck 10,000 times against an empty table, by one fixed play
+policy, and reports the opening hands kept, the turn each commander is cast, the mana on each turn (median and
+worst tenth), how often a spell had the mana but not the colours, and, for a deck with a Commander Spellbook
+combo or a finisher, how soon each lands, with a warning for a combo that comes up by the bracket's turn in a
+quarter of the games or more. The turns shown follow the deck's bracket, which also picks the mulligan rule.
+It reads the card data and the caches alone and fetches nothing; the same deck always gives the same figures
+(the seed is the deck id). The figures are the earliest a deck gets there, not a promise: nothing interacts,
+and `Not modelled` lists the cards the reading could not place.
+
+`--swap "<card in>=<card out>"` (repeated for more) or `--plan plan.toml` (the plan `apply` reads: its adds
+paired with its removes, in order) plays the same games again with the swaps made and lists every figure that
+moved, before and after; a figure counts as moved only when the change is larger than twice its paired
+standard error. A swap takes out all copies of the card out, so a basic land swap that leaves some of the
+basics in cannot be played. `--json` gives the figures for scripts, and `[goldfish]` in the profile (above)
+sets the finishers. See
+[ADR 0054](docs/adr/0054-goldfish-a-deck.md).
 
 ### Deck folders
 

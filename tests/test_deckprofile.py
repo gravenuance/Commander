@@ -85,6 +85,24 @@ def test_full_profile_is_read(tmp_path: Path) -> None:
     )
 
 
+def test_the_goldfish_finishers_are_read_and_an_older_profile_without_the_table_has_none(
+    tmp_path: Path,
+) -> None:
+    write(tmp_path, '[goldfish]\nfinishers = ["Craterhoof Behemoth"]\nnot_finishers = ["Overrun"]\n')
+    profile = read_profile(tmp_path)
+    assert profile.finishers == ("Craterhoof Behemoth",)
+    assert profile.not_finishers == ("Overrun",)
+    write(tmp_path, "version = 1\n[grace]\n")
+    assert read_profile(tmp_path).finishers == ()
+    assert read_profile(tmp_path).not_finishers == ()
+
+
+def test_the_template_has_an_empty_goldfish_table_that_reads_as_no_finishers(deck: Deck) -> None:
+    template = profile_template(deck)
+    assert tomllib.loads(template)["goldfish"] == {"finishers": [], "not_finishers": []}
+    assert parse_profile(tomllib.loads(template), "template") == Profile()
+
+
 def test_a_profile_keeps_cards_by_either_face_of_a_name_or_by_category() -> None:
     profile = Profile(keep_cards=("Sol Ring", "Fire // Ice"), keep_categories=("Stax",))
     assert profile.keeps("sol ring")
@@ -157,6 +175,15 @@ def test_byte_order_mark_is_accepted(tmp_path: Path) -> None:
         ("[ideas]\ntags = []", "unknown key 'tags' in [ideas]"),
         ("[ideas]\ntag_search = 'yes'", "ideas.tag_search must be true or false"),
         ("[ideas]\ntag_search = 1", "ideas.tag_search must be true or false"),
+        ("goldfish = 3", "'goldfish' must be a table"),
+        ("[goldfish]\nfinishers = 'Overrun'", "goldfish.finishers must be a list"),
+        ("[goldfish]\nnot_finishers = [3]", "goldfish.not_finishers[0] must be text"),
+        ("[goldfish]\nfinishers = ['']", "goldfish.finishers[0] is empty"),
+        ("[goldfish]\nwinners = []", "unknown key 'winners' in [goldfish]"),
+        (
+            "[goldfish]\nfinishers = ['Overrun']\nnot_finishers = ['overrun']",
+            "'overrun' is in both goldfish.finishers and goldfish.not_finishers",
+        ),
         ("grace = 3", "'grace' must be a table"),
         ("[grace]\n'Basalt Monolith' = 1", "grace.Basalt Monolith must be a number over 1 and at most 10"),
         ("[grace]\n'Basalt Monolith' = 0.5", "grace.Basalt Monolith must be a number over 1 and at most 10"),

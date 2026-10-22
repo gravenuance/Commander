@@ -178,4 +178,15 @@ show only these headline figures, and of them only the ones that moved:
 - each combo landed by the bracket's turn.
 
 The bracket's turn is 9, 8, 6 and 4 for brackets 1 to 4, and turn 3 for bracket 5. The Goldfish tab and
-`cmdr goldfish --swap` still give every figure.
+`cmdr goldfish --swap` still give every figure. When the bracket's turn is not among the turns shown, the
+nearest turn shown stands in for it.
+
+## Amendment (2026-10-22): the finishers setting and partial swaps
+
+- The owner's finishers are stored in `profile.toml` as a `[goldfish]` table: `finishers` for cards the owner
+  adds, `not_finishers` for Tagger-marked ones the owner takes out. A card in both lists is refused. The table
+  is optional, so older profiles stay valid and `PROFILE_VERSION` stays 1.
+- A swap takes the place of every copy of the card cut, as the engine plays it. A queued card whose copies
+  differ from the copies the deck holds of its cut (one Forest out of ten), whose cut is not in the deck's
+  library or whose card the deck already holds is left out of the figures, and `cmdr goldfish` refuses it
+  with the reason.
