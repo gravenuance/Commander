@@ -6,6 +6,7 @@ errors, which a fixed seed keeps from ever flaking.
 """
 
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from math import comb
 
 import pytest
@@ -28,7 +29,9 @@ from commander.goldfish_cards import (
     GoldfishCard,
     GoldfishCombo,
     GoldfishDeck,
+    LandDestination,
     LandFace,
+    LandRamp,
     ManaAbility,
     Tutor,
     TutorDestination,
@@ -58,6 +61,8 @@ def make(
     extra_land_drops: int = 0,
     needs_sacrifice: bool = False,
     entry_cost: EntryCost | None = None,
+    land_ramp: LandRamp | None = None,
+    land_types: frozenset[str] = frozenset(),
 ) -> GoldfishCard:
     return GoldfishCard(
         name=name,
@@ -70,7 +75,7 @@ def make(
         kinds=kinds,
         land=land,
         mana=mana,
-        land_ramp=None,
+        land_ramp=land_ramp,
         tutor=tutor,
         draw=draw,
         combo=combo,
@@ -80,6 +85,7 @@ def make(
         extra_land_drops=extra_land_drops,
         needs_sacrifice=needs_sacrifice,
         entry_cost=entry_cost,
+        land_types=land_types,
     )
 
 
@@ -482,6 +488,22 @@ def test_a_spell_that_needs_a_creature_to_sacrifice_waits_for_one() -> None:
     assert only_outcome(run(with_creature)).mana == (2, 3, 4, 5, 5)
 
 
+def test_sacrificing_a_mana_creature_takes_only_its_own_mana_not_a_tapped_lands() -> None:
+    elves = make(
+        "Elves",
+        mv=1,
+        pips={"G": 1},
+        kinds=CREATURE,
+        mana=ManaAbility(1, frozenset("G"), delayed=True, ritual=False),
+    )
+    sacrifice = make("Sacrifice", mv=1, pips={"G": 1}, needs_sacrifice=True)
+    nine_drop = make("Nine", mv=9, kinds=CREATURE)
+    slots = [FOREST, land("Tapped Forest", "G", tapped=True), FOREST, elves, sacrifice, nine_drop, nine_drop]
+    # Turn one: Forest, Elves. Turn two: the tapped land is played, Sacrifice eats Elves, one Forest is left.
+    # Turn three: the tapped land is ready and the third Forest comes down: three. Elves' mana is gone.
+    assert only_outcome(run(slots)).mana == (1, 1, 3, 3, 3)
+
+
 def test_a_ritual_is_cast_only_to_pay_for_something_this_turn() -> None:
     ritual = make(
         "Dark Ritual",
@@ -670,6 +692,14 @@ def test_a_commander_piece_is_castable_with_the_mana_left_for_a_held_piece() -> 
     assert only_outcome(run(slots, commanders=(boss,), combos=combos)).combo_turns == (3,)
 
 
+def test_an_instant_or_sorcery_piece_that_also_draws_is_held_for_the_winning_turn() -> None:
+    piece = make("Piece", mv=2, kinds=CREATURE, combo=True)
+    cantrip = make("Cantrip", mv=1, combo=True, draw=Draw(1, engine=False))
+    slots = [*repeat(FOREST, 4), piece, cantrip, VANILLA]
+    # The sorcery is not cast for its card on turn one; the creature lands on turn two and the pair on three.
+    assert only_outcome(run(slots, combos=(combo_of(piece, cantrip),))).combo_turns == (3,)
+
+
 def test_a_commander_piece_that_needs_only_the_command_zone_is_free() -> None:
     boss = make("Boss", mv=3, kinds=CREATURE, combo=True)
     piece = make("Piece", mv=1, kinds=ARTIFACT, combo=True)
@@ -778,6 +808,31 @@ def test_a_tutor_goes_for_a_finisher_when_no_combo_piece_is_missing() -> None:
     slots = [*repeat(FOREST, 5), tutor, finisher, VANILLA, VANILLA]
     report = run(slots, games=500, seed=2)
     assert any(o.searched for o in report.outcomes)
+
+
+def typed_search(*land_types: str) -> GoldfishCard:
+    return make(
+        "Search",
+        mv=2,
+        land_ramp=LandRamp(
+            1, basic_only=False, destination=LandDestination.UNTAPPED, land_types=frozenset(land_types)
+        ),
+    )
+
+
+def test_a_typed_land_search_fetches_only_lands_of_its_types() -> None:
+    tomb = land("Tomb", "C", amount=2)
+    report = run([typed_search("forest"), *repeat(tomb, 49)], games=300, seed=3)
+    # No Forest to find: every game plays a Tomb a turn for two mana, whether or not the search is cast.
+    assert all(o.mana == (2, 4, 6, 8, 10) for o in report.outcomes)
+    assert any(o.searched for o in report.outcomes)
+
+
+def test_a_typed_land_search_fetches_a_land_with_one_of_its_types() -> None:
+    forest = replace(FOREST, land_types=frozenset({"forest"}))
+    report = run([typed_search("plains", "forest"), *repeat(forest, 49)], games=300, seed=3)
+    # Cast on turn two with two Forests out, the search puts a third untapped.
+    assert any(o.mana[1] == 3 for o in report.outcomes)
 
 
 # --- the payment solver ----------------------------------------------------------------------------------

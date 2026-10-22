@@ -272,12 +272,40 @@ def test_a_card_already_in_the_deck_replays_every_game_as_the_numbering_of_cards
 # --- plain spells -------------------------------------------------------------------------------------------
 
 
-def test_a_swap_of_two_plain_spells_changes_nothing_and_plays_nothing() -> None:
-    result = judged([(PLAIN_SPELL, make("Other Spell", mv=6, pips={"B": 2}))])
+def test_a_swap_of_two_plain_spells_that_cost_the_same_changes_nothing_and_plays_nothing() -> None:
+    swaps = [(PLAIN_SPELL, make("Other Spell", mv=4, pips={"B": 1}))]
+    result = judged(swaps)
     assert result.replayed == ()
     assert result.moved == ()
     assert not result.any_moved
     assert result.swapped == result.base
+    assert result.swapped == played_whole(swaps)
+
+
+PLAIN_SWAPS_THAT_PLAY = {
+    "a dearer spell": make("Dearer Spell", mv=6, pips={"B": 2}),
+    "a spell of another colour": make("Red Spell", mv=4, pips={"R": 1}),
+    "a creature for a non-creature": make("Creature Spell", mv=4, pips={"B": 1}, kinds=CREATURE),
+}
+
+
+@pytest.mark.parametrize("incoming", PLAIN_SWAPS_THAT_PLAY.values(), ids=PLAIN_SWAPS_THAT_PLAY.keys())
+def test_a_plain_swap_that_changes_the_cost_colours_or_creatures_is_played_like_any_other(
+    incoming: Card,
+) -> None:
+    swaps = [(PLAIN_SPELL, incoming)]
+    result = judged(swaps)
+    assert result.replayed
+    assert result.swapped == played_whole(swaps)
+
+
+def test_a_plain_swap_that_moves_the_average_across_the_land_count_line_is_played() -> None:
+    deck = dataclasses.replace(DECK, average_mana_value=3.49)
+    swaps = [(PLAIN_SPELL, make("Big Spell", mv=12, pips={"B": 1}))]
+    base = play_deck(deck, bracket=3, seed=SEED, games=GAMES)
+    result = compare_deck(deck, base, swaps, seed=SEED)
+    # The average passes 3.5, so bracket 3 keeps hands of three lands where it kept two: every game is played.
+    assert len(result.replayed) == GAMES
 
 
 def test_a_plain_spell_for_a_ramp_card_is_not_short_circuited() -> None:

@@ -177,6 +177,24 @@ SEA_GATE = real(
 )
 
 SOL_RING = real("Sol Ring", "{1}", 1, "Artifact", "{T}: Add {C}{C}.", produced="C", roles=(RAMP,))
+JUNGLE_SHRINE = real(
+    "Jungle Shrine",
+    "",
+    0,
+    "Land",
+    "This land enters tapped.\n{T}: Add {R}, {G}, or {W}.",
+    produced="RGW",
+)
+NOBLE_HIERARCH = real(
+    "Noble Hierarch",
+    "{G}",
+    1,
+    "Creature — Human Druid",
+    "Exalted (Whenever a creature you control attacks alone, that creature gets +1/+1 until end of "
+    "turn.)\n{T}: Add {G}, {W}, or {U}.",
+    produced="GWU",
+    roles=(RAMP,),
+)
 ARCANE_SIGNET = real(
     "Arcane Signet",
     "{2}",
@@ -363,6 +381,50 @@ GREEN_SUNS_ZENITH = real(
     "Search your library for a green creature card with mana value X or less, put it onto the battlefield, "
     "then shuffle. Shuffle Green Sun's Zenith into its owner's library.",
     roles=(Role.RECURSION, TUTOR),
+)
+RECRUITER_OF_THE_GUARD = real(
+    "Recruiter of the Guard",
+    "{2}{W}",
+    3,
+    "Creature — Human Soldier",
+    "When this creature enters, you may search your library for a creature card with toughness 2 or less, "
+    "reveal it, put it into your hand, then shuffle.",
+    roles=(TUTOR,),
+)
+IMPERIAL_RECRUITER = real(
+    "Imperial Recruiter",
+    "{2}{R}",
+    3,
+    "Creature — Human Advisor",
+    "When this creature enters, search your library for a creature card with power 2 or less, reveal it, "
+    "put it into your hand, then shuffle.",
+    roles=(TUTOR,),
+)
+TROPHY_MAGE = real(
+    "Trophy Mage",
+    "{2}{U}",
+    3,
+    "Creature — Human Wizard",
+    "When this creature enters, you may search your library for an artifact card with mana value 3, "
+    "reveal it, put it into your hand, then shuffle.",
+    roles=(TUTOR,),
+)
+FIERCE_EMPATH = real(
+    "Fierce Empath",
+    "{2}{G}",
+    3,
+    "Creature — Elf Druid",
+    "When this creature enters, you may search your library for a creature card with mana value 6 or "
+    "greater, reveal it, put it into your hand, then shuffle.",
+    roles=(TUTOR,),
+)
+TIME_OF_NEED = real(
+    "Time of Need",
+    "{1}{G}",
+    2,
+    "Sorcery",
+    "Search your library for a legendary creature card, reveal it, put it into your hand, then shuffle.",
+    roles=(TUTOR,),
 )
 FINALE = real(
     "Finale of Devastation",
@@ -749,6 +811,15 @@ CROP_ROTATION = real(
     "that "
     "card onto the battlefield, then shuffle.",
 )
+TINKER = real(
+    "Tinker",
+    "{2}{U}",
+    3,
+    "Sorcery",
+    "As an additional cost to cast this spell, sacrifice an artifact.\nSearch your library for an artifact "
+    "card, put it onto the battlefield, then shuffle.",
+    roles=(TUTOR,),
+)
 PATH_TO_EXILE = real(
     "Path to Exile",
     "{W}",
@@ -994,6 +1065,15 @@ BREEDING_POOL = real(
     produced="GU",
     identity="GU",
 )
+BANT_PANORAMA = real(
+    "Bant Panorama",
+    "",
+    0,
+    "Land",
+    "{T}: Add {C}.\n{1}, {T}, Sacrifice this land: Search your library for a basic Forest, Plains, or "
+    "Island card, put it onto the battlefield tapped, then shuffle.",
+    produced="C",
+)
 WINDSWEPT_HEATH = real(
     "Windswept Heath",
     "",
@@ -1017,6 +1097,12 @@ def test_a_fetch_land_finds_only_lands_of_the_types_it_names() -> None:
     deck = build(WINDSWEPT_HEATH, WATERY_GRAVE, BREEDING_POOL, FOREST, commander=GLARB)
     # Forest or Plains: the Forest and Breeding Pool, not the Island-Swamp.
     assert card_named(deck, "Windswept Heath").land == LandFace(frozenset("GU"), tapped=False)
+
+
+def test_a_panorama_finds_the_basics_of_its_types_and_no_typed_nonbasic_land() -> None:
+    deck = build(BANT_PANORAMA, WATERY_GRAVE)
+    # Basic Forest, Plains or Island: G, W and U, plus its own colourless; Watery Grave's Swamp adds no B.
+    assert card_named(deck, "Bant Panorama").land == LandFace(frozenset("CGWU"), tapped=True)
 
 
 def test_a_fetch_land_for_any_basic_keeps_its_reading_beside_typed_lands() -> None:
@@ -1095,6 +1181,14 @@ def test_arcane_signet_makes_any_colour_of_the_commanders_identity() -> None:
     )
 
 
+def test_a_choice_of_coloured_mana_is_one_mana_not_one_per_option() -> None:
+    shrine = one(JUNGLE_SHRINE)
+    assert shrine.land == LandFace(frozenset("RGW"), tapped=True, amount=1)
+    hierarch = one(NOBLE_HIERARCH)
+    assert hierarch.mana == ManaAbility(1, frozenset("GWU"), delayed=True, ritual=False)
+    assert one(SOL_RING).mana == ManaAbility(2, frozenset("C"), delayed=False, ritual=False)
+
+
 def test_a_mana_creature_is_delayed_by_summoning_sickness() -> None:
     elves = one(LLANOWAR)
     assert elves.mana == ManaAbility(1, frozenset("G"), delayed=True, ritual=False)
@@ -1144,12 +1238,29 @@ def test_cultivate_puts_one_land_tapped_and_one_in_hand_and_is_no_tutor() -> Non
 
 def test_land_ramp_reads_basics_typed_lands_tapped_and_untapped() -> None:
     assert one(RAMPANT_GROWTH).land_ramp == LandRamp(1, basic_only=True, destination=LandDestination.TAPPED)
-    assert one(NATURES_LORE).land_ramp == LandRamp(1, basic_only=False, destination=LandDestination.UNTAPPED)
-    assert one(FARSEEK).land_ramp == LandRamp(1, basic_only=False, destination=LandDestination.TAPPED)
-    assert one(SKYSHROUD_CLAIM).land_ramp == LandRamp(
-        2, basic_only=False, destination=LandDestination.UNTAPPED
+    forest = frozenset({"forest"})
+    assert one(NATURES_LORE).land_ramp == LandRamp(
+        1, basic_only=False, destination=LandDestination.UNTAPPED, land_types=forest
     )
-    assert one(WOOD_ELVES).land_ramp == LandRamp(1, basic_only=False, destination=LandDestination.UNTAPPED)
+    assert one(FARSEEK).land_ramp == LandRamp(
+        1,
+        basic_only=False,
+        destination=LandDestination.TAPPED,
+        land_types=frozenset({"plains", "island", "swamp", "mountain"}),
+    )
+    assert one(SKYSHROUD_CLAIM).land_ramp == LandRamp(
+        2, basic_only=False, destination=LandDestination.UNTAPPED, land_types=forest
+    )
+    assert one(WOOD_ELVES).land_ramp == LandRamp(
+        1, basic_only=False, destination=LandDestination.UNTAPPED, land_types=forest
+    )
+
+
+def test_a_land_record_carries_its_basic_land_types() -> None:
+    assert one(FOREST).land_types == {"forest"}
+    assert one(BREEDING_POOL).land_types == {"forest", "island"}
+    assert one(COMMAND_TOWER).land_types == frozenset()
+    assert one(SOL_RING).land_types == frozenset()
 
 
 def test_a_permanent_that_sacrifices_itself_for_lands_carries_its_activation_cost() -> None:
@@ -1197,6 +1308,17 @@ def test_a_search_is_a_tutor_only_when_the_tagger_says_so() -> None:
     card = one(untagged)
     assert card.tutor is None
     assert card.modelled
+
+
+@pytest.mark.parametrize(
+    "tutor",
+    [RECRUITER_OF_THE_GUARD, IMPERIAL_RECRUITER, TROPHY_MAGE, FIERCE_EMPATH, TIME_OF_NEED],
+    ids=lambda t: t.mana.name,
+)
+def test_a_search_restricted_beyond_card_type_and_a_mana_value_ceiling_is_not_modelled(tutor: Real) -> None:
+    card = one(tutor)
+    assert card.tutor is None
+    assert not card.modelled
 
 
 @pytest.mark.parametrize("tutor", [SURVIVAL, ENTOMB], ids=lambda t: t.mana.name)
@@ -1429,11 +1551,16 @@ def test_a_tutor_limited_by_the_sacrificed_creature_carries_the_bonus() -> None:
     assert evolution.needs_sacrifice
 
 
-def test_a_land_search_with_a_sacrifice_cost_is_land_ramp_that_needs_one() -> None:
+def test_a_search_that_sacrifices_a_land_or_an_artifact_is_not_modelled() -> None:
     rotation = one(CROP_ROTATION)
-    assert rotation.land_ramp == LandRamp(1, basic_only=False, destination=LandDestination.UNTAPPED)
-    assert rotation.needs_sacrifice
-    assert rotation.modelled
+    assert not rotation.modelled
+    assert not rotation.needs_sacrifice
+    assert rotation.land_ramp is None
+    tinker = one(TINKER)
+    assert not tinker.modelled
+    assert not tinker.needs_sacrifice
+    assert tinker.tutor is None
+    assert build(CROP_ROTATION, TINKER, DIABOLIC_INTENT).not_modelled == ("Crop Rotation", "Tinker")
 
 
 # --- cards the reading cannot place ---------------------------------------------------------------

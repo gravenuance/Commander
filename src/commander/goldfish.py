@@ -313,6 +313,7 @@ class _Card:
         "land_amount",
         "land_mask",
         "land_tapped",
+        "land_types",
         "mana_amount",
         "mana_mask",
         "mana_perm",
@@ -352,6 +353,7 @@ class _Card:
         self.land_mask = unit_mask(land.colours) if land is not None else 0
         self.land_amount = land.amount if land is not None else 0
         self.land_tapped = land is not None and land.tapped
+        self.land_types = card.land_types
         name = card.name.casefold()
         self.basic = name in _BASICS or name.startswith("snow-covered ")
         self.creature = CardKind.CREATURE in card.kinds
@@ -371,7 +373,7 @@ class _Card:
 
     def _rank(self) -> int:
         card = self.src
-        if self.is_land or card.finisher or self.ritual:
+        if self.is_land or card.finisher or self.ritual or (card.combo and not card.permanent):
             return _HELD
         cost = min(self.cost.total, _RANK_SPAN)
         if self.mana_perm or card.land_ramp is not None or card.extra_land_drops:
@@ -381,7 +383,7 @@ class _Card:
         if card.draw is not None:
             return _DRAW_RANK + cost
         if card.combo:
-            return _COMBO_RANK + cost if card.permanent else _HELD
+            return _COMBO_RANK + cost
         return _OTHER_RANK + _RANK_SPAN - min(card.mana_value, _RANK_SPAN)
 
 
@@ -569,6 +571,7 @@ class _Game:
         "screw",
         "searched",
         "shuffles",
+        "sick",
         "top",
         "turn",
         "tutor_look",
@@ -587,6 +590,8 @@ class _Game:
         self.pool: list[int] = []
         self.units: list[int] = []
         self.pending: list[int] = []
+        # Mana creatures cast this turn, whose mana sits in `pending` until the next turn.
+        self.sick: set[int] = set()
         self.creatures: list[tuple[int, int, int]] = []
         self.engines = 0
         self.extra_drops = 0
@@ -664,6 +669,7 @@ class _Game:
             pool.extend(self.pending)
             self.pending.clear()
             pool.sort(key=_POP_KEY)
+        self.sick.clear()
         self._draw(1 + self.engines)
         self.drops_left = 1 + self.extra_drops
         self.units = list(pool)
@@ -747,14 +753,20 @@ class _Game:
             extra = extra or have < card.cost.total <= have + 1
         return want, want & ~cover, extra
 
-    def _find_land(self, *, basic_only: bool) -> int:
-        """The index in the library of the land to fetch, or -1: the one best for the colours wanted."""
+    def _find_land(self, *, basic_only: bool, types: frozenset[str]) -> int:
+        """The index in the library of the land to fetch, or -1: the one best for the colours wanted, among
+        the lands with one of the basic land types (any land when none are named)."""
         cards = self.s.cards
         first: dict[int, int] = {}
         for index in range(self.top, len(self.lib)):
             cid = self.lib[index]
             card = cards[cid]
-            if cid not in first and card.is_land and (card.basic or not basic_only):
+            if (
+                cid not in first
+                and card.is_land
+                and (card.basic or not basic_only)
+                and (not types or not types.isdisjoint(card.land_types))
+            ):
                 first[cid] = index
         if not first:
             return -1
@@ -795,11 +807,14 @@ class _Game:
         self.units.extend(added)
         self.units.sort(key=_POP_KEY)
 
-    def _remove_source(self, mask: int, count: int) -> None:
+    def _remove_creature_mana(self, cid: int, mask: int, count: int) -> None:
+        """Take a sacrificed mana creature's mana away from where it sits: next turn's mana while it is
+        summoning sick, else the pool. Mana already in the turn's units can still be spent: the creature was
+        tapped for it before it was sacrificed."""
+        source = self.pending if cid in self.sick else self.pool
         for _ in range(count):
-            for source in (self.pool, self.units, self.pending):
-                if mask in source:
-                    source.remove(mask)
+            if mask in source:
+                source.remove(mask)
 
     def _plan(self, units: list[int], cost: Cost) -> tuple[int, ...] | None:
         """The rituals and spirit guides to use first for a cost to be paid: none when the mana is enough,
@@ -939,6 +954,7 @@ class _Game:
             self.creatures.append((rank, card.mv, cid))
         if card.mana_perm:
             if card.delayed:
+                self.sick.add(cid)
                 self.pending.extend([card.mana_mask] * card.mana_amount)
             else:
                 self._add_now(card.mana_mask, card.mana_amount)
@@ -962,7 +978,7 @@ class _Game:
         self.bf.discard(cid)
         if rank == 1:
             card = self.s.cards[cid]
-            self._remove_source(card.mana_mask, card.mana_amount)
+            self._remove_creature_mana(cid, card.mana_mask, card.mana_amount)
         return mv
 
     # -- searching ----------------------------------------------------------------------------------------
@@ -974,7 +990,7 @@ class _Game:
         self.searched = self.land_search = True
         cards = self.s.cards
         for index in range(ramp.count):
-            found = self._find_land(basic_only=ramp.basic_only)
+            found = self._find_land(basic_only=ramp.basic_only, types=ramp.land_types)
             if found < 0:
                 return
             cid = self.lib.pop(found)
@@ -1335,6 +1351,18 @@ def _is_plain(card: GoldfishCard) -> bool:
     )
 
 
+def _plays_alike(cut: GoldfishCard, incoming: GoldfishCard) -> bool:
+    """Whether two plain spells are played the same in every game: the same mana value, colours and
+    creature status, which are all a plain spell brings to the game."""
+    return (
+        _is_plain(cut)
+        and _is_plain(incoming)
+        and cut.mana_value == incoming.mana_value
+        and cut.pips == incoming.pips
+        and (CardKind.CREATURE in cut.kinds) == (CardKind.CREATURE in incoming.kinds)
+    )
+
+
 def _cuts(slots: Sequence[GoldfishCard], swaps: Sequence[Swap]) -> dict[str, GoldfishCard]:
     """The incoming card for the key of each card cut."""
     held = {card_key(card.name) for card in slots}
@@ -1385,20 +1413,22 @@ def compare(
     plays out as before; only the others are played again. Their outcomes join the base ones to make the
     report `simulate` would give for the swapped slots. A swap that changes the keep rule or the numbering
     of the cards plays every game again. With `skip_irrelevant`, a swap of plain spells for plain spells
-    (`_is_plain`) is taken to change nothing and plays nothing.
+    that play alike (`_plays_alike`) under the same rules changes nothing and plays nothing.
     """
     cuts = _cuts(slots, swaps)
     held = {card_key(card.name): card for card in slots}
-    if not cuts or (
-        skip_irrelevant and all(_is_plain(held[key]) and _is_plain(card) for key, card in cuts.items())
-    ):
-        return GoldfishComparison(base, base, _changes(base, base, ()), ())
+    unchanged = GoldfishComparison(base, base, _changes(base, base, ()), ())
+    if not cuts:
+        return unchanged
     after_slots = [cuts.get(card_key(card.name), card) for card in slots]
     before = _Setup(slots, commanders, combos, base.bracket, average_mana_value)
     after = _Setup(
         after_slots, commanders, combos, base.bracket, swapped_average(slots, swaps, average_mana_value)
     )
-    if _same_rules(before, after):
+    same_rules = _same_rules(before, after)
+    if skip_irrelevant and same_rules and all(_plays_alike(held[key], card) for key, card in cuts.items()):
+        return unchanged
+    if same_rules:
         cut_slots = frozenset(i for i, card in enumerate(slots) if card_key(card.name) in cuts)
         replayed = _reached(
             base, frozenset(before.ids[i] for i in cut_slots), _looked_at(before, after, cut_slots)

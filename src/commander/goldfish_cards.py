@@ -117,6 +117,8 @@ class LandRamp:
     to_hand: int = 0
     # Mana to pay after casting a permanent that sacrifices itself to search (Wayfarer's Bauble).
     activation: int = 0
+    # The basic land types a found land must have (Nature's Lore: forest); empty for any land.
+    land_types: frozenset[str] = frozenset()
 
 
 @dataclass(slots=True, frozen=True)
@@ -173,6 +175,8 @@ class GoldfishCard:
     # Casting it needs a creature to sacrifice (Diabolic Intent, Culling the Weak).
     needs_sacrifice: bool = False
     entry_cost: EntryCost | None = None
+    # The basic land types of a land (Breeding Pool: forest and island), which a typed search matches.
+    land_types: frozenset[str] = frozenset()
 
     @property
     def permanent(self) -> bool:
@@ -387,17 +391,22 @@ def _split_combos(
 # --- one card ---------------------------------------------------------------------------------------------
 
 _KIND_WORDS = {kind.value: kind for kind in CardKind}
+# The additional cost of a creature to sacrifice, which the game meets from its creatures. A sacrifice of
+# anything else (a land, an artifact) is a cost it does not model.
+_SACRIFICE_CREATURE = (
+    r"sacrifice (?:an?|one) (?:(?:\w+ )?creature|artifact or creature|creature or artifact)\."
+)
+_SACRIFICE_COST = re.compile(rf"as an additional cost to cast this \w+, {_SACRIFICE_CREATURE}")
 # Wording that makes a card more than a plain spell with the cost printed on it: a cost it is cast for
 # instead, a cost reduction, or a cost to pay besides mana and a creature to sacrifice.
 _UNMODELLED = re.compile(
     r"costs? (?:\{[^}]+\})+ less|less to cast|rather than pay (?:this spell's|its) mana cost"
     r"|cast this spell without paying|^(?:affinity|convoke|delve|improvise|emerge|undaunted)\b"
-    r"|as an additional cost to cast this \w+, (?!you may|sacrifice (?:an?|one) )",
+    rf"|as an additional cost to cast this \w+, (?!you may|{_SACRIFICE_CREATURE})",
     re.MULTILINE,
 )
 # A land that returns a land to the hand on entering (Karoo).
 _BOUNCE_LAND = re.compile(r"return (?:an? )?(?:untapped )?\w+ you control to its owner's hand")
-_SACRIFICE_COST = re.compile(r"as an additional cost to cast this \w+, sacrifice (?:an?|one) ")
 _EXTRA_LAND_DROPS = re.compile(r"you may play (an|one|two|three) additional lands? on each of your turns")
 # A card from the hand a permanent costs as it enters: Chrome Mox's imprint, Mox Diamond.
 _ENTRY_COSTS = (
@@ -438,7 +447,7 @@ def _compile_card(
     )
     if info_is_land(info):
         land, understood = _land_face(info, context)
-        return replace(card, land=land, modelled=understood)
+        return replace(card, land=land, land_types=_land_types(info), modelled=understood)
     card = _read_spell(card, info, _face_text(info, face), context)
     if back_is_land(info.type_line):
         land, understood = _land_face(info, context)
@@ -515,6 +524,8 @@ def _kinds(type_line: str) -> frozenset[CardKind]:
 # A mana ability or a spell's added mana, from the start of a line: an optional cost, then "add".
 _MANA_ABILITY = re.compile(r"(?:(?P<cost>[^:]+): )?add (?P<what>[^.]*)\.")
 _SYMBOL = re.compile(r"\{([wubrgc]|\d+)\}")
+# "Add {R}, {G}, or {W}": one mana of a choice, so the options are split before their symbols are counted.
+_MANA_OPTION_SEPARATOR = re.compile(r",\s*(?:or\s+)?|\s+or\s+")
 _NUMBER_WORDS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7}
 _ANY_COLOUR = re.compile(
     r"\bany (?:one )?(?:color|type)\b|the chosen colou?r|any of the exiled card's colou?rs"
@@ -572,7 +583,7 @@ def _net_mana(cost: _Cost, what: str, identity: frozenset[str]) -> tuple[int, fr
     else:
         made = 0
         found: set[str] = set()
-        for option in what.split(" or "):
+        for option in _MANA_OPTION_SEPARATOR.split(what):
             symbols = _SYMBOL.findall(option)
             made = max(made, sum(int(s) if s.isdigit() else 1 for s in symbols))
             found.update(_COLOURLESS if s.isdigit() else s.upper() for s in symbols)
@@ -611,12 +622,17 @@ def _land_face(info: CardMana, context: _Context) -> tuple[LandFace, bool]:
     return LandFace(colours, tapped, amount), _land_understood(text)
 
 
+_BASIC_SEARCH = re.compile(r"search your library for [^.]*\bbasic\b")
+
+
 def _fetchable_colours(text: str, context: _Context) -> frozenset[str]:
     """The colours of the deck's lands that a land searching by basic land type can fetch: those with one of
-    the types it names. Its own colours (the types' basic lands) are added by the caller's reading."""
+    the types it names. A search for basic lands finds only those types' basics."""
     if "search your library" not in text:
         return frozenset()
     searched = {land_type for land_type in BASIC_TYPES if land_type in text}
+    if _BASIC_SEARCH.search(text):
+        return frozenset(BASIC_TYPES[land_type] for land_type in searched)
     return frozenset(c for types, made in context.typed_lands if types & searched for c in made)
 
 
@@ -690,6 +706,7 @@ _TUTOR_KINDS = {
     )
 }
 _VALUE_LIMIT = re.compile(r"mana value (x|\d+) or less")
+_UNSUPPORTED_CONDITION = re.compile(r"\bwith\b(?! mana value (?:x|\d+) or less\b)")
 _SACRIFICE_VALUE = re.compile(r"where x is (\d+) plus the sacrificed creature's mana value")
 _TAPPED = re.compile(r"\btapped\b")
 _DRAW = re.compile(r"\bdraws? (?:(?P<n>an?|one|two|three|four|five|six|seven|x) cards?|cards)")
@@ -742,17 +759,24 @@ def _land_ramp(search: _Search | None, kinds: frozenset[CardKind]) -> LandRamp |
         destination = LandDestination.TAPPED
     else:
         destination = LandDestination.UNTAPPED
-    return LandRamp(count, "basic" in words, destination, to_hand, cost.mana)
+    # "A Forest card" names the types; "a land card" or "a basic land card" takes any.
+    types = frozenset[str]() if "land" in words else frozenset(BASIC_TYPES).intersection(words)
+    return LandRamp(count, "basic" in words, destination, to_hand, cost.mana, types)
 
 
 def _tutor(search: _Search | None) -> Tutor | None:
     """A search for a card of some type, when the game can follow where it goes."""
     if search is None or search.cost or search.repeating:
         return None
-    words = [w for w in re.findall(r"[a-z]+", search.head) if w not in _FILLER]
+    named = re.findall(r"[a-z]+", search.head)
+    words = [w for w in named if w not in _FILLER]
     finds = frozenset(_TUTOR_KINDS[w] for w in words if w in _TUTOR_KINDS)
     destination = _tutor_destination(search.rest)
-    if len(finds) != len(words) or destination is None:
+    if len(finds) != len(words) or destination is None or "legendary" in named:
+        return None
+    # What the card must have, before the comma that goes on to reveal and place it.
+    condition = re.split(r"\bcards?\b", search.sentence, maxsplit=1)[-1].partition(",")[0]
+    if _UNSUPPORTED_CONDITION.search(condition):
         return None
     limit = _VALUE_LIMIT.search(search.rest)
     over = _SACRIFICE_VALUE.search(search.rest)
