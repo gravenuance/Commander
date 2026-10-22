@@ -101,3 +101,23 @@ def test_the_reload_after_a_sync_asks_for_the_meta_once() -> None:
     return asked("meta");
     """)
     assert seen == 1
+
+
+def test_a_poll_that_fails_for_a_reason_other_than_the_bridge_reports_it_to_the_app_log() -> None:
+    seen = run("""
+    stub.log_page_error = async () => ({});
+    stub.deck = async () => ({ ...view("new"), tags: null });
+    await poll();
+    return calls.filter((c) => c[0] === "log_page_error").map((c) => c[2]);
+    """)
+    assert seen == ["caught"]
+
+
+def test_a_poll_whose_reload_the_bridge_refused_does_not_report_to_the_app_log() -> None:
+    seen = run("""
+    stub.log_page_error = async () => ({});
+    stub.deck = async () => ({ error: "busy" });
+    await poll();
+    return asked("log_page_error");
+    """)
+    assert seen == 0

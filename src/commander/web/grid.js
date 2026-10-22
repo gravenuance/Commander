@@ -210,7 +210,7 @@ async function stepCount(name, step, aside = null) {
       else if (change.count === 0) showStatus(`${name}: queued to come out`);
       else showStatus(`${name}: ${change.was} → ${change.count}, queued`);
       await refresh();
-    } catch { /* shown in the status line */ }
+    } catch (error) { noteFailure(error); }
   });
   // The grid was rebuilt; keep the keyboard on this card's + or -, or the other one when it is gone.
   const again = gridCard(name, aside)?.querySelector(".count-tools");
@@ -366,7 +366,7 @@ async function chooseLabel(name, current, label) {
       await api("set_label", state.current, name, label);
       showStatus(label ? `${name}: ${label}` : `${name}: no label`);
       await loadDeck();
-    } catch { /* shown in the status line */ }
+    } catch (error) { noteFailure(error); }
   });
   flag.classList.remove("saving");
   // The grid was rebuilt around the new label; keep the keyboard on this card's flag.

@@ -530,7 +530,7 @@ async function addPlain(card, category) {
       state.selected = null;
       showStatus(`${card.name} queued to add to ${category}`);
       await refresh();
-    } catch { /* shown in the status line */ }
+    } catch (error) { noteFailure(error); }
   });
 }
 
@@ -545,7 +545,7 @@ async function swapIn(cardId, target) {
       state.selected = null;
       showStatus(`${known.card.name} replaces ${target}`);
       await refresh();
-    } catch { /* the status line already says what went wrong */ }
+    } catch (error) { noteFailure(error); }
   });
 }
 
@@ -602,7 +602,7 @@ async function decide(card, decision, note = "", trigger = null) {
       if (decision === "reject") showStatus(`Turned down ${card.name}`);
       await refresh();
       refocusNear(spot);
-    } catch { /* shown in the status line */ }
+    } catch (error) { noteFailure(error); }
   });
 }
 
@@ -640,6 +640,6 @@ async function propose(name) {
         select(answer.card.id);
       }
       showStatus(shown ? `${answer.card.name} is under consideration` : `${answer.card.name} is not under consideration`, !shown);
-    } catch { /* shown in the status line */ }
+    } catch (error) { noteFailure(error); }
   });
 }

@@ -31,7 +31,10 @@ async function poll() {
       state.metaStamp = answer.meta;
       if (metaChanged) await metaPanel.load();
     }
-  } catch { /* a missed poll is retried on the next tick */ }
+  } catch (error) {
+    // A missed poll is retried on the next tick.
+    noteFailure(error);
+  }
   setTimeout(poll, POLL_MS);
 }
 

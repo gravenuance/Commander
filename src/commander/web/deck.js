@@ -260,7 +260,7 @@ async function exportDeck() {
     const answer = await api("export", state.current);
     await copyText(answer.text);
     showStatus(`Copied ${answer.cards} cards for TopDeck.gg; queued changes are not included`);
-  } catch { /* shown in the status line */ }
+  } catch (error) { noteFailure(error); }
 }
 
 // Copies every deck's Don't Have cards as a Cardmarket wants list; nothing is marked ordered.
@@ -274,7 +274,7 @@ async function copyCardsToBuy() {
     }
     await copyText(answer.text);
     showStatus(`Copied ${answer.cards} cards for Cardmarket${skipped}`);
-  } catch { /* shown in the status line */ }
+  } catch (error) { noteFailure(error); }
 }
 
 async function copyText(text) {

@@ -77,6 +77,12 @@ function reportPageError(message, source, line, stack) {
     if (sent && sent.catch) sent.catch(() => {});
   } catch { /* nothing more can be done when the bridge itself fails */ }
 }
+// For a catch that leaves a bridge error to the status line: any other error is a bug in a script, so it goes
+// to the app's log instead of vanishing.
+function noteFailure(error) {
+  if (error && error.fromBridge) return;
+  reportPageError(error instanceof Error ? error.message : String(error), "caught", 0, error && error.stack);
+}
 window.addEventListener("error", (event) => {
   reportPageError(event.message, event.filename, event.lineno, event.error && event.error.stack);
 });
@@ -160,7 +166,7 @@ function panel(loader, renderer, { wanted = () => true, keyOf = JSON.stringify }
     try {
       const answer = await loader(deck);
       if (deck === state.current && mine === sent) render(deck, answer);
-    } catch { /* shown in the status line */ }
+    } catch (error) { noteFailure(error); }
   }
   // Drops what is shown, so the next answer draws even for the deck that was on show.
   function forget() {
@@ -197,7 +203,7 @@ function combobox(input, list, find, pick) {
     const mine = ++sent;
     timer = setTimeout(async () => {
       let found = [];
-      try { found = await find(input.value); } catch { /* the status line says what went wrong */ }
+      try { found = await find(input.value); } catch (error) { noteFailure(error); }
       if (mine !== sent) return;
       if (document.activeElement !== input) { close(); return; }
       items = found;

@@ -204,3 +204,26 @@ def test_a_category_added_by_a_sync_is_offered_to_a_card_selected_afterwards() -
     return texts(state.tiles.get("a").node.querySelector(".add-plain select"), "option");
     """)
     assert seen == ["Draw", "Ramp"]
+
+
+def test_a_failure_in_the_refresh_after_a_decision_reaches_the_app_log_not_only_the_page() -> None:
+    seen = run("""
+    stub.log_page_error = async () => ({});
+    showBoard(names(["a", "b"]));
+    stub.deck = async () => ({ ...deckView(), cards: null });
+    await turnDown("a");
+    return calls.filter((c) => c[0] === "log_page_error").map((c) => [c[1].slice(0, 30), c[2]]);
+    """)
+    assert seen == [["Cannot read properties of null", "caught"]]
+
+
+def test_a_refusal_from_the_bridge_on_a_decision_is_shown_but_not_sent_to_the_app_log() -> None:
+    seen = run("""
+    stub.log_page_error = async () => ({});
+    showBoard(names(["a", "b"]));
+    stub.decide = async () => ({ error: "Wait for the sync to finish" });
+    await turnDown("a");
+    return { sent: calls.filter((c) => c[0] === "log_page_error").length,
+      status: $("status-text").textContent };
+    """)
+    assert seen == {"sent": 0, "status": "Wait for the sync to finish"}
