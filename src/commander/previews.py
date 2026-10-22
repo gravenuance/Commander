@@ -21,7 +21,7 @@ from commander.ideas import dominant_tags
 from commander.jsonshape import ShapeError, as_object, req_bool, req_int, req_list, req_str, str_list
 from commander.models import Deck
 from commander.net import NetworkError, Pacer
-from commander.scryfall import ScryfallClient, ScryfallError, SetCard, SetInfo
+from commander.scryfall import ScryfallClient, ScryfallError, SetCard, SetInfo, is_scryfall_id
 from commander.suggest import deck_identity, short_roles
 
 log = logging.getLogger(__name__)
@@ -76,6 +76,12 @@ class PreviewFit:
     fills_short_role: bool
 
 
+def local_day(moment: datetime) -> date:
+    """The viewer's calendar day at moment: release dates are calendar days, and a card is out on its day
+    wherever the owner is, not on UTC's."""
+    return moment.astimezone().date()
+
+
 def upcoming_sets(sets: Iterable[SetInfo], today: date) -> list[SetInfo]:
     """Sets bringing new cards that are not out yet and already have cards on Scryfall, soonest first."""
     found = [s for s in sets if s.brings_new_cards and s.released_at > today and s.card_count > 0]
@@ -94,7 +100,9 @@ def probe_previews(
     """Search the cards of each upcoming set, once a UTC day (or again, with force), and replace the cache
     with the previews among them; with no upcoming set the cache is emptied. A failure keeps the last cache
     and comes back as FAILED, already logged."""
-    today = now().astimezone(UTC).date()
+    moment = now()
+    # Once a UTC day, like the card data's check; what is out yet goes by the local day.
+    today, local = moment.astimezone(UTC).date(), local_day(moment)
     if not force and read_previews(folder).probed_on == today:
         return PreviewProbe(ProbeState.DONE_TODAY)
     started = monotonic()
@@ -106,11 +114,11 @@ def probe_previews(
         requests += 1
 
     try:
-        upcoming = upcoming_sets(client.sets(), today)
+        upcoming = upcoming_sets(client.sets(), local)
         cards: dict[str, SetCard] = {}
         for found in upcoming:
             for card in client.set_cards(found.code, before_each=before_each, max_pages=MAX_PAGES_PER_SET):
-                if is_preview(card, today):
+                if is_preview(card, local):
                     # A card in a set and its Commander decks alike keeps its first printing.
                     cards.setdefault(card.oracle_id, card)
         write_previews(folder, PreviewCache(today, tuple(cards.values())))
@@ -167,13 +175,16 @@ def fitting_previews(
     targets: Mapping[Role, int],
 ) -> list[PreviewFit]:
     """The previews in the deck's colour identity that match its dominant tags, the most tags first, then
-    those filling a role the deck runs short of, then by name; at most SHOWN."""
+    those filling a role the deck runs short of, then by name; at most SHOWN. today is the local day."""
     identity = deck_identity(main)
     if identity is None:
         return []
     live = [c for c in cards if is_preview(c, today) and set(c.color_identity) <= set(identity)]
+    # The theme work only when there is something to match it against.
+    if not live:
+        return []
     names = dominant_tags(deck, profile, db)
-    if not live or not names:
+    if not names:
         return []
     specs = {
         t.name: t.spec
@@ -239,6 +250,9 @@ def _cache_from_json(raw: object) -> PreviewCache:
     for index, item in enumerate(req_list(obj, "cards", "previews")):
         where = f"previews.cards[{index}]"
         card = as_object(item, where)
+        if not is_scryfall_id(req_str(card, "scryfallId", where)):
+            log.warning("%s (%s) skipped: not a Scryfall id", where, card.get("name"))
+            continue
         cards.append(
             SetCard(
                 scryfall_id=req_str(card, "scryfallId", where),

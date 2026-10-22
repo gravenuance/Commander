@@ -11,7 +11,7 @@ import threading
 from collections.abc import Callable, Collection, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import datetime
 from enum import Enum
 from functools import wraps
 from pathlib import Path
@@ -99,7 +99,7 @@ from commander.metajson import report_json
 from commander.metapanel import combo_groups, key_card_rows, stopper_rows, untouched
 from commander.models import Deck
 from commander.net import Fetcher, NetworkError, Pacer
-from commander.previews import PREVIEWS_FILE, PreviewFit, fitting_previews, read_previews
+from commander.previews import PREVIEWS_FILE, PreviewFit, fitting_previews, local_day, read_previews
 from commander.profileedit import save_settings
 from commander.spellbook import SpellbookClient
 from commander.store import SNAPSHOT_FILE, StoredDeck, Workspace, WorkspaceError
@@ -468,6 +468,7 @@ class Desk:
         self._rules.clear()
         self._rows.clear()
         self._reports.clear()
+        self._previews.clear()
         with self._sync_lock:
             self._open_deck = None
 
@@ -927,18 +928,24 @@ class Desk:
         self, stored: StoredDeck, main: Sequence[ResolvedCard], profile: Profile, db: CardDb
     ) -> list[PreviewFit]:
         """The previews that fit the deck, kept until its snapshot, its profile, the probe's cache, the card
-        data or the day changes."""
-        today = self._now().astimezone(UTC).date()
+        data, the targets or the local day change."""
+        today = local_day(self._now())
+        targets = {**DEFAULT_TARGETS, **self._settings.targets, **profile.targets}
         stamp = (
             f"{files_stamp(stored.folder, ('deck.json', 'profile.toml'))}"
             f"|{files_stamp(self._settings.cache, (PREVIEWS_FILE,))}|{self._card_data_stamp()}|{today}"
+            f"|{sorted((role.value, n) for role, n in self._settings.targets.items())}"
         )
         known = self._previews.get(stored.deck.id)
         if known is not None and known[0] == stamp:
             return known[1]
         cards = read_previews(self._settings.cache).cards
-        targets = {**DEFAULT_TARGETS, **self._settings.targets, **profile.targets}
-        fits = fitting_previews(stored.deck, main, profile, db, cards, today=today, targets=targets)
+        # Between preview seasons the cache is empty, and a deck view costs nothing more.
+        fits = (
+            fitting_previews(stored.deck, main, profile, db, cards, today=today, targets=targets)
+            if cards
+            else []
+        )
         self._previews[stored.deck.id] = (stamp, fits)
         return fits
 

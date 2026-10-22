@@ -6,12 +6,13 @@ import logging
 import shutil
 from collections.abc import Iterator
 from dataclasses import replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
 import pytest
 
+from commander import desk as desk_module
 from commander import previews as previews_module
 from commander import syncrun
 from commander.carddb import CARD_DB_FILE, CardDb, Role
@@ -23,6 +24,7 @@ from commander.net import Fetcher, Pacer
 from commander.previews import (
     PREVIEWS_FILE,
     PreviewCache,
+    PreviewProbe,
     ProbeState,
     fitting_previews,
     probe_previews,
@@ -92,6 +94,17 @@ def ramp_with_munitions() -> str:
 @pytest.fixture(scope="module")
 def previews_db_file(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return build_card_db(tmp_path_factory.mktemp("previewsdb"), [TREASURE_TAG, ramp_with_munitions()])
+
+
+@pytest.fixture(autouse=True)
+def utc_is_local(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The local day is the UTC day here, so the tests read the same in any time zone."""
+
+    def utc_day(moment: datetime) -> date:
+        return moment.astimezone(UTC).date()
+
+    monkeypatch.setattr(previews_module, "local_day", utc_day)
+    monkeypatch.setattr(desk_module, "local_day", utc_day)
 
 
 @pytest.fixture
@@ -373,6 +386,42 @@ def test_a_failed_probe_is_a_sync_warning_and_the_sync_carries_on(
     assert read_previews(cache) == kept
 
 
+def test_an_unexpected_error_in_the_probe_is_logged_and_a_warning_not_a_failed_sync(
+    tmp_path: Path, raw_deck: Json, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake = FakeArchidekt()
+    fake.put(raw_deck)
+
+    def downloaded(*_: object, **__: object) -> CardRefresh:
+        return DOWNLOADED
+
+    def broken_probe(*_: object, **__: object) -> PreviewProbe:
+        raise KeyError("released_at")
+
+    monkeypatch.setattr(syncrun, "refresh_card_db", downloaded)
+    monkeypatch.setattr(syncrun, "probe_previews", broken_probe)
+    services = syncrun.SyncServices(
+        fake.client, MemoryTokenStore(), tmp_path / "cache", lambda: NOW, lambda _: Pacer(0)
+    )
+    with caplog.at_level(logging.ERROR, logger="commander.syncrun"):
+        outcome = run_sync(
+            services,
+            Workspace(tmp_path / "decks"),
+            "TESTER",
+            MetaSettings(),
+            SyncOptions(ideas=False),
+            on_progress=lambda _: None,
+        )
+    assert [r.deck_id for r in outcome.results] == [raw_deck["id"]]
+    assert outcome.previews is not None
+    assert outcome.previews.state is ProbeState.FAILED
+    assert [w for w in outcome.warnings if w.startswith("card previews not refreshed (")]
+    [record] = [
+        r for r in caplog.records if r.getMessage().startswith("the card previews probe failed unexpectedly")
+    ]
+    assert record.exc_info is not None
+
+
 def test_a_sync_without_card_data_does_not_probe(tmp_path: Path, raw_deck: Json) -> None:
     fake = FakeArchidekt()
     fake.put(raw_deck)
@@ -445,6 +494,50 @@ def test_the_deck_view_counts_its_previews_and_the_panel_gets_them_to_look_at(
         "fits": ["Treasure"],
     }
     assert str(cards[1]["text"]).startswith("Flash\nEnchant creature")
+
+
+def test_off_season_opening_a_deck_does_no_theme_work_for_previews(
+    desk_settings: DeskSettings, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_theme_work(*_: object, **__: object) -> list[str]:
+        raise AssertionError("dominant_tags ran with no previews cached")
+
+    monkeypatch.setattr(previews_module, "dominant_tags", no_theme_work)
+    write_previews(desk_settings.cache, PreviewCache(TODAY, ()))
+    assert make_desk(desk_settings).deck(int(raw_deck["id"]))["previews"] == 0
+
+
+def test_a_card_leaves_on_its_release_day_by_the_local_date_not_utc(
+    desk_settings: DeskSettings, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 23:30 UTC the day before release is already release day in Central Europe.
+    def central_europe(moment: datetime) -> date:
+        return (moment + timedelta(hours=1)).date()
+
+    monkeypatch.setattr(previews_module, "local_day", central_europe)
+    monkeypatch.setattr(desk_module, "local_day", central_europe)
+    write_previews(desk_settings.cache, PreviewCache(TODAY, parse_search_page(search_page()).cards))
+    desk = Desk(
+        desk_settings,
+        client_factory=FakeArchidekt().client,
+        token_store=MemoryTokenStore(),
+        now=lambda: datetime(2026, 11, 12, 23, 30, tzinfo=UTC),
+        pacer_factory=lambda _: Pacer(0),
+    )
+    assert desk.previews(int(raw_deck["id"])) == {"cards": []}
+
+
+def test_a_card_without_a_valid_scryfall_id_is_skipped_in_the_answer_and_the_cache(tmp_path: Path) -> None:
+    answer = search_page()
+    answer["data"][0]["id"] = ""
+    names = [card.name for card in parse_search_page(answer).cards]
+    assert len(names) == 8
+    assert "Captain's Tutelage" not in names
+    write_previews(tmp_path, PreviewCache(TODAY, parse_search_page(search_page()).cards))
+    stored = json.loads((tmp_path / PREVIEWS_FILE).read_text(encoding="utf-8"))
+    stored["cards"][0]["scryfallId"] = "not-a-uuid"
+    (tmp_path / PREVIEWS_FILE).write_text(json.dumps(stored), encoding="utf-8")
+    assert len(read_previews(tmp_path).cards) == 8
 
 
 def test_the_config_files_targets_decide_which_roles_run_short(

@@ -322,7 +322,12 @@ def _previews_probe(job: Future[PreviewProbe] | None, warnings: list[str]) -> Pr
     """The probe's outcome once it ends; a failed one is a warning, as the sync carries on without it."""
     if job is None:
         return None
-    probe = job.result()
+    try:
+        probe = job.result()
+    except Exception as error:
+        # The previews are an extra: a bug in the probe must not fail a sync whose decks are already in.
+        log.exception("the card previews probe failed unexpectedly; the last previews are kept")
+        probe = PreviewProbe(ProbeState.FAILED, problem=f"unexpected {type(error).__name__}: {error}")
     if probe.state is ProbeState.FAILED:
         warnings.append(f"card previews not refreshed ({probe.problem}); the last ones are kept")
     return probe

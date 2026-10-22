@@ -29,18 +29,19 @@ cards a page with a `next_page` link. Card images come from `cards.scryfall.io`,
 Option 3, decided with the owner on 2026-10-22.
 
 - **When to probe:** the sync checks Scryfall's `/sets` list. A preview season is on when the list has a set
-  that brings new cards (`SetInfo.brings_new_cards`), is not out yet (`released_at` after today, UTC) and
-  already has cards (`card_count` above 0). For each such set the sync searches its cards
-  (`/cards/search?q=e:<code>&unique=cards`, following `next_page`), at most once a day. The `/sets` answer
+  that brings new cards (`SetInfo.brings_new_cards`), is not out yet (`released_at` after the local day)
+  and already has cards (`card_count` above 0). For each such set the sync searches its cards
+  (`/cards/search?q=e:<code>&unique=cards`, following `next_page`), at most once a UTC day. The `/sets` answer
   is read once per sync and shared with the card data's new-set check. With no upcoming set, no card search
   is made.
 - **Pacing and limits:** the probe waits at least 200 ms between its own requests (5 a second, half
   Scryfall's limit) and reads at most 10 pages per set. A `next_page` link that does not point at Scryfall's
   API is refused. Scryfall's 404 for a set with no cards yet means an empty set.
 - **What counts as a preview:** a printed card from the search, not a token or other non-deck layout, whose
-  Commander legality is `not_legal` (a reprint that is already legal is no preview), and whose own release
-  date is still in the future. The cache is read with today's date, so a card leaves the panel on its
-  release day even before the next sync.
+  Commander legality is `not_legal` (a reprint that is already legal is no preview), a valid Scryfall id
+  (its image address is made from it), and whose own release date is after the local day. Release dates are
+  calendar days, so the local day decides, not UTC's. The cache is read with that day, so a card leaves the
+  panel on its release day even before the next sync.
 - **The cache:** `previews.json` beside the card database (`%LOCALAPPDATA%\Commander`), with a format
   version; a file of another version is ignored and rebuilt by the next probe. Each successful probe
   replaces it whole (atomic write), and a probe that finds no upcoming set empties it. A failed probe is

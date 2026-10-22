@@ -10,6 +10,7 @@ import json
 import logging
 import re
 import threading
+import uuid
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -417,10 +418,23 @@ def parse_search_page(raw: object, api_base: str = API_BASE) -> SearchPage:
     return SearchPage(tuple(cards), next_page)
 
 
+def is_scryfall_id(text: str) -> bool:
+    """Whether text is a UUID in Scryfall's form, lowercase with hyphens."""
+    try:
+        return str(uuid.UUID(text)) == text
+    except ValueError:
+        return False
+
+
 def parse_set_card(raw: object, where: str) -> SetCard | None:
     card = as_object(raw, where)
     layout = req_str(card, "layout", where)
     if layout in _NON_CARD_LAYOUTS or card.get("digital") is True:
+        return None
+    scryfall_id = req_str(card, "id", where)
+    if not is_scryfall_id(scryfall_id):
+        # Its image address is made from the id, so a card without a real one cannot be shown.
+        log.warning("%s (%s) skipped: not a Scryfall id: %r", where, card.get("name"), scryfall_id)
         return None
     faces = [as_object(face, f"{where}.card_faces") for face in as_list(card.get("card_faces") or [], where)]
     front: Mapping[str, object] = faces[0] if faces else {}
@@ -434,7 +448,7 @@ def parse_set_card(raw: object, where: str) -> SetCard | None:
         raise ShapeError(f"{where}.released_at: not a date: {released!r}") from None
     legality = req_object(card, "legalities", where).get("commander")
     return SetCard(
-        scryfall_id=req_str(card, "id", where),
+        scryfall_id=scryfall_id,
         oracle_id=oracle_id,
         name=req_str(card, "name", where),
         mana_cost=opt_str(card, "mana_cost", where) or opt_str(front, "mana_cost", where) or "",
