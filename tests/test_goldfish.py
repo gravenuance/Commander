@@ -1182,6 +1182,18 @@ def test_a_tutor_for_an_artifact_or_a_subtype_finds_either_and_a_changeling_has_
     assert fetched_share(tutor, dragon, relic) == pytest.approx(2 / 9, abs=0.035)
 
 
+def test_a_changeling_has_every_creature_type_and_no_other_subtype() -> None:
+    sword = replace(make("A", mv=1, kinds=ARTIFACT, combo=True), subtypes=frozenset({"equipment"}))
+    shifter = replace(make("B", mv=1, kinds=CREATURE, combo=True), subtypes=frozenset({CHANGELING}))
+    # Four standard errors are 0.035: only the Equipment is found, as 1 in 9, and not the changeling.
+    tutor = Tutor(frozenset(), TutorDestination.HAND, subtypes=frozenset({"equipment"}))
+    assert fetched_share(tutor, sword, shifter) == pytest.approx(1 / 9, abs=0.035)
+    elf = replace(shifter, subtypes=frozenset({"elf"}))
+    tutor = Tutor(frozenset(), TutorDestination.HAND, subtypes=frozenset({"goblin", "equipment"}))
+    assert fetched_share(tutor, sword, elf) == pytest.approx(1 / 9, abs=0.035)
+    assert fetched_share(tutor, sword, shifter) == pytest.approx(2 / 9, abs=0.035)
+
+
 def test_a_tutor_to_the_hand_fetches_the_piece_it_can_cast_before_a_dearer_one() -> None:
     first = make("First", mv=1, kinds=CREATURE, combo=True)
     second = make("Second", mv=1, kinds=CREATURE, combo=True)

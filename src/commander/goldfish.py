@@ -22,6 +22,7 @@ from typing import NamedTuple
 from commander.answers import card_key
 from commander.goldfish_cards import (
     CHANGELING,
+    NON_CREATURE_SUBTYPES,
     CardKind,
     EntryCost,
     GoldfishCard,
@@ -1712,7 +1713,12 @@ def _finds_colour(colours: frozenset[str], wanted: frozenset[str]) -> bool:
 
 def _has_type(card: GoldfishCard, types: frozenset[str]) -> bool:
     """Whether a creature has one of the subtypes, "creature" standing for any."""
-    return "creature" in types or CHANGELING in card.subtypes or bool(card.subtypes & types)
+    return "creature" in types or _has_creature_type(card, types) or bool(card.subtypes & types)
+
+
+def _has_creature_type(card: GoldfishCard, types: frozenset[str]) -> bool:
+    """Whether a changeling has one of the subtypes: it has every creature type and no other."""
+    return CHANGELING in card.subtypes and not types <= NON_CREATURE_SUBTYPES
 
 
 def _finds_type(card: GoldfishCard, tutor: Tutor) -> bool:
@@ -1720,7 +1726,7 @@ def _finds_type(card: GoldfishCard, tutor: Tutor) -> bool:
     of_type = not tutor.finds or bool(card.kinds & tutor.finds)
     if not tutor.subtypes:
         return of_type
-    of_subtype = CHANGELING in card.subtypes or bool(card.subtypes & tutor.subtypes)
+    of_subtype = _has_creature_type(card, tutor.subtypes) or bool(card.subtypes & tutor.subtypes)
     if tutor.either and tutor.finds:
         return bool(card.kinds & tutor.finds) or of_subtype
     return of_type and of_subtype

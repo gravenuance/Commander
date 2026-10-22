@@ -45,6 +45,22 @@ _ALL_COLOURS = frozenset(COLORS)
 # The subtypes of a card with changeling: every creature type.
 CHANGELING = "changeling"
 _CHANGELING = re.compile(r"^changeling\b", re.MULTILINE)
+# The subtypes of the other card types, which a changeling does not have: its types are the creature types.
+NON_CREATURE_SUBTYPES = frozenset(
+    word
+    for words in (
+        # Artifact
+        "attraction blood bobblehead clue contraption equipment food fortification gold incubator junk",
+        "lander map powerstone spacecraft treasure vehicle",
+        # Enchantment
+        "aura background cartouche case class curse role room rune saga shrine",
+        # Land, without the words of Power-Plant that are also creature types
+        "cave desert forest gate island lair locus mine mountain plains planet sphere swamp tower town",
+        # Instant, sorcery and battle
+        "adventure arcane lesson omen trap siege",
+    )
+    for word in words.split()
+)
 
 
 class CardKind(Enum):
