@@ -3,8 +3,9 @@
 Pure: the input is the compiled cards of `goldfish_cards`, the output a `GoldfishReport` of figures plus the
 outcome of every game. The game loop reads small ints and tuples built once per run, never rules text.
 
-Determinism: game `i` of a run uses `game_rng(seed, i)` and nothing else, and its k-th shuffle is the k-th
-`shuffle` of a list of `len(slots)` items on that stream, whatever was played before. A swap that puts a new
+Determinism: game `i` of a run uses `game_rng(seed, i)` and nothing else, and its k-th shuffle takes
+`8 * len(slots)` bytes from that stream, whatever was played before, as the numbers of a Fisher-Yates from
+the front that is carried out only as far as the game reads (`_Game._settle`). A swap that puts a new
 card into a cut card's slots (`compare`) therefore replays the same shuffles, and a game whose outcome
 records that the cut slot was never reached (`reached`), and whose searches (`land_search`,
 `tutor_look`) never looked at a kind of card the swap changes, is unchanged.
@@ -67,6 +68,8 @@ _DRAW_RANK = 400
 _COMBO_RANK = 500
 _OTHER_RANK = 600
 _RANK_SPAN = 99
+# Bytes of randomness a shuffle takes per card: one 64-bit number for each step of the Fisher-Yates.
+_STEP_BYTES = 8
 
 
 def turns_shown(bracket: int | None) -> tuple[int, ...]:
@@ -581,11 +584,13 @@ class _Game:
         "pending",
         "pool",
         "pops",
+        "rand",
         "reached",
         "rng",
         "s",
         "screw",
         "searched",
+        "settled",
         "shuffles",
         "sick",
         "top",
@@ -598,6 +603,9 @@ class _Game:
         self.s = setup
         self.rng = rng
         self.lib: list[int] = []
+        # The random numbers of the library's shuffle, one per card, and how many at its front are final.
+        self.rand = memoryview(b"").cast("Q")
+        self.settled = 0
         self.top = 0
         self.hand: list[int] = []
         self.hand_size = _HAND
@@ -619,7 +627,8 @@ class _Game:
         self.fetched: set[int] = set()
         self.searched = False
         self.pops = 0
-        self.dealt: list[int] = []
+        # The library as dealt, once a search has settled it and started taking cards out.
+        self.dealt: list[int] | None = None
         self.reached: set[int] = set()
         self.land_search = False
         self.tutor_look = False
@@ -641,7 +650,11 @@ class _Game:
             self.turn = turn
             self._take_turn()
         depth = self.top + self.pops
-        self.reached.update(self.dealt[:depth])
+        if self.dealt is None:
+            self._settle(depth)
+            self.reached.update(self.lib[: min(depth, len(self.rand))])
+        else:
+            self.reached.update(self.dealt[:depth])
         return GameOutcome(
             hand_size=self.hand_size,
             commander_turns=tuple(self.cmd_turn[cid] for cid in s.cmd_ids),
@@ -663,16 +676,18 @@ class _Game:
         s = self.s
         while True:
             lib = list(s.ids)
-            self.rng.shuffle(lib)
+            # Every shuffle takes the same amount from the stream, however far the game reads into it.
+            self.rand = memoryview(self.rng.randbytes(_STEP_BYTES * len(lib))).cast("Q")
+            self.settled = 0
+            self.lib = lib
             self.shuffles += 1
+            self._settle(_HAND)
             bottoms = max(self.shuffles - 1 - _FREE_MULLIGANS, 0)
             hand = lib[:_HAND]
             self.reached.update(hand)
             kept, bottomed = _split_bottom(s.cards, hand, bottoms)
             if bottoms >= 2 or s.keeps(kept):  # noqa: PLR2004 — five cards, kept whatever they hold
                 break
-        self.dealt = lib[:]
-        self.lib = lib
         self.lib.extend(bottomed)
         self.top = len(hand)
         self.hand = kept
@@ -695,14 +710,32 @@ class _Game:
             self._check_screw()
         self.mana.append(len(pool))
 
+    def _settle(self, count: int) -> None:
+        """Shuffle the library down to its first `count` cards, which are then final: a Fisher-Yates from the
+        front, one step per card, so a game pays for the cards it reads and no more."""
+        lib, rand = self.lib, self.rand
+        size = len(rand)
+        for i in range(self.settled, min(count, size)):
+            j = i + rand[i] % (size - i)
+            lib[i], lib[j] = lib[j], lib[i]
+        self.settled = max(self.settled, min(count, size))
+
+    def _open_library(self) -> None:
+        """Settle the whole library before a search reads or takes from it, and keep the order dealt."""
+        if self.dealt is None:
+            self._settle(len(self.rand))
+            self.dealt = self.lib[: len(self.rand)]
+
     def _draw(self, count: int) -> None:
         lib = self.lib
-        for _ in range(count):
-            if self.top >= len(lib):
-                return
-            self.hand.append(lib[self.top])
-            self.top += 1
-        self.check_land = True
+        end = self.top + count
+        if end > self.settled:
+            self._settle(end)
+        left = len(lib) - self.top
+        self.hand.extend(lib[self.top : end])
+        self.top += min(count, left)
+        if count <= left:
+            self.check_land = True
 
     # -- lands --------------------------------------------------------------------------------------------
 
@@ -780,6 +813,7 @@ class _Game:
         """The index in the library of the land to fetch, or -1: the one best for the colours wanted, among
         the lands with one of the basic land types (any land when none are named)."""
         cards = self.s.cards
+        self._open_library()
         first: dict[int, int] = {}
         for index in range(self.top, len(self.lib)):
             cid = self.lib[index]
@@ -1051,6 +1085,9 @@ class _Game:
         """What a tutor is after that is in the library, best first, with its place there: the missing
         pieces of the combos with the fewest missing, dearest first, then the finishers not castable yet."""
         s = self.s
+        if not self.open_combos and not s.fin_ids:
+            return []
+        self._open_library()
         cards = s.cards
         where: dict[int, int] = {}
 
