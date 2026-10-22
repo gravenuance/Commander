@@ -1236,10 +1236,10 @@ def _read_spell(card: GoldfishCard, info: CardMana, text: str, context: _Context
 
 
 # Treasures a permanent makes as it comes, the mode of a choice included (Plundering Barbarian); a tapped
-# Treasure is left out.
+# Treasure and one made only if an opponent is ahead (Beza) are left out.
 _ENTRY_TREASURES = re.compile(
     r"^when (?P<who>[^,\n]+) enters, (?:choose one —(?:\n• [^\n]*)*?\n• (?:[^—\n]+ — )?)?"
-    r"create (?P<n>a|an|one|two|three|four|five) treasure tokens?\b",
+    r"create (?P<n>a|an|one|two|three|four|five) treasure tokens?\b(?![^.\n]* if (?:an?|each|any) opponent)",
     re.MULTILINE,
 )
 _ATTACK_TREASURES = re.compile(

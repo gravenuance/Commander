@@ -2708,6 +2708,35 @@ def test_treasures_made_on_entering_or_attacking_are_read_and_combat_damage_is_n
     assert not breaker.modelled
 
 
+BEZA = real(
+    "Beza, the Bounding Spring",
+    "{2}{W}{W}",
+    4,
+    "Legendary Creature — Elemental Elk",
+    "When Beza enters, create a Treasure token if an opponent controls more lands than you. You gain 4 life "
+    "if an opponent has more life than you. Create two 1/1 blue Fish creature tokens if an opponent controls "
+    "more creatures than you. Draw a card if an opponent has more cards in hand than you.",
+    identity="W",
+)
+
+
+def test_a_treasure_made_only_if_an_opponent_is_ahead_is_not_counted() -> None:
+    assert one(BEZA).treasures_on_entry == 0
+
+
+def test_a_treasure_made_with_other_text_after_it_still_counts() -> None:
+    tomb = real(
+        "Tomb Raider",
+        "{2}{R}",
+        3,
+        "Creature — Human Rogue",
+        "When this creature enters, create a Treasure token. You gain 2 life if an opponent has more life "
+        "than you.",
+        identity="R",
+    )
+    assert one(tomb, commander=MAGDA).treasures_on_entry == 1
+
+
 def test_a_card_missing_from_the_card_data_is_a_plain_spell_of_average_value() -> None:
     deck = build(SOL_RING, CULTIVATE, missing=("Rhystic Study",))
     study = card_named(deck, "Rhystic Study")
