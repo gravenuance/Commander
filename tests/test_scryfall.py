@@ -1,7 +1,11 @@
 import json
+import logging
 import os
+import sqlite3
 from collections.abc import Callable
-from datetime import UTC, datetime
+from contextlib import closing
+from dataclasses import replace
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -14,8 +18,10 @@ from commander.scryfall import (
     RefreshStatus,
     ScryfallClient,
     ScryfallError,
+    SetInfo,
     parse_bulk_listing,
     parse_card,
+    parse_sets_listing,
     parse_tag,
     read_cards,
     read_tags,
@@ -27,6 +33,7 @@ from conftest import (
     CARDS_URL,
     FILLER_TAGS,
     MAGDA_ORACLE,
+    SETS_URL,
     TAGS_URL,
     FakeScryfall,
     Json,
@@ -43,6 +50,7 @@ FLUTE_ORACLE = "d6c46906-1339-4440-8cd0-2bb9890d4975"
 # 28 real lines minus the digital-only Magda promo, plus the filler.
 PRINTINGS_IN_FIXTURE = 28 + 10_000
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
+BULK_URL = "https://api.scryfall.com/bulk-data"
 
 
 def real_card(name: str, set_code: str) -> Json:
@@ -57,8 +65,13 @@ def client_for(fake: FakeScryfall) -> ScryfallClient:
     return ScryfallClient(Fetcher(fake.client(), sleep=lambda _: None))
 
 
-def refresh(fake: FakeScryfall, folder: Path, *, force: bool = False) -> RefreshStatus:
-    return refresh_card_db(client_for(fake), folder, now=lambda: NOW, force=force).status
+def refresh(fake: FakeScryfall, folder: Path, *, force: bool = False, when: datetime = NOW) -> RefreshStatus:
+    return refresh_card_db(client_for(fake), folder, now=lambda: when, force=force).status
+
+
+def only_sets(fake: FakeScryfall, *codes: str) -> Json:
+    """The fixture's /sets answer cut down to these sets."""
+    return {**fake.sets, "data": [s for s in fake.sets["data"] if s["code"] in codes]}
 
 
 def test_listing_keeps_files_with_a_download_link() -> None:
@@ -294,36 +307,191 @@ def test_first_refresh_downloads_and_builds(tmp_path: Path) -> None:
     assert sorted(p.name for p in tmp_path.iterdir()) == [CARD_DB_FILE]
 
 
-def test_refresh_skips_download_when_scryfall_has_nothing_newer(tmp_path: Path) -> None:
+def test_sets_listing_reads_the_fixture() -> None:
+    sets = {s.code: s for s in parse_sets_listing(FakeScryfall().sets)}
+    assert len(sets) == 19
+    assert sets["fra"] == SetInfo("fra", "Reality Fracture", date(2026, 10, 2), "expansion", digital=False)
+    assert sets["yfra"].digital
+
+
+def fixture_set(code: str) -> SetInfo:
+    return next(s for s in parse_sets_listing(FakeScryfall().sets) if s.code == code)
+
+
+# core, expansion, masters, draft_innovation, commander and eternal sets.
+@pytest.mark.parametrize("code", ["fdn", "fra", "cmm", "mbc", "frc", "hoc"])
+def test_sets_with_new_commander_cards_count(code: str) -> None:
+    assert fixture_set(code).brings_new_cards
+
+
+# promo, token, memorabilia, box (twice), funny and a digital alchemy set.
+@pytest.mark.parametrize("code", ["pfra", "tfra", "afra", "slz", "sld", "unf", "yfra"])
+def test_promo_token_box_and_other_sets_do_not_count(code: str) -> None:
+    assert not fixture_set(code).brings_new_cards
+
+
+def test_a_digital_set_never_counts() -> None:
+    assert not replace(fixture_set("fra"), digital=True).brings_new_cards
+
+
+def test_sets_listing_rejects_a_bad_release_date() -> None:
+    with pytest.raises(ShapeError, match="released_at"):
+        parse_sets_listing({"data": [{"released_at": "soon"}]})
+
+
+def test_a_rebuild_says_why_and_a_current_check_says_when_it_is_next_due(tmp_path: Path) -> None:
     fake = FakeScryfall()
+    fake.sets = only_sets(fake, "fdn")
+    first = refresh_card_db(client_for(fake), tmp_path, now=lambda: NOW)
+    assert (first.reason, first.next_due) == ("no usable card data", None)
+    kept = refresh_card_db(client_for(fake), tmp_path, now=lambda: NOW + timedelta(days=2))
+    assert (kept.reason, kept.next_due) == ("", date(2026, 10, 22))
+    old = refresh_card_db(client_for(fake), tmp_path, now=lambda: NOW + timedelta(days=9))
+    assert old.reason == "9 days old"
+    forced = refresh_card_db(client_for(fake), tmp_path, now=lambda: NOW, force=True)
+    assert forced.reason == "forced"
+
+
+def test_a_rebuild_for_a_new_set_names_the_set(tmp_path: Path) -> None:
+    fake = FakeScryfall()
+    built = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
+    refresh(fake, tmp_path, when=built)
+    result = refresh_card_db(client_for(fake), tmp_path, now=lambda: built + timedelta(days=2))
+    assert result.reason == "new set: Reality Fracture"
+
+
+def test_data_under_a_week_old_is_current_without_a_download(tmp_path: Path) -> None:
+    fake = FakeScryfall()
+    fake.sets = only_sets(fake, "fdn", "hob", "slz", "fra", "frc")
     refresh(fake, tmp_path)
     fake.requests.clear()
-    assert refresh(fake, tmp_path) is RefreshStatus.CURRENT
-    assert fake.requests == ["https://api.scryfall.com/bulk-data"]
+    assert refresh(fake, tmp_path, when=NOW + timedelta(days=6)) is RefreshStatus.CURRENT
+    assert fake.requests == [SETS_URL]
 
 
-@pytest.mark.parametrize("field", ["cards_updated_at", "tags_updated_at"])
-def test_refresh_rebuilds_when_either_file_is_newer(tmp_path: Path, field: str) -> None:
+def test_newer_bulk_files_alone_do_not_rebuild(tmp_path: Path) -> None:
+    fake = FakeScryfall()
+    fake.sets = only_sets(fake, "fdn")
+    refresh(fake, tmp_path)
+    fake.cards_updated_at = fake.tags_updated_at = "2026-10-16T09:00:00.000+00:00"
+    fake.requests.clear()
+    assert refresh(fake, tmp_path, when=NOW + timedelta(days=1)) is RefreshStatus.CURRENT
+    assert fake.requests == [SETS_URL]
+
+
+def test_data_a_week_old_is_rebuilt_without_asking_for_sets(tmp_path: Path) -> None:
+    fake = FakeScryfall()
+    fake.sets = only_sets(fake, "fdn")
+    refresh(fake, tmp_path)
+    fake.requests.clear()
+    assert refresh(fake, tmp_path, when=NOW + timedelta(days=7)) is RefreshStatus.UPDATED
+    assert fake.requests == [BULK_URL, CARDS_URL, TAGS_URL]
+
+
+def test_a_set_released_since_the_build_rebuilds_the_data(tmp_path: Path) -> None:
+    fake = FakeScryfall()
+    built = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
+    refresh(fake, tmp_path, when=built)
+    fake.requests.clear()
+    # Reality Fracture, an expansion, came out on 2026-10-02.
+    assert refresh(fake, tmp_path, when=built + timedelta(days=2)) is RefreshStatus.UPDATED
+    assert fake.requests == [SETS_URL, BULK_URL, CARDS_URL, TAGS_URL]
+    fake.requests.clear()
+    assert refresh(fake, tmp_path, when=built + timedelta(days=3)) is RefreshStatus.CURRENT
+    assert fake.requests == [SETS_URL]
+
+
+@pytest.mark.parametrize("code", ["pfra", "tfra", "afra"])
+def test_a_promo_token_or_art_set_does_not_rebuild_the_data(tmp_path: Path, code: str) -> None:
+    fake = FakeScryfall()
+    built = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
+    refresh(fake, tmp_path, when=built)
+    fake.sets = only_sets(fake, code)
+    assert refresh(fake, tmp_path, when=built + timedelta(days=2)) is RefreshStatus.CURRENT
+
+
+def test_a_secret_lair_style_box_set_does_not_rebuild_the_data(tmp_path: Path) -> None:
+    fake = FakeScryfall()
+    built = datetime(2026, 8, 30, 12, 0, tzinfo=UTC)
+    refresh(fake, tmp_path, when=built)
+    # The Zeta Set, a "box" set, came out on 2026-09-02.
+    assert refresh(fake, tmp_path, when=built + timedelta(days=5)) is RefreshStatus.CURRENT
+
+
+def test_a_digital_set_does_not_rebuild_the_data(tmp_path: Path) -> None:
+    fake = FakeScryfall()
+    built = datetime(2026, 10, 10, 12, 0, tzinfo=UTC)
+    refresh(fake, tmp_path, when=built)
+    fake.sets = only_sets(fake, "yfra")
+    assert refresh(fake, tmp_path, when=built + timedelta(days=4)) is RefreshStatus.CURRENT
+
+
+def test_a_set_not_out_yet_does_not_rebuild_the_data(tmp_path: Path) -> None:
     fake = FakeScryfall()
     refresh(fake, tmp_path)
-    setattr(fake, field, "2026-10-16T09:00:00.000+00:00")
-    assert refresh(fake, tmp_path) is RefreshStatus.UPDATED
+    # Mystery Booster Commander Edition comes out on 2026-10-19, Star Trek on 2026-11-13.
+    fake.sets = only_sets(fake, "mbc", "trk")
+    assert refresh(fake, tmp_path, when=NOW + timedelta(days=1)) is RefreshStatus.CURRENT
+
+
+@pytest.mark.parametrize(("released", "status"), [(0, RefreshStatus.CURRENT), (1, RefreshStatus.UPDATED)])
+def test_only_a_set_released_after_the_build_day_counts(
+    tmp_path: Path, released: int, status: RefreshStatus
+) -> None:
+    fake = FakeScryfall()
+    refresh(fake, tmp_path)
+    expansion = next(s for s in fake.sets["data"] if s["code"] == "fra")
+    day = (NOW + timedelta(days=released)).date().isoformat()
+    fake.sets = {**fake.sets, "data": [{**expansion, "released_at": day}]}
+    assert refresh(fake, tmp_path, when=NOW + timedelta(days=1)) is status
+
+
+def test_failed_sets_check_falls_back_to_the_age_rule(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake = FakeScryfall()
+    refresh(fake, tmp_path)
+    fake.failing[SETS_URL] = 503
+    with caplog.at_level(logging.WARNING, logger="commander.scryfall"):
+        assert refresh(fake, tmp_path, when=NOW + timedelta(days=6)) is RefreshStatus.CURRENT
+    assert any("set list" in message for message in caplog.messages)
+    assert refresh(fake, tmp_path, when=NOW + timedelta(days=7)) is RefreshStatus.UPDATED
+
+
+def test_malformed_sets_answer_falls_back_to_the_age_rule(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake = FakeScryfall()
+    refresh(fake, tmp_path)
+    fake.sets = {"object": "list", "data": [{"code": "fra", "released_at": "soon"}]}
+    with caplog.at_level(logging.WARNING, logger="commander.scryfall"):
+        assert refresh(fake, tmp_path, when=NOW + timedelta(days=2)) is RefreshStatus.CURRENT
+    assert any("set list" in message for message in caplog.messages)
+
+
+def test_unreadable_build_time_rebuilds_the_data(tmp_path: Path) -> None:
+    fake = FakeScryfall()
+    refresh(fake, tmp_path)
+    with closing(sqlite3.connect(tmp_path / CARD_DB_FILE)) as db, db:
+        db.execute("UPDATE meta SET value = 'garbage' WHERE key = 'built_at'")
+    assert refresh(fake, tmp_path, when=NOW + timedelta(days=1)) is RefreshStatus.UPDATED
 
 
 def test_force_rebuilds_even_when_current(tmp_path: Path) -> None:
     fake = FakeScryfall()
     refresh(fake, tmp_path)
+    fake.requests.clear()
     assert refresh(fake, tmp_path, force=True) is RefreshStatus.UPDATED
+    assert fake.requests == [BULK_URL, CARDS_URL, TAGS_URL]
 
 
 def test_failed_download_keeps_the_previous_data(tmp_path: Path) -> None:
     fake = FakeScryfall()
     refresh(fake, tmp_path)
     before = (tmp_path / CARD_DB_FILE).read_bytes()
-    fake.cards_updated_at = "2026-10-16T09:00:00.000+00:00"
     fake.failing[CARDS_URL] = 404
     with pytest.raises(NetworkError, match="HTTP 404"):
-        refresh(fake, tmp_path)
+        refresh(fake, tmp_path, when=NOW + timedelta(days=7))
     assert (tmp_path / CARD_DB_FILE).read_bytes() == before
     assert sorted(p.name for p in tmp_path.iterdir()) == [CARD_DB_FILE]
 
@@ -332,10 +500,9 @@ def test_unusable_download_keeps_the_previous_data(tmp_path: Path) -> None:
     fake = FakeScryfall()
     refresh(fake, tmp_path)
     before = (tmp_path / CARD_DB_FILE).read_bytes()
-    fake.cards_updated_at = "2026-10-16T09:00:00.000+00:00"
     fake.cards_gz = b"<html>maintenance</html>"
     with pytest.raises(ScryfallError):
-        refresh(fake, tmp_path)
+        refresh(fake, tmp_path, when=NOW + timedelta(days=7))
     assert (tmp_path / CARD_DB_FILE).read_bytes() == before
     assert sorted(p.name for p in tmp_path.iterdir()) == [CARD_DB_FILE]
 

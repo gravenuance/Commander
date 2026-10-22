@@ -1,7 +1,8 @@
 """Scryfall bulk data: find the daily files, download them and turn them into the local card database.
 
 Scryfall asks for bulk files instead of per-card API calls for lookups like these, and the files live on
-data.scryfall.io, which has no rate limit. The API itself is called once per refresh, for the file list.
+data.scryfall.io, which has no rate limit. The API itself is called for the file list when a rebuild is due,
+and for the set list on the days it is not.
 """
 
 import gzip
@@ -10,7 +11,7 @@ import logging
 import re
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from enum import Enum
 from pathlib import Path
@@ -36,13 +37,14 @@ from commander.jsonshape import (
     as_object,
     opt_int,
     opt_str,
+    req_bool,
     req_float,
     req_list,
     req_object,
     req_str,
     str_list,
 )
-from commander.net import Fetcher
+from commander.net import Fetcher, NetworkError
 
 log = logging.getLogger(__name__)
 
@@ -58,6 +60,17 @@ MAX_LINE_CHARS = 1024 * 1024
 MAX_BAD_FRACTION = 0.01
 MIN_CARDS = 10_000
 MIN_TAGS = 100
+# The card data is rebuilt at this age even when no new set has come out, to refresh the prices.
+MAX_DATA_AGE = timedelta(days=7)
+# Scryfall's set types that bring new cards to Commander, and so make the card data worth rebuilding the day
+# they come out: the main releases (core, expansion), reprint sets with new cards (masters, draft_innovation,
+# e.g. Modern Horizons 3), Commander products, and the Universes Beyond "eternal" sets. Left out on purpose,
+# so that weekly drops do not defeat the weekly cadence: promo, token, memorabilia (art series), box (Secret
+# Lair, Challenger and Game Night products), masterpiece (reprints that come out with their parent set),
+# funny (Un-sets, whose silver and acorn cards are not legal in Commander), alchemy (digital only) and the
+# old reprint products (duel_deck, from_the_vault, premium_deck, starter, treasure_chest and so on). A
+# digital set never counts, whatever its type.
+NEW_CARD_SET_TYPES = frozenset({"core", "expansion", "masters", "draft_innovation", "commander", "eternal"})
 # Tokens, emblems, art cards and Planechase/Archenemy pieces never sit in a Commander deck.
 _NON_CARD_LAYOUTS = frozenset(
     {"token", "double_faced_token", "emblem", "art_series", "vanguard", "scheme", "planar", "augment", "host"}
@@ -135,10 +148,27 @@ class RefreshStatus(Enum):
 
 
 @dataclass(slots=True, frozen=True)
+class SetInfo:
+    code: str
+    name: str
+    released_at: date
+    set_type: str
+    digital: bool
+
+    @property
+    def brings_new_cards(self) -> bool:
+        return not self.digital and self.set_type in NEW_CARD_SET_TYPES
+
+
+@dataclass(slots=True, frozen=True)
 class CardRefresh:
     status: RefreshStatus
     meta: CardDataMeta
     printings: int | None = None
+    # Why the data was rebuilt ("7 days old", "new set: Foundations"); empty when it was not.
+    reason: str = ""
+    # The day the data is old enough to rebuild, if no new set comes out first; None when it was rebuilt.
+    next_due: date | None = None
 
 
 class ScryfallClient:
@@ -152,6 +182,13 @@ class ScryfallClient:
             return parse_bulk_listing(raw)
         except ShapeError as error:
             raise ScryfallError(f"unexpected bulk data list from Scryfall: {error}") from error
+
+    def sets(self) -> list[SetInfo]:
+        raw = self._fetcher.get_json(f"{self._api_base}/sets")
+        try:
+            return parse_sets_listing(raw)
+        except ShapeError as error:
+            raise ScryfallError(f"unexpected set list from Scryfall: {error}") from error
 
     def download(self, file: BulkFile, dest: Path) -> int:
         if file.size is not None and file.size > MAX_BULK_BYTES:
@@ -169,18 +206,25 @@ def refresh_card_db(
     force: bool = False,
     on_progress: Callable[[str], None] = lambda _: None,
 ) -> CardRefresh:
-    """Rebuild the card database when Scryfall has published newer files (or always, with force)."""
-    files = client.bulk_files()
-    cards_file, tags_file = _require(files, CARDS_FILE), _require(files, TAGS_FILE)
+    """Rebuild the card database when it is missing, a week old or a new set has come out (or always, with
+    force), and otherwise leave it with no download. The update times of Scryfall's files do not matter: they
+    change daily, for the prices."""
     db_path = folder / CARD_DB_FILE
     current = read_meta(db_path)
-    if (
-        not force
-        and current is not None
-        and current.cards_updated_at == cards_file.updated_at
-        and current.tags_updated_at == tags_file.updated_at
-    ):
-        return CardRefresh(RefreshStatus.CURRENT, current)
+    built = None if current is None else _built_at(current)
+    if force:
+        reason = "forced"
+    elif current is None:
+        reason = "no usable card data"
+    elif built is None:
+        reason = "unreadable build time"
+    else:
+        due = _due_reason(client, built, now())
+        if due is None:
+            return CardRefresh(RefreshStatus.CURRENT, current, next_due=built.date() + MAX_DATA_AGE)
+        reason = due
+    files = client.bulk_files()
+    cards_file, tags_file = _require(files, CARDS_FILE), _require(files, TAGS_FILE)
 
     folder.mkdir(parents=True, exist_ok=True)
     _clear_stale_temp_files(folder, now())
@@ -202,7 +246,37 @@ def refresh_card_db(
         cards_gz.unlink(missing_ok=True)
         tags_gz.unlink(missing_ok=True)
     log.info("card data rebuilt: %d printings", count)
-    return CardRefresh(RefreshStatus.UPDATED, meta, count)
+    return CardRefresh(RefreshStatus.UPDATED, meta, count, reason)
+
+
+def _built_at(meta: CardDataMeta) -> datetime | None:
+    """When the database was built, in UTC; None when the stored time is unreadable."""
+    try:
+        built = datetime.fromisoformat(meta.built_at)
+    except ValueError:
+        return None
+    return built.astimezone(UTC) if built.tzinfo is not None else built.replace(tzinfo=UTC)
+
+
+def _due_reason(client: ScryfallClient, built: datetime, now: datetime) -> str | None:
+    """Why the card data built at `built` is due for a rebuild, or None when it is not."""
+    age = now - built
+    if age >= MAX_DATA_AGE:
+        return f"{age.days} days old"
+    new_set = _new_set_since(client, built.date(), now.astimezone(UTC).date())
+    return None if new_set is None else f"new set: {new_set.name}"
+
+
+def _new_set_since(client: ScryfallClient, built_on: date, today: date) -> SetInfo | None:
+    """The first set that brings new cards and came out after the build day, up to today. A failed check
+    is only logged: the age rule still brings the data up to date."""
+    try:
+        sets = client.sets()
+    except (NetworkError, ScryfallError) as error:
+        log.warning("could not read Scryfall's set list (%s); only the data's age counts", error)
+        return None
+    released = [s for s in sets if s.brings_new_cards and built_on < s.released_at <= today]
+    return min(released, key=lambda s: (s.released_at, s.name), default=None)
 
 
 def _clear_stale_temp_files(folder: Path, now: datetime) -> None:
@@ -234,6 +308,31 @@ def parse_bulk_listing(raw: object) -> dict[str, BulkFile]:
             kind, req_str(entry, "updated_at", where), url, opt_int(entry, "compressed_size", where)
         )
     return files
+
+
+def parse_sets_listing(raw: object) -> list[SetInfo]:
+    obj = as_object(raw, "sets")
+    sets: list[SetInfo] = []
+    for index, item in enumerate(req_list(obj, "data", "sets")):
+        where = f"sets.data[{index}]"
+        entry = as_object(item, where)
+        released = opt_str(entry, "released_at", where)
+        if released is None:
+            continue
+        try:
+            released_at = date.fromisoformat(released)
+        except ValueError:
+            raise ShapeError(f"{where}.released_at: not a date: {released!r}") from None
+        sets.append(
+            SetInfo(
+                req_str(entry, "code", where),
+                req_str(entry, "name", where),
+                released_at,
+                req_str(entry, "set_type", where),
+                req_bool(entry, "digital", where),
+            )
+        )
+    return sets
 
 
 def parse_card(raw: object) -> ParsedCard | None:

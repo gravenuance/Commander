@@ -74,6 +74,7 @@ def summary_row(deck_id: int, name: str, updated_at: str, deck_format: int = 3) 
 
 CARDS_UPDATED_AT = "2026-10-15T09:05:41.217+00:00"
 TAGS_UPDATED_AT = "2026-10-15T09:00:38.101+00:00"
+SETS_URL = "https://api.scryfall.com/sets"
 CARDS_URL = "https://data.scryfall.io/default-cards/default-cards-20261015090541.jsonl.gz"
 TAGS_URL = "https://data.scryfall.io/oracle-tags/oracle-tags-20261015090038.jsonl.gz"
 # The real files hold ~100k cards and ~4.5k tags; the reader refuses files far below that.
@@ -213,13 +214,15 @@ def own_cache(tmp_path: Path, card_db_file: Path) -> Path:
 
 
 class FakeScryfall:
-    """Serves the bulk-data list and the two bulk files, and records every request."""
+    """Serves the bulk-data list, the set list and the two bulk files, and records every request."""
 
     def __init__(self) -> None:
         self.cards_updated_at = CARDS_UPDATED_AT
         self.tags_updated_at = TAGS_UPDATED_AT
         self.failing: dict[str, int] = {}
         self.requests: list[str] = []
+        # A trimmed real /sets answer; tests reassign it to try other sets or a malformed answer.
+        self.sets: Json = load_fixture("scryfall_sets.json")
         self.cards_gz = default_cards_gz()
         self.tags_gz = oracle_tags_gz()
 
@@ -260,6 +263,8 @@ class FakeScryfall:
             return httpx.Response(self.failing[url])
         if url == "https://api.scryfall.com/bulk-data":
             return httpx.Response(200, json=self.listing())
+        if url == SETS_URL:
+            return httpx.Response(200, json=self.sets)
         if url == CARDS_URL:
             return httpx.Response(200, content=self.cards_gz)
         if url == TAGS_URL:
