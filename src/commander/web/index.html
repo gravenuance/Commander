@@ -153,7 +153,7 @@
     </section>
   </main>
 
-  <aside id="activity-pane" class="activity" aria-label="Activity and mana base" hidden>
+  <aside id="activity-pane" class="activity" aria-label="Activity, mana base and goldfish" hidden>
     <div class="rail-tabs">
       <button id="activity-toggle" class="rail-toggle" type="button" aria-expanded="false" aria-controls="activity" data-tab="activity">
         <span class="rail-label">Activity</span>
@@ -161,9 +161,13 @@
       <button id="mana-toggle" class="rail-toggle" type="button" aria-expanded="false" aria-controls="mana" data-tab="mana">
         <span class="rail-label">Mana</span>
       </button>
+      <button id="goldfish-toggle" class="rail-toggle" type="button" aria-expanded="false" aria-controls="goldfish" data-tab="goldfish">
+        <span class="rail-label">Goldfish</span>
+      </button>
     </div>
     <ol id="activity" class="activity-list" hidden></ol>
     <div id="mana" class="mana" hidden></div>
+    <div id="goldfish" class="goldfish" hidden></div>
   </aside>
 </div>
 
@@ -256,6 +260,19 @@
       <button id="settings-grace-add" class="button" type="button">Add card</button>
     </div>
   </section>
+  <section class="setting" aria-labelledby="settings-finishers-title">
+    <h3 id="settings-finishers-title">Finishers</h3>
+    <p class="muted small">Cards the goldfish counts as a way to win. Cards the Scryfall Tagger marks as finishers
+      are included; take one out to leave it out, or add any card of the deck.</p>
+    <ul id="settings-finishers" class="setting-chips" aria-label="Finishers"></ul>
+    <div class="propose setting-input">
+      <input id="settings-finishers-input" type="search" role="combobox" placeholder="Add a finisher" aria-label="Add a finisher"
+             aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="settings-finishers-results"
+             autocomplete="off" spellcheck="false">
+      <ul id="settings-finishers-results" class="results" role="listbox" aria-label="Matching cards of the deck" hidden></ul>
+    </div>
+    <div id="settings-finishers-left-out" class="setting-offers"></div>
+  </section>
   <p id="settings-error" class="field-error" role="alert" hidden></p>
   <div class="dialog-actions">
     <button id="settings-cancel" class="button" type="button">Cancel</button>
@@ -275,6 +292,10 @@
   <ul id="review-problems" class="notes problems"></ul>
   <ul id="review-warnings" class="notes warnings"></ul>
   <ul id="review-notes" class="notes"></ul>
+  <section id="review-goldfish" class="review-goldfish" aria-labelledby="review-goldfish-title" hidden>
+    <h3 id="review-goldfish-title">Goldfish</h3>
+    <div id="review-goldfish-figures"></div>
+  </section>
   <p id="review-error" class="field-error" role="alert" hidden></p>
   <div class="dialog-actions">
     <button id="review-cancel" class="button" type="button">Keep editing</button>
@@ -293,6 +314,7 @@
 <script src="bracket.js"></script>
 <script src="rail.js"></script>
 <script src="mana.js"></script>
+<script src="goldfish.js"></script>
 <script src="previews.js"></script>
 <script src="settings.js"></script>
 <script src="review.js"></script>

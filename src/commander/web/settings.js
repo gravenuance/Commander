@@ -1,11 +1,13 @@
 "use strict";
 
-/* Settings: the profile's commanders that play alike, the tag search, grace cards and themes to ignore */
+/* Settings: the profile's commanders that play alike, the tag search, grace cards, themes to ignore and finishers */
 
 const DEFAULT_GRACE = 3;
 const settingsState = {
   deck: null, adjacent: [], tagSearch: false, grace: [], maxGrace: 10, ignore: [], themes: [], leanings: [], max: 8, pairWith: null,
+  finishers: [], finishersRemoved: [], finishersWas: "",
 };
+const MAX_FINISHER_MATCHES = 8;
 
 async function openSettings() {
   const deck = state.current;
@@ -14,7 +16,10 @@ async function openSettings() {
     Object.assign(settingsState, {
       deck, adjacent: answer.adjacent, tagSearch: answer.tagSearch, grace: answer.grace, maxGrace: answer.maxGrace,
       ignore: answer.ignore, themes: answer.themes, leanings: answer.leanings, max: answer.maxAdjacent, pairWith: null,
+      finishers: answer.finishers.map((f) => ({ ...f })), finishersRemoved: [...answer.finishersRemoved],
     });
+    settingsState.finishersWas = finishersKey();
+    $("settings-finishers-input").value = "";
     $("settings-grace-name").value = "";
     $("settings-grace-factor").value = String(DEFAULT_GRACE);
     $("settings-deck").textContent = $("deck-short").textContent;
@@ -65,6 +70,72 @@ function renderSettings() {
       el("button", { class: "deck-chip offer", type: "button", text: `+ ${o.name}`, title: `Ignore this ${o.kind}`,
         onclick: () => addIgnore(o.name) })))),
   ] : []));
+  renderFinishers();
+}
+
+/* Finishers: the cards the goldfish counts as ways to win */
+
+// The finishers as a set, to tell whether the viewer changed it.
+const finishersKey = () => settingsState.finishers.map((f) => f.name.toLowerCase()).sort().join("|");
+
+// Chips for the finishers as played (the Tagger's marks say "tagged"), and one-click buttons to put back a
+// marked card the viewer took out.
+function renderFinishers() {
+  const s = settingsState;
+  $("settings-finishers").replaceChildren(...s.finishers.map((finisher, index) => el("li", { class: "deck-chip setting-chip" },
+    el("span", { text: finisher.name }),
+    finisher.auto ? el("span", { class: "muted small", text: "tagged", title: "Marked as a finisher by the Scryfall Tagger" }) : null,
+    el("button", {
+      class: "chip-remove", type: "button", text: "×", "aria-label": `Remove ${finisher.name}`,
+      title: `Remove ${finisher.name}`, onclick: () => removeFinisher(index),
+    }))));
+  $("settings-finishers-left-out").replaceChildren(...(s.finishersRemoved.length ? [
+    el("p", { class: "muted small", text: "Marked as finishers, left out:" }),
+    el("ul", { class: "deck-chips" }, ...s.finishersRemoved.map((name) => el("li", {},
+      el("button", { class: "deck-chip offer", type: "button", text: `+ ${name}`, title: "Count it as a finisher again",
+        onclick: () => addFinisher(name) })))),
+  ] : []));
+}
+
+function removeFinisher(index) {
+  const s = settingsState;
+  const [gone] = s.finishers.splice(index, 1);
+  if (gone.auto) s.finishersRemoved.push(gone.name);
+  renderFinishers();
+  $("settings-finishers-input").focus();
+}
+
+// A card the Tagger marks that was taken out comes back as marked; a name the deck holds takes the deck's
+// spelling; any other name is sent as typed and the bridge checks it.
+function addFinisher(text) {
+  const s = settingsState;
+  const typed = text.trim();
+  const input = $("settings-finishers-input");
+  if (!typed) return;
+  input.value = "";
+  const same = (name) => name.toLowerCase() === typed.toLowerCase();
+  if (s.finishers.some((f) => same(f.name))) return;
+  const left = s.finishersRemoved.findIndex(same);
+  if (left >= 0) {
+    s.finishers.push({ name: s.finishersRemoved.splice(left, 1)[0], auto: true });
+  } else {
+    s.finishers.push({ name: [...state.gridCards.keys()].find(same) ?? typed, auto: false });
+  }
+  renderFinishers();
+  input.focus();
+}
+
+// The deck's own cards that hold the text and are not finishers yet. The bridge's card search leaves out the
+// cards a deck holds, so the page's own list is the one to ask.
+function findFinishers(text) {
+  const needle = text.trim().toLowerCase();
+  if (needle.length < 2) return [];
+  const held = new Set(settingsState.finishers.map((f) => f.name.toLowerCase()));
+  return [...state.gridCards.keys()]
+    .filter((name) => name.toLowerCase().includes(needle) && !held.has(name.toLowerCase()))
+    .sort((a, b) => a.toLowerCase().startsWith(needle) - b.toLowerCase().startsWith(needle) || a.localeCompare(b))
+    .slice(0, MAX_FINISHER_MATCHES)
+    .map((name) => ({ label: name, value: name }));
 }
 
 // One row per grace card; typing in a factor changes the state alone, so the box keeps its focus.
@@ -155,6 +226,19 @@ async function saveSettings() {
   problem.hidden = true;
   try {
     await api("save_settings", s.deck, s.adjacent, s.ignore, s.tagSearch, s.grace);
+    // Grace cards and the like change what a queued swap moves in the goldfish.
+    goldfishEpoch++;
+    // The finishers are saved by their own call, and only when the viewer changed them. When it is refused
+    // the rest is saved already, so the deck is refreshed and the dialog says which part is not.
+    if (finishersKey() !== s.finishersWas) {
+      try {
+        await api("save_finishers", s.deck, s.finishers.map((f) => f.name));
+      } catch (error) {
+        await refresh();
+        const why = error instanceof Error ? error.message : String(error);
+        throw new Error(`Other settings saved; the finishers were not: ${why}`);
+      }
+    }
     $("settings-dialog").close();
     showStatus("Settings saved to the deck's profile.toml");
     await refresh();
@@ -178,6 +262,7 @@ function setupSettings() {
       addGrace();
     });
   }
+  combobox($("settings-finishers-input"), $("settings-finishers-results"), async (text) => findFinishers(text), addFinisher);
   const adjacent = $("settings-adjacent-input");
   // A partner pair is typed "First + Second": matches are for the name after the last +. The second name,
   // typed or picked through "+ partner", may be any legal card, so the bridge is asked in partner mode.

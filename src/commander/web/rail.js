@@ -1,13 +1,13 @@
 "use strict";
 
-// The right-hand rail: the activity log and the mana tab's switch.
+// The right-hand rail: the activity log, the mana tab and the goldfish tab.
 const ACTIVITY_KEY = "commander.activityOpen";
 
 /* Activity rail */
 
-// The right-hand rail: Activity or Mana open, or both folded to their labels. Remembered per viewer. It
+// The right-hand rail: Activity, Mana or Goldfish open, or all folded to their labels. Remembered per viewer. It
 // belongs to the open deck, so it is hidden, its panel folded, while no deck is open.
-const RAIL_TABS = ["activity", "mana"];
+const RAIL_TABS = ["activity", "mana", "goldfish"];
 let railTab = null;
 // The tab the viewer last left open; a deck opening shows the rail that way again.
 let railWanted = null;
@@ -55,6 +55,7 @@ function paintRail(tab) {
   }
   $("activity-pane").classList.toggle("open", tab !== null);
   if (tab === "mana") manaPanel.load();
+  if (tab === "goldfish") loadGoldfish();
 }
 
 function renderActivity(entries) {

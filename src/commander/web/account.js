@@ -117,6 +117,7 @@ function showSignedOut() {
   renderDecks();
   renderActivity([]);
   resetMana();
+  resetGoldfish();
   showRailFor(false);
   $("deck").hidden = true;
   $("loading").hidden = true;
