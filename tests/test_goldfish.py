@@ -23,6 +23,7 @@ from commander.goldfish import (
     turns_shown,
 )
 from commander.goldfish_cards import (
+    CHANGELING,
     CardKind,
     Draw,
     EntryCost,
@@ -1049,6 +1050,77 @@ def test_a_tutor_limited_by_mana_value_fetches_only_cards_within_it() -> None:
     report = run(slots, combos=(combo_of(a, dear),), bracket=4, games=500)
     # The four-drop is out of its reach, so a search never resolves for it.
     assert not any(o.combo_fetched for o in report.outcomes)
+
+
+def fetched_share(tutor: Tutor, a: GoldfishCard, b: GoldfishCard) -> float:
+    """The share of the games landing the pair that a tutor helped, in a nine-card deck whose ninth card is
+    left in the library after turn one's draw: 1 in 9 when the tutor finds only A, 2 in 9 when it finds
+    both."""
+    slots = [*repeat(FOREST, 5), make("Tutor", mv=1, tutor=tutor), a, b, VANILLA]
+    ways = run(slots, combos=(combo_of(a, b),), bracket=4, games=3000, seed=5).ways_to_win
+    assert ways is not None
+    return ways.combos[0].fetched_share
+
+
+def test_a_tutor_for_a_colour_finds_only_cards_of_that_colour() -> None:
+    green = make("A", mv=1, pips={"G": 1}, kinds=CREATURE, combo=True)
+    colourless = make("B", mv=1, kinds=CREATURE, combo=True)
+    tutor = Tutor(frozenset({CardKind.CREATURE}), TutorDestination.HAND, colours=frozenset("G"))
+    # Four standard errors are 0.03.
+    assert fetched_share(tutor, green, colourless) == pytest.approx(1 / 9, abs=0.035)
+    assert fetched_share(replace(tutor, colours=frozenset()), green, colourless) == pytest.approx(
+        2 / 9, abs=0.035
+    )
+
+
+def test_a_tutor_for_a_power_ceiling_finds_only_creatures_within_it() -> None:
+    small = replace(make("A", mv=1, kinds=CREATURE, combo=True), power=2)
+    big = replace(make("B", mv=1, kinds=CREATURE, combo=True), power=3)
+    tutor = Tutor(frozenset({CardKind.CREATURE}), TutorDestination.HAND, max_power=2)
+    assert fetched_share(tutor, small, big) == pytest.approx(1 / 9, abs=0.035)
+
+
+def test_a_tutor_for_an_artifact_or_a_subtype_finds_either_and_a_changeling_has_every_type() -> None:
+    dragon = replace(make("A", mv=1, kinds=CREATURE, combo=True), subtypes=frozenset({"dragon"}))
+    elf = replace(make("B", mv=1, kinds=CREATURE, combo=True), subtypes=frozenset({"elf"}))
+    tutor = Tutor(
+        frozenset({CardKind.ARTIFACT}), TutorDestination.HAND, subtypes=frozenset({"dragon"}), either=True
+    )
+    assert fetched_share(tutor, dragon, elf) == pytest.approx(1 / 9, abs=0.035)
+    shifter = replace(elf, subtypes=frozenset({CHANGELING}))
+    assert fetched_share(tutor, dragon, shifter) == pytest.approx(2 / 9, abs=0.035)
+    relic = make("B", mv=1, kinds=ARTIFACT, combo=True)
+    assert fetched_share(tutor, dragon, relic) == pytest.approx(2 / 9, abs=0.035)
+
+
+def test_a_tutor_to_the_hand_fetches_the_piece_it_can_cast_before_a_dearer_one() -> None:
+    first = make("First", mv=1, kinds=CREATURE, combo=True)
+    second = make("Second", mv=1, kinds=CREATURE, combo=True)
+    dear = make("Dear", mv=9, kinds=CREATURE, combo=True)
+    cheap = make("Cheap", mv=1, kinds=CREATURE, combo=True)
+    tutor = make("Tutor", mv=1, tutor=Tutor(frozenset({CardKind.CREATURE}), TutorDestination.HAND))
+    # Two combos of a commander-free piece each: the dear one first in the deck's order, the cheap one after.
+    combos = (
+        GoldfishCombo("1", ("First", "Dear"), (), (), command_zone=("First",)),
+        GoldfishCombo("2", ("Second", "Cheap"), (), (), command_zone=("Second",)),
+    )
+    slots = [*repeat(FOREST, 10), tutor, dear, cheap]
+    report = run(slots, commanders=(first, second), combos=combos, games=2000, seed=3)
+    # The nine-drop is never cast by turn five, so a fetch of it is wasted. Taking it whenever it is in the
+    # library, as the combos' order alone would, leaves the one-drop fetched in about a fifth of the games
+    # (0.21 at this seed, one standard error 0.01); taking the one-drop first, in over a quarter.
+    assert sum(1 for o in report.outcomes if o.combo_fetched & 2) / len(report.outcomes) > 0.24
+
+
+def test_a_combo_piece_that_taps_lands_the_turn_after_it_comes() -> None:
+    ritual = make(
+        "Ritual", mv=1, pips={"G": 1}, mana=ManaAbility(3, frozenset("G"), delayed=False, ritual=True)
+    )
+    druid = replace(make("Druid", mv=2, kinds=CREATURE, combo=True), tap_ability=True)
+    oracle = make("Oracle", mv=1, kinds=frozenset({CardKind.INSTANT}), combo=True)
+    slots = [*repeat(FOREST, 4), ritual, druid, oracle]
+    # Turn one's Forest and ritual pay for both, but the druid's tap ability waits for turn two.
+    assert only_outcome(run(slots, combos=(combo_of(druid, oracle),))).combo_turns == (2,)
 
 
 def test_a_finisher_is_held_and_its_turn_is_the_first_it_could_be_cast() -> None:

@@ -38,6 +38,7 @@ class Real:
     identity: str
     roles: frozenset[Role]
     tags: frozenset[str]
+    power: str | None = None
 
 
 def real(
@@ -52,9 +53,10 @@ def real(
     identity: str = "",
     roles: Iterable[Role] = (),
     tags: Iterable[str] = (),
+    power: str | None = None,
 ) -> Real:
     mana = CardMana(f"id-{name}", name, cost, mana_value, type_line, text, produced, "common", layout)
-    return Real(mana, identity, frozenset(roles), frozenset(tags))
+    return Real(mana, identity, frozenset(roles), frozenset(tags), power)
 
 
 RAMP, DRAW, TUTOR = Role.RAMP, Role.DRAW, Role.TUTOR
@@ -401,6 +403,7 @@ IMPERIAL_RECRUITER = real(
     "When this creature enters, search your library for a creature card with power 2 or less, reveal it, "
     "put it into your hand, then shuffle.",
     roles=(TUTOR,),
+    power="1",
 )
 TROPHY_MAGE = real(
     "Trophy Mage",
@@ -911,6 +914,7 @@ def compile_for(
         synergy=list(synergy),
         finishers_added=added,
         finishers_removed=removed,
+        powers={c.mana.oracle_id: c.power for c in known},
     )
 
 
@@ -966,6 +970,7 @@ def incoming(
         synergy=list(synergy),
         finishers_added=added,
         finishers_removed=removed,
+        powers={c.mana.oracle_id: c.power for c in known},
     )
 
 
@@ -1804,7 +1809,9 @@ def test_a_tutor_names_the_card_types_it_finds() -> None:
 
 def test_an_x_tutor_to_the_battlefield_is_limited_by_x() -> None:
     zenith = one(GREEN_SUNS_ZENITH)
-    assert zenith.tutor == Tutor(frozenset({CardKind.CREATURE}), TutorDestination.BATTLEFIELD, x_limited=True)
+    assert zenith.tutor == Tutor(
+        frozenset({CardKind.CREATURE}), TutorDestination.BATTLEFIELD, x_limited=True, colours=frozenset("G")
+    )
     assert zenith.x_cost
     assert zenith.mana_value == 1
     finale = one(FINALE)
@@ -1824,13 +1831,109 @@ def test_a_search_is_a_tutor_only_when_the_tagger_says_so() -> None:
 
 @pytest.mark.parametrize(
     "tutor",
-    [RECRUITER_OF_THE_GUARD, IMPERIAL_RECRUITER, TROPHY_MAGE, FIERCE_EMPATH, TIME_OF_NEED],
+    [RECRUITER_OF_THE_GUARD, TROPHY_MAGE, FIERCE_EMPATH, TIME_OF_NEED],
     ids=lambda t: t.mana.name,
 )
-def test_a_search_restricted_beyond_card_type_and_a_mana_value_ceiling_is_not_modelled(tutor: Real) -> None:
+def test_a_search_restricted_beyond_type_colour_power_and_a_mana_value_ceiling_is_not_modelled(
+    tutor: Real,
+) -> None:
     card = one(tutor)
     assert card.tutor is None
     assert not card.modelled
+
+
+def test_a_tutor_for_a_creature_with_power_up_to_a_ceiling_says_so_and_cards_carry_their_power() -> None:
+    recruiter = one(IMPERIAL_RECRUITER)
+    assert recruiter.tutor == Tutor(frozenset({CardKind.CREATURE}), TutorDestination.HAND, max_power=2)
+    assert recruiter.modelled
+    assert recruiter.power == 1
+    assert one(SOL_RING).power is None
+
+
+GOBLIN_MATRON = real(
+    "Goblin Matron",
+    "{2}{R}",
+    3,
+    "Creature — Goblin",
+    "When this creature enters, you may search your library for a Goblin card, reveal that card, put it into "
+    "your hand, then shuffle.",
+    roles=(TUTOR,),
+)
+STONEFORGE = real(
+    "Stoneforge Mystic",
+    "{1}{W}",
+    2,
+    "Creature — Kor Artificer",
+    "When this creature enters, you may search your library for an Equipment card, reveal it, put it into "
+    "your hand, then shuffle.\n{1}{W}, {T}: You may put an Equipment card from your hand onto the "
+    "battlefield.",
+    roles=(TUTOR,),
+)
+ACADEMY_RECTOR = real(
+    "Academy Rector",
+    "{3}{W}",
+    4,
+    "Creature — Human Cleric",
+    "When this creature dies, you may exile it. If you do, search your library for an enchantment card, put "
+    "that card onto the battlefield, then shuffle.",
+    roles=(TUTOR,),
+)
+HERMIT_DRUID = real(
+    "Hermit Druid",
+    "{1}{G}",
+    2,
+    "Creature — Human Druid",
+    "{G}, {T}: Reveal cards from the top of your library until you reveal a basic land card. Put that card "
+    "into your hand and all other cards revealed this way into your graveyard.",
+)
+
+
+def test_a_tutor_for_a_subtype_of_the_decks_cards_finds_it_and_cards_carry_their_subtypes() -> None:
+    deck = build(GOBLIN_MATRON, ELECTROMANCER)
+    matron = card_named(deck, "Goblin Matron")
+    assert matron.tutor == Tutor(frozenset(), TutorDestination.HAND, subtypes=frozenset({"goblin"}))
+    assert matron.modelled
+    assert card_named(deck, "Goblin Electromancer").subtypes == {"goblin", "wizard"}
+    # No card of the deck is an Equipment, so the word is not known for a type.
+    mystic = one(STONEFORGE)
+    assert mystic.tutor is None
+    assert not mystic.modelled
+
+
+SARKHANS_TRIUMPH = real(
+    "Sarkhan's Triumph",
+    "{2}{R}",
+    3,
+    "Instant",
+    "Search your library for a Dragon creature card, reveal it, put it into your hand, then shuffle.",
+    roles=(TUTOR,),
+)
+SHIVAN_DRAGON = real(
+    "Shivan Dragon",
+    "{4}{R}{R}",
+    6,
+    "Creature — Dragon",
+    "Flying\n{R}: This creature gets +1/+0 until end of turn.",
+)
+
+
+def test_a_tutor_for_a_subtype_of_a_card_type_needs_both() -> None:
+    triumph = card_named(build(SARKHANS_TRIUMPH, SHIVAN_DRAGON), "Sarkhan's Triumph")
+    assert triumph.tutor == Tutor(
+        frozenset({CardKind.CREATURE}), TutorDestination.HAND, subtypes=frozenset({"dragon"})
+    )
+
+
+def test_a_tutor_that_searches_when_its_creature_dies_is_not_modelled() -> None:
+    rector = one(ACADEMY_RECTOR)
+    assert rector.tutor is None
+    assert not rector.modelled
+
+
+def test_a_creature_with_a_tap_ability_other_than_mana_says_so() -> None:
+    assert one(HERMIT_DRUID).tap_ability
+    assert not one(LLANOWAR).tap_ability
+    assert not one(THASSAS_ORACLE).tap_ability
 
 
 @pytest.mark.parametrize("tutor", [SURVIVAL, ENTOMB], ids=lambda t: t.mana.name)
@@ -2076,7 +2179,7 @@ def test_extra_land_drops_are_counted_per_turn() -> None:
 def test_a_pact_is_a_free_spell() -> None:
     pact = one(SUMMONERS_PACT)
     assert pact.mana_value == 0
-    assert pact.tutor == Tutor(frozenset({CardKind.CREATURE}), TutorDestination.HAND)
+    assert pact.tutor == Tutor(frozenset({CardKind.CREATURE}), TutorDestination.HAND, colours=frozenset("G"))
     assert pact.modelled
     assert one(SLAUGHTER_PACT).modelled
 
@@ -2086,7 +2189,9 @@ def test_tutors_and_rituals_with_a_sacrifice_cost_say_so() -> None:
     assert intent.tutor == Tutor(frozenset(), TutorDestination.HAND)
     assert intent.needs_sacrifice
     order = one(NATURAL_ORDER)
-    assert order.tutor == Tutor(frozenset({CardKind.CREATURE}), TutorDestination.BATTLEFIELD)
+    assert order.tutor == Tutor(
+        frozenset({CardKind.CREATURE}), TutorDestination.BATTLEFIELD, colours=frozenset("G")
+    )
     assert order.needs_sacrifice
     culling = one(CULLING_THE_WEAK)
     assert culling.mana == ManaAbility(4, frozenset("B"), delayed=False, ritual=True)

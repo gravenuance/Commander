@@ -21,6 +21,7 @@ from typing import NamedTuple
 
 from commander.answers import card_key
 from commander.goldfish_cards import (
+    CHANGELING,
     CardKind,
     EntryCost,
     GoldfishCard,
@@ -57,6 +58,8 @@ _START_LIFE = 40
 _LIFE_FLOOR = 10
 # Mox Opal's metalcraft.
 _METALCRAFT = 3
+# The colours a card's cost gives it, which a tutor for a colour reads.
+_CARD_COLOURS = frozenset("WUBRG")
 # What one-shot mana is spent on: life alone for anything; rituals and bursts for a mana source, a combo
 # piece, a tutor fetching one, a finisher, the commander or a combo landing; Lion's Eye Diamond only for the
 # last three, which win or are the commander.
@@ -353,6 +356,7 @@ class _Card:
         "aura",
         "basic",
         "burst_types",
+        "colours",
         "combo",
         "cost",
         "creature",
@@ -431,6 +435,7 @@ class _Card:
         paid = [symbol for symbol, count in card.pips.items() if count > 0]
         self.pip_mask = unit_mask(symbol for symbol in paid if "/" not in symbol)
         self.hybrids = tuple(symbol_mask(symbol) for symbol in paid if "/" in symbol)
+        self.colours = frozenset(letter for symbol in paid for letter in symbol if letter in _CARD_COLOURS)
         self._read_land(card)
         self.creature = CardKind.CREATURE in card.kinds
         self.permanent = card.permanent
@@ -1374,7 +1379,8 @@ class _Game:
 
     def _target(self, card: _Card, units: list[int]) -> tuple[int, int] | None:
         """The card a tutor would fetch and its place in the library: a piece of the combo nearest to landing
-        that the tutor can find, else a finisher."""
+        that the tutor can find, else a finisher. A tutor to the hand or the top takes one the mana could pay
+        for by the last turn, a land a turn, before one it could not."""
         tutor = card.src.tutor
         if tutor is None:
             return None
@@ -1386,7 +1392,17 @@ class _Game:
             # With no creature to sacrifice nothing fits.
             limit = tutor.value_over_sacrifice + min(self.creatures)[1] if self.creatures else -1
         cards = self.s.cards
-        return next(((index, cid) for cid, index in self._wanted() if _finds(cards[cid], tutor, limit)), None)
+        anywhere = tutor.destination is TutorDestination.BATTLEFIELD
+        reach = len(units) - card.cost.total + self.s.horizon - self.turn
+        first = None
+        for cid, index in self._wanted():
+            found = cards[cid]
+            if not _finds(found, tutor, limit):
+                continue
+            if anywhere or found.mv <= reach:
+                return index, cid
+            first = first or (index, cid)
+        return first
 
     def _wanted(self) -> list[tuple[int, int]]:
         """What a tutor is after that is in the library, best first, with its place there: the missing
@@ -1456,13 +1472,19 @@ class _Game:
             self.open_combos.remove(k)
 
     def _pieces_to_cast(self, k: int) -> tuple[int, ...] | None:
-        """The pieces of combo k still to be cast, or None when one is neither out nor castable."""
+        """The pieces of combo k still to be cast, or None when one is neither out nor castable. A piece whose
+        ability taps it must have been out since the turn began."""
         s = self.s
         cast: list[int] = []
         for piece in s.combo_pieces[k] or ():
-            if piece in self.bf or piece in s.combo_free[k]:
+            if piece in s.combo_free[k]:
                 continue
-            if piece not in self.hand and piece not in self.cmd_left:
+            taps = s.cards[piece].src.tap_ability
+            if piece in self.bf:
+                if taps and piece in self.arrived:
+                    return None
+                continue
+            if taps or (piece not in self.hand and piece not in self.cmd_left):
                 return None
             cast.append(piece)
         return tuple(cast)
@@ -1485,14 +1507,33 @@ class _Game:
 
 
 def _finds(card: _Card, tutor: Tutor, limit: int | None) -> bool:
-    """Whether a tutor can fetch the card: a permanent for the battlefield, of a type it searches, within the
-    mana value limit, and no land."""
+    """Whether a tutor can fetch the card: a permanent for the battlefield, of a type, subtype and colour it
+    searches, within the mana value and power limits, and no land."""
+    src = card.src
     return (
         (limit is None or card.mv <= limit)
-        and (not tutor.finds or bool(card.src.kinds & tutor.finds))
+        and _finds_type(src, tutor)
+        and _finds_colour(card.colours, tutor.colours)
+        and (tutor.max_power is None or (src.power is not None and src.power <= tutor.max_power))
         and (card.permanent or tutor.destination is not TutorDestination.BATTLEFIELD)
         and not card.is_land
     )
+
+
+def _finds_colour(colours: frozenset[str], wanted: frozenset[str]) -> bool:
+    """Whether a card of these colours has one of the wanted ones, "C" standing for none."""
+    return not wanted or bool(colours & wanted) or ("C" in wanted and not colours)
+
+
+def _finds_type(card: GoldfishCard, tutor: Tutor) -> bool:
+    """Whether the card is of a type and a subtype the tutor searches, or of either when it takes either."""
+    of_type = not tutor.finds or bool(card.kinds & tutor.finds)
+    if not tutor.subtypes:
+        return of_type
+    of_subtype = CHANGELING in card.subtypes or bool(card.subtypes & tutor.subtypes)
+    if tutor.either and tutor.finds:
+        return bool(card.kinds & tutor.finds) or of_subtype
+    return of_type and of_subtype
 
 
 # --- the run ----------------------------------------------------------------------------------------------
