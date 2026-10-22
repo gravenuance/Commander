@@ -84,7 +84,7 @@ def test_a_refresh_whose_deck_answer_arrives_before_the_deck_list_ends_on_the_fr
 def test_a_poll_whose_stamps_lack_the_open_deck_does_not_ask_for_it() -> None:
     seen = run("""
     state.stamps = { "1": "a", "2": "b" };
-    stub.stamps = async () => ({ stamps: { "1": "a" }, meta: null });
+    stub.stamps = async () => ({ stamps: { "1": "a" }, meta: null, previews: null });
     stub.decks = async () => ({ decks: decks.slice(0, 1) });
     stub.deck = async (id) => ({ error: "deck is not in the workspace" });
     await poll();

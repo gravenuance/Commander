@@ -19,6 +19,7 @@ const state = {
   view: null,
   stamps: {},
   metaStamp: null,
+  previewsStamp: null,
   tiles: new Map(),
   groups: new Map(),
   gridCards: new Map(),

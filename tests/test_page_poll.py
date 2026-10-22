@@ -15,7 +15,8 @@ state.current = 7;
 state.decks = [{ id: 7, short: "A", name: "A", queued: 0 }];
 state.stamps = { "7": "old" };
 state.metaStamp = null;
-stub.stamps = async () => ({ stamps: { "7": "new" }, meta: null });
+state.previewsStamp = null;
+stub.stamps = async () => ({ stamps: { "7": "new" }, meta: null, previews: null });
 stub.decks = async () => ({ decks: [{ id: 7, short: "A", name: "A", queued: 0 }] });
 stub.deck = async () => view("new");
 stub.bracket = async () => ({ estimate: null, notes: [], causes: [], unavailable: "" });
@@ -51,7 +52,7 @@ def test_a_poll_whose_open_deck_reload_failed_reloads_it_when_its_stamp_changes(
     await poll();
     const afterFailure = asked("deck");
     failing = false;
-    stub.stamps = async () => ({ stamps: { "7": "newer" }, meta: null });
+    stub.stamps = async () => ({ stamps: { "7": "newer" }, meta: null, previews: null });
     await poll();
     return { afterFailure, afterRetry: asked("deck"), shown: state.view?.stamp };
     """)
@@ -90,7 +91,7 @@ def test_a_deck_that_fails_to_load_leaves_the_syncs_progress_and_the_meta_reload
     accountState.syncing = true;
     stub.account = async () => ({ user: "u", signedIn: true,
       sync: { running: true, progress: "Fetching 2 of 9", summary: "", failed: false, decks: {} } });
-    stub.stamps = async () => ({ stamps: { "7": "new" }, meta: "fresh" });
+    stub.stamps = async () => ({ stamps: { "7": "new" }, meta: "fresh", previews: null });
     await poll();
     return { account: asked("account"), meta: asked("meta"), note: $("sync-status").textContent };
     """)
@@ -101,7 +102,7 @@ def test_a_deck_opened_while_a_poll_is_out_keeps_the_stamp_it_loaded_with() -> N
     seen = run("""
     state.decks = [...state.decks, { id: 8, short: "B", name: "B", queued: 0 }];
     state.stamps = { "7": "old", "8": "b1" };
-    stub.stamps = async () => ({ stamps: { "7": "new", "8": "b2" }, meta: null });
+    stub.stamps = async () => ({ stamps: { "7": "new", "8": "b2" }, meta: null, previews: null });
     let release;
     const gate = new Promise((resolve) => { release = resolve; });
     stub.decks = async () => { await gate; return { decks: state.decks }; };
@@ -163,6 +164,50 @@ def test_the_reload_after_a_sync_asks_for_the_meta_once() -> None:
     return asked("meta");
     """)
     assert seen == 1
+
+
+def test_a_changed_previews_stamp_reloads_the_open_deck_so_its_count_and_open_panel_follow() -> None:
+    seen = run("""
+    state.stamps = { "7": "new" };
+    state.view = view("new");
+    state.previewsStamp = "day1";
+    $("h-previews").setAttribute("aria-expanded", "true");
+    const card = { name: "Tutelage", manaCost: "", typeLine: "Aura", text: "", image: "", set: "S",
+      out: "2026-11-13", fits: ["Flash"] };
+    stub.previews = async () => ({ cards: [card] });
+    stub.deck = async () => ({ ...view("new"), previews: 2 });
+    stub.stamps = async () => ({ stamps: { "7": "new" }, meta: null, previews: "day1" });
+    await poll();
+    const same = { deck: asked("deck"), hidden: $("previews").hidden };
+    stub.stamps = async () => ({ stamps: { "7": "new" }, meta: null, previews: "day2" });
+    await poll();
+    await settle();
+    return { same, deck: asked("deck"), hidden: $("previews").hidden, count: $("count-previews").textContent,
+      tiles: $("list-previews").children.length, stamp: state.previewsStamp };
+    """)
+    assert seen == {
+        "same": {"deck": 0, "hidden": True},
+        "deck": 1,
+        "hidden": False,
+        "count": "(2)",
+        "tiles": 1,
+        "stamp": "day2",
+    }
+
+
+def test_a_previews_stamp_that_changes_during_a_save_reloads_the_deck_when_it_ends() -> None:
+    seen = run("""
+    state.stamps = { "7": "new" };
+    state.previewsStamp = "day1";
+    stub.stamps = async () => ({ stamps: { "7": "new" }, meta: null, previews: "day2" });
+    state.busy = true;
+    await poll();
+    const during = asked("deck");
+    state.busy = false;
+    await poll();
+    return { during, after: asked("deck") };
+    """)
+    assert seen == {"during": 0, "after": 1}
 
 
 def test_a_poll_that_fails_for_a_reason_other_than_the_bridge_reports_it_to_the_app_log() -> None:

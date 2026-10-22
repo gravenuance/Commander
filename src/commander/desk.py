@@ -726,7 +726,12 @@ class Desk:
         return {
             "stamps": {str(i): board_stamp(folder) for i, folder in self._workspace.deck_folders()},
             "meta": cache_stamp(self._settings.cache),
+            "previews": self._previews_stamp(),
         }
+
+    def _previews_stamp(self) -> str:
+        """Changes when the probe rewrites the previews file or the local day turns, a card's release day."""
+        return f"{files_stamp(self._settings.cache, (PREVIEWS_FILE,))}|{local_day(self._now())}"
 
     @_guarded
     def deck(self, deck_id: int) -> Json:
@@ -1058,7 +1063,7 @@ class Desk:
         targets = {**DEFAULT_TARGETS, **self._settings.targets, **profile.targets}
         stamp = (
             f"{files_stamp(stored.folder, ('deck.json', 'profile.toml'))}"
-            f"|{files_stamp(self._settings.cache, (PREVIEWS_FILE,))}|{self._card_data_stamp()}|{today}"
+            f"|{self._previews_stamp()}|{self._card_data_stamp()}"
             f"|{sorted((role.value, n) for role, n in self._settings.targets.items())}"
         )
         known = self._previews.get(stored.deck.id)

@@ -526,6 +526,27 @@ def test_the_deck_view_counts_its_previews_and_the_panel_gets_them_to_look_at(
     assert str(cards[1]["text"]).startswith("Flash\nEnchant creature")
 
 
+def test_the_polled_previews_stamp_changes_with_the_cache_file_and_the_local_day(
+    desk_settings: DeskSettings,
+) -> None:
+    clock = [NOW]
+    desk = Desk(
+        desk_settings,
+        client_factory=FakeArchidekt().client,
+        token_store=MemoryTokenStore(),
+        now=lambda: clock[0],
+        pacer_factory=lambda _: Pacer(0),
+    )
+    before = desk.stamps().get("previews")
+    assert before is not None
+    assert desk.stamps().get("previews") == before
+    write_previews(desk_settings.cache, PreviewCache(TODAY, parse_search_page(search_page()).cards))
+    written = desk.stamps().get("previews")
+    assert written != before
+    clock[0] = NOW + timedelta(days=1)
+    assert desk.stamps().get("previews") not in (before, written)
+
+
 def test_off_season_opening_a_deck_does_no_theme_work_for_previews(
     desk_settings: DeskSettings, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
 ) -> None:

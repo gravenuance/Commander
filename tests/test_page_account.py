@@ -221,7 +221,7 @@ def start_page(account_answer: str) -> Answer:
     return run(f"""
     stub.account = async () => {account_answer};
     stub.decks = async () => ({{ decks }});
-    stub.stamps = async () => ({{ stamps: {{ "1": "a" }}, meta: "m" }});
+    stub.stamps = async () => ({{ stamps: {{ "1": "a" }}, meta: "m", previews: "p" }});
     const opened = [];
     $("signin-dialog").showModal = () => opened.push("dialog");
     await fire(window, "pywebviewready");

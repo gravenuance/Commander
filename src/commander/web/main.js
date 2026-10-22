@@ -46,6 +46,12 @@ async function poll() {
       const metaChanged = answer.meta !== state.metaStamp;
       state.metaStamp = answer.meta;
       if (metaChanged) await metaPanel.load();
+      // A sync's probe or a new local day changes which previews fit; the deck view carries their count.
+      // During a save the stamp is kept, so the reload happens when it ends.
+      const previewsChanged = answer.previews !== state.previewsStamp;
+      const previewsDeferred = previewsChanged && state.busy;
+      if (!previewsDeferred) state.previewsStamp = answer.previews;
+      if (previewsChanged && !previewsDeferred && state.current !== null && !reloadDeck) await loadDeck();
     }
   } catch (error) {
     // A missed poll is retried on the next tick.
@@ -89,6 +95,7 @@ window.addEventListener("pywebviewready", async () => {
       if (!answer.error) {
         state.stamps = answer.stamps;
         state.metaStamp = answer.meta;
+        state.previewsStamp = answer.previews;
       }
     }
   } catch {
