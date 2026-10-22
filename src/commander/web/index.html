@@ -153,7 +153,7 @@
     </section>
   </main>
 
-  <aside id="activity-pane" class="activity" aria-label="Activity and mana base" hidden>
+  <aside id="activity-pane" class="activity" aria-label="Activity, mana base and goldfish" hidden>
     <div class="rail-tabs">
       <button id="activity-toggle" class="rail-toggle" type="button" aria-expanded="false" aria-controls="activity" data-tab="activity">
         <span class="rail-label">Activity</span>
@@ -161,9 +161,13 @@
       <button id="mana-toggle" class="rail-toggle" type="button" aria-expanded="false" aria-controls="mana" data-tab="mana">
         <span class="rail-label">Mana</span>
       </button>
+      <button id="goldfish-toggle" class="rail-toggle" type="button" aria-expanded="false" aria-controls="goldfish" data-tab="goldfish">
+        <span class="rail-label">Goldfish</span>
+      </button>
     </div>
     <ol id="activity" class="activity-list" hidden></ol>
     <div id="mana" class="mana" hidden></div>
+    <div id="goldfish" class="goldfish" hidden></div>
   </aside>
 </div>
 
@@ -293,6 +297,7 @@
 <script src="bracket.js"></script>
 <script src="rail.js"></script>
 <script src="mana.js"></script>
+<script src="goldfish.js"></script>
 <script src="previews.js"></script>
 <script src="settings.js"></script>
 <script src="review.js"></script>
