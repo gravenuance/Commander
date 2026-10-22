@@ -371,7 +371,7 @@ class _Card:
 
     def _rank(self) -> int:
         card = self.src
-        if self.is_land or card.finisher or self.ritual:
+        if self.is_land or card.finisher or self.ritual or (card.combo and not card.permanent):
             return _HELD
         cost = min(self.cost.total, _RANK_SPAN)
         if self.mana_perm or card.land_ramp is not None or card.extra_land_drops:
@@ -381,7 +381,7 @@ class _Card:
         if card.draw is not None:
             return _DRAW_RANK + cost
         if card.combo:
-            return _COMBO_RANK + cost if card.permanent else _HELD
+            return _COMBO_RANK + cost
         return _OTHER_RANK + _RANK_SPAN - min(card.mana_value, _RANK_SPAN)
 
 

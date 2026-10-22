@@ -670,6 +670,14 @@ def test_a_commander_piece_is_castable_with_the_mana_left_for_a_held_piece() -> 
     assert only_outcome(run(slots, commanders=(boss,), combos=combos)).combo_turns == (3,)
 
 
+def test_an_instant_or_sorcery_piece_that_also_draws_is_held_for_the_winning_turn() -> None:
+    piece = make("Piece", mv=2, kinds=CREATURE, combo=True)
+    cantrip = make("Cantrip", mv=1, combo=True, draw=Draw(1, engine=False))
+    slots = [*repeat(FOREST, 4), piece, cantrip, VANILLA]
+    # The sorcery is not cast for its card on turn one; the creature lands on turn two and the pair on three.
+    assert only_outcome(run(slots, combos=(combo_of(piece, cantrip),))).combo_turns == (3,)
+
+
 def test_a_commander_piece_that_needs_only_the_command_zone_is_free() -> None:
     boss = make("Boss", mv=3, kinds=CREATURE, combo=True)
     piece = make("Piece", mv=1, kinds=ARTIFACT, combo=True)
