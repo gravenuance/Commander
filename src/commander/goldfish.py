@@ -66,13 +66,17 @@ _CARD_COLOURS = frozenset("WUBRG")
 _FOR_NOTHING = 0
 _FOR_PLAY = 1
 _FOR_WIN = 2
-# A one-shot in a plan that is no card in hand: a life payment, or the burst of the creature `_BURST - code`.
+# A one-shot in a plan that is no card in hand: a life payment, a Treasure, or the burst of the creature
+# `_BURST - code`.
 _LIFE = -1
-_BURST = -2
+_TREASURE = -2
+_BURST = -3
 
 # Colours as bits, so a mana unit is one small int: the set of colours it can pay.
 _BITS = {"W": 1, "U": 2, "B": 4, "R": 8, "G": 16, "C": 32}
 _COLOUR_BITS = 63
+# A Treasure's unit: any colour.
+_ANY_COLOUR = sum(_BITS[colour] for colour in "WUBRG")
 # A unit a ritual made that may be spent only on some kinds of spell, and is lost once that spell is paid.
 _RESTRICTED = 64
 _MASKS = 128
@@ -490,6 +494,7 @@ class _Setup:
     """Everything about a run that does not change from game to game."""
 
     __slots__ = (
+        "attacks",
         "average",
         "cards",
         "cmd_ids",
@@ -511,6 +516,7 @@ class _Setup:
         "need_syn",
         "need_win",
         "shown",
+        "tap_pieces",
     )
 
     def __init__(
@@ -555,8 +561,14 @@ class _Setup:
             for combo in combos
         )
         self.fin_ids = tuple(cid for cid, card in enumerate(self.cards) if card.finisher)
-        # One-shot mana beyond the turn's: rituals in hand, life payments, bursts for a land.
-        self.has_rituals = any(card.ritual or card.life_cost or card.burst_types for card in self.cards)
+        self.tap_pieces = frozenset(cid for cid, card in enumerate(self.cards) if card.src.tap_ability)
+        # Attacks make Treasures: a creature's own trigger, or a permanent's for a creature becoming tapped.
+        self.attacks = any(c.src.treasures_on_attack or c.src.treasure_on_tap for c in self.cards)
+        # One-shot mana beyond the turn's: rituals in hand, life payments, bursts for a land, Treasures.
+        self.has_rituals = self.attacks or any(
+            card.ritual or card.life_cost or card.burst_types or card.src.treasures_on_entry
+            for card in self.cards
+        )
         self.has_needs = any(card.need for card in self.cards)
         self.merged: dict[tuple[int, ...], Cost] = {}
         self._set_keep_rule()
@@ -650,6 +662,7 @@ class _Game:
     """The state of one game. Mana units are masks of the colours each can pay, sorted by how many that is."""
 
     __slots__ = (
+        "activators",
         "arrived",
         "artifacts",
         "bf",
@@ -675,6 +688,7 @@ class _Game:
         "life",
         "life_sources",
         "lost_lands",
+        "loyalty_used",
         "mana",
         "needing",
         "needs_met",
@@ -693,6 +707,7 @@ class _Game:
         "shuffles",
         "sick",
         "top",
+        "treasures",
         "turn",
         "tutor_look",
         "units",
@@ -727,6 +742,10 @@ class _Game:
         # Creatures making a burst of mana for a land sacrificed, and those used this turn.
         self.bursts: list[int] = []
         self.burst_used: set[int] = set()
+        self.treasures = 0
+        # Permanents in play with a search paid for by Treasures or loyalty, and those whose loyalty is spent.
+        self.activators: list[int] = []
+        self.loyalty_used: set[int] = set()
         self.engines = 0
         self.extra_drops = 0
         self.drops_left = 0
@@ -819,7 +838,14 @@ class _Game:
         self.drops_left = 1 + self.extra_drops
         self.units = list(pool)
         self._play_lands()
+        # Searches paid for by Treasures or loyalty are used as each main phase begins, the second after the
+        # attack.
+        if self.activators:
+            self._activate()
         self._act()
+        attacked = s.attacks and self._attack()
+        if (self.activators and self._activate()) or attacked:
+            self._act()
         if self.turn <= s.mid and not self.screw:
             self._check_screw()
         self.mana.append(len(pool))
@@ -1046,6 +1072,12 @@ class _Game:
     ) -> bool:
         """Add to `trial` and `used` the rituals in hand, cheapest first, then the creatures' bursts, until
         the cost can be paid; whether it can. The creatures the rituals sacrifice go into `gone`."""
+        for _ in range(self._treasures_for(purpose)):
+            trial.append(_ANY_COLOUR)
+            trial.sort(key=_PAY_KEY)
+            used.append(_TREASURE)
+            if can_pay(trial, cost):
+                return True
         cards = self.s.cards
         # The creatures the rituals may sacrifice, cheapest first as `_sacrifice` takes them, leaving those
         # the cards paid for sacrifice themselves.
@@ -1092,6 +1124,9 @@ class _Game:
             source = cards[min(self.life_sources, key=lambda cid: cards[cid].life_cost)]
             self.life -= source.life_cost
             self.units.append(source.mana_mask)
+        elif code == _TREASURE:
+            self._spend_treasures(1)
+            self.units.append(_ANY_COLOUR)
         elif code <= _BURST:
             cid = _BURST - code
             self.burst_used.add(cid)
@@ -1107,6 +1142,19 @@ class _Game:
                 amount += sacrificed if card.plus_sacrificed else 0
             self.units.extend([card.mana_mask] * amount)
         self.units.sort(key=_PAY_KEY)
+
+    def _treasures_for(self, purpose: int) -> int:
+        """The Treasures a cost may spend: as rituals, none on a plain spell, and while a search paid for by
+        Treasures is in play with something to find, none but on a win or the commander."""
+        if purpose < _FOR_PLAY or not self.treasures:
+            return 0
+        if purpose < _FOR_WIN and (self.open_combos or self.open_fins):
+            cards = self.s.cards
+            for cid in self.activators:
+                ability = cards[cid].src.activated_tutor
+                if ability is not None and ability.treasures:
+                    return 0
+        return self.treasures
 
     def _bursts_ready(self) -> list[int]:
         """The creatures that can sacrifice a land for their mana now: in play since the turn began, not used
@@ -1218,7 +1266,8 @@ class _Game:
         cards = self.s.cards
         anything = units + self._life_payments()[0]
         play = anything + sum(cards[cid].mana_amount for cid in self._bursts_ready())
-        win = play
+        win = play + self.treasures
+        play += self._treasures_for(_FOR_PLAY)
         biggest = max((mv for _, mv, _ in self.creatures), default=0)
         for cid in self.hand:
             card = cards[cid]
@@ -1239,7 +1288,7 @@ class _Game:
         target = None
         purpose = _FOR_WIN if from_command else card.purpose
         if card.src.tutor is not None:
-            target = self._target(card, units)
+            target = self._target(card.src.tutor, units, card.cost.total)
             if target is None:
                 return None
             if self.s.cards[target[1]].combo:
@@ -1289,8 +1338,8 @@ class _Game:
             self._sacrifice()
         if card.src.land_ramp is not None:
             self._ramp_lands(card)
-        if target is not None:
-            self._fetch(card, target)
+        if target is not None and card.src.tutor is not None:
+            self._fetch(card.src.tutor, target)
         self._enter(cid, card, from_command=from_command)
 
     def _enter(self, cid: int, card: _Card, *, from_command: bool = False) -> None:
@@ -1318,6 +1367,57 @@ class _Game:
             self._draw(card.draw_count)
         if card.finisher and card.permanent:
             self._record_finisher(cid)
+        if card.src.treasures_on_entry:
+            self._make_treasures(card.src.treasures_on_entry)
+
+    def _make_treasures(self, count: int) -> None:
+        """Treasures wait in play as one-shot mana of any colour, and count as artifacts."""
+        self.treasures += count
+        self.artifacts += count
+        if self.needing:
+            self._meet_needs()
+
+    def _attack(self) -> bool:
+        """Attack with every creature in play since the turn began, for the Treasures that attacking and
+        becoming tapped make (no damage is followed); whether any were made."""
+        cards = self.s.cards
+        attackers = [cards[cid].src for _, _, cid in self.creatures if cid not in self.arrived]
+        made = sum(attacker.treasures_on_attack for attacker in attackers)
+        for cid in self.bf:
+            types = cards[cid].src.treasure_on_tap
+            if types:
+                made += sum(1 for attacker in attackers if _has_type(attacker, types))
+        if made:
+            self._make_treasures(made)
+        return made > 0
+
+    def _activate(self) -> bool:
+        """Use each permanent's search paid for by Treasures or loyalty while it can pay and finds a card;
+        whether any did."""
+        cards = self.s.cards
+        used = False
+        for cid in list(self.activators):
+            ability = cards[cid].src.activated_tutor
+            if ability is None or cid not in self.bf:
+                continue
+            while self.treasures >= ability.treasures and cid not in self.loyalty_used:
+                target = self._target(ability.tutor, self.units, 0)
+                if target is None:
+                    break
+                if ability.loyalty:
+                    self.loyalty_used.add(cid)
+                self._spend_treasures(ability.treasures)
+                self._fetch(ability.tutor, target)
+                used = True
+        return used
+
+    def _spend_treasures(self, count: int) -> None:
+        if not count:
+            return
+        self.treasures -= count
+        self.artifacts -= count
+        if self.needing:
+            self._meet_needs()
 
     def _track_sources(self, cid: int, card: _Card, *, gone: bool = False) -> None:
         """Count a permanent coming or going among the artifacts and the mana sources that are no fixed part
@@ -1328,6 +1428,7 @@ class _Game:
             (card.need is not None, self.needing),
             (bool(card.life_cost), self.life_sources),
             (bool(card.burst_types), self.bursts),
+            (card.src.activated_tutor is not None, self.activators),
         ):
             if held:
                 (kept.remove if gone else kept.append)(cid)
@@ -1377,23 +1478,21 @@ class _Game:
                 tapped = ramp.destination is not LandDestination.UNTAPPED
                 self._put_land(cid, cards[cid], tapped=tapped)
 
-    def _target(self, card: _Card, units: list[int]) -> tuple[int, int] | None:
+    def _target(self, tutor: Tutor, units: list[int], paid: int) -> tuple[int, int] | None:
         """The card a tutor would fetch and its place in the library: a piece of the combo nearest to landing
-        that the tutor can find, else a finisher. A tutor to the hand or the top takes one the mana could pay
-        for by the last turn, a land a turn, before one it could not."""
-        tutor = card.src.tutor
-        if tutor is None:
-            return None
+        that the tutor can find, else a finisher. `paid` is the mana the tutor itself takes from the units.
+        A tutor to the hand or the top takes one the mana could pay for by the last turn, a land a turn,
+        before one it could not."""
         self.tutor_look = True
         limit = tutor.max_mana_value
         if tutor.x_limited:
-            limit = len(units) - card.cost.total
+            limit = len(units) - paid
         elif tutor.value_over_sacrifice is not None:
             # With no creature to sacrifice nothing fits.
             limit = tutor.value_over_sacrifice + min(self.creatures)[1] if self.creatures else -1
         cards = self.s.cards
         anywhere = tutor.destination is TutorDestination.BATTLEFIELD
-        reach = len(units) - card.cost.total + self.s.horizon - self.turn
+        reach = len(units) - paid + self.s.horizon - self.turn
         first = None
         for cid, index in self._wanted():
             found = cards[cid]
@@ -1437,11 +1536,8 @@ class _Game:
         ]
         return [(cid, where[cid]) for cid in wanted]
 
-    def _fetch(self, card: _Card, target: tuple[int, int]) -> None:
+    def _fetch(self, tutor: Tutor, target: tuple[int, int]) -> None:
         index, cid = target
-        tutor = card.src.tutor
-        if tutor is None:
-            return
         self.searched = True
         self.lib.pop(index)
         self.pops += 1
@@ -1475,16 +1571,16 @@ class _Game:
         """The pieces of combo k still to be cast, or None when one is neither out nor castable. A piece whose
         ability taps it must have been out since the turn began."""
         s = self.s
+        free, taps = s.combo_free[k], s.tap_pieces
         cast: list[int] = []
         for piece in s.combo_pieces[k] or ():
-            if piece in s.combo_free[k]:
-                continue
-            taps = s.cards[piece].src.tap_ability
             if piece in self.bf:
-                if taps and piece in self.arrived:
+                if piece in taps and piece in self.arrived and piece not in free:
                     return None
                 continue
-            if taps or (piece not in self.hand and piece not in self.cmd_left):
+            if piece in free:
+                continue
+            if piece in taps or (piece not in self.hand and piece not in self.cmd_left):
                 return None
             cast.append(piece)
         return tuple(cast)
@@ -1523,6 +1619,11 @@ def _finds(card: _Card, tutor: Tutor, limit: int | None) -> bool:
 def _finds_colour(colours: frozenset[str], wanted: frozenset[str]) -> bool:
     """Whether a card of these colours has one of the wanted ones, "C" standing for none."""
     return not wanted or bool(colours & wanted) or ("C" in wanted and not colours)
+
+
+def _has_type(card: GoldfishCard, types: frozenset[str]) -> bool:
+    """Whether a creature has one of the subtypes, "creature" standing for any."""
+    return "creature" in types or CHANGELING in card.subtypes or bool(card.subtypes & types)
 
 
 def _finds_type(card: GoldfishCard, tutor: Tutor) -> bool:

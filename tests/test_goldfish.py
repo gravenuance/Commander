@@ -24,6 +24,7 @@ from commander.goldfish import (
 )
 from commander.goldfish_cards import (
     CHANGELING,
+    ActivatedTutor,
     CardKind,
     Draw,
     EntryCost,
@@ -1121,6 +1122,41 @@ def test_a_combo_piece_that_taps_lands_the_turn_after_it_comes() -> None:
     slots = [*repeat(FOREST, 4), ritual, druid, oracle]
     # Turn one's Forest and ritual pay for both, but the druid's tap ability waits for turn two.
     assert only_outcome(run(slots, combos=(combo_of(druid, oracle),))).combo_turns == (2,)
+
+
+def test_a_treasure_made_on_entering_waits_in_play_for_a_later_turn() -> None:
+    barbarian = replace(make("Barbarian", mv=1, kinds=CREATURE), treasures_on_entry=1)
+    piece = make("Piece", mv=3, kinds=CREATURE, combo=True)
+    # Turn one's Forest pays for the barbarian; turn two's two Forests and the Treasure pay for the piece.
+    slots = [FOREST, FOREST, barbarian, piece]
+    assert only_outcome(run(slots, combos=(combo_of(piece),))).combo_turns == (2,)
+
+
+def test_a_creature_attacks_for_its_treasure_only_once_it_is_no_longer_summoning_sick() -> None:
+    raider = replace(make("Raider", mv=1, kinds=CREATURE), treasures_on_attack=1)
+    piece = make("Piece", mv=4, kinds=CREATURE, combo=True)
+    # Cast on turn one, it attacks on turns two and three: two Forests and two Treasures pay on turn three.
+    slots = [FOREST, FOREST, raider, piece]
+    assert only_outcome(run(slots, combos=(combo_of(piece),))).combo_turns == (3,)
+
+
+def test_treasures_from_a_dwarf_attacking_pay_for_a_search_that_sacrifices_them() -> None:
+    finds = Tutor(frozenset({CardKind.ARTIFACT}), TutorDestination.BATTLEFIELD)
+    magda = replace(
+        make("Magda", mv=1, kinds=CREATURE, combo=True),
+        subtypes=frozenset({"dwarf"}),
+        treasure_on_tap=frozenset({"dwarf"}),
+        activated_tutor=ActivatedTutor(finds, treasures=1),
+    )
+    relic = make("Relic", mv=1, kinds=ARTIFACT, combo=True)
+    slots = [*repeat(FOREST, 3), relic, *repeat(VANILLA, 6)]
+    report = run(slots, commanders=(magda,), combos=(combo_of(magda, relic),), bracket=None, games=3000)
+    ways = report.ways_to_win
+    assert ways is not None
+    # Magda comes on turn one and attacks on turn two, which takes the Relic from the library when it is the
+    # tenth card, the one turn two leaves there: 1 in 10, among the hands kept for two Forests or more
+    # (11/12 of those with the Relic tenth, 49/60 of all), so 11/98. Four standard errors are 0.023.
+    assert ways.combos[0].fetched_share == pytest.approx(11 / 98, abs=0.025)
 
 
 def test_a_finisher_is_held_and_its_turn_is_the_first_it_could_be_cast() -> None:

@@ -168,6 +168,17 @@ class Tutor:
 
 
 @dataclass(slots=True, frozen=True)
+class ActivatedTutor:
+    """A permanent's ability that searches, paid for by sacrificing Treasures (Magda, Brazen Outlaw) or by
+    loyalty (Tezzeret, Cruel Captain's -3). Loyalty is not in the card data: a -N ability is taken as payable
+    once, when N is at most the card's mana value."""
+
+    tutor: Tutor
+    treasures: int = 0
+    loyalty: int = 0
+
+
+@dataclass(slots=True, frozen=True)
 class Draw:
     """Cards drawn on casting; an `engine` is a permanent drawing again each turn."""
 
@@ -217,6 +228,13 @@ class GoldfishCard:
     # A creature with an activated ability that taps it and makes no mana (Hermit Druid): as a combo piece it
     # must have been in play since the turn began.
     tap_ability: bool = False
+    # Treasures it makes as it comes (Plundering Barbarian) and each time it attacks.
+    treasures_on_entry: int = 0
+    treasures_on_attack: int = 0
+    # The creature subtypes ("creature" for any) that make a Treasure as one becomes tapped (Magda: Dwarf),
+    # which a creature does as it attacks.
+    treasure_on_tap: frozenset[str] = frozenset()
+    activated_tutor: ActivatedTutor | None = None
 
     @property
     def permanent(self) -> bool:
@@ -1005,15 +1023,18 @@ def _land_ramp(search: _Search | None, kinds: frozenset[CardKind]) -> LandRamp |
 
 def _tutor(search: _Search | None, known_subtypes: frozenset[str]) -> Tutor | None:
     """A search for a card of some types, colours or subtypes, when the game can follow where it goes. A
-    subtype must be one of `known_subtypes`, the deck's, so a word that is none is not read for one."""
+    subtype must be one of `known_subtypes`, the deck's, so a word that is none is not read for one, unless
+    it is the other choice beside a card type ("an artifact or Dragon card"), which only widens the search."""
     if search is None or search.cost or search.repeating or search.compound or search.deferred:
         return None
     named = re.findall(r"[a-z]+", search.head)
     words = [w for w in named if w not in _FILLER]
     finds = frozenset(_TUTOR_KINDS[w] for w in words if w in _TUTOR_KINDS)
     subtypes = frozenset(w for w in words if w not in _TUTOR_KINDS)
+    either = bool(finds and subtypes) and "or" in named
+    known = subtypes <= known_subtypes or either
     destination = _tutor_destination(search.rest)
-    if not subtypes <= known_subtypes - _LAND_WORDS or destination is None or "legendary" in named:
+    if not known or subtypes & _LAND_WORDS or destination is None or "legendary" in named:
         return None
     # What the card must have, before the comma that goes on to reveal and place it.
     condition = re.split(r"\bcards?\b", search.sentence, maxsplit=1)[-1].partition(",")[0]
@@ -1034,8 +1055,33 @@ def _tutor(search: _Search | None, known_subtypes: frozenset[str]) -> Tutor | No
         colours=frozenset(_COLOUR_WORDS[w] for w in named if w in _COLOUR_WORDS),
         max_power=int(power.group(1)) if power is not None else None,
         subtypes=subtypes,
-        either=bool(finds and subtypes) and "or" in named,
+        either=either,
     )
+
+
+_TREASURE_SACRIFICE = re.compile(r"^sacrifice (a|one|two|three|four|five|six|seven) treasures?$")
+# A loyalty cost's minus: the card data's minus sign, or a hyphen.
+_LOYALTY_COST = re.compile("^[\N{MINUS SIGN}-](\\d+)$")
+
+
+def _activated_tutor(
+    search: _Search | None, card: GoldfishCard, known_subtypes: frozenset[str]
+) -> ActivatedTutor | None:
+    """A permanent's search paid for with Treasures or loyalty, read as the tutor it would be with no cost."""
+    if search is None or not search.cost or not card.permanent:
+        return None
+    treasures = _TREASURE_SACRIFICE.match(search.cost)
+    loyalty = _LOYALTY_COST.match(search.cost)
+    removed = int(loyalty.group(1)) if loyalty is not None else 0
+    if CardKind.PLANESWALKER not in card.kinds or removed > card.mana_value:
+        removed = 0
+    if treasures is None and not removed:
+        return None
+    tutor = _tutor(replace(search, cost=""), known_subtypes)
+    if tutor is None:
+        return None
+    sacrificed = _NUMBER_WORDS[treasures.group(1)] if treasures is not None else 0
+    return ActivatedTutor(tutor, treasures=sacrificed, loyalty=removed)
 
 
 def _tutor_destination(sentence: str) -> TutorDestination | None:
@@ -1095,11 +1141,19 @@ def _read_spell(card: GoldfishCard, info: CardMana, text: str, context: _Context
     found = {
         "mana": _mana(text, card.kinds, context.identity),
         "land_ramp": ramp,
-        "tutor": None if ramp is not None or Role.TUTOR not in roles else _tutor(search, context.subtypes),
+        "tutor": _tutor(search, context.subtypes) if ramp is None and Role.TUTOR in roles else None,
         "draw": _draw(text, card.kinds) if Role.DRAW in roles else None,
     }
+    searches = ramp is None and Role.TUTOR in roles
+    activated = _activated_tutor(search, card, context.subtypes) if searches else None
+    treasures = _treasures(text, card)
     extra = _NUMBER_WORDS[land_drops.group(1)] if land_drops else 0
-    placed = extra > 0 or any(value is not None for value in found.values())
+    placed = (
+        extra > 0
+        or activated is not None
+        or treasures != (0, 0, frozenset())
+        or any(value is not None for value in found.values())
+    )
     # A key card cast for a cost the Tagger calls alternative may be cast sooner than its mana value says.
     alternative = bool(context.tags.get(info.oracle_id, frozenset()) & ALTERNATIVE_COST_TAGS)
     return replace(
@@ -1109,7 +1163,48 @@ def _read_spell(card: GoldfishCard, info: CardMana, text: str, context: _Context
         needs_sacrifice=_SACRIFICE_COST.search(text) is not None,
         entry_cost=next((cost for pattern, cost in _ENTRY_COSTS if pattern.search(text)), None),
         tap_ability=CardKind.CREATURE in card.kinds and _TAP_ABILITY.search(text) is not None,
+        treasures_on_entry=treasures[0],
+        treasures_on_attack=treasures[1],
+        treasure_on_tap=treasures[2],
+        activated_tutor=activated,
         **found,
+    )
+
+
+# Treasures a permanent makes as it comes, the mode of a choice included (Plundering Barbarian); a tapped
+# Treasure is left out.
+_ENTRY_TREASURES = re.compile(
+    r"^when (?P<who>[^,\n]+) enters, (?:choose one —(?:\n• [^\n]*)*?\n• (?:[^—\n]+ — )?)?"
+    r"create (?P<n>a|an|one|two|three|four|five) treasure tokens?\b",
+    re.MULTILINE,
+)
+_ATTACK_TREASURES = re.compile(
+    r"^whenever (?P<who>[^,\n]+) attacks, create (?P<n>a|an|one|two|three|four|five) treasure tokens?\b",
+    re.MULTILINE,
+)
+_TAP_TREASURE = re.compile(
+    r"^whenever an? (?P<type>[a-z]+) you control becomes tapped, create (?:a|one) treasure token\b",
+    re.MULTILINE,
+)
+
+
+def _treasures(text: str, card: GoldfishCard) -> tuple[int, int, frozenset[str]]:
+    """The Treasures a permanent makes as it comes and as it attacks, and the subtypes whose tapping makes
+    one."""
+    if not card.permanent:
+        return 0, 0, frozenset()
+    name = card.name.casefold()
+    # The card names itself "this creature" ("this artifact" and so on) or by its name or short name.
+    itself = {f"this {kind.value}" for kind in card.kinds} | {name, name.partition(",")[0]}
+    entry, attack = (
+        next((found for found in pattern.finditer(text) if found.group("who") in itself), None)
+        for pattern in (_ENTRY_TREASURES, _ATTACK_TREASURES)
+    )
+    tapped = _TAP_TREASURE.search(text)
+    return (
+        _NUMBER_WORDS[entry.group("n")] if entry is not None else 0,
+        _NUMBER_WORDS[attack.group("n")] if attack is not None else 0,
+        frozenset({tapped.group("type")}) if tapped is not None else frozenset(),
     )
 
 

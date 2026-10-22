@@ -2,7 +2,7 @@
 
 import json
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
@@ -10,6 +10,7 @@ import pytest
 from commander.carddb import CardInfo, CardMana, Role
 from commander.goldfish import simulate
 from commander.goldfish_cards import (
+    ActivatedTutor,
     CardKind,
     Draw,
     EntryCost,
@@ -2419,10 +2420,101 @@ def test_ramp_the_reading_cannot_place_is_not_modelled(unplaced: Real) -> None:
     assert not card.modelled
 
 
+HOARDMASTER = real(
+    "Magda, the Hoardmaster",
+    "{1}{R}",
+    2,
+    "Legendary Creature — Dwarf Berserker",
+    "Whenever you commit a crime, create a tapped Treasure token. This ability triggers only once each turn. "
+    "(Targeting opponents, anything they control, and/or cards in their graveyards is a crime.)\n"
+    "Sacrifice three Treasures: Create a 4/4 red Scorpion Dragon creature token with flying and haste. "
+    "Activate only as a sorcery.",
+    identity="R",
+    roles=(RAMP,),
+)
+
+
 def test_a_commander_the_reading_cannot_place_is_named_in_not_modelled() -> None:
-    deck = build(BATTERED_GOLEM, commander=MAGDA)
-    assert [c.name for c in deck.commanders] == ["Magda, Brazen Outlaw"]
-    assert deck.not_modelled == ("Magda, Brazen Outlaw",)
+    deck = build(BATTERED_GOLEM, commander=HOARDMASTER)
+    assert [c.name for c in deck.commanders] == ["Magda, the Hoardmaster"]
+    assert deck.not_modelled == ("Magda, the Hoardmaster",)
+
+
+def test_a_treasure_for_each_dwarf_tapped_and_a_search_for_five_treasures_are_read() -> None:
+    magda = card_named(build(BATTERED_GOLEM, commander=MAGDA), "Magda, Brazen Outlaw")
+    assert magda.treasure_on_tap == {"dwarf"}
+    # No card of the deck is a Dragon, but the word is the other choice beside a card type.
+    dragon = frozenset({"dragon"})
+    tutor = Tutor(frozenset({CardKind.ARTIFACT}), TutorDestination.BATTLEFIELD, subtypes=dragon, either=True)
+    assert magda.activated_tutor == ActivatedTutor(tutor, treasures=5)
+    assert magda.tutor is None
+    assert magda.modelled
+
+
+TEZZERET = real(
+    "Tezzeret, Cruel Captain",
+    "{3}",
+    3,
+    "Legendary Planeswalker — Tezzeret",
+    "Whenever an artifact you control enters, put a loyalty counter on Tezzeret.\n"
+    "0: Untap target artifact or creature. If it's an artifact creature, put a +1/+1 counter on it.\n"
+    "\N{MINUS SIGN}3: Search your library for an artifact card with mana value 1 or less, reveal it, put it "
+    "into your hand, then shuffle.",
+    roles=(TUTOR,),
+)
+
+
+def test_a_loyalty_search_no_dearer_than_the_card_is_read_as_payable_once() -> None:
+    tezzeret = one(TEZZERET)
+    tutor = Tutor(frozenset({CardKind.ARTIFACT}), TutorDestination.HAND, 1)
+    assert tezzeret.activated_tutor == ActivatedTutor(tutor, loyalty=3)
+    assert tezzeret.modelled
+    dearer = replace(TEZZERET, mana=replace(TEZZERET.mana, mana_cost="{2}", cmc=2))
+    assert one(dearer).activated_tutor is None
+    assert not one(dearer).modelled
+
+
+PLUNDERING_BARBARIAN = real(
+    "Plundering Barbarian",
+    "{2}{R}",
+    3,
+    "Creature — Dwarf Barbarian",
+    "When this creature enters, choose one —\n• Smash the Chest — Destroy target artifact.\n"
+    "• Pry It Open — Create a Treasure token. (It's an artifact with \"{T}, Sacrifice this token: Add one "
+    'mana of any color.")',
+    roles=(RAMP,),
+)
+LANNERY_STORM = real(
+    "Captain Lannery Storm",
+    "{2}{R}",
+    3,
+    "Legendary Creature — Human Pirate",
+    "Haste\nWhenever Captain Lannery Storm attacks, create a Treasure token. (It's an artifact with \"{T}, "
+    'Sacrifice this token: Add one mana of any color.")\nWhenever you sacrifice a Treasure, Captain Lannery '
+    "Storm gets +1/+0 until end of turn.",
+    roles=(RAMP,),
+)
+FACE_BREAKER = real(
+    "Professional Face-Breaker",
+    "{2}{R}",
+    3,
+    "Creature — Human Warrior",
+    "Menace\nWhenever one or more creatures you control deal combat damage to a player, create a Treasure "
+    "token.\nSacrifice a Treasure: Exile the top card of your library. You may play that card this turn.",
+    roles=(RAMP,),
+)
+
+
+def test_treasures_made_on_entering_or_attacking_are_read_and_combat_damage_is_not() -> None:
+    barbarian = one(PLUNDERING_BARBARIAN)
+    assert (barbarian.treasures_on_entry, barbarian.treasures_on_attack) == (1, 0)
+    assert barbarian.modelled
+    storm = one(LANNERY_STORM)
+    assert (storm.treasures_on_entry, storm.treasures_on_attack) == (0, 1)
+    assert storm.modelled
+    breaker = one(FACE_BREAKER)
+    assert (breaker.treasures_on_entry, breaker.treasures_on_attack, breaker.treasure_on_tap) == (0, 0, set())
+    assert not breaker.modelled
 
 
 def test_a_card_missing_from_the_card_data_is_a_plain_spell_of_average_value() -> None:
