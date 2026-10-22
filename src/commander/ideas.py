@@ -272,7 +272,7 @@ class _IdeaJudge:
     # The keys at least half of the alike decks' pool plays; None when a group's decks could not be read or
     # the pool is too small to name staples. The same for each tag's pool.
     adjacent_keys: frozenset[str] | None
-    # A tag with no entry here had its pool read wrongly or not at all.
+    # By casefolded tag; a tag with no entry here had its pool read wrongly or not at all.
     tag_keys: Mapping[str, frozenset[str] | None]
     # The casefolded theme tags the deck carries now; a tagged idea's tag that is not among them is gone.
     deck_tags: frozenset[str]
@@ -296,7 +296,7 @@ class _IdeaJudge:
             case Origin.ADJACENT:
                 keys = self.adjacent_keys
             case Origin.TAGGED:
-                keys = self.tag_keys.get(card.origin_tag or "")
+                keys = self.tag_keys.get((card.origin_tag or "").casefold())
             case Origin.META if self.data.lists.data is not None and self.table:
                 return self.table.is_idea(card.name)
             case Origin.DECKS if self.data.peers.data is not None and self.table:
@@ -338,7 +338,7 @@ def rejudge_ideas(
         table,
         profile,
         None if adjacent is None else pool_staple_keys(adjacent),
-        {pool.tag: pool_staple_keys(pool.decks) for pool in tagged},
+        {pool.tag.casefold(): pool_staple_keys(pool.decks) for pool in tagged},
         frozenset(tag.casefold() for tag in _search_tags(stored.deck, profile, db)),
     )
 

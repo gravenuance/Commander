@@ -857,6 +857,21 @@ def test_tagged_ideas_stay_with_the_pool_rule_while_the_tag_search_is_on(
     assert card_state(tmp_path, signet)[0] is Status.REJECTED
 
 
+def test_a_tagged_idea_is_judged_by_its_pool_whatever_the_case_the_tag_is_spelled_in(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    (tmp_path / "profile.toml").write_text(TAG_SEARCH, encoding="utf-8")
+    # Seeded under "dwarves"; the deck's tag, and so the pool's, now reads "Dwarves".
+    will = seed(tmp_path, deck, db, "Jeska's Will", Actor.CMDR, origin=Origin.TAGGED, tag="dwarves")
+    signet = seed(tmp_path, deck, db, "Arcane Signet", Actor.CMDR, origin=Origin.TAGGED, tag="dwarves")
+    dwarves = tag_pool("Dwarves", ["Jeska's Will", "Arcane Signet"], ["Jeska's Will"], ["Jeska's Will"], [])
+
+    assert judge(tmp_path, deck, db, commander_data(), tagged=[dwarves]) == ["Arcane Signet"]
+
+    assert card_state(tmp_path, will)[0] is Status.OPEN
+    assert card_state(tmp_path, signet)[0] is Status.REJECTED
+
+
 def test_alike_ideas_stay_with_the_pool_rule_while_their_group_is_listed(
     deck: Deck, db: CardDb, tmp_path: Path
 ) -> None:

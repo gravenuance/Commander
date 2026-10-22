@@ -4,6 +4,7 @@ import pytest
 
 from commander.carddb import CardMana
 from commander.manabase import (
+    Need,
     analyse_mana,
     cheap_draw,
     cheap_ramp,
@@ -105,6 +106,34 @@ def test_turn_one_counts_only_untapped_lands() -> None:
     # Brainstorm needs 19 blue sources on turn one; only the 15 Islands enter untapped.
     assert [(n.card, n.have, n.needed) for n in report.turn_one] == [("Brainstorm", 15, 19)]
     assert report.tapped_lands == 10
+
+
+def test_a_split_card_is_judged_by_each_half_not_by_its_combined_mana_value() -> None:
+    # Printed mana value 4 (two plus two), but a half is cast for two.
+    split = card("Wear // Tear", "{1}{W} // {1}{U}", 4, "Instant // Instant")
+    report = analyse_mana(
+        deck_of(("Plains", 19), ("Island", 18), ("Wear // Tear", 1)), by_name(LEADER, PLAINS, ISLAND, split)
+    )
+    needs = {c.colour: [n for n in c.needs if n.card == "Wear // Tear"] for c in report.colours}
+    # A two-drop with one pip asks 19 of 41 lands, 17.1 of 37: white from the front half, blue from the back.
+    assert needs == {
+        "W": [Need("Wear // Tear", "1C", 17.1, 19.0)],
+        "U": [Need("Wear // Tear", "1C", 17.1, 18.0)],
+    }
+
+
+def test_a_split_card_asks_a_colour_for_the_harder_half_and_its_cheap_half_counts_on_turn_one() -> None:
+    split = card("Gather // Scatter", "{W} // {2}{W}{W}", 5, "Instant // Instant")
+    tapped = card("Tapped Plains", type_line="Land", text="This land enters tapped.", produced="W")
+    deck = deck_of(("Plains", 9), ("Tapped Plains", 10), ("Island", 18), ("Gather // Scatter", 1))
+    report = analyse_mana(deck, by_name(LEADER, PLAINS, ISLAND, tapped, split))
+    white = report.colours[0]
+    # {2}{W}{W} asks 26 of 41 lands, 23.5 of 37, more than the one-drop half's 17.1.
+    assert [n for n in white.needs if n.card == "Gather // Scatter"] == [
+        Need("Gather // Scatter", "2CC", 23.5, 19.0)
+    ]
+    # The {W} half is a one-drop: ten of the nineteen white sources enter tapped.
+    assert report.turn_one == (Need("Gather // Scatter", "C", 17.1, 9.0),)
 
 
 def test_fetches_choosing_lands_and_opponent_lands_count_as_karsten_says() -> None:

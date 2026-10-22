@@ -96,6 +96,7 @@ _MANA_PAID = re.compile(r"\{(?!t\})[^}]+\}")
 # Cavern of Souls and its kind: their coloured mana casts only some spells.
 RESTRICTED = "spend this mana only"
 _PIP = re.compile(r"\{([^}]+)\}")
+_HALF_SEPARATOR = " // "
 _BASIC_TYPES = {"plains": "W", "island": "U", "swamp": "B", "mountain": "R", "forest": "G"}
 _CHEAP_DRAW = (
     "draw a card",
@@ -144,6 +145,14 @@ class Need:
     @property
     def short(self) -> bool:
         return self.have < self.needed
+
+
+@dataclass(slots=True, frozen=True)
+class Casting:
+    """One way to cast a card: the mana value it is cast at and its fixed coloured pips (`fixed_pips`)."""
+
+    mana_value: int
+    pips: Mapping[str, int]
 
 
 @dataclass(slots=True, frozen=True)
@@ -201,11 +210,10 @@ def analyse_mana(
         ColourSources(colour, _land_sources(sources, colour), _needs(checked, colour, sources, scale))
         for colour in colours
     )
-    one_drops = [info for info in checked if info.cmc == 1]
     turn_one = tuple(
         need
         for colour in colours
-        for need in _needs(one_drops, colour, sources, scale, untapped_only=True)
+        for need in _needs(checked, colour, sources, scale, untapped_only=True)
         if need.short
     )
     skipped = tuple(
@@ -466,18 +474,28 @@ def _needs(
     *,
     untapped_only: bool = False,
 ) -> tuple[Need, ...]:
+    """What each spell asks of a colour, its most demanding way of casting it; with untapped_only, the
+    turn-one check of the one-mana ways."""
     found: list[Need] = []
     for info in spells:
-        pips = fixed_pips(info.mana_cost)
-        if colour not in pips:
+        ways = [
+            (casting, _sources_asked(casting, colour, scale))
+            for casting in castings(info)
+            if colour in casting.pips and (casting.mana_value == 1 or not untapped_only)
+        ]
+        if not ways:
             continue
-        mana_value = max(int(info.cmc), 1)
-        gold = sum(1 for c in pips if c in COLORS) > 1
-        needed = needed_sources(mana_value, pips[colour]) * scale + (GOLD_EXTRA if gold else 0)
-        have = count_sources(sources, colour, mana_value, untapped_only=untapped_only)
-        found.append(Need(info.name, _pattern(mana_value, pips[colour]), round(needed, 1), round(have, 1)))
+        casting, needed = max(ways, key=lambda way: way[1])
+        have = count_sources(sources, colour, casting.mana_value, untapped_only=untapped_only)
+        pattern = _pattern(casting.mana_value, casting.pips[colour])
+        found.append(Need(info.name, pattern, round(needed, 1), round(have, 1)))
     found.sort(key=lambda n: (n.have - n.needed, n.card))
     return tuple(found)
+
+
+def _sources_asked(casting: Casting, colour: str, scale: float) -> float:
+    gold = sum(1 for c in casting.pips if c in COLORS) > 1
+    return needed_sources(casting.mana_value, casting.pips[colour]) * scale + (GOLD_EXTRA if gold else 0)
 
 
 def count_sources(sources: Sequence[Source], colour: str, mana_value: int, *, untapped_only: bool) -> float:
@@ -533,14 +551,42 @@ def fixed_pips(mana_cost: str) -> dict[str, int]:
     return pips
 
 
+def castings(info: CardMana) -> list[Casting]:
+    """How a card is cast. A split card (Fire // Ice, cost "{1}{R} // {1}{U}") is cast a half at a time, each
+    at its own mana value; its printed mana value, the halves added up (rule 202.3c), is what it counts as
+    in the library. Any other card is cast at its mana value, by its front face's cost."""
+    halves = _cost_halves(info.mana_cost)
+    if len(halves) == 1:
+        return [Casting(max(int(info.cmc), 1), fixed_pips(info.mana_cost))]
+    return [Casting(max(_cost_value(half), 1), fixed_pips(half)) for half in halves]
+
+
+def _cost_halves(mana_cost: str) -> list[str]:
+    halves = mana_cost.split(_HALF_SEPARATOR)
+    return halves if len(halves) > 1 and all(halves) else [mana_cost]
+
+
+def _cost_value(mana_cost: str) -> int:
+    """The mana value of a cost; X counts for nothing, a hybrid symbol for its larger side ({2/W} is 2)."""
+    total = 0
+    for symbol in _PIP.findall(mana_cost):
+        first = symbol.split("/")[0]
+        if first.isdigit():
+            total += int(first)
+        elif first not in ("X", "Y", "Z"):
+            total += 1
+    return total
+
+
 def _only_flexible_pips(info: CardMana) -> bool:
     """Coloured mana in the cost, but all of it hybrid or Phyrexian, so no colour has a fixed pip to check."""
-    symbols = _PIP.findall(front_face(info.mana_cost))
+    symbols = _PIP.findall(info.mana_cost)
     return not _pips_colours(info.mana_cost) and any(set(symbol) & set(COLORS) for symbol in symbols)
 
 
 def _pips_colours(mana_cost: str) -> set[str]:
-    return {c for c in fixed_pips(mana_cost) if c in COLORS}
+    """The colours with a fixed pip in any half of the cost."""
+    return {c for half in _cost_halves(mana_cost) for c in fixed_pips(half) if c in COLORS}
 
 
 def _identity(deck: Deck, cards: Mapping[str, CardMana]) -> set[str]:

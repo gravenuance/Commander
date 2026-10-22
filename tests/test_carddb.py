@@ -194,6 +194,18 @@ def test_card_named_matches_the_full_name_or_the_front_face(card_db_file: Path) 
     assert front == full
 
 
+def test_cards_named_matches_a_front_face_like_card_named_and_keys_it_as_asked(card_db_file: Path) -> None:
+    asked = ["SUNDERING ERUPTION", "Mountain", "Volcanic Fissure", "Sundering", "Not A Card"]
+    with CardDb(card_db_file) as db:
+        found = db.cards_named(asked)
+        full = db.card_named("Sundering Eruption // Volcanic Fissure")
+
+    # The back face and a partial front face match nothing, as with card_named.
+    assert sorted(found) == ["mountain", "sundering eruption"]
+    assert full is not None
+    assert found["sundering eruption"] == full
+
+
 def test_printings_of_lists_every_printing_in_set_order(card_db_file: Path) -> None:
     with CardDb(card_db_file) as db:
         printings = db.printings_of(MAGDA_ORACLE)

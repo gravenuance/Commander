@@ -211,6 +211,12 @@ def test_a_cut_of_another_role_says_what_makes_it_a_surplus() -> None:
     )
 
 
+def test_a_card_filed_as_two_entries_counts_once_towards_a_role_as_it_does_for_the_peers() -> None:
+    deck = [*ramp(9), *ramp(1)]
+    found = for_draw_idea(deck, rules(roles={Role.RAMP: band(1.0, 6.0)}, shares=shares_of(deck)))
+    assert found[0].reason.startswith("surplus ramp: 9 against a median of 6 in recent decks;")
+
+
 def listed_as_ramp(count: int) -> list[ResolvedCard]:
     """Cards only the deck's own category calls ramp: the peers' counts never see those."""
     return [card(f"Listed {n}", categories=("Ramp",)) for n in range(1, count + 1)]

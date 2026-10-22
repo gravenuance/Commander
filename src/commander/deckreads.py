@@ -37,16 +37,13 @@ class DeckRead:
 
 
 def read_of(deck: Deck) -> DeckRead:
-    counts: dict[str, int] = {}
-    for card in deck.main_cards:
-        counts[card.name] = counts.get(card.name, 0) + card.quantity
     return DeckRead(
         commanders=deck.commanders,
         cards=tuple(sorted({card.name for card in deck.main_cards})),
         planned=tuple(
             sorted({card.name for card in deck.main_cards if any(map(plan_category, card.categories))})
         ),
-        multiples=tuple(sorted((name, count) for name, count in counts.items() if count > 1)),
+        multiples=tuple(sorted((name, count) for name, count in deck.main_counts.items() if count > 1)),
     )
 
 

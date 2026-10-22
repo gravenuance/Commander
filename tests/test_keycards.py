@@ -91,6 +91,16 @@ def test_key_cards_come_from_combos_categories_peers_cost_and_the_profile(db: Ca
     }
 
 
+def test_a_card_filed_as_two_entries_gives_each_reason_once(db: CardDb) -> None:
+    # Two printings of one card, one of them filed under the plan.
+    tested = deck(deck_card("Filler Card 30", "Combo Pieces"), deck_card("Filler Card 30", "Removal"))
+    found = key_cards(tested, Profile(), [combo("Filler Card 30", "Filler Card 3")], [], db)
+    assert reasons(found)["Filler Card 30"] == (
+        "in a combo with Filler Card 3",
+        "you file it under Combo Pieces",
+    )
+
+
 def test_pitch_spells_lands_and_ignored_cards_are_not_key(db: CardDb) -> None:
     found = key_cards(deck(), Profile(ignore_keys=(HULK.upper(),)), [], [], db)
     # The pitch spell costs 5 but is cast for less; Ancient Tomb is a land.

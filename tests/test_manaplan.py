@@ -4,6 +4,7 @@ from dataclasses import replace
 
 import pytest
 
+from commander.carddb import CardMana
 from commander.manabase import analyse_mana
 from commander.manaplan import BasicCount, ColourOutcome, LandOption, Swap, suggest_mana
 from commander.models import Deck
@@ -37,8 +38,10 @@ OPTIONS = (LandOption(GUILDGATE, 25), LandOption(FOUNTAIN, 1500), LandOption(TUN
 KNOWN = (LEADER, PLAINS, ISLAND, FILLER, COUNTERSPELL, GUILDGATE, CHANCERY, FOUNTAIN, TUNDRA)
 
 
-def suggestion(deck: Deck, lists: list[dict[str, int]] | None = None):  # noqa: ANN201 — the plan, inferred
-    cards = by_name(*KNOWN)
+def suggestion(  # noqa: ANN201 — the plan, inferred
+    deck: Deck, lists: list[dict[str, int]] | None = None, extra: tuple[CardMana, ...] = ()
+):
+    cards = by_name(*KNOWN, *extra)
     report = analyse_mana(deck, cards, comparison=("recent decks", lists) if lists else None)
     return suggest_mana(deck, cards, report, options=OPTIONS)
 
@@ -60,6 +63,17 @@ def test_basics_move_to_the_short_colour_and_untapped_duals_close_what_is_left()
     # Blue: 22 sources after, still short of Counterspell's 27.8; the commander is met.
     assert plan.colours == (ColourOutcome("W", 0, 0), ColourOutcome("U", 2, 1))
     assert plan.still_short == ("Counterspell",)
+
+
+def test_a_split_cards_back_half_asks_for_its_colours_sources_too() -> None:
+    # Cast for white at one mana or for two blue at two; the printed mana value is the three added up.
+    split = card("Dispel // Prayer", "{W} // {U}{U}", 3, "Instant // Instant")
+    deck = deck_of(("Plains", 30), ("Island", 8), ("Filler", 60), ("Dispel // Prayer", 1))
+    plan = suggestion(deck, extra=(split,))
+    # Counterspell's {U}{U} in the first test asked the same of blue: the back half does here.
+    assert plan.basics == (BasicCount("W", "Plains", 30, 18, 2), BasicCount("U", "Island", 8, 20))
+    assert plan.colours == (ColourOutcome("W", 0, 0), ColourOutcome("U", 2, 1))
+    assert plan.still_short == ("Dispel // Prayer",)
 
 
 def test_a_plain_tap_land_gets_an_untapped_land_of_the_same_colours() -> None:
@@ -223,3 +237,12 @@ def test_a_check_land_is_taken_or_refused_alike_to_close_a_gap_and_to_replace_a_
     report = analyse_mana(sparse, cards, comparison=("recent decks", lists))
     refused = suggest_mana(sparse, cards, report, options=options)
     assert all(swap.add != "Glacial Fortress" for swap in refused.swaps)
+
+
+def test_a_basic_land_filed_as_two_entries_is_planned_as_one() -> None:
+    deck = deck_of(("Plains", 20), ("Plains", 10), ("Island", 8), ("Filler", 60), ("Counterspell", 1))
+    plan = suggestion(deck)
+    # The first test's deck with its 30 Plains in two entries: white stays met, blue is short of Counterspell.
+    assert plan.basics == (BasicCount("W", "Plains", 30, 18, 2), BasicCount("U", "Island", 8, 20))
+    assert plan.colours == (ColourOutcome("W", 0, 0), ColourOutcome("U", 2, 1))
+    assert plan.still_short == ("Counterspell",)
