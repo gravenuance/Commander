@@ -89,6 +89,10 @@ class TopdeckKeyError(TopdeckError, ServiceKeyError):
     """There is no key, or TopDeck refused it."""
 
 
+class TopdeckStoreError(TopdeckError):
+    """The fetched events could not be written to the store (a locked file, a full disk)."""
+
+
 @dataclass(slots=True, frozen=True)
 class _Window:
     since: date
@@ -117,7 +121,7 @@ class TopdeckClient:
         self._lock = threading.Lock()
         self._loaded: tuple[_Window, list[TournamentRecord], StaleNote | None] | None = None
         # The first key or network failure: a sync reads once per deck, so later reads give up unsent.
-        self._failure: TopdeckKeyError | NetworkError | None = None
+        self._failure: TopdeckKeyError | TopdeckStoreError | NetworkError | None = None
 
     def check_key(self, key: str) -> None:
         """Ask TopDeck for events no one reached; TopdeckKeyError when it refuses the key."""
@@ -200,7 +204,7 @@ class TopdeckClient:
                 raise self._failure
             self._ensure(window)
         except (TopdeckError, NetworkError) as error:
-            if isinstance(error, TopdeckKeyError | NetworkError):
+            if isinstance(error, TopdeckKeyError | TopdeckStoreError | NetworkError):
                 self._failure = error
             if before is None or not _overlaps(before, window):
                 raise
@@ -226,11 +230,15 @@ class TopdeckClient:
             return
         while cursor <= need_last:
             end = min(cursor + CHUNK_DAYS * _DAY - 1, need_last)
-            for record in self._fetch_fitting(cursor, end):
-                self._store.save(record)
+            records = self._fetch_fitting(cursor, end)
             self._loaded = None
             covered = max(covered, min(end, settled))
-            self._store.set_coverage(Coverage(first, covered))
+            try:
+                for record in records:
+                    self._store.save(record)
+                self._store.set_coverage(Coverage(first, covered))
+            except OSError as error:
+                raise TopdeckStoreError(f"TopDeck events could not be stored: {error}") from error
             cursor = end + 1
         removed = self._store.prune(window.since)
         if removed:
