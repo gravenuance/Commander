@@ -46,6 +46,7 @@ uv run cmdr suggest                                 # combo pieces and short rol
 uv run cmdr suggest magda --max-price 5             # one deck: cards to add up to EUR 5, cards to consider cutting
 uv run cmdr goldfish magda                          # play a deck out 10,000 times: hands, commander, mana, combos
 uv run cmdr goldfish magda --swap "Arcane Signet=Wild Growth"  # the same, and what that swap moves
+uv run cmdr goldfish magda --cuts "Arcane Signet"   # a board card against each deck card it could replace
 uv run cmdr meta                                    # every bracket 4 and 5 deck against the meta, side by side
 uv run cmdr meta magda                              # one deck: staples it misses, meta threats, meta combos
 uv run cmdr meta ellivere --card "Sylvan Safekeeper" # how performing lists use one card
@@ -569,9 +570,15 @@ Settings, beside it, edits the deck's `profile.toml`: the commanders
 that play alike (`[ideas] commanders`, with autocomplete; "+ partner" on one makes a pair), the *Search decks by tag* switch
 (`[ideas] tag_search`) and the themes to ignore
 (`[themes] ignore`: the deck's tags, categories and leanings are one click away, and any Tagger tag
-can be typed, with autocomplete) and the grace cards (`[grace]`, below; type the card's name, no autocomplete). Your comments and everything else in the file stay as they are.
+can be typed, with autocomplete), the grace cards (`[grace]`, below; type the card's name, no autocomplete)
+and the *Finishers* the goldfish counts as ways to win (`[goldfish]`: one chip each, the Tagger-marked ones
+labelled "tagged"; × takes one out, "+ name" puts a marked one back, and the box adds a deck card, with
+autocomplete). Your comments and everything
+else in the file stay as they are.
 
-The right-hand rail has two tabs. **Activity** lists what changed on the board. **Mana** checks the mana
+The right-hand rail has three tabs. **Activity** lists what changed on the board. **Goldfish** plays the
+deck out 10,000 times when opened and shows what `cmdr goldfish` reports (see [Goldfish](#goldfish));
+**Play the deck again** runs it anew. **Mana** checks the mana
 base against Frank Karsten's published numbers
 ([ADR 0019](docs/adr/0019-mana-base-from-karstens-numbers.md)):
 - **Lands:** the land count, beside his land count formula and the median of other lists of the commander
@@ -635,6 +642,12 @@ base against Frank Karsten's published numbers
   ends within one of Karsten's, closer to it than before, or inside the range of three or more other lists,
   and every colour keeps its sources
   ([ADR 0030](docs/adr/0030-land-swaps-guarded-by-the-mana-base.md)).
+  When an idea is clicked and some of its targets tie on score, the goldfish plays it against each of them
+  and reorders those once its answer comes; a target it moved up carries a *Goldfish pick* mark whose tooltip
+  names the figure that decided it ([ADR 0056](docs/adr/0056-goldfish-breaks-ties-between-cut-targets.md)).
+  A queued idea with a cut, once clicked, shows a folded *Goldfish* section with the headline figures its
+  swap moves (each commander cast, the worst tenth of mana and each combo by the bracket's turn, and colour
+  screw), and nothing at all when none moved.
 - **Labels**: the flag in a grid card's top-left corner sets its Archidekt label. Every deck offers your
   account's labels in their colours, read on each signed-in `sync` and before each label change
   ([ADR 0012](docs/adr/0012-card-labels-from-the-archidekt-account.md)). A change is written to
@@ -651,7 +664,8 @@ base against Frank Karsten's published numbers
   Spellbook. The cards behind a cause carry the bracket they lift the deck to in an amber badge beside the
   label flag, with the reasons on hover. The estimate comes from the same 7-day cache as `bracket`.
 - **Review changes** checks the queued swaps, adds and count changes against the deck on Archidekt and
-  saves them.
+  saves them. Above Save, a *Goldfish* block lists the headline figures the queued swaps move together, only
+  when something moved.
 
 The window follows changes made with the CLI or by Claude within a couple of seconds. The rail on the
 right opens the open deck's activity and mana base; it is hidden while no deck is open.
@@ -763,6 +777,13 @@ Forests plays nine Forests and Cultivate; in a plan, a remove takes out the copi
 its add brings as many. `--json` gives the figures for scripts, and `[goldfish]` in the profile (above)
 sets the finishers. See
 [ADR 0054](docs/adr/0054-goldfish-a-deck.md).
+
+`--cuts "<card>"` plays a card on the deck's board against each deck card it could replace and prints the
+headline figures each swap moves, in the order the app shows the targets. Targets scoring at most 0.10 below
+the first of a run tie with it, and a tie is ordered by those figures: fewer made worse first, then more made
+better, else the score's order. A target that moved up says which figure put it there, and one whose swap
+cannot be played says why and keeps its place. The goldfish never offers a card the score did not
+([ADR 0056](docs/adr/0056-goldfish-breaks-ties-between-cut-targets.md)).
 
 ### Deck folders
 

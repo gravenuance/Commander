@@ -7,6 +7,14 @@
   commander, mana by turn, colour screw and how soon its combos and finishers come together, for the bracket
   the deck is played at. `--swap "<in>=<out>"` or `--plan plan.toml` lists every figure a swap moves
   (ADR 0054). A deck's profile can name finishers of its own, and finishers to leave out, under `[goldfish]`.
+  A swap may cut some copies of a card: Cultivate for one of ten Forests plays nine Forests and Cultivate, and
+  a plan's remove with `keep` cuts the copies beyond it.
+- A Goldfish tab in the app shows the same figures. A queued idea with a cut shows the headline figures its
+  swap moves in a *Goldfish* fold, and Review shows them for all queued swaps together, each only when
+  something moved. The deck's Settings edit its finishers as chips.
+- When an idea's cut targets tie on score (within 0.10), the goldfish orders them by what each swap does to
+  the headline figures, and marks a target it moved up *Goldfish pick*; it never offers a card the score did
+  not. `cmdr goldfish <deck> --cuts "<card>"` prints each target's figures in that order (ADR 0056).
 - A *Previews* panel in the app shows, while a set is being previewed, up to 6 of its announced cards that
   suit the open deck: in its colours, matching the most of its three main Archidekt tags, then filling a role
   it runs short of. It is only to look at, with no price, and a card leaves it on its release day. The sync
