@@ -863,7 +863,7 @@ class BoardService:
     ) -> None:
         """Record that the queued cards with these ids, and the count changes in counts (by card and
         category), were saved to Archidekt, or, with no snapshot, were found in the deck there already. A
-        done count change leaves the board."""
+        done count change leaves the board; a change to the same card made since stays."""
         with self._editing() as (board, save):
             stamp = self._stamp()
             done = set(ids)
@@ -873,8 +873,8 @@ class BoardService:
                 else c
                 for c in board.cards
             )
-            counted = {change.key for change in counts}
-            finished = [c for c in board.counts if c.key in counted]
+            # The very changes that were sent: one made since, for the same card, is still to be saved.
+            finished = [c for c in board.counts if c in counts]
             names = ", ".join(
                 [c.name for c in board.cards if c.id in done] + [count_text(c) for c in finished]
             )
