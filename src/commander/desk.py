@@ -78,6 +78,20 @@ from commander.deckprofile import (
 from commander.deckthemes import merge_themes
 from commander.deckview import card_image, decklist_json
 from commander.fetchpriority import FetchPriority
+from commander.goldfish import POLICY_VERSION, GoldfishComparison
+from commander.goldfish_json import changes_json, goldfish_report_json
+from commander.goldfish_load import GoldfishError, load_goldfish, tagged_finishers
+from commander.goldfish_run import (
+    GoldfishCache,
+    GoldfishRun,
+    SwapRequest,
+    compare_swaps,
+    headline,
+    queued_swaps,
+    run,
+    seed_of,
+    swap_of,
+)
 from commander.ideas import idea_labels
 from commander.labels import LabelError, label_options, set_label
 from commander.landswap import comparison_lists
@@ -100,7 +114,7 @@ from commander.metapanel import combo_groups, key_card_rows, stopper_rows, untou
 from commander.models import Deck
 from commander.net import Fetcher, NetworkError, Pacer
 from commander.previews import PREVIEWS_FILE, PreviewFit, fitting_previews, local_day, read_previews
-from commander.profileedit import save_settings
+from commander.profileedit import save_finishers, save_settings
 from commander.spellbook import SpellbookClient
 from commander.store import SNAPSHOT_FILE, StoredDeck, Workspace, WorkspaceError
 from commander.suggest import DEFAULT_TARGETS, deck_identity
@@ -139,6 +153,7 @@ _EXPECTED = (
     NotYourDeckError,
     WorkspaceError,
     LabelError,
+    GoldfishError,
     OSError,
 )
 _DECISIONS = {"add": Status.ADD, "reject": Status.REJECTED, "reopen": Status.OPEN}
@@ -314,6 +329,9 @@ class Desk:
         self._reports: dict[int, tuple[str, Json]] = {}
         # Per deck: the previews that fit it, and the stamp of what they were worked out from.
         self._previews: dict[int, tuple[str, list[PreviewFit]]] = {}
+        # Per deck: the goldfish report and the comparisons of swaps against it, with the stamp of what they
+        # were played from; one run at a time per deck.
+        self._goldfish = GoldfishCache()
         self._sync_lock = threading.Lock()
         self._sync = _SyncState()
         # The page errors already logged, as (message, source, line), under their own lock.
@@ -469,6 +487,7 @@ class Desk:
         self._rows.clear()
         self._reports.clear()
         self._previews.clear()
+        self._goldfish.clear()
         with self._sync_lock:
             self._open_deck = None
 
@@ -793,14 +812,24 @@ class Desk:
 
     @_guarded
     def settings(self, deck_id: int) -> Json:
-        """The profile's commanders, tag search, grace cards, ignored themes and the deck's themes."""
+        """The profile's commanders, tag search, grace cards, ignored themes, the deck's themes and its
+        goldfish finishers: `finishers` as played ([{name, auto}], auto when the Tagger marks the card) and
+        `finishersRemoved`, the marked cards the profile takes out."""
         stored = self._stored(deck_id)
         profile = read_profile(stored.folder)
         with self._db() as db:
             derived = merge_themes(stored.deck, Profile(), db).derived
             main = db.resolve(stored.deck.main_cards)
             leanings = self._deck_rules(stored, main, profile, db).leanings
+            tagged = tagged_finishers(stored.deck, db)
+        taken = {card_key(name) for name in profile.not_finishers}
+        marked = {card_key(name) for name in tagged}
+        finishers = [{"name": name, "auto": True} for name in tagged if card_key(name) not in taken]
+        added = [name for name in profile.finishers if card_key(name) not in marked]
+        finishers += [{"name": name, "auto": False} for name in added]
         return {
+            "finishers": finishers,
+            "finishersRemoved": [name for name in tagged if card_key(name) in taken],
             "adjacent": [list(group) for group in profile.adjacent],
             "ignore": list(profile.ignore_themes),
             "tagSearch": profile.tag_search,
@@ -882,6 +911,102 @@ class Desk:
                 grace=cards,
             )
         return self.settings(deck_id)
+
+    @_guarded
+    def save_finishers(self, deck_id: int, finishers: object) -> Json:
+        """Set the cards the goldfish plays as finishers to exactly these names ([str]): the Tagger-marked
+        ones left out of the list go into profile.toml's [goldfish] not_finishers, the others into finishers.
+        Comments stay. Answers as `settings` does."""
+        with self._writing("finishers save", "save the finishers", deck_id) as busy:
+            if busy:
+                return busy
+            stored = self._stored(deck_id)
+            typed = _names_from_page(finishers, "finishers")
+            profile = read_profile(stored.folder)
+            held = {card_key(name) for name in profile.finishers}
+            with self._db() as db:
+                tagged = {card_key(name): name for name in tagged_finishers(stored.deck, db)}
+                wanted: dict[str, str] = {}
+                for name in typed:
+                    key = card_key(name)
+                    real = tagged.get(key, name)
+                    # A profile card may be newer than the card data: only new ones are looked up.
+                    if key not in tagged and key not in held:
+                        info = db.card_named(name)
+                        if info is None:
+                            return {"error": f"No card named {name!r} (check the spelling)"}
+                        real = info.name
+                    wanted.setdefault(card_key(real), real)
+            save_finishers(
+                stored.folder,
+                stored.deck,
+                added=[name for key, name in wanted.items() if key not in tagged],
+                removed=[name for key, name in tagged.items() if key not in wanted],
+            )
+        return self.settings(deck_id)
+
+    @_guarded
+    def goldfish(self, deck_id: int) -> Json:
+        """How the deck plays out over 10,000 goldfish games (ADR 0054): opening hands, the commander, mana,
+        colour screw and ways to win by turn. Played on the first ask and kept until the deck, its profile,
+        the card data, its bracket or the policy change; only cached data is read."""
+        played = self._goldfish_run(self._stored(deck_id))
+        return goldfish_report_json(played.report, played.loaded.deck, seed_of(played.loaded))
+
+    @_guarded
+    def goldfish_swap(self, deck_id: int, card_id: str) -> Json:
+        """The headline figures that move when a queued card takes the place of its chosen cut: {"figures":
+        [...]}, empty when nothing moves, the card has no cut or the swap cannot be played."""
+        stored = self._stored(deck_id)
+        card = read_board(stored.folder).find(card_id)
+        if card is None:
+            raise BoardError(f"no card {card_id!r} on the board")
+        swap = swap_of(card)
+        return self._goldfish_figures(stored, [] if swap is None else [swap])
+
+    @_guarded
+    def goldfish_review(self, deck_id: int) -> Json:
+        """`goldfish_swap` for every card queued with a cut on the board, taken together."""
+        stored = self._stored(deck_id)
+        return self._goldfish_figures(stored, queued_swaps(read_board(stored.folder)))
+
+    def _goldfish_figures(self, stored: StoredDeck, swaps: list[SwapRequest]) -> Json:
+        if not swaps:
+            return {"figures": []}
+        deck_id = stored.deck.id
+
+        def compare(played: GoldfishRun) -> GoldfishComparison:
+            with self._db() as db:
+                return compare_swaps(played, db, swaps, lenient=True)
+
+        comparison = self._goldfish.compared(
+            deck_id,
+            self._goldfish_stamp(stored),
+            tuple(swaps),
+            lambda: self._play_goldfish(stored),
+            compare,
+        )
+        return {"figures": changes_json(headline(comparison), comparison.base)}
+
+    def _goldfish_run(self, stored: StoredDeck) -> GoldfishRun:
+        return self._goldfish.played(
+            stored.deck.id, self._goldfish_stamp(stored), lambda: self._play_goldfish(stored)
+        )
+
+    def _goldfish_stamp(self, stored: StoredDeck) -> str:
+        """What the games depend on: the deck's snapshot and profile, the card data, the cached combos and
+        estimate (through the meta stamp and the bracket) and the policy."""
+        return (
+            f"{files_stamp(stored.folder, ('deck.json', 'profile.toml'))}|{self._card_data_stamp()}"
+            f"|{cache_stamp(self._settings.cache)}|{self._effective(stored.deck).bracket}|{POLICY_VERSION}"
+        )
+
+    def _play_goldfish(self, stored: StoredDeck) -> GoldfishRun:
+        with self._db() as db:
+            loaded = load_goldfish(
+                stored.deck, db, read_profile(stored.folder), self._settings.cache, now=self._now
+            )
+        return run(loaded)
 
     @_guarded
     def mana(self, deck_id: int) -> Json:
@@ -1457,6 +1582,23 @@ def _grace_from_page(entries: object) -> dict[str, float]:
             raise ProfileError(f"{name} is listed twice in the grace cards")
         found[name] = float(factor)
     return found
+
+
+def _names_from_page(entries: object, what: str) -> list[str]:
+    """The panel's card names, [str], trimmed; ProfileError for a payload that is not one."""
+    if not isinstance(entries, list):
+        raise ProfileError(f"the {what} must be a list of card names")
+    items = cast("list[object]", entries)
+    if len(items) > MAX_LIST:
+        raise ProfileError(f"the {what} hold at most {MAX_LIST} cards")
+    names: list[str] = []
+    for item in items:
+        if not isinstance(item, str) or not item.strip():
+            raise ProfileError(f"each of the {what} needs a card name")
+        if len(item.strip()) > MAX_TEXT:
+            raise ProfileError(f"{item.strip()[:30]}...: a card name is at most {MAX_TEXT} characters")
+        names.append(item.strip())
+    return names
 
 
 def _grace_json(profile: Profile, shares: ShareTable) -> Json:
