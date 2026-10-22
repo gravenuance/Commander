@@ -17,7 +17,7 @@ replace. Every sync also re-judges the open ideas by cmdr or from the old Maybeb
 longer passes its source's test is turned down (`rejudge_ideas`).
 """
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -439,12 +439,14 @@ def dominant_tags(deck: Deck, profile: Profile, db: CardDb) -> list[str]:
     return sorted(matches, key=lambda name: -matches[name])[:MAX_SEARCH_TAGS]
 
 
-def dominant_card_ids(deck: Deck, profile: Profile, db: CardDb) -> frozenset[str]:
-    """Oracle ids of the deck's main cards matching one of its `dominant_tags`."""
+def dominant_card_ids(deck: Deck, profile: Profile, db: CardDb, also: Iterable[str] = ()) -> frozenset[str]:
+    """Oracle ids of the deck's main cards, and of the cards `also` names by oracle id, matching one of its
+    `dominant_tags`."""
     names = set(dominant_tags(deck, profile, db))
     themes = [t for t in merge_themes(deck, profile, db).used if t.source is ThemeSource.DECK_TAG]
     themes = [t for t in themes if t.name in names]
     oracle_ids = [r.info.oracle_id for r in db.resolve(deck.main_cards) if r.info is not None]
+    oracle_ids.extend(also)
     ids = db.tag_ids([slug for t in themes for slug in t.spec.tags])
     found: set[str] = set()
     for theme in themes:
