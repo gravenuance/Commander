@@ -47,3 +47,12 @@ log line says "full search" rather than "paged in full", which read as "reached 
   next step to try.
 - The probes behind the numbers were one session's; Archidekt may change its limit without notice, and the
   429 lines in the log (with the `Retry-After`, if one is ever sent) are what to watch.
+
+## Amendment (2026-10-22): the owner's deck pull waits out a 429 too
+
+The pull of the owner's own decks (`ArchidektClient`, the listing and each deck read) retried a 429 after the
+fetcher's few seconds of backoff, which is shorter than the limit lasts, so the last decks of a pull failed.
+It now reads through the same guard as the search (`_LimitGuard`): requests go out unpaced, as before, until a
+429 comes; then nothing goes out for 60 s or the `Retry-After` if longer, for every thread of the client, and
+the limited request is tried once more. A second 429 ends Archidekt for that client, as for the search. A
+`Retry-After` date without a time zone is read as UTC, not as the machine's local time.

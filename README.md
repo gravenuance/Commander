@@ -68,10 +68,16 @@ and `cmdr login --as <name or email>` signs in with a name other than the userna
 
 ### Card data
 
-`analyze` and `price` read a local card database built from Scryfall's daily bulk files. `sync` downloads
-them (about 80 MB) the first time and again only when Scryfall publishes newer ones, which it does once a
-day; `sync --no-cards` skips that step. If the download fails, the previous card data stays in use and
-`sync` exits with 1. `analyze` and `price` warn when the card data is more than three days old.
+`analyze` and `price` read a local card database built from Scryfall's bulk files. `sync` downloads them
+(about 80 MB) the first time, and rebuilds the database when it is a week old or a new set that brings new
+cards has come out since it was built (core, expansion, Masters, Commander and Universes Beyond sets, not
+promos, boxed products or Un-sets). Scryfall rewrites the files every day for the prices, which no longer
+starts a download, so a price is up to a week old. The sync report says why the data was rebuilt, or when it
+is next due ("next refresh 2026-10-29 or with the next new set"); `sync --force` rebuilds it at once and
+`sync --no-cards` skips the step ([ADR 0001](docs/adr/0001-scryfall-bulk-card-data.md)). If the download
+fails, the previous card data stays in use and `sync` exits with 1. `analyze` and `price` warn when the
+Scryfall file the data was built from is more than three days old, which can show for a few days before the
+weekly rebuild.
 
 - **Prices** are Cardmarket trend prices in EUR, as Scryfall reports them. Each card is priced at the
   printing and finish (foil or not) in your deck. When that printing has no price, the card's cheapest
@@ -295,9 +301,14 @@ deck also reads its commander's tournament lists, which bracket 5 decks always d
 goes by its estimate's lowest bracket here too (see *Brackets*): estimated Powerful 3+, it searches brackets 3
 and 4.
 
+That is the search for the deck's own commander. The commanders a profile lists as alike and the deck tags are
+searched less, three and two pages per bracket and 15 and 10 reads, and only three tags are searched (see
+*Deck boards* below, [ADR 0053](docs/adr/0053-search-less-for-alike-commanders-and-deck-tags.md)).
+
 Searches and deck reads are 6.5 seconds apart, just under the ten requests a minute Archidekt answers, and
 after a 429 nothing goes out for a minute (or the `Retry-After`, if longer) before the request is tried once
-more. Each deck read is kept until its owner edits
+more. The pull of your own decks is not paced, but a 429 holds it for the same minute and one retry, so its
+last decks no longer fail. Each deck read is kept until its owner edits
 the deck, so a later run reads only the changes. Each commander's (and each tag's) search answer is refreshed
 every third day, on a day of its own, so a sync refreshes about a third of them and the ideas may lag Archidekt
 by up to three days; the other answers are cached for a day. A refresh searches again, which keeps the view
@@ -347,7 +358,7 @@ ignore = ["Pyrokinesis"]     # found, but not key
 
 [ideas]                      # commanders that play like this one: `sync` learns from their decks too
 commanders = ["The Gitrog Monster", ["Tevesh Szat, Doom of Fools", "Kodama of the East Tree"]]
-tag_search = true            # also learn from decks carrying the deck's theme tags; off when missing
+tag_search = true            # also learn from decks carrying the deck's 3 main theme tags; off when missing
 
 [grace]                      # lists holding these cards count for more in this deck's shares
 "Basalt Monolith" = 3
@@ -456,16 +467,21 @@ lacks that its profile, bracket ceiling and budget allow:
 - **adjacent decks** ("Archidekt: alike commanders"): for a deck that plays unlike most decks of its
   commander. List the commanders that play like it under `[ideas] commanders` in its profile (at most eight,
   a partner pair as its own list). Their recent decks form one pool, and cards at least half the pool plays
-  become ideas.
+  become ideas. Each commander is searched over three pages per bracket (most viewed first, with the same view
+  bars) and read for up to a quarter of `peer_decks` decks, 15 of 60. A name alone takes every deck that
+  commander leads, with a partner or Background or without; a pair takes the decks led by exactly that pair
+  ([ADR 0053](docs/adr/0053-search-less-for-alike-commanders-and-deck-tags.md)).
 - **tagged decks** ("Archidekt: tagged *tag*"), only for a deck that sets `[ideas] tag_search = true` (the
   Settings switch *Search decks by tag*; off when missing): the deck's theme tags (the Archidekt deck tags
   that became themes, not play styles, roles or card types) are searched for recent decks of other
-  commanders. Each tag is a pool, read at the deck's bracket and the one above, three search pages per
-  bracket (most viewed first, with the same view bars) and up to a quarter of `peer_decks` decks. Cards at least half a pool plays become ideas, labelled
-  with the tag. Write the tag under `[themes] ignore` to stop using it. It is off by default because the
-  pools added almost nothing beyond the commander's own decks and each tag costs about 1.5 to 2 minutes on
-  a first sync. Tagged ideas already on the board stay, but with the search off, or once their tag has left
-  the deck, each sync tests them by the commander's own lists instead of the pool: one that fails the idea
+  commanders, but only the three that the most of the deck's main cards match (ties in Archidekt's tag order);
+  no setting searches more. Each tag is a pool, read at the deck's bracket and the one above, two search pages
+  per bracket (most viewed first, with the same view bars) and up to 10 decks. Cards at least half a pool
+  plays become ideas, labelled with the tag. Write the tag under `[themes] ignore` to stop using it. It is off
+  by default because the pools added almost nothing beyond the commander's own decks and each tag costs up to
+  about a minute and a half on a first sync. Tagged ideas already on the board stay, but with the search off,
+  or once their tag has left the deck or its three searched tags, each sync tests them by the commander's own
+  lists instead of the pool: one that fails the idea
   test below is turned down, one that passes is relabelled to the source that plays it more. The same goes
   for alike ideas once the profile lists no commander. `sync`, `meta --to-board` and the app all follow the setting.
 
@@ -523,8 +539,11 @@ and `cmdr` keep working on the decks.
 A sync and a save, a label change, the Mana tab's swaps, a board edit (proposing, deciding or removing a
 card, or + and −), saving the Settings or a sign-in or sign-out never run together: the one
 that starts second is refused with a message ("Wait for the save to finish, then sync.") and can be tried
-again when the first ends. The app only reads the cache of other players' data; Sync is the one way to
-refresh it ([ADR 0032](docs/adr/0032-one-considering-list-and-one-sync.md)).
+again when the first ends. A sign-in or sign-out waits for no deck's write: it is refused only while a sync
+runs, and a save already under way finishes for the account it began with
+([ADR 0042](docs/adr/0042-writes-wait-only-while-the-sync-writes-the-deck.md)). The app only reads the
+cache of other players' data; Sync is the one way to refresh it
+([ADR 0032](docs/adr/0032-one-considering-list-and-one-sync.md)).
 
 `cmdr app` opens a window over every deck's board. Pick a deck on the left to see it as a card grid,
 grouped by card type with counts and EUR totals. The deck's Sideboard, Maybeboard and any other category
@@ -555,6 +574,10 @@ base against Frank Karsten's published numbers
 - **Colour sources:** each colour's sources, with every card short of what his table asks to cast it on
   curve.
 - **Turn one:** one-drops without enough untapped lands.
+- **Two-part cards** are judged by one part in all of these and in the suggested changes: an adventure
+  (Bonecrusher Giant // Stomp) by its creature, at the card's mana value, so Stomp does not make it a
+  one-drop; a split card (Dead // Gone, Fire // Ice) by its most expensive half, both halves when they tie;
+  any other card by its front face.
 - **Suggested changes** (below bracket 5, [ADR 0024](docs/adr/0024-mana-base-suggestion.md)): how many lands
   to run, how many of each basic, and untapped lands to name where basics can't close a gap, with
   untapped twins for plain tap-lands. Named lands are split into within budget (up to 25% over the deck's
@@ -726,7 +749,9 @@ Labels set on the Archidekt website come back with the next `sync`. See
 `decks/` is gitignored, because it holds your own decks and notes. To keep their history, make it a git
 repository of its own (`git init decks`) and commit there after each sync.
 
-When a deck is renamed on Archidekt, `sync` renames its folder to match. When a deck is deleted on
+When a deck is renamed on Archidekt, `sync` renames its folder to match, under the deck's board lock; if a
+board write holds that lock, the deck is skipped and the next sync renames it
+([ADR 0045](docs/adr/0045-sync-removes-the-folder-of-a-deleted-deck.md)). When a deck is deleted on
 Archidekt, a signed-in `sync` deletes its folder too (notes, profile and board included, so commit `decks/` first
 if you keep its history) and reports it as `removed`; `sync --dry-run` says `would remove` and deletes nothing.
 It does so only when the deck is missing from a complete signed-in listing and Archidekt answers 404 for the
@@ -763,9 +788,9 @@ defaults.
 | Archidekt username | `--user` | `CMDR_USER` | `user` | none (required) |
 | Deck folder | `--workspace` | `CMDR_WORKSPACE` | `workspace` | none (required) |
 | Config file | `--config` | `CMDR_CONFIG` | n/a | `%APPDATA%\Commander\config.toml` |
-| Cache folder: card data, meta answers, other players' decks, view scores (`views.json`), logs | n/a | `CMDR_CACHE_DIR` | n/a | `%LOCALAPPDATA%\Commander` |
+| Cache folder: card data, meta answers, other players' decks, view scores (`views.json`), logs, the app window's profile (`webview`, with the card images) | n/a | `CMDR_CACHE_DIR` | n/a | `%LOCALAPPDATA%\Commander` |
 | Role targets for `suggest` | n/a | n/a | `[targets]` table | ramp 10, draw 10, removal 8, board_wipe 2 |
-| Sample sizes for `meta` and `sync` | n/a | n/a | `[meta]` table | 60 days, events of 16+, up to 60 Archidekt decks, 10 commanders, 30 lists each |
+| Sample sizes for `meta` and `sync` | n/a | n/a | `[meta]` table | 60 days, events of 16+, up to 60 Archidekt decks (a quarter of that for an alike commander), 10 commanders, 30 lists each |
 | Archidekt login for `apply --save`, and for `sync` to read private and unlisted decks | `cmdr login` | n/a | n/a | none; the token is kept in Windows Credential Manager |
 | TopDeck.gg API key for the tournament lists | `cmdr topdeck`, or the app's TopDeck button | n/a | n/a | none; the key is kept in Windows Credential Manager |
 | App log detail | n/a | `CMDR_LOG_LEVEL` | n/a | `INFO` |
@@ -786,9 +811,9 @@ Tests use recorded fixture data and never touch the network.
 | Service | Used for | Notes |
 |---|---|---|
 | Archidekt (`archidekt.com/api`) | Reading decks; changing them with `apply --save` | Public decks need no login; changes, and `sync` of your private and unlisted decks, need `cmdr login`, whose token lives in Windows Credential Manager and is refreshed on each save and each sync. The API is undocumented, so every response's shape is checked and a clear message names what changed. A save makes a handful of requests, never retried. Its written terms forbid automated requests; its co-founder has said on its forum that the API is open to use. See [ADR 0004](docs/adr/0004-deck-changes-through-archidekts-site-api.md). |
-| Scryfall (`api.scryfall.com/bulk-data`, files on `data.scryfall.io`; card images from `cards.scryfall.io` in the app) | Card facts, rules text, EUR prices, Tagger tags for roles and profiles, card art | One API call per `sync` for the file list; the files themselves have no rate limit. Scryfall updates prices once a day and asks for bulk files rather than per-card calls for lookups like these. Tag data is community-maintained and can change. See [ADR 0001](docs/adr/0001-scryfall-bulk-card-data.md). |
+| Scryfall (`api.scryfall.com/bulk-data` and `/sets`, files on `data.scryfall.io`; card images from `cards.scryfall.io` in the app) | Card facts, rules text, EUR prices, Tagger tags for roles and profiles, card art | One API call per `sync` for the set list (skipped when the data is a week old anyway), and one for the file list when the card data is rebuilt (weekly, or when a new set has come out); the files themselves have no rate limit. Scryfall updates prices once a day and asks for bulk files rather than per-card calls for lookups like these. The app keeps the card images it has loaded in its window profile on disk, so each is fetched once. Tag data is community-maintained and can change. See [ADR 0001](docs/adr/0001-scryfall-bulk-card-data.md). |
 | Commander Spellbook (`backend.commanderspellbook.com`: `estimate-bracket`, `find-my-combos`) | Bracket estimates, combos, and combos one card short | One request per deck and command, at most four at a time, and none while a cached answer is under 7 days old. Spellbook asks tools to name themselves in the User-Agent, keep to a few calls per user action, stay under about 80 requests a minute, handle 429, and credit and link back to commanderspellbook.com, which `bracket` and `suggest` do in their output. Only card names and quantities are sent. See [ADR 0002](docs/adr/0002-bracket-estimates-from-commander-spellbook.md) and [ADR 0003](docs/adr/0003-suggestions-from-spellbook-and-scryfall.md). |
-| Archidekt deck search (`archidekt.com/api/decks/v3/`) | Other players' popular recent decks for `meta` and `sync`'s ideas | Searches and deck reads 6.5 s apart, after a 429 a pause of at least a minute, and a second 429 ends Archidekt for the run; at most 5 search pages (60 decks each) per bracket and `peer_decks` (60) deck reads per commander, and a quarter of that per deck tag, for decks that search by tag. Each search answer is refreshed every third day (staggered per commander or tag), by a new search by views, and each deck read until its owner edits it. Your own decks are left out. Under the same informal permission as the rest of Archidekt's API (ADR 0004). See [ADR 0027](docs/adr/0027-reading-other-players-archidekt-decks.md), [ADR 0048](docs/adr/0048-pace-archidekt-by-its-own-limits.md) and [ADR 0050](docs/adr/0050-search-archidekt-by-view-count.md). |
+| Archidekt deck search (`archidekt.com/api/decks/v3/`) | Other players' popular recent decks for `meta` and `sync`'s ideas | Searches and deck reads 6.5 s apart, after a 429 a pause of at least a minute, and a second 429 ends Archidekt for the run; at most 5 search pages (60 decks each) per bracket and `peer_decks` (60) deck reads for a deck's own commander; 3 pages and a quarter of that (15) for each alike commander; and, for decks that search by tag, 2 pages and 10 reads for each of the deck's 3 main tags. Each search answer is refreshed every third day (staggered per commander or tag), by a new search by views, and each deck read until its owner edits it. Your own decks are left out. Under the same informal permission as the rest of Archidekt's API (ADR 0004). See [ADR 0027](docs/adr/0027-reading-other-players-archidekt-decks.md), [ADR 0048](docs/adr/0048-pace-archidekt-by-its-own-limits.md), [ADR 0050](docs/adr/0050-search-archidekt-by-view-count.md) and [ADR 0053](docs/adr/0053-search-less-for-alike-commanders-and-deck-tags.md). |
 | TopDeck.gg (`topdeck.gg/api/v2/tournaments`) | Commander tournaments with decklists, for the commander's lists and the most-played commanders in `meta` and `sync`'s ideas | A free key for each user (`cmdr topdeck`, or the app), sent in the `Authorization` header and kept in Windows Credential Manager; it does not expire unless TopDeck revokes it. 100 requests a minute, fewer for bulk queries: events of 16+ players are asked for seven days at a time, 12 s apart (a 429 is waited out for the `Retry-After` it names), only for days not seen yet, and kept per event in the cache folder; malformed events and decks are skipped and logged. Player names and ids are dropped as the answer is read. Any output that shows the data credits and links TopDeck.gg, as its terms ask. See [ADR 0047](docs/adr/0047-tournament-lists-from-topdeck-with-a-key-per-user.md). |
 | Commander Spellbook (`find-my-combos`, for `meta`) | The combos the most-played commanders' lists run | One request per meta commander, 1 s apart, cached for 7 days. |
 | EDHREC (via Scryfall's `edhrec_rank`) | Popularity ranks for `suggest` | Never contacted: the rank comes inside Scryfall's bulk files. EDHREC's terms forbid automated requests to its site. |

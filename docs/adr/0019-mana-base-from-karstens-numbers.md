@@ -99,4 +99,20 @@ The app's right-hand rail has two tabs, Activity and Mana. The Mana tab shows th
     sources on turn one.
   - **Ellivere's** Finale of Devastation and Eternal Witness are short of green.
 - Shortfalls are thresholds, not verdicts: a card a few tenths short is close to Karsten's line.
+
+## Amendment (2026-10-22): how a card with two parts is judged
+
+The card data keeps Scryfall's `layout` for each card (schema 8), and the Mana tab, its turn-one check and the
+suggested changes (ADR 0024) judge a card's colour by it (`manabase.castings`). The owner decided:
+
+- **An adventure** (Bonecrusher Giant // Stomp) by its creature: the front face's cost at the card's mana
+  value. Its cheap adventure half no longer counts as a one-drop on turn one.
+- **A split card** (Dead // Gone, Fire // Ice) by its most expensive half, at that half's own mana value,
+  since the printed mana value is the halves added up (rule 202.3c). Halves of equal value both count, and a
+  colour takes the harder of them.
+- **Every other layout,** a modal double-faced card included, by its front face's cost at the card's mana
+  value.
+
+Before, a split card was judged at the combined mana value by its front half's pips alone, so Fire // Ice
+asked for the sources of a four-mana spell. The curve and the average mana value keep the printed mana value.
 - The tab reads only the snapshot, the card data and cached meta answers, and opens in about 0.1 s.

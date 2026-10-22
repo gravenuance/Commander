@@ -2,9 +2,84 @@
 
 ## Unreleased
 
+### Changed
+- The card data is rebuilt weekly, or on the day a new set that brings new cards comes out, instead of
+  whenever Scryfall's daily price update changed its bulk files, which downloaded 80 MB on the first sync of
+  every day (ADR 0001). The sync report says why it rebuilt ("7 days old", "new set: Foundations") or when the
+  next refresh is due, and `sync --json` carries them as `cardData.reason` and `cardData.nextRefresh`. Prices
+  are up to a week old; `sync --force` rebuilds at once. The card database is now schema 8 (see *Faster*), so
+  the next sync rebuilds it.
+- Alike commanders and deck tags are searched less (ADR 0053). An alike commander, or a pair, is searched over
+  three pages a bracket and read for a quarter of `peer_decks` (15 of 60); a single-name entry now keeps the
+  decks that commander leads with a partner or Background too, and a pair only the decks led by exactly that
+  pair. A deck's tag search covers only its three most prevalent deck tags (the ones most of its main cards
+  match), over two pages a bracket and 10 reads each; no setting searches more. The deck's own commander is
+  searched as before (five pages, 60 reads). Answers stored under the old limits stay fresh and are cut to the
+  new reads. A fresh first sync of 11 decks took 3466 s, 450 of its 530 paced requests for one deck.
+- The sync's progress line names the deck each Archidekt step reads for ("Chatterfang: Ygra decks (alike)",
+  "Chatterfang: Landfall decks (theme)"), where it said "Archidekt: recent Ygra decks" (ADR 0053).
+- A card with two parts is judged for colour by one part, in the Mana tab, its turn-one check and the
+  suggested changes (ADR 0019): an adventure (Bonecrusher Giant // Stomp) by its creature at the card's mana
+  value, so Stomp no longer makes it a one-drop; a split card (Dead // Gone, Fire // Ice) by its most
+  expensive half, both halves when they tie; any other card by its front face. The card database keeps
+  Scryfall's layout for it.
+- The app keeps its window profile on disk (`%LOCALAPPDATA%\Commander\webview`), so card images load from the
+  cache after their first view instead of from Scryfall at every launch, and the card size and activity tab it
+  remembers survive a restart (ADR 0006).
+
+### Faster
+- The card database is built without a rollback journal and indexed after its rows are in (writing 100,000
+  printings from memory took 4.9 s, now 1.7 s), has indexes on printings and role members by card, and keeps
+  its tag, theme and legal-card counts in memory per build; tag counts and themes walk the tag subtree first.
+- The deck view reads the card data in fewer queries, remembers a land swap's answer and the deck's main
+  cards, and reads only the newest lines of the activity log. The deck list keeps its rows until a deck's
+  files change, the Meta panel its answer until what it is made of changes, and the activity list is redrawn
+  only when its entries change.
+- Hovering a card, and a change to one card, redraw only the grid cards and group headers that changed instead
+  of the whole grid. A Considering tile builds its buttons, category list and reason form when it is selected,
+  and keeps the open breakdown, folds and typed reason across a refresh.
+- A stored TopDeck window builds a deck's cards when it is first used, not when the window loads, and the app
+  loads httpx and keyring on first use, so it reaches its window sooner.
+
 ### Fixed
 - Commander.exe carries its name, version and copyright, which Explorer's Properties → Details tab showed
   empty: the build stamps a version resource written from pyproject.toml (`tools/version_info.py`).
+- The sync's Archidekt pacer could leave decks waiting for good when a deck was opened in the app mid-sync:
+  waiters now wake when the deck order changes, and look again every second.
+- The pull of your own decks waits a minute on a 429, with one retry, as the other Archidekt reads do, instead
+  of failing its last decks after a few seconds (ADR 0048). A `Retry-After` date with no time zone is read as
+  UTC, not as the machine's local time.
+- A TopDeck store error (a locked file, a full disk) or one deck's failed read no longer ends the whole sync:
+  the deck concerned is left incomplete, with a warning, and the others still merge.
+- A deck renamed on Archidekt has its folder renamed under the board lock, so a board write from the CLI can
+  no longer recreate the old folder and leave two for one deck; a lock that stays held skips the deck until
+  the next sync (ADR 0045). One deck's busy board lock no longer stalls the writes to other decks.
+- A damaged `deck.json` is reported as unreadable, not as the deck missing from the workspace.
+- `NaN`, infinite and overflowing numbers in an answer from a service are refused as a badly shaped answer,
+  where a bad share or price would have compared false everywhere downstream.
+- Batch card lookups find a card by its front-face name as a single lookup does, so ideas, meta weights, peer
+  counts and leanings no longer drop a card that a list spells by its front face.
+- A tagged idea whose deck tag was re-cased is still judged against its pool.
+- A card the deck files as several entries counts once for key cards, leanings and the role and theme totals,
+  as the other players' counts do, and its copies are summed by the land guard and the mana plan: a basic land
+  split over two printings no longer has every swap refused, nor the Mana tab report cards short after the
+  plan was followed.
+- A basic land swap whose save landed but was not marked applied (a failed read-back, a timeout) is not sent a
+  second time: the card notes the copies held before the send, and the deck holding that plus the swap counts
+  it as done.
+- A count change queued while a save that sent an earlier one for the same card finishes stays queued; the
+  save removes only the changes it sent (ADR 0043).
+- The page retries a failed reload on the next poll, where it stayed stale until the next change. A panel no
+  longer draws an older answer over a newer one or for the previous deck, and opening a deck empties the
+  bracket chip, its detail and the Mana panel, which showed the last deck's until the new answer came.
+- The label menu closes when the grid's pane scrolls instead of floating away from its flag, and the flag says
+  whether it is open to screen readers.
+- A second click on Sync while the first request is out is ignored, and a double click on Reconsider sends one
+  decision. An open reject form, share breakdown, fold or category list survives a background refresh.
+- Each "Not in deck" stack has its own id, so a toggle controls its own stack when categories such as Ramp 1
+  and Ramp 2 slug alike. The settings chips' remove buttons have a tooltip and a 24 px target.
+- Keyboard focus stays where it was after Save (on Review, which a save leaves disabled), after a decision in
+  the Considering list, and after "Put N swaps on the board" in the Mana plan.
 
 ## 1.0.0 - 2026-10-21
 

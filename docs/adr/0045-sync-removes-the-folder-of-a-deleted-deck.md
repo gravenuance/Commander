@@ -88,3 +88,11 @@ folder the workspace refuses (outside the root, a link, an earlier leftover of t
 rename that fails. The retry is as before. `on_removed` is now called when the delete fails after the rename
 too (but not when it fails in a later retry, which the first attempt already announced): the deck is out of the
 workspace from the rename on, and an app that kept it open answered every action with "deck N is not in ...".
+
+## Amendment (2026-10-22): a renamed deck folder is renamed under the board lock too
+
+A deck renamed on Archidekt gets its folder renamed by `sync` (README, *Deck folders*). That rename took no
+lock, so a board write by the CLI in another process could create the old folder again halfway and leave two
+folders for one deck. `Workspace.save` now renames under the same board lock as `remove_deck`, and deletes
+the lock file that moved with the folder. A lock that stays held fails that deck's save with "its board is in
+use"; the deck's files are untouched and the next sync retries.

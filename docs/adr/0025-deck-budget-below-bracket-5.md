@@ -52,4 +52,5 @@ Where it applies:
 - A card a little over the average (Muldrotha at €0.83 for Ashling's €0.74) is within budget; the badge
   marks only clearly dearer cards, and is a hint, not a refusal.
 - Prices are the cheapest regular printing in Scryfall's daily data; a card without a EUR price is never
-  within budget.
+  within budget. Since 2026-10-22 the data is rebuilt weekly or with a new set, so a price is up to a week old
+  (ADR 0001).

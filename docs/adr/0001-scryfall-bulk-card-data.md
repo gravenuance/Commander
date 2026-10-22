@@ -1,6 +1,7 @@
 # 0001: Card data from Scryfall bulk files in a local SQLite database
 
-**Status:** Accepted · **Date:** 2026-10-15
+**Status:** Accepted · **Date:** 2026-10-15 · Amended in part by the 2026-10-22 amendment below (when the
+database is rebuilt)
 Corrected in place on 2026-10-18 for accuracy (see git history); an exception to never editing accepted records.
 
 ## Context
@@ -54,3 +55,26 @@ excluded from the tutor role.
   misjudges a deck because of a tag; it relies on them for tutors, extra turns and mass land denial.
 - Digital-only printings and tokens are left out of the database. A deck card whose printing is missing is
   matched by name and priced at its cheapest printing.
+
+## Amendment (2026-10-22): rebuilt weekly or with a new set, not on every price update
+
+Scryfall rewrites both bulk files every day for the prices, so comparing `updated_at` rebuilt the database,
+with an 80 MB download, on the first sync of every day. The owner decided that the card data is refreshed
+weekly or when a new paper set appears (`scryfall.refresh_card_db`):
+
+- **When:** the database is missing or its build time is unreadable, it was built seven days ago or more
+  (`MAX_DATA_AGE`), a set that brings new cards came out after the day it was built, or `sync --force`. The
+  files' `updated_at` is no longer compared. Otherwise nothing is downloaded, and `/bulk-data` is not called.
+- **New sets:** read from Scryfall's `/sets` listing when a rebuild is not already due. Core, expansion,
+  masters, draft innovation, Commander and "eternal" (Universes Beyond) sets count, never a digital one.
+  Promos, tokens, memorabilia, boxed products, masterpieces, Un-sets, Alchemy and the old reprint products are
+  left out on purpose, so that weekly drops do not defeat the weekly cadence. If the listing cannot be read it
+  is logged and only the age counts.
+- **The sync report says why and when next:** an update reads "7 days old, Scryfall data of ..." or "new set:
+  *name*, ...", and a current database "..., next refresh 2026-10-29 or with the next new set". `sync --json`
+  carries them as `cardData.reason` and `cardData.nextRefresh`.
+- **Prices are as old as the build**, up to a week, not a day, and cards or tags Scryfall adds after the build
+  wait for the next refresh.
+- **Schema 8.** The `oracle` table keeps Scryfall's `layout` (ADR 0019), and printings and role members are
+  indexed by card. The database is built with no rollback journal and its indexes made after the rows are in,
+  which is quicker. The next `sync` rebuilds a database of schema 7.

@@ -1,6 +1,8 @@
 # 0015: Ideas from commanders that play alike
 
-**Status:** Superseded by [ADR 0028](0028-ideas-from-four-sources.md) · **Date:** 2026-10-16
+**Status:** Superseded by [ADR 0028](0028-ideas-from-four-sources.md) · **Date:** 2026-10-16 · Its reads
+are amended by [ADR 0053](0053-search-less-for-alike-commanders-and-deck-tags.md) (15 for a commander or a
+pair, and a single name keeps the decks that pair it with a partner)
 
 ## Context
 
