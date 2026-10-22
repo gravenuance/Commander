@@ -417,6 +417,23 @@ def test_a_cards_printings_and_roles_are_found_by_index(card_db_file: Path) -> N
     assert "SCAN role_member" not in roles
 
 
+def test_a_built_database_is_sound_and_holds_every_index(card_db_file: Path) -> None:
+    with sqlite3.connect(card_db_file) as db:
+        indexes = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
+        assert db.execute("PRAGMA integrity_check").fetchall() == [("ok",)]
+        assert db.execute("PRAGMA user_version").fetchone() == (SCHEMA_VERSION,)
+    assert {
+        "oracle_name",
+        "oracle_rank",
+        "printing_oracle",
+        "role_member_card",
+        "tag_slug",
+        "tag_member_card",
+    } <= indexes
+    # A finished build is one file: no journal beside it.
+    assert [p.name for p in card_db_file.parent.glob("cards.sqlite*")] == ["cards.sqlite"]
+
+
 def test_find_tags_counts_cards_with_sub_tags_most_first(card_db_file: Path) -> None:
     with CardDb(card_db_file) as db:
         found = db.find_tags(" RAMP ")

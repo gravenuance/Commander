@@ -153,13 +153,11 @@ CREATE TABLE oracle (
     layout TEXT NOT NULL,
     cheapest_cents INTEGER
 );
-CREATE INDEX oracle_name ON oracle (name_key);
 CREATE TABLE card_mana (
     oracle_id TEXT PRIMARY KEY,
     produced TEXT NOT NULL,
     rarity TEXT NOT NULL
 );
-CREATE INDEX oracle_rank ON oracle (edhrec_rank, oracle_id);
 CREATE TABLE printing (
     scryfall_id TEXT PRIMARY KEY,
     oracle_id TEXT NOT NULL,
@@ -169,19 +167,25 @@ CREATE TABLE printing (
     eur_foil_cents INTEGER,
     regular INTEGER NOT NULL
 );
-CREATE INDEX printing_oracle ON printing (oracle_id);
 CREATE TABLE role_member (role TEXT NOT NULL, oracle_id TEXT NOT NULL, PRIMARY KEY (role, oracle_id))
     WITHOUT ROWID;
-CREATE INDEX role_member_card ON role_member (oracle_id);
 CREATE TABLE role_available (role TEXT PRIMARY KEY);
 CREATE TABLE tag (tag_id TEXT PRIMARY KEY, slug TEXT NOT NULL);
-CREATE INDEX tag_slug ON tag (slug);
 CREATE TABLE tag_child (parent_id TEXT NOT NULL, child_id TEXT NOT NULL, PRIMARY KEY (parent_id, child_id))
     WITHOUT ROWID;
 CREATE TABLE tag_member (tag_id TEXT NOT NULL, oracle_id TEXT NOT NULL, PRIMARY KEY (tag_id, oracle_id))
     WITHOUT ROWID;
-CREATE INDEX tag_member_card ON tag_member (oracle_id);
 """
+
+# Made after the rows are in, which is quicker than keeping each index up to date through every insert.
+_INDEXES = (
+    "CREATE INDEX oracle_name ON oracle (name_key)",
+    "CREATE INDEX oracle_rank ON oracle (edhrec_rank, oracle_id)",
+    "CREATE INDEX printing_oracle ON printing (oracle_id)",
+    "CREATE INDEX role_member_card ON role_member (oracle_id)",
+    "CREATE INDEX tag_slug ON tag (slug)",
+    "CREATE INDEX tag_member_card ON tag_member (oracle_id)",
+)
 
 
 class CardDataError(Exception):
@@ -823,9 +827,11 @@ def _fill(
     tags: Mapping[str, Tag],
     gates: Sequence[TextGate],
 ) -> int:
-    # Built whole and swapped in by rename, never edited in place, so the default rollback journal is enough.
     db = sqlite3.connect(path)
     try:
+        # Built whole and swapped in by rename, and a failed build deletes the file: no journal, no syncing.
+        db.execute("PRAGMA journal_mode = OFF")
+        db.execute("PRAGMA synchronous = OFF")
         db.executescript(_SCHEMA)
         count = 0
         oracle: dict[str, tuple[object, ...]] = {}
@@ -877,6 +883,8 @@ def _fill(
                     ("built_at", meta.built_at),
                 ],
             )
+            for statement in _INDEXES:
+                db.execute(statement)
             db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     finally:
         db.close()
