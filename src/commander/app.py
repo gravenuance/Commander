@@ -24,6 +24,7 @@ from commander.desk import Desk, DeskSettings
 log = logging.getLogger(__name__)
 
 WINDOW_TITLE = "Commander"
+WEBVIEW_FOLDER = "webview"
 _CSS_SLOT = "/*APP_CSS*/"
 # index.html lists the page scripts in the order they load; each tag is replaced by the file's text.
 _SCRIPT_TAG = re.compile(r'<script src="([a-z]+\.js)"></script>')
@@ -86,8 +87,9 @@ def setup_logging(folder: Path, env: Mapping[str, str], settings: DeskSettings) 
     return path
 
 
-def run_app(desk: Desk, *, debug: bool = False) -> None:
-    """Open the window and block until it closes."""
+def run_app(desk: Desk, *, storage: Path, debug: bool = False) -> None:
+    """Open the window and block until it closes; the window keeps its profile (HTTP cache, page storage) in
+    `storage`, so card images load from disk after their first view."""
     # pywebview loads .NET through pythonnet, which takes a moment; only the app pays for it.
     import webview  # noqa: PLC0415
 
@@ -104,7 +106,7 @@ def run_app(desk: Desk, *, debug: bool = False) -> None:
     log.info("window opened")
     # A packed exe unpacks its data to a folder, so the icon has a real path for WinForms to load.
     with resources.as_file(resources.files("commander") / "web" / "commander.ico") as icon:
-        webview.start(debug=debug, private_mode=True, icon=str(icon))
+        webview.start(debug=debug, private_mode=False, storage_path=str(storage), icon=str(icon))
     log.info("window closed")
 
 
@@ -121,4 +123,5 @@ def launch(
 ) -> None:
     settings = desk_settings(env, config=config, workspace=workspace, user=user)
     setup_logging(cache_dir(env), env, settings)
-    run_app(Desk(settings, client_factory=client_factory, token_store=token_store, now=now), debug=debug)
+    desk = Desk(settings, client_factory=client_factory, token_store=token_store, now=now)
+    run_app(desk, storage=cache_dir(env) / WEBVIEW_FOLDER, debug=debug)
