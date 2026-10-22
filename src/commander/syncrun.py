@@ -171,7 +171,7 @@ def run_sync(
                 log.warning("Archidekt login not usable: %s", login.problem)
                 warnings.append(f"Archidekt login not usable ({login.problem}): {PRIVATE_NOT_UPDATED}")
             results = sync_decks(
-                ArchidektClient(fetcher, token=login.token),
+                ArchidektClient(fetcher, token=login.token, pacer=services.pacer_factory(0.0)),
                 workspace,
                 user,
                 force=options.force,
