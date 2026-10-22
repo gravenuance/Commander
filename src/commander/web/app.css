@@ -866,6 +866,15 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   cursor: pointer;
 }
 .target:hover { background: transparent; }
+.pick-mark {
+  margin-left: var(--space-1);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-s);
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
 .fold summary { cursor: pointer; font-size: var(--text-s); color: var(--muted); width: fit-content; }
 .fold p { margin: var(--space-1) 0 0; font-size: var(--text-s); white-space: pre-line; }
 
