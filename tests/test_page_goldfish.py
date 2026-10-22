@@ -193,3 +193,58 @@ def test_opening_another_deck_clears_the_tab_and_plays_that_deck() -> None:
     return { first, during: texts(".state") };
     """)
     assert seen == {"first": ["10,000 games against an empty table"], "during": ["Playing the deck…"]}
+
+
+def test_a_reload_while_the_deck_is_first_played_draws_the_newer_answer() -> None:
+    seen = run("""
+    let release;
+    const slow = new Promise((resolve) => { release = resolve; });
+    const answers = [slow, { ...report(null), games: 500 }];
+    stub.goldfish = async () => answers.shift();
+    state.view = view(1);
+    showRail("goldfish");
+    await settle();
+    await loadGoldfish();
+    await settle();
+    release({ ...report(null), games: 10000 });
+    await settle();
+    return { source: texts(".goldfish-source"), spinner: texts(".spinner").length };
+    """)
+    assert seen == {"source": ["500 games against an empty table"], "spinner": 0}
+
+
+def test_going_to_another_deck_and_back_during_a_play_draws_only_the_last_asks_answer() -> None:
+    seen = run("""
+    let release;
+    const slow = new Promise((resolve) => { release = resolve; });
+    let first = true;
+    // Deck 1's first ask is the slow one; deck 2 never answers; every later ask of deck 1 answers at once.
+    stub.goldfish = (id) => {
+      if (id === 2) return new Promise(() => {});
+      if (!first) return { ...report(null), games: 500 };
+      first = false;
+      return slow;
+    };
+    stub.open_deck = async () => ({});
+    stub.deck = async (id) => view(id);
+    state.view = view(1);
+    showRail("goldfish");
+    await settle();
+    await openDeck(2);
+    await settle();
+    await openDeck(1);
+    await settle();
+    const drawn = texts(".goldfish-source");
+    release({ ...report(null), games: 10000 });
+    await settle();
+    await loadGoldfish();
+    await settle();
+    return { drawn, after: texts(".goldfish-source"), spinner: texts(".spinner").length,
+      asked: calls.filter((c) => c[0] === "goldfish").map((c) => c[1]) };
+    """)
+    source = ["500 games against an empty table"]
+    assert seen["drawn"] == source
+    assert seen["after"] == source
+    assert seen["spinner"] == 0
+    assert seen["asked"][0] == 1
+    assert 2 in seen["asked"]

@@ -3,7 +3,7 @@
 /* Goldfish: how the deck plays out over thousands of games against an empty table, and how soon it wins (ADR 0054) */
 
 const goldfishPanel = panel(fetchGoldfish, renderGoldfish, { wanted: () => railTab === "goldfish" });
-// The deck whose report, error or spinner the tab shows, and the deck whose report is being played now.
+// The deck whose report, error or spinner the tab shows, and the latest ask still out ({ deck }).
 let goldfishDrawn = null;
 let goldfishPending = null;
 
@@ -26,21 +26,22 @@ function resetGoldfish() {
 }
 
 // Plays the open deck while the tab is open. The first ask takes seconds, so the tab shows a spinner until
-// then; a reload of the same deck leaves what is on show alone until the new figures differ.
+// then; a reload of the same deck leaves what is on show alone until the new figures differ. A reload while
+// the first ask is out asks again (the panel drops the older answer) but keeps the spinner as it is.
 async function loadGoldfish() {
   const deck = state.current;
   if (deck === null || railTab !== "goldfish") return;
-  if (goldfishDrawn !== deck) {
-    if (goldfishPending === deck) return;
+  if (goldfishDrawn !== deck && goldfishPending?.deck !== deck) {
     goldfishPanel.forget();
     $("goldfish").replaceChildren(el("div", { class: "state inline", role: "status" },
       el("span", { class: "spinner", "aria-hidden": "true" }), el("span", { text: "Playing the deck…" })));
   }
-  goldfishPending = deck;
+  const ask = { deck };
+  goldfishPending = ask;
   try {
     await goldfishPanel.load();
   } finally {
-    if (goldfishPending === deck) goldfishPending = null;
+    if (goldfishPending === ask) goldfishPending = null;
   }
 }
 
