@@ -8,6 +8,7 @@ import pytest
 
 from commander.carddb import CardDb
 from commander.deckprofile import Profile, ThemeSpec
+from commander.deckthemes import merge_themes
 from commander.ideas import dominant_card_ids, dominant_tags
 from commander.models import Deck
 from commander.scryfall import parse_search_page
@@ -144,6 +145,16 @@ def test_the_commanders_wants_count_with_the_goldfish_synergy_cards_though_the_d
     themed = themed_deck(deck, ())
     assert dominant_tags(themed, Profile(), low_power_commander_db) == []
     assert dominant_card_ids(themed, Profile(), low_power_commander_db) == {MAGDA_ORACLE}
+
+
+def test_suggests_themes_still_name_the_payoff_tags_alone(deck: Deck, db: CardDb) -> None:
+    # The feeders are the reading's, not the spec's: suggest ranks ideas and cuts by these specs.
+    used = merge_themes(themed_deck(deck, ("Artifacts", "Weenies", "Vehicles")), Profile(), db).used
+    assert {theme.name: theme.spec for theme in used} == {
+        "Artifacts": ThemeSpec(tags=("synergy-artifact",)),
+        "Weenies": ThemeSpec(tags=("synergy-low-power",)),
+        "Vehicles": ThemeSpec(types=("Vehicle",)),
+    }
 
 
 def test_every_artifact_of_the_deck_feeds_the_artifacts_tag_though_it_is_a_payoff_tag(

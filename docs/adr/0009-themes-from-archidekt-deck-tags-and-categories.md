@@ -61,3 +61,10 @@ The thresholds were tuned on the owner's eleven decks against what their categor
   needs a line when a new deck tag misses.
 - Override slugs can go stale as Tagger changes; `suggest` warns about a "deck theme tag" Tagger lacks.
 - Each `suggest` and `profile` run spends about 0.1 to 0.7 s per deck on the derivation.
+
+## Amendment (2026-10-22): payoff tags and the dominant tags
+
+`OVERRIDES` still maps a deck tag to the Tagger tags of its payoffs (Artifacts → `synergy-artifact`), and
+`merge_themes` and everything `suggest` does with themes are unchanged. The cards that feed such a tag, the
+commander's own tags, and which three deck tags are dominant (none that match no deck card, tags with one
+spec as one) are in ADR 0055's amendment of this date; `commander.themereading` holds the reading.
