@@ -477,6 +477,10 @@ class Desk:
         step under the lock, so a sync and a write cannot both start. Otherwise a deck's write waits only for
         the sync's own write to that deck (ADR 0042). The refusal is logged with the phase the sync is in, so
         the log shows why.
+
+        Signing in or out takes no deck's lock and does not wait for a deck's write that is running: such a
+        write holds its deck, user, workspace and token before its first call to Archidekt, so it finishes
+        for the account it began with, in that account's folder.
         """
         target = None if deck_id is None else int(deck_id)
         with self._sync_lock:
