@@ -163,8 +163,9 @@ def test_a_swap_is_played_against_the_games_already_played(played: GoldfishRun, 
 
 def test_a_swap_of_two_plain_cards_replays_but_moves_nothing(played: GoldfishRun, db: CardDb) -> None:
     comparison = compare_swaps(played, db, [SwapRequest("Chaos Warp", "Disruptor Flute")])
-    # Their costs differ, so the games are replayed; neither card makes mana or wins.
-    assert comparison.replayed != ()
+    # Their costs differ, so every game is replayed (the 8-card library shows Disruptor Flute in each);
+    # neither card makes mana or wins.
+    assert len(comparison.replayed) == GAMES
     assert not comparison.any_moved
     assert headline(comparison) == []
 
