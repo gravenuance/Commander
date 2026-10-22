@@ -6,7 +6,7 @@ import logging
 import os
 import re
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
@@ -188,13 +188,20 @@ def cached_answer[T](
     fresh_for: timedelta,
     errors: tuple[type[Exception], ...],
     stale: Callable[[], StaleNote | None] | None = None,
+    also_accept: Sequence[Mapping[str, object]] = (),
 ) -> Answer[T]:
     """A recent cached answer, else a fresh one; if fetching fails with one of errors, the last good one.
 
     `stale` is asked after a fetch that returned: a note means stored data answered because refreshing failed,
-    so the answer is stale and not cached as fresh."""
+    so the answer is stale and not cached as fresh. An answer stored under one of the `also_accept` requests
+    counts as the answer to this one when none is stored under its own; a fresh answer is stored under its
+    own request."""
     key = request_key(request)
     cached = cache.load(item, key)
+    for other in also_accept:
+        if cached is not None:
+            break
+        cached = cache.load(item, request_key(other))
     # A time ahead of the clock (a wrong clock, a hand-edited file) cannot be trusted as recent.
     if cached is not None and not refresh and timedelta(0) <= now() - cached.fetched_at < fresh_for:
         return Answer(cached.data, AnswerSource.CACHED, cached.fetched_at, None)
