@@ -186,9 +186,16 @@ async function signOut() {
   } catch { /* shown in the status line */ }
 }
 
+// True while a click on Sync is sent, until the buttons show the sync running; a second click is ignored.
+let syncRequested = false;
+
 async function startSync() {
+  if (syncRequested) return;
+  syncRequested = true;
   try {
     await api("sync");
     await loadAccount();
-  } catch { /* shown in the status line */ }
+  } catch { /* shown in the status line */ } finally {
+    syncRequested = false;
+  }
 }
