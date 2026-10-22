@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from typing import cast
 
 from commander.deckcache import cache_item
 from commander.fsutil import write_text_atomic
@@ -35,10 +36,42 @@ class Coverage:
 
 
 @dataclass(slots=True, frozen=True)
+class _PackedCards:
+    """A stored deck's cards as read: validated, but not yet built into `DecklistCard` objects."""
+
+    names: Sequence[str]
+    flat: Sequence[int]
+
+    def unpack(self) -> tuple[DecklistCard, ...]:
+        names, flat = self.names, self.flat
+        return tuple(DecklistCard(names[flat[i]], flat[i + 1]) for i in range(0, len(flat), 2))
+
+
+@dataclass(slots=True, frozen=True, eq=False)
 class DeckEntry:
+    """A deck's commander and finish, with its cards. A stored deck builds its cards on first use: a window
+    holds some 1.5M of them and a sync reads those of a few commanders."""
+
     commander: str
     standing: int
-    cards: tuple[DecklistCard, ...]
+    _cards: tuple[DecklistCard, ...] | _PackedCards
+
+    @property
+    def cards(self) -> tuple[DecklistCard, ...]:
+        cards = self._cards
+        if isinstance(cards, _PackedCards):
+            cards = cards.unpack()
+            # Racing threads build the same tuple; the last write wins.
+            object.__setattr__(self, "_cards", cards)
+        return cards
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, DeckEntry):
+            return NotImplemented
+        return (self.commander, self.standing, self.cards) == (other.commander, other.standing, other.cards)
+
+    def __hash__(self) -> int:
+        return hash((self.commander, self.standing, self.cards))
 
 
 @dataclass(slots=True, frozen=True)
@@ -172,14 +205,16 @@ def _decode(raw: object) -> TournamentRecord | None:
     return TournamentRecord(tournament, tuple(decks))
 
 
-def _cards(deck: object, names: Sequence[str], where: str) -> tuple[DecklistCard, ...]:
+def _cards(deck: object, names: Sequence[str], where: str) -> _PackedCards:
+    """The deck's run of name index and count, checked whole now so that unpacking it cannot fail."""
     flat = as_list(as_object(deck, where).get("k"), f"{where}.k")
     if len(flat) % 2:
         raise ShapeError(f"{where}.k: expected pairs")
-    cards: list[DecklistCard] = []
-    for position in range(0, len(flat), 2):
-        index, count = flat[position], flat[position + 1]
-        if not isinstance(index, int) or not isinstance(count, int) or not 0 <= index < len(names):
-            raise ShapeError(f"{where}.k[{position}]: expected a name index and a count")
-        cards.append(DecklistCard(names[index], count))
-    return tuple(cards)
+    # C-level passes (set, min, max): a Python loop over the 1.5M values of a window costs far more.
+    if not set(map(type, flat)) <= {int, bool}:
+        raise ShapeError(f"{where}.k: expected whole numbers")
+    numbers = cast("Sequence[int]", flat)
+    indices = numbers[::2]
+    if indices and not 0 <= min(indices) <= max(indices) < len(names):
+        raise ShapeError(f"{where}.k: a name index is out of range")
+    return _PackedCards(names, numbers)
