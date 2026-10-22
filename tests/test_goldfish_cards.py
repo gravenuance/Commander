@@ -19,6 +19,7 @@ from commander.goldfish_cards import (
     LandFace,
     LandRamp,
     ManaAbility,
+    ManaNeed,
     Tutor,
     TutorDestination,
     compile_card,
@@ -1447,38 +1448,100 @@ def test_a_talisman_unions_its_abilities_colours() -> None:
     assert one(TALISMAN).mana == ManaAbility(1, frozenset("CUB"), delayed=False, ritual=False)
 
 
-@pytest.mark.parametrize(
-    "rock",
-    [
-        real(
-            "Mox Amber",
-            "{0}",
-            0,
-            "Legendary Artifact",
-            "{T}: Add one mana of any color among legendary creatures and planeswalkers you control.",
-            produced="WUBRG",
-            roles=(RAMP,),
-        ),
-        real(
-            "Flywheel Racer",
-            "{2}",
-            2,
-            "Artifact — Vehicle",
-            "Vigilance\n{T}: Add one mana of any color. Activate only if this permanent is a creature.\n"
-            "Crew 1 (Tap any number of creatures you control with total power 1 or more: This Vehicle "
-            "becomes an artifact creature until end of turn.)",
-            produced="WUBRG",
-            roles=(RAMP,),
-        ),
-    ],
-    ids=lambda c: c.mana.name,
+MOX_AMBER = real(
+    "Mox Amber",
+    "{0}",
+    0,
+    "Legendary Artifact",
+    "{T}: Add one mana of any color among legendary creatures and planeswalkers you control.",
+    produced="WUBRG",
+    roles=(RAMP,),
 )
-def test_a_rock_that_needs_a_legendary_creature_or_a_crewed_vehicle_is_not_modelled(rock: Real) -> None:
-    deck = build(rock)
-    card = card_named(deck, rock.mana.name)
+FLYWHEEL_RACER = real(
+    "Flywheel Racer",
+    "{2}",
+    2,
+    "Artifact — Vehicle",
+    "Vigilance\n{T}: Add one mana of any color. Activate only if this permanent is a creature.\n"
+    "Crew 1 (Tap any number of creatures you control with total power 1 or more: This Vehicle "
+    "becomes an artifact creature until end of turn.)",
+    produced="WUBRG",
+    roles=(RAMP,),
+)
+SPRINGLEAF_DRUM = real(
+    "Springleaf Drum",
+    "{1}",
+    1,
+    "Artifact",
+    "{T}, Tap an untapped creature you control: Add one mana of any color.",
+    produced="WUBRG",
+    roles=(RAMP,),
+)
+MOX_OPAL = real(
+    "Mox Opal",
+    "{0}",
+    0,
+    "Legendary Artifact",
+    "Metalcraft — {T}: Add one mana of any color. Activate only if you control three or more artifacts.",
+    produced="WUBRG",
+    roles=(RAMP,),
+)
+TREASONOUS_OGRE = real(
+    "Treasonous Ogre",
+    "{3}{R}",
+    4,
+    "Creature — Ogre Shaman",
+    "Dethrone (Whenever this creature attacks the player with the most life or tied for most life, put a "
+    "+1/+1 counter on it.)\nPay 3 life: Add {R}.",
+    produced="R",
+    roles=(RAMP,),
+)
+ORCISH_LUMBERJACK = real(
+    "Orcish Lumberjack",
+    "{R}",
+    1,
+    "Creature — Orc",
+    "{T}, Sacrifice a Forest: Add three mana in any combination of {R} and/or {G}.",
+    produced="RG",
+    roles=(RAMP,),
+)
+
+
+def test_a_rock_that_needs_a_legendary_creature_is_not_modelled() -> None:
+    deck = build(MOX_AMBER)
+    card = card_named(deck, MOX_AMBER.mana.name)
     assert card.mana is None
     assert not card.modelled
-    assert deck.not_modelled == (rock.mana.name,)
+    assert deck.not_modelled == (MOX_AMBER.mana.name,)
+
+
+def test_a_rock_that_taps_a_creature_needs_one_and_a_crewed_vehicle_needs_a_turn_too() -> None:
+    drum = one(SPRINGLEAF_DRUM)
+    assert drum.mana == ManaAbility(1, frozenset(ALL), delayed=False, ritual=False, needs=ManaNeed.CREATURE)
+    assert drum.modelled
+    racer = one(FLYWHEEL_RACER)
+    assert racer.mana == ManaAbility(1, frozenset(ALL), delayed=True, ritual=False, needs=ManaNeed.CREATURE)
+    assert racer.modelled
+
+
+def test_mox_opal_needs_three_artifacts() -> None:
+    opal = one(MOX_OPAL)
+    assert opal.mana == ManaAbility(1, frozenset(ALL), delayed=False, ritual=False, needs=ManaNeed.ARTIFACTS)
+    assert opal.modelled
+
+
+def test_mana_paid_for_with_life_is_mana_for_each_payment() -> None:
+    ogre = one(TREASONOUS_OGRE)
+    assert ogre.mana == ManaAbility(1, frozenset("R"), delayed=False, ritual=False, life=3)
+    assert ogre.modelled
+
+
+def test_mana_paid_for_with_a_land_is_a_burst_from_a_creature_in_play() -> None:
+    jack = one(ORCISH_LUMBERJACK)
+    assert jack.mana == ManaAbility(
+        3, frozenset("RG"), delayed=True, ritual=False, land_sacrificed=frozenset({"forest"})
+    )
+    assert jack.modelled
 
 
 def test_a_sacrifice_to_draw_is_neither_a_draw_nor_a_hindrance_to_the_mana() -> None:

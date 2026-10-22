@@ -33,6 +33,7 @@ from commander.goldfish_cards import (
     LandFace,
     LandRamp,
     ManaAbility,
+    ManaNeed,
     Tutor,
     TutorDestination,
 )
@@ -570,6 +571,67 @@ def test_a_spirit_guide_pays_for_a_two_drop_on_turn_one() -> None:
     assert only_outcome(run(slots)).mana == (1, 2, 2, 2, 2)
     without = [FOREST, FOREST, *repeat(VANILLA, 5)]
     assert only_outcome(run(without, commanders=(boss,))).commander_turns == (2,)
+
+
+def test_a_rock_that_taps_a_creature_makes_mana_once_a_creature_is_out_even_a_new_one() -> None:
+    drum = make(
+        "Drum",
+        mv=1,
+        kinds=ARTIFACT,
+        mana=ManaAbility(1, ANY_COLOUR, delayed=False, ritual=False, needs=ManaNeed.CREATURE),
+    )
+    bear = make("Bear", mv=1, kinds=CREATURE)
+    slots = [FOREST, FOREST, drum, bear, *repeat(VANILLA, 3)]
+    # Turn one casts the drum with nothing to tap; turn two the bear, which the drum taps at once.
+    assert only_outcome(run(slots)).mana == (1, 3, 3, 3, 3)
+
+
+def test_mox_opal_makes_mana_from_the_third_artifact_on() -> None:
+    opal = make(
+        "Opal",
+        kinds=ARTIFACT,
+        mana=ManaAbility(1, ANY_COLOUR, delayed=False, ritual=False, needs=ManaNeed.ARTIFACTS),
+    )
+    trinket = make("Trinket", mv=1, kinds=ARTIFACT)
+    slots = [MOUNTAIN, MOUNTAIN, opal, trinket, trinket, *repeat(VANILLA, 2)]
+    # Turn one: the Opal and one trinket; turn two the second trinket makes three artifacts.
+    assert only_outcome(run(slots)).mana == (1, 3, 3, 3, 3)
+
+
+def test_mana_paid_for_with_life_is_used_down_to_ten_life() -> None:
+    ogre = make(
+        "Ogre",
+        mv=4,
+        pips={"R": 1},
+        kinds=CREATURE,
+        mana=ManaAbility(1, frozenset("R"), delayed=False, ritual=False, life=3),
+    )
+    slots = [*repeat(MOUNTAIN, 4), ogre, *repeat(make("Giant", mv=20, kinds=CREATURE), 2)]
+    # Turn four casts the ogre; forty life down to ten pays for ten mana at once, and no more.
+    assert only_outcome(run(slots, commanders=(make("Ten", mv=10, kinds=CREATURE),))).commander_turns == (4,)
+    assert only_outcome(run(slots, commanders=(make("Eleven", mv=11, kinds=CREATURE),))).commander_turns == (
+        5,
+    )
+
+
+def test_a_creature_that_sacrifices_a_land_for_mana_does_it_once_its_turn_has_passed() -> None:
+    jack = make(
+        "Lumberjack",
+        mv=1,
+        pips={"R": 1},
+        kinds=CREATURE,
+        mana=ManaAbility(
+            3, frozenset("RG"), delayed=True, ritual=False, land_sacrificed=frozenset({"forest"})
+        ),
+    )
+    forest = replace(FOREST, land_types=frozenset({"forest"}))
+    giant = make("Giant", mv=20, kinds=CREATURE)
+    slots = [MOUNTAIN, forest, forest, jack, *repeat(giant, 3)]
+    boss = make("Boss", mv=5, kinds=CREATURE)
+    outcome = only_outcome(run(slots, commanders=(boss,)))
+    # Turn two: two lands and the three mana for a Forest cast the five-drop; the Forest is gone after.
+    assert outcome.commander_turns == (2,)
+    assert outcome.mana == (1, 1, 2, 2, 2)
 
 
 def test_mana_spent_only_on_creatures_casts_a_creature_and_its_rest_pays_for_nothing_else() -> None:
