@@ -29,6 +29,7 @@ from commander.board import (
     feed_ideas,
     read_activity,
     read_board,
+    read_recent_activity,
 )
 from commander.carddb import CardDb, ResolvedCard
 from commander.models import Deck
@@ -326,6 +327,61 @@ def test_activity_since_a_time_and_damaged_lines_are_skipped(tmp_path: Path, ser
     service.propose("Arcane Signet", Actor.CLAUDE)
     assert [e.card for e in read_activity(tmp_path)] == ["Lightning Bolt", "Arcane Signet"]
     assert [e.card for e in read_activity(tmp_path, since="2026-10-15T12:01:00+00:00")] == ["Arcane Signet"]
+
+
+def write_log(folder: Path, details: Sequence[str], *, damaged_at: Sequence[int] = ()) -> None:
+    lines = [
+        "{damaged"
+        if n in damaged_at
+        else json.dumps(
+            {
+                "at": f"2026-10-15T12:00:{n:02d}+00:00",
+                "actor": "you",
+                "action": "noted",
+                "card": None,
+                "detail": d,
+            },
+            ensure_ascii=False,
+        )
+        for n, d in enumerate(details)
+    ]
+    (folder / ACTIVITY_FILE).write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+
+
+@pytest.mark.parametrize("block", [1, 7, 64, board_module.TAIL_BLOCK_BYTES])
+def test_the_newest_activity_is_read_from_the_end_in_blocks_of_any_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, block: int
+) -> None:
+    monkeypatch.setattr(board_module, "TAIL_BLOCK_BYTES", block)
+    # Accented and wide characters, so that a block can end inside one.
+    details = [f"é{n}→日本" for n in range(12)]
+    write_log(tmp_path, details)
+
+    assert [e.detail for e in read_recent_activity(tmp_path, 4)] == details[-4:]
+    assert [e.detail for e in read_recent_activity(tmp_path, 12)] == details
+    assert [e.detail for e in read_recent_activity(tmp_path, 50)] == details
+
+
+def test_the_newest_activity_skips_damaged_lines_and_counts_only_good_ones(tmp_path: Path) -> None:
+    write_log(tmp_path, [f"line {n}" for n in range(6)], damaged_at=(0, 4))
+
+    assert [e.detail for e in read_recent_activity(tmp_path, 3)] == ["line 2", "line 3", "line 5"]
+    assert [e.detail for e in read_recent_activity(tmp_path, 9)] == ["line 1", "line 2", "line 3", "line 5"]
+
+
+def test_the_newest_activity_of_a_missing_or_empty_log_is_nothing(tmp_path: Path) -> None:
+    assert read_recent_activity(tmp_path, 5) == []
+    (tmp_path / ACTIVITY_FILE).write_bytes(b"")
+    assert read_recent_activity(tmp_path, 5) == []
+    assert read_recent_activity(tmp_path, 0) == []
+
+
+def test_the_newest_activity_reads_a_last_line_with_no_newline_after_it(tmp_path: Path) -> None:
+    write_log(tmp_path, ["a", "b"])
+    path = tmp_path / ACTIVITY_FILE
+    path.write_bytes(path.read_bytes().rstrip(b"\n"))
+
+    assert [e.detail for e in read_recent_activity(tmp_path, 5)] == ["a", "b"]
 
 
 def test_unreadable_or_newer_boards_are_refused(tmp_path: Path) -> None:

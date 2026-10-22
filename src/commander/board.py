@@ -54,6 +54,8 @@ MAX_CARDS = 500
 # A deck holds at most 99 cards besides its commander.
 MAX_COPIES = 99
 MAX_LOG_LINE = 16 * 1024
+# How much of the end of the activity log is read at a time when only its newest lines are wanted.
+TAIL_BLOCK_BYTES = 64 * 1024
 LOCK_TIMEOUT_SECONDS = 10.0
 # A lock file older than this was left by a crashed writer; a real update takes milliseconds.
 STALE_LOCK_SECONDS = 60.0
@@ -366,6 +368,51 @@ def read_activity(folder: Path, *, since: str | None = None) -> list[Activity]:
         if since is None or entry.at > since:
             entries.append(entry)
     return entries
+
+
+def read_recent_activity(folder: Path, count: int) -> list[Activity]:
+    """The last `count` entries of the board's history, oldest first.
+
+    It reads the file from its end, a block at a time, until it has them, so a log that has grown for months
+    costs what is shown, not its length. A damaged line is skipped, as `read_activity` does.
+    """
+    path = folder / ACTIVITY_FILE
+    newest: list[Activity] = []
+    try:
+        with path.open("rb") as handle:
+            position = handle.seek(0, os.SEEK_END)
+            # The start of the oldest line read so far; the next block completes it.
+            head = b""
+            while position > 0 and len(newest) < count:
+                step = min(TAIL_BLOCK_BYTES, position)
+                position -= step
+                handle.seek(position)
+                lines = (handle.read(step) + head).split(b"\n")
+                head = lines[0]
+                _take_newest(newest, reversed(lines[1:]), count, path)
+            if position == 0 and len(newest) < count:
+                _take_newest(newest, [head], count, path)
+    except FileNotFoundError:
+        return []
+    except OSError as error:
+        raise BoardIOError(f"cannot read {path}: {error}") from error
+    newest.reverse()
+    return newest
+
+
+def _take_newest(newest: list[Activity], lines: Iterable[bytes], count: int, path: Path) -> None:
+    """Add the entries of lines, newest first, to newest until it holds count of them."""
+    for raw in lines:
+        if len(newest) >= count:
+            return
+        try:
+            text = raw.decode("utf-8")
+            if not text.strip():
+                continue
+            newest.append(_activity_from_json(json.loads(text[:MAX_LOG_LINE])))
+        except (UnicodeDecodeError, json.JSONDecodeError, ShapeError, ValueError) as error:
+            # One damaged line must not hide the rest of the history.
+            log.warning("skipping an unreadable line of %s: %s", path, error)
 
 
 def parse_board(raw: Mapping[str, object]) -> Board:

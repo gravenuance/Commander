@@ -21,7 +21,17 @@ from commander import syncrun
 from commander.app import desk_settings, page_html
 from commander.apply import Resolution
 from commander.archidekt import parse_deck
-from commander.board import Actor, BoardService, Origin, OriginPool, Status, read_board
+from commander.board import (
+    ACTIVITY_FILE,
+    Activity,
+    Actor,
+    BoardService,
+    Origin,
+    OriginPool,
+    Status,
+    activity_json,
+    read_board,
+)
 from commander.boardsave import BoardSave
 from commander.carddb import CARD_DB_FILE, CardDb
 from commander.config import MetaSettings
@@ -238,6 +248,26 @@ def test_a_proposed_card_shows_with_its_card_facts(desk: Desk) -> None:
     assert "Magda, Brazen Outlaw" not in names(view, "deckCards")
     assert "Battered Golem" in names(view, "deckCards")
     assert [e["action"] for e in items(view, "activity")] == ["proposed (considering)"]
+
+
+def test_a_deck_view_reads_only_the_newest_activity_lines_it_shows(
+    desk: Desk, settings: DeskSettings, caplog: pytest.LogCaptureFixture
+) -> None:
+    folder = Workspace(settings.workspace).folder_for(DECK)
+    assert folder is not None
+    noted = [
+        Activity(f"2026-10-15T12:{n // 60:02d}:{n % 60:02d}+00:00", Actor.YOU, "noted", None, f"line {n}")
+        for n in range(100)
+    ]
+    # 140 damaged lines before the 100 good ones: reading the whole log would warn about each of them.
+    lines = ["{damaged\n"] * 140 + [json.dumps(activity_json(entry)) + "\n" for entry in noted]
+    (folder / ACTIVITY_FILE).write_text("".join(lines), encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING, logger="commander.board"):
+        shown = items(desk.deck(DECK), "activity")
+
+    assert [e["detail"] for e in shown] == [f"line {n}" for n in range(99, 39, -1)]
+    assert caplog.records == []
 
 
 def test_the_view_flags_the_cards_the_main_deck_holds_and_not_those_in_the_maybeboard(

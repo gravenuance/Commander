@@ -44,8 +44,8 @@ from commander.board import (
     count_json,
     files_stamp,
     held_keys,
-    read_activity,
     read_board,
+    read_recent_activity,
 )
 from commander.boardsave import BoardSave, preview_board, save_board
 from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
@@ -706,7 +706,7 @@ class Desk:
                 colours=dict(account or ()),
                 share=lambda name: _share_json(shares.of(name)),
             )
-        activity = read_activity(stored.folder)[-ACTIVITY_SHOWN:]
+        activity = read_recent_activity(stored.folder, ACTIVITY_SHOWN)
         return {
             "id": stored.deck.id,
             "short": stored.deck.short_name,
