@@ -136,6 +136,9 @@ function tileFor(card) {
   return node;
 }
 
+// The parts of a tile that paint() shows or hides, by tile.
+const tileParts = new WeakMap();
+
 // A card's controls, and the rows that hold them, so a click in the gap beside one doesn't drop the selection.
 const TILE_CONTROLS = "button, a, summary, select, option, input, textarea, label, .share-pop, .add-plain, "
   + ".targets, .reject-form";
@@ -147,8 +150,6 @@ function buildTile(card) {
     "aria-label": `${card.name}: show what it could replace`,
     onclick: () => select(card.id),
   }, el("span", { class: "card-name", text: times(card.copies, card.name) }));
-  pick.addEventListener("focus", () => hover(card.id));
-  pick.addEventListener("blur", () => hover(null));
 
   const meta = el("div", { class: "card-meta" },
     el("span", { class: "type", text: card.typeLine, title: card.typeLine }),
@@ -167,6 +168,7 @@ function buildTile(card) {
       }))
       : [el("p", { class: "muted small", text: "Pick the deck card it replaces" })]));
 
+  const plain = plainAdd(card);
   const reasoning = [card.reason, card.note].filter(Boolean).join("\n");
   const doing = card.choice ? `Replacing ${times(card.copies, card.choice)}` : `Adding to ${card.category ?? card.typeCategory ?? "the deck"}`;
   const body = el("div", { class: "card-body" },
@@ -177,7 +179,7 @@ function buildTile(card) {
       el("button", { class: "button quiet small", type: "button", text: "Undo", "aria-label": `Undo ${card.name}: ${doing}`,
         onclick: () => decide(card, "reopen") })) : null,
     targets,
-    plainAdd(card),
+    plain,
     card.text ? el("details", { class: "fold" }, el("summary", { text: "Rules text" }), el("p", { text: card.text })) : null,
     reasoning ? el("details", { class: "fold" }, el("summary", { text: "Reasoning" }), el("p", { text: reasoning })) : null);
 
@@ -192,8 +194,7 @@ function buildTile(card) {
   });
   const tile = el("article", { class: `card ${queued ? "queued" : ""}`, role: "listitem", "data-id": card.id, "aria-label": card.name },
     cardImage(card.image, card.name, "art"), body, reject);
-  tile.addEventListener("mouseenter", () => hover(card.id));
-  tile.addEventListener("mouseleave", () => hover(null));
+  tileParts.set(tile, { pick, targets, plain });
   // The whole card selects it, except its own controls: a click on one is for that control alone.
   tile.addEventListener("click", (event) => {
     if (!event.target.closest(TILE_CONTROLS)) select(card.id);
@@ -307,10 +308,27 @@ function setupSharePopover() {
   });
 }
 
+// One set of listeners per list rather than per tile. The pointer's tile is whichever one it entered last, so
+// moving from one tile to the next never passes through "no tile"; mouseenter does not bubble, hence mouseover.
+function setupHover() {
+  const tileOf = (node) => node.closest(".card")?.dataset.id ?? null;
+  const isPick = (node) => node.classList?.contains("pick");
+  for (const list of [$("list-considering"), $("list-uncut")]) {
+    list.addEventListener("mouseover", (event) => hover(tileOf(event.target)));
+    list.addEventListener("mouseleave", () => hover(null));
+    // Focus does not bubble either; capturing hears it. Tabbing to the next card's name keeps the grid lit.
+    list.addEventListener("focus", (event) => { if (isPick(event.target)) hover(tileOf(event.target)); }, true);
+    list.addEventListener("blur", (event) => {
+      if (isPick(event.target) && !(event.relatedTarget && isPick(event.relatedTarget))) hover(null);
+    }, true);
+  }
+}
+
 function hover(id) {
   if (state.hovered === id) return;
   state.hovered = id;
-  paint();
+  // A selected card is what the grid shows whatever the pointer is over.
+  if (state.selected === null) paint();
 }
 
 function select(id) {
@@ -326,42 +344,72 @@ function select(id) {
   first.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
 
+// What the last paint showed, so the next one touches only the grid cards and tiles that differ from it.
+// `dirty` holds the grid cards built since, which have shown nothing yet.
+const painted = { selected: null, active: null, taken: new Map(), lit: new Map(), choosing: false, dirty: new Set() };
+
+const sameEntries = (a, b) => a.size === b.size && [...a].every(([key, value]) => b.get(key) === value);
+
+// One grid card: tinted as a target, marked when a queued card takes its place, with a swap button for the
+// selected idea. A clicked idea can replace any deck card not already going out; the suggested ones stand out.
+function paintGridCard(name, node, { lit, taken, active }) {
+  const target = lit.get(name);
+  const out = taken.get(name);
+  const { note, swap } = gridParts.get(node);
+  node.classList.toggle("target", Boolean(target));
+  node.classList.toggle("out", Boolean(out));
+  note.hidden = !out;
+  note.textContent = out ? `→ ${out.name}` : "";
+  const chosen = active && state.selected === active.id && !out && !node.dataset.commander;
+  swap.hidden = !target && !chosen;
+  swap.classList.toggle("any", !target);
+  if (!swap.hidden) {
+    swap.dataset.card = active.id;
+    swap.setAttribute("aria-label", `Replace ${name} with ${active.name}`);
+    swap.title = target ? target.reason : `Replace ${name} (your pick, not suggested)`;
+  }
+}
+
 // Lights the grid for the considering card in focus: targets tinted, cards already queued out marked.
 function paint() {
-  const cards = [...state.tiles.values()].map((t) => t.card);
-  const taken = new Map(cards.filter((c) => c.status === "add" && c.choice).map((c) => [c.choice, c]));
+  const tiles = [...state.tiles.values()];
+  const taken = new Map(tiles.filter(({ card }) => card.status === "add" && card.choice).map(({ card }) => [card.choice, card]));
   const activeId = state.selected ?? state.hovered;
-  const active = cards.find((c) => c.id === activeId) || null;
+  const active = state.tiles.get(activeId)?.card ?? null;
   const lit = new Map(active ? active.targets.filter((t) => !taken.has(t.name) || taken.get(t.name) === active).map((t) => [t.name, t]) : []);
+  const next = { lit, taken, active };
 
-  for (const [name, node] of state.gridCards) {
-    const target = lit.get(name);
-    const out = taken.get(name);
-    node.classList.toggle("target", Boolean(target));
-    node.classList.toggle("out", Boolean(out));
-    const note = node.querySelector(".out-note");
-    note.hidden = !out;
-    note.textContent = out ? `→ ${out.name}` : "";
-    // A clicked idea can replace any deck card not already going out; the suggested ones stand out.
-    const swap = node.querySelector(".swap");
-    const chosen = active && state.selected === active.id && !out && !node.dataset.commander;
-    swap.hidden = !target && !chosen;
-    swap.classList.toggle("any", !target);
-    if (!swap.hidden) {
-      swap.dataset.card = active.id;
-      swap.setAttribute("aria-label", `Replace ${name} with ${active.name}`);
-      swap.title = target ? target.reason : `Replace ${name} (your pick, not suggested)`;
-    }
+  // Choosing a card changes the swap button of every deck card; hovering one changes only its targets.
+  const everyCard = painted.selected !== state.selected || (state.selected !== null && painted.active !== active)
+    || !sameEntries(painted.taken, taken);
+  const names = new Set(everyCard ? state.gridCards.keys() : painted.dirty);
+  if (!everyCard) {
+    for (const name of [...painted.lit.keys(), ...lit.keys()]) if (painted.lit.get(name) !== lit.get(name)) names.add(name);
   }
-  for (const { node, card } of state.tiles.values()) {
-    const on = card.id === state.selected;
-    node.classList.toggle("selected", on);
-    node.classList.toggle("lit", card.id === activeId);
-    node.querySelector(".pick").setAttribute("aria-pressed", String(on));
-    node.querySelector(".targets").hidden = !on;
-    node.querySelector(".add-plain").hidden = !on || (card.status === "add" && !card.choice);
+  for (const name of names) {
+    const node = state.gridCards.get(name);
+    if (node) paintGridCard(name, node, next);
   }
-  $("grid").classList.toggle("choosing", Boolean(active));
+  Object.assign(painted, { selected: state.selected, active, taken, lit });
+  painted.dirty.clear();
+
+  for (const tile of tiles) {
+    const on = tile.card.id === state.selected;
+    const isLit = tile.card.id === activeId;
+    if (tile.shown && tile.shown.on === on && tile.shown.lit === isLit) continue;
+    tile.shown = { on, lit: isLit };
+    const { pick, targets, plain } = tileParts.get(tile.node);
+    tile.node.classList.toggle("selected", on);
+    tile.node.classList.toggle("lit", isLit);
+    pick.setAttribute("aria-pressed", String(on));
+    targets.hidden = !on;
+    plain.hidden = !on || (tile.card.status === "add" && !tile.card.choice);
+  }
+  const choosing = Boolean(active);
+  if (painted.choosing !== choosing) {
+    painted.choosing = choosing;
+    $("grid").classList.toggle("choosing", choosing);
+  }
 }
 
 // Adding with no cut, filed under one of the deck's categories, its card type's first.

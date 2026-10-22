@@ -68,10 +68,12 @@ function renderGrid(groups) {
     if (!seen.has(id)) { known.node.remove(); state.groups.delete(id); }
   }
   // Only the deck's own cards can be cut or lit as targets: not those outside it, nor those still to come in.
+  const before = new Map(state.gridCards);
   state.gridCards.clear();
   for (const node of grid.querySelectorAll(".gcard")) {
     if (!node.classList.contains("incoming") && !node.closest(".outside")) state.gridCards.set(node.dataset.name, node);
   }
+  for (const [name, node] of state.gridCards) if (before.get(name) !== node) painted.dirty.add(name);
 }
 
 function buildGroup(group) {
@@ -166,6 +168,9 @@ async function stepCount(name, step, aside = null) {
   if (target && lost) target.focus();
 }
 
+// The parts of a grid card that paint() shows or hides, by card.
+const gridParts = new WeakMap();
+
 // aside is the category of a card outside the deck, null for the deck's own.
 function buildGridCard(card, aside = null) {
   const inDeck = !aside;
@@ -184,6 +189,7 @@ function buildGridCard(card, aside = null) {
   }
   const swap = el("button", { class: "swap", type: "button", hidden: true });
   swap.addEventListener("click", () => swapIn(swap.dataset.card, card.name));
+  const outNote = el("span", { class: "out-note", hidden: true });
   const note = incoming ? `New · ${card.category}` : leaving ? "Coming out" : "";
   const classes = ["gcard", incoming ? "incoming" : "", leaving ? "leaving" : ""].filter(Boolean).join(" ");
   const node = el("li", { class: classes, "data-name": card.name, title: card.name },
@@ -193,9 +199,10 @@ function buildGridCard(card, aside = null) {
     card.share ? el("span", { class: "share", text: card.share.label, title: [card.share.tip, graceLine(state.view?.grace, GRACE_TIP_CARDS)].filter(Boolean).join("\n") }) : null,
     flag,
     note ? el("span", { class: "pending-note", text: note }) : null,
-    el("span", { class: "out-note", hidden: true }),
+    outNote,
     swap,
     countTools(card, aside));
+  gridParts.set(node, { note: outNote, swap });
   node.addEventListener("click", (event) => {
     if (!event.target.closest("button")) zoom(card);
   });

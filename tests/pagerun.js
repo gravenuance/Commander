@@ -21,6 +21,8 @@ const path = require("node:path");
 const vm = require("node:vm");
 
 const VOID_TAGS = new Set(["meta", "link", "br", "hr", "img", "input"]);
+// Events the browser fires on their target alone, so that only a capturing listener above it hears them.
+const NON_BUBBLING = new Set(["mouseenter", "mouseleave", "focus", "blur", "scroll"]);
 const ENTITIES = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'" };
 
 class FakeText {
@@ -172,7 +174,7 @@ class FakeElement {
   querySelectorAll(selector) { return walk(this).filter((node) => node.matches(selector)); }
   querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
 
-  // Events bubble to the document, with capture listeners of the document first.
+  // Events bubble to the document (all but NON_BUBBLING), with capture listeners of the ancestors first.
   addEventListener(type, listener, capture = false) {
     const list = this.listeners.get(type) ?? [];
     list.push({ listener, capture: capture === true });
@@ -194,7 +196,7 @@ class FakeElement {
       return true;
     };
     if (![...route].reverse().every((node) => fire(node, true))) return !event.defaultPrevented;
-    route.every((node) => fire(node, false));
+    (NON_BUBBLING.has(event.type) ? [this] : route).every((node) => fire(node, false));
     return !event.defaultPrevented;
   }
   focus() {
