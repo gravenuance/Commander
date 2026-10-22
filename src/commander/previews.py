@@ -189,9 +189,10 @@ def fitting_previews(
     targets: Mapping[Role, int],
 ) -> list[PreviewFit]:
     """The previews in the deck's colour identity that match its dominant tags or that its commander wants:
-    those the commander wants first, then the most distinct features of the tags (types, keywords, tags and
-    feeding cards; tags that ask for one feature count it once), then those filling a role the deck runs
-    short of, then the coloured before the colourless, then by name; at most SHOWN. today is the local day.
+    the most distinct features of the tags first (types, keywords, tags and feeding cards; tags that ask for
+    one feature count it once, and the commander's want counts as one more), then those the commander wants,
+    then those filling a role the deck runs short of, then the coloured before the colourless, then by name;
+    at most SHOWN. today is the local day.
     Like every suggestion, a card the profile excludes, by name or by its [exclude] types, keywords or tags,
     is never one, nor is a card the deck already has."""
     identity = deck_identity(main)
@@ -217,7 +218,7 @@ def fitting_previews(
     lineage = db.tag_lineage(ids)
     roles = db.roles(ids)
     short = short_roles(main, db, targets)
-    ranked: list[tuple[tuple[bool, int, bool, bool, str], PreviewFit]] = []
+    ranked: list[tuple[tuple[int, bool, bool, bool, str], PreviewFit]] = []
     for card in live:
         facts = preview_facts(card, lineage.get(card.oracle_id, frozenset()))
         if named_traits(profile.exclude, facts):
@@ -230,7 +231,10 @@ def fitting_previews(
         fills = bool(roles.get(card.oracle_id, frozenset()) & short)
         # Tags asking for the same feature, like Tokens and Go-wide for repeatable tokens, count it once.
         features = {trait for _, found in by_theme for trait in found}
-        key = (not commander, -len(features), not fills, not card.color_identity, card.name.casefold())
+        # The commander's want counts one feature more, as a commander can want something as broad as every
+        # artifact, and breaks a tie first.
+        score = len(features) + commander
+        key = (-score, not commander, not fills, not card.color_identity, card.name.casefold())
         ranked.append((key, PreviewFit(card, matched, fills, commander)))
     ranked.sort(key=lambda item: item[0])
     return [fit for _, fit in ranked[:SHOWN]]

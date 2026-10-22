@@ -430,8 +430,9 @@ def test_previews_rank_by_the_features_they_match_then_a_short_role_then_name(de
 def test_a_commanders_wants_rank_first_and_show_a_card_no_deck_tag_matches(
     deck: Deck, commander_db: CardDb
 ) -> None:
-    # Magda is a made-up synergy-low-power commander: Quark, with 1 power, is wanted though no tag of the deck
-    # names him, and ahead of Captain's Tutelage, which matches as many features but sorts before him.
+    # Magda is a made-up synergy-low-power commander: Quark, with 1 power, is wanted, and ahead of Captain's
+    # Tutelage, which matches as many tag features but sorts before him. With Flash alone no tag of the deck
+    # names him, and his one feature, the want, ties with Tutelage's Flash and breaks the tie.
     shown = found_fits(themed_deck(deck, ("Flash", "Treasure")), commander_db)
     assert [(f.card.name, f.fits_commander) for f in shown] == [
         ("Quark, Humble Proprietor", True),
@@ -443,6 +444,27 @@ def test_a_commanders_wants_rank_first_and_show_a_card_no_deck_tag_matches(
     assert [(f.card.name, f.tags, f.fits_commander) for f in only] == [
         ("Quark, Humble Proprietor", (), True),
         ("Captain's Tutelage", ("Flash",), False),
+    ]
+
+
+def test_a_commanders_want_counts_as_one_more_feature_and_breaks_a_tie_first(
+    deck: Deck, commander_db: CardDb
+) -> None:
+    # Quark without his Treasure text and tag matches no deck tag; the low-power commander wants him, which
+    # counts one feature: behind Captain's Tutelage's two, ahead of Munitions Enthusiast's one, though
+    # Munitions fills the deck's short ramp role.
+    cards = [
+        replace(card, oracle_id="00000000-0000-0000-0000-00000000000a", oracle_text="")
+        if card.name == "Quark, Humble Proprietor"
+        else card
+        for card in parse_search_page(search_page()).cards
+    ]
+    shown = found_fits(themed_deck(deck, ("Flash", "Treasure")), commander_db, cards=cards)
+    assert [(f.card.name, f.fits_commander) for f in shown] == [
+        ("Captain's Tutelage", False),
+        ("Quark, Humble Proprietor", True),
+        ("Munitions Enthusiast", False),
+        ("Dahar Master", False),
     ]
 
 

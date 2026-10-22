@@ -112,11 +112,13 @@ cards (`ideas.dominant_card_ids`) and the Archidekt tag search (`ideas.search_ta
   that are no Aura, only those with mana value 4 or more when the commander also has
   `high-mana-value-matters`; `typal-X` wants the type X, when some card has it as a type (`typal-creature`
   and `typal-choose` are no tribes). The goldfish's synergy cards include the deck's cards a commander wants.
-- **Ranking.** A preview shows when it matches a theme or the commander. Order: the commander wants it; then
-  the most distinct features it matches, that is the types, keywords, tags and wants of all the shown themes
-  together, so Tokens and Go-wide sharing a tag count it once; then filling a role the deck runs short of;
-  then coloured before colourless; then by name. The cap stays 6. The panel shows the deck's short name
-  among the tags of a card the commander wants ("Fits: #Treasure #Magda").
+- **Ranking.** A preview shows when it matches a theme or the commander. Order: the most distinct features it
+  matches, that is the types, keywords, tags and wants of all the shown themes together, so Tokens and
+  Go-wide sharing a tag count it once, and the commander wanting it counts as one more; then the commander
+  wants it; then filling a role the deck runs short of; then coloured before colourless; then by name. A
+  commander can want something as broad as every artifact, so its want weighs as one feature rather than
+  ranking above a card that fits several of the deck's themes. The cap stays 6. The panel shows the deck's
+  short name among the tags of a card the commander wants ("Fits: #Treasure #Magda").
 - **The cache** gains each card's mana value and power, which feeders need and a card revealed after the
   weekly card data may not have there: `previews.json` is version 2, and a version 1 file is ignored and
   replaced by the next probe.
