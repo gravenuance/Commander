@@ -612,6 +612,28 @@ def test_a_ritual_that_sacrifices_a_creature_waits_for_one_and_sacrifices_it() -
     assert outcome.mana == (1, 2, 3, 4, 4)
 
 
+def test_a_ritual_is_not_paid_for_with_the_creature_that_pays_life_for_mana() -> None:
+    ogre = make(
+        "Ogre",
+        mv=4,
+        pips={"R": 1},
+        kinds=CREATURE,
+        mana=ManaAbility(1, frozenset("R"), delayed=False, ritual=False, life=3),
+    )
+    plunge = make(
+        "Infernal Plunge",
+        mv=1,
+        pips={"R": 1},
+        needs_sacrifice=True,
+        mana=ManaAbility(3, frozenset("R"), delayed=False, ritual=True),
+    )
+    slots = [*repeat(MOUNTAIN, 4), ogre, plunge, make("Giant", mv=20, kinds=CREATURE)]
+    # Turn five: sacrificing the ogre to the ritual makes six; keeping it, four Mountains and ten life make
+    # the fourteen.
+    boss = make("Boss", mv=14, kinds=CREATURE)
+    assert only_outcome(run(slots, commanders=(boss,))).commander_turns == (5,)
+
+
 def test_a_ritual_for_a_sacrificed_creature_adds_its_mana_value() -> None:
     metamorphosis = make(
         "Metamorphosis",

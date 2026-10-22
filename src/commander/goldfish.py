@@ -12,7 +12,7 @@ records that the cut slot was never reached (`reached`), and whose searches (`la
 """
 
 import random
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from itertools import combinations
@@ -1003,32 +1003,49 @@ class _Game:
         """The one-shots to use first for a cost to be paid: none when the mana is enough, None when even they
         would not make it. `paying` holds the cards the cost is for, whose kinds a ritual's restricted mana
         must all allow. Rituals and bursts serve a purpose of `_FOR_PLAY` or more, Lion's Eye Diamond only
-        `_FOR_WIN`; life is paid for anything."""
+        `_FOR_WIN`; life is paid for anything. A plan whose rituals sacrifice a creature is tried again
+        without them, as the creature may be the one paying life."""
         if can_pay(units, cost):
             return ()
         if not self.s.has_rituals:
             return None
-        trial = list(units)
-        used: list[int] = []
-        if purpose >= _FOR_PLAY and self._plan_rituals(trial, used, cost, paying, purpose):
-            return tuple(used)
-        payments, mask = self._life_payments()
-        for _ in range(payments):
-            trial.append(mask)
-            trial.sort(key=_PAY_KEY)
-            used.append(_LIFE)
-            if can_pay(trial, cost):
+        for sacrifices in (True, False):
+            trial = list(units)
+            used: list[int] = []
+            gone: set[int] = set()
+            if purpose >= _FOR_PLAY and self._plan_rituals(
+                trial, used, gone, cost=cost, paying=paying, purpose=purpose, sacrifices=sacrifices
+            ):
                 return tuple(used)
+            payments, mask = self._life_payments(gone)
+            for _ in range(payments):
+                trial.append(mask)
+                trial.sort(key=_PAY_KEY)
+                used.append(_LIFE)
+                if can_pay(trial, cost):
+                    return tuple(used)
+            if not gone:
+                return None
         return None
 
     def _plan_rituals(
-        self, trial: list[int], used: list[int], cost: Cost, paying: Sequence[_Card], purpose: int
+        self,
+        trial: list[int],
+        used: list[int],
+        gone: set[int],
+        *,
+        cost: Cost,
+        paying: Sequence[_Card],
+        purpose: int,
+        sacrifices: bool,
     ) -> bool:
         """Add to `trial` and `used` the rituals in hand, cheapest first, then the creatures' bursts, until
-        the cost can be paid; whether it can."""
+        the cost can be paid; whether it can. The creatures the rituals sacrifice go into `gone`."""
         cards = self.s.cards
-        # The creatures the rituals may sacrifice, cheapest first, as `_sacrifice` takes them.
-        fodder = sorted(self.creatures)[sum(card.needs_sac for card in paying) :]
+        # The creatures the rituals may sacrifice, cheapest first as `_sacrifice` takes them, leaving those
+        # the cards paid for sacrifice themselves.
+        fodder = sorted(self.creatures)
+        spare = len(fodder) - sum(card.needs_sac for card in paying)
         for cid in sorted(
             (cid for cid in self.hand if cards[cid].ritual), key=lambda cid: cards[cid].cost.total
         ):
@@ -1036,7 +1053,7 @@ class _Game:
             spend = card.spend_bits
             if (
                 (card.discards and purpose < _FOR_WIN)
-                or (card.needs_sac and not fodder)
+                or (card.needs_sac and (not sacrifices or len(gone) >= spare))
                 or (spend and not all(c.kind_bits & spend for c in paying))
                 or not can_pay(trial, card.cost)
             ):
@@ -1044,7 +1061,8 @@ class _Game:
             pay(trial, card.cost)
             amount = card.mana_amount
             if card.needs_sac:
-                sacrificed = fodder.pop(0)[1]
+                _, sacrificed, victim = fodder[len(gone)]
+                gone.add(victim)
                 amount += sacrificed if card.plus_sacrificed else 0
             trial.extend([card.mana_mask] * amount)
             trial.sort(key=_PAY_KEY)
@@ -1052,6 +1070,8 @@ class _Game:
             if can_pay(trial, cost):
                 return True
         for cid in self._bursts_ready():
+            if cid in gone:
+                continue
             card = cards[cid]
             trial.extend([card.mana_mask] * card.mana_amount)
             trial.sort(key=_PAY_KEY)
@@ -1098,12 +1118,14 @@ class _Game:
             and not types.isdisjoint(cards[cid].burst_types)
         ]
 
-    def _life_payments(self) -> tuple[int, int]:
-        """How many life payments for mana the life allows down to the floor, and the mana each makes."""
-        if not self.life_sources:
+    def _life_payments(self, gone: Collection[int] = ()) -> tuple[int, int]:
+        """How many life payments for mana the life allows down to the floor, and the mana each makes, from
+        the cheapest source that is not among the creatures `gone`."""
+        sources = [cid for cid in self.life_sources if cid not in gone]
+        if not sources:
             return 0, 0
         cards = self.s.cards
-        source = cards[min(self.life_sources, key=lambda cid: cards[cid].life_cost)]
+        source = cards[min(sources, key=lambda cid: cards[cid].life_cost)]
         return max((self.life - _LIFE_FLOOR) // source.life_cost, 0), source.mana_mask
 
     def _sacrifice_land(self, types: frozenset[str]) -> None:
