@@ -680,6 +680,11 @@ class CardDb:
         params = {"identity": identity, "max_cents": max_cents, "limit": limit}
         return [(CardMana(*row[:9]), row[9]) for row in self._query_named(_LAND_QUERY, params)]
 
+    def roles(self, oracle_ids: Iterable[str]) -> dict[str, frozenset[Role]]:
+        """Each card's roles by oracle id, from its tags, for cards the tags know even before the card
+        data does (a preview); cards with no role are left out."""
+        return self._roles(oracle_ids)
+
     def card_text(self, oracle_id: str) -> CardText | None:
         return self.card_texts([oracle_id]).get(oracle_id)
 

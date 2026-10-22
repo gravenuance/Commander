@@ -71,7 +71,7 @@ def desk_settings(
         name: str | None = resolve_user(user, env, file)
     except ConfigError:
         name = None
-    return DeskSettings(folder, cache_dir(env) / CARD_DB_FILE, name, file.meta, path, documents)
+    return DeskSettings(folder, cache_dir(env) / CARD_DB_FILE, name, file.meta, path, documents, file.targets)
 
 
 def setup_logging(folder: Path, env: Mapping[str, str], settings: DeskSettings) -> Path:

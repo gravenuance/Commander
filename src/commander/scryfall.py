@@ -9,6 +9,8 @@ import gzip
 import json
 import logging
 import re
+import threading
+import uuid
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -44,7 +46,7 @@ from commander.jsonshape import (
     req_str,
     str_list,
 )
-from commander.net import Fetcher, NetworkError
+from commander.net import HTTP_NOT_FOUND, Fetcher, HttpStatusError, NetworkError
 
 log = logging.getLogger(__name__)
 
@@ -154,10 +156,38 @@ class SetInfo:
     released_at: date
     set_type: str
     digital: bool
+    # How many cards Scryfall has for the set; a set announced but not yet previewed has none.
+    card_count: int = 0
 
     @property
     def brings_new_cards(self) -> bool:
         return not self.digital and self.set_type in NEW_CARD_SET_TYPES
+
+
+@dataclass(slots=True, frozen=True)
+class SetCard:
+    """A card from a card search of one set: what a preview of it shows and is matched by (ADR 0055)."""
+
+    scryfall_id: str
+    oracle_id: str
+    name: str
+    mana_cost: str
+    type_line: str
+    # Faces of a two-faced card are joined by FACE_SEPARATOR.
+    oracle_text: str
+    keywords: tuple[str, ...]
+    color_identity: str
+    set_code: str
+    set_name: str
+    released_at: date
+    # Legal, restricted or banned in Commander: a card already out, like a reprint, not a preview.
+    already_out: bool
+
+
+@dataclass(slots=True, frozen=True)
+class SearchPage:
+    cards: tuple[SetCard, ...]
+    next_page: str | None
 
 
 @dataclass(slots=True, frozen=True)
@@ -175,6 +205,10 @@ class ScryfallClient:
     def __init__(self, fetcher: Fetcher, api_base: str = API_BASE) -> None:
         self._fetcher = fetcher
         self._api_base = api_base.rstrip("/")
+        # The set list is read once per client, as the card data's check and the preview probe both want it
+        # in the same sync, from two threads.
+        self._sets: list[SetInfo] | None = None
+        self._sets_lock = threading.Lock()
 
     def bulk_files(self) -> dict[str, BulkFile]:
         raw = self._fetcher.get_json(f"{self._api_base}/bulk-data")
@@ -184,11 +218,42 @@ class ScryfallClient:
             raise ScryfallError(f"unexpected bulk data list from Scryfall: {error}") from error
 
     def sets(self) -> list[SetInfo]:
-        raw = self._fetcher.get_json(f"{self._api_base}/sets")
-        try:
-            return parse_sets_listing(raw)
-        except ShapeError as error:
-            raise ScryfallError(f"unexpected set list from Scryfall: {error}") from error
+        with self._sets_lock:
+            if self._sets is None:
+                raw = self._fetcher.get_json(f"{self._api_base}/sets")
+                try:
+                    self._sets = parse_sets_listing(raw)
+                except ShapeError as error:
+                    raise ScryfallError(f"unexpected set list from Scryfall: {error}") from error
+            return list(self._sets)
+
+    def set_cards(self, code: str, *, before_each: Callable[[], None], max_pages: int) -> list[SetCard]:
+        """Every card of one set by Scryfall's card search, a page at a time with before_each called ahead of
+        each request (the caller's pacing); [] for a set Scryfall has no cards for yet. A set with more than
+        max_pages pages keeps the cards of those pages, as a probe would rather show some than none."""
+        cards: list[SetCard] = []
+        url: str | None = f"{self._api_base}/cards/search"
+        params: dict[str, str | int] | None = {"q": f"e:{code}", "unique": "cards"}
+        for _ in range(max_pages):
+            if url is None:
+                return cards
+            before_each()
+            try:
+                raw = self._fetcher.get_json(url, params)
+            except HttpStatusError as error:
+                # Scryfall answers a search that finds nothing with a 404.
+                if error.status == HTTP_NOT_FOUND and not cards:
+                    return []
+                raise
+            try:
+                page = parse_search_page(raw, self._api_base)
+            except ShapeError as error:
+                raise ScryfallError(f"unexpected card search answer for set {code}: {error}") from error
+            cards.extend(page.cards)
+            url, params = page.next_page, None
+        if url is not None:
+            log.warning("the search for set %s has over %d pages; the rest is left out", code, max_pages)
+        return cards
 
     def download(self, file: BulkFile, dest: Path) -> int:
         if file.size is not None and file.size > MAX_BULK_BYTES:
@@ -332,9 +397,71 @@ def parse_sets_listing(raw: object) -> list[SetInfo]:
                 released_at,
                 req_str(entry, "set_type", where),
                 req_bool(entry, "digital", where),
+                opt_int(entry, "card_count", where) or 0,
             )
         )
     return sets
+
+
+def parse_search_page(raw: object, api_base: str = API_BASE) -> SearchPage:
+    """One page of a card search; tokens and digital cards are left out. A next page that is not on
+    Scryfall's API is refused, so a changed answer can never send the probe elsewhere."""
+    obj = as_object(raw, "search")
+    cards: list[SetCard] = []
+    for index, item in enumerate(req_list(obj, "data", "search")):
+        card = parse_set_card(item, f"search.data[{index}]")
+        if card is not None:
+            cards.append(card)
+    next_page = opt_str(obj, "next_page", "search") if obj.get("has_more") is True else None
+    if next_page is not None and not next_page.startswith(f"{api_base.rstrip('/')}/cards/search?"):
+        raise ShapeError(f"search.next_page: not a Scryfall search URL: {next_page}")
+    return SearchPage(tuple(cards), next_page)
+
+
+def is_scryfall_id(text: str) -> bool:
+    """Whether text is a UUID in Scryfall's form, lowercase with hyphens."""
+    try:
+        return str(uuid.UUID(text)) == text
+    except ValueError:
+        return False
+
+
+def parse_set_card(raw: object, where: str) -> SetCard | None:
+    card = as_object(raw, where)
+    layout = req_str(card, "layout", where)
+    if layout in _NON_CARD_LAYOUTS or card.get("digital") is True:
+        return None
+    scryfall_id = req_str(card, "id", where)
+    if not is_scryfall_id(scryfall_id):
+        # Its image address is made from the id, so a card without a real one cannot be shown.
+        log.warning("%s (%s) skipped: not a Scryfall id: %r", where, card.get("name"), scryfall_id)
+        return None
+    faces = [as_object(face, f"{where}.card_faces") for face in as_list(card.get("card_faces") or [], where)]
+    front: Mapping[str, object] = faces[0] if faces else {}
+    oracle_id = opt_str(card, "oracle_id", where) or opt_str(front, "oracle_id", where)
+    if not oracle_id:
+        raise ShapeError(f"{where}: no oracle_id")
+    released = req_str(card, "released_at", where)
+    try:
+        released_at = date.fromisoformat(released)
+    except ValueError:
+        raise ShapeError(f"{where}.released_at: not a date: {released!r}") from None
+    legality = req_object(card, "legalities", where).get("commander")
+    return SetCard(
+        scryfall_id=scryfall_id,
+        oracle_id=oracle_id,
+        name=req_str(card, "name", where),
+        mana_cost=opt_str(card, "mana_cost", where) or opt_str(front, "mana_cost", where) or "",
+        type_line=opt_str(card, "type_line", where)
+        or " // ".join(req_str(f, "type_line", where) for f in faces),
+        oracle_text=_oracle_text(card, faces, where),
+        keywords=str_list(card, "keywords", where),
+        color_identity=_colors(str_list(card, "color_identity", where)),
+        set_code=req_str(card, "set", where),
+        set_name=req_str(card, "set_name", where),
+        released_at=released_at,
+        already_out=legality in {"legal", "restricted", "banned"},
+    )
 
 
 def parse_card(raw: object) -> ParsedCard | None:

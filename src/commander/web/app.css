@@ -737,6 +737,11 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .card.selected { background: var(--selected); border-color: var(--accent); }
 .card.queued { border-left-color: var(--queued); }
 .art { width: var(--art-width); aspect-ratio: 488 / 680; align-self: start; }
+/* A preview is only looked at: no reject button to keep room for, and only its art does anything. */
+.card.preview { padding-right: var(--space-3); cursor: default; }
+.preview-art { align-self: start; padding: 0; border: 0; background: transparent; border-radius: var(--radius); cursor: zoom-in; }
+.preview-art:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.fits { margin: 0; color: var(--muted); }
 /* One column no wider than the body, so a long name or type line truncates instead of widening it. */
 .card-body {
   position: relative;

@@ -421,6 +421,12 @@ def search_tags(deck: Deck, profile: Profile, db: CardDb) -> list[str]:
     MAX_SEARCH_TAGS that the most of the deck's main cards match, ties in Archidekt's tag order."""
     if not profile.tag_search:
         return []
+    return dominant_tags(deck, profile, db)
+
+
+def dominant_tags(deck: Deck, profile: Profile, db: CardDb) -> list[str]:
+    """The deck's dominant theme tags: at most the MAX_SEARCH_TAGS deck tags that the most of its main cards
+    match, ties in Archidekt's tag order, after the profile's ignore list and [exclude]."""
     # Theme tags only: the play style, role and card type tags are too broad to pick decks by (ADR 0009).
     themes = [t for t in merge_themes(deck, profile, db).used if t.source is ThemeSource.DECK_TAG]
     if len(themes) <= 1:

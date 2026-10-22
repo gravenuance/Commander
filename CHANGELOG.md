@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+- A *Previews* panel in the app shows, while a set is being previewed, up to 6 of its announced cards that
+  suit the open deck: in its colours, matching the most of its three main Archidekt tags, then filling a role
+  it runs short of. It is only to look at, with no price, and a card leaves it on its release day. The sync
+  fetches the upcoming sets' cards from Scryfall at most once a day, and makes no card search between
+  seasons (ADR 0055).
+
 ## 1.1.0 - 2026-10-22
 
 ### Changed

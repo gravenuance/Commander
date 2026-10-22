@@ -214,7 +214,8 @@ def own_cache(tmp_path: Path, card_db_file: Path) -> Path:
 
 
 class FakeScryfall:
-    """Serves the bulk-data list, the set list and the two bulk files, and records every request."""
+    """Serves the bulk-data list, the set list, card searches and the two bulk files, and records every
+    request."""
 
     def __init__(self) -> None:
         self.cards_updated_at = CARDS_UPDATED_AT
@@ -223,6 +224,8 @@ class FakeScryfall:
         self.requests: list[str] = []
         # A trimmed real /sets answer; tests reassign it to try other sets or a malformed answer.
         self.sets: Json = load_fixture("scryfall_sets.json")
+        # Card search answers by full URL; a search not listed finds nothing, which Scryfall answers with 404.
+        self.searches: dict[str, Json] = {}
         self.cards_gz = default_cards_gz()
         self.tags_gz = oracle_tags_gz()
 
@@ -261,14 +264,12 @@ class FakeScryfall:
         self.requests.append(url)
         if url in self.failing:
             return httpx.Response(self.failing[url])
-        if url == "https://api.scryfall.com/bulk-data":
-            return httpx.Response(200, json=self.listing())
-        if url == SETS_URL:
-            return httpx.Response(200, json=self.sets)
-        if url == CARDS_URL:
-            return httpx.Response(200, content=self.cards_gz)
-        if url == TAGS_URL:
-            return httpx.Response(200, content=self.tags_gz)
+        answers = {"https://api.scryfall.com/bulk-data": self.listing(), SETS_URL: self.sets, **self.searches}
+        if url in answers:
+            return httpx.Response(200, json=answers[url])
+        files = {CARDS_URL: self.cards_gz, TAGS_URL: self.tags_gz}
+        if url in files:
+            return httpx.Response(200, content=files[url])
         return httpx.Response(404)
 
     def client(self) -> httpx.Client:

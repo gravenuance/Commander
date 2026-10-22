@@ -411,20 +411,32 @@ def role_targets(
     if identity is None:
         return ()
     exclude = {r.info.oracle_id for r in main if r.info}
-    # Ideas are never lands, so lands that happen to carry a role do not count towards a target.
-    spells = [r for r in main if r.info and not r.info.is_land]
     targets: list[RoleTarget] = []
     for role in ANALYZED_ROLES:
         target = options.targets.get(role)
         if target is None or role not in db.available_roles:
             continue
-        have = sum(r.card.quantity for r in spells if fills_role(r, role))
+        have = role_count(main, role)
         if have >= target:
             targets.append(RoleTarget(role, have, target, ()))
             continue
         candidates = db.candidates(role, identity, exclude=exclude, max_cents=picker.screen.budget.ceiling)
         targets.append(RoleTarget(role, have, target, tuple(picker.pick(candidates, theme_first=True))))
     return tuple(targets)
+
+
+def role_count(main: Sequence[ResolvedCard], role: Role) -> int:
+    """How many deck cards fill the role; ideas are never lands, so lands carrying it do not count."""
+    return sum(r.card.quantity for r in main if r.info and not r.info.is_land and fills_role(r, role))
+
+
+def short_roles(main: Sequence[ResolvedCard], db: CardDb, targets: Mapping[Role, int]) -> frozenset[Role]:
+    """The roles whose count is below its target, of those the card data can count."""
+    return frozenset(
+        role
+        for role in ANALYZED_ROLES
+        if role in targets and role in db.available_roles and role_count(main, role) < targets[role]
+    )
 
 
 def fills_role(card: ResolvedCard, role: Role) -> bool:

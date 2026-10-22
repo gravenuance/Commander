@@ -318,7 +318,9 @@ def test_first_refresh_downloads_and_builds(tmp_path: Path) -> None:
 def test_sets_listing_reads_the_fixture() -> None:
     sets = {s.code: s for s in parse_sets_listing(FakeScryfall().sets)}
     assert len(sets) == 19
-    assert sets["fra"] == SetInfo("fra", "Reality Fracture", date(2026, 10, 2), "expansion", digital=False)
+    assert sets["fra"] == SetInfo(
+        "fra", "Reality Fracture", date(2026, 10, 2), "expansion", digital=False, card_count=462
+    )
     assert sets["yfra"].digital
 
 

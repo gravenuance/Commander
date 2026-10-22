@@ -117,6 +117,17 @@
             </div>
           </section>
 
+          <section id="previews" class="panel" aria-labelledby="h-previews" hidden>
+            <h2 class="panel-title">
+              <button id="h-previews" class="panel-toggle" type="button" aria-expanded="false" aria-controls="previews-body">
+                Previews <span class="count" id="count-previews"></span>
+              </button>
+            </h2>
+            <div id="previews-body" class="panel-body" hidden>
+              <div id="list-previews" class="cards" role="list" aria-label="Upcoming cards that fit"></div>
+            </div>
+          </section>
+
           <section id="meta" class="panel" aria-labelledby="h-meta" hidden>
             <h2 class="panel-title">
               <button id="h-meta" class="panel-toggle" type="button" aria-expanded="false" aria-controls="meta-panel">
@@ -282,6 +293,7 @@
 <script src="bracket.js"></script>
 <script src="rail.js"></script>
 <script src="mana.js"></script>
+<script src="previews.js"></script>
 <script src="settings.js"></script>
 <script src="review.js"></script>
 <script src="meta.js"></script>
