@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from commander.board import BoardIOError, board_lock
+from commander.board import LOCK_FILE, BoardIOError, board_lock
 from commander.fsutil import write_text_atomic
 from commander.jsonshape import (
     ShapeError,
@@ -188,6 +188,18 @@ class Workspace:
                 "the next sync retries"
             ) from error
 
+    @staticmethod
+    def _rename_folder(existing: Path, target: Path) -> None:
+        """Rename under the deck's board lock, so a board write in another process (the CLI) cannot recreate
+        the old folder halfway; DeckInUseError when the lock stays held, and the next sync retries."""
+        try:
+            with board_lock(existing):
+                existing.rename(target)
+                # The lock file moved with the folder, and the release looks for it at the old path.
+                (target / LOCK_FILE).unlink(missing_ok=True)
+        except BoardIOError as error:
+            raise DeckInUseError(f"cannot rename {existing.name}: its board is in use ({error})") from error
+
     def save(self, deck: Deck) -> Path:
         """Write deck.json and list.md, renaming the folder to match the deck name; never touches notes.md."""
         target = self.root / folder_name(deck)
@@ -195,7 +207,7 @@ class Workspace:
         if existing is not None and existing != target:
             if target.exists():
                 raise WorkspaceError(f"cannot rename {existing.name} to {target.name}: it already exists")
-            existing.rename(target)
+            self._rename_folder(existing, target)
         target.mkdir(parents=True, exist_ok=True)
         write_text_atomic(target / SNAPSHOT_FILE, snapshot_json(deck))
         write_text_atomic(target / LIST_FILE, deck_list_markdown(deck))
