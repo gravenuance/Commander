@@ -843,6 +843,8 @@ class _Game:
         self.sick.clear()
         self.arrived.clear()
         self.burst_used.clear()
+        if self.needing:
+            self._meet_needs()
         self._draw(1 + self.engines)
         self.drops_left = 1 + self.extra_drops
         self.units = list(pool)
@@ -1208,12 +1210,23 @@ class _Game:
         held = self.pending if land in self.arrived and cards[land].land_tapped else self.pool
         self._remove_mana(held, cards[land].land_mask, cards[land].land_amount)
 
+    def _taps_for_mana(self, cid: int) -> bool:
+        """Whether a creature is tapped for its mana in the turn's pool: one in play since the turn began that
+        taps for mana. A summoning-sick one cannot."""
+        card = self.s.cards[cid]
+        return card.mana_perm and card.delayed and cid not in self.arrived
+
+    def _tappable(self, cid: int) -> bool:
+        """Whether a Drum or a crew may tap the creature: it is not tapped for mana, and is no combo piece
+        whose own ability needs it untapped."""
+        return not self._taps_for_mana(cid) and not (self.s.cards[cid].combo and cid in self.s.tap_pieces)
+
     def _meet_needs(self) -> None:
         """Put the mana of each source that needs other permanents into the pool while they are there, and
-        take it out when they are gone: each source taps a creature of its own, and metalcraft counts the
-        artifacts. A crewed Vehicle that came this turn makes its mana from the next."""
+        take it out when they are gone: each source taps a creature of its own that is not tapped already, and
+        metalcraft counts the artifacts. A crewed Vehicle that came this turn makes its mana from the next."""
         cards = self.s.cards
-        creatures = len(self.creatures)
+        creatures = sum(1 for _, _, cid in self.creatures if self._tappable(cid))
         for cid in self.needing:
             card = cards[cid]
             if card.need is ManaNeed.CREATURE:
@@ -1402,10 +1415,10 @@ class _Game:
             self._meet_needs()
 
     def _attack(self) -> bool:
-        """Attack with every creature in play since the turn began, for the Treasures that attacking and
-        becoming tapped make (no damage is followed); whether any were made."""
+        """Attack with every creature that is left untapped by the first main phase, for the Treasures that
+        attacking and becoming tapped make (no damage is followed); whether any were made."""
         cards = self.s.cards
-        attackers = [cards[cid].src for _, _, cid in self.creatures if cid not in self.arrived]
+        attackers = [cards[cid].src for cid in self._attackers()]
         made = sum(attacker.treasures_on_attack for attacker in attackers)
         for cid in self.bf:
             types = cards[cid].src.treasure_on_tap
@@ -1414,6 +1427,27 @@ class _Game:
         if made:
             self._make_treasures(made)
         return made > 0
+
+    def _attackers(self) -> list[int]:
+        """The creatures that attack: in play since the turn began and not tapped in the first main phase.
+        Those tapped for mana or a burst do not, and nor do as many others as Drums and crews tap, the
+        summoning-sick ones first and then those with the least to gain from attacking."""
+        cards = self.s.cards
+        types = frozenset(t for cid in self.bf for t in cards[cid].src.treasure_on_tap)
+        ready = [
+            cid
+            for _, _, cid in self.creatures
+            if cid not in self.arrived and cid not in self.burst_used and not self._taps_for_mana(cid)
+        ]
+        taps = sum(1 for cid in self.needs_met if cards[cid].need is ManaNeed.CREATURE)
+        taps -= sum(1 for _, _, cid in self.creatures if cid in self.arrived and self._tappable(cid))
+
+        def gain(cid: int) -> int:
+            src = cards[cid].src
+            return src.treasures_on_attack + (1 if types and _has_type(src, types) else 0)
+
+        spare = sorted((cid for cid in ready if self._tappable(cid)), key=gain)[: max(taps, 0)]
+        return [cid for cid in ready if cid not in spare]
 
     def _activate(self) -> bool:
         """Use each permanent's search paid for by Treasures or loyalty while it can pay and finds a card;

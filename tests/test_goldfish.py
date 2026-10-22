@@ -718,6 +718,56 @@ def test_a_rock_that_taps_a_creature_makes_mana_once_a_creature_is_out_even_a_ne
     assert only_outcome(run(slots)).mana == (1, 3, 3, 3, 3)
 
 
+SPRINGLEAF_DRUM = make(
+    "Drum",
+    mv=1,
+    kinds=ARTIFACT,
+    mana=ManaAbility(1, ANY_COLOUR, delayed=False, ritual=False, needs=ManaNeed.CREATURE),
+)
+
+
+def test_a_rock_that_taps_a_creature_cannot_tap_one_that_is_tapped_for_its_own_mana() -> None:
+    elf = make(
+        "Elf",
+        mv=1,
+        pips={"G": 1},
+        kinds=CREATURE,
+        mana=ManaAbility(1, frozenset("G"), delayed=True, ritual=False),
+    )
+    slots = [FOREST, FOREST, SPRINGLEAF_DRUM, elf, *repeat(VANILLA, 3)]
+    # Whichever of the two comes first, turn two has the two Forests and the elf's mana or the drum's, which
+    # taps the elf while it is summoning sick; from turn three the elf taps for itself: 3 and not 4.
+    assert {o.mana for o in run(slots).outcomes} == {(1, 3, 3, 3, 3)}
+
+
+def test_a_creature_tapped_for_a_rock_does_not_attack() -> None:
+    raider = replace(make("Raider", mv=1, kinds=CREATURE), treasures_on_attack=1)
+    piece = make("Piece", mv=4, kinds=CREATURE, combo=True)
+    slots = [FOREST, FOREST, SPRINGLEAF_DRUM, raider, piece, VANILLA, VANILLA]
+    # Two Forests and the drum tapping the raider make 3, and the tapped raider makes no Treasure for a 4.
+    assert only_outcome(run(slots, combos=(combo_of(piece),))).combo_turns == (0,)
+    # Without the drum it attacks from turn two: turn three has three Forests and a Treasure, for the 4.
+    slots = [FOREST, FOREST, FOREST, raider, piece, VANILLA, VANILLA]
+    assert only_outcome(run(slots, combos=(combo_of(piece),))).combo_turns == (3,)
+
+
+def test_a_creature_tapped_for_its_own_mana_does_not_attack() -> None:
+    raider = replace(
+        make(
+            "Raider",
+            mv=1,
+            pips={"G": 1},
+            kinds=CREATURE,
+            mana=ManaAbility(1, frozenset("G"), delayed=True, ritual=False),
+        ),
+        treasures_on_attack=1,
+    )
+    piece = make("Piece", mv=4, kinds=CREATURE, combo=True)
+    slots = [FOREST, FOREST, raider, piece, *repeat(VANILLA, 3)]
+    # Turn two: two Forests and the raider's mana are 3; attacking would add a Treasure, but it is tapped.
+    assert only_outcome(run(slots, combos=(combo_of(piece),))).combo_turns == (0,)
+
+
 def test_mox_opal_makes_mana_from_the_third_artifact_on() -> None:
     opal = make(
         "Opal",
