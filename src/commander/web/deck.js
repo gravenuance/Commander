@@ -57,10 +57,11 @@ function paintFetchStates(states) {
 
 function renderDecks() {
   const list = $("deck-list");
-  const seen = new Set();
+  // Decks that left go first, so those after them keep their place and a focused one keeps its focus.
+  const seen = new Set(state.decks.map((deck) => String(deck.id)));
+  for (const item of [...list.children]) if (!seen.has(item.dataset.id)) item.remove();
   for (const [index, deck] of state.decks.entries()) {
     const key = String(deck.id);
-    seen.add(key);
     let item = list.querySelector(`li[data-id="${key}"]`);
     if (!item) {
       const button = el("button", { class: "deck-button", type: "button", onclick: () => openDeck(deck.id) });
@@ -80,7 +81,6 @@ function renderDecks() {
     button.setAttribute("aria-label", deckLabel(deck));
     place(list, item, index);
   }
-  for (const item of [...list.children]) if (!seen.has(item.dataset.id)) item.remove();
 }
 
 async function loadDecks() {

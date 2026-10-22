@@ -131,7 +131,12 @@ class FakeElement {
     if (text !== "" && text !== null && text !== undefined) this.#adopt(new FakeText(String(text)), null);
   }
   #adopt(child, before) {
-    child.parentNode?.removeChild?.(child);
+    if (child.parentNode) {
+      // As in Chromium, a node that is moved loses focus, and so does one that holds the focused node.
+      const doc = this.ownerDocument;
+      if (child instanceof FakeElement && child.contains(doc.activeElement)) doc.activeElement = doc.body;
+      child.parentNode.removeChild?.(child);
+    }
     child.parentNode = this;
     const at = before === null ? this.childNodes.length : this.childNodes.indexOf(before);
     this.childNodes.splice(at, 0, child);

@@ -48,10 +48,13 @@ const groupKey = (group) => group.key ?? group.name;
 
 function renderGrid(groups) {
   const grid = $("grid");
-  const seen = new Set();
+  // Groups that left go first, so those after them keep their place and a focused one keeps its focus.
+  const seen = new Set(groups.map(groupKey));
+  for (const [id, known] of [...state.groups]) {
+    if (!seen.has(id)) { known.node.remove(); state.groups.delete(id); }
+  }
   groups.forEach((group, index) => {
     const id = groupKey(group);
-    seen.add(id);
     let known = state.groups.get(id);
     if (!known) {
       known = buildGroup(group);
@@ -61,9 +64,6 @@ function renderGrid(groups) {
     syncStack(known, group);
     place(grid, known.node, index);
   });
-  for (const [id, known] of [...state.groups]) {
-    if (!seen.has(id)) { known.node.remove(); state.groups.delete(id); }
-  }
   // Only the deck's own cards can be cut or lit as targets: not those outside it, nor those still to come in.
   const before = new Map(state.gridCards);
   state.gridCards.clear();
@@ -130,13 +130,22 @@ function syncStack(known, group) {
   const grace = state.view?.grace;
   const old = new Map(known.entries.map((entry) => [entry.id, entry]));
   const copies = new Map();
-  known.entries = group.cards.map((card, index) => {
+  const ids = group.cards.map((card) => {
     const seen = copies.get(card.name) ?? 0;
     copies.set(card.name, seen + 1);
-    const id = seen ? `${card.name}#${seen}` : card.name;
+    return seen ? `${card.name}#${seen}` : card.name;
+  });
+  // Cards that left go first, so the ones after them keep their place and a focused one keeps its focus.
+  const wanted = new Set(ids);
+  for (const [id, gone] of old) {
+    if (wanted.has(id)) continue;
+    gone.node.remove();
+    old.delete(id);
+  }
+  known.entries = group.cards.map((card, index) => {
+    const id = ids[index];
     const key = JSON.stringify([card, aside, card.share ? grace : null]);
     let entry = old.get(id);
-    old.delete(id);
     if (!entry || entry.key !== key) {
       const node = buildGridCard(card, aside);
       // The commander is never offered as a cut.
@@ -147,7 +156,6 @@ function syncStack(known, group) {
     place(known.stack, entry.node, index);
     return entry;
   });
-  for (const gone of old.values()) gone.node.remove();
 }
 
 // The copies badge: a queued count change shows as "×6 → 7", or Out when the card is to come out.

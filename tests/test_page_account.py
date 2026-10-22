@@ -61,6 +61,19 @@ def test_the_deck_list_paints_a_labelled_icon_per_fetch_state() -> None:
     assert painted["labels"] == ["Magda, Sample, deck..", "Ellivere, Second"]
 
 
+def test_a_deck_leaving_above_a_focused_deck_does_not_take_its_focus_with_it() -> None:
+    seen = run("""
+    state.decks = decks;
+    renderDecks();
+    const button = $("deck-list").children[1].firstChild;
+    button.focus();
+    state.decks = decks.slice(1);
+    renderDecks();
+    return { rows: $("deck-list").children.length, kept: document.activeElement === button };
+    """)
+    assert seen == {"rows": 1, "kept": True}
+
+
 def test_a_fetch_state_change_touches_only_its_own_deck_and_a_redraw_keeps_the_icon() -> None:
     seen = run("""
     state.decks = decks;
