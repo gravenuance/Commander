@@ -260,10 +260,12 @@ def _built_at(meta: CardDataMeta) -> datetime | None:
 
 def _due_reason(client: ScryfallClient, built: datetime, now: datetime) -> str | None:
     """Why the card data built at `built` is due for a rebuild, or None when it is not."""
-    age = now - built
+    # By calendar day, as the sync report names the day it is due (`next_due`), whatever hour it was built.
+    today = now.astimezone(UTC).date()
+    age = today - built.date()
     if age >= MAX_DATA_AGE:
         return f"{age.days} days old"
-    new_set = _new_set_since(client, built.date(), now.astimezone(UTC).date())
+    new_set = _new_set_since(client, built.date(), today)
     return None if new_set is None else f"new set: {new_set.name}"
 
 
