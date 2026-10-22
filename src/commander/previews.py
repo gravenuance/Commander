@@ -114,6 +114,8 @@ def probe_previews(
         requests += 1
 
     try:
+        # The set list is shared with the card data's check, so this request may be answered from its copy.
+        requests += 1
         upcoming = upcoming_sets(client.sets(), local)
         cards: dict[str, SetCard] = {}
         for found in upcoming:
@@ -177,11 +179,13 @@ def fitting_previews(
     """The previews in the deck's colour identity that match its dominant tags, the most tags first, then
     those filling a role the deck runs short of, then by name; at most SHOWN. today is the local day. Like
     every suggestion, a card the profile excludes, by name or by its [exclude] types, keywords or tags, is
-    never one."""
+    never one, nor is a card the deck already has."""
     identity = deck_identity(main)
     if identity is None:
+        log.debug("deck %d: no previews, its commander is missing or not in the card data", deck.id)
         return []
-    excluded = name_keys_of(profile.exclude_cards)
+    # The deck's own cards too: one just added on Archidekt may be too new for the card data.
+    excluded = name_keys_of(profile.exclude_cards) | name_keys_of(r.card.name for r in main)
     live = [
         c
         for c in cards
