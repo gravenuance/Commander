@@ -23,6 +23,7 @@ from commander.board import (
     BoardService,
     NothingQueuedError,
     already_added,
+    basic_land_swaps,
     board_plan,
     change_key,
     counts_met,
@@ -117,9 +118,24 @@ def save_board(
         service.mark_applied([card.id for card in board.queued], actor, None, counts=board.counts)
         names = (*(card.name for card in board.queued), *(change.name for change in board.counts))
         return BoardSave(resolution, None, names)
+    sending = basic_land_swaps(live.deck, board)
+
+    def record_sending() -> None:
+        # A basic land is added to the copies held, so a send that is never marked applied is told by this.
+        if sending:
+            service.record_sending(sending, actor)
+
     try:
         outcome = apply_to_live(
-            editor, live, plan, db, save_changes=True, now=now, on_progress=on_progress, estimated=estimated
+            editor,
+            live,
+            plan,
+            db,
+            save_changes=True,
+            now=now,
+            on_progress=on_progress,
+            estimated=estimated,
+            before_send=record_sending,
         )
     except SaveError as error:
         service.note(actor, "save to Archidekt failed", str(error))

@@ -159,6 +159,10 @@ class BoardCard:
     reconsidered: bool = False
     # The Archidekt category a card being added is filed under; None files it by its card type.
     category: str | None = None
+    # For a basic land swap a save was sent for: the copies the deck held then. A basic is added to what the
+    # deck holds, so without this a send that went unmarked (read-back failed, timeout, board lock) would add
+    # the copies again on the next save; the deck holding this many plus `copies` means it landed.
+    sent_held: int | None = None
 
     @property
     def relabellable(self) -> bool:
@@ -184,6 +188,8 @@ class BoardCard:
             raise ValueError(f"{self.name}: only an open card can be reconsidered")
         if self.category is not None and self.status not in {Status.ADD, Status.APPLIED}:
             raise ValueError(f"{self.name}: only a card being added has a category")
+        if self.sent_held is not None and (self.status is not Status.ADD or self.sent_held < 0):
+            raise ValueError(f"{self.name}: only a card being added has a count held when sent")
 
 
 @dataclass(slots=True, frozen=True)
@@ -390,6 +396,7 @@ def parse_board(raw: Mapping[str, object]) -> Board:
                 copies=opt_int(card, "copies", where) or 1,
                 reconsidered=card.get("reconsidered") is True,
                 category=opt_str(card, "category", where),
+                sent_held=opt_int(card, "sentHeld", where),
             )
         )
     counts: list[CountChange] = []
@@ -463,6 +470,7 @@ def card_json(card: BoardCard) -> dict[str, object]:
         "copies": card.copies,
         "reconsidered": card.reconsidered,
         "category": card.category,
+        "sentHeld": card.sent_held,
     }
 
 
@@ -505,6 +513,18 @@ def board_plan(deck: Deck, board: Board) -> Plan | None:
     return Plan(str(deck.id), tuple(adds), tuple(cuts))
 
 
+def basic_land_swaps(deck: Deck, board: Board) -> dict[str, int]:
+    """The copies deck holds of each queued basic land the next save adds to, by card id: what
+    `BoardService.record_sending` keeps, because the plan adds to the copies held (`board_plan`)."""
+    held = _held(deck)
+    done = already_added(deck, board)
+    return {
+        card.id: held[card_key(card.name)]
+        for card in board.queued
+        if _is_basic_land(card.name) and card not in done
+    }
+
+
 def counts_met(deck: Deck, board: Board) -> tuple[CountChange, ...]:
     """The count changes deck already meets (`CountChange.met_by`): nothing is left to do for them."""
     return tuple(
@@ -525,7 +545,8 @@ def copies_held(deck: Deck, name: str, category: str | None = None) -> int:
 
 
 def already_added(deck: Deck, board: Board) -> tuple[BoardCard, ...]:
-    """The queued cards that deck already holds, other than basic lands: nothing is left to do for them."""
+    """The queued cards that deck already holds: nothing is left to do for them. A basic land counts only
+    once the deck holds the copies it added, on top of those it held when a save was sent (`sent_held`)."""
     return tuple(card for card in board.queued if _holds(deck, card))
 
 
@@ -538,8 +559,12 @@ def held_keys(deck: Deck, db: CardDb) -> frozenset[str]:
 
 
 def _holds(deck: Deck, card: BoardCard) -> bool:
-    """Whether deck already holds every copy the card adds; a basic land is always added to."""
-    return not _is_basic_land(card.name) and _held(deck)[card_key(card.name)] >= card.copies
+    """Whether deck already holds every copy the card adds. A basic land is added to what the deck holds, so
+    only a send recorded in `sent_held` can show it done."""
+    held = _held(deck)[card_key(card.name)]
+    if not _is_basic_land(card.name):
+        return held >= card.copies
+    return card.sent_held is not None and held >= card.sent_held + card.copies
 
 
 def _add_target(held: Counter[str], card: BoardCard) -> int:
@@ -757,6 +782,7 @@ class BoardService:
                 rejected_share=kept_share,
                 reconsidered=status is Status.OPEN
                 and (card.reconsidered or (reconsidering and actor is Actor.YOU)),
+                sent_held=card.sent_held if status is Status.ADD else None,
             )
             if reconsidering and relabel is not None and card.relabellable:
                 updated = _relabelled(updated, relabel)
@@ -788,7 +814,7 @@ class BoardService:
             stamp = self._stamp()
             done = set(ids)
             cards = tuple(
-                replace(c, status=Status.APPLIED, updated_at=stamp)
+                replace(c, status=Status.APPLIED, updated_at=stamp, sent_held=None)
                 if c.id in done and c.status is Status.ADD
                 else c
                 for c in board.cards
@@ -803,6 +829,15 @@ class BoardService:
             else:
                 entry = Activity(stamp, actor, "saved to Archidekt", None, f"{names}; snapshot '{snapshot}'")
             save(Board(cards, tuple(c for c in board.counts if c not in finished)), entry)
+
+    def record_sending(self, held: Mapping[str, int], actor: Actor) -> None:
+        """Before a save is sent: keep for each queued basic land swap (by card id) the copies the deck holds,
+        so a send that is never marked applied is not made again (`BoardCard.sent_held`)."""
+        with self._editing() as (board, save):
+            cards = tuple(replace(c, sent_held=held[c.id]) if c.id in held else c for c in board.cards)
+            names = ", ".join(f"{c.name} from {c.sent_held}" for c in cards if c.id in held)
+            sending = _note_line(self._stamp(), actor, "sending to Archidekt", names, None)
+            save(Board(cards, board.counts), sending)
 
     def set_count(
         self, name: str, count: int, actor: Actor, *, category: str | None = None
