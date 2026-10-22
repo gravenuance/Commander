@@ -436,6 +436,21 @@ def test_a_basic_land_swap_that_never_reached_archidekt_is_sent_on_the_next_save
     assert read_board(stored.folder).cards[0].sent_held is None
 
 
+def test_researching_an_unsent_swap_reopens_it_and_forgets_the_copies_held_at_the_send(
+    fake: FakeArchidekt, service: BoardService, stored: StoredDeck, commit: Callable[[], BoardSave]
+) -> None:
+    card_id = queue(service, "Mountain", cut="Disruptor Flute")
+    fake.write_status["modifyCards"] = 500
+    with pytest.raises(SaveError):
+        commit()
+    assert read_board(stored.folder).cards[0].sent_held == 6
+
+    researched = service.research(card_id, Actor.CLAUDE, reason="a land that fits the curve")
+
+    assert (researched.status, researched.choice, researched.sent_held) == (Status.OPEN, None, None)
+    assert read_board(stored.folder).cards[0].sent_held is None
+
+
 def test_a_deck_that_gained_mountains_since_an_unsent_swap_still_gets_the_swap(
     fake: FakeArchidekt, service: BoardService, commit: Callable[[], BoardSave]
 ) -> None:

@@ -20,7 +20,7 @@ from datetime import datetime
 from enum import Enum
 from functools import cached_property
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, Self
 
 from commander.answers import card_key
 from commander.carddb import CardDb, CardInfo
@@ -172,6 +172,11 @@ class BoardCard:
     # deck holds, so without this a send that went unmarked (read-back failed, timeout, board lock) would add
     # the copies again on the next save; the deck holding this many plus `copies` means it landed.
     sent_held: int | None = None
+
+    def with_status(self, status: Status, **changes: object) -> Self:
+        """The card in another status with `changes`; leaving ADD drops the count held when sent."""
+        changes.setdefault("sent_held", self.sent_held if status is Status.ADD else None)
+        return replace(self, status=status, **changes)
 
     @property
     def relabellable(self) -> bool:
@@ -706,11 +711,10 @@ class BoardService:
             if existing is not None and existing.status not in {Status.REJECTED, Status.APPLIED}:
                 raise BoardError(f"{info.name} is already on the board ({existing.status.value})")
             if existing is not None:
-                card = replace(
-                    existing,
+                card = existing.with_status(
+                    Status.OPEN,
                     reason=reason or existing.reason,
                     replace=options or existing.replace,
-                    status=Status.OPEN,
                     choice=None,
                     note="",
                     updated_at=stamp,
@@ -771,7 +775,7 @@ class BoardService:
             if updated.choice is not None and updated.choice.casefold() not in {
                 o.name.casefold() for o in updated.replace
             }:
-                updated = replace(updated, choice=None, status=Status.OPEN)
+                updated = updated.with_status(Status.OPEN, choice=None)
             changed = [
                 what
                 for what, before, after in (
@@ -826,9 +830,8 @@ class BoardService:
                     raise BoardError(f"{name} has a queued count change; undo it first")
             kept_share = share if status is Status.REJECTED else None
             reconsidering = status is Status.OPEN and card.status is Status.REJECTED
-            updated = replace(
-                card,
-                status=status,
+            updated = card.with_status(
+                status,
                 choice=cut,
                 category=filed,
                 note=note,
@@ -836,7 +839,6 @@ class BoardService:
                 rejected_share=kept_share,
                 reconsidered=status is Status.OPEN
                 and (card.reconsidered or (reconsidering and actor is Actor.YOU)),
-                sent_held=card.sent_held if status is Status.ADD else None,
             )
             if reconsidering and relabel is not None and card.relabellable:
                 updated = _relabelled(updated, relabel)
@@ -868,7 +870,7 @@ class BoardService:
             stamp = self._stamp()
             done = set(ids)
             cards = tuple(
-                replace(c, status=Status.APPLIED, updated_at=stamp, sent_held=None)
+                c.with_status(Status.APPLIED, updated_at=stamp)
                 if c.id in done and c.status is Status.ADD
                 else c
                 for c in board.cards
@@ -991,13 +993,8 @@ class BoardService:
             ):
                 return None
             stamp = self._stamp()
-            updated = replace(
-                card,
-                status=Status.REJECTED,
-                note=note,
-                updated_at=stamp,
-                rejected_share=share,
-                reconsidered=False,
+            updated = card.with_status(
+                Status.REJECTED, note=note, updated_at=stamp, rejected_share=share, reconsidered=False
             )
             save(
                 _swap(board, updated),
@@ -1025,8 +1022,8 @@ class BoardService:
             if card is None or card.status is not Status.OPEN:
                 return None
             stamp = self._stamp()
-            updated = replace(
-                card, status=Status.APPLIED, note=ALREADY_IN_THE_DECK, updated_at=stamp, reconsidered=False
+            updated = card.with_status(
+                Status.APPLIED, note=ALREADY_IN_THE_DECK, updated_at=stamp, reconsidered=False
             )
             save(_swap(board, updated), Activity(stamp, Actor.CMDR, "closed", card.name, ALREADY_IN_THE_DECK))
             return updated
