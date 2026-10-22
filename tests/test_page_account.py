@@ -268,3 +268,9 @@ def test_a_second_click_on_sync_while_the_first_request_is_out_sends_nothing() -
     return { whileOut, after: sent() };
     """)
     assert seen == {"whileOut": 1, "after": 2}
+
+
+def test_the_sign_in_username_offers_no_names_typed_before() -> None:
+    # The page's WebView profile persists, so its form history would suggest another account's name.
+    seen = run("""return $("signin-user").getAttribute("autocomplete");""")
+    assert seen == "off"
