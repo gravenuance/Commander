@@ -402,6 +402,20 @@ def test_dominant_tags_count_with_the_tag_search_off(deck: Deck, db: CardDb) -> 
     assert fits(themed_deck(deck, ("Treasure",)), db, profile=Profile(tag_search=False))
 
 
+def test_a_spacecraft_is_a_vehicle_and_an_artifact_feeds_the_artifacts_tag_of_a_preview(
+    deck: Deck, db: CardDb
+) -> None:
+    # The deck's Hoverbike is a Vehicle and its artifacts are Flute, Hoverbike and Golem.
+    assert fits(themed_deck(deck, ("Vehicles",)), db) == [("D-7 Battle Cruiser", "Vehicles")]
+    assert fits(themed_deck(deck, ("Artifacts",)), db) == [("D-7 Battle Cruiser", "Artifacts")]
+
+
+def test_a_red_preview_with_power_two_or_less_feeds_the_weenies_tag(deck: Deck, db: CardDb) -> None:
+    # Magda has 2 power. Quark has 1; Munitions Enthusiast has 3, Dahar Master 4, and the blue Telepath is
+    # out of Magda's colours.
+    assert fits(themed_deck(deck, ("Weenies",)), db) == [("Quark, Humble Proprietor", "Weenies")]
+
+
 def test_an_ignored_tag_finds_no_previews(deck: Deck, db: CardDb) -> None:
     profile = Profile(ignore_themes=("Treasure",))
     assert fits(themed_deck(deck, ("Flash", "Treasure")), db, profile=profile) == [

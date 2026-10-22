@@ -32,6 +32,7 @@ from commander.net import NetworkError, Pacer
 from commander.scryfall import ScryfallClient, ScryfallError, SetCard, SetInfo, is_scryfall_id
 from commander.suggest import deck_identity, name_keys_of, short_roles
 from commander.themereading import read_deck_themes
+from commander.themewants import preview_facts, spec_wants, type_words
 
 log = logging.getLogger(__name__)
 
@@ -228,14 +229,16 @@ def fitting_previews(
 def _matches(spec: ThemeSpec, card: SetCard, slugs: frozenset[str]) -> bool:
     """Whether the card has one of the spec's types, keywords or tags (sub-tags included), as the card data's
     theme search would judge it."""
-    # Spaces around each word of the type line, so "Elf" never matches "Elfball" or "Self".
-    words = f" {card.type_line.casefold().replace('—', ' ').replace('//', ' ')} "
+    words = type_words(card.type_line)
     if any(f" {word.casefold()} " in words for word in spec.types):
         return True
     keywords = {keyword.casefold() for keyword in card.keywords}
     if any(keyword.casefold() in keywords for keyword in spec.keywords):
         return True
-    return any(tag in slugs for tag in spec.tags)
+    if any(tag in slugs for tag in spec.tags):
+        return True
+    facts = preview_facts(card, slugs)
+    return any(want.matches(facts) for want in spec_wants(spec))
 
 
 def _cache_json(cache: PreviewCache) -> dict[str, object]:
