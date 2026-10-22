@@ -47,6 +47,7 @@ from commander.metadata import (
 )
 from commander.net import Fetcher, NetworkError, Pacer
 from commander.phases import ActivePhases
+from commander.previews import PROBE_INTERVAL_SECONDS, PreviewProbe, ProbeState, probe_previews
 from commander.profileedit import ensure_grace_table
 from commander.scryfall import CardRefresh, RefreshStatus, ScryfallClient, ScryfallError, refresh_card_db
 from commander.spellbook import SpellbookClient
@@ -128,6 +129,8 @@ class SyncOutcome:
     counts_cleared: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
     # What went wrong without stopping the sync, one sentence each.
     warnings: list[str] = field(default_factory=list[str])
+    # The probe of Scryfall's card previews (ADR 0055); None when the card data was skipped.
+    previews: PreviewProbe | None = None
 
     @property
     def failed(self) -> bool:
@@ -158,6 +161,7 @@ def run_sync(
         fetcher = Fetcher(http)
         # The card download is independent of the decks, so it runs while they sync.
         cards_job: Future[CardRefresh] | None = None
+        previews_job: Future[PreviewProbe] | None = None
         if not options.dry_run and options.cards:
             scryfall = ScryfallClient(fetcher)
             cards_job = in_background(
@@ -165,6 +169,16 @@ def run_sync(
                     scryfall, services.cache, now=services.now, force=options.force, on_progress=on_progress
                 ),
                 name="card-data",
+            )
+            previews_job = in_background(
+                lambda: probe_previews(
+                    scryfall,
+                    services.cache,
+                    now=services.now,
+                    pacer=services.pacer_factory(PROBE_INTERVAL_SECONDS),
+                    force=options.force,
+                ),
+                name="card-previews",
             )
         if on_cards is not None:
             if cards_job is None:
@@ -190,14 +204,17 @@ def run_sync(
                 warnings.append(f"Not signed in to Archidekt: {PRIVATE_NOT_UPDATED}")
             labels = None if options.dry_run else _sync_labels(fetcher, workspace, login, warnings)
         except Exception:
-            # The download shares this client, which closes on leaving the block: wait for it, and log
-            # its status because there is no outcome to carry it.
+            # The download and the probe share this client, which closes on leaving the block: wait for
+            # them, and log the card data's status because there is no outcome to carry it.
             card_status = _card_status(cards_job, options)
             log.info("card data: %s, %s", card_status.state.value, card_status.detail)
+            if previews_job is not None:
+                wait([previews_job])
             raise
         cards = _card_status(cards_job, options)
+        previews = _previews_probe(previews_job, warnings)
     if options.dry_run:
-        return SyncOutcome(results, cards, labels, warnings=warnings)
+        return SyncOutcome(results, cards, labels, warnings=warnings, previews=previews)
     _add_grace_tables(workspace, warnings, deck_lock)
     phase = (
         _compile_ideas(
@@ -223,6 +240,7 @@ def run_sync(
         phase.closed,
         phase.counts_cleared,
         warnings,
+        previews,
     )
 
 
@@ -298,6 +316,16 @@ def _sync_labels(
         log.warning("could not save the card labels: %s", error)
         warnings.append(f"card labels not saved: {error}")
     return labels
+
+
+def _previews_probe(job: Future[PreviewProbe] | None, warnings: list[str]) -> PreviewProbe | None:
+    """The probe's outcome once it ends; a failed one is a warning, as the sync carries on without it."""
+    if job is None:
+        return None
+    probe = job.result()
+    if probe.state is ProbeState.FAILED:
+        warnings.append(f"card previews not refreshed ({probe.problem}); the last ones are kept")
+    return probe
 
 
 def _card_status(job: Future[CardRefresh] | None, options: SyncOptions) -> CardStatus:

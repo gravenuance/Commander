@@ -118,6 +118,7 @@ function closeOpenDeckIfGone() {
   renderDecks();
   renderActivity([]);
   resetMana();
+  resetPreviews();
   showRailFor(false);
   $("deck").hidden = true;
   showStatus(`${name} is no longer among your decks (deleted on Archidekt?), so it is closed.`);
@@ -145,6 +146,7 @@ async function openDeck(id) {
     closeLabelMenu(false);
     resetBracket();
     resetMana();
+    resetPreviews();
     renderDecks();
     showRailFor(true);
     metaPanel.render(id, null);
@@ -167,6 +169,7 @@ async function loadDeck() {
   state.view = view;
   state.stamps[String(view.id)] = view.stamp;
   renderDeck();
+  showPreviews(view);
   // The report is worked out from the deck list, which a save or a sync may just have changed.
   metaPanel.load();
 }
@@ -311,6 +314,7 @@ function setupPanels() {
       const open = toggle.getAttribute("aria-expanded") !== "true";
       showPanel(toggle, open);
       if (open && toggle.id === "h-meta") metaPanel.load();
+      if (open && toggle.id === "h-previews") previewsPanel.load();
     });
   }
   document.addEventListener("keydown", (event) => {

@@ -8,10 +8,10 @@ refuses while a sync runs, and a sync refuses while one of them runs.
 
 import logging
 import threading
-from collections.abc import Callable, Collection, Generator, Sequence
+from collections.abc import Callable, Collection, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from functools import wraps
 from pathlib import Path
@@ -58,12 +58,13 @@ from commander.bracket import (
 from commander.bracketcheck import check_bracket, check_json
 from commander.bracketpreview import preview_json, spellbook_preview
 from commander.budget import resolved_budget
-from commander.carddb import CardDataError, CardDb, CardInfo, CardText, ResolvedCard
+from commander.carddb import CardDataError, CardDb, CardInfo, CardText, ResolvedCard, Role
 from commander.changetext import change_mark, change_text
 from commander.config import ConfigError, MetaSettings, forget_account, switch_account, validate_user
 from commander.credentials import CredentialError, KeyringKeyStore, KeyStore, TokenStore, check_api_key
 from commander.deckcache import NOT_FETCHED
 from commander.deckexport import cardmarket_wants_text, topdeck_text
+from commander.deckgrid import image_url
 from commander.decklocks import DeckLocks
 from commander.deckprofile import (
     MAX_ADJACENT,
@@ -98,10 +99,11 @@ from commander.metajson import report_json
 from commander.metapanel import combo_groups, key_card_rows, stopper_rows, untouched
 from commander.models import Deck
 from commander.net import Fetcher, NetworkError, Pacer
+from commander.previews import PREVIEWS_FILE, PreviewFit, fitting_previews, read_previews
 from commander.profileedit import save_settings
 from commander.spellbook import SpellbookClient
 from commander.store import SNAPSHOT_FILE, StoredDeck, Workspace, WorkspaceError
-from commander.suggest import deck_identity
+from commander.suggest import DEFAULT_TARGETS, deck_identity
 from commander.sync import PullWatch, SyncStatus
 from commander.syncrun import CardState, FetchState, SyncOutcome, SyncServices, run_sync
 from commander.targets import CutRules, Target, deck_cut_rules, targets_for, with_ideas
@@ -273,6 +275,8 @@ class DeskSettings:
     # The config file that sign-in writes the account to, and where a first account's decks go.
     config: Path | None = None
     documents: Path | None = None
+    # The config file's [targets], over suggest's defaults and under each deck profile's.
+    targets: Mapping[Role, int] = field(default_factory=dict[Role, int])
 
     @property
     def cache(self) -> Path:
@@ -308,6 +312,8 @@ class Desk:
         self._rows: dict[Path, tuple[str, Json]] = {}
         # Per deck: the meta panel's answer, and the stamp of what it was made from.
         self._reports: dict[int, tuple[str, Json]] = {}
+        # Per deck: the previews that fit it, and the stamp of what they were worked out from.
+        self._previews: dict[int, tuple[str, list[PreviewFit]]] = {}
         self._sync_lock = threading.Lock()
         self._sync = _SyncState()
         # The page errors already logged, as (message, source, line), under their own lock.
@@ -732,6 +738,7 @@ class Desk:
                 }
                 for card in board.cards
             ]
+            previews = len(self._fitting_previews(stored, main, profile, db))
             account = self._workspace.account_labels()
             decklist = decklist_json(
                 stored.deck,
@@ -759,6 +766,8 @@ class Desk:
             "budget": budget.json(),
             "pending": board.pending,
             "cards": cards,
+            # How many upcoming cards fit the deck; the Previews panel asks for them when opened.
+            "previews": previews,
             "deckCards": sorted({c.name for c in stored.deck.main_cards if "Commander" not in c.categories}),
             "labels": [{"name": n, "colour": c} for n, c in label_options(stored.deck, account)],
             **decklist,
@@ -888,6 +897,50 @@ class Desk:
             swap["board"] = held.status.value if held is not None else None
         view["plan"] = shown
         return view
+
+    @_guarded
+    def previews(self, deck_id: int) -> Json:
+        """The upcoming cards that fit the deck, best first, to look at only: they cannot be added until they
+        are out (ADR 0055)."""
+        stored = self._stored(deck_id)
+        profile = read_profile(stored.folder)
+        with self._db() as db:
+            main = db.resolve(stored.deck.main_cards)
+            fits = self._fitting_previews(stored, main, profile, db)
+        return {
+            "cards": [
+                {
+                    "name": fit.card.name,
+                    "manaCost": fit.card.mana_cost,
+                    "typeLine": fit.card.type_line,
+                    "text": fit.card.oracle_text,
+                    "image": image_url(fit.card.scryfall_id),
+                    "set": fit.card.set_name,
+                    "out": fit.card.released_at.isoformat(),
+                    "fits": list(fit.tags),
+                }
+                for fit in fits
+            ]
+        }
+
+    def _fitting_previews(
+        self, stored: StoredDeck, main: Sequence[ResolvedCard], profile: Profile, db: CardDb
+    ) -> list[PreviewFit]:
+        """The previews that fit the deck, kept until its snapshot, its profile, the probe's cache, the card
+        data or the day changes."""
+        today = self._now().astimezone(UTC).date()
+        stamp = (
+            f"{files_stamp(stored.folder, ('deck.json', 'profile.toml'))}"
+            f"|{files_stamp(self._settings.cache, (PREVIEWS_FILE,))}|{self._card_data_stamp()}|{today}"
+        )
+        known = self._previews.get(stored.deck.id)
+        if known is not None and known[0] == stamp:
+            return known[1]
+        cards = read_previews(self._settings.cache).cards
+        targets = {**DEFAULT_TARGETS, **self._settings.targets, **profile.targets}
+        fits = fitting_previews(stored.deck, main, profile, db, cards, today=today, targets=targets)
+        self._previews[stored.deck.id] = (stamp, fits)
+        return fits
 
     @_guarded
     def mana_to_board(self, deck_id: int) -> Json:
