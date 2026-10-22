@@ -97,6 +97,8 @@ _MANA_PAID = re.compile(r"\{(?!t\})[^}]+\}")
 RESTRICTED = "spend this mana only"
 _PIP = re.compile(r"\{([^}]+)\}")
 _HALF_SEPARATOR = " // "
+# An aftermath card has layout "split" like Fire // Ice; only the Aftermath keyword line of its text tells.
+_AFTERMATH = re.compile(r"^aftermath\b", re.IGNORECASE | re.MULTILINE)
 _BASIC_TYPES = {"plains": "W", "island": "U", "swamp": "B", "mountain": "R", "forest": "G"}
 _CHEAP_DRAW = (
     "draw a card",
@@ -554,11 +556,14 @@ def fixed_pips(mana_cost: str) -> dict[str, int]:
 def castings(info: CardMana) -> list[Casting]:
     """How a card is judged for colour. A split card (Fire // Ice, cost "{1}{R} // {1}{U}") by its most
     expensive half at that half's own mana value, since its printed mana value is the halves added up (rule
-    202.3c); halves of equal value both count. Any other card, an adventure (Bonecrusher Giant // Stomp)
-    included, by its front face's cost at its mana value."""
+    202.3c); halves of equal value both count. An aftermath card (Cut // Ribbons), whose second half can only
+    be cast from the graveyard, by its first half at that half's own value. Any other card, an adventure
+    (Bonecrusher Giant // Stomp) included, by its front face's cost at its mana value."""
     halves = _cost_halves(info.mana_cost)
     if info.layout != "split" or len(halves) == 1:
         return [Casting(max(int(info.cmc), 1), fixed_pips(info.mana_cost))]
+    if _AFTERMATH.search(info.oracle_text):
+        return [Casting(max(_cost_value(halves[0]), 1), fixed_pips(halves[0]))]
     values = [max(_cost_value(half), 1) for half in halves]
     highest = max(values)
     return [

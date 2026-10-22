@@ -193,6 +193,28 @@ def test_how_a_card_is_judged_follows_its_layout(
     assert castings(card("Two Parts", cost, mana_value, layout=layout)) == expected
 
 
+CUT_RIBBONS_TEXT = (
+    "Cut deals 4 damage to target creature.\n//\n"
+    "Aftermath (Cast this spell only from your graveyard. Then exile it.)\nEach opponent loses X life."
+)
+DEAD_GONE_TEXT = (
+    "Dead deals 2 damage to target creature.\n//\nReturn target creature you control to its owner's hand."
+)
+
+
+def test_an_aftermath_card_is_judged_by_its_first_half_alone() -> None:
+    # The graveyard half costs {X}{B}{B}, which would tie Cut's mana value 2 and ask for black sources.
+    cost, kinds = "{1}{R} // {X}{B}{B}", "Sorcery // Sorcery"
+    ribbons = card("Cut // Ribbons", cost, 4, kinds, text=CUT_RIBBONS_TEXT, layout="split")
+    assert castings(ribbons) == [Casting(2, {"R": 1})]
+
+
+def test_a_split_card_without_aftermath_keeps_its_most_expensive_half() -> None:
+    cost, kinds = "{R} // {2}{R}", "Instant // Instant"
+    dead = card("Dead // Gone", cost, 4, kinds, text=DEAD_GONE_TEXT, layout="split")
+    assert castings(dead) == [Casting(3, {"R": 1})]
+
+
 def test_fetches_choosing_lands_and_opponent_lands_count_as_karsten_says() -> None:
     fetch = card("Flooded Strand", type_line="Land", text="Search your library for a Plains or Island card")
     passage = card("Fabled Passage", type_line="Land", text="Search your library for a basic land card")
