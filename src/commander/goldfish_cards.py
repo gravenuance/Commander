@@ -655,8 +655,9 @@ _COST_PART = re.compile(
 _PLUS_SACRIFICED = re.compile(
     r"x mana of any one colou?r, where x is (?P<n>\d) plus the sacrificed creature's mana value"
 )
-# "Three mana in any combination of {R} and/or {G}".
+# "Three mana in any combination of {R} and/or {G}", or of "colors", which are the deck's.
 _COMBINATION = re.compile(r"(?P<n>\w+) mana in any combination of (?P<symbols>.*)")
+_COLOURS_WORD = re.compile(r"colou?rs\b")
 # A mode of a modal spell ("• Add {R} for each ..."), read like a line of its own.
 _MODE_BULLET = re.compile(r"^• ")
 # Mana that grows with a count after a fixed part (Rite of Flame): the fixed part is what is sure.
@@ -783,6 +784,8 @@ def _net_mana(cost: _Cost, what: str, identity: frozenset[str]) -> tuple[int, fr
     elif (mixed := _COMBINATION.fullmatch(what)) and mixed.group("n") in _NUMBER_WORDS:
         made = _NUMBER_WORDS[mixed.group("n")]
         colours = frozenset(s.upper() for s in _SYMBOL.findall(mixed.group("symbols")) if not s.isdigit())
+        if _COLOURS_WORD.match(mixed.group("symbols")):
+            colours = identity or _ALL_COLOURS
     else:
         made = 0
         found: set[str] = set()

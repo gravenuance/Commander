@@ -1696,6 +1696,51 @@ def test_jeskas_will_counts_an_opponents_hand_of_seven() -> None:
     assert will.modelled
 
 
+MANAMORPHOSE = real(
+    "Manamorphose",
+    "{1}{R/G}",
+    2,
+    "Instant",
+    "Add two mana in any combination of colors.\nDraw a card.",
+    identity="RG",
+    roles=(DRAW,),
+)
+SAGE_OF_THE_MAZE = real(
+    "Sage of the Maze",
+    "{2}{G}",
+    3,
+    "Creature — Elf Wizard",
+    "{T}: Add two mana in any combination of colors.\n{T}: Until end of turn, target land you control "
+    "becomes an X/X Citizen creature with haste in addition to its other types, where X is twice the number "
+    "of Gates you control. Activate only as a sorcery.\nTap an untapped Gate you control: Untap this "
+    "creature.",
+    identity="G",
+    roles=(RAMP,),
+)
+DAWNS_REFLECTION = real(
+    "Dawn's Reflection",
+    "{3}{G}",
+    4,
+    "Enchantment — Aura",
+    "Enchant land\nWhenever enchanted land is tapped for mana, its controller adds an additional two mana in "
+    "any combination of colors.",
+    identity="G",
+    roles=(RAMP,),
+)
+
+
+@pytest.mark.parametrize(
+    "card", [MANAMORPHOSE, SAGE_OF_THE_MAZE, DAWNS_REFLECTION], ids=lambda c: c.mana.name
+)
+def test_mana_in_any_combination_of_colors_is_of_the_commanders_colours(card: Real) -> None:
+    mana = one(card, commander=MAGDA).mana
+    assert mana is not None
+    assert (mana.amount, mana.colours) == (2, frozenset("R"))
+    mana = one(card).mana
+    assert mana is not None
+    assert mana.colours == frozenset(ALL)
+
+
 DEADLY_DISPUTE = real(
     "Deadly Dispute",
     "{1}{B}",
