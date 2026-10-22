@@ -430,8 +430,8 @@ def dominant_tags(deck: Deck, profile: Profile, db: CardDb) -> list[str]:
 
 
 def dominant_card_ids(deck: Deck, profile: Profile, db: CardDb, also: Iterable[str] = ()) -> frozenset[str]:
-    """Oracle ids of the deck's main cards, and of the cards `also` names by oracle id, matching one of its
-    `dominant_tags`."""
+    """Oracle ids of the deck's main cards, and of the cards `also` names by oracle id, that match one of its
+    `dominant_tags`, feed one or are wanted by the commander (`DeckReading.matching`)."""
     oracle_ids = [r.info.oracle_id for r in db.resolve(deck.main_cards) if r.info is not None]
     oracle_ids.extend(also)
     return read_deck_themes(deck, profile, db).matching(db, oracle_ids)

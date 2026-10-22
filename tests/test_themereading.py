@@ -15,6 +15,7 @@ from commander.scryfall import parse_search_page
 from commander.themewants import (
     FEEDERS_BY_TAG,
     LOW_POWER,
+    TREASURE,
     VEHICLE,
     CardFacts,
     Want,
@@ -68,6 +69,14 @@ def test_each_feeder_wants_the_cards_that_feed_its_payoff_tag() -> None:
         "synergy-treasure": ["Quark, Humble Proprietor"],
         "synergy-vehicle": ["D-7 Battle Cruiser"],
     }
+
+
+def test_a_treasure_made_at_the_start_of_a_sentence_or_a_mode_feeds_the_treasure_tag() -> None:
+    quark = previews()["Quark, Humble Proprietor"]
+    # Strike It Rich's text, and a mode of Atsushi, the Blazing Sky.
+    assert TREASURE.matches(replace(quark, text="Create a Treasure token."))
+    assert TREASURE.matches(replace(quark, text="• Create three Treasure tokens."))
+    assert not TREASURE.matches(replace(quark, text="Create a Food token."))
 
 
 def test_a_power_that_is_not_a_number_is_no_low_power_and_a_card_without_power_is_none() -> None:

@@ -67,7 +67,7 @@ class Want:
 ARTIFACT = Want("artifact", types=("Artifact",))
 ENCHANTMENT = Want("enchantment", types=("Enchantment",))
 LOW_POWER = Want("creature with power 2 or less", types=("Creature",), max_power=2)
-TREASURE = Want("treasure maker", tags=("repeatable-treasures",), text=r"\bcreates?\b[^.\n]*\bTreasure\b")
+TREASURE = Want("treasure maker", tags=("repeatable-treasures",), text=r"\b[Cc]reates?\b[^.\n]*\bTreasure\b")
 # Spacecraft are Vehicles to a Vehicles deck (checked 2026-10-22).
 VEHICLE = Want("vehicle", types=("Vehicle", "Spacecraft"))
 # The payoff tags a deck tag stands for, by tag, and the cards that feed them (checked 2026-10-22).
