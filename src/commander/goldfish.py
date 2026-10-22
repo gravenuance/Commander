@@ -382,6 +382,7 @@ class _Setup:
         "cards",
         "cmd_ids",
         "cmd_set",
+        "combo_free",
         "combo_ids",
         "combo_pieces",
         "fin_ids",
@@ -429,6 +430,10 @@ class _Setup:
         self.cmd_set = frozenset(self.cmd_ids)
         self.combo_ids = tuple(combo.id for combo in combos)
         self.combo_pieces = tuple(_piece_ids(combo, by_key) for combo in combos)
+        self.combo_free = tuple(
+            frozenset(by_key[card_key(name)] for name in combo.command_zone if card_key(name) in by_key)
+            for combo in combos
+        )
         self.fin_ids = tuple(cid for cid, card in enumerate(self.cards) if card.finisher)
         self.has_rituals = any(card.ritual for card in self.cards)
         self.merged: dict[tuple[int, ...], Cost] = {}
@@ -1011,27 +1016,29 @@ class _Game:
     # -- ways to win --------------------------------------------------------------------------------------
 
     def _check_combos(self) -> None:
-        """A combo lands once every piece is out, is a commander, or can be cast from the hand with the mana
-        left; it is then recorded and the game goes on."""
+        """A combo lands once every piece is out, or can be cast with the mana left from the hand or, for a
+        commander, the command zone; it is then recorded and the game goes on."""
         s = self.s
         for k in list(self.open_combos):
-            pieces = s.combo_pieces[k]
-            if pieces is None:
+            cast = self._pieces_to_cast(k)
+            if cast is None or (cast and self._plan(self.units, s.merged_cost(cast)) is None):
                 continue
-            cast: list[int] = []
-            for piece in pieces:
-                if piece in self.bf or piece in s.cmd_set:
-                    continue
-                if piece not in self.hand:
-                    break
-                cast.append(piece)
-            else:
-                if cast and self._plan(self.units, s.merged_cost(tuple(cast))) is None:
-                    continue
-                self.combo_turn[k] = self.turn
-                if any(piece in self.fetched for piece in pieces):
-                    self.combo_fetched |= 1 << k
-                self.open_combos.remove(k)
+            self.combo_turn[k] = self.turn
+            if any(piece in self.fetched for piece in s.combo_pieces[k] or ()):
+                self.combo_fetched |= 1 << k
+            self.open_combos.remove(k)
+
+    def _pieces_to_cast(self, k: int) -> tuple[int, ...] | None:
+        """The pieces of combo k still to be cast, or None when one is neither out nor castable."""
+        s = self.s
+        cast: list[int] = []
+        for piece in s.combo_pieces[k] or ():
+            if piece in self.bf or piece in s.combo_free[k]:
+                continue
+            if piece not in self.hand and piece not in self.cmd_left:
+                return None
+            cast.append(piece)
+        return tuple(cast)
 
     def _check_finishers(self) -> None:
         s = self.s

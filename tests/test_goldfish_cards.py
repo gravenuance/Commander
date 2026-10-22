@@ -1242,6 +1242,22 @@ def test_a_piece_may_start_in_any_one_of_its_zones() -> None:
     assert len(build(ANIMATE_DEAD, WORLDGORGER, combos=(either,)).combos) == 1
 
 
+def test_a_piece_that_needs_only_the_command_zone_is_marked_so() -> None:
+    combo = ComboDetail(
+        "5-6",
+        (
+            ComboPiece("Magda, Brazen Outlaw", "Legendary Creature — Dwarf", ("C",)),
+            ComboPiece("Battered Golem", "Artifact Creature — Golem", ("B", "C")),
+        ),
+        (),
+        (),
+        "",
+    )
+    deck = build(BATTERED_GOLEM, commander=MAGDA, combos=(combo,))
+    # Battered Golem may also start on the battlefield, so it is not a command zone piece.
+    assert [c.command_zone for c in deck.combos] == [("Magda, Brazen Outlaw",)]
+
+
 def test_a_combo_with_a_piece_outside_the_deck_is_left_out() -> None:
     deck = build(BATTERED_GOLEM, commander=MAGDA, combos=combo_details())
     assert deck.combos == ()

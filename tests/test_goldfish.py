@@ -604,6 +604,32 @@ def test_the_warning_needs_a_quarter_of_the_games() -> None:
     assert ways.faster_than_bracket == ()
 
 
+def test_a_commander_piece_counts_once_it_is_out_and_is_not_free() -> None:
+    boss = make("Boss", mv=3, kinds=CREATURE, combo=True)
+    piece = make("Piece", mv=1, kinds=ARTIFACT, combo=True)
+    slots = [*repeat(FOREST, 4), piece, VANILLA, VANILLA]
+    combos = (combo_of(boss, piece),)
+    # The piece is cast on turn one, the commander on turn three, and the pair is out then.
+    assert only_outcome(run(slots, commanders=(boss,), combos=combos)).combo_turns == (3,)
+
+
+def test_a_commander_piece_is_castable_with_the_mana_left_for_a_held_piece() -> None:
+    boss = make("Boss", mv=2, kinds=CREATURE, combo=True)
+    held = make("Held", mv=1, kinds=frozenset({CardKind.INSTANT}), combo=True)
+    # Turn two has two lands: the commander is cast for two, and the instant waits for turn three's mana.
+    slots = [*repeat(FOREST, 4), held, VANILLA, VANILLA]
+    combos = (combo_of(boss, held),)
+    assert only_outcome(run(slots, commanders=(boss,), combos=combos)).combo_turns == (3,)
+
+
+def test_a_commander_piece_that_needs_only_the_command_zone_is_free() -> None:
+    boss = make("Boss", mv=3, kinds=CREATURE, combo=True)
+    piece = make("Piece", mv=1, kinds=ARTIFACT, combo=True)
+    slots = [*repeat(FOREST, 4), piece, VANILLA, VANILLA]
+    combos = (GoldfishCombo("1-2", ("Boss", "Piece"), (), (), command_zone=("Boss",)),)
+    assert only_outcome(run(slots, commanders=(boss,), combos=combos)).combo_turns == (1,)
+
+
 def test_a_tutor_that_fetches_a_missing_piece_lands_the_combo_and_is_counted() -> None:
     tutor = make(
         "Tutor",

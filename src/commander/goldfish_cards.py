@@ -187,6 +187,9 @@ class GoldfishCombo:
     # Pieces described instead of named ("Vehicle with Crew 4 or less"); the tab shows them beside the combo.
     requirements: tuple[str, ...]
     results: tuple[str, ...]
+    # Pieces that need only the command zone (Spellbook zones C alone): a commander so named counts without
+    # being cast. Any other commander piece must be on the battlefield or cast.
+    command_zone: tuple[str, ...] = ()
 
 
 @dataclass(slots=True, frozen=True)
@@ -315,7 +318,10 @@ def _split_combos(
     left_out: list[GoldfishCombo] = []
     for combo in combos:
         pieces = tuple(names.get(card_key(p.name), p.name) for p in combo.pieces)
-        found = GoldfishCombo(combo.id, pieces, combo.requirements, combo.results)
+        command_zone = tuple(
+            names.get(card_key(p.name), p.name) for p in combo.pieces if p.zones and set(p.zones) == {"C"}
+        )
+        found = GoldfishCombo(combo.id, pieces, combo.requirements, combo.results, command_zone)
         # A piece with no zones named may start anywhere.
         reachable = all(not p.zones or _REACHABLE_ZONES.intersection(p.zones) for p in combo.pieces)
         present = all(card_key(p.name) in names for p in combo.pieces)
