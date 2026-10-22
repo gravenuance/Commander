@@ -407,6 +407,14 @@ _UNMODELLED = re.compile(
 )
 # A land that returns a land to the hand on entering (Karoo).
 _BOUNCE_LAND = re.compile(r"return (?:an? )?(?:untapped )?\w+ you control to its owner's hand")
+# A land that costs other lands (Lotus Field, Glacial Chasm) or is lost when one is played (City of Traitors).
+_LAND_SACRIFICE = re.compile(
+    r"when this land enters, sacrifice (?:a|one|two|three) lands?\b|when you play another land, sacrifice"
+)
+# The cost of a filter land (Fetid Heath): one mana, of a colour or either of two.
+_FILTER_COST = re.compile(r"\{[wubrg](?:/[wubrg])?\}")
+# A land that is whatever land it copies (Vesuva): it makes mana, but no text says how much.
+_COPY_LAND = re.compile(r"as a copy of any land")
 _EXTRA_LAND_DROPS = re.compile(r"you may play (an|one|two|three) additional lands? on each of your turns")
 # A card from the hand a permanent costs as it enters: Chrome Mox's imprint, Mox Diamond.
 _ENTRY_COSTS = (
@@ -593,36 +601,66 @@ def _net_mana(cost: _Cost, what: str, identity: frozenset[str]) -> tuple[int, fr
 
 
 def _land_understood(text: str) -> bool:
-    """Whether a land's mana is a fixed amount and it does not bounce a land."""
-    return _BOUNCE_LAND.search(text) is None and not any(varies for _, _, varies in _abilities(text))
+    """Whether a land's mana is a fixed amount and the land costs or does nothing the game cannot follow: it
+    does not bounce or sacrifice lands, is not sacrificed when another land is played, and does not search
+    for several lands."""
+    return (
+        _BOUNCE_LAND.search(text) is None
+        and _LAND_SACRIFICE.search(text) is None
+        and _SEARCHES_SEVERAL.search(text) is None
+        and not any(varies for _, _, varies in _abilities(text))
+    )
+
+
+def _land_faces(info: CardMana) -> list[str]:
+    """The casefolded text of each face a card is played as a land by: a land's own land faces (a Pathway's
+    two), a modal card's land back."""
+    faces = [REMINDER_TEXT.sub("", face).casefold() for face in info.oracle_text.split(FACE_SEPARATOR)]
+    if not info_is_land(info):
+        return faces[-1:]
+    types = info.type_line.split(" // ")
+    return [face for face, kind in zip(faces, types, strict=False) if "Land" in kind.split()] or faces[:1]
+
+
+def _land_nets(text: str, identity: frozenset[str]) -> list[tuple[int, frozenset[str]]]:
+    """The net mana and colours of a land's abilities that make more than they cost and leave the land."""
+    return [
+        found
+        for cost, what, varies in _abilities(text)
+        if not varies
+        and (paid := _paid(_FILTER_COST.sub("{1}", cost))) is not None
+        and not paid.sacrifices
+        and (found := _net_mana(paid, what, identity))
+    ]
 
 
 def _land_face(info: CardMana, context: _Context) -> tuple[LandFace, bool]:
     """The land a card is played as and whether its text is understood; a modal card whose back is a land is
-    played as its back."""
-    faces = info.oracle_text.split(FACE_SEPARATOR)
-    text = REMINDER_TEXT.sub("", faces[0] if info_is_land(info) else faces[-1]).casefold()
-    made = set(info.produced)
-    colours = frozenset(land_colours(info, text, made, len(context.identity)))
+    played as its back.
+
+    Colours and amount come from the mana abilities read from its text, as the game can use them: Scryfall's
+    produced mana is only the fallback for a land with none (a basic land, whose ability is reminder text),
+    and a land whose mana is all restricted (Ancient Ziggurat) makes none."""
+    faces = _land_faces(info)
+    text = faces[0]
+    nets = [net for face in faces for net in _land_nets(face, context.identity)]
     tapped = not mostly_untapped(tapped_share(text, context.lands))
-    nets = [
-        found
-        for cost, what, varies in _abilities(text)
-        if not varies
-        and (paid := _paid(cost)) is not None
-        and (found := _net_mana(paid, what, context.identity))
-    ]
-    if RESTRICTED in text and nets:
-        # Cavern of Souls: only its unrestricted mana counts.
+    if nets or RESTRICTED in text:
         colours = frozenset(c for _, got in nets for c in got)
-    colours |= _fetchable_colours(text, context)
+    else:
+        colours = frozenset(land_colours(info, text, set(info.produced), len(context.identity)))
+    if _SEARCHES_SEVERAL.search(text) is None:
+        colours |= _fetchable_colours(text, context)
     if context.identity:
         colours = colours & (context.identity | {_COLOURLESS}) or colours
-    amount = max((net for net, _ in nets), default=1)
+    makes_mana = bool(colours) or _COPY_LAND.search(text) is not None
+    amount = max((net for net, _ in nets), default=int(makes_mana))
     return LandFace(colours, tapped, amount), _land_understood(text)
 
 
 _BASIC_SEARCH = re.compile(r"search your library for [^.]*\bbasic\b")
+# A land that finds more than one land (Krosan Verge, Myriad Landscape) is no stand-in for the one it finds.
+_SEARCHES_SEVERAL = re.compile(r"search your library for [^.]*(?:\b(?:two|three|four)\b|put them)")
 
 
 def _fetchable_colours(text: str, context: _Context) -> frozenset[str]:

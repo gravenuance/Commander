@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from commander.carddb import CardInfo, CardMana, Role
+from commander.goldfish import simulate
 from commander.goldfish_cards import (
     CardKind,
     Draw,
@@ -1183,6 +1184,198 @@ def test_a_modal_card_with_a_land_back_is_its_spell_cost_and_its_land_face() -> 
     assert smashing.kinds == {CardKind.SORCERY}
     assert smashing.land == LandFace(frozenset("R"), tapped=False)
     assert smashing.modelled
+
+
+def land(name: str, type_line: str, text: str, produced: str, *, roles: Iterable[Role] = ()) -> Real:
+    return real(name, "", 0, type_line, text, produced=produced, roles=roles)
+
+
+# Lands as the card data has them, produced mana included.
+CRYSTAL_VEIN = land("Crystal Vein", "Land", "{T}: Add {C}.\n{T}, Sacrifice this land: Add {C}{C}.", "C")
+CITY_OF_TRAITORS = land(
+    "City of Traitors", "Land", "When you play another land, sacrifice this land.\n{T}: Add {C}{C}.", "C"
+)
+GEMSTONE_CAVERNS = land(
+    "Gemstone Caverns",
+    "Legendary Land",
+    "If this card is in your opening hand and you're not the starting player, you may begin the game with "
+    "Gemstone Caverns on the battlefield with a luck counter on it. If you do, exile a card from your hand.\n"
+    "{T}: Add {C}. If Gemstone Caverns has a luck counter on it, instead add one mana of any color.",
+    "WUBRGC",
+)
+NYKTHOS = land(
+    "Nykthos, Shrine to Nyx",
+    "Legendary Land",
+    "{T}: Add {C}.\n{2}, {T}: Choose a color. Add an amount of mana of that color equal to your devotion to "
+    "that color. (Your devotion to a color is the number of mana symbols of that color in the mana costs of "
+    "permanents you control.)",
+    "WUBRGC",
+)
+THREE_TREE_CITY = land(
+    "Three Tree City",
+    "Legendary Land",
+    "As Three Tree City enters, choose a creature type.\n{T}: Add {C}.\n{2}, {T}: Choose a color. Add an "
+    "amount of mana of that color equal to the number of creatures you control of the chosen type.",
+    "WUBRGC",
+)
+TALON_GATES = land(
+    "Talon Gates of Madara",
+    "Land — Gate",
+    "When this land enters, up to one target creature phases out.\n{T}: Add {C}.\n{1}, {T}: Add one mana of "
+    "any color.\n{4}: Put this card from your hand onto the battlefield.",
+    "WUBRGC",
+)
+ANCIENT_ZIGGURAT = land(
+    "Ancient Ziggurat",
+    "Land",
+    "{T}: Add one mana of any color. Spend this mana only to cast a creature spell.",
+    "WUBRG",
+)
+MAZE_OF_ITH = land(
+    "Maze of Ith",
+    "Land",
+    "{T}: Untap target attacking creature. Prevent all combat damage that would be dealt to and dealt by "
+    "that creature this turn.",
+    "",
+)
+GLACIAL_CHASM = land(
+    "Glacial Chasm",
+    "Land",
+    "Cumulative upkeep—Pay 2 life. (At the beginning of your upkeep, put an age counter on this permanent, "
+    "then sacrifice it unless you pay its upkeep cost for each age counter on it.)\n"
+    "When this land enters, sacrifice a land.\nCreatures you control can't attack.\n"
+    "Prevent all damage that would be dealt to you.",
+    "",
+)
+LOTUS_FIELD = land(
+    "Lotus Field",
+    "Land",
+    "Hexproof\nThis land enters tapped.\nWhen this land enters, sacrifice two lands.\n"
+    "{T}: Add three mana of any one color.",
+    "WUBRG",
+)
+MYRIAD_LANDSCAPE = land(
+    "Myriad Landscape",
+    "Land",
+    "This land enters tapped.\n{T}: Add {C}.\n{2}, {T}, Sacrifice this land: Search your library for up to "
+    "two basic land cards that share a land type, put them onto the battlefield tapped, then shuffle.",
+    "C",
+    roles=(RAMP,),
+)
+KROSAN_VERGE = land(
+    "Krosan Verge",
+    "Land",
+    "This land enters tapped.\n{T}: Add {C}.\n{2}, {T}, Sacrifice this land: Search your library for a "
+    "Forest card and a Plains card, put them onto the battlefield tapped, then shuffle.",
+    "C",
+    roles=(RAMP,),
+)
+EXOTIC_ORCHARD = land(
+    "Exotic Orchard",
+    "Land",
+    "{T}: Add one mana of any color that a land an opponent controls could produce.",
+    "WUBRG",
+)
+
+
+def test_a_land_that_makes_its_double_mana_only_by_sacrificing_itself_makes_one() -> None:
+    vein = one(CRYSTAL_VEIN)
+    assert vein.land == LandFace(frozenset("C"), tapped=False, amount=1)
+    assert vein.modelled
+
+
+def test_a_land_that_is_sacrificed_when_another_land_is_played_is_not_modelled() -> None:
+    city = one(CITY_OF_TRAITORS)
+    assert city.land == LandFace(frozenset("C"), tapped=False, amount=2)
+    assert not city.modelled
+
+
+def test_a_land_makes_the_colours_of_its_mana_abilities_not_those_it_could_make_later() -> None:
+    # Gemstone Caverns makes {C} from the hand; its any colour needs the luck counter of an opening hand.
+    assert one(GEMSTONE_CAVERNS).land == LandFace(frozenset("C"), tapped=False, amount=1)
+    # The coloured ability of Nykthos and Three Tree City is a devotion or creature count, not read as mana.
+    assert one(NYKTHOS).land == LandFace(frozenset("C"), tapped=False, amount=1)
+    assert one(THREE_TREE_CITY).land == LandFace(frozenset("C"), tapped=False, amount=1)
+    # A filter that pays one mana for one mana nets nothing.
+    assert one(TALON_GATES).land == LandFace(frozenset("C"), tapped=False, amount=1)
+
+
+def test_a_land_whose_mana_is_all_restricted_makes_none() -> None:
+    ziggurat = one(ANCIENT_ZIGGURAT)
+    assert ziggurat.land == LandFace(frozenset(), tapped=False, amount=0)
+    assert ziggurat.modelled
+
+
+def test_a_land_with_no_mana_ability_makes_no_mana() -> None:
+    maze = one(MAZE_OF_ITH)
+    assert maze.land == LandFace(frozenset(), tapped=False, amount=0)
+    assert maze.modelled
+    chasm = one(GLACIAL_CHASM)
+    assert chasm.land == LandFace(frozenset(), tapped=False, amount=0)
+
+
+def test_a_land_that_costs_other_lands_as_it_enters_is_not_modelled() -> None:
+    field = one(LOTUS_FIELD)
+    assert field.land == LandFace(frozenset("WUBRG"), tapped=True, amount=3)
+    assert not field.modelled
+    assert not one(GLACIAL_CHASM).modelled
+
+
+@pytest.mark.parametrize("sacrificer", [MYRIAD_LANDSCAPE, KROSAN_VERGE], ids=lambda c: c.mana.name)
+def test_a_land_that_also_searches_by_sacrificing_itself_stays_a_colourless_land_not_modelled(
+    sacrificer: Real,
+) -> None:
+    card = one(sacrificer, commander=LEGION)
+    assert card.land == LandFace(frozenset("C"), tapped=True, amount=1)
+    assert not card.modelled
+
+
+def test_a_land_that_makes_no_mana_is_played_without_adding_any() -> None:
+    giant = real("Giant", "{9}", 9, "Creature — Giant", "")
+    deck = build(FOREST, MAZE_OF_ITH, giant, copies={"Giant": 5})
+    slots = [card_named(deck, "Forest"), card_named(deck, "Maze of Ith"), *[card_named(deck, "Giant")] * 5]
+    # Seven cards are dealt whole: the Forest on turn 1, the Maze on turn 2 adds nothing.
+    report = simulate(slots, (), (), bracket=5, average_mana_value=2.0, games=1, seed=7)
+    assert report.outcomes[0].mana[:4] == (1, 1, 1, 1)
+
+
+def test_a_filter_land_keeps_the_colours_it_filters_to() -> None:
+    heath = land("Fetid Heath", "Land", "{T}: Add {C}.\n{W/B}, {T}: Add {W}{W}, {W}{B}, or {B}{B}.", "WBC")
+    assert one(heath).land == LandFace(frozenset("CWB"), tapped=False, amount=1)
+
+
+def test_a_land_with_another_land_sacrificed_by_an_unrelated_ability_is_still_modelled() -> None:
+    kavaron = land(
+        "Kavaron, Memorial World",
+        "Land — Planet",
+        "This land enters tapped.\n{T}: Add {R}.\nStation (Tap another creature you control: Put charge "
+        "counters equal to its power on this Planet. Station only as a sorcery.)\n12+ | {1}{R}, {T}, "
+        "Sacrifice a land: Create a 2/2 colorless Robot artifact creature token, then creatures you control "
+        "get +1/+0 and gain haste until end of turn.",
+        "R",
+    )
+    assert one(kavaron).modelled
+
+
+def test_a_land_that_copies_another_land_still_makes_one_mana() -> None:
+    vesuva = land(
+        "Vesuva", "Land", "You may have this land enter tapped as a copy of any land on the battlefield.", ""
+    )
+    assert one(vesuva).land == LandFace(frozenset(), tapped=False, amount=1)
+
+
+def test_command_tower_and_exotic_orchard_make_the_commanders_colours() -> None:
+    tower = real(
+        "Command Tower",
+        "",
+        0,
+        "Land",
+        "{T}: Add one mana of any color in your commander's color identity.",
+        produced="WUBRG",
+    )
+    assert one(tower, commander=MAGDA).land == LandFace(frozenset("R"), tapped=False)
+    assert one(EXOTIC_ORCHARD, commander=MAGDA).land == LandFace(frozenset("R"), tapped=False)
+    assert one(EXOTIC_ORCHARD).land == LandFace(frozenset("WUBRG"), tapped=False)
 
 
 # --- mana sources -------------------------------------------------------------------------------------------
