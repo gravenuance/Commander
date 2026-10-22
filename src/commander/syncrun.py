@@ -364,6 +364,7 @@ def _compile_ideas(
             services.cache,
             waits=_TopdeckWaits(phases),
             rank=lambda deck_id: next_up.rank(deck_id, order),
+            rank_changes=next_up.watch,
         )
         waiting = _with_estimated_brackets(waiting, http, services, phases)
         # TopDeck's window is fetched once, on its own thread, while every deck's Archidekt and Spellbook

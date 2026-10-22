@@ -33,6 +33,8 @@ RATE_LIMIT_FALLBACK_SECONDS = 30.0
 RATE_LIMIT_MIN_SECONDS = 1.0
 # The most `send_paced` waits on 429s for one request before it gives up.
 MAX_RATE_LIMIT_WAIT_SECONDS = 300.0
+# How long a `Pacer` waiter waits for its turn before it looks at the ranking again.
+RANK_RECHECK_SECONDS = 1.0
 ERROR_DETAIL_BYTES = 300
 HTTP_OK = 200
 HTTP_NOT_FOUND = 404
@@ -317,10 +319,14 @@ class Pacer:
         *,
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
+        recheck: float = RANK_RECHECK_SECONDS,
     ) -> None:
         if interval < 0:
             raise ValueError("interval must not be negative")
+        if recheck <= 0:
+            raise ValueError("recheck must be positive")
         self._interval = interval
+        self._recheck = recheck
         self._sleep = sleep
         self._monotonic = monotonic
         self._last: float | None = None
@@ -339,6 +345,11 @@ class Pacer:
         """Serve the waiting decks by `rank`, lowest first, read afresh as each slot opens."""
         with self._turns:
             self._rank = rank
+
+    def rank_changed(self) -> None:
+        """Tell the waiters the ranking moved, so each looks at whose turn it is again."""
+        with self._turns:
+            self._turns.notify_all()
 
     @property
     def waiting(self) -> int:
@@ -369,7 +380,8 @@ class Pacer:
         """None once `me` has the slot, else how long it sleeps for it (0: it only waited for its turn)."""
         with self._turns:
             if self._sleeper is not None or self._best() is not me:
-                self._turns.wait()
+                # Bounded, so a rank change nobody announced cannot leave every waiter asleep for good.
+                self._turns.wait(self._recheck)
                 return 0.0
             now = max(self._monotonic(), self._floor)
             ready = self._not_before

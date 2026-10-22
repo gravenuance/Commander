@@ -18,10 +18,20 @@ class FetchPriority:
     def __init__(self, selected: int | None = None) -> None:
         self._lock = threading.Lock()
         self._selected = selected
+        self._listeners: list[Callable[[], None]] = []
+
+    def watch(self, listener: Callable[[], None]) -> None:
+        """Call `listener` after each change of preference, for as long as this object lives (one sync)."""
+        with self._lock:
+            self._listeners.append(listener)
 
     def prefer(self, deck_id: int) -> None:
         with self._lock:
             self._selected = deck_id
+            listeners = tuple(self._listeners)
+        # Outside the lock: a listener may take its own, which is held while it reads `rank`.
+        for listener in listeners:
+            listener()
 
     def rank(self, deck_id: int, order: Sequence[int]) -> int:
         """Where the deck stands for requests that wait their turn, lowest first: the preferred deck, then the
