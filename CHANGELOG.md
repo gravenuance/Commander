@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.1.0 - 2026-10-22
+
 ### Changed
 - The card data is rebuilt weekly, or on the day a new set that brings new cards comes out, instead of
   whenever Scryfall's daily price update changed its bulk files, which downloaded 80 MB on the first sync of
