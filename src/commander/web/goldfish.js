@@ -45,6 +45,18 @@ async function loadGoldfish() {
   }
 }
 
+// Plays the deck once more after a refusal. The button goes with the refusal, so focus moves to the new
+// report's first heading, or to the new button when the refusal comes again; a viewer who has moved on keeps
+// their place.
+async function playAgain() {
+  goldfishDrawn = null;
+  await loadGoldfish();
+  const active = document.activeElement;
+  if (active && active !== document.body && active.isConnected) return;
+  const target = $("goldfish").querySelector("h3, .goldfish-error .button");
+  if (target) target.focus();
+}
+
 function renderGoldfish(deck, report) {
   goldfishDrawn = deck;
   if (report.error) {
@@ -52,7 +64,7 @@ function renderGoldfish(deck, report) {
       el("p", { class: "field-error", text: report.error }),
       el("button", {
         class: "button small", type: "button", text: "Play the deck again",
-        onclick: () => { goldfishDrawn = null; loadGoldfish(); },
+        onclick: playAgain,
       })));
     return;
   }
@@ -79,7 +91,7 @@ const goldfishNumber = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
 function goldfishSection(title, ...children) {
   const id = `goldfish-${title.toLowerCase().replace(/[^a-z]+/g, "-")}`;
   return el("section", { class: "goldfish-section", "aria-labelledby": id },
-    el("h3", { id, text: title }), ...children);
+    el("h3", { id, tabindex: "-1", text: title }), ...children);
 }
 
 // A table of figures by turn: one row per figure, one column per turn the bracket shows.

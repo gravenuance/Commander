@@ -1167,9 +1167,10 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .goldfish-big strong { font-size: var(--text-l); }
 .goldfish-group { font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
 .goldfish-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-.goldfish-table th, .goldfish-table td { padding: var(--space-1) var(--space-1); border-top: 1px solid var(--border); text-align: right; vertical-align: top; font-weight: 400; }
+.goldfish-table th, .goldfish-table td { padding: var(--space-1) 2px; border-top: 1px solid var(--border); text-align: right; vertical-align: top; font-weight: 400; }
 .goldfish-table thead th { border-top: 0; font-weight: 600; }
-.goldfish-table th[scope="row"], .goldfish-table th[scope="col"]:first-child { width: 42%; text-align: left; }
+.goldfish-table td { font-size: var(--text-xs); white-space: nowrap; }
+.goldfish-table th[scope="row"], .goldfish-table th[scope="col"]:first-child { width: 34%; text-align: left; }
 .goldfish-table th[scope="row"] { overflow-wrap: anywhere; }
 .goldfish-table tr.faster th, .goldfish-table tr.faster td { background: var(--warn-soft); }
 .goldfish-name, .goldfish-detail { display: block; }

@@ -248,3 +248,55 @@ def test_going_to_another_deck_and_back_during_a_play_draws_only_the_last_asks_a
     assert seen["spinner"] == 0
     assert seen["asked"][0] == 1
     assert 2 in seen["asked"]
+
+
+def test_playing_the_deck_again_moves_focus_to_the_new_report_or_the_new_retry_button() -> None:
+    seen = run("""
+    let answers = [{ error: "The deck has no commander." }, report(null), { error: "Still no." }];
+    stub.goldfish = async () => answers.shift();
+    state.view = view(1);
+    showRail("goldfish");
+    await settle();
+    const retry = () => walk($("goldfish")).find((n) => n.matches(".button"));
+    retry().focus();
+    await fire(retry(), "click");
+    await settle();
+    const report_ = document.activeElement;
+    const onReport = { tag: report_.tagName, text: report_.textContent,
+      tabindex: report_.getAttribute("tabindex"), inPanel: $("goldfish").contains(report_) };
+    resetGoldfish();
+    answers = [{ error: "No." }, { error: "Still no." }];
+    await loadGoldfish();
+    retry().focus();
+    await fire(retry(), "click");
+    await settle();
+    return { onReport, onRetry: document.activeElement === retry(), retryText: retry().textContent };
+    """)
+    assert seen == {
+        "onReport": {"tag": "H3", "text": "Opening hand", "tabindex": "-1", "inPanel": True},
+        "onRetry": True,
+        "retryText": "Play the deck again",
+    }
+
+
+def test_a_goldfish_tab_left_open_last_time_plays_the_deck_that_opens() -> None:
+    seen = run("""
+    storage["commander.activityOpen"] = "goldfish";
+    state.current = null;
+    setupActivity();
+    const asked = () => [...new Set(calls.filter((c) => c[0] === "goldfish").map((c) => c[1]))];
+    const before = { hidden: $("activity-pane").hidden, asked: asked() };
+    stub.goldfish = async () => report(null);
+    stub.open_deck = async () => ({});
+    stub.deck = async (id) => view(id);
+    await openDeck(1);
+    await settle();
+    return { before, expanded: $("goldfish-toggle").getAttribute("aria-expanded"),
+      asked: asked(), drawn: texts(".goldfish-source") };
+    """)
+    assert seen == {
+        "before": {"hidden": True, "asked": []},
+        "expanded": "true",
+        "asked": [1],
+        "drawn": ["10,000 games against an empty table"],
+    }
