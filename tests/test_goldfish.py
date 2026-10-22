@@ -572,6 +572,27 @@ def test_a_ritual_is_cast_only_to_pay_for_something_this_turn() -> None:
     assert only_outcome(run(slots)).mana == (1, 2, 2, 2, 2)
 
 
+def morph() -> GoldfishCard:
+    """Manamorphose: two mana of any colour for two, and a card."""
+    return make(
+        "Morph", mv=2, draw=Draw(1, engine=False), mana=ManaAbility(2, ANY_COLOUR, delayed=False, ritual=True)
+    )
+
+
+def test_a_spell_that_makes_no_more_mana_than_it_costs_is_cast_for_its_card() -> None:
+    drawn = only_outcome(run(repeat(FOREST, 16))).shuffle_depths[-1]
+    report = run([*repeat(FOREST, 14), *repeat(morph(), 2)])
+    # A morph among the cards dealt is cast on turn two, and draws a card the Forests alone would not.
+    assert max(o.shuffle_depths[-1] for o in report.outcomes) > drawn
+
+
+def test_a_spell_that_makes_no_more_mana_than_it_costs_gives_its_mana_back() -> None:
+    piece = make("Piece", mv=2, kinds=CREATURE, combo=True)
+    slots = [*repeat(FOREST, 3), morph(), piece, VANILLA, VANILLA]
+    # Turn two's two Forests pay for the morph, whose two mana pay for the piece; without them, turn three.
+    assert only_outcome(run(slots, combos=(combo_of(piece),))).combo_turns == (2,)
+
+
 def test_a_ritual_is_kept_from_a_plain_spell_for_the_commander() -> None:
     ritual = make(
         "Dark Ritual",

@@ -398,6 +398,7 @@ class _Card:
         "purpose",
         "rank",
         "reach_for",
+        "refund",
         "ritual",
         "source",
         "spend_bits",
@@ -411,10 +412,10 @@ class _Card:
         self.mv = card.mana_value
         mana = card.mana
         spend_from_hand = mana is not None and mana.from_hand
-        self.ritual = mana is not None and (mana.ritual or mana.from_hand)
+        one_shot = mana is not None and (mana.ritual or mana.from_hand)
         # A permanent making mana of some kind, and the kinds that are not a fixed part of each turn's mana:
         # mana that needs other permanents, mana paid for with life, a burst for a land sacrificed.
-        self.source = mana is not None and not self.ritual
+        self.source = mana is not None and not one_shot
         self.need = mana.needs if mana is not None else None
         self.life_cost = mana.life if mana is not None else 0
         self.burst_types = mana.land_sacrificed if mana is not None else frozenset[str]()
@@ -431,6 +432,11 @@ class _Card:
         self.aura = mana is not None and mana.on_land
         # Mana a ritual adds, net of the mana its own cost takes.
         self.gain = 0 if mana is None else mana.amount - (0 if spend_from_hand else card.mana_value)
+        # A one-shot that nets no mana (Manamorphose) is cast for its card and gives its mana back as it
+        # resolves, unless its mana is restricted, which is then still held for what it can pay.
+        keeps = mana is not None and (self.gain > 0 or mana.plus_sacrificed or bool(mana.spend_on))
+        self.ritual = one_shot and keeps
+        self.refund = one_shot and not keeps
         activation = card.land_ramp.activation if card.land_ramp is not None else 0
         # A spirit guide is exiled, not cast: its pips are not paid.
         self.cost = cost_of(0, {}) if spend_from_hand else cost_of(card.mana_value + activation, card.pips)
@@ -1365,6 +1371,9 @@ class _Game:
                 self.pending.extend([card.mana_mask] * card.mana_amount)
             else:
                 self._add_now(card.mana_mask, card.mana_amount)
+        if card.refund:
+            self.units.extend([card.mana_mask] * card.mana_amount)
+            self.units.sort(key=_PAY_KEY)
         if card.extra_drops:
             self.extra_drops += card.extra_drops
             self.drops_left += card.extra_drops

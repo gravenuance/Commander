@@ -871,15 +871,24 @@ def _fetchable_colours(text: str, context: _Context) -> frozenset[str]:
     return frozenset(c for types, made in context.typed_lands if types & searched for c in made)
 
 
-def _mana(text: str, kinds: frozenset[CardKind], identity: frozenset[str]) -> ManaAbility | None:
-    """The best mana ability of a nonland card: the most mana, the colours of all its abilities."""
+def _spell_treasures(text: str, kinds: frozenset[CardKind]) -> int:
+    """The Treasures an instant or sorcery makes; 0 for any other card."""
+    found = _TREASURES.search(text) if CardKind.INSTANT in kinds or CardKind.SORCERY in kinds else None
+    return _NUMBER_WORDS[found.group("n")] if found is not None else 0
+
+
+def _mana(
+    text: str, kinds: frozenset[CardKind], identity: frozenset[str], mana_value: int
+) -> ManaAbility | None:
+    """The best mana ability of a nonland card: the most mana, the colours of all its abilities. The Treasures
+    of a spell are mana only when they are more than its cost; else it is cast for what else it does."""
     spell = CardKind.INSTANT in kinds or CardKind.SORCERY in kinds
     best: ManaAbility | None = None
     colours: set[str] = set()
     abilities = _abilities(text)
-    treasures = _TREASURES.search(text) if spell else None
-    if treasures is not None:
-        made = f"{treasures.group('n')} mana of any color"
+    treasures = _spell_treasures(text, kinds)
+    if treasures > mana_value:
+        made = f"{_NUMBER_NAMES[treasures]} mana of any color"
         abilities.append(_ManaLine("", made, varies=False, spend_on=frozenset()))
     for cost, what, varies, spend_on, needs, conditional in abilities:
         paid = _paid(cost)
@@ -1179,7 +1188,7 @@ def _read_spell(card: GoldfishCard, info: CardMana, text: str, context: _Context
     land_drops = _EXTRA_LAND_DROPS.search(text)
     searches = ramp is None and Role.TUTOR in roles
     found = {
-        "mana": _mana(text, card.kinds, context.identity),
+        "mana": _mana(text, card.kinds, context.identity, card.mana_value),
         "land_ramp": ramp,
         "tutor": _tutor(search, context.subtypes) if searches else None,
         "activated_tutor": _activated_tutor(search, card, context.subtypes) if searches else None,
@@ -1226,9 +1235,10 @@ _TAP_TREASURE = re.compile(
 
 def _treasures(text: str, card: GoldfishCard) -> tuple[int, int, frozenset[str]]:
     """The Treasures a permanent makes as it comes and as it attacks, and the subtypes whose tapping makes
-    one."""
+    one; those of a spell that `_mana` does not read as a ritual, made as it resolves."""
     if not card.permanent:
-        return 0, 0, frozenset()
+        made = _spell_treasures(text, card.kinds)
+        return (made if made <= card.mana_value else 0), 0, frozenset()
     itself = _names_of_itself(card)
     entry, attack = (
         next((found for found in pattern.finditer(text) if found.group("who") in itself), None)

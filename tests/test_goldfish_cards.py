@@ -1696,10 +1696,50 @@ def test_jeskas_will_counts_an_opponents_hand_of_seven() -> None:
     assert will.modelled
 
 
-def test_a_spell_that_makes_a_treasure_is_a_ritual_of_one_mana_of_any_colour() -> None:
+DEADLY_DISPUTE = real(
+    "Deadly Dispute",
+    "{1}{B}",
+    2,
+    "Instant",
+    "As an additional cost to cast this spell, sacrifice an artifact or creature.\nDraw two cards and create "
+    'a Treasure token. (It\'s an artifact with "{T}, Sacrifice this token: Add one mana of any color.")',
+    identity="B",
+    roles=(DRAW,),
+)
+# Made up, to reach the other side of the line: three Treasures for one mana.
+TREASURE_TROVE = real(
+    "Treasure Trove",
+    "{R}",
+    1,
+    "Sorcery",
+    "Create three Treasure tokens.",
+    produced="WUBRG",
+    identity="R",
+    roles=(RAMP,),
+)
+
+
+def test_a_spell_that_makes_a_treasure_for_no_net_mana_is_cast_for_the_treasure_it_leaves() -> None:
     strike = one(STRIKE_IT_RICH, commander=MAGDA)
-    assert strike.mana == ManaAbility(1, frozenset("R"), delayed=False, ritual=True)
+    assert strike.mana is None
+    assert strike.treasures_on_entry == 1
     assert strike.modelled
+
+
+def test_a_spell_that_draws_and_makes_a_treasure_is_a_draw_that_leaves_a_treasure() -> None:
+    dispute = one(DEADLY_DISPUTE)
+    assert dispute.mana is None
+    assert dispute.treasures_on_entry == 1
+    assert dispute.draw == Draw(2, engine=False)
+    assert dispute.needs_sacrifice
+    assert dispute.modelled
+
+
+def test_a_spell_that_makes_more_treasures_than_it_costs_is_a_ritual_of_that_many_mana() -> None:
+    trove = one(TREASURE_TROVE)
+    assert trove.mana == ManaAbility(3, frozenset(ALL), delayed=False, ritual=True)
+    assert trove.treasures_on_entry == 0
+    assert trove.modelled
 
 
 GEOSURGE = real(
