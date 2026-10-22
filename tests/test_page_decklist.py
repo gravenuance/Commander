@@ -15,7 +15,8 @@ const deckCard = (over = {}) => ({
 const group = (name, cards, over = {}) => ({
   key: name, name, inDeck: true, count: cards.reduce((n, c) => n + c.quantity, 0), cents: 0, cards,
   ...over });
-const labels = (node, selector) => node.querySelectorAll(selector).map((n) => n.getAttribute("aria-label"));
+const labels = (node, selector) =>
+  [...node.querySelectorAll(selector)].map((n) => n.getAttribute("aria-label"));
 """
 )
 
@@ -171,7 +172,7 @@ def test_the_stats_show_the_saved_deck_and_what_review_would_change() -> None:
     seen = run("""
     const saved = { cards: 100, dontHave: 2, dontHaveCents: 450, dontHaveUnpriced: 0, averageManaValue: 2.5 };
     renderStats({ saved, after: { ...saved, cards: 101, dontHave: 3, dontHaveCents: 480 } });
-    const stats = $("deck-stats").querySelectorAll(".stat");
+    const stats = [...$("deck-stats").querySelectorAll(".stat")];
     return stats.map((s) => [s.querySelector("dt").textContent, s.querySelector("dd").textContent,
       s.querySelector("dd").classList.contains("changed")]);
     """)

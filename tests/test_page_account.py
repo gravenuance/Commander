@@ -12,8 +12,8 @@ const decks = [
 ];
 const account = (over = {}) => ({ user: "TESTER", signedIn: true,
   sync: { running: false, progress: "", summary: "", failed: false, decks: {} }, ...over });
-const icons = () => $("deck-list").querySelectorAll(".fetch-icon");
-const rowLabels = () => $("deck-list").children.map((li) => li.firstChild.getAttribute("aria-label"));
+const icons = () => [...$("deck-list").querySelectorAll(".fetch-icon")];
+const rowLabels = () => [...$("deck-list").children].map((li) => li.firstChild.getAttribute("aria-label"));
 """
 
 
@@ -66,14 +66,14 @@ def test_a_fetch_state_change_touches_only_its_own_deck_and_a_redraw_keeps_the_i
     state.decks = decks;
     renderDecks();
     paintFetchStates({ "1": "queued", "2": "queued" });
-    const buttons = $("deck-list").children.map((li) => li.firstChild);
+    const buttons = [...$("deck-list").children].map((li) => li.firstChild);
     buttons[1].setAttribute("aria-label", "untouched");
     paintFetchStates({ "1": "done", "2": "queued" });
     const labels = rowLabels();
     state.decks = decks.map((d) => ({ ...d, queued: d.id }));
     renderDecks();
     return { labels, redrawn: icons().map((i) => i.getAttribute("aria-label")),
-      sameRows: $("deck-list").children.every((li, i) => li.firstChild === buttons[i]) };
+      sameRows: [...$("deck-list").children].every((li, i) => li.firstChild === buttons[i]) };
     """)
     assert seen["labels"] == ["Magda, Sample, deck.., Fetched", "untouched"]
     assert seen["redrawn"] == ["Fetched", "Waiting to fetch"]

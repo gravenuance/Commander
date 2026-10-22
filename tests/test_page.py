@@ -19,7 +19,7 @@ const card = (over = {}) => ({
 const part = (share, count, total) => ({ share, count, total });
 const combined = (share, count, total, parts = {}) => ({
   share, count, total, label: `${Math.round(share * 100)}%`, meta: null, archidekt: null, ...parts });
-const texts = (node, selector) => node.querySelectorAll(selector).map((n) => n.textContent);
+const texts = (node, selector) => [...node.querySelectorAll(selector)].map((n) => n.textContent);
 setupTiles();
 """
 
@@ -106,7 +106,7 @@ def test_the_breakdown_lists_each_source_and_asks_for_the_next_sync_when_a_pool_
     const alike = card({ id: "a", origin: "adjacent decks", share: combined(0.7, 7, 10),
       pool: { share: 0.5, count: 2, total: 4 } });
     const old = card({ id: "o", origin: "tagged decks", originTag: "Storm", share: combined(0.7, 7, 10) });
-    const rowsOf = (c) => buildTile(c).querySelector(".share-pop").querySelectorAll(".share-row")
+    const rowsOf = (c) => [...buildTile(c).querySelector(".share-pop").querySelectorAll(".share-row")]
       .map((row) => [texts(row, ".share-source")[0], texts(row, ".share-numbers")[0]]);
     return { both: rowsOf(both), alike: rowsOf(alike), old: rowsOf(old) };
     """)
@@ -172,8 +172,8 @@ def test_one_breakdown_is_open_at_a_time_and_a_click_inside_it_does_not_select_t
       card({ id: "one", name: "One", share: combined(0.6, 3, 5, { meta: part(0.6, 3, 5) }) }),
       card({ id: "two", name: "Two", share: combined(0.4, 2, 5, { meta: part(0.4, 2, 5) }) }),
     ]);
-    const pills = $("list-considering").querySelectorAll(".share-pill");
-    const pops = $("list-considering").querySelectorAll(".share-pop");
+    const pills = [...$("list-considering").querySelectorAll(".share-pill")];
+    const pops = [...$("list-considering").querySelectorAll(".share-pop")];
     const open = () => pills.map((p) => p.getAttribute("aria-expanded"));
     const shown = () => pops.map((p) => !p.hidden);
     await fire(pills[0], "click");

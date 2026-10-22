@@ -154,7 +154,7 @@ def test_a_refresh_that_changes_a_card_keeps_its_share_breakdown_open() -> None:
 def test_a_refresh_that_changes_a_card_keeps_the_folds_the_viewer_opened() -> None:
     seen = run("""
     const idea = (reason) => card({ id: "a", text: "Add {C}.", reason });
-    const folds = () => state.tiles.get("a").node.querySelectorAll("details");
+    const folds = () => [...state.tiles.get("a").node.querySelectorAll("details")];
     showBoard([idea("old")]);
     folds()[1].open = true;
     showBoard([idea("new")]);

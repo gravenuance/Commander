@@ -141,7 +141,7 @@ function tileFor(card) {
 // (and its focus), the share breakdown, the folds and the category picked for an add without a cut.
 function carryOver(old, node, card) {
   const was = tileParts.get(old);
-  const folds = new Map(node.querySelectorAll("details")
+  const folds = new Map([...node.querySelectorAll("details")]
     .map((fold) => [fold.querySelector("summary").textContent, fold]));
   for (const fold of old.querySelectorAll("details")) {
     const same = folds.get(fold.querySelector("summary").textContent);
@@ -208,7 +208,7 @@ function showPlainAdd(node, card) {
 function keepChoice(from, to) {
   const picked = from.querySelector("select").value;
   const select = to.querySelector("select");
-  const offered = select.querySelectorAll("option").some((option) => option.getAttribute("value") === picked);
+  const offered = [...select.querySelectorAll("option")].some((option) => option.getAttribute("value") === picked);
   if (offered) select.value = picked;
 }
 
