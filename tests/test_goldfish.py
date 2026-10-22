@@ -228,6 +228,26 @@ def test_bracket_four_wants_one_more_mana_source_than_bracket_five() -> None:
     assert run(slots, combos=combos, bracket=4).kept_on_five_or_fewer == 1.0
 
 
+def test_a_finisher_is_a_way_to_win_for_the_keep_rule_of_the_top_brackets() -> None:
+    finisher = make("Overrun", mv=6, finisher=True)
+    slots = [*repeat(FOREST, 4), *repeat(VANILLA, 4), finisher]
+    # Nine cards deal seven, two left out. Bracket 5 sends a hand back when the finisher is left out (8 of 36
+    # pairs); bracket 4, which also wants three sources, when two Forests are (6 more pairs). The free
+    # mulligan squares the failure: kept on seven in 1 - (8/36)^2 and 1 - (14/36)^2 of games (4 errors: 0.02).
+    for bracket, failing in ((5, 8 / 36), (4, 14 / 36)):
+        report = run(slots, bracket=bracket, games=2000, seed=6)
+        assert report.kept_on_seven == pytest.approx(1 - failing**2, abs=0.02)
+
+
+def test_a_deck_with_no_combo_or_finisher_is_kept_by_the_bracket_three_clause_even_with_tutors() -> None:
+    tutor = make("Tutor", mv=1, tutor=Tutor(frozenset(), TutorDestination.HAND))
+    sweet = make("Sweet", mv=2, kinds=CREATURE, synergy=True)
+    slots = [*repeat(FOREST, 4), tutor, *repeat(VANILLA, 2), sweet, sweet]
+    # The tutor is no way to win here, so a hand needs a dominant-tag card: both left out is 1 in 36 hands.
+    report = run(slots, bracket=5, games=2000, seed=6)
+    assert report.kept_on_seven > 0.99
+
+
 def test_a_seven_without_a_way_to_win_is_not_kept_in_the_top_brackets() -> None:
     piece = make("Piece", mv=2, kinds=CREATURE, combo=True)
     slots = [*repeat(FOREST, 3), *repeat(VANILLA, 4)]
@@ -680,7 +700,8 @@ def test_a_finisher_with_x_in_its_cost_needs_the_mana_for_ten_more(monkeypatch: 
 def test_a_tutor_goes_for_a_finisher_when_no_combo_piece_is_missing() -> None:
     finisher = make("Overrun", mv=6, finisher=True)
     tutor = make("Tutor", mv=1, tutor=Tutor(frozenset({CardKind.SORCERY}), TutorDestination.HAND))
-    slots = [*repeat(FOREST, 5), tutor, finisher, VANILLA]
+    # Nine cards: the one left in the library after turn one's draw is the finisher in 1 game of 9.
+    slots = [*repeat(FOREST, 5), tutor, finisher, VANILLA, VANILLA]
     report = run(slots, games=500, seed=2)
     assert any(o.searched for o in report.outcomes)
 

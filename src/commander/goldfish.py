@@ -355,7 +355,7 @@ class _Card:
         self.keep_syn = card.synergy or card.draw is not None
         # Fast mana for the keep rule: a cheap mana source other than a land.
         self.fast = mana is not None and not spend_from_hand and card.mana_value <= (_HAND - 5)
-        self.win_piece = card.combo or card.tutor is not None
+        self.win_piece = card.combo or card.tutor is not None or card.finisher
         self.rank = self._rank()
 
     def _rank(self) -> int:
@@ -445,9 +445,12 @@ class _Setup:
             self.max_lands, self.min_sources = _MAX_KEPT_LANDS, 0
         else:
             self.min_lands, self.max_lands, self.min_sources = 3, _MAX_KEPT_LANDS, 0
-        # A rule asking for what the deck has none of would send every hand to the bottom.
-        self.need_win = rule >= _STRICT_KEEP and any(c.win_piece for c in library)
-        self.need_syn = rule < _STRICT_KEEP and any(c.keep_syn and not c.is_land for c in library)
+        # A deck with no combo and no finisher has no way to win to ask for, so it is kept by the lower
+        # brackets' clause; that clause is dropped for a deck with no card that could meet it.
+        has_way = any(c.combo or c.finisher for c in library)
+        self.need_win = rule >= _STRICT_KEEP and has_way
+        wants_syn = rule < _STRICT_KEEP or not has_way
+        self.need_syn = wants_syn and any(c.keep_syn and not c.is_land for c in library)
 
     def keeps(self, hand: Sequence[int]) -> bool:
         lands = fast = win = syn = 0
