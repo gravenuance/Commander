@@ -11,8 +11,7 @@ from collections.abc import Callable, Mapping
 from datetime import datetime
 from importlib import resources
 from pathlib import Path
-
-import httpx
+from typing import TYPE_CHECKING
 
 from commander import __version__
 from commander.applog import install_file_log
@@ -20,6 +19,9 @@ from commander.carddb import CARD_DB_FILE
 from commander.config import ConfigError, cache_dir, config_path, read_config, resolve_user, resolve_workspace
 from commander.credentials import TokenStore
 from commander.desk import Desk, DeskSettings
+
+if TYPE_CHECKING:
+    import httpx
 
 log = logging.getLogger(__name__)
 
@@ -113,7 +115,7 @@ def run_app(desk: Desk, *, storage: Path, debug: bool = False) -> None:
 def launch(
     env: Mapping[str, str],
     *,
-    client_factory: Callable[[], httpx.Client],
+    client_factory: Callable[[], "httpx.Client"],
     token_store: TokenStore,
     now: Callable[[], datetime],
     config: str | None = None,

@@ -12,13 +12,16 @@ from dataclasses import dataclass
 from datetime import UTC
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from typing import Protocol
-
-import httpx
+from typing import TYPE_CHECKING, Protocol
 
 from commander import __version__
 from commander.fetchpriority import fetching_deck
 from commander.jsonshape import as_object, opt_float
+
+# httpx is imported inside the functions that need it, and only named in annotations (as strings) elsewhere:
+# it takes 60 ms to load, which the app should not wait for before it has a window.
+if TYPE_CHECKING:
+    import httpx
 
 log = logging.getLogger(__name__)
 
@@ -90,7 +93,9 @@ class RateLimitedError(HttpStatusError):
         self.retry_after = retry_after
 
 
-def make_client() -> httpx.Client:
+def make_client() -> "httpx.Client":
+    import httpx  # noqa: PLC0415
+
     # Redirects are not followed, so a response can never come from a host we did not ask for.
     return httpx.Client(
         timeout=httpx.Timeout(20.0, connect=10.0),
@@ -105,7 +110,7 @@ retry_sleep: Callable[[float], None] = time.sleep
 class Fetcher:
     def __init__(
         self,
-        client: httpx.Client,
+        client: "httpx.Client",
         *,
         max_attempts: int = MAX_ATTEMPTS,
         sleep: Callable[[float], None] | None = None,
@@ -199,8 +204,10 @@ class Fetcher:
         url: str,
         payload: object,
         headers: Mapping[str, str] | None,
-        read_success: Callable[[httpx.Response], T],
+        read_success: Callable[["httpx.Response"], T],
     ) -> T:
+        import httpx  # noqa: PLC0415
+
         started = self._monotonic()
         try:
             with self._client.stream(method, url, json=payload, headers=headers) as response:
@@ -233,11 +240,13 @@ class Fetcher:
         url: str,
         params: Mapping[str, str | int] | None,
         payload: object,
-        read: Callable[[httpx.Response], T],
+        read: Callable[["httpx.Response"], T],
         *,
         headers: Mapping[str, str] | None = None,
         surface_rate_limit: bool = False,
     ) -> T:
+        import httpx  # noqa: PLC0415
+
         for attempt in range(1, self._max_attempts + 1):
             started = self._monotonic()
             limit_body = b""
@@ -507,7 +516,7 @@ def _retry_after_seconds(value: str | None, now: float) -> float | None:
     return max(0.0, when.timestamp() - now)
 
 
-def _read_capped(response: httpx.Response, url: str, max_bytes: int) -> bytes:
+def _read_capped(response: "httpx.Response", url: str, max_bytes: int) -> bytes:
     chunks: list[bytes] = []
     size = 0
     for chunk in response.iter_bytes():
@@ -518,7 +527,7 @@ def _read_capped(response: httpx.Response, url: str, max_bytes: int) -> bytes:
     return b"".join(chunks)
 
 
-def _write_capped(response: httpx.Response, url: str, dest: Path, max_bytes: int) -> int:
+def _write_capped(response: "httpx.Response", url: str, dest: Path, max_bytes: int) -> int:
     size = 0
     with dest.open("wb") as handle:
         for chunk in response.iter_bytes():
@@ -529,7 +538,7 @@ def _write_capped(response: httpx.Response, url: str, dest: Path, max_bytes: int
     return size
 
 
-def _read_start(response: httpx.Response, limit: int) -> bytes:
+def _read_start(response: "httpx.Response", limit: int) -> bytes:
     start = b""
     for chunk in response.iter_bytes():
         start += chunk

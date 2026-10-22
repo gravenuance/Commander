@@ -15,9 +15,7 @@ from datetime import datetime
 from enum import Enum
 from functools import wraps
 from pathlib import Path
-from typing import cast
-
-import httpx
+from typing import TYPE_CHECKING, cast
 
 from commander.answers import card_key
 from commander.apply import NotYourDeckError, Resolution, SaveError, default_category
@@ -118,6 +116,9 @@ from commander.weightedshare import (
     share_tip,
     weighted_shares,
 )
+
+if TYPE_CHECKING:
+    import httpx
 
 log = logging.getLogger(__name__)
 
@@ -284,7 +285,7 @@ class Desk:
         self,
         settings: DeskSettings,
         *,
-        client_factory: Callable[[], httpx.Client],
+        client_factory: Callable[[], "httpx.Client"],
         token_store: TokenStore,
         now: Callable[[], datetime],
         pacer_factory: Callable[[float], Pacer] = Pacer,
@@ -1238,7 +1239,7 @@ class Desk:
                 offline=True,
             )
 
-    def _meta_sources(self, http: httpx.Client) -> MetaSources:
+    def _meta_sources(self, http: "httpx.Client") -> MetaSources:
         return meta_sources(
             http, self._pacer_factory, self._settings.user or "", self._settings.meta, self._settings.cache
         )
@@ -1257,7 +1258,7 @@ class Desk:
             raise ConfigError("Sign in to Archidekt first.")
         return self._settings.user
 
-    def _editor(self, http: httpx.Client, user: str) -> ArchidektEditor:
+    def _editor(self, http: "httpx.Client", user: str) -> ArchidektEditor:
         """An Archidekt editor signed in as the user; the sign-in must be on file."""
         fetcher = Fetcher(http)
         return ArchidektEditor(fetcher, ArchidektAuth(fetcher, self._token_store).access_token(user))

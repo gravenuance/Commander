@@ -17,8 +17,7 @@ from dataclasses import dataclass, field, replace
 from datetime import date
 from enum import Enum
 from pathlib import Path
-
-import httpx
+from typing import TYPE_CHECKING
 
 from commander.archidekt import ArchidektClient, ArchidektError, AuthError
 from commander.archidekt_edit import ArchidektAuth, ArchidektEditor
@@ -56,6 +55,9 @@ from commander.sync import PRIVATE_NOT_UPDATED, PullWatch, SyncResult, SyncStatu
 from commander.topdeck import KEY_REMEDY
 from commander.viewscore import VIEWS_FILE, ViewScores
 
+if TYPE_CHECKING:
+    import httpx
+
 log = logging.getLogger(__name__)
 
 
@@ -63,7 +65,7 @@ log = logging.getLogger(__name__)
 class SyncServices:
     """What a sync reaches outside the deck folder, injected so tests run it offline."""
 
-    client_factory: Callable[[], httpx.Client]
+    client_factory: Callable[[], "httpx.Client"]
     token_store: TokenStore
     # The card database and the meta answers live here.
     cache: Path
@@ -417,7 +419,7 @@ _ESTIMATES_STEP = "Spellbook: bracket estimates"
 
 
 def _with_estimated_brackets(
-    waiting: list[StoredDeck], http: httpx.Client, services: SyncServices, phases: ActivePhases
+    waiting: list[StoredDeck], http: "httpx.Client", services: SyncServices, phases: ActivePhases
 ) -> list[StoredDeck]:
     """The decks as their reads and ideas see them (ADR 0051): one with no bracket set has its estimate's
     lowest. The estimate comes from the cache while fresh and is otherwise asked of Spellbook; a deck whose
