@@ -382,6 +382,50 @@ GREEN_SUNS_ZENITH = real(
     "then shuffle. Shuffle Green Sun's Zenith into its owner's library.",
     roles=(Role.RECURSION, TUTOR),
 )
+RECRUITER_OF_THE_GUARD = real(
+    "Recruiter of the Guard",
+    "{2}{W}",
+    3,
+    "Creature — Human Soldier",
+    "When this creature enters, you may search your library for a creature card with toughness 2 or less, "
+    "reveal it, put it into your hand, then shuffle.",
+    roles=(TUTOR,),
+)
+IMPERIAL_RECRUITER = real(
+    "Imperial Recruiter",
+    "{2}{R}",
+    3,
+    "Creature — Human Advisor",
+    "When this creature enters, search your library for a creature card with power 2 or less, reveal it, "
+    "put it into your hand, then shuffle.",
+    roles=(TUTOR,),
+)
+TROPHY_MAGE = real(
+    "Trophy Mage",
+    "{2}{U}",
+    3,
+    "Creature — Human Wizard",
+    "When this creature enters, you may search your library for an artifact card with mana value 3, "
+    "reveal it, put it into your hand, then shuffle.",
+    roles=(TUTOR,),
+)
+FIERCE_EMPATH = real(
+    "Fierce Empath",
+    "{2}{G}",
+    3,
+    "Creature — Elf Druid",
+    "When this creature enters, you may search your library for a creature card with mana value 6 or "
+    "greater, reveal it, put it into your hand, then shuffle.",
+    roles=(TUTOR,),
+)
+TIME_OF_NEED = real(
+    "Time of Need",
+    "{1}{G}",
+    2,
+    "Sorcery",
+    "Search your library for a legendary creature card, reveal it, put it into your hand, then shuffle.",
+    roles=(TUTOR,),
+)
 FINALE = real(
     "Finale of Devastation",
     "{X}{G}{G}",
@@ -1232,6 +1276,17 @@ def test_a_search_is_a_tutor_only_when_the_tagger_says_so() -> None:
     card = one(untagged)
     assert card.tutor is None
     assert card.modelled
+
+
+@pytest.mark.parametrize(
+    "tutor",
+    [RECRUITER_OF_THE_GUARD, IMPERIAL_RECRUITER, TROPHY_MAGE, FIERCE_EMPATH, TIME_OF_NEED],
+    ids=lambda t: t.mana.name,
+)
+def test_a_search_restricted_beyond_card_type_and_a_mana_value_ceiling_is_not_modelled(tutor: Real) -> None:
+    card = one(tutor)
+    assert card.tutor is None
+    assert not card.modelled
 
 
 @pytest.mark.parametrize("tutor", [SURVIVAL, ENTOMB], ids=lambda t: t.mana.name)

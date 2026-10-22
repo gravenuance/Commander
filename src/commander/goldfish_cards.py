@@ -697,6 +697,7 @@ _TUTOR_KINDS = {
     )
 }
 _VALUE_LIMIT = re.compile(r"mana value (x|\d+) or less")
+_UNSUPPORTED_CONDITION = re.compile(r"\bwith\b(?! mana value (?:x|\d+) or less\b)")
 _SACRIFICE_VALUE = re.compile(r"where x is (\d+) plus the sacrificed creature's mana value")
 _TAPPED = re.compile(r"\btapped\b")
 _DRAW = re.compile(r"\bdraws? (?:(?P<n>an?|one|two|three|four|five|six|seven|x) cards?|cards)")
@@ -756,10 +757,15 @@ def _tutor(search: _Search | None) -> Tutor | None:
     """A search for a card of some type, when the game can follow where it goes."""
     if search is None or search.cost or search.repeating:
         return None
-    words = [w for w in re.findall(r"[a-z]+", search.head) if w not in _FILLER]
+    named = re.findall(r"[a-z]+", search.head)
+    words = [w for w in named if w not in _FILLER]
     finds = frozenset(_TUTOR_KINDS[w] for w in words if w in _TUTOR_KINDS)
     destination = _tutor_destination(search.rest)
-    if len(finds) != len(words) or destination is None:
+    if len(finds) != len(words) or destination is None or "legendary" in named:
+        return None
+    # What the card must have, before the comma that goes on to reveal and place it.
+    condition = re.split(r"\bcards?\b", search.sentence, maxsplit=1)[-1].partition(",")[0]
+    if _UNSUPPORTED_CONDITION.search(condition):
         return None
     limit = _VALUE_LIMIT.search(search.rest)
     over = _SACRIFICE_VALUE.search(search.rest)
