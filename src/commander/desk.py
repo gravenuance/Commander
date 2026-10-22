@@ -1089,7 +1089,8 @@ class Desk:
                     "image": image_url(fit.card.scryfall_id),
                     "set": fit.card.set_name,
                     "out": fit.card.released_at.isoformat(),
-                    "fits": list(fit.tags),
+                    # A card the commander wants shows the deck's name among the tags it fits.
+                    "fits": [*fit.tags, *([stored.deck.short_name] if fit.fits_commander else [])],
                 }
                 for fit in fits
             ]

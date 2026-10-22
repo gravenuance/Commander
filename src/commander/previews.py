@@ -14,7 +14,7 @@ from enum import Enum
 from pathlib import Path
 
 from commander.carddb import CardDb, ResolvedCard, Role, name_keys
-from commander.deckprofile import Profile, ThemeSpec
+from commander.deckprofile import Profile
 from commander.fsutil import write_text_atomic
 from commander.jsonshape import (
     ShapeError,
@@ -32,7 +32,7 @@ from commander.net import NetworkError, Pacer
 from commander.scryfall import ScryfallClient, ScryfallError, SetCard, SetInfo, is_scryfall_id
 from commander.suggest import deck_identity, name_keys_of, short_roles
 from commander.themereading import read_deck_themes
-from commander.themewants import preview_facts, spec_wants, type_words
+from commander.themewants import named_traits, preview_facts, traits
 
 log = logging.getLogger(__name__)
 
@@ -84,6 +84,8 @@ class PreviewFit:
     # The deck's dominant tags the card matches, in the deck's order.
     tags: tuple[str, ...]
     fills_short_role: bool
+    # Whether the card is one the deck's commander wants (themewants.commander_wants).
+    fits_commander: bool = False
 
 
 def local_day(moment: datetime) -> date:
@@ -186,10 +188,12 @@ def fitting_previews(
     today: date,
     targets: Mapping[Role, int],
 ) -> list[PreviewFit]:
-    """The previews in the deck's colour identity that match its dominant tags, the most tags first, then
-    those filling a role the deck runs short of, then by name; at most SHOWN. today is the local day. Like
-    every suggestion, a card the profile excludes, by name or by its [exclude] types, keywords or tags, is
-    never one, nor is a card the deck already has."""
+    """The previews in the deck's colour identity that match its dominant tags or that its commander wants:
+    those the commander wants first, then the most distinct features of the tags (types, keywords, tags and
+    feeding cards; tags that ask for one feature count it once), then those filling a role the deck runs
+    short of, then the coloured before the colourless, then by name; at most SHOWN. today is the local day.
+    Like every suggestion, a card the profile excludes, by name or by its [exclude] types, keywords or tags,
+    is never one, nor is a card the deck already has."""
     identity = deck_identity(main)
     if identity is None:
         log.debug("deck %d: no previews, its commander is missing or not in the card data", deck.id)
@@ -206,39 +210,30 @@ def fitting_previews(
     # The theme work only when there is something to match it against.
     if not live:
         return []
-    themes = read_deck_themes(deck, profile, db).themes
-    if not themes:
+    reading = read_deck_themes(deck, profile, db)
+    if not reading.themes and not reading.commander:
         return []
     ids = [c.oracle_id for c in live]
     lineage = db.tag_lineage(ids)
     roles = db.roles(ids)
     short = short_roles(main, db, targets)
-    fits: list[PreviewFit] = []
+    ranked: list[tuple[tuple[bool, int, bool, bool, str], PreviewFit]] = []
     for card in live:
-        slugs = lineage.get(card.oracle_id, frozenset())
-        if _matches(profile.exclude, card, slugs):
+        facts = preview_facts(card, lineage.get(card.oracle_id, frozenset()))
+        if named_traits(profile.exclude, facts):
             continue
-        matched = tuple(theme.name for theme in themes if _matches(theme.spec, card, slugs))
-        if matched:
-            fills = bool(roles.get(card.oracle_id, frozenset()) & short)
-            fits.append(PreviewFit(card, matched, fills))
-    fits.sort(key=lambda f: (-len(f.tags), not f.fills_short_role, f.card.name.casefold()))
-    return fits[:SHOWN]
-
-
-def _matches(spec: ThemeSpec, card: SetCard, slugs: frozenset[str]) -> bool:
-    """Whether the card has one of the spec's types, keywords or tags (sub-tags included), as the card data's
-    theme search would judge it."""
-    words = type_words(card.type_line)
-    if any(f" {word.casefold()} " in words for word in spec.types):
-        return True
-    keywords = {keyword.casefold() for keyword in card.keywords}
-    if any(keyword.casefold() in keywords for keyword in spec.keywords):
-        return True
-    if any(tag in slugs for tag in spec.tags):
-        return True
-    facts = preview_facts(card, slugs)
-    return any(want.matches(facts) for want in spec_wants(spec))
+        by_theme = [(theme, traits(theme.spec, facts)) for theme in reading.themes]
+        matched = tuple(theme.name for theme, found in by_theme if found)
+        commander = any(want.matches(facts) for want in reading.commander)
+        if not matched and not commander:
+            continue
+        fills = bool(roles.get(card.oracle_id, frozenset()) & short)
+        # Tags asking for the same feature, like Tokens and Go-wide for repeatable tokens, count it once.
+        features = {trait for _, found in by_theme for trait in found}
+        key = (not commander, -len(features), not fills, not card.color_identity, card.name.casefold())
+        ranked.append((key, PreviewFit(card, matched, fills, commander)))
+    ranked.sort(key=lambda item: item[0])
+    return [fit for _, fit in ranked[:SHOWN]]
 
 
 def _cache_json(cache: PreviewCache) -> dict[str, object]:

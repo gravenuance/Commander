@@ -100,11 +100,15 @@ def test_a_commander_that_animates_enchantments_and_cares_for_big_cards_wants_bi
     assert wanted_by(commander_wants(db, {"animate-enchantment"}), saga)
 
 
-def test_a_commander_that_animates_artifacts_wants_artifacts_of_mana_value_four_or_more(db: CardDb) -> None:
+def test_a_commander_that_animates_artifacts_wants_artifacts_but_no_equipment_of_mana_value_four_or_more(
+    db: CardDb,
+) -> None:
     cruiser = previews()["D-7 Battle Cruiser"]  # Artifact - Spacecraft, mana value 2
     wants = commander_wants(db, {"animate-artifact", "high-mana-value-matters"})
     assert not wanted_by(wants, cruiser)
     assert wanted_by(wants, replace(cruiser, mana_value=5))
+    # Equipment is the one artifact such a commander leaves alone.
+    assert not wanted_by(wants, replace(cruiser, type_line="Artifact — Equipment", mana_value=5))
 
 
 def test_a_commanders_payoff_tags_want_what_feeds_them_and_its_treasure_makers_want_treasure(

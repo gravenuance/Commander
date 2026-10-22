@@ -16,6 +16,9 @@ from commander.deckprofile import ThemeSpec
 from commander.deckthemes import TYPE_NAMES
 from commander.scryfall import SetCard
 
+# One thing a card has of a theme: ("type", "dwarf"), ("keyword", "flash"), ("tag", slug) or ("want", name).
+type Trait = tuple[str, str]
+
 
 @dataclass(slots=True, frozen=True)
 class CardFacts:
@@ -80,9 +83,10 @@ FEEDERS_BY_TYPE: Mapping[str, Want] = {"vehicle": VEHICLE}
 # What a commander's Tagger tags say its deck wants (checked 2026-10-22): its payoff tags want what feeds
 # them, and its Treasure makers want Treasure.
 COMMANDER_WANTS_BY_TAG: Mapping[str, Want] = {**FEEDERS_BY_TAG, "repeatable-treasures": TREASURE}
-# A commander that animates cards wants the ones it can animate: not an Aura, which cannot become a creature.
+# A commander that animates cards wants the ones it can animate: no Aura, which is attached, and no
+# Equipment, which is too.
 ANIMATED_BY_TAG: Mapping[str, Want] = {
-    "animate-artifact": ARTIFACT,
+    "animate-artifact": Want("artifact that is no Equipment", types=("Artifact",), not_types=("Equipment",)),
     "animate-enchantment": Want("enchantment that is no Aura", types=("Enchantment",), not_types=("Aura",)),
 }
 # ...and, when it also cares about high mana values, only those of at least BIG_MANA_VALUE.
@@ -96,6 +100,21 @@ def spec_wants(spec: ThemeSpec) -> tuple[Want, ...]:
     wants = [FEEDERS_BY_TAG[tag] for tag in spec.tags if tag in FEEDERS_BY_TAG]
     wants.extend(FEEDERS_BY_TYPE[t.casefold()] for t in spec.types if t.casefold() in FEEDERS_BY_TYPE)
     return tuple(dict.fromkeys(wants))
+
+
+def named_traits(spec: ThemeSpec, card: CardFacts) -> frozenset[Trait]:
+    """The spec's own types, keywords and tags (sub-tags included) that the card has."""
+    words = type_words(card.type_line)
+    return frozenset(
+        [("type", t.casefold()) for t in spec.types if _has_word(words, t)]
+        + [("keyword", k.casefold()) for k in spec.keywords if k.casefold() in card.keywords]
+        + [("tag", t) for t in spec.tags if t in card.slugs]
+    )
+
+
+def traits(spec: ThemeSpec, card: CardFacts) -> frozenset[Trait]:
+    """What of the spec the card has: its named traits, and the wants of its payoff tags the card meets."""
+    return named_traits(spec, card) | {("want", w.name) for w in spec_wants(spec) if w.matches(card)}
 
 
 def commander_wants(db: CardDb, slugs: Iterable[str]) -> tuple[Want, ...]:
