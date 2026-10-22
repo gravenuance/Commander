@@ -20,7 +20,7 @@ from datetime import datetime
 from enum import Enum
 from functools import cached_property
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, Self
 
 from commander.answers import card_key
 from commander.carddb import CardDb, CardInfo
@@ -172,6 +172,16 @@ class BoardCard:
     # deck holds, so without this a send that went unmarked (read-back failed, timeout, board lock) would add
     # the copies again on the next save; the deck holding this many plus `copies` means it landed.
     sent_held: int | None = None
+    # The copies the deck held of the chosen cut then; None when nothing is cut or the send was noted before
+    # this was kept. A swap landed only if the add rose and the cut fell, as a Mountain added by hand moves
+    # the first alone.
+    sent_cut_held: int | None = None
+
+    def with_status(self, status: Status, **changes: object) -> Self:
+        """The card in another status with `changes`; leaving ADD drops the count held when sent."""
+        for field in ("sent_held", "sent_cut_held"):
+            changes.setdefault(field, getattr(self, field) if status is Status.ADD else None)
+        return replace(self, status=status, **changes)
 
     @property
     def relabellable(self) -> bool:
@@ -199,6 +209,8 @@ class BoardCard:
             raise ValueError(f"{self.name}: only a card being added has a category")
         if self.sent_held is not None and (self.status is not Status.ADD or self.sent_held < 0):
             raise ValueError(f"{self.name}: only a card being added has a count held when sent")
+        if self.sent_cut_held is not None and (self.sent_held is None or self.sent_cut_held < 0):
+            raise ValueError(f"{self.name}: a cut's count held when sent needs the added card's too")
 
 
 @dataclass(slots=True, frozen=True)
@@ -451,6 +463,7 @@ def parse_board(raw: Mapping[str, object]) -> Board:
                 reconsidered=card.get("reconsidered") is True,
                 category=opt_str(card, "category", where),
                 sent_held=opt_int(card, "sentHeld", where),
+                sent_cut_held=opt_int(card, "sentCutHeld", where),
             )
         )
     counts: list[CountChange] = []
@@ -525,6 +538,7 @@ def card_json(card: BoardCard) -> dict[str, object]:
         "reconsidered": card.reconsidered,
         "category": card.category,
         "sentHeld": card.sent_held,
+        "sentCutHeld": card.sent_cut_held,
     }
 
 
@@ -567,13 +581,23 @@ def board_plan(deck: Deck, board: Board) -> Plan | None:
     return Plan(str(deck.id), tuple(adds), tuple(cuts))
 
 
-def basic_land_swaps(deck: Deck, board: Board) -> dict[str, int]:
-    """The copies deck holds of each queued basic land the next save adds to, by card id: what
+@dataclass(slots=True, frozen=True)
+class HeldAtSend:
+    """The copies a deck held of a basic land swap's added card and of its cut (None without a cut)."""
+
+    added: int
+    cut: int | None
+
+
+def basic_land_swaps(deck: Deck, board: Board) -> dict[str, HeldAtSend]:
+    """The copies deck holds for each queued basic land the next save adds to, by card id: what
     `BoardService.record_sending` keeps, because the plan adds to the copies held (`board_plan`)."""
     held = _held(deck)
     done = already_added(deck, board)
     return {
-        card.id: held[card_key(card.name)]
+        card.id: HeldAtSend(
+            held[card_key(card.name)], held[card_key(card.choice)] if card.choice is not None else None
+        )
         for card in board.queued
         if _is_basic_land(card.name) and card not in done
     }
@@ -614,11 +638,16 @@ def held_keys(deck: Deck, db: CardDb) -> frozenset[str]:
 
 def _holds(deck: Deck, card: BoardCard) -> bool:
     """Whether deck already holds every copy the card adds. A basic land is added to what the deck holds, so
-    only a send recorded in `sent_held` can show it done."""
-    held = _held(deck)[card_key(card.name)]
+    only a send recorded in `sent_held` can show it done, and only if the cut fell too (`sent_cut_held`):
+    a copy added by hand since raises the count alone."""
+    counts = _held(deck)
     if not _is_basic_land(card.name):
-        return held >= card.copies
-    return card.sent_held is not None and held >= card.sent_held + card.copies
+        return counts[card_key(card.name)] >= card.copies
+    if card.sent_held is None or counts[card_key(card.name)] < card.sent_held + card.copies:
+        return False
+    if card.choice is None or card.sent_cut_held is None:
+        return True
+    return counts[card_key(card.choice)] <= card.sent_cut_held - card.copies
 
 
 def _add_target(held: Counter[str], card: BoardCard) -> int:
@@ -706,11 +735,10 @@ class BoardService:
             if existing is not None and existing.status not in {Status.REJECTED, Status.APPLIED}:
                 raise BoardError(f"{info.name} is already on the board ({existing.status.value})")
             if existing is not None:
-                card = replace(
-                    existing,
+                card = existing.with_status(
+                    Status.OPEN,
                     reason=reason or existing.reason,
                     replace=options or existing.replace,
-                    status=Status.OPEN,
                     choice=None,
                     note="",
                     updated_at=stamp,
@@ -771,7 +799,7 @@ class BoardService:
             if updated.choice is not None and updated.choice.casefold() not in {
                 o.name.casefold() for o in updated.replace
             }:
-                updated = replace(updated, choice=None, status=Status.OPEN)
+                updated = updated.with_status(Status.OPEN, choice=None)
             changed = [
                 what
                 for what, before, after in (
@@ -826,9 +854,8 @@ class BoardService:
                     raise BoardError(f"{name} has a queued count change; undo it first")
             kept_share = share if status is Status.REJECTED else None
             reconsidering = status is Status.OPEN and card.status is Status.REJECTED
-            updated = replace(
-                card,
-                status=status,
+            updated = card.with_status(
+                status,
                 choice=cut,
                 category=filed,
                 note=note,
@@ -836,7 +863,8 @@ class BoardService:
                 rejected_share=kept_share,
                 reconsidered=status is Status.OPEN
                 and (card.reconsidered or (reconsidering and actor is Actor.YOU)),
-                sent_held=card.sent_held if status is Status.ADD else None,
+                # The cut's count held at a send says nothing about another cut.
+                sent_cut_held=card.sent_cut_held if status is Status.ADD and cut == card.choice else None,
             )
             if reconsidering and relabel is not None and card.relabellable:
                 updated = _relabelled(updated, relabel)
@@ -868,7 +896,7 @@ class BoardService:
             stamp = self._stamp()
             done = set(ids)
             cards = tuple(
-                replace(c, status=Status.APPLIED, updated_at=stamp, sent_held=None)
+                c.with_status(Status.APPLIED, updated_at=stamp)
                 if c.id in done and c.status is Status.ADD
                 else c
                 for c in board.cards
@@ -884,11 +912,15 @@ class BoardService:
                 entry = Activity(stamp, actor, "saved to Archidekt", None, f"{names}; snapshot '{snapshot}'")
             save(Board(cards, tuple(c for c in board.counts if c not in finished)), entry)
 
-    def record_sending(self, held: Mapping[str, int], actor: Actor) -> None:
-        """Before a save is sent: keep for each queued basic land swap (by card id) the copies the deck holds,
-        so a send that is never marked applied is not made again (`BoardCard.sent_held`)."""
+    def record_sending(self, held: Mapping[str, HeldAtSend], actor: Actor) -> None:
+        """Before a save is sent: keep for each queued basic land swap (by card id) the copies the deck holds
+        of the card and its cut, so a send that is never marked applied is not made again
+        (`BoardCard.sent_held`, `BoardCard.sent_cut_held`)."""
         with self._editing() as (board, save):
-            cards = tuple(replace(c, sent_held=held[c.id]) if c.id in held else c for c in board.cards)
+            cards = tuple(
+                replace(c, sent_held=held[c.id].added, sent_cut_held=held[c.id].cut) if c.id in held else c
+                for c in board.cards
+            )
             names = ", ".join(f"{c.name} from {c.sent_held}" for c in cards if c.id in held)
             sending = _note_line(self._stamp(), actor, "sending to Archidekt", names, None)
             save(Board(cards, board.counts), sending)
@@ -991,13 +1023,8 @@ class BoardService:
             ):
                 return None
             stamp = self._stamp()
-            updated = replace(
-                card,
-                status=Status.REJECTED,
-                note=note,
-                updated_at=stamp,
-                rejected_share=share,
-                reconsidered=False,
+            updated = card.with_status(
+                Status.REJECTED, note=note, updated_at=stamp, rejected_share=share, reconsidered=False
             )
             save(
                 _swap(board, updated),
@@ -1025,8 +1052,8 @@ class BoardService:
             if card is None or card.status is not Status.OPEN:
                 return None
             stamp = self._stamp()
-            updated = replace(
-                card, status=Status.APPLIED, note=ALREADY_IN_THE_DECK, updated_at=stamp, reconsidered=False
+            updated = card.with_status(
+                Status.APPLIED, note=ALREADY_IN_THE_DECK, updated_at=stamp, reconsidered=False
             )
             save(_swap(board, updated), Activity(stamp, Actor.CMDR, "closed", card.name, ALREADY_IN_THE_DECK))
             return updated

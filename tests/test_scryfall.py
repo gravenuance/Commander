@@ -396,6 +396,20 @@ def test_data_a_week_old_is_rebuilt_without_asking_for_sets(tmp_path: Path) -> N
     assert fake.requests == [BULK_URL, CARDS_URL, TAGS_URL]
 
 
+def test_data_is_rebuilt_on_the_day_the_sync_report_promised_whatever_the_hour(tmp_path: Path) -> None:
+    fake = FakeScryfall()
+    fake.sets = only_sets(fake, "fdn")
+    built = datetime(2026, 10, 1, 18, 0, tzinfo=UTC)
+    refresh(fake, tmp_path, when=built)
+    last_morning = refresh_card_db(
+        client_for(fake), tmp_path, now=lambda: datetime(2026, 10, 7, 23, 59, tzinfo=UTC)
+    )
+    assert (last_morning.status, last_morning.next_due) == (RefreshStatus.CURRENT, date(2026, 10, 8))
+    # Seven days less nine hours after the build, on the day named as the next refresh.
+    due_day = refresh_card_db(client_for(fake), tmp_path, now=lambda: datetime(2026, 10, 8, 9, 0, tzinfo=UTC))
+    assert (due_day.status, due_day.reason) == (RefreshStatus.UPDATED, "7 days old")
+
+
 def test_a_set_released_since_the_build_rebuilds_the_data(tmp_path: Path) -> None:
     fake = FakeScryfall()
     built = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)

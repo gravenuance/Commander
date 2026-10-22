@@ -1,5 +1,6 @@
 """Previewing and saving a deck's board against a fake Archidekt whose deck moved on since the last sync."""
 
+import json
 from collections.abc import Callable, Iterator, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -10,6 +11,7 @@ from commander.apply import NotYourDeckError, SaveError, SaveReadBackError
 from commander.archidekt import parse_deck
 from commander.archidekt_edit import ArchidektEditor, CardEdit
 from commander.board import (
+    BOARD_FILE,
     Actor,
     BoardError,
     BoardIOError,
@@ -425,6 +427,7 @@ def test_a_basic_land_swap_that_never_reached_archidekt_is_sent_on_the_next_save
     assert (live_quantity(fake, "Mountain"), live_quantity(fake, "Disruptor Flute")) == (6, 1)
     # The six Mountains held at the send stay noted on the card, and the log says so.
     assert read_board(stored.folder).cards[0].sent_held == 6
+    assert read_board(stored.folder).cards[0].sent_cut_held == 1
     sending = [a for a in read_activity(stored.folder) if a.action == "sending to Archidekt"]
     assert [a.detail for a in sending] == ["Mountain from 6"]
     fake.write_status.clear()
@@ -436,7 +439,64 @@ def test_a_basic_land_swap_that_never_reached_archidekt_is_sent_on_the_next_save
     assert read_board(stored.folder).cards[0].sent_held is None
 
 
-def test_a_deck_that_gained_mountains_since_an_unsent_swap_still_gets_the_swap(
+def test_researching_an_unsent_swap_reopens_it_and_forgets_the_copies_held_at_the_send(
+    fake: FakeArchidekt, service: BoardService, stored: StoredDeck, commit: Callable[[], BoardSave]
+) -> None:
+    card_id = queue(service, "Mountain", cut="Disruptor Flute")
+    fake.write_status["modifyCards"] = 500
+    with pytest.raises(SaveError):
+        commit()
+    assert read_board(stored.folder).cards[0].sent_held == 6
+
+    researched = service.research(card_id, Actor.CLAUDE, reason="a land that fits the curve")
+
+    assert (researched.status, researched.choice, researched.sent_held) == (Status.OPEN, None, None)
+    assert read_board(stored.folder).cards[0].sent_held is None
+
+
+def test_a_deck_that_gained_a_mountain_by_hand_since_an_unsent_swap_still_cuts_the_swaps_card(
+    fake: FakeArchidekt, service: BoardService, stored: StoredDeck, commit: Callable[[], BoardSave]
+) -> None:
+    queue(service, "Mountain", cut="Disruptor Flute")
+    fake.write_status["modifyCards"] = 500
+    with pytest.raises(SaveError):
+        commit()
+    fake.write_status.clear()
+    # A Mountain was added on Archidekt meanwhile: seven are held, as if the swap's add had landed.
+    mountains = live_entry(fake, "Mountain")
+    assert mountains is not None
+    mountains["quantity"] = 7
+
+    saved = commit()
+
+    assert (live_quantity(fake, "Mountain"), live_quantity(fake, "Disruptor Flute")) == (8, 0)
+    assert saved.applied == ("Mountain",)
+    assert read_board(stored.folder).cards[0].status is Status.APPLIED
+
+
+def test_a_board_from_before_the_cuts_count_was_kept_counts_a_swap_landed_by_its_add_alone(
+    fake: FakeArchidekt, service: BoardService, stored: StoredDeck, commit: Callable[[], BoardSave]
+) -> None:
+    queue(service, "Mountain", cut="Disruptor Flute")
+    fake.write_status["modifyCards"] = 500
+    with pytest.raises(SaveError):
+        commit()
+    fake.write_status.clear()
+    path = stored.folder / BOARD_FILE
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    del raw["cards"][0]["sentCutHeld"]
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    mountains = live_entry(fake, "Mountain")
+    assert mountains is not None
+    mountains["quantity"] = 7
+
+    saved = commit()
+
+    assert (live_quantity(fake, "Mountain"), live_quantity(fake, "Disruptor Flute")) == (7, 1)
+    assert saved.applied == ("Mountain",)
+
+
+def test_a_deck_that_lost_mountains_since_an_unsent_swap_still_gets_the_swap(
     fake: FakeArchidekt, service: BoardService, commit: Callable[[], BoardSave]
 ) -> None:
     queue(service, "Mountain", cut="Disruptor Flute")

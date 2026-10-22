@@ -48,6 +48,7 @@ from commander.config import MetaSettings
 from commander.credentials import KeyringKeyStore, KeyStore
 from commander.deckcache import (
     NOT_FETCHED,
+    Accepted,
     Answer,
     AnswerSource,
     Clock,
@@ -819,6 +820,12 @@ def _group_peers(
     The deck's own commander (own_id given) is read in full. A commander the profile names as alike
     (own_id None) is searched smaller and read for an alike_reads(peer_decks) cut of it; an answer stored for
     the deck-sized question also serves it, cut to that many decks.
+
+    An alike answer has an item of its own, because an item keeps one request and a refetch of the 15-deck
+    alike answer must not replace the 60-deck own one, the stale fallback when the own refetch fails. While
+    the own answer is the newest, it serves the alike question, but it lacks the decks led with a partner or
+    Background, which own answers drop; the alike answer's own fetch brings them in. Alike answers stored in
+    the own item before this stay accepted there (ADR 0053).
     """
     settings = sources.settings
     name = commander_name(group)
@@ -826,8 +833,11 @@ def _group_peers(
     full = _group_request(name, bracket, sources, settings.peer_decks)
     reads = alike_reads(settings.peer_decks) if alike else settings.peer_decks
     request = _group_request(name, bracket, sources, reads) if alike else full
-    item = cache_item("archidekt", name, str(bracket))
-    with sources.searches.hold(item):
+    own_item = cache_item("archidekt", name, str(bracket))
+    item = cache_item("archidekt-alike", name, str(bracket)) if alike else own_item
+    accepted = [Accepted(own_item, request), Accepted(own_item, full)] if alike else []
+    # The commander's one lock, so an alike read waits for the own read of it and finds its answer.
+    with sources.searches.hold(own_item):
         answer = cached_answer(
             item,
             request,
@@ -849,9 +859,9 @@ def _group_peers(
             _peer_cache(folder, "Archidekt decks"),
             now=now,
             refresh=refresh,
-            fresh_for=peer_fresh_for(item, now()),
+            fresh_for=peer_fresh_for(own_item, now()),
             errors=_ERRORS,
-            also_accept=[full] if alike else (),
+            also_accept=accepted,
         )
     return _cut_to(answer, reads)
 
