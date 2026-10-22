@@ -99,8 +99,8 @@ class GameOutcome(NamedTuple):
     commander_turns: tuple[int, ...]
     # Mana the permanents could make, on turn 1, 2, 3 ... up to the last turn played.
     mana: tuple[int, ...]
-    # The first turn up to the middle one shown that ended with mana unspent while a spell in hand had the mana
-    # for it but not the colours.
+    # The first turn up to the middle one shown that ended with mana unspent while a spell in hand had the
+    # mana for it but not the colours.
     colour_screw_turn: int
     # Per combo, in the order given: the turn it landed.
     combo_turns: tuple[int, ...]
