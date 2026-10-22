@@ -475,6 +475,25 @@ def test_card_mana_reads_what_each_card_makes(tmp_path: Path) -> None:
     assert found["mind stone"].produced == ""
 
 
+def test_a_theme_card_sharing_a_real_cards_name_never_stands_in_for_it(tmp_path: Path) -> None:
+    # Scryfall's "front_card" objects (Savage Lands, Cunning) reuse real names; this twin sorts first.
+    twin = json.loads(filler_card(30_004, "Mind Stone", 0.0))
+    twin.update(
+        oracle_id="00000000-0000-4000-8000-000000030004",
+        layout="front_card",
+        type_line="Card",
+        mana_cost="",
+        legalities={"commander": "not_legal"},
+    )
+    with CardDb(build_card_db(tmp_path, extra_cards=[json.dumps(twin)])) as db:
+        mana = db.card_mana(["Mind Stone"])["mind stone"]
+        named = db.cards_named(["Mind Stone"])["mind stone"]
+        single = db.card_named("Mind Stone")
+    assert (mana.type_line, mana.layout, mana.mana_cost) == ("Artifact", "normal", "{2}")
+    assert (named.type_line, named.commander_legal) == ("Artifact", True)
+    assert single == named
+
+
 def test_card_mana_reads_each_cards_layout(tmp_path: Path) -> None:
     giant = json.loads(filler_card(30_002, "Test Giant // Test Stomp", 3.0))
     giant.update(layout="adventure", mana_cost="{2}{R} // {1}{R}")

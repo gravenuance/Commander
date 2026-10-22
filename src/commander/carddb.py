@@ -31,7 +31,8 @@ _CARD_QUERIES = {
     "oracle_id": "SELECT oracle_id, name, mana_cost, cmc, type_line, color_identity, game_changer,"
     " commander_legal, cheapest_cents, edhrec_rank FROM oracle WHERE oracle_id IN ({}) ORDER BY oracle_id",
     "name_key": "SELECT oracle_id, name, mana_cost, cmc, type_line, color_identity, game_changer,"
-    " commander_legal, cheapest_cents, edhrec_rank FROM oracle WHERE name_key IN ({}) ORDER BY oracle_id",
+    " commander_legal, cheapest_cents, edhrec_rank FROM oracle WHERE name_key IN ({})"
+    " ORDER BY layout = 'front_card', oracle_id",
 }
 _INFO_COLUMNS = (
     "oracle.oracle_id, name, mana_cost, cmc, type_line, color_identity, game_changer, commander_legal,"
@@ -136,6 +137,7 @@ _CARD_MANA_QUERY = """
 SELECT o.oracle_id, o.name, o.mana_cost, o.cmc, o.type_line, o.oracle_text, m.produced, m.rarity, o.layout
 FROM oracle o JOIN card_mana m ON m.oracle_id = o.oracle_id
 WHERE o.name_key IN ({})
+ORDER BY o.layout = 'front_card', o.oracle_id
 """
 
 _SCHEMA = """
@@ -469,7 +471,8 @@ class CardDb:
         asked = {name.casefold() for name in names}
         found: dict[str, CardInfo] = {}
         for info in self._cards_where("name_key", asked):
-            # Ordered by oracle id, so a name shared by several cards resolves the same way every time.
+            # Real cards come before theme cards ("front_card" objects reuse real names), then by oracle id,
+            # so a name shared by several cards resolves the same way every time.
             found.setdefault(info.name.casefold(), info)
         # A front face is the start of a "front // back" name: an index range per name, in chunks to keep the
         # statement small.
@@ -671,7 +674,11 @@ class CardDb:
     def card_mana(self, names: Iterable[str]) -> dict[str, CardMana]:
         """What each named card does for a mana base, by casefolded name; unknown names are left out."""
         rows = self._select_in(_CARD_MANA_QUERY, [name.casefold() for name in names])
-        return {row[1].casefold(): CardMana(*row) for row in rows}
+        found: dict[str, CardMana] = {}
+        for row in rows:
+            # Rows come real cards first, so a theme card sharing the name never replaces its card.
+            found.setdefault(row[1].casefold(), CardMana(*row))
+        return found
 
     def lands(
         self, identity: str, *, max_cents: int | None = None, limit: int = MAX_LANDS
