@@ -65,15 +65,27 @@ def test_basics_move_to_the_short_colour_and_untapped_duals_close_what_is_left()
     assert plan.still_short == ("Counterspell",)
 
 
-def test_a_split_cards_back_half_asks_for_its_colours_sources_too() -> None:
+def test_a_split_cards_dearer_half_asks_for_its_colours_sources() -> None:
     # Cast for white at one mana or for two blue at two; the printed mana value is the three added up.
-    split = card("Dispel // Prayer", "{W} // {U}{U}", 3, "Instant // Instant")
+    split = card("Dispel // Prayer", "{W} // {U}{U}", 3, "Instant // Instant", layout="split")
     deck = deck_of(("Plains", 30), ("Island", 8), ("Filler", 60), ("Dispel // Prayer", 1))
     plan = suggestion(deck, extra=(split,))
-    # Counterspell's {U}{U} in the first test asked the same of blue: the back half does here.
+    # Counterspell's {U}{U} in the first test asked the same of blue: the dearer half does here.
     assert plan.basics == (BasicCount("W", "Plains", 30, 18, 2), BasicCount("U", "Island", 8, 20))
     assert plan.colours == (ColourOutcome("W", 0, 0), ColourOutcome("U", 2, 1))
     assert plan.still_short == ("Dispel // Prayer",)
+
+
+def test_an_adventures_colour_asks_nothing_when_only_its_adventure_half_uses_it() -> None:
+    # Made up: a colourless creature whose adventure costs {U}{U}. Only the creature is judged.
+    golem = card(
+        "Tide Golem // Flood", "{3} // {U}{U}", 3, "Artifact Creature // Instant", layout="adventure"
+    )
+    deck = deck_of(("Plains", 30), ("Island", 8), ("Filler", 60), ("Tide Golem // Flood", 1))
+    plan = suggestion(deck, extra=(golem,))
+    # Only the commander asks: 18 of 41 lands for a three-drop, 16.7 of 38, plus one for two colours.
+    assert plan.basics == (BasicCount("W", "Plains", 30, 20), BasicCount("U", "Island", 8, 18))
+    assert plan.still_short == ()
 
 
 def test_a_plain_tap_land_gets_an_untapped_land_of_the_same_colours() -> None:

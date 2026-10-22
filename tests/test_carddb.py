@@ -390,6 +390,28 @@ def test_card_mana_reads_what_each_card_makes(tmp_path: Path) -> None:
     assert found["mind stone"].produced == ""
 
 
+def test_card_mana_reads_each_cards_layout(tmp_path: Path) -> None:
+    giant = json.loads(filler_card(30_002, "Test Giant // Test Stomp", 3.0))
+    giant.update(layout="adventure", mana_cost="{2}{R} // {1}{R}")
+    fire = json.loads(filler_card(30_003, "Test Fire // Test Ice", 4.0))
+    fire.update(layout="split", mana_cost="{1}{R} // {1}{U}")
+    with CardDb(build_card_db(tmp_path, extra_cards=[json.dumps(giant), json.dumps(fire)])) as db:
+        found = db.card_mana(
+            [
+                "test giant // test stomp",
+                "test fire // test ice",
+                "Mountain",
+                "Sundering Eruption // Volcanic Fissure",
+            ]
+        )
+    assert {name: info.layout for name, info in found.items()} == {
+        "test giant // test stomp": "adventure",
+        "test fire // test ice": "split",
+        "mountain": "normal",
+        "sundering eruption // volcanic fissure": "modal_dfc",
+    }
+
+
 def tiny_db_inputs(folder: Path) -> tuple[Path, CardDataMeta]:
     cards_gz, _ = write_bulk(folder / "bulk", cards=card_lines())
     meta = CardDataMeta(CARDS_UPDATED_AT, "2026-10-15T00:00:00+00:00", "2026-10-15T12:00:00+00:00")

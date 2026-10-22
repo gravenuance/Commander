@@ -116,14 +116,15 @@ LIMIT :limit
 
 # Nonbasic lands that fit a deck, most played first; the caller keeps the ones whose front face is a land.
 _LAND_QUERY = f"""
-SELECT oracle.oracle_id, name, mana_cost, cmc, type_line, oracle_text, produced, rarity, cheapest_cents
+SELECT oracle.oracle_id, name, mana_cost, cmc, type_line, oracle_text, produced, rarity, layout,
+    cheapest_cents
 FROM oracle JOIN card_mana ON card_mana.oracle_id = oracle.oracle_id
 WHERE {_FITS_DECK} AND instr(type_line, 'Land') > 0 AND type_line NOT LIKE 'Basic %'
 ORDER BY edhrec_rank, oracle.oracle_id
 LIMIT :limit
 """  # noqa: S608 — built from constant fragments and placeholders; every value is bound
 _CARD_MANA_QUERY = """
-SELECT o.oracle_id, o.name, o.mana_cost, o.cmc, o.type_line, o.oracle_text, m.produced, m.rarity
+SELECT o.oracle_id, o.name, o.mana_cost, o.cmc, o.type_line, o.oracle_text, m.produced, m.rarity, o.layout
 FROM oracle o JOIN card_mana m ON m.oracle_id = o.oracle_id
 WHERE o.name_key IN ({})
 """
@@ -148,6 +149,7 @@ CREATE TABLE oracle (
     toughness TEXT,
     -- The card's own colours (front face's for a two-faced card), unlike its colour identity.
     colors TEXT NOT NULL,
+    layout TEXT NOT NULL,
     cheapest_cents INTEGER
 );
 CREATE INDEX oracle_name ON oracle (name_key);
@@ -296,6 +298,8 @@ class ParsedCard:
     # The mana it can make, as colour letters and C for colourless ("WU"), from Scryfall's produced_mana.
     produced: str = ""
     rarity: str = ""
+    # Scryfall's layout ("normal", "adventure", "split", "modal_dfc"); it decides how a two-part card is cast.
+    layout: str = "normal"
 
 
 @dataclass(slots=True, frozen=True)
@@ -310,6 +314,7 @@ class CardMana:
     oracle_text: str
     produced: str
     rarity: str
+    layout: str = "normal"
 
 
 @dataclass(slots=True, frozen=True)
@@ -617,7 +622,7 @@ class CardDb:
     ) -> list[tuple[CardMana, int | None]]:
         """Legal nonbasic lands in a colour identity with their cheapest price, the most played first."""
         params = {"identity": identity, "max_cents": max_cents, "limit": limit}
-        return [(CardMana(*row[:8]), row[8]) for row in self._query_named(_LAND_QUERY, params)]
+        return [(CardMana(*row[:9]), row[9]) for row in self._query_named(_LAND_QUERY, params)]
 
     def card_text(self, oracle_id: str) -> CardText | None:
         return self.card_texts([oracle_id]).get(oracle_id)
@@ -811,7 +816,7 @@ def _fill(
                     if card.printing.regular:
                         _keep_lowest(cheapest, oracle_id, *prices)
             db.executemany(
-                "INSERT INTO oracle VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO oracle VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     (*row, cheapest.get(oracle_id, cheapest_any.get(oracle_id)))
                     for oracle_id, row in oracle.items()
@@ -885,6 +890,7 @@ def _oracle_row(card: ParsedCard) -> tuple[object, ...]:
         card.power,
         card.toughness,
         card.colors,
+        card.layout,
     )
 
 

@@ -128,6 +128,14 @@ def test_modal_card_takes_its_cost_from_the_front_face() -> None:
     assert (card.mana_cost, card.cmc, card.type_line) == ("{2}{R}", 3.0, "Sorcery // Land")
 
 
+def test_the_layout_is_kept() -> None:
+    modal = parse_card(real_card("Sundering Eruption // Volcanic Fissure", "mh3"))
+    plain = parse_card(real_card("Mountain", "clb"))
+    assert modal is not None
+    assert plain is not None
+    assert (modal.layout, plain.layout) == ("modal_dfc", "normal")
+
+
 def test_reversible_card_takes_oracle_id_and_cmc_from_its_faces() -> None:
     raw = real_card("Battered Golem", "5dn")
     del raw["oracle_id"], raw["cmc"], raw["mana_cost"], raw["type_line"]
