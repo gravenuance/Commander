@@ -994,6 +994,30 @@ def _meta_combos(
     return _combined(answers)
 
 
+def cached_own_combos(deck: Deck, cache_root: Path, *, now: Clock) -> tuple[ComboDetail, ...] | None:
+    """The deck's own Spellbook combos from the cache alone, however old; None when none is stored for the
+    deck as it is now. Nothing is fetched."""
+
+    def not_fetched(_: Mapping[str, object]) -> tuple[ComboDetail, ...]:
+        raise NotFetchedError(NOT_FETCHED)
+
+    try:
+        request = deck_request(deck)
+    except SpellbookError:
+        return None
+    answer = cached_answer(
+        cache_item("spellbook-deck", str(deck.id)),
+        request,
+        not_fetched,
+        _cache(cache_root / CACHE_FOLDER, "Spellbook deck combos", _encode_combos, _decode_combos),
+        now=now,
+        refresh=False,
+        fresh_for=SPELLBOOK_FRESH_FOR,
+        errors=(NotFetchedError,),
+    )
+    return answer.data
+
+
 def _paced_details(sources: MetaSources, request: Mapping[str, object]) -> tuple[ComboDetail, ...]:
     sources.spellbook_pacer.wait()
     return sources.spellbook.combo_details(request)

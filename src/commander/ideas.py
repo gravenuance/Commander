@@ -421,6 +421,12 @@ def search_tags(deck: Deck, profile: Profile, db: CardDb) -> list[str]:
     MAX_SEARCH_TAGS that the most of the deck's main cards match, ties in Archidekt's tag order."""
     if not profile.tag_search:
         return []
+    return dominant_tags(deck, profile, db)
+
+
+def dominant_tags(deck: Deck, profile: Profile, db: CardDb) -> list[str]:
+    """The deck's theme tags that the most of its main cards match, whether or not the tag search is on: at
+    most MAX_SEARCH_TAGS, ties in Archidekt's tag order."""
     # Theme tags only: the play style, role and card type tags are too broad to pick decks by (ADR 0009).
     themes = [t for t in merge_themes(deck, profile, db).used if t.source is ThemeSource.DECK_TAG]
     if len(themes) <= 1:
@@ -430,6 +436,19 @@ def search_tags(deck: Deck, profile: Profile, db: CardDb) -> list[str]:
     matches = {t.name: len(db.matching(resolve_spec(t.spec, ids), oracle_ids)) for t in themes}
     # sorted is stable, so equal counts stay in the order of the deck's tags.
     return sorted(matches, key=lambda name: -matches[name])[:MAX_SEARCH_TAGS]
+
+
+def dominant_card_ids(deck: Deck, profile: Profile, db: CardDb) -> frozenset[str]:
+    """Oracle ids of the deck's main cards matching one of its `dominant_tags`."""
+    names = set(dominant_tags(deck, profile, db))
+    themes = [t for t in merge_themes(deck, profile, db).used if t.source is ThemeSource.DECK_TAG]
+    themes = [t for t in themes if t.name in names]
+    oracle_ids = [r.info.oracle_id for r in db.resolve(deck.main_cards) if r.info is not None]
+    ids = db.tag_ids([slug for t in themes for slug in t.spec.tags])
+    found: set[str] = set()
+    for theme in themes:
+        found |= db.matching(resolve_spec(theme.spec, ids), oracle_ids)
+    return frozenset(found)
 
 
 def gather_idea_pools(

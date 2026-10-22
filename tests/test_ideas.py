@@ -25,6 +25,8 @@ from commander.ideas import (
     Idea,
     adjacent_ideas,
     compile_ideas,
+    dominant_card_ids,
+    dominant_tags,
     idea_labels,
     ideas_summary,
     rejudge_ideas,
@@ -357,6 +359,25 @@ def test_an_ignored_theme_tag_is_not_searched_and_makes_room_for_the_next(deck: 
 
 def test_no_theme_tag_is_searched_while_the_tag_search_is_off(deck: Deck, db: CardDb) -> None:
     assert search_tags(themed_deck(deck, ("Flash",)), Profile(), db) == []
+
+
+def test_the_dominant_tags_do_not_depend_on_the_tag_search(deck: Deck, db: CardDb) -> None:
+    themed = themed_deck(deck, ("Golems", "Dwarves", "Flash", "Vehicles"))
+    assert dominant_tags(themed, Profile(), db) == ["Flash", "Golems", "Dwarves"]
+    assert dominant_tags(themed, Profile(tag_search=True), db) == search_tags(
+        themed, Profile(tag_search=True), db
+    )
+
+
+def test_the_cards_matching_the_dominant_tags_are_found_with_the_tag_search_off(
+    deck: Deck, db: CardDb
+) -> None:
+    themed = themed_deck(deck, ("Golems", "Dwarves", "Flash", "Vehicles"))
+    found = dominant_card_ids(themed, Profile(), db)
+    names = {info.name for info in db.cards(found).values()}
+    # Flash, Golems and Dwarves are the dominant tags; Vehicles falls out, and the Hoverbike is Flash too.
+    assert names == {"Magda, Brazen Outlaw", "Disruptor Flute", "High-Speed Hoverbike", "Battered Golem"}
+    assert dominant_card_ids(themed_deck(deck, ()), Profile(), db) == frozenset()
 
 
 def tag_pool(tag: str, *decks: list[str]) -> TaggedDecks:
