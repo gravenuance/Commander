@@ -18,7 +18,17 @@ from commander.deckprofile import Profile, ThemeSpec
 from commander.deckthemes import ThemeSource, merge_themes
 from commander.fsutil import write_text_atomic
 from commander.ideas import dominant_tags
-from commander.jsonshape import ShapeError, as_object, req_bool, req_int, req_list, req_str, str_list
+from commander.jsonshape import (
+    ShapeError,
+    as_object,
+    opt_str,
+    req_bool,
+    req_float,
+    req_int,
+    req_list,
+    req_str,
+    str_list,
+)
 from commander.models import Deck
 from commander.net import NetworkError, Pacer
 from commander.scryfall import ScryfallClient, ScryfallError, SetCard, SetInfo, is_scryfall_id
@@ -28,7 +38,7 @@ log = logging.getLogger(__name__)
 
 PREVIEWS_FILE = "previews.json"
 # Bump when the file's fields change; a file of another version is ignored until the next probe replaces it.
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 # Half Scryfall's asked-for 10 requests a second.
 PROBE_INTERVAL_SECONDS = 0.2
 # 1,750 cards a set, more than any set has had.
@@ -244,8 +254,10 @@ def _cache_json(cache: PreviewCache) -> dict[str, object]:
                 "oracleId": c.oracle_id,
                 "name": c.name,
                 "manaCost": c.mana_cost,
+                "manaValue": c.mana_value,
                 "typeLine": c.type_line,
                 "text": c.oracle_text,
+                "power": c.power,
                 "keywords": list(c.keywords),
                 "identity": c.color_identity,
                 "set": c.set_code,
@@ -274,8 +286,10 @@ def _cache_from_json(raw: object) -> PreviewCache:
                 oracle_id=req_str(card, "oracleId", where),
                 name=req_str(card, "name", where),
                 mana_cost=req_str(card, "manaCost", where),
+                mana_value=req_float(card, "manaValue", where),
                 type_line=req_str(card, "typeLine", where),
                 oracle_text=req_str(card, "text", where),
+                power=opt_str(card, "power", where),
                 keywords=str_list(card, "keywords", where),
                 color_identity=req_str(card, "identity", where),
                 set_code=req_str(card, "set", where),

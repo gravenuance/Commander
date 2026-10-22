@@ -168,6 +168,15 @@ def test_a_search_page_reads_the_real_answer_and_knows_a_reprint_from_a_preview(
     assert by_name["Reckless Impulse"].already_out
 
 
+def test_a_preview_keeps_its_mana_value_and_power_through_the_cache(tmp_path: Path) -> None:
+    page = parse_search_page(search_page())
+    by_name = {card.name: card for card in page.cards}
+    shown = [by_name["D-7 Battle Cruiser"], by_name["Quark, Humble Proprietor"], by_name["Reckless Impulse"]]
+    assert [(c.mana_value, c.power) for c in shown] == [(2.0, "3"), (3.0, "1"), (2.0, None)]
+    write_previews(tmp_path, PreviewCache(TODAY, page.cards))
+    assert read_previews(tmp_path).cards == page.cards
+
+
 def test_a_next_page_that_is_not_scryfalls_search_is_refused() -> None:
     first, _ = two_pages()
     first["next_page"] = "https://example.com/cards/search?page=2"
