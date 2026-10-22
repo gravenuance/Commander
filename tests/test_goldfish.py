@@ -473,6 +473,27 @@ def test_two_commanders_are_figured_apart() -> None:
 # --- colours ---------------------------------------------------------------------------------------------
 
 
+def test_a_stuck_spell_is_no_screw_when_all_the_mana_went_on_other_plays() -> None:
+    red = make("Red One", mv=1, pips={"R": 1}, kinds=CREATURE)
+    green_one = make("Green One", mv=1, pips={"G": 1}, kinds=CREATURE)
+    green_two_a = make("Green Two A", mv=2, pips={"G": 1}, kinds=CREATURE)
+    green_two_b = make("Green Two B", mv=2, pips={"G": 1}, kinds=CREATURE)
+    # Two Forests: turn one's mana pays the one-drop, turns two and three's the two-drops; the red spell never
+    # had mana to spare.
+    slots = [FOREST, FOREST, red, green_one, green_two_a, green_two_b, VANILLA]
+    assert run(slots).colour_screw == 0.0
+
+
+def test_a_stuck_spell_is_a_screw_when_mana_was_left_unspent() -> None:
+    red = make("Red One", mv=1, pips={"R": 1}, kinds=CREATURE)
+    assert run([FOREST, FOREST, red, *repeat(VANILLA, 4)]).colour_screw == 1.0
+
+
+def test_a_spell_stuck_on_colours_that_the_policy_holds_back_is_no_screw() -> None:
+    red_finisher = make("Red Finisher", mv=1, pips={"R": 1}, finisher=True)
+    assert run([FOREST, FOREST, red_finisher, *repeat(VANILLA, 4)]).colour_screw == 0.0
+
+
 def test_off_colour_lands_leave_a_spell_with_the_mana_but_not_the_colours() -> None:
     red = make("Red Spell", mv=2, pips={"R": 2}, kinds=CREATURE)
     report = run([*repeat(FOREST, 4), red, VANILLA, VANILLA])

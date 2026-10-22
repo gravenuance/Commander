@@ -99,7 +99,8 @@ class GameOutcome(NamedTuple):
     commander_turns: tuple[int, ...]
     # Mana the permanents could make, on turn 1, 2, 3 ... up to the last turn played.
     mana: tuple[int, ...]
-    # The first turn up to the middle one shown on which a spell in hand had the mana but not the colours.
+    # The first turn up to the middle one shown that ended with mana unspent while a spell in hand had the mana
+    # for it but not the colours.
     colour_screw_turn: int
     # Per combo, in the order given: the turn it landed.
     combo_turns: tuple[int, ...]
@@ -627,9 +628,9 @@ class _Game:
         self.drops_left = 1 + self.extra_drops
         self.units = list(pool)
         self._play_lands()
+        self._act()
         if self.turn <= s.mid and not self.screw:
             self._check_screw()
-        self._act()
         self.mana.append(len(pool))
 
     def _draw(self, count: int) -> None:
@@ -731,14 +732,17 @@ class _Game:
         return first[max(first, key=score)]
 
     def _check_screw(self) -> None:
+        """Colour screw: mana is left unspent at the end of the turn while a spell the policy would cast, or
+        the uncast commander, costs no more than the turn's mana but cannot be paid for its colours."""
+        if not self.units:
+            return
         cards = self.s.cards
-        units = self.units
         for cid in (*self.hand, *self.cmd_left):
             card = cards[cid]
             cost = card.cost
-            if card.is_land or card.ritual or not cost.hall or cost.total > len(units):
+            if (card.rank >= _HELD and cid not in self.cmd_left) or not cost.hall:
                 continue
-            if not can_pay(units, cost):
+            if cost.total <= len(self.pool) and not can_pay(self.pool, cost):
                 self.screw = self.turn
                 return
 
