@@ -6,8 +6,6 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
-import httpx
-
 from commander.jsonshape import (
     ShapeError,
     as_object,
@@ -348,6 +346,8 @@ class _Cursor:
 
 
 def _target(url: str, params: Mapping[str, str | int] | None) -> str:
+    import httpx  # noqa: PLC0415
+
     return f"{url}?{httpx.QueryParams(params)}" if params else url
 
 

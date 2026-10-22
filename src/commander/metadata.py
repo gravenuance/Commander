@@ -26,8 +26,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from functools import partial
 from pathlib import Path
-
-import httpx
+from typing import TYPE_CHECKING
 
 from commander.archidekt import (
     MIN_DECKS,
@@ -92,6 +91,9 @@ from commander.tournaments import (
     TournamentSource,
     commander_name,
 )
+
+if TYPE_CHECKING:
+    import httpx
 
 log = logging.getLogger(__name__)
 
@@ -224,7 +226,7 @@ class MetaSources:
 
 
 def topdeck_client(
-    http: httpx.Client,
+    http: "httpx.Client",
     pacer_factory: Callable[[float], Pacer],
     cache_root: Path,
     keys: KeyStore | None = None,
@@ -243,7 +245,7 @@ def topdeck_client(
 
 
 def meta_sources(
-    http: httpx.Client,
+    http: "httpx.Client",
     pacer_factory: Callable[[float], Pacer],
     user: str,
     settings: MetaSettings,
