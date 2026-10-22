@@ -387,17 +387,22 @@ def _split_combos(
 # --- one card ---------------------------------------------------------------------------------------------
 
 _KIND_WORDS = {kind.value: kind for kind in CardKind}
+# The additional cost of a creature to sacrifice, which the game meets from its creatures. A sacrifice of
+# anything else (a land, an artifact) is a cost it does not model.
+_SACRIFICE_CREATURE = (
+    r"sacrifice (?:an?|one) (?:(?:\w+ )?creature|artifact or creature|creature or artifact)\."
+)
+_SACRIFICE_COST = re.compile(rf"as an additional cost to cast this \w+, {_SACRIFICE_CREATURE}")
 # Wording that makes a card more than a plain spell with the cost printed on it: a cost it is cast for
 # instead, a cost reduction, or a cost to pay besides mana and a creature to sacrifice.
 _UNMODELLED = re.compile(
     r"costs? (?:\{[^}]+\})+ less|less to cast|rather than pay (?:this spell's|its) mana cost"
     r"|cast this spell without paying|^(?:affinity|convoke|delve|improvise|emerge|undaunted)\b"
-    r"|as an additional cost to cast this \w+, (?!you may|sacrifice (?:an?|one) )",
+    rf"|as an additional cost to cast this \w+, (?!you may|{_SACRIFICE_CREATURE})",
     re.MULTILINE,
 )
 # A land that returns a land to the hand on entering (Karoo).
 _BOUNCE_LAND = re.compile(r"return (?:an? )?(?:untapped )?\w+ you control to its owner's hand")
-_SACRIFICE_COST = re.compile(r"as an additional cost to cast this \w+, sacrifice (?:an?|one) ")
 _EXTRA_LAND_DROPS = re.compile(r"you may play (an|one|two|three) additional lands? on each of your turns")
 # A card from the hand a permanent costs as it enters: Chrome Mox's imprint, Mox Diamond.
 _ENTRY_COSTS = (

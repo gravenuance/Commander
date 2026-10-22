@@ -767,6 +767,15 @@ CROP_ROTATION = real(
     "that "
     "card onto the battlefield, then shuffle.",
 )
+TINKER = real(
+    "Tinker",
+    "{2}{U}",
+    3,
+    "Sorcery",
+    "As an additional cost to cast this spell, sacrifice an artifact.\nSearch your library for an artifact "
+    "card, put it onto the battlefield, then shuffle.",
+    roles=(TUTOR,),
+)
 PATH_TO_EXILE = real(
     "Path to Exile",
     "{W}",
@@ -1455,11 +1464,16 @@ def test_a_tutor_limited_by_the_sacrificed_creature_carries_the_bonus() -> None:
     assert evolution.needs_sacrifice
 
 
-def test_a_land_search_with_a_sacrifice_cost_is_land_ramp_that_needs_one() -> None:
+def test_a_search_that_sacrifices_a_land_or_an_artifact_is_not_modelled() -> None:
     rotation = one(CROP_ROTATION)
-    assert rotation.land_ramp == LandRamp(1, basic_only=False, destination=LandDestination.UNTAPPED)
-    assert rotation.needs_sacrifice
-    assert rotation.modelled
+    assert not rotation.modelled
+    assert not rotation.needs_sacrifice
+    assert rotation.land_ramp is None
+    tinker = one(TINKER)
+    assert not tinker.modelled
+    assert not tinker.needs_sacrifice
+    assert tinker.tutor is None
+    assert build(CROP_ROTATION, TINKER, DIABOLIC_INTENT).not_modelled == ("Crop Rotation", "Tinker")
 
 
 # --- cards the reading cannot place ---------------------------------------------------------------
