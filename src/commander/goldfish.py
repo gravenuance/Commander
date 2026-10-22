@@ -94,6 +94,15 @@ def game_rng(seed: int, index: int) -> random.Random:
     return random.Random(seed * 1_000_003 + index)  # noqa: S311 — shuffles for a simulation, not a secret
 
 
+def _shuffle_front(order: list[int], numbers: memoryview, start: int, stop: int) -> None:
+    """Carry out steps `start` up to `stop` of the Fisher-Yates from the front that `numbers` (one 64-bit
+    number a card) fixes: step i swaps `order[i]` with one of the cards from i on."""
+    size = len(numbers)
+    for i in range(start, min(stop, size)):
+        j = i + numbers[i] % (size - i)
+        order[i], order[j] = order[j], order[i]
+
+
 # --- results ----------------------------------------------------------------------------------------------
 
 
@@ -439,7 +448,11 @@ class _Setup:
         combos: Sequence[GoldfishCombo],
         bracket: int | None,
         average_mana_value: float,
+        *,
+        late: Sequence[GoldfishCard] = (),
     ) -> None:
+        """`late` cards are numbered after every other card, the commanders included, so a card put into
+        some slots of another leaves the numbers of all the cards already there as they were."""
         self.shown = turns_shown(bracket)
         self.horizon = self.shown[-1]
         self.mid = self.shown[len(self.shown) // 2]
@@ -457,6 +470,9 @@ class _Setup:
                 by_key.setdefault(self.cards[cid].key, cid)
             return cid
 
+        deferred = {id(card) for card in late}
+        for card in (*(card for card in slots if id(card) not in deferred), *commanders, *late):
+            add(card)
         self.ids = [add(card) for card in slots]
         self.cmd_ids = tuple(add(card) for card in commanders)
         self.cmd_set = frozenset(self.cmd_ids)
@@ -713,12 +729,8 @@ class _Game:
     def _settle(self, count: int) -> None:
         """Shuffle the library down to its first `count` cards, which are then final: a Fisher-Yates from the
         front, one step per card, so a game pays for the cards it reads and no more."""
-        lib, rand = self.lib, self.rand
-        size = len(rand)
-        for i in range(self.settled, min(count, size)):
-            j = i + rand[i] % (size - i)
-            lib[i], lib[j] = lib[j], lib[i]
-        self.settled = max(self.settled, min(count, size))
+        _shuffle_front(self.lib, self.rand, self.settled, count)
+        self.settled = max(self.settled, min(count, len(self.rand)))
 
     def _open_library(self) -> None:
         """Settle the whole library before a search reads or takes from it, and keep the order dealt."""
@@ -1331,8 +1343,17 @@ def _ways_to_win(
 
 # --- swaps ------------------------------------------------------------------------------------------------
 
-# A card cut from the deck and the card put in every slot it held.
-type Swap = tuple[GoldfishCard, GoldfishCard]
+
+class PartialSwap(NamedTuple):
+    """Some copies of a card cut and the card put in their slots: the last `copies` slots the card holds."""
+
+    cut: GoldfishCard
+    incoming: GoldfishCard
+    copies: int
+
+
+# A card cut from the deck and the card put in every slot it held, or in some of them.
+type Swap = tuple[GoldfishCard, GoldfishCard] | PartialSwap
 
 # A share has moved when its paired difference is more than this many standard errors.
 _SIGMAS = 2
@@ -1429,29 +1450,47 @@ def _plays_alike(cut: GoldfishCard, incoming: GoldfishCard) -> bool:
     )
 
 
-def _cuts(slots: Sequence[GoldfishCard], swaps: Sequence[Swap]) -> dict[str, GoldfishCard]:
-    """The incoming card for the key of each card cut."""
-    held = {card_key(card.name) for card in slots}
-    cuts: dict[str, GoldfishCard] = {}
-    for cut, incoming in swaps:
+class _Cut(NamedTuple):
+    """One swap read against the slots: the card put in, the slots it takes, and whether the card cut keeps
+    other copies in the deck."""
+
+    incoming: GoldfishCard
+    slots: tuple[int, ...]
+    partial: bool
+
+
+def _cuts(slots: Sequence[GoldfishCard], swaps: Sequence[Swap]) -> dict[str, _Cut]:
+    """The slots and incoming card for the key of each card cut."""
+    held: dict[str, list[int]] = {}
+    for i, card in enumerate(slots):
+        held.setdefault(card_key(card.name), []).append(i)
+    cuts: dict[str, _Cut] = {}
+    for swap in swaps:
+        cut, incoming = swap[0], swap[1]
         key = card_key(cut.name)
-        if key not in held:
+        at = held.get(key)
+        if not at:
             raise ValueError(f"{cut.name} is not in the deck")
         if key in cuts:
             raise ValueError(f"{cut.name} is cut twice")
-        cuts[key] = incoming
+        copies = swap.copies if isinstance(swap, PartialSwap) else len(at)
+        if not 1 <= copies <= len(at):
+            raise ValueError(f"{copies} of {cut.name} are cut and the deck holds {len(at)}")
+        cuts[key] = _Cut(incoming, tuple(at[-copies:]), copies < len(at))
     return cuts
+
+
+def _replacements(cuts: Mapping[str, _Cut]) -> dict[int, GoldfishCard]:
+    """The card each slot that a swap changes comes to hold."""
+    return {i: cut.incoming for cut in cuts.values() for i in cut.slots}
 
 
 def swapped_average(slots: Sequence[GoldfishCard], swaps: Sequence[Swap], average_mana_value: float) -> float:
     """The average mana value of the nonland cards after the swaps, as `manabase.land_count` rounds it."""
-    cuts = _cuts(slots, swaps)
     spells = sum(1 for card in slots if _is_spell(card))
     total = average_mana_value * spells
-    for card in slots:
-        incoming = cuts.get(card_key(card.name))
-        if incoming is None:
-            continue
+    for i, incoming in _replacements(_cuts(slots, swaps)).items():
+        card = slots[i]
         if _is_spell(card):
             spells -= 1
             total -= card.mana_value
@@ -1474,31 +1513,43 @@ def compare(
 ) -> GoldfishComparison:
     """The figures of the deck with `swaps` made, on the games of `base` (a run of `slots` on `seed`).
 
-    Each incoming card takes every slot its cut held, so a game that never drew a cut slot, and whose
-    searches never looked at a land or a card a tutor wants when the swap puts one in or takes one out,
-    plays out as before; only the others are played again. Their outcomes join the base ones to make the
-    report `simulate` would give for the swapped slots. A swap that changes the keep rule or the numbering
-    of the cards plays every game again. With `skip_irrelevant`, a swap of plain spells for plain spells
-    that play alike (`_plays_alike`) under the same rules changes nothing and plays nothing.
+    Each incoming card takes every slot its cut held, or the last slots of a `PartialSwap`, so a game that
+    never drew a slot that changed, and whose searches never looked at a land or a card a tutor wants when
+    the swap puts one in or takes one out, plays out as before; only the others are played again. Their
+    outcomes join the base ones to make the report `simulate` would give for the swapped slots. A swap that
+    changes the keep rule or the numbering of the cards plays every game again. With `skip_irrelevant`, a
+    swap of plain spells for plain spells that play alike (`_plays_alike`) under the same rules changes
+    nothing and plays nothing.
     """
     cuts = _cuts(slots, swaps)
     held = {card_key(card.name): card for card in slots}
     unchanged = GoldfishComparison(base, base, _changes(base, base, ()), ())
     if not cuts:
         return unchanged
-    after_slots = [cuts.get(card_key(card.name), card) for card in slots]
+    replaced = _replacements(cuts)
+    after_slots = [replaced.get(i, card) for i, card in enumerate(slots)]
+    some = frozenset(i for cut in cuts.values() if cut.partial for i in cut.slots)
     before = _Setup(slots, commanders, combos, base.bracket, average_mana_value)
     after = _Setup(
-        after_slots, commanders, combos, base.bracket, swapped_average(slots, swaps, average_mana_value)
+        after_slots,
+        commanders,
+        combos,
+        base.bracket,
+        swapped_average(slots, swaps, average_mana_value),
+        late=[cut.incoming for cut in cuts.values() if cut.partial],
     )
-    same_rules = _same_rules(before, after)
-    if skip_irrelevant and same_rules and all(_plays_alike(held[key], card) for key, card in cuts.items()):
+    same_rules = _same_rules(before, after, some)
+    if (
+        skip_irrelevant
+        and same_rules
+        and all(_plays_alike(held[key], cut.incoming) for key, cut in cuts.items())
+    ):
         return unchanged
     if same_rules:
-        cut_slots = frozenset(i for i, card in enumerate(slots) if card_key(card.name) in cuts)
-        replayed = _reached(
-            base, frozenset(before.ids[i] for i in cut_slots), _looked_at(before, after, cut_slots)
-        )
+        whole = frozenset(before.ids[i] for cut in cuts.values() if not cut.partial for i in cut.slots)
+        looked = _looked_at(before, after, frozenset(replaced))
+        touched = _Touched(whole, some, frozenset(before.ids[i] for i in some))
+        replayed = _reached(base, seed, len(slots), touched, looked)
     else:
         replayed = tuple(range(len(base.outcomes)))
     fresh = {index: _Game(after, game_rng(seed, index)).play() for index in replayed}
@@ -1508,8 +1559,8 @@ def compare(
         fresh[index] if index in fresh else _carried(outcome, old, new)
         for index, outcome in enumerate(base.outcomes)
     )
-    gone = {held[key].name for key in cuts}
-    lacking = {card.name for card in cuts.values() if not card.modelled}
+    gone = {held[key].name for key, cut in cuts.items() if not cut.partial}
+    lacking = {cut.incoming.name for cut in cuts.values() if not cut.incoming.modelled}
     not_modelled = tuple(sorted((set(base.not_modelled) - gone) | lacking))
     swapped = _report(after, base.bracket, outcomes, not_modelled, combos)
     return GoldfishComparison(base, swapped, _changes(base, swapped, replayed), replayed)
@@ -1536,16 +1587,20 @@ def compare_deck(
     )
 
 
-def _same_rules(before: _Setup, after: _Setup) -> bool:
+def _same_rules(before: _Setup, after: _Setup, some: frozenset[int]) -> bool:
     """Whether the swap leaves the rules every game is played by as they were: the same card number in each
-    slot, the same keep rule and the same free combo pieces."""
+    slot but those of `some` (a card put in some slots of another), which hold the new numbers after all the
+    old ones; the same keep rule and the same free combo pieces."""
 
     def rules(setup: _Setup) -> tuple[int, int, int, bool, bool]:
         return (setup.min_lands, setup.max_lands, setup.min_sources, setup.need_win, setup.need_syn)
 
+    old = len(before.cards)
+    new = {after.ids[i] for i in some}
     return (
-        before.ids == after.ids
-        and len(before.cards) == len(after.cards)
+        all(a == b for i, (a, b) in enumerate(zip(before.ids, after.ids, strict=True)) if i not in some)
+        and before.cmd_ids == after.cmd_ids
+        and min(new, default=old) >= old
         and before.combo_free == after.combo_free
         and rules(before) == rules(after)
     )
@@ -1571,16 +1626,45 @@ def _looked_at(before: _Setup, after: _Setup, cut_slots: frozenset[int]) -> _Loo
     )
 
 
-def _reached(base: GoldfishReport, cut_cids: frozenset[int], looked: _Looked) -> tuple[int, ...]:
-    """The games a swap can change: those that drew a cut card, and those whose searches looked at a kind of
-    card that was cut or put in."""
+class _Touched(NamedTuple):
+    """The cards a swap takes out of the games, by how much of them it takes."""
+
+    # The numbers of the cards cut from all their slots.
+    whole: frozenset[int]
+    # The slots that a card cut from only some of its slots gives up, and those cards' numbers.
+    some: frozenset[int]
+    some_cids: frozenset[int]
+
+
+def _reached(
+    base: GoldfishReport, seed: int, size: int, touched: _Touched, looked: _Looked
+) -> tuple[int, ...]:
+    """The games a swap can change: those that drew a card cut from all its slots, those that drew a slot
+    given up by a card cut from only some, and those whose searches looked at a kind of card that was cut
+    or put in. `size` is the number of slots."""
+    whole, some, some_cids = touched
     return tuple(
         index
         for index, outcome in enumerate(base.outcomes)
         if (looked.lands and outcome.land_search)
         or (looked.wanted and outcome.tutor_look)
-        or not cut_cids.isdisjoint(outcome.reached)
+        or not whole.isdisjoint(outcome.reached)
+        or (
+            not some_cids.isdisjoint(outcome.reached)
+            and _drew_slot(outcome.shuffle_depths, game_rng(seed, index), size, some)
+        )
     )
+
+
+def _drew_slot(depths: Sequence[int], rng: random.Random, size: int, slots: frozenset[int]) -> bool:
+    """Whether a game with the stream `rng` drew one of `slots` of the `size` in some shuffle. The game's
+    shuffles come from its stream alone, so they are dealt again from it down to the depths it read."""
+    for depth in depths:
+        order = list(range(size))
+        _shuffle_front(order, memoryview(rng.randbytes(_STEP_BYTES * size)).cast("Q"), 0, depth)
+        if not slots.isdisjoint(order[:depth]):
+            return True
+    return False
 
 
 def _carried(outcome: GameOutcome, old: Sequence[str], new: Sequence[str]) -> GameOutcome:

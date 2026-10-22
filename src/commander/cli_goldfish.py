@@ -5,11 +5,13 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TextIO
 
+from commander.answers import card_key
 from commander.cli_output import progress_printer, write_json
 from commander.clibase import EXIT_OK, Context, UsageError, one_deck, open_card_db, workspace
 from commander.config import cache_dir
 from commander.deckprofile import read_profile
 from commander.goldfish import GAMES, WARN_SHARE, GoldfishComparison, GoldfishReport
+from commander.goldfish_cards import GoldfishDeck
 from commander.goldfish_json import (
     bracket_turn,
     changes_json,
@@ -22,7 +24,7 @@ from commander.goldfish_json import (
 from commander.goldfish_load import GoldfishError, GoldfishInput, load_goldfish
 from commander.goldfish_run import GoldfishRun, SwapRequest, compare_swaps, headline, run, seed_of
 from commander.models import Deck
-from commander.plan import Plan, read_plan
+from commander.plan import AddCard, Plan, RemoveCard, read_plan
 
 DESCRIPTION = """\
 Deal and play the deck by a fixed policy against an empty table, from cached data alone. Nothing is
@@ -35,9 +37,10 @@ examples:
   cmdr goldfish --plan plan.toml          the same for each add of a plan paired with a remove
   cmdr goldfish ellivere --json           everything as JSON
 
-A swap is "<card in>=<card out>" and takes the place of every copy of the card out. A plan pairs its adds
-with its removes in order; each remove must name a card of the deck and keep none of it. A figure is
-shown as moved only when the change is larger than the luck of the same draws allows.
+A swap is "<card in>=<card out>" and takes the place of one copy of the card out, the others staying in the
+deck. A plan pairs its adds with its removes in order; a remove takes out the copies the deck holds beyond
+its `keep`, and its add brings as many (Cultivate for one of ten Forests plays nine Forests and Cultivate).
+A figure is shown as moved only when the change is larger than the luck of the same draws allows.
 """
 
 _COLUMN = 7
@@ -73,11 +76,13 @@ def add_goldfish_command(add_parser: Callable[..., argparse.ArgumentParser]) -> 
 def _cmd_goldfish(args: argparse.Namespace, ctx: Context) -> int:
     plan = read_plan(ctx.stdin if args.plan == "-" else Path(args.plan)) if args.plan else None
     stored = one_deck(workspace(args, ctx), _deck_query(args.deck, plan, args, ctx))
-    swaps = [*_typed_swaps(args.swap), *(_plan_swaps(plan) if plan else [])]
+    typed = _typed_swaps(args.swap)
+    pairs = _plan_pairs(plan) if plan else []
     progress = progress_printer(ctx.err)
     with open_card_db(ctx) as db:
         progress(f"reading {stored.deck.name}")
         loaded = load_goldfish(stored.deck, db, read_profile(stored.folder), cache_dir(ctx.env), now=ctx.now)
+        swaps = [*typed, *_plan_swaps(pairs, loaded.deck)]
         progress(f"playing {GAMES:,} games")
         played = run(loaded)
         try:
@@ -117,7 +122,7 @@ def _typed_swaps(entries: Sequence[str]) -> list[SwapRequest]:
     return swaps
 
 
-def _plan_swaps(plan: Plan) -> list[SwapRequest]:
+def _plan_pairs(plan: Plan) -> list[tuple[AddCard, RemoveCard]]:
     """The plan's adds paired with its removes from the deck, in order."""
     removes = [remove for remove in plan.remove if remove.category is None]
     if len(plan.add) != len(removes):
@@ -125,10 +130,26 @@ def _plan_swaps(plan: Plan) -> list[SwapRequest]:
             f"the plan adds {len(plan.add)} cards and removes {len(removes)} from the deck; "
             "a goldfish swap pairs each add with a remove, in order"
         )
-    for remove in removes:
-        if remove.keep:
-            raise UsageError(f"{remove.name}: the plan keeps {remove.keep}, which is not played as a swap")
-    return [SwapRequest(add.name, cut.name, add.quantity) for add, cut in zip(plan.add, removes, strict=True)]
+    return list(zip(plan.add, removes, strict=True))
+
+
+def _plan_swaps(pairs: Sequence[tuple[AddCard, RemoveCard]], deck: GoldfishDeck) -> list[SwapRequest]:
+    """The swaps the pairs stand for: a remove takes out the copies the deck holds beyond what it keeps, and
+    the add must bring as many. A card the deck does not hold is left for the swap to refuse."""
+    held = {card_key(card.name): card.copies for card in deck.cards}
+    swaps: list[SwapRequest] = []
+    for add, remove in pairs:
+        have = held.get(card_key(remove.name))
+        cut = add.quantity if have is None else have - remove.keep
+        if cut < 1:
+            raise UsageError(f"{remove.name}: the plan keeps {remove.keep} of the {have} the deck holds")
+        if cut != add.quantity:
+            raise UsageError(
+                f"{remove.name}: the plan removes {cut} and adds {add.quantity} {add.name}; "
+                "a goldfish swap pairs equal numbers"
+            )
+        swaps.append(SwapRequest(add.name, remove.name, add.quantity))
+    return swaps
 
 
 # --- text -------------------------------------------------------------------------------------------------

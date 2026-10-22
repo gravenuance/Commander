@@ -11,6 +11,7 @@ from commander.goldfish import (
     FigureKind,
     GoldfishComparison,
     GoldfishReport,
+    PartialSwap,
     Swap,
     compare,
     compare_deck,
@@ -131,27 +132,40 @@ DECK = real_shaped()
 PLAIN_SPELL = PLAIN[3]
 
 
-def base_of(bracket: int | None = 4) -> GoldfishReport:
-    return play_deck(DECK, bracket=bracket, seed=SEED, games=GAMES)
+def base_of(bracket: int | None = 4, deck: GoldfishDeck = DECK) -> GoldfishReport:
+    return play_deck(deck, bracket=bracket, seed=SEED, games=GAMES)
 
 
-def judged(swaps: Sequence[Swap], *, bracket: int | None = 4, **options: bool) -> GoldfishComparison:
-    return compare_deck(DECK, base_of(bracket), swaps, seed=SEED, **options)
+def judged(
+    swaps: Sequence[Swap], *, bracket: int | None = 4, deck: GoldfishDeck = DECK, **options: bool
+) -> GoldfishComparison:
+    return compare_deck(deck, base_of(bracket, deck), swaps, seed=SEED, **options)
 
 
-def played_whole(swaps: Sequence[Swap], *, bracket: int | None = 4) -> GoldfishReport:
+def swapped_slots(deck: GoldfishDeck, swaps: Sequence[Swap]) -> list[Card]:
+    """The deck's slots with each swap's incoming card in the slots of the cut card, or in the last ones
+    of a partial swap."""
+    slots = list(deck_slots(deck))
+    for swap in swaps:
+        at = [i for i, card in enumerate(slots) if card.name == swap[0].name]
+        for i in at[-swap.copies :] if isinstance(swap, PartialSwap) else at:
+            slots[i] = swap[1]
+    return slots
+
+
+def played_whole(
+    swaps: Sequence[Swap], *, bracket: int | None = 4, deck: GoldfishDeck = DECK
+) -> GoldfishReport:
     """The deck with the swaps made, played from scratch on the same seed."""
-    by_name = {cut.name: incoming for cut, incoming in swaps}
-    slots = [by_name.get(card.name, card) for card in deck_slots(DECK)]
     return simulate(
-        slots,
-        DECK.commanders,
-        DECK.combos,
+        swapped_slots(deck, swaps),
+        deck.commanders,
+        deck.combos,
         bracket=bracket,
-        average_mana_value=swapped_average(deck_slots(DECK), swaps, DECK.average_mana_value),
+        average_mana_value=swapped_average(deck_slots(deck), swaps, deck.average_mana_value),
         games=GAMES,
         seed=SEED,
-        not_modelled=base_of(bracket).not_modelled,
+        not_modelled=base_of(bracket, deck).not_modelled,
     )
 
 
@@ -190,6 +204,52 @@ def test_a_swap_replayed_gives_the_report_of_the_swapped_deck_played_whole(swaps
     assert result.base == base_of()
 
 
+DECK_FOREST, DECK_SWAMP, DECK_GOLGARI = DECK.cards[0], DECK.cards[1], DECK.cards[2]
+KODAMAS_REACH = dataclasses.replace(CULTIVATE, name="Kodama's Reach")
+MIND_STONE = make(
+    "Mind Stone", mv=2, kinds=ARTIFACT, mana=ManaAbility(1, frozenset("C"), delayed=False, ritual=False)
+)
+VAMPIRIC = make("Vampiric Tutor", mv=1, pips={"B": 1}, tutor=Tutor(frozenset(), TutorDestination.TOP))
+
+PARTIAL_CASES = {
+    "one forest for a ramp rock": [PartialSwap(DECK_FOREST, TALISMAN, 1)],
+    "three swamps for land ramp": [PartialSwap(DECK_SWAMP, KODAMAS_REACH, 3)],
+    "two of a plain spell for a ritual": [PartialSwap(PLAIN_SPELL, DARK_RITUAL, 2)],
+    "two of a plain spell for a finisher": [PartialSwap(PLAIN_SPELL, HOOF, 2)],
+    "one of a plain spell for a tutor": [PartialSwap(PLAIN_SPELL, VAMPIRIC, 1)],
+    "one of a plain spell for a combo piece": [PartialSwap(PLAIN_SPELL, PIECE_C, 1)],
+    "one tapped dual for an untapped one": [PartialSwap(DECK_GOLGARI, land("Command Tower", "GB"), 1)],
+    "all but one of a plain spell for a rock": [PartialSwap(PLAIN_SPELL, TALISMAN, 4)],
+    "a partial swap and a whole one": [PartialSwap(DECK_FOREST, TALISMAN, 2), (SOLO, MIND_STONE)],
+    "a partial swap and a whole one that cuts a finisher": [
+        PartialSwap(DECK_SWAMP, TALISMAN, 2),
+        (OVERRUN, HOOF),
+    ],
+    "two partial swaps": [PartialSwap(DECK_FOREST, TALISMAN, 2), PartialSwap(DECK_SWAMP, MIND_STONE, 1)],
+    "two partial swaps of plain spells": [
+        PartialSwap(PLAIN_SPELL, DARK_RITUAL, 1),
+        PartialSwap(PLAIN[4], HOOF, 2),
+    ],
+    "a partial swap for a card the deck holds": [PartialSwap(PLAIN_SPELL, SOL_RING, 2)],
+}
+
+
+def without_numbers(report: GoldfishReport) -> GoldfishReport:
+    """The report with the cards each game reached left out: they are counted by number, and a card put in
+    some slots of another is numbered after all the others, where a deck played whole numbers it by place."""
+    outcomes = tuple(outcome._replace(reached=frozenset()) for outcome in report.outcomes)
+    return dataclasses.replace(report, outcomes=outcomes)
+
+
+@pytest.mark.parametrize("swaps", PARTIAL_CASES.values(), ids=PARTIAL_CASES.keys())
+def test_a_swap_of_some_copies_gives_the_report_of_the_deck_with_those_copies_swapped_played_whole(
+    swaps: list[Swap],
+) -> None:
+    result = judged(swaps, skip_irrelevant=False)
+    assert without_numbers(result.swapped) == without_numbers(played_whole(swaps))
+    assert result.base == base_of()
+
+
 def test_the_same_holds_in_bracket_three_where_the_keep_rule_asks_for_lands_and_draw() -> None:
     swaps = [(HARMONIZE, make("Filler", mv=4, pips={"G": 2})), (PLAIN_SPELL, TALISMAN)]
     assert judged(swaps, bracket=3).swapped == played_whole(swaps, bracket=3)
@@ -209,11 +269,14 @@ def test_a_swap_replays_only_the_games_that_can_change_and_every_changed_game_is
     assert result.swapped == whole
 
 
-def expected_replays(result: GoldfishComparison, cut: Card, *, lands: bool, wanted: bool) -> list[int]:
-    """The games that drew the cut card's slots in some shuffle, or whose searches looked at lands (when the
-    swap has one) or at what a tutor wants (when it has one)."""
+def expected_replays(
+    result: GoldfishComparison, cut: Card, *, lands: bool, wanted: bool, copies: int | None = None
+) -> list[int]:
+    """The games that drew the cut card's slots (the last `copies` of them, if given) in some shuffle, or
+    whose searches looked at lands (when the swap has one) or at what a tutor wants (when it has one)."""
     slots = deck_slots(DECK)
-    cut_slots = {i for i, card in enumerate(slots) if card.name == cut.name}
+    named = [i for i, card in enumerate(slots) if card.name == cut.name]
+    cut_slots = set(named if copies is None else named[-copies:])
     found: list[int] = []
     for index, outcome in enumerate(result.base.outcomes):
         reached = (lands and outcome.land_search) or (wanted and outcome.tutor_look)
@@ -238,6 +301,70 @@ def test_the_games_replayed_are_those_that_drew_the_cut_slot_when_no_search_look
     # Games that searched are not replayed for that: the cards a search takes out are lands and combo cards.
     searching = [i for i, o in enumerate(result.base.outcomes) if o.searched]
     assert set(searching) - set(result.replayed)
+
+
+def test_a_swap_of_some_copies_replays_the_games_that_drew_one_of_the_slots_it_gives_up() -> None:
+    swaps = [PartialSwap(PLAIN_SPELL, TALISMAN, 2)]
+    result = judged(swaps)
+    expected = expected_replays(result, PLAIN_SPELL, lands=False, wanted=False, copies=2)
+    assert list(result.replayed) == expected
+    # The three copies it keeps are drawn in games that need no replay, which a swap of all five would play.
+    assert expected
+    assert set(expected) < set(expected_replays(result, PLAIN_SPELL, lands=False, wanted=False))
+    whole = without_numbers(played_whole(swaps))
+    before = without_numbers(result.base)
+    changed = {i for i, (a, b) in enumerate(zip(before.outcomes, whole.outcomes, strict=True)) if a != b}
+    assert changed
+    assert changed <= set(result.replayed)
+
+
+def test_a_swap_of_one_land_replays_the_games_that_drew_its_slot_and_those_that_searched_for_a_land() -> None:
+    result = judged([PartialSwap(DECK_FOREST, TALISMAN, 1)])
+    assert list(result.replayed) == expected_replays(result, DECK_FOREST, lands=True, wanted=False, copies=1)
+    assert {i for i, o in enumerate(result.base.outcomes) if o.land_search} <= set(result.replayed)
+    assert len(result.replayed) < GAMES
+
+
+def test_a_swap_of_some_copies_of_a_combo_piece_replays_the_games_whose_tutor_looked() -> None:
+    pieces = dataclasses.replace(PIECE_A, copies=2)
+    forests = dataclasses.replace(DECK_FOREST, copies=13)
+    deck = dataclasses.replace(DECK, cards=(forests, *DECK.cards[1:11], pieces, *DECK.cards[12:]))
+    assert sum(card.copies for card in deck.cards) == 99
+    swaps = [PartialSwap(pieces, FILLER, 1)]
+    result = judged(swaps, deck=deck)
+    assert {i for i, o in enumerate(result.base.outcomes) if o.tutor_look} <= set(result.replayed)
+    assert without_numbers(result.swapped) == without_numbers(played_whole(swaps, deck=deck))
+    assert any(o.combo_turns[0] for o in result.base.outcomes)
+
+
+def test_a_swap_of_all_the_copies_given_as_some_is_the_swap_of_the_card() -> None:
+    some = judged([PartialSwap(PLAIN_SPELL, TALISMAN, PLAIN_SPELL.copies)])
+    whole = judged([(PLAIN_SPELL, TALISMAN)])
+    assert some == whole
+
+
+def test_a_swap_of_some_copies_of_plain_spells_that_play_alike_changes_nothing_and_plays_nothing() -> None:
+    swaps = [PartialSwap(PLAIN_SPELL, make("Other Spell", mv=4, pips={"B": 1}), 2)]
+    result = judged(swaps)
+    assert result.replayed == ()
+    assert result.swapped == result.base
+
+
+def test_a_swap_of_some_copies_that_moves_the_average_across_the_land_count_line_plays_every_game() -> None:
+    deck = dataclasses.replace(DECK, average_mana_value=3.49)
+    swaps = [PartialSwap(PLAIN_SPELL, make("Big Spell", mv=12, pips={"B": 1}), 1)]
+    base = play_deck(deck, bracket=3, seed=SEED, games=GAMES)
+    result = compare_deck(deck, base, swaps, seed=SEED)
+    assert len(result.replayed) == GAMES
+    assert without_numbers(result.swapped) == without_numbers(played_whole(swaps, bracket=3, deck=deck))
+
+
+def test_a_card_cut_in_part_stays_among_the_cards_not_modelled_and_one_cut_whole_does_not() -> None:
+    deck = dataclasses.replace(DECK, not_modelled=(PLAIN_SPELL.name,))
+    some = judged([PartialSwap(PLAIN_SPELL, TALISMAN, 2)], deck=deck)
+    whole = judged([(PLAIN_SPELL, TALISMAN)], deck=deck)
+    assert some.swapped.not_modelled == (PLAIN_SPELL.name,)
+    assert whole.swapped.not_modelled == ()
 
 
 def test_a_swap_of_a_land_replays_the_games_whose_land_search_looked_at_the_lands() -> None:
@@ -423,6 +550,17 @@ def test_a_card_cut_twice_is_refused() -> None:
         judged([(PLAIN_SPELL, TALISMAN), (PLAIN_SPELL, SIGNET)])
 
 
+@pytest.mark.parametrize("copies", [0, -1, 6])
+def test_a_swap_of_no_copies_or_more_than_the_deck_holds_is_refused(copies: int) -> None:
+    with pytest.raises(ValueError, match=rf"{copies} of Spell 3 are cut and the deck holds 5"):
+        judged([PartialSwap(PLAIN_SPELL, TALISMAN, copies)])
+
+
+def test_a_card_cut_in_part_and_again_is_refused() -> None:
+    with pytest.raises(ValueError, match="twice"):
+        judged([PartialSwap(PLAIN_SPELL, TALISMAN, 1), PartialSwap(PLAIN_SPELL, SIGNET, 1)])
+
+
 def test_no_swaps_change_nothing() -> None:
     result = judged([])
     assert result.replayed == ()
@@ -440,3 +578,13 @@ def test_the_average_mana_value_follows_the_swap() -> None:
     # A spell in a land's place counts as a new one.
     assert swapped_average([FOREST, cheap, cheap], [(FOREST, dear)], 2.0) == 3.0
     assert swapped_average([FOREST], [(FOREST, FOREST)], 0.0) == 0.0
+
+
+def test_the_average_mana_value_counts_only_the_copies_swapped() -> None:
+    cheap = make("Cheap", mv=2)
+    dear = make("Dear", mv=5)
+    slots = [FOREST, cheap, cheap, cheap]
+    # One of three 2s becomes a 5: 9 over 3 spells.
+    assert swapped_average(slots, [PartialSwap(cheap, dear, 1)], 2.0) == 3.0
+    # Two of them go for lands, leaving one spell.
+    assert swapped_average(slots, [PartialSwap(cheap, FOREST, 2)], 2.0) == 2.0

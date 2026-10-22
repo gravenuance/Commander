@@ -161,6 +161,25 @@ def test_a_swap_is_played_against_the_games_already_played(played: GoldfishRun, 
     assert [(c.turn, c.base, c.swapped) for c in worst] == [(3, 3, 5)]
 
 
+@pytest.mark.parametrize(
+    ("copies", "medians"),
+    [
+        # Mana Crypt is free and makes 2 beside the Mountains that are left. Every card of the 8 is seen on
+        # turn 1, so each Crypt is out at once: Mountains played so far, 1 a turn up to the 5 or fewer left.
+        (1, (3, 4, 5, 6, 7)),
+        (3, (7, 8, 9, 9, 9)),
+        (5, (11, 11, 11, 11, 11)),
+    ],
+)
+def test_some_copies_of_a_card_swapped_leave_the_others_in_the_deck(
+    played: GoldfishRun, db: CardDb, copies: int, medians: tuple[int, ...]
+) -> None:
+    comparison = compare_swaps(played, db, [SwapRequest("Mana Crypt", "Mountain", copies)])
+    assert comparison.base.mana_median == (1, 2, 3, 4, 5)
+    assert comparison.swapped.mana_median == medians
+    assert len(comparison.replayed) == GAMES
+
+
 def test_a_swap_of_two_plain_cards_replays_but_moves_nothing(played: GoldfishRun, db: CardDb) -> None:
     comparison = compare_swaps(played, db, [SwapRequest("Chaos Warp", "Disruptor Flute")])
     # Their costs differ, so every game is replayed (the 8-card library shows Disruptor Flute in each);
@@ -191,8 +210,12 @@ def test_a_swap_of_two_plain_cards_replays_but_moves_nothing(played: GoldfishRun
             "'Not A Real Card' is no card the card data knows",
         ),
         (
-            SwapRequest("Arcane Signet", "Mountain"),
-            "the deck holds 6 of Mountain and 1 are swapped; only a swap of all of them is played",
+            SwapRequest("Arcane Signet", "Mountain", 7),
+            "the deck holds 6 of Mountain and 7 are swapped",
+        ),
+        (
+            SwapRequest("Arcane Signet", "Mountain", 0),
+            "the deck holds 6 of Mountain and 0 are swapped",
         ),
     ],
 )

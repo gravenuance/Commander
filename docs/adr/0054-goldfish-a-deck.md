@@ -206,3 +206,20 @@ nearest turn shown stands in for it.
   out only as far as the game reads: a mulligan costs the seven cards dealt, not the whole library, and a
   search settles the rest. The stream a game uses is still fixed by its seed and index, so a swap is played
   on the same shuffles as before. The cards a seed deals are not the ones it dealt before.
+
+## Amendment (2026-10-22): a swap of some copies
+
+The owner decided that a swap of some copies of a card is played, which lifts the limit the amendment on
+partial swaps set. Cultivate in for one of ten Forests plays nine Forests and Cultivate.
+
+- The incoming card takes the slots of the copies cut (the last ones the card holds), so the paired games
+  still line up by slot. A queued card's copies are the copies cut and the copies brought; more than the deck
+  holds, or none, is refused with the reason. A cut with no add and an add with no cut stay out of the figures,
+  and Review keeps only swaps with a cut.
+- A game is played again if it drew a slot that changed, found by dealing its shuffles again from its own
+  random stream (the drawn card numbers say only that some copy of the card was drawn). Games whose searches
+  looked at a land or at a card a tutor wants are played again when the swap puts one in or takes one out, as
+  before. The card put in some slots is numbered after all the others, so the cards already there keep their
+  numbers; the figures equal those of the swapped deck played whole.
+- `cmdr goldfish --plan` pairs a remove with its add by count: the remove takes out the copies the deck holds
+  beyond its `keep`, and the add must bring as many.

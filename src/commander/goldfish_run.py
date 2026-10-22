@@ -17,6 +17,7 @@ from commander.goldfish import (
     FigureKind,
     GoldfishComparison,
     GoldfishReport,
+    PartialSwap,
     Swap,
     compare_deck,
     goldfish,
@@ -79,10 +80,11 @@ def compare_swaps(
 ) -> GoldfishComparison:
     """The deck's figures with `swaps` made against the games already played, on the same draws.
 
-    Only a swap of every copy of the cut card can be played: the engine puts the incoming card in each slot
-    the cut one held. Anything else raises GoldfishError saying why, as does a cut that is not in the
-    deck's library, one cut twice, an incoming card put in twice, one the deck holds or one the card data
-    lacks. With `lenient` such a swap is logged and left out instead, as the app's board may hold one.
+    The incoming card takes the slots of the copies cut, so the deck plays with the copies that are left of
+    the cut card (Cultivate for one of ten Forests plays nine Forests). A swap raises GoldfishError saying
+    why when it cuts more copies than the deck holds, a cut that is not in the deck's library, one cut twice,
+    an incoming card put in twice, one the deck holds or one the card data lacks. With `lenient` such a swap
+    is logged and left out instead, as the app's board may hold one.
     """
     loaded = played.loaded
     cut_keys: set[str] = set()
@@ -115,11 +117,8 @@ def _pair(
         raise GoldfishError(f"{request.cut} is {why}, so it cannot be swapped out")
     if key in cut_keys:
         raise GoldfishError(f"{cut.name} is cut twice")
-    if request.copies != cut.copies:
-        raise GoldfishError(
-            f"the deck holds {cut.copies} of {cut.name} and {request.copies} are swapped; "
-            "only a swap of all of them is played"
-        )
+    if not 1 <= request.copies <= cut.copies:
+        raise GoldfishError(f"the deck holds {cut.copies} of {cut.name} and {request.copies} are swapped")
     incoming = incoming_card(loaded, db, request.add, request.copies)
     in_deck = (*loaded.deck.cards, *loaded.deck.commanders)
     if any(card_key(card.name) == card_key(incoming.name) for card in in_deck):
@@ -129,7 +128,9 @@ def _pair(
         raise GoldfishError(f"{incoming.name} is put in twice")
     cut_keys.add(key)
     incoming_keys.add(incoming_key)
-    return cut, incoming
+    if request.copies == cut.copies:
+        return cut, incoming
+    return PartialSwap(cut, incoming, request.copies)
 
 
 def headline_turn(report: GoldfishReport) -> int:

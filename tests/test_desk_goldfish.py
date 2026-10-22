@@ -137,11 +137,16 @@ def test_a_board_with_nothing_queued_plays_no_games_for_review(desk: Desk, plays
 
 
 def test_a_swap_that_cannot_be_played_is_left_out_without_an_error(desk: Desk) -> None:
-    # The deck holds six Mountains and a swap takes out one, which is no swap of the card.
-    partial = queue(desk, "Mind Stone", "Mountain")
-    assert desk.goldfish_swap(DECK, partial) == {"figures": []}
+    # Both cut the Golem: the second is left out of the review, which shows the Signet alone.
     queue(desk, "Arcane Signet", "Battered Golem")
+    queue(desk, "Mind Stone", "Battered Golem")
     assert mana_at(desk.goldfish_review(DECK), 3) == (3, 4)
+
+
+def test_a_swap_that_cuts_one_of_six_mountains_plays_the_other_five(desk: Desk) -> None:
+    # The Stone is cast on turn 2 with two of the five Mountains: turn 3 has three lands and the Stone.
+    stone = queue(desk, "Mind Stone", "Mountain")
+    assert mana_at(desk.goldfish_swap(DECK, stone), 3) == (3, 4)
 
 
 def test_a_card_that_is_not_on_the_board_is_an_error(desk: Desk) -> None:

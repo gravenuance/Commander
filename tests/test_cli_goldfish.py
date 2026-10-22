@@ -109,6 +109,34 @@ def test_a_swap_adds_every_figure_that_moved_with_its_old_and_new_value(
     assert [line for line in after if "mana" in line] == CRYPT_MOVES
 
 
+def test_a_swap_of_a_basic_takes_out_one_copy_and_plays_the_rest(home: Path, fake: FakeArchidekt) -> None:
+    result = goldfish(home, fake, "magda", "--swap", "Mana Crypt=Mountain")
+    assert (result.code, result.err) == (0, "")
+    after = swapped(result.out)
+    assert after[:2] == ["swaps", "  + Mana Crypt  - Mountain"]
+    # Five Mountains are enough for the five turns, so it moves what the Crypt does for the Golem.
+    assert [line for line in after if "mana" in line] == CRYPT_MOVES
+
+
+def test_a_plan_that_keeps_some_copies_swaps_the_rest_and_the_add_brings_as_many(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    text = (
+        'deck = "magda"\nadd = [{name = "Mana Crypt", quantity = 3}]\n'
+        'remove = [{name = "Mountain", keep = 3}]\n'
+    )
+    result = run(["goldfish", "--plan", plan(home, text), "--workspace", str(home / "decks")], home, fake)
+    assert (result.code, result.err) == (0, "")
+    after = swapped(result.out)
+    assert after[1] == "  + 3 x Mana Crypt  - 3 x Mountain"
+    # Three Crypts make 6 beside the one Mountain of turn 1; three Mountains are all there are after turn 3.
+    assert "  Median mana on turn 1: 1 -> 7" in after
+    assert "  Median mana on turn 5: 5 -> 9" in after
+    one = 'deck = "magda"\nadd = ["Mana Crypt"]\nremove = [{name = "Mountain", keep = 5}]\n'
+    by_plan = run(["goldfish", "--plan", plan(home, one), "--workspace", str(home / "decks")], home, fake)
+    assert by_plan.out == goldfish(home, fake, "magda", "--swap", "Mana Crypt=Mountain").out
+
+
 def test_a_swap_that_moves_nothing_says_so(home: Path, fake: FakeArchidekt) -> None:
     result = goldfish(home, fake, "magda", "--swap", "Chaos Warp=Disruptor Flute")
     assert result.code == 0
@@ -228,10 +256,6 @@ def test_a_plain_run_is_json_without_swaps(home: Path, fake: FakeArchidekt) -> N
             "cmdr: 'Not A Card' is no card the card data knows\n",
         ),
         (
-            ("magda", "--swap", "Mana Crypt=Mountain"),
-            "cmdr: the deck holds 6 of Mountain and 1 are swapped; only a swap of all of them is played\n",
-        ),
-        (
             ("magda", "--swap", "Mana Crypt=Disruptor Flute", "--swap", "Mind Stone=Disruptor Flute"),
             "cmdr: Disruptor Flute is cut twice\n",
         ),
@@ -263,8 +287,19 @@ def test_a_swap_or_deck_that_cannot_be_played_is_a_usage_error_with_a_short_mess
             ),
         ),
         (
-            'deck = "magda"\nadd = ["Mana Crypt"]\nremove = [{name = "Mountain", keep = 5}]\n',
-            "cmdr: Mountain: the plan keeps 5, which is not played as a swap\n",
+            (
+                'deck = "magda"\nadd = [{name = "Mana Crypt", quantity = 2}]\n'
+                'remove = [{name = "Mountain", keep = 5}]\n'
+            ),
+            "cmdr: Mountain: the plan removes 1 and adds 2 Mana Crypt; a goldfish swap pairs equal numbers\n",
+        ),
+        (
+            'deck = "magda"\nadd = [{name = "Mana Crypt", quantity = 3}]\nremove = ["Mountain"]\n',
+            "cmdr: Mountain: the plan removes 6 and adds 3 Mana Crypt; a goldfish swap pairs equal numbers\n",
+        ),
+        (
+            'deck = "magda"\nadd = ["Mana Crypt"]\nremove = [{name = "Mountain", keep = 6}]\n',
+            "cmdr: Mountain: the plan keeps 6 of the 6 the deck holds\n",
         ),
         ("deck = 12\nadd = []\n", "plan.toml: the plan has nothing to add or remove\n"),
     ],

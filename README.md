@@ -758,8 +758,9 @@ and `Not modelled` lists the cards the reading could not place.
 `--swap "<card in>=<card out>"` (repeated for more) or `--plan plan.toml` (the plan `apply` reads: its adds
 paired with its removes, in order) plays the same games again with the swaps made and lists every figure that
 moved, before and after; a figure counts as moved only when the change is larger than twice its paired
-standard error. A swap takes out all copies of the card out, so a basic land swap that leaves some of the
-basics in cannot be played. `--json` gives the figures for scripts, and `[goldfish]` in the profile (above)
+standard error. A swap takes out one copy of the card out and plays the rest, so Cultivate for one of ten
+Forests plays nine Forests and Cultivate; in a plan, a remove takes out the copies beyond its `keep`, and
+its add brings as many. `--json` gives the figures for scripts, and `[goldfish]` in the profile (above)
 sets the finishers. See
 [ADR 0054](docs/adr/0054-goldfish-a-deck.md).
 
