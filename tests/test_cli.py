@@ -353,7 +353,7 @@ def test_sync_downloads_card_data_then_reports_it_current(tmp_path: Path, archid
     first = sync(tmp_path, archidekt, cards=True)
     assert first.code == 0
     assert first.out.endswith(
-        "card data: updated, no usable card data, Scryfall data of 2026-10-15, 10,028 printings\n"
+        "card data: updated, no usable card data, Scryfall data of 2026-10-15, 10,029 printings\n"
     )
     assert (tmp_path / "localappdata" / "Commander" / "cards.sqlite").is_file()
     second = sync(tmp_path, archidekt, cards=True)
@@ -372,7 +372,7 @@ def test_sync_says_why_old_card_data_was_refreshed(tmp_path: Path, archidekt: Fa
         now=NOW + timedelta(days=8),
     )
     assert later.out.endswith(
-        "card data: updated, 8 days old, Scryfall data of 2026-10-15, 10,028 printings\n"
+        "card data: updated, 8 days old, Scryfall data of 2026-10-15, 10,029 printings\n"
     )
 
 
@@ -392,7 +392,7 @@ def test_sync_json_reports_card_data(tmp_path: Path, archidekt: FakeArchidekt) -
     document = json.loads(sync(tmp_path, archidekt, "--json", cards=True).out)
     assert document["cardData"] == {
         "status": "updated",
-        "detail": "no usable card data, Scryfall data of 2026-10-15, 10,028 printings",
+        "detail": "no usable card data, Scryfall data of 2026-10-15, 10,029 printings",
         "reason": "no usable card data",
         "nextRefresh": None,
     }

@@ -472,6 +472,61 @@ def test_settings_offer_commanders_and_tags_and_save_to_the_profile(desk: Desk) 
     assert desk.settings(DECK)["adjacent"] == [["Tempestra, Dame of Games"]]
 
 
+def test_a_partner_search_offers_any_commander_legal_card_and_not_a_banned_one(desk: Desk) -> None:
+    # A Background is no legendary creature, so only the partner slot offers it.
+    assert desk.find_commanders("raised by")["names"] == []
+    assert desk.find_commanders("raised by", True)["names"] == ["Raised by Giants"]  # noqa: FBT003
+    assert desk.find_commanders("arcane", True)["names"] == ["Arcane Signet"]  # noqa: FBT003
+    assert desk.find_commanders("mana crypt", True)["names"] == []  # noqa: FBT003
+    assert desk.find_commanders("tomb", True)["names"] == ["Ancient Tomb"]  # noqa: FBT003
+
+
+def test_a_pair_saves_its_second_name_as_the_card_data_spells_it(desk: Desk, settings: DeskSettings) -> None:
+    saved = save(desk, [["tempestra, DAME of games", " raised BY giants "]], [], tag_search=False)
+    expected = [["Tempestra, Dame of Games", "Raised by Giants"]]
+    assert saved["adjacent"] == expected
+    assert desk.settings(DECK)["adjacent"] == expected
+    assert '["Tempestra, Dame of Games", "Raised by Giants"]' in profile_file(settings).read_text(
+        encoding="utf-8"
+    )
+    # Any legal card may partner, whatever its type, and a front face stands for its two-faced card.
+    mixed = save(desk, [["Magda, Brazen Outlaw", "arcane signet"]], [], tag_search=False)
+    assert mixed["adjacent"] == [["Magda, Brazen Outlaw", "Arcane Signet"]]
+    faced = save(desk, [["Magda, Brazen Outlaw", "sundering eruption"]], [], tag_search=False)
+    assert faced["adjacent"] == [["Magda, Brazen Outlaw", "Sundering Eruption // Volcanic Fissure"]]
+
+
+@pytest.mark.parametrize(
+    ("second", "message"),
+    [
+        pytest.param(
+            "Nonesuch Relic", "'Nonesuch Relic' is not a legal card the card data knows", id="unknown"
+        ),
+        pytest.param("Mana Crypt", "'Mana Crypt' is not a legal card the card data knows", id="banned"),
+    ],
+)
+def test_a_pair_whose_second_name_is_no_legal_card_is_refused_and_nothing_is_saved(
+    desk: Desk, settings: DeskSettings, second: str, message: str
+) -> None:
+    save(desk, [["Tempestra, Dame of Games"]], ["Stax"], tag_search=False)
+    before = profile_file(settings).read_bytes()
+    refused = save(desk, [["Tempestra, Dame of Games", second]], ["Dice"], tag_search=True)
+    assert refused == {"error": message}
+    assert profile_file(settings).read_bytes() == before
+
+
+def test_a_lone_commander_is_still_held_to_a_commander_and_saved_as_spelled(
+    desk: Desk, settings: DeskSettings
+) -> None:
+    before = profile_file(settings).read_bytes()
+    assert save(desk, [["Raised by Giants"]], [], tag_search=False) == {
+        "error": "'Raised by Giants' is not a commander the card data knows"
+    }
+    assert profile_file(settings).read_bytes() == before
+    saved = save(desk, [["tempestra, dame of games"]], [], tag_search=False)
+    assert saved["adjacent"] == [["Tempestra, Dame of Games"]]
+
+
 def test_searching_decks_by_tag_is_off_in_the_settings_until_saved_on(
     desk: Desk, settings: DeskSettings
 ) -> None:

@@ -802,10 +802,16 @@ class Desk:
         }
 
     @_guarded
-    def find_commanders(self, text: str) -> Json:
-        """Commanders whose name holds text, for the adjacent commanders' autocomplete."""
+    def find_commanders(
+        self,
+        text: str,
+        partner: bool = False,  # noqa: FBT001, FBT002 — the page's bridge passes positionals
+    ) -> Json:
+        """Commanders whose name holds text, for the adjacent commanders' autocomplete; for the second name of
+        a pair (partner), any commander-legal card, since a Background or another partner type sits there."""
         with self._db() as db:
-            found = db.search_commanders(text, limit=MAX_SUGGESTIONS)
+            search = db.search_legal if partner else db.search_commanders
+            found = search(text, limit=MAX_SUGGESTIONS)
         return {"names": [info.name for info in found]}
 
     @_guarded
@@ -835,12 +841,17 @@ class Desk:
             typed = _grace_from_page(grace)
             held = {card_key(name) for name in read_profile(stored.folder).grace}
             cards: dict[str, float] = {}
+            named: list[list[str]] = []
             with self._db() as db:
                 for group in adjacent:
-                    for name in group:
-                        found = {info.name.casefold() for info in db.search_commanders(name)}
-                        if name.strip().casefold() not in found:
-                            return {"error": f"{name!r} is not a commander the card data knows"}
+                    names: list[str] = []
+                    for position, name in enumerate(group):
+                        real = _real_commander_slot(db, name, partner=position > 0)
+                        if real is None:
+                            kind = "a legal card" if position > 0 else "a commander"
+                            return {"error": f"{name!r} is not {kind} the card data knows"}
+                        names.append(real)
+                    named.append(names)
                 for name, factor in typed.items():
                     real = name
                     # A profile card may be newer than the card data: only new ones are looked up.
@@ -855,7 +866,7 @@ class Desk:
             save_settings(
                 stored.folder,
                 stored.deck,
-                adjacent=adjacent,
+                adjacent=named,
                 ignore=ignore,
                 tag_search=tag_search,
                 grace=cards,
@@ -1346,6 +1357,17 @@ def land_options(db: CardDb, deck: Deck, folder: Path) -> tuple[list[LandOption]
         if mana.name.casefold() not in skip
     ]
     return options, budget.line
+
+
+def _real_commander_slot(db: CardDb, name: str, *, partner: bool) -> str | None:
+    """The card data's spelling of a name in a pair, or None when it may not stand there: the first must be a
+    commander, the second (partner) any commander-legal card, because the pair itself is not checked."""
+    info = db.card_named(name.strip())
+    if info is None or not info.commander_legal:
+        return None
+    if partner or any(found.oracle_id == info.oracle_id for found in db.search_commanders(info.name)):
+        return info.name
+    return None
 
 
 def _grace_from_page(entries: object) -> dict[str, float]:
