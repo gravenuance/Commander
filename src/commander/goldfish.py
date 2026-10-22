@@ -32,7 +32,7 @@ from commander.goldfish_cards import (
 )
 
 # Raised whenever the policy or the recognition changes, so kept results are not mixed with new ones.
-POLICY_VERSION = 1
+POLICY_VERSION = 2
 GAMES = 10_000
 # The turn by which a bracket expects to be able to play before winning or losing (Wizards, 2025-10-21).
 BRACKET_TURN = {1: 9, 2: 8, 3: 6, 4: 4}
