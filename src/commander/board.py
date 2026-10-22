@@ -54,6 +54,8 @@ MAX_CARDS = 500
 # A deck holds at most 99 cards besides its commander.
 MAX_COPIES = 99
 MAX_LOG_LINE = 16 * 1024
+# How much of the end of the activity log is read at a time when only its newest lines are wanted.
+TAIL_BLOCK_BYTES = 64 * 1024
 LOCK_TIMEOUT_SECONDS = 10.0
 # A lock file older than this was left by a crashed writer; a real update takes milliseconds.
 STALE_LOCK_SECONDS = 60.0
@@ -65,7 +67,14 @@ _LOCK_POLL_SECONDS = 0.05
 # Basic land names, Wastes included, for telling a basic swap; manabase and manaplan list only the five
 # coloured basics, by type or colour, because Wastes has no land type and makes no colour.
 _BASIC_LAND_NAMES = frozenset({"plains", "island", "swamp", "mountain", "forest", "wastes"})
-_THREAD_LOCK = threading.Lock()
+# One thread lock per deck folder, so a lock another process holds on one deck holds up only that deck.
+_THREAD_LOCKS: dict[Path, threading.Lock] = {}
+_THREAD_LOCKS_GUARD = threading.Lock()
+
+
+def _thread_lock(folder: Path) -> threading.Lock:
+    with _THREAD_LOCKS_GUARD:
+        return _THREAD_LOCKS.setdefault(folder.resolve(), threading.Lock())
 
 
 class BoardError(Exception):
@@ -159,6 +168,10 @@ class BoardCard:
     reconsidered: bool = False
     # The Archidekt category a card being added is filed under; None files it by its card type.
     category: str | None = None
+    # For a basic land swap a save was sent for: the copies the deck held then. A basic is added to what the
+    # deck holds, so without this a send that went unmarked (read-back failed, timeout, board lock) would add
+    # the copies again on the next save; the deck holding this many plus `copies` means it landed.
+    sent_held: int | None = None
 
     @property
     def relabellable(self) -> bool:
@@ -184,6 +197,8 @@ class BoardCard:
             raise ValueError(f"{self.name}: only an open card can be reconsidered")
         if self.category is not None and self.status not in {Status.ADD, Status.APPLIED}:
             raise ValueError(f"{self.name}: only a card being added has a category")
+        if self.sent_held is not None and (self.status is not Status.ADD or self.sent_held < 0):
+            raise ValueError(f"{self.name}: only a card being added has a count held when sent")
 
 
 @dataclass(slots=True, frozen=True)
@@ -362,6 +377,51 @@ def read_activity(folder: Path, *, since: str | None = None) -> list[Activity]:
     return entries
 
 
+def read_recent_activity(folder: Path, count: int) -> list[Activity]:
+    """The last `count` entries of the board's history, oldest first.
+
+    It reads the file from its end, a block at a time, until it has them, so a log that has grown for months
+    costs what is shown, not its length. A damaged line is skipped, as `read_activity` does.
+    """
+    path = folder / ACTIVITY_FILE
+    newest: list[Activity] = []
+    try:
+        with path.open("rb") as handle:
+            position = handle.seek(0, os.SEEK_END)
+            # The start of the oldest line read so far; the next block completes it.
+            head = b""
+            while position > 0 and len(newest) < count:
+                step = min(TAIL_BLOCK_BYTES, position)
+                position -= step
+                handle.seek(position)
+                lines = (handle.read(step) + head).split(b"\n")
+                head = lines[0]
+                _take_newest(newest, reversed(lines[1:]), count, path)
+            if position == 0 and len(newest) < count:
+                _take_newest(newest, [head], count, path)
+    except FileNotFoundError:
+        return []
+    except OSError as error:
+        raise BoardIOError(f"cannot read {path}: {error}") from error
+    newest.reverse()
+    return newest
+
+
+def _take_newest(newest: list[Activity], lines: Iterable[bytes], count: int, path: Path) -> None:
+    """Add the entries of lines, newest first, to newest until it holds count of them."""
+    for raw in lines:
+        if len(newest) >= count:
+            return
+        try:
+            text = raw.decode("utf-8")
+            if not text.strip():
+                continue
+            newest.append(_activity_from_json(json.loads(text[:MAX_LOG_LINE])))
+        except (UnicodeDecodeError, json.JSONDecodeError, ShapeError, ValueError) as error:
+            # One damaged line must not hide the rest of the history.
+            log.warning("skipping an unreadable line of %s: %s", path, error)
+
+
 def parse_board(raw: Mapping[str, object]) -> Board:
     cards: list[BoardCard] = []
     for index, item in enumerate(req_list(raw, "cards", "board")):
@@ -390,6 +450,7 @@ def parse_board(raw: Mapping[str, object]) -> Board:
                 copies=opt_int(card, "copies", where) or 1,
                 reconsidered=card.get("reconsidered") is True,
                 category=opt_str(card, "category", where),
+                sent_held=opt_int(card, "sentHeld", where),
             )
         )
     counts: list[CountChange] = []
@@ -463,6 +524,7 @@ def card_json(card: BoardCard) -> dict[str, object]:
         "copies": card.copies,
         "reconsidered": card.reconsidered,
         "category": card.category,
+        "sentHeld": card.sent_held,
     }
 
 
@@ -505,6 +567,18 @@ def board_plan(deck: Deck, board: Board) -> Plan | None:
     return Plan(str(deck.id), tuple(adds), tuple(cuts))
 
 
+def basic_land_swaps(deck: Deck, board: Board) -> dict[str, int]:
+    """The copies deck holds of each queued basic land the next save adds to, by card id: what
+    `BoardService.record_sending` keeps, because the plan adds to the copies held (`board_plan`)."""
+    held = _held(deck)
+    done = already_added(deck, board)
+    return {
+        card.id: held[card_key(card.name)]
+        for card in board.queued
+        if _is_basic_land(card.name) and card not in done
+    }
+
+
 def counts_met(deck: Deck, board: Board) -> tuple[CountChange, ...]:
     """The count changes deck already meets (`CountChange.met_by`): nothing is left to do for them."""
     return tuple(
@@ -525,7 +599,8 @@ def copies_held(deck: Deck, name: str, category: str | None = None) -> int:
 
 
 def already_added(deck: Deck, board: Board) -> tuple[BoardCard, ...]:
-    """The queued cards that deck already holds, other than basic lands: nothing is left to do for them."""
+    """The queued cards that deck already holds: nothing is left to do for them. A basic land counts only
+    once the deck holds the copies it added, on top of those it held when a save was sent (`sent_held`)."""
     return tuple(card for card in board.queued if _holds(deck, card))
 
 
@@ -538,8 +613,12 @@ def held_keys(deck: Deck, db: CardDb) -> frozenset[str]:
 
 
 def _holds(deck: Deck, card: BoardCard) -> bool:
-    """Whether deck already holds every copy the card adds; a basic land is always added to."""
-    return not _is_basic_land(card.name) and _held(deck)[card_key(card.name)] >= card.copies
+    """Whether deck already holds every copy the card adds. A basic land is added to what the deck holds, so
+    only a send recorded in `sent_held` can show it done."""
+    held = _held(deck)[card_key(card.name)]
+    if not _is_basic_land(card.name):
+        return held >= card.copies
+    return card.sent_held is not None and held >= card.sent_held + card.copies
 
 
 def _add_target(held: Counter[str], card: BoardCard) -> int:
@@ -757,6 +836,7 @@ class BoardService:
                 rejected_share=kept_share,
                 reconsidered=status is Status.OPEN
                 and (card.reconsidered or (reconsidering and actor is Actor.YOU)),
+                sent_held=card.sent_held if status is Status.ADD else None,
             )
             if reconsidering and relabel is not None and card.relabellable:
                 updated = _relabelled(updated, relabel)
@@ -783,18 +863,18 @@ class BoardService:
     ) -> None:
         """Record that the queued cards with these ids, and the count changes in counts (by card and
         category), were saved to Archidekt, or, with no snapshot, were found in the deck there already. A
-        done count change leaves the board."""
+        done count change leaves the board; a change to the same card made since stays."""
         with self._editing() as (board, save):
             stamp = self._stamp()
             done = set(ids)
             cards = tuple(
-                replace(c, status=Status.APPLIED, updated_at=stamp)
+                replace(c, status=Status.APPLIED, updated_at=stamp, sent_held=None)
                 if c.id in done and c.status is Status.ADD
                 else c
                 for c in board.cards
             )
-            counted = {change.key for change in counts}
-            finished = [c for c in board.counts if c.key in counted]
+            # The very changes that were sent: one made since, for the same card, is still to be saved.
+            finished = [c for c in board.counts if c in counts]
             names = ", ".join(
                 [c.name for c in board.cards if c.id in done] + [count_text(c) for c in finished]
             )
@@ -803,6 +883,15 @@ class BoardService:
             else:
                 entry = Activity(stamp, actor, "saved to Archidekt", None, f"{names}; snapshot '{snapshot}'")
             save(Board(cards, tuple(c for c in board.counts if c not in finished)), entry)
+
+    def record_sending(self, held: Mapping[str, int], actor: Actor) -> None:
+        """Before a save is sent: keep for each queued basic land swap (by card id) the copies the deck holds,
+        so a send that is never marked applied is not made again (`BoardCard.sent_held`)."""
+        with self._editing() as (board, save):
+            cards = tuple(replace(c, sent_held=held[c.id]) if c.id in held else c for c in board.cards)
+            names = ", ".join(f"{c.name} from {c.sent_held}" for c in cards if c.id in held)
+            sending = _note_line(self._stamp(), actor, "sending to Archidekt", names, None)
+            save(Board(cards, board.counts), sending)
 
     def set_count(
         self, name: str, count: int, actor: Actor, *, category: str | None = None
@@ -1228,7 +1317,7 @@ def board_lock(folder: Path) -> Generator[None]:
     """Hold the deck's board lock: one thread here, and one process across the CLI and the app. Raises
     BoardIOError when another holds it for longer than LOCK_TIMEOUT_SECONDS."""
     path = folder / LOCK_FILE
-    with _THREAD_LOCK:
+    with _thread_lock(folder):
         deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
         while True:
             try:

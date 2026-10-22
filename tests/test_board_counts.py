@@ -148,6 +148,18 @@ def test_plus_on_a_basic_land_queues_one_more_and_logs_it(tmp_path: Path, servic
     assert read_board(tmp_path).counts == (CountChange("Mountain", 6, 8, Actor.YOU, STAMP),)
 
 
+def test_a_count_change_made_while_another_was_saving_stays_queued(
+    tmp_path: Path, service: BoardService
+) -> None:
+    service.step_count("Mountain", 1, Actor.YOU)
+    sent = read_board(tmp_path).counts  # what a save (the CLI's, say) read and sent: Mountain 6 -> 7
+    service.step_count("Mountain", 1, Actor.YOU)  # the app asks for one more meanwhile: 6 -> 8
+
+    service.mark_applied([], Actor.YOU, "snapshot", counts=sent)
+
+    assert read_board(tmp_path).counts == (CountChange("Mountain", 6, 8, Actor.YOU, STAMP),)
+
+
 def test_plus_on_a_card_any_number_of_which_is_allowed_queues_it(service: BoardService) -> None:
     assert service.step_count("Dragon's Approach", 1, Actor.YOU) == CountChange(
         "Dragon's Approach", 1, 2, Actor.YOU, STAMP
