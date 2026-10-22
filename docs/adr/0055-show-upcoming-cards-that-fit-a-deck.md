@@ -73,3 +73,9 @@ Option 3, decided with the owner on 2026-10-22.
 - A deck with no Archidekt theme tags, or whose tags no preview matches, shows no panel.
 - Revisit the limit of 6 and the ranking once the owner has used the panel through a season, and if
   Scryfall changes its search paging or rate guidance.
+
+## Amendment (2026-10-22): the profile's exclusions
+
+The owner decided after the review that previews honour the deck profile's exclusions like every other
+suggestion: a card named in `exclude_cards`, or with one of the `[exclude]` types, keywords or tags (sub-tags
+included), is never shown.

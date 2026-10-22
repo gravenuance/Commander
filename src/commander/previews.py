@@ -13,7 +13,7 @@ from datetime import UTC, date, datetime
 from enum import Enum
 from pathlib import Path
 
-from commander.carddb import CardDb, ResolvedCard, Role
+from commander.carddb import CardDb, ResolvedCard, Role, name_keys
 from commander.deckprofile import Profile, ThemeSpec
 from commander.deckthemes import ThemeSource, merge_themes
 from commander.fsutil import write_text_atomic
@@ -22,7 +22,7 @@ from commander.jsonshape import ShapeError, as_object, req_bool, req_int, req_li
 from commander.models import Deck
 from commander.net import NetworkError, Pacer
 from commander.scryfall import ScryfallClient, ScryfallError, SetCard, SetInfo, is_scryfall_id
-from commander.suggest import deck_identity, short_roles
+from commander.suggest import deck_identity, name_keys_of, short_roles
 
 log = logging.getLogger(__name__)
 
@@ -175,11 +175,20 @@ def fitting_previews(
     targets: Mapping[Role, int],
 ) -> list[PreviewFit]:
     """The previews in the deck's colour identity that match its dominant tags, the most tags first, then
-    those filling a role the deck runs short of, then by name; at most SHOWN. today is the local day."""
+    those filling a role the deck runs short of, then by name; at most SHOWN. today is the local day. Like
+    every suggestion, a card the profile excludes, by name or by its [exclude] types, keywords or tags, is
+    never one."""
     identity = deck_identity(main)
     if identity is None:
         return []
-    live = [c for c in cards if is_preview(c, today) and set(c.color_identity) <= set(identity)]
+    excluded = name_keys_of(profile.exclude_cards)
+    live = [
+        c
+        for c in cards
+        if is_preview(c, today)
+        and set(c.color_identity) <= set(identity)
+        and not name_keys(c.name) & excluded
+    ]
     # The theme work only when there is something to match it against.
     if not live:
         return []
@@ -198,6 +207,8 @@ def fitting_previews(
     fits: list[PreviewFit] = []
     for card in live:
         slugs = lineage.get(card.oracle_id, frozenset())
+        if _matches(profile.exclude, card, slugs):
+            continue
         matched = tuple(name for name in names if name in specs and _matches(specs[name], card, slugs))
         if matched:
             fills = bool(roles.get(card.oracle_id, frozenset()) & short)

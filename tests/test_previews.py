@@ -17,7 +17,7 @@ from commander import previews as previews_module
 from commander import syncrun
 from commander.carddb import CARD_DB_FILE, CardDb, Role
 from commander.config import MetaSettings
-from commander.deckprofile import Profile
+from commander.deckprofile import Profile, ThemeSpec
 from commander.desk import Desk, DeskSettings
 from commander.models import Deck
 from commander.net import Fetcher, Pacer
@@ -340,6 +340,22 @@ def test_an_ignored_tag_finds_no_previews(deck: Deck, db: CardDb) -> None:
     assert fits(themed_deck(deck, ("Flash", "Treasure")), db, profile=profile) == [
         ("Captain's Tutelage", "Flash")
     ]
+
+
+def test_the_profiles_excluded_cards_keywords_and_tags_never_show_as_previews(deck: Deck, db: CardDb) -> None:
+    # Flash and the treasure tag stay dominant; the exclusions drop cards, not the tags they match by.
+    themed = themed_deck(deck, ("Flash", "Treasure"))
+    by_card = Profile(exclude_cards=("Dahar Master",))
+    assert [name for name, *_ in fits(themed, db, profile=by_card)] == [
+        "Captain's Tutelage",
+        "Munitions Enthusiast",
+        "Quark, Humble Proprietor",
+    ]
+    # Munitions Enthusiast has trample; ramp is its role, through the ramp tag.
+    by_keyword = Profile(exclude=ThemeSpec(keywords=("Trample",)))
+    assert "Munitions Enthusiast" not in [name for name, *_ in fits(themed, db, profile=by_keyword)]
+    by_tag = Profile(exclude=ThemeSpec(tags=("ramp",)))
+    assert "Munitions Enthusiast" not in [name for name, *_ in fits(themed, db, profile=by_tag)]
 
 
 def test_a_deck_with_no_theme_tags_or_none_a_preview_matches_has_no_previews(deck: Deck, db: CardDb) -> None:
