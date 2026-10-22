@@ -11,7 +11,11 @@ from pathlib import Path
 
 import pytest
 
-from commander.carddb import CARD_DB_FILE
+from commander import cli_goldfish_cuts
+from commander.carddb import CARD_DB_FILE, CardDb
+from commander.goldfish import FigureChange, FigureKind, GoldfishComparison
+from commander.goldfish_run import GoldfishRun, SwapRequest
+from commander.targets import Target, TargetSource
 from conftest import FakeArchidekt, Json
 from test_cli_apply import Run, run
 
@@ -325,3 +329,135 @@ def test_the_help_gives_examples_before_the_flags(
     help_text = capsys.readouterr().out
     assert help_text.index("examples:") < help_text.index("options:")
     assert "cmdr goldfish ellivere --json" in help_text
+    assert 'cmdr goldfish ellivere --cuts "Cultivate"' in help_text
+
+
+# --- --cuts: a board card against the deck cards it could replace (ADR 0056) ----------------------------
+
+GOLEM, FLUTE = "Battered Golem", "Disruptor Flute"
+SCREW_WORSE = FigureChange(FigureKind.COLOUR_SCREW, "", None, 0.0, 0.3, moved=True)
+CUTS_HEADER = "Sample, deck.. (10000001): Arcane Signet against its cut targets, 10,000 games, seed 10000001"
+
+
+def put_on_board(home: Path, fake: FakeArchidekt, name: str) -> None:
+    added = run(["board", "add", "magda", name, "--workspace", str(home / "decks")], home, fake)
+    assert added.code == 0, added.err
+
+
+def test_a_board_card_is_played_against_each_card_it_could_replace(home: Path, fake: FakeArchidekt) -> None:
+    put_on_board(home, fake, "Arcane Signet")
+    result = goldfish(home, fake, "magda", "--cuts", "arcane signet")
+    assert (result.code, result.err) == (0, "")
+    # The Signet is cast on turn 2 and adds a mana to the three that three lands make on turn 3. With no
+    # shares read it scores only the 0.10 of replacing a card like it, and the Golem is its one target.
+    assert result.out.splitlines() == [
+        CUTS_HEADER,
+        "1. Battered Golem (score 0.10)",
+        "     Worst-tenth mana on turn 3: 3 -> 4",
+    ]
+    assert fake.requests == []
+
+
+def test_the_cuts_come_as_json_with_the_figures_of_each(home: Path, fake: FakeArchidekt) -> None:
+    put_on_board(home, fake, "Arcane Signet")
+    document = json.loads(goldfish(home, fake, "magda", "--cuts", "Arcane Signet", "--json").out)
+    assert document["deck"] == {"id": 10000001, "name": "Sample, deck..", "short": "Magda"}
+    assert (document["card"], document["copies"]) == ("Arcane Signet", 1)
+    [cut] = document["cuts"]
+    assert {key: cut[key] for key in ("name", "place", "scorePlace", "score", "movedUp", "why")} == {
+        "name": GOLEM,
+        "place": 1,
+        "scorePlace": 1,
+        "score": 0.1,
+        "movedUp": False,
+        "why": None,
+    }
+    assert [(f["label"], f["before"], f["after"]) for f in cut["figures"]] == [
+        ("Worst-tenth mana on turn 3", 3, 4)
+    ]
+
+
+def stub_targets(monkeypatch: pytest.MonkeyPatch, scores: dict[str, float]) -> list[str]:
+    """The card's targets with these scores, each swap moving a colour screw figure only when it cuts the
+    Golem; the cuts compared, in order, are the list returned."""
+    compared: list[str] = []
+
+    def targets(*_: object) -> tuple[Target, ...]:
+        return tuple(Target(name, f"{name} goes", TargetSource.ROLE, score) for name, score in scores.items())
+
+    def compare(
+        played: GoldfishRun, _db: CardDb, swaps: list[SwapRequest], *, lenient: bool = False
+    ) -> GoldfishComparison:
+        assert not lenient
+        compared.append(swaps[0].cut)
+        figures = (SCREW_WORSE,) if swaps[0].cut == GOLEM else ()
+        return GoldfishComparison(played.report, played.report, figures, ())
+
+    monkeypatch.setattr(cli_goldfish_cuts, "targets_for", targets)
+    monkeypatch.setattr(cli_goldfish_cuts, "compare_swaps", compare)
+    return compared
+
+
+def test_targets_that_tie_come_in_the_order_of_their_figures_and_the_one_moved_up_says_why(
+    home: Path, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    put_on_board(home, fake, "Arcane Signet")
+    compared = stub_targets(monkeypatch, {GOLEM: 0.50, FLUTE: 0.45})
+    result = goldfish(home, fake, "magda", "--cuts", "Arcane Signet")
+    assert result.code == 0
+    assert result.out.splitlines() == [
+        CUTS_HEADER,
+        "1. Disruptor Flute (score 0.45)",
+        "     goldfish pick, up from place 2: Colour screw is worse with Battered Golem",
+        "     no headline figure moved",
+        "2. Battered Golem (score 0.50)",
+        "     Colour screw: 0.0% -> 30.0%",
+    ]
+    assert compared == [GOLEM, FLUTE]
+    document = json.loads(goldfish(home, fake, "magda", "--cuts", "Arcane Signet", "--json").out)
+    assert [(c["name"], c["place"], c["scorePlace"], c["movedUp"]) for c in document["cuts"]] == [
+        (FLUTE, 1, 2, True),
+        (GOLEM, 2, 1, False),
+    ]
+
+
+def test_targets_that_do_not_tie_keep_the_scores_order_and_still_show_their_figures(
+    home: Path, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    put_on_board(home, fake, "Arcane Signet")
+    compared = stub_targets(monkeypatch, {GOLEM: 0.90, FLUTE: 0.45})
+    result = goldfish(home, fake, "magda", "--cuts", "Arcane Signet")
+    assert [line for line in result.out.splitlines() if line[0].isdigit()] == [
+        "1. Battered Golem (score 0.90)",
+        "2. Disruptor Flute (score 0.45)",
+    ]
+    assert "goldfish pick" not in result.out
+    assert compared == [GOLEM, FLUTE]
+
+
+def test_a_card_that_is_not_on_the_board_or_has_no_targets_is_an_error(
+    home: Path, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    off = goldfish(home, fake, "magda", "--cuts", "Chaos Warp")
+    assert (off.code, off.out) == (2, "")
+    assert off.err == "cmdr: 'Chaos Warp' is not on the board of Magda; `cmdr board add` puts it there\n"
+    put_on_board(home, fake, "Arcane Signet")
+    stub_targets(monkeypatch, {})
+    none = goldfish(home, fake, "magda", "--cuts", "Arcane Signet")
+    assert (none.code, none.out) == (2, "")
+    assert none.err == "cmdr: Arcane Signet has no cut targets in Magda\n"
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (("magda", "--cuts", "Arcane Signet", "--swap", "Mana Crypt=Battered Golem"), "leave out --swap"),
+        (("--cuts", "Arcane Signet"), "name a deck for --cuts"),
+    ],
+)
+def test_cuts_asks_for_a_deck_and_takes_no_swaps(
+    home: Path, fake: FakeArchidekt, args: tuple[str, ...], message: str
+) -> None:
+    result = goldfish(home, fake, *args)
+    assert (result.code, result.out) == (2, "")
+    assert message in result.err

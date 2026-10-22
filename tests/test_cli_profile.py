@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from commander import cli_profile
+from commander import cli_meta
 from commander.archidekt import parse_deck
 from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
 from commander.bracket import estimate_cache, estimate_deck
@@ -210,13 +210,13 @@ def test_profile_reads_the_cached_meta_at_an_unset_decks_estimated_bracket(
             refresh=False,
         )
     read: list[int | None] = []
-    real = cli_profile.gather_for
+    real = cli_meta.gather_for
 
     def spying(deck: Deck, *args: Any, **kwargs: Any) -> MetaData:  # noqa: ANN401 - passed on as it came
         read.append(deck.bracket)
         return real(deck, *args, **kwargs)
 
-    monkeypatch.setattr(cli_profile, "gather_for", spying)
+    monkeypatch.setattr(cli_meta, "gather_for", spying)
     code, _, err = profile(["magda"], tmp_path, own_cache)
     assert code == 0, err
     # The fake Spellbook says Ruthless 4+, the deck has no bracket, and no estimate is asked for.

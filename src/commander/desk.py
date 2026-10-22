@@ -79,6 +79,7 @@ from commander.deckthemes import merge_themes
 from commander.deckview import card_image, decklist_json
 from commander.fetchpriority import FetchPriority
 from commander.goldfish import POLICY_VERSION, GoldfishComparison
+from commander.goldfish_cuts import cuts_json, rank_cuts
 from commander.goldfish_json import changes_json, goldfish_report_json
 from commander.goldfish_load import GoldfishError, load_goldfish, tagged_finishers
 from commander.goldfish_run import (
@@ -982,19 +983,49 @@ class Desk:
         stored, stamp = self._stored_for_goldfish(deck_id)
         return self._goldfish_figures(stored, stamp, queued_swaps(read_board(stored.folder)))
 
+    @_guarded
+    def goldfish_cuts(self, deck_id: int, card_id: str) -> Json:
+        """The cut targets of a board card in the order the goldfish gives them (ADR 0056): {"cuts": [{name,
+        up, why}]}, `up` when the goldfish moved a target ahead of one the meta scored higher and `why` the
+        figure that decided it. Targets that tie on score are played against the card; the meta's order
+        stands for the rest. Empty for a card with no targets."""
+        stored, stamp = self._stored_for_goldfish(deck_id)
+        card = read_board(stored.folder).find(card_id)
+        if card is None:
+            raise BoardError(f"no card {card_id!r} on the board")
+        profile = read_profile(stored.folder)
+        with self._db() as db:
+            main = db.resolve(stored.deck.main_cards)
+            info = db.cards([card.oracle_id]).get(card.oracle_id)
+            rules = with_ideas(self._deck_rules(stored, main, profile, db), [info] if info else [], db)
+            targets = targets_for(card, info, main, rules)
+
+        def compare(target: Target) -> GoldfishComparison:
+            return self._goldfish_comparison(
+                stored, stamp, [SwapRequest(card.name, target.name, card.copies)]
+            )
+
+        return cuts_json(rank_cuts(targets, compare))
+
     def _goldfish_figures(self, stored: StoredDeck, stamp: str, swaps: list[SwapRequest]) -> Json:
         if not swaps:
             return {"figures": []}
-        deck_id = stored.deck.id
+        comparison = self._goldfish_comparison(stored, stamp, swaps)
+        return {"figures": changes_json(headline(comparison), comparison.base)}
+
+    def _goldfish_comparison(
+        self, stored: StoredDeck, stamp: str, swaps: list[SwapRequest]
+    ) -> GoldfishComparison:
+        """The swaps played against the deck's games, kept per deck and swap until the stamp changes. One
+        that cannot be played is left out."""
 
         def compare(played: GoldfishRun) -> GoldfishComparison:
             with self._db() as db:
                 return compare_swaps(played, db, swaps, lenient=True)
 
-        comparison = self._goldfish.compared(
-            deck_id, stamp, tuple(swaps), lambda: self._play_goldfish(stored), compare
+        return self._goldfish.compared(
+            stored.deck.id, stamp, tuple(swaps), lambda: self._play_goldfish(stored), compare
         )
-        return {"figures": changes_json(headline(comparison), comparison.base)}
 
     def _goldfish_run(self, stored: StoredDeck, stamp: str) -> GoldfishRun:
         return self._goldfish.played(stored.deck.id, stamp, lambda: self._play_goldfish(stored))
@@ -1642,7 +1673,12 @@ def _source_json(part: SourceShare | WeightedShare) -> Json:
 
 
 def _target_json(target: Target) -> Json:
-    return {"name": target.name, "reason": target.reason, "source": target.source.value}
+    return {
+        "name": target.name,
+        "reason": target.reason,
+        "source": target.source.value,
+        "score": None if target.score is None else round(target.score, 4),
+    }
 
 
 def _unavailable_reason(data: MetaData) -> Json:

@@ -8,7 +8,7 @@ from typing import TextIO
 import httpx
 
 from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
-from commander.bracket import estimate_cache, estimated_decks
+from commander.bracket import cached_effective_deck, estimate_cache, estimated_decks
 from commander.carddb import CardDb
 from commander.cli_output import progress_printer, write_json
 from commander.clibase import EXIT_FAILURE, EXIT_OK, Context, UsageError, one_deck, open_card_db, workspace
@@ -36,7 +36,7 @@ from commander.metadata import (
 )
 from commander.metadata import meta_sources as shared_meta_sources
 from commander.metajson import report_json
-from commander.models import short_commander_name
+from commander.models import Deck, short_commander_name
 from commander.playstyle import Fit
 from commander.spellbook import SpellbookClient
 from commander.store import StoredDeck, Workspace
@@ -140,6 +140,20 @@ def _cmd_meta(args: argparse.Namespace, ctx: Context) -> int:
 def meta_sources(http: httpx.Client, ctx: Context, user: str, settings: MetaSettings) -> MetaSources:
     """TopDeck, Archidekt search and Spellbook clients over one HTTP client, each at its own pace."""
     return shared_meta_sources(http, ctx.pacer_factory, user, settings, cache_dir(ctx.env))
+
+
+def cached_pool(deck: Deck, args: argparse.Namespace, ctx: Context) -> MetaData | None:
+    """What other players do with the deck's commander, read from the caches alone as the app does (the sync
+    fetches); None for a deck without a commander. The answers are keyed by the effective bracket
+    (ADR 0051)."""
+    if not deck.commanders:
+        return None
+    file = read_config(config_path(args.config, ctx.env))
+    with ctx.client_factory() as http:
+        sources = meta_sources(http, ctx, file.user or "", file.meta)
+        cache = estimate_cache(cache_dir(ctx.env) / SPELLBOOK_CACHE_FOLDER)
+        playing = cached_effective_deck(deck, cache, now=ctx.now)
+        return gather_for(playing, sources, cache_dir(ctx.env), now=ctx.now, refresh=False, offline=True)
 
 
 def _print_results(

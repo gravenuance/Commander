@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TextIO
 
 from commander.answers import card_key
+from commander.cli_goldfish_cuts import cmd_cuts
 from commander.cli_output import progress_printer, write_json
 from commander.clibase import EXIT_OK, Context, UsageError, one_deck, open_card_db, workspace
 from commander.config import cache_dir
@@ -35,12 +36,18 @@ examples:
   cmdr goldfish ellivere --swap "Arcane Signet=Wild Growth"
                                           what putting the first in for the second changes
   cmdr goldfish --plan plan.toml          the same for each add of a plan paired with a remove
+  cmdr goldfish ellivere --cuts "Cultivate"
+                                          a board card against each deck card it could replace
   cmdr goldfish ellivere --json           everything as JSON
 
 A swap is "<card in>=<card out>" and takes the place of one copy of the card out, the others staying in the
 deck. A plan pairs its adds with its removes in order; a remove takes out the copies the deck holds beyond
 its `keep`, and its add brings as many (Cultivate for one of ten Forests plays nine Forests and Cultivate).
 A figure is shown as moved only when the change is larger than the luck of the same draws allows.
+
+--cuts plays a card on the deck's board against its cut targets, as the app does when you select it. Targets
+whose scores are within 0.10 of each other are put in the order of what their swaps do to the headline
+figures (ADR 0056); the rest keep the score's order. A card with no targets is an error.
 """
 
 _COLUMN = 7
@@ -68,12 +75,19 @@ def add_goldfish_command(add_parser: Callable[..., argparse.ArgumentParser]) -> 
     goldfish.add_argument(
         "--plan", metavar="FILE", help="a plan file as `cmdr apply` reads it, or - for stdin"
     )
+    goldfish.add_argument(
+        "--cuts",
+        metavar="CARD",
+        help="a card on the deck's board, played against each deck card it could replace",
+    )
     goldfish.add_argument("--workspace", help="folder that holds the deck folders")
     goldfish.add_argument("--json", action="store_true", help="print the figures as JSON")
     goldfish.set_defaults(handler=_cmd_goldfish)
 
 
 def _cmd_goldfish(args: argparse.Namespace, ctx: Context) -> int:
+    if args.cuts is not None:
+        return cmd_cuts(args, ctx)
     plan = read_plan(ctx.stdin if args.plan == "-" else Path(args.plan)) if args.plan else None
     stored = one_deck(workspace(args, ctx), _deck_query(args.deck, plan, args, ctx))
     typed = _typed_swaps(args.swap)

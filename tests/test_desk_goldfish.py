@@ -16,10 +16,13 @@ from typing import cast
 import pytest
 
 from commander import desk as desk_module
+from commander.carddb import CardDb
 from commander.desk import Desk, DeskSettings
-from commander.goldfish import POLICY_VERSION
+from commander.goldfish import POLICY_VERSION, FigureChange, FigureKind, GoldfishComparison
+from commander.goldfish_run import GoldfishRun, SwapRequest
 from commander.models import Deck
 from commander.store import Workspace
+from commander.targets import Target, TargetSource
 from conftest import PASSWORD, FakeArchidekt, Json, build_card_db
 from test_desk import DECK, deferred_desk, desk, fake, items, make_desk, probing, profile_file, settings
 from test_desk_account import Env
@@ -151,6 +154,108 @@ def test_a_swap_that_cuts_one_of_six_mountains_plays_the_other_five(desk: Desk) 
 
 def test_a_card_that_is_not_on_the_board_is_an_error(desk: Desk) -> None:
     assert desk.goldfish_swap(DECK, "nothing") == {"error": "no card 'nothing' on the board"}
+
+
+# --- the order of an idea's cut targets (ADR 0056) -------------------------------------------------------
+
+GOLEM, FLUTE = "Battered Golem", "Disruptor Flute"
+SCREW_WORSE = FigureChange(FigureKind.COLOUR_SCREW, "", None, 0.0, 0.3, moved=True)
+
+
+class Cuts:
+    """The idea's targets with scores set here, and the figures a swap moves set by the deck card it cuts; the
+    games a swap would play are left out, and the cuts compared are counted."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, scores: dict[str, float]) -> None:
+        self.figures: dict[str, tuple[FigureChange, ...]] = {}
+        self.compared: list[str] = []
+
+        def targets(*_: object) -> tuple[Target, ...]:
+            return tuple(
+                Target(name, f"{name} goes", TargetSource.ROLE, score) for name, score in scores.items()
+            )
+
+        def compare(
+            played: GoldfishRun, _db: CardDb, swaps: list[SwapRequest], *, lenient: bool
+        ) -> GoldfishComparison:
+            assert lenient
+            cut = swaps[0].cut
+            self.compared.append(cut)
+            return GoldfishComparison(played.report, played.report, self.figures.get(cut, ()), ())
+
+        monkeypatch.setattr(desk_module, "targets_for", targets)
+        monkeypatch.setattr(desk_module, "compare_swaps", compare)
+
+
+def proposed(desk: Desk, name: str) -> str:
+    return str(cast("Json", desk.propose(DECK, name)["card"])["id"])
+
+
+def test_targets_that_tie_are_played_and_the_one_whose_swap_hurts_less_goes_first(
+    desk: Desk, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cuts = Cuts(monkeypatch, {GOLEM: 0.50, FLUTE: 0.45})
+    cuts.figures[GOLEM] = (SCREW_WORSE,)
+    answer = desk.goldfish_cuts(DECK, proposed(desk, "Arcane Signet"))
+    assert answer == {
+        "cuts": [
+            {"name": FLUTE, "up": True, "why": "Colour screw is worse with Battered Golem"},
+            {"name": GOLEM, "up": False, "why": None},
+        ]
+    }
+    assert cuts.compared == [GOLEM, FLUTE]
+
+
+def test_targets_that_do_not_tie_are_not_played_and_keep_the_meta_order(
+    desk: Desk, plays: Plays, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cuts = Cuts(monkeypatch, {GOLEM: 0.90, FLUTE: 0.45})
+    cuts.figures[GOLEM] = (SCREW_WORSE,)
+    answer = desk.goldfish_cuts(DECK, proposed(desk, "Arcane Signet"))
+    assert answer == {
+        "cuts": [{"name": GOLEM, "up": False, "why": None}, {"name": FLUTE, "up": False, "why": None}]
+    }
+    assert (cuts.compared, plays.games) == ([], 0)
+
+
+def test_the_comparisons_are_kept_for_the_swap_fold_and_played_again_when_the_deck_changes(
+    desk: Desk, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cuts = Cuts(monkeypatch, {GOLEM: 0.50, FLUTE: 0.45})
+    idea = proposed(desk, "Arcane Signet")
+    first = desk.goldfish_cuts(DECK, idea)
+    assert desk.goldfish_cuts(DECK, idea) == first
+    assert cuts.compared == [GOLEM, FLUTE]
+    # Queued over the Flute, the idea's fold is the comparison already made.
+    assert "error" not in desk.decide(DECK, idea, "add", FLUTE, "")
+    desk.goldfish_swap(DECK, idea)
+    assert cuts.compared == [GOLEM, FLUTE]
+    desk.save_finishers(DECK, ["Battered Golem"])
+    desk.goldfish_cuts(DECK, idea)
+    assert cuts.compared == [GOLEM, FLUTE, GOLEM, FLUTE]
+
+
+def test_a_card_with_one_target_or_none_plays_nothing(desk: Desk, plays: Plays) -> None:
+    # The fixture deck gives the Signet only the Golem to replace.
+    assert desk.goldfish_cuts(DECK, proposed(desk, "Arcane Signet")) == {
+        "cuts": [{"name": GOLEM, "up": False, "why": None}]
+    }
+    assert plays.games == 0
+
+
+def test_a_card_with_no_targets_has_no_cuts_and_a_card_off_the_board_is_an_error(
+    desk: Desk, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    Cuts(monkeypatch, {})
+    assert desk.goldfish_cuts(DECK, proposed(desk, "Arcane Signet")) == {"cuts": []}
+    assert desk.goldfish_cuts(DECK, "nothing") == {"error": "no card 'nothing' on the board"}
+
+
+def test_a_target_comes_to_the_page_with_the_score_it_was_chosen_by(desk: Desk) -> None:
+    # No shares are read, so the card scores only the 0.10 of replacing a card like it.
+    desk.propose(DECK, "Arcane Signet")
+    [signet] = items(desk.deck(DECK), "cards")
+    assert [(t["name"], t["score"]) for t in cast("list[Json]", signet["targets"])] == [(GOLEM, 0.1)]
 
 
 def test_the_same_swap_is_compared_once_and_a_change_to_the_deck_files_plays_again(

@@ -199,7 +199,7 @@ def change_json(change: FigureChange, report: GoldfishReport) -> Json:
         "before": change.base,
         "after": change.swapped,
         "moved": change.moved,
-        "better": _better(change),
+        "better": better_for_deck(change),
     }
 
 
@@ -207,7 +207,9 @@ def changes_json(changes: Sequence[FigureChange], report: GoldfishReport) -> lis
     return [change_json(change, report) for change in changes]
 
 
-def _better(change: FigureChange) -> bool | None:
+def better_for_deck(change: FigureChange) -> bool | None:
+    """Whether the figure moved the way the deck wants (True), against it (False), or neither way is better
+    or a side is missing (None)."""
     direction = _BETTER_WHEN[change.kind]
     if direction == 0 or change.base is None or change.swapped is None or change.base == change.swapped:
         return None

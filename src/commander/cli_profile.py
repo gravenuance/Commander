@@ -3,12 +3,9 @@
 import argparse
 from collections.abc import Callable, Sequence
 
-from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
-from commander.bracket import cached_effective_deck, estimate_cache
-from commander.cli_meta import meta_sources
+from commander.cli_meta import cached_pool
 from commander.cli_output import write_json
 from commander.clibase import EXIT_OK, Context, one_deck, open_card_db, workspace
-from commander.config import cache_dir, config_path, read_config
 from commander.deckprofile import (
     Profile,
     ThemeSpec,
@@ -19,7 +16,6 @@ from commander.deckprofile import (
 )
 from commander.deckthemes import BroadKind, DerivedTheme, MergedThemes, ThemeSource, broad_kind, merge_themes
 from commander.leanings import Leaning, leaning_json, leaning_text
-from commander.metadata import gather_for
 from commander.pricing import format_eur
 from commander.targets import deck_cut_rules
 
@@ -46,22 +42,14 @@ def _cmd_profile(args: argparse.Namespace, ctx: Context) -> int:
         print(f"wrote {path}; fill it in, then `cmdr profile {stored.deck.id}` checks it", file=ctx.out)
         return EXIT_OK
     profile = read_profile(stored.folder)
-    file = read_config(config_path(args.config, ctx.env))
-    with open_card_db(ctx) as db, ctx.client_factory() as http:
+    with open_card_db(ctx) as db:
         unknown = resolve_themes(profile, db).unknown_tags
         unknown_grace = tuple(name for name in profile.grace if db.card_named(name) is None)
         merged = merge_themes(stored.deck, profile, db)
         # Leaning tags can be ignored too, so only names that are no Tagger tag either are unknown.
         tags = db.tag_ids(name.strip().casefold() for name in merged.unknown_ignores)
         unknown_ignores = [name for name in merged.unknown_ignores if name.strip().casefold() not in tags]
-        data = None
-        if stored.deck.commanders:
-            sources = meta_sources(http, ctx, file.user or "", file.meta)
-            # The cached answers are keyed by the effective bracket (ADR 0051), read from the cache too.
-            playing = cached_effective_deck(
-                stored.deck, estimate_cache(cache_dir(ctx.env) / SPELLBOOK_CACHE_FOLDER), now=ctx.now
-            )
-            data = gather_for(playing, sources, cache_dir(ctx.env), now=ctx.now, refresh=False, offline=True)
+        data = cached_pool(stored.deck, args, ctx)
         leanings = deck_cut_rules(
             stored.deck, db.resolve(stored.deck.main_cards), profile, db, data, now=ctx.now
         ).leanings
