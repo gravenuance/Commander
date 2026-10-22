@@ -257,9 +257,11 @@ ignore = []
 
 {GRACE_BLOCK}
 # Commanders that play like this one: their recent Archidekt decks at this deck's bracket give `sync`
-# ideas too. A partner pair goes in its own list:
+# ideas too, from up to 15 of the most viewed of each. A name alone takes every deck it leads, with a
+# partner or not. A partner pair goes in its own list, and takes the decks led by exactly that pair:
 # commanders = ["The Gitrog Monster", ["Tevesh Szat, Doom of Fools", "Kodama of the East Tree"]]
-# tag_search: also read recent decks of other commanders carrying this deck's theme tags (slow at first).
+# tag_search: also read recent decks of other commanders carrying this deck's 3 most prevalent theme tags,
+# up to 10 of the most viewed of each (slow at first).
 [ideas]
 commanders = []
 # tag_search = true

@@ -256,7 +256,7 @@ def test_every_step_that_is_reported_started_is_reported_done(rig: Rig, bracket:
         on_progress=started.append,
         on_done=finished.append,
     )
-    assert "Archidekt: recent Ellivere decks" in started
+    assert "Ellivere: Ellivere of the Wild Court decks" in started
     assert sorted(started) == sorted(finished)
 
 
@@ -274,8 +274,29 @@ def test_the_adjacent_reads_report_each_step_started_and_done(rig: Rig) -> None:
         on_progress=started.append,
         on_done=finished.append,
     )
-    assert started == ["Archidekt: recent Magda decks", "Archidekt: recent decks tagged Stax"]
+    assert started == ["Ellivere: Magda decks (alike)", "Ellivere: Stax decks (theme)"]
     assert finished == started
+
+
+def test_a_step_names_the_deck_it_reads_for_not_only_the_commander_it_searches(rig: Rig) -> None:
+    started: list[str] = []
+    for deck in (ellivere_deck(), ellivere_deck(MAGDA)):
+        gather_adjacent(
+            deck,
+            [("Ygra, Eater of All",)],
+            rig.sources(),
+            rig.cache,
+            now=lambda: rig.now,
+            refresh=False,
+            tags=["Landfall"],
+            on_progress=started.append,
+        )
+    assert started == [
+        "Ellivere: Ygra decks (alike)",
+        "Ellivere: Landfall decks (theme)",
+        "Magda: Ygra decks (alike)",
+        "Magda: Landfall decks (theme)",
+    ]
 
 
 def test_the_tournament_refresh_reports_its_step_started_before_it_returns_and_done_after(rig: Rig) -> None:
@@ -570,7 +591,7 @@ def test_each_bracket_of_a_commander_is_searched_to_the_fifth_page_at_most(rig: 
     assert [q.get("page") for q in rig.archidekt.searches] == [None, "2", "2", "2", "2"] * 2
 
 
-def test_a_tag_search_pages_each_bracket_to_the_third_page_by_views(rig: Rig) -> None:
+def test_a_tag_search_pages_each_bracket_to_the_second_page_by_views(rig: Rig) -> None:
     rig.settings = replace(SETTINGS, peer_decks=12)
     rig.archidekt.page = popular_page(10, more=True)
     gather_adjacent(
@@ -584,9 +605,104 @@ def test_a_tag_search_pages_each_bracket_to_the_third_page_by_views(rig: Rig) ->
     )
     searches = rig.archidekt.searches
     assert {q["orderBy"] for q in searches} == {"-viewCount"}
-    assert [q.get("page") for q in searches] == [None, "2", "2"] * 2
+    assert [q.get("page") for q in searches] == [None, "2"] * 2
     firsts = [q for q in searches if "page" not in q]
     assert [(q["deckTagName"], q["edhBracket"]) for q in firsts] == [("Landfall", "3"), ("Landfall", "4")]
+
+
+def test_an_alike_commanders_search_pages_to_the_third_page_and_reads_a_quarter_of_peer_decks(
+    rig: Rig,
+) -> None:
+    rig.settings = replace(SETTINGS, peer_decks=60)
+    rig.archidekt.page = popular_page(70, more=True)
+    found = gather_adjacent(
+        replace(ellivere_deck(), bracket=3),
+        [(ELLIVERE,)],
+        rig.sources(),
+        rig.cache,
+        now=lambda: rig.now,
+        refresh=False,
+    )
+    assert [q.get("page") for q in rig.archidekt.searches] == [None, "2", "2"] * 2
+    assert len(rig.archidekt.deck_reads) == 15
+    assert [p.deck.id for p in found.decks] == list(range(30_000_000, 30_000_015))
+
+
+def test_a_pair_of_alike_commanders_reads_no_more_than_a_single_one(rig: Rig) -> None:
+    rig.settings = replace(SETTINGS, peer_decks=60)
+    rig.archidekt.page = popular_page(70)
+    rig.archidekt.partnered = set(range(30_000_000, 30_000_070))
+    found = adjacent(rig, (ELLIVERE, KODAMA))
+    assert len(rig.archidekt.deck_reads) == 15
+    assert len(found.decks) == 15
+
+
+def test_a_commanders_own_search_keeps_its_five_pages_and_sixty_reads(rig: Rig) -> None:
+    rig.settings = replace(SETTINGS, peer_decks=60)
+    rig.archidekt.page = popular_page(70, more=True)
+    rig.gather()
+    assert [q.get("page") for q in rig.archidekt.searches] == [None, "2", "2", "2", "2"]
+    assert len(rig.archidekt.deck_reads) == 60
+
+
+def test_an_alike_search_uses_the_commanders_own_stored_answer_cut_to_its_reads(rig: Rig) -> None:
+    rig.settings = replace(SETTINGS, peer_decks=60)
+    rig.archidekt.page = popular_page(70)
+    rig.gather()
+    asked = len(rig.archidekt.requests)
+    found = adjacent(rig, (ELLIVERE,))
+    assert len(rig.archidekt.requests) == asked
+    assert [p.deck.id for p in found.decks] == list(range(30_000_000, 30_000_015))
+
+
+def test_an_alike_searchs_smaller_answer_does_not_stand_in_for_the_commanders_own(rig: Rig) -> None:
+    rig.settings = replace(SETTINGS, peer_decks=60)
+    rig.archidekt.page = popular_page(70)
+    adjacent(rig, (ELLIVERE,))
+    searched = len(rig.archidekt.searches)
+    own = rig.gather().peers.data
+    assert len(rig.archidekt.searches) > searched
+    assert own is not None
+    assert len(own.decks) == 60
+    # Its own answer now serves the alike search again, with no new search.
+    searched = len(rig.archidekt.searches)
+    assert len(adjacent(rig, (ELLIVERE,)).decks) == 15
+    assert len(rig.archidekt.searches) == searched
+
+
+# The fingerprint of a tag answer as stored while a tag search paged 3 pages a bracket and read 15 decks.
+LARGER_TAG_REQUEST = {
+    "tag": "landfall",
+    "brackets": [5],
+    "pages": 3,
+    "decks": 15,
+    "viewFloors": [1000, 750, 500],
+    "minDecks": 10,
+    "windowDays": 60,
+    "user": "tester",
+}
+
+
+def test_a_tag_answer_stored_under_the_larger_limits_stays_fresh_and_is_cut_to_the_new_reads(
+    rig: Rig,
+) -> None:
+    rig.settings = replace(SETTINGS, peer_decks=60)
+    rig.archidekt.commander = MAGDA
+    rig.archidekt.page = popular_page(70)
+    tagged(rig, "Landfall")
+    [path] = (rig.cache / CACHE_FOLDER).glob("archidekt-tag-landfall*.json")
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    template = raw["answer"]["decks"][0]
+    # Fifteen decks, stored the least viewed first.
+    raw["answer"]["decks"] = [
+        {**template, "id": 30_000_000 + n, "views": 9000 - n} for n in reversed(range(15))
+    ]
+    raw["key"] = request_key(LARGER_TAG_REQUEST)
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    asked = len(rig.archidekt.requests)
+    again = tagged(rig, "Landfall")
+    assert len(rig.archidekt.requests) == asked
+    assert [p.deck.id for p in again.tagged[0].decks] == list(range(30_000_000, 30_000_010))
 
 
 def old_answer_with_search(rig: Rig, search: object) -> None:
@@ -870,23 +986,40 @@ def test_a_partner_pair_keeps_only_decks_led_by_both(rig: Rig) -> None:
     # that also does is under the bar and never read.
     rig.archidekt.commander = MAGDA
     rig.archidekt.partnered = {7432856, 23074747, 26605393}
-    rig.settings = replace(SETTINGS, peer_decks=12)
+    rig.settings = replace(SETTINGS, peer_decks=20)
     found = adjacent(rig, (MAGDA, KODAMA))
     assert [p.deck.id for p in found.decks] == [7432856, 23074747]
     assert 26605393 not in rig.archidekt.deck_reads
     assert found.errors == ()
 
 
-def test_a_lone_commander_leaves_out_decks_that_pair_it_with_a_partner(rig: Rig) -> None:
-    # The 3rd most viewed pairs Magda with Kodama; its off-colour cards would skew a lone Magda's meta.
+def test_a_lone_alike_commander_keeps_decks_that_pair_it_with_a_partner(rig: Rig) -> None:
+    # The 3rd most viewed pairs Magda with Kodama: it still leads with Magda, so it is a Magda deck.
     rig.archidekt.commander = MAGDA
     rig.archidekt.partnered = {7432856}
+    rig.settings = replace(SETTINGS, peer_decks=12)
     found = adjacent(rig, (MAGDA,))
-    assert [p.deck.id for p in found.decks] == [5553433, 13668856]
+    assert [p.deck.id for p in found.decks] == [5553433, 13668856, 7432856]
+
+
+def test_a_lone_alike_commander_still_leaves_out_decks_led_by_another_commander(rig: Rig) -> None:
+    rig.archidekt.commander = MAGDA
+    rig.archidekt.led_by = {13668856: KODAMA}
+    rig.settings = replace(SETTINGS, peer_decks=12)
+    found = adjacent(rig, (MAGDA,))
+    assert [p.deck.id for p in found.decks] == [5553433, 7432856]
+
+
+def test_a_commanders_own_search_still_leaves_out_decks_that_pair_it_with_a_partner(rig: Rig) -> None:
+    rig.archidekt.partnered = {7432856}
+    peers = rig.gather().peers.data
+    assert peers is not None
+    assert [p.deck.id for p in peers.decks] == [5553433, 13668856]
 
 
 def test_adjacent_groups_pool_their_decks_once_each(rig: Rig) -> None:
     # The fake search answers every commander with the same decks, so the second group adds none.
+    rig.settings = replace(SETTINGS, peer_decks=12)
     found = adjacent(rig, (ELLIVERE,), (ELLIVERE,))
     assert [p.deck.id for p in found.decks] == [5553433, 13668856, 7432856]
 
@@ -981,6 +1114,17 @@ def test_a_tag_search_reads_a_quarter_of_the_commander_reads_rounded_up(
     assert len(rig.archidekt.deck_reads) == reads
 
 
+@pytest.mark.parametrize(("peer_decks", "reads"), [(40, 10), (44, 10), (60, 10), (20, 5)])
+def test_a_tag_search_reads_ten_decks_at_most_whatever_the_commander_reads(
+    rig: Rig, peer_decks: int, reads: int
+) -> None:
+    rig.settings = replace(SETTINGS, peer_decks=peer_decks)
+    rig.archidekt.commander = MAGDA
+    rig.archidekt.page = popular_page(70)
+    tagged(rig, "Landfall")
+    assert len(rig.archidekt.deck_reads) == reads
+
+
 def test_decks_of_the_decks_own_commander_are_left_out_of_a_tag_search(rig: Rig) -> None:
     rig.settings = replace(SETTINGS, peer_decks=12)
     rig.archidekt.commander = MAGDA
@@ -1022,6 +1166,7 @@ def test_each_tag_is_searched_once_whatever_its_case(rig: Rig) -> None:
 
 
 def test_tag_decks_sit_beside_the_commander_groups_decks(rig: Rig) -> None:
+    rig.settings = replace(SETTINGS, peer_decks=12)
     rig.archidekt.commander = MAGDA
     found = tagged(rig, "Landfall", groups=((MAGDA,),))
     assert [p.deck.id for p in found.decks] == [5553433, 13668856, 7432856]
@@ -1029,6 +1174,7 @@ def test_tag_decks_sit_beside_the_commander_groups_decks(rig: Rig) -> None:
 
 
 def test_a_deck_read_for_a_commander_search_is_not_read_again_for_a_tag(rig: Rig) -> None:
+    rig.settings = replace(SETTINGS, peer_decks=12)
     rig.archidekt.commander = MAGDA
     tagged(rig, "Landfall", groups=((MAGDA,),))
     assert sorted(rig.archidekt.deck_reads) == [5553433, 7432856, 13668856]

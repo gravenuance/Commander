@@ -48,10 +48,16 @@ TOP_BRACKET = 5
 VIEW_FLOORS = (1000, 750, 500)
 MIN_DECKS = 10
 MAX_DECK_READS = 60
-# A deck-tag search spans every commander, so it is kept small: this many pages per bracket, and a quarter
-# of a commander's deck reads (rounded up).
-TAG_SEARCH_PAGES_PER_BRACKET = 3
-TAG_READ_DIVISOR = 4
+# A commander the profile names as playing alike is searched smaller than the deck's own: this many pages per
+# bracket, and a quarter of the deck reads (rounded up).
+ALIKE_SEARCH_PAGES_PER_BRACKET = 3
+ALIKE_READ_DIVISOR = 4
+# A deck-tag search spans every commander, so it is smaller still: only the deck's MAX_SEARCH_TAGS most
+# prevalent theme tags, each with this many pages per bracket and at most this many deck reads (and never
+# more than an alike commander's). Fixed on purpose: no setting raises them.
+MAX_SEARCH_TAGS = 3
+TAG_SEARCH_PAGES_PER_BRACKET = 2
+TAG_SEARCH_READS = 10
 _UNAUTHORIZED = frozenset({401, 403})
 
 
