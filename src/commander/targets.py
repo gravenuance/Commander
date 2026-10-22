@@ -424,20 +424,22 @@ def _role_counts(main: Sequence[ResolvedCard]) -> Counter[Role]:
     """How many deck cards the Tagger tags put in each role, as `peercounts` counts the peers'; commanders
     left out."""
     counts: Counter[Role] = Counter()
-    for r in main:
-        if COMMANDER_CATEGORY not in r.card.categories:
-            for role in _tagged_roles(r):
-                counts[role] += r.card.quantity
+    for r in _distinct_cards(main):
+        counts.update(_tagged_roles(r))
     return counts
 
 
 def _theme_counts(main: Sequence[ResolvedCard], rules: CutRules) -> Counter[str]:
     counts: Counter[str] = Counter()
-    for r in main:
-        if COMMANDER_CATEGORY not in r.card.categories:
-            for theme in _themes_of(r, rules):
-                counts[theme] += r.card.quantity
+    for r in _distinct_cards(main):
+        counts.update(_themes_of(r, rules))
     return counts
+
+
+def _distinct_cards(main: Sequence[ResolvedCard]) -> list[ResolvedCard]:
+    """The deck's cards but the commanders, each once however many entries or copies it has: the peers'
+    counts see a card once per deck."""
+    return list({r.card.name: r for r in main if COMMANDER_CATEGORY not in r.card.categories}.values())
 
 
 def _tagged_roles(r: ResolvedCard) -> list[Role]:
