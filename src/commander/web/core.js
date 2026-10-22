@@ -25,6 +25,7 @@ const state = {
   collapsed: new Set(),
   tagsKey: null,
   leaningsKey: null,
+  activityKey: null,
   selected: null,
   hovered: null,
   busy: false,
