@@ -2,12 +2,13 @@ import json
 import logging
 import sqlite3
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
+from commander import carddb
 from commander.archidekt import parse_deck
 from commander.carddb import (
     FACE_SEPARATOR,
@@ -303,6 +304,37 @@ def test_a_cycle_in_the_tag_tree_still_ends(card_db_file: Path) -> None:
 def test_tag_ids_leave_out_unknown_slugs(card_db_file: Path) -> None:
     with CardDb(card_db_file) as db:
         assert db.tag_ids(["ramp", "no-such-tag"]) == {"ramp": RAMP_TAG}
+
+
+def test_tag_sizes_count_cards_with_sub_tags_and_leave_out_unknown_slugs(card_db_file: Path) -> None:
+    with CardDb(card_db_file) as db:
+        # Same counts as find_tags: Magda sits in ramp through combat-ramp and is counted once.
+        assert db.tag_sizes(["ramp", "combat-ramp", "no-such-tag"]) == {"ramp": 7, "combat-ramp": 1}
+
+
+def _plan(db_file: Path, sql: str, params: Sequence[object] | Mapping[str, object]) -> str:
+    with sqlite3.connect(db_file) as db:
+        return "\n".join(str(row[3]) for row in db.execute(f"EXPLAIN QUERY PLAN {sql}", params))
+
+
+def test_tag_count_and_theme_queries_walk_the_tag_subtree_into_tag_member(card_db_file: Path) -> None:
+    # Left alone SQLite scans all of tag_member and probes the subtree for each row.
+    internals = vars(carddb)
+    cte, condition, params = internals["_theme_sql"](Theme(tag_ids=(RAMP_TAG,)))
+    sql = f"{cte} SELECT oracle_id FROM oracle WHERE {condition}"  # noqa: S608 — constant fragments, bound values
+    theme_plan = _plan(card_db_file, sql, params)
+    count_plan = _plan(card_db_file, internals["_TAG_COUNT_QUERY"], [RAMP_TAG])
+    for plan in (theme_plan, count_plan):
+        assert "SCAN tag_member" not in plan
+        assert "SEARCH tag_member USING" in plan
+
+
+def test_a_cards_printings_and_roles_are_found_by_index(card_db_file: Path) -> None:
+    printings = _plan(card_db_file, "SELECT * FROM printing WHERE oracle_id = ?", [MAGDA_ORACLE])
+    roles = _plan(card_db_file, "SELECT role FROM role_member WHERE oracle_id = ?", [MAGDA_ORACLE])
+    assert "SEARCH printing USING INDEX printing_oracle" in printings
+    assert "SEARCH role_member USING" in roles
+    assert "SCAN role_member" not in roles
 
 
 def test_find_tags_counts_cards_with_sub_tags_most_first(card_db_file: Path) -> None:

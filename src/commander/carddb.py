@@ -16,7 +16,7 @@ from commander.models import DeckCard
 log = logging.getLogger(__name__)
 
 # Bump whenever the tables or the meaning of a column change; an old file is rebuilt, never migrated.
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 CARD_DB_FILE = "cards.sqlite"
 # The suffix of a database being built beside the real one; a crash can leave such a file behind.
 BUILD_SUFFIX = ".building"
@@ -62,7 +62,9 @@ _SUBTREE_CTE = """WITH RECURSIVE subtree(tag_id) AS (
 )"""
 _TAG_COUNT_QUERY = (
     _SUBTREE_CTE.format("?")  # noqa: S608 — built from constant fragments and placeholders; every value is bound
-    + " SELECT count(DISTINCT oracle_id) FROM tag_member JOIN subtree ON tag_member.tag_id = subtree.tag_id"
+    # CROSS JOIN keeps the subtree first; left alone SQLite scans every tag_member row and probes the subtree.
+    + " SELECT count(DISTINCT oracle_id)"
+    " FROM subtree CROSS JOIN tag_member ON tag_member.tag_id = subtree.tag_id"
 )
 _SUBTREE_SLUGS_QUERY = (
     _SUBTREE_CTE.format("SELECT tag_id FROM tag WHERE slug = ?")  # noqa: S608 — built from constant fragments and placeholders; every value is bound
@@ -163,8 +165,10 @@ CREATE TABLE printing (
     eur_foil_cents INTEGER,
     regular INTEGER NOT NULL
 );
+CREATE INDEX printing_oracle ON printing (oracle_id);
 CREATE TABLE role_member (role TEXT NOT NULL, oracle_id TEXT NOT NULL, PRIMARY KEY (role, oracle_id))
     WITHOUT ROWID;
+CREATE INDEX role_member_card ON role_member (oracle_id);
 CREATE TABLE role_available (role TEXT PRIMARY KEY);
 CREATE TABLE tag (tag_id TEXT PRIMARY KEY, slug TEXT NOT NULL);
 CREATE INDEX tag_slug ON tag (slug);
@@ -693,7 +697,8 @@ def _theme_sql(theme: Theme) -> tuple[str, str, dict[str, object]]:
         cte = _SUBTREE_CTE.format(", ".join(names))
         parts.append(
             "oracle.oracle_id IN"
-            " (SELECT oracle_id FROM tag_member WHERE tag_id IN (SELECT tag_id FROM subtree))"
+            " (SELECT tag_member.oracle_id"
+            " FROM subtree CROSS JOIN tag_member ON tag_member.tag_id = subtree.tag_id)"
         )
     return cte, " OR ".join(parts), params
 
