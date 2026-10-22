@@ -292,7 +292,12 @@ def test_sync_json_gives_the_removed_status(
 
 def test_sync_json_output(tmp_path: Path, archidekt: FakeArchidekt) -> None:
     document = json.loads(sync(tmp_path, archidekt, "--json").out)
-    assert document["cardData"] == {"status": "skipped", "detail": "--no-cards"}
+    assert document["cardData"] == {
+        "status": "skipped",
+        "detail": "--no-cards",
+        "reason": None,
+        "nextRefresh": None,
+    }
     rows = document["decks"]
     assert len(rows) == 1
     assert rows[0]["id"] == 10000001
@@ -347,10 +352,28 @@ def test_maybeboard_only_edit_is_unchanged_but_saved(
 def test_sync_downloads_card_data_then_reports_it_current(tmp_path: Path, archidekt: FakeArchidekt) -> None:
     first = sync(tmp_path, archidekt, cards=True)
     assert first.code == 0
-    assert first.out.endswith("card data: updated, Scryfall data of 2026-10-15, 10,028 printings\n")
+    assert first.out.endswith(
+        "card data: updated, no usable card data, Scryfall data of 2026-10-15, 10,028 printings\n"
+    )
     assert (tmp_path / "localappdata" / "Commander" / "cards.sqlite").is_file()
     second = sync(tmp_path, archidekt, cards=True)
-    assert second.out == "1 unchanged\ncard data: current, Scryfall data of 2026-10-15\n"
+    assert second.out == (
+        "1 unchanged\n"
+        "card data: current, Scryfall data of 2026-10-15, next refresh 2026-10-22 or with the next new set\n"
+    )
+
+
+def test_sync_says_why_old_card_data_was_refreshed(tmp_path: Path, archidekt: FakeArchidekt) -> None:
+    sync(tmp_path, archidekt, cards=True)
+    later = run(
+        ["sync", "--user", "TESTER", "--workspace", str(tmp_path / "decks")],
+        tmp_path,
+        archidekt,
+        now=NOW + timedelta(days=8),
+    )
+    assert later.out.endswith(
+        "card data: updated, 8 days old, Scryfall data of 2026-10-15, 10,028 printings\n"
+    )
 
 
 def test_failed_card_refresh_fails_the_run_but_keeps_the_decks(
@@ -369,8 +392,14 @@ def test_sync_json_reports_card_data(tmp_path: Path, archidekt: FakeArchidekt) -
     document = json.loads(sync(tmp_path, archidekt, "--json", cards=True).out)
     assert document["cardData"] == {
         "status": "updated",
-        "detail": "Scryfall data of 2026-10-15, 10,028 printings",
+        "detail": "no usable card data, Scryfall data of 2026-10-15, 10,028 printings",
+        "reason": "no usable card data",
+        "nextRefresh": None,
     }
+    again = json.loads(sync(tmp_path, archidekt, "--json", cards=True).out)
+    assert again["cardData"]["status"] == "current"
+    assert again["cardData"]["reason"] is None
+    assert again["cardData"]["nextRefresh"] == "2026-10-22"
 
 
 @pytest.fixture

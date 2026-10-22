@@ -351,7 +351,12 @@ def _cmd_sync(args: argparse.Namespace, ctx: Context) -> int:
     if args.json:
         document = {
             "decks": [_result_json(r) for r in outcome.results],
-            "cardData": {"status": outcome.cards.state.value, "detail": outcome.cards.detail},
+            "cardData": {
+                "status": outcome.cards.state.value,
+                "detail": outcome.cards.detail,
+                "reason": outcome.cards.reason,
+                "nextRefresh": outcome.cards.next_refresh and outcome.cards.next_refresh.isoformat(),
+            },
             "labels": None
             if outcome.labels is None
             else [{"name": n, "colour": c} for n, c in outcome.labels],

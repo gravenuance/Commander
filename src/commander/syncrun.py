@@ -14,6 +14,7 @@ from collections.abc import Callable, Generator
 from concurrent.futures import FIRST_COMPLETED, Future, wait
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
+from datetime import date
 from enum import Enum
 from pathlib import Path
 
@@ -103,6 +104,9 @@ class CardState(Enum):
 class CardStatus:
     state: CardState
     detail: str
+    # Why the card data was rebuilt, and the day it is next rebuilt for its age; None when they do not apply.
+    reason: str | None = None
+    next_refresh: date | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -304,8 +308,11 @@ def _card_status(job: Future[CardRefresh] | None, options: SyncOptions) -> CardS
         return CardStatus(CardState.FAILED, f"{error}; the previous card data is kept")
     source = f"Scryfall data of {refresh.meta.cards_updated_at[:10]}"
     if refresh.status is RefreshStatus.CURRENT:
-        return CardStatus(CardState.CURRENT, source)
-    return CardStatus(CardState.UPDATED, f"{source}, {refresh.printings or 0:,} printings")
+        due = f", next refresh {refresh.next_due} or with the next new set" if refresh.next_due else ""
+        return CardStatus(CardState.CURRENT, source + due, next_refresh=refresh.next_due)
+    why = f"{refresh.reason}, " if refresh.reason else ""
+    detail = f"{why}{source}, {refresh.printings or 0:,} printings"
+    return CardStatus(CardState.UPDATED, detail, reason=refresh.reason or None)
 
 
 @dataclass(slots=True)
