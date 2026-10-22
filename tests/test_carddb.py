@@ -471,7 +471,7 @@ def test_card_mana_reads_what_each_card_makes(tmp_path: Path) -> None:
     assert sorted(found) == ["mind stone", "test dual land"]
     dual = found["test dual land"]
     assert (dual.name, dual.type_line, dual.produced, dual.rarity) == ("Test Dual Land", "Land", "WU", "rare")
-    # The fixture lines carry no produced_mana, so Mind Stone reads as making nothing here.
+    # Only the fixture's Mountains carry produced_mana, so Mind Stone reads as making nothing here.
     assert found["mind stone"].produced == ""
 
 
