@@ -87,3 +87,10 @@ The owner decided that a card cut on Archidekt after a count increase was queued
 by the next save: the increase is met like a decrease of such a card, and the save and the sync both drop it.
 Putting the card back in the deck is a separate, explicit choice (an add on the board). `CountChange.met_by`
 is true for a deck holding none of the card, whichever way the change goes.
+
+## Amendment (2026-10-22): a save removes only the count change it sent
+
+After a save, the count changes it sent leave the board. They were found by card and category, so a change
+queued for the same card while the save was running (another + or − on the decklist) left with the earlier
+one, and the new target was lost. `BoardService.mark_applied` now removes exactly the changes that were sent,
+and one queued meanwhile for the same card stays on the board for the next save.

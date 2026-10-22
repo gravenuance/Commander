@@ -25,6 +25,7 @@ const state = {
   collapsed: new Set(),
   tagsKey: null,
   leaningsKey: null,
+  activityKey: null,
   selected: null,
   hovered: null,
   busy: false,
@@ -51,7 +52,12 @@ function el(tag, props = {}, ...children) {
 }
 
 async function api(name, ...args) {
-  const answer = await window.pywebview.api[name](...args);
+  return checkAnswer(await window.pywebview.api[name](...args));
+}
+
+// Returns a bridge answer, or shows its refusal and throws it. A caller that may drop a stale answer checks it
+// first, so a refusal nobody wants is not shown.
+function checkAnswer(answer) {
   if (answer && answer.error) {
     showStatus(answer.error, true);
     const refusal = new Error(answer.error);
@@ -75,6 +81,12 @@ function reportPageError(message, source, line, stack) {
     const sent = bridge.log_page_error(String(message), String(source || ""), Number(line) || 0, String(stack || ""));
     if (sent && sent.catch) sent.catch(() => {});
   } catch { /* nothing more can be done when the bridge itself fails */ }
+}
+// For a catch that leaves a bridge error to the status line: any other error is a bug in a script, so it goes
+// to the app's log instead of vanishing.
+function noteFailure(error) {
+  if (error && error.fromBridge) return;
+  reportPageError(error instanceof Error ? error.message : String(error), "caught", 0, error && error.stack);
 }
 window.addEventListener("error", (event) => {
   reportPageError(event.message, event.filename, event.lineno, event.error && event.error.stack);
@@ -138,7 +150,7 @@ function graceLine(grace, limit = Infinity) {
 }
 
 // A panel that loads an answer for the open deck and draws it. `load()` drops an answer that arrives after
-// the deck changed; `render(deck, answer)` skips one the panel already shows. The renderer is called with
+// the deck changed or a newer request was sent; `render(deck, answer)` skips one the panel already shows. The renderer is called with
 // (deck, answer, fresh), fresh meaning this deck was not on show before. `wanted` says when a request is
 // worth sending; `keyOf` decides which answers count as the same.
 function panel(loader, renderer, { wanted = () => true, keyOf = JSON.stringify } = {}) {
@@ -151,13 +163,15 @@ function panel(loader, renderer, { wanted = () => true, keyOf = JSON.stringify }
     shown.key = key;
     renderer(deck, answer, fresh);
   }
+  let sent = 0;
   async function load() {
     if (state.current === null || !wanted()) return;
     const deck = state.current;
+    const mine = ++sent;
     try {
       const answer = await loader(deck);
-      if (deck === state.current) render(deck, answer);
-    } catch { /* shown in the status line */ }
+      if (deck === state.current && mine === sent) render(deck, answer);
+    } catch (error) { noteFailure(error); }
   }
   // Drops what is shown, so the next answer draws even for the deck that was on show.
   function forget() {
@@ -194,7 +208,7 @@ function combobox(input, list, find, pick) {
     const mine = ++sent;
     timer = setTimeout(async () => {
       let found = [];
-      try { found = await find(input.value); } catch { /* the status line says what went wrong */ }
+      try { found = await find(input.value); } catch (error) { noteFailure(error); }
       if (mine !== sent) return;
       if (document.activeElement !== input) { close(); return; }
       items = found;

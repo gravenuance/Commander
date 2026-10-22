@@ -67,6 +67,19 @@ def test_the_window_shows_the_icon(monkeypatch: pytest.MonkeyPatch) -> None:
     fake.create_window = lambda *_args, **_kwargs: None  # type: ignore[attr-defined]
     fake.start = lambda **kwargs: started.update(kwargs)  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "webview", fake)
-    app.run_app(Desk.__new__(Desk))
+    app.run_app(Desk.__new__(Desk), storage=Path("profile"))
     assert Path(started["icon"]).name == "commander.ico"
     assert Path(started["icon"]).is_file()
+
+
+def test_the_window_keeps_its_profile_so_card_images_stay_cached(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    started: dict[str, Any] = {}
+    fake = types.ModuleType("webview")
+    fake.create_window = lambda *_args, **_kwargs: None  # type: ignore[attr-defined]
+    fake.start = lambda **kwargs: started.update(kwargs)  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "webview", fake)
+    app.run_app(Desk.__new__(Desk), storage=tmp_path / "webview")
+    assert started["private_mode"] is False
+    assert started["storage_path"] == str(tmp_path / "webview")

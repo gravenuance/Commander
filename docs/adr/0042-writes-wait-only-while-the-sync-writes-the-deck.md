@@ -105,3 +105,11 @@ A refusal while the whole sync runs ended in the sync's phase, "Wait for the syn
 Starting the sync).", which is 13 words and longer with a longer phase; the UI budget for status text is 12
 (`ui.md`). The text is now "Wait for the sync to finish, then sign in." The phase stays in the log line of the
 refusal, with the deck and how long the sync has run.
+
+## Amendment (2026-10-22): signing in or out waits for no deck's write
+
+*User writes* says that signing in or out "still waits for the whole sync". That is all it waits for: it takes
+no deck's lock and does not wait for a deck's write that is already running, and it does not stop one. Such a
+write holds its deck, user, workspace and token before its first call to Archidekt, so it finishes for the
+account it began with, in that account's folder, whichever account the window switches to meanwhile. A sign-in
+during a sync is still refused (ADR 0023, ADR 0032).

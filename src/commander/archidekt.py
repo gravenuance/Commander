@@ -2,11 +2,9 @@
 
 import logging
 import time
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-
-import httpx
 
 from commander.jsonshape import (
     ShapeError,
@@ -48,10 +46,16 @@ TOP_BRACKET = 5
 VIEW_FLOORS = (1000, 750, 500)
 MIN_DECKS = 10
 MAX_DECK_READS = 60
-# A deck-tag search spans every commander, so it is kept small: this many pages per bracket, and a quarter
-# of a commander's deck reads (rounded up).
-TAG_SEARCH_PAGES_PER_BRACKET = 3
-TAG_READ_DIVISOR = 4
+# A commander the profile names as playing alike is searched smaller than the deck's own: this many pages per
+# bracket, and a quarter of the deck reads (rounded up).
+ALIKE_SEARCH_PAGES_PER_BRACKET = 3
+ALIKE_READ_DIVISOR = 4
+# A deck-tag search spans every commander, so it is smaller still: only the deck's MAX_SEARCH_TAGS most
+# prevalent theme tags, each with this many pages per bracket and at most this many deck reads (and never
+# more than an alike commander's). Fixed on purpose: no setting raises them.
+MAX_SEARCH_TAGS = 3
+TAG_SEARCH_PAGES_PER_BRACKET = 2
+TAG_SEARCH_READS = 10
 _UNAUTHORIZED = frozenset({401, 403})
 
 
@@ -83,14 +87,61 @@ class _ListingDrifted(Exception):  # noqa: N818 - control flow inside list_comma
     """A paged listing showed one deck on two pages."""
 
 
+class _LimitGuard:
+    """Sends Archidekt reads through a pacer and keeps away after a 429.
+
+    After a 429 nothing goes out for RATE_LIMIT_PAUSE_SECONDS or the Retry-After if longer, which holds the
+    next request of any caller of the pacer; the limited one is tried again after it. A request limited again
+    gives up: every later request of this guard fails at once, so callers fall back to their cache without
+    more waiting.
+    """
+
+    def __init__(self, pacer: Pacer) -> None:
+        self.pacer = pacer
+        self._gave_up: RateLimitedError | None = None
+
+    def send[T](self, send: Callable[[], T], target: str) -> T:
+        """`send` is a fetcher read made with surface_rate_limit=True."""
+        if self._gave_up is not None:
+            raise RateLimitedError(str(self._gave_up), self._gave_up.retry_after)
+        for attempt in range(RATE_LIMIT_RETRIES + 1):
+            self.pacer.wait()
+            started = time.perf_counter()
+            try:
+                return send()
+            except RateLimitedError as error:
+                if attempt == RATE_LIMIT_RETRIES:
+                    log.warning("Archidekt is still limiting requests; no more are sent this run")
+                    self._gave_up = error
+                    raise
+                pause = max(RATE_LIMIT_PAUSE_SECONDS, error.retry_after or 0.0)
+                log.warning("Archidekt asked for quiet; waiting %.0fs before the next request", pause)
+                self.pacer.cool_down(pause)
+            finally:
+                log.debug("Archidekt request %s took %.2fs", target, time.perf_counter() - started)
+        raise AssertionError("unreachable: the last attempt raises")  # pragma: no cover
+
+
 class ArchidektClient:
     """The owner's decks. With an access token the listing and the reads also cover the owner's private and
-    unlisted decks (ADR 0040); without one they cover public decks only, as plain requests."""
+    unlisted decks (ADR 0040); without one they cover public decks only, as plain requests.
 
-    def __init__(self, fetcher: Fetcher, base_url: str = API_BASE, *, token: str | None = None) -> None:
+    Requests go out at once; only a 429 holds them, for every thread of the client (the `pacer`, which the
+    client makes at no interval when none is given).
+    """
+
+    def __init__(
+        self,
+        fetcher: Fetcher,
+        base_url: str = API_BASE,
+        *,
+        token: str | None = None,
+        pacer: Pacer | None = None,
+    ) -> None:
         self._fetcher = fetcher
         self._base_url = base_url.rstrip("/")
         self._headers = auth_headers(token)
+        self._guard = _LimitGuard(pacer or Pacer(0.0))
 
     @property
     def signed_in(self) -> bool:
@@ -98,7 +149,7 @@ class ArchidektClient:
 
     def anonymous(self) -> "ArchidektClient":
         """The same client without the token."""
-        return ArchidektClient(self._fetcher, self._base_url)
+        return ArchidektClient(self._fetcher, self._base_url, pacer=self._guard.pacer)
 
     def list_commander_decks(self, user: str) -> list[DeckSummary]:
         """Every Commander deck the user owns that this client may see, following pagination.
@@ -167,10 +218,13 @@ class ArchidektClient:
         return False
 
     def _get(self, url: str, params: Mapping[str, str | int] | None) -> object:
+        return self._guard.send(lambda: self._read(url, params), _target(url, params))
+
+    def _read(self, url: str, params: Mapping[str, str | int] | None) -> object:
         if self._headers is None:
-            return self._fetcher.get_json(url, params)
+            return self._fetcher.get_json(url, params, surface_rate_limit=True)
         try:
-            return self._fetcher.get_json(url, params, headers=self._headers)
+            return self._fetcher.get_json(url, params, headers=self._headers, surface_rate_limit=True)
         except HttpStatusError as error:
             raise_if_unauthorized(error)
             raise
@@ -208,10 +262,8 @@ class ArchidektSearch:
 
     def __init__(self, fetcher: Fetcher, pacer: Pacer, base_url: str = API_BASE) -> None:
         self._fetcher = fetcher
-        self._pacer = pacer
         self._base_url = base_url.rstrip("/")
-        # Set when a request was limited twice: the rest of this run's requests then fail at once.
-        self._gave_up: RateLimitedError | None = None
+        self._guard = _LimitGuard(pacer)
 
     def popular_decks(
         self,
@@ -269,30 +321,10 @@ class ArchidektSearch:
         return _read_deck(self._get(f"{self._base_url}/decks/{deck_id}/", None), deck_id)
 
     def _get(self, url: str, params: Mapping[str, str | int] | None) -> object:
-        """One paced request. After a 429 nothing goes out for RATE_LIMIT_PAUSE_SECONDS or the Retry-After if
-        longer, which holds the next request of any caller; the limited one is tried again after it. A request
-        limited again gives up: every later request of this object fails at once, so callers fall back to
-        their cache without more waiting."""
-        if self._gave_up is not None:
-            raise RateLimitedError(str(self._gave_up), self._gave_up.retry_after)
-        for attempt in range(RATE_LIMIT_RETRIES + 1):
-            self._pacer.wait()
-            started = time.perf_counter()
-            try:
-                return self._fetcher.get_json(url, params, surface_rate_limit=True)
-            except RateLimitedError as error:
-                if attempt == RATE_LIMIT_RETRIES:
-                    log.warning("Archidekt is still limiting requests; no more are sent this run")
-                    self._gave_up = error
-                    raise
-                pause = max(RATE_LIMIT_PAUSE_SECONDS, error.retry_after or 0.0)
-                log.warning("Archidekt asked for quiet; waiting %.0fs before the next request", pause)
-                self._pacer.cool_down(pause)
-            finally:
-                log.debug(
-                    "Archidekt request %s took %.2fs", _target(url, params), time.perf_counter() - started
-                )
-        raise AssertionError("unreachable: the last attempt raises")  # pragma: no cover
+        """One paced request, held by a 429 as `_LimitGuard` says."""
+        return self._guard.send(
+            lambda: self._fetcher.get_json(url, params, surface_rate_limit=True), _target(url, params)
+        )
 
 
 class _Cursor:
@@ -320,6 +352,8 @@ class _Cursor:
 
 
 def _target(url: str, params: Mapping[str, str | int] | None) -> str:
+    import httpx  # noqa: PLC0415
+
     return f"{url}?{httpx.QueryParams(params)}" if params else url
 
 

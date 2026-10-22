@@ -2,7 +2,8 @@
 
 **Status:** Accepted · **Date:** 2026-10-15 · Superseded in part by
 [ADR 0032](0032-one-considering-list-and-one-sync.md) (the board's two lists) and
-[ADR 0035](0035-retire-the-maybeboard-and-sideboard.md) (the Sideboard and Maybeboard)
+[ADR 0035](0035-retire-the-maybeboard-and-sideboard.md) (the Sideboard and Maybeboard) · Amended in part by
+the 2026-10-22 amendment below (the board's thread lock, the window's profile)
 Corrected in place on 2026-10-18 for accuracy (see git history); an exception to never editing accepted records.
 
 ## Context
@@ -77,3 +78,15 @@ Ruination; the read-back matched. The reverse swap moved Lightning Bolt back in 
 - The Maybeboard grows with every swap until cards are turned down; turning down is the cleanup.
 - Revisit the polling, and whether the page should move to a framework, if the app grows past the two
   lists, the review dialog and the activity column.
+
+## Amendment (2026-10-22): a thread lock for each deck, and a window profile on disk
+
+- **The board lock's thread half is per deck folder.** `board_lock` takes the lock file for other processes
+  and, before it, one `threading.Lock` for the folder (`board._thread_lock`), where it was one lock for the
+  whole process. A lock file that another process holds on one deck, which can last the 10 s of
+  `LOCK_TIMEOUT_SECONDS`, now holds up that deck's threads only, not every deck's.
+- **The window keeps its profile.** It ran in pywebview's private mode, which drops WebView2's HTTP cache at
+  every close, so each launch fetched every card image from Scryfall again and forgot the card size and the
+  activity tab the page remembers. It now keeps the profile in `webview` under the cache folder
+  (`%LOCALAPPDATA%\Commander\webview`), so an image loads from disk after its first view. Deleting the folder
+  clears it.

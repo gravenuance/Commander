@@ -4,9 +4,19 @@ from pathlib import Path
 
 import pytest
 
+from commander import board as board_module
 from commander.archidekt import parse_deck
+from commander.board import board_lock
 from commander.models import Deck
-from commander.store import Workspace, WorkspaceError, folder_name, parse_snapshot, slugify, snapshot_json
+from commander.store import (
+    DeckInUseError,
+    Workspace,
+    WorkspaceError,
+    folder_name,
+    parse_snapshot,
+    slugify,
+    snapshot_json,
+)
 from conftest import Json
 
 
@@ -235,3 +245,34 @@ def test_remove_deck_refuses_a_folder_that_is_not_directly_inside_the_workspace(
         Wandering(tmp_path / "decks").remove_deck(5)
 
     assert (outside / "keep.txt").read_text(encoding="utf-8") == "keep"
+
+
+def test_a_rename_waits_for_the_board_lock_and_fails_when_it_stays_held(
+    tmp_path: Path, deck: Deck, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = Workspace(tmp_path)
+    folder = workspace.save(deck)
+    monkeypatch.setattr(board_module, "LOCK_TIMEOUT_SECONDS", 0.0)
+    lock = folder / board_module.LOCK_FILE
+    # Another process, such as the CLI, is in the middle of a board write.
+    lock.write_text("123", encoding="utf-8")
+
+    with pytest.raises(DeckInUseError, match="board is in use"):
+        workspace.save(replace(deck, name="Magda Treasure"))
+
+    assert [p.name for p in tmp_path.iterdir()] == ["10000001-sample-deck"]
+    assert lock.read_text(encoding="utf-8") == "123"
+    # The next sync, with the board free again, renames it.
+    lock.unlink()
+    renamed = workspace.save(replace(deck, name="Magda Treasure"))
+    assert [p.name for p in tmp_path.iterdir()] == ["10000001-magda-treasure"]
+    assert renamed.name == "10000001-magda-treasure"
+
+
+def test_a_renamed_folder_does_not_carry_the_lock_it_was_renamed_under(tmp_path: Path, deck: Deck) -> None:
+    workspace = Workspace(tmp_path)
+    workspace.save(deck)
+    folder = workspace.save(replace(deck, name="Magda Treasure"))
+    assert not (folder / board_module.LOCK_FILE).exists()
+    with board_lock(folder):
+        pass

@@ -312,8 +312,12 @@ def save(
     *,
     now: Callable[[], datetime],
     on_progress: Callable[[str], None] = lambda _: None,
+    before_send: Callable[[], None] = lambda: None,
 ) -> SaveResult:
-    """Look up new cards, snapshot the deck on Archidekt, send every change at once, then read it back."""
+    """Look up new cards, snapshot the deck on Archidekt, send every change at once, then read it back.
+
+    before_send runs once everything is checked and just ahead of the send; what it raises stops the save
+    with nothing changed on the deck."""
     if resolution.problems:
         raise ValueError("a resolution with problems cannot be saved")
     if not resolution.changes:
@@ -338,6 +342,7 @@ def save(
     snapshot = f"before cmdr apply {now().strftime('%Y-%m-%d %H:%M:%S')} UTC"
     on_progress(f"saving snapshot '{snapshot}' on Archidekt")
     editor.create_snapshot(deck.id, snapshot, "Restore point saved by cmdr before applying a plan.")
+    before_send()
     on_progress(f"sending {len(edits)} change(s) to deck {deck.id}")
     try:
         editor.modify_cards(deck.id, edits)
@@ -466,13 +471,15 @@ def apply_to_live(
     now: Callable[[], datetime],
     on_progress: Callable[[str], None] = lambda _: None,
     estimated: int | None = None,
+    before_send: Callable[[], None] = lambda: None,
 ) -> ApplyOutcome:
     """Check a plan against a deck fetched from Archidekt; save it when asked and nothing is wrong.
-    estimated is as for `resolve_plan`."""
+    estimated is as for `resolve_plan`, before_send as for `save`."""
     resolution = resolve_plan(live.deck, plan, db, categories=live.categories, estimated=estimated)
     if not (save_changes and resolution.changes and not resolution.problems):
         return ApplyOutcome(resolution, None)
-    return ApplyOutcome(resolution, save(editor, live, resolution, now=now, on_progress=on_progress))
+    saved = save(editor, live, resolution, now=now, on_progress=on_progress, before_send=before_send)
+    return ApplyOutcome(resolution, saved)
 
 
 def apply_plan(

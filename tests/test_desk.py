@@ -3,15 +3,17 @@
 import copy
 import json
 import logging
+import os
 import re
 import shutil
 import threading
+from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from importlib import resources
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -21,7 +23,17 @@ from commander import syncrun
 from commander.app import desk_settings, page_html
 from commander.apply import Resolution
 from commander.archidekt import parse_deck
-from commander.board import Actor, BoardService, Origin, OriginPool, Status, read_board
+from commander.board import (
+    ACTIVITY_FILE,
+    Activity,
+    Actor,
+    BoardService,
+    Origin,
+    OriginPool,
+    Status,
+    activity_json,
+    read_board,
+)
 from commander.boardsave import BoardSave
 from commander.carddb import CARD_DB_FILE, CardDb
 from commander.config import MetaSettings
@@ -202,6 +214,70 @@ def test_decks_are_listed_by_commander_short_name(desk: Desk) -> None:
     }
 
 
+def count_calls(monkeypatch: pytest.MonkeyPatch, owner: object, *names: str) -> Counter[str]:
+    """Count the calls to the owner's functions or methods of these names, which still run."""
+    calls = Counter[str]()
+    for name in names:
+        original = getattr(owner, name)
+
+        def counted(*args: Any, _name: str = name, _original: Any = original, **kwargs: Any) -> Any:  # noqa: ANN401
+            calls[_name] += 1
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(owner, name, counted)
+    return calls
+
+
+def test_an_unchanged_deck_is_not_read_again_for_the_list(
+    desk: Desk, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    desk.propose(DECK, "Lightning Bolt")
+    first = desk.decks()
+    calls = count_calls(monkeypatch, desk_module, "read_board", "held_keys")
+
+    assert desk.decks() == first
+    assert sum(calls.values()) == 0
+
+
+def test_the_list_follows_a_deck_changed_by_a_proposal_a_save_or_new_card_data(
+    desk: Desk, settings: DeskSettings
+) -> None:
+    assert items(desk.decks(), "decks")[0]["queued"] == 0
+    desk.propose(DECK, "Lightning Bolt")
+    assert [(r["queued"], r["open"]) for r in items(desk.decks(), "decks")] == [(0, 1)]
+    desk.decide(DECK, first_card_id(desk), "add", "Disruptor Flute", "")
+    assert [(r["queued"], r["open"]) for r in items(desk.decks(), "decks")] == [(1, 0)]
+    # The deck on disk gets the Bolt, as a save puts it there: the card is no idea any more.
+    workspace = Workspace(settings.workspace)
+    saved = workspace.load(DECK)
+    assert saved is not None
+    bolt = replace(saved.main_cards[0], name="Lightning Bolt", categories=("Ramp",), entry_id=1)
+    workspace.save(replace(saved, name="Renamed", cards=(*saved.cards, bolt)))
+
+    [row] = items(desk.decks(), "decks")
+
+    assert (row["name"], row["queued"]) == ("Renamed", 1)
+
+
+def test_a_deck_view_asks_the_card_data_the_same_times_for_few_or_many_board_cards(
+    desk: Desk, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in ("Lightning Bolt", "Arcane Signet"):
+        desk.propose(DECK, name)
+    desk.deck(DECK)  # fills what the desk keeps between views, such as the cut rules
+    calls = count_calls(monkeypatch, CardDb, "cards", "card_text", "card_texts")
+    desk.deck(DECK)
+    few = sum(calls.values())
+    for name in ("Chaos Warp", "Mind Stone", "Jeska's Will", "Splinter Twin"):
+        desk.propose(DECK, name)
+    calls.clear()
+
+    desk.deck(DECK)
+
+    assert few > 0
+    assert sum(calls.values()) == few
+
+
 def test_a_deck_with_a_damaged_board_lists_with_an_error_and_the_others_still_load(
     desk: Desk, settings: DeskSettings
 ) -> None:
@@ -238,6 +314,26 @@ def test_a_proposed_card_shows_with_its_card_facts(desk: Desk) -> None:
     assert "Magda, Brazen Outlaw" not in names(view, "deckCards")
     assert "Battered Golem" in names(view, "deckCards")
     assert [e["action"] for e in items(view, "activity")] == ["proposed (considering)"]
+
+
+def test_a_deck_view_reads_only_the_newest_activity_lines_it_shows(
+    desk: Desk, settings: DeskSettings, caplog: pytest.LogCaptureFixture
+) -> None:
+    folder = Workspace(settings.workspace).folder_for(DECK)
+    assert folder is not None
+    noted = [
+        Activity(f"2026-10-15T12:{n // 60:02d}:{n % 60:02d}+00:00", Actor.YOU, "noted", None, f"line {n}")
+        for n in range(100)
+    ]
+    # 140 damaged lines before the 100 good ones: reading the whole log would warn about each of them.
+    lines = ["{damaged\n"] * 140 + [json.dumps(activity_json(entry)) + "\n" for entry in noted]
+    (folder / ACTIVITY_FILE).write_text("".join(lines), encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING, logger="commander.board"):
+        shown = items(desk.deck(DECK), "activity")
+
+    assert [e["detail"] for e in shown] == [f"line {n}" for n in range(99, 39, -1)]
+    assert caplog.records == []
 
 
 def test_the_view_flags_the_cards_the_main_deck_holds_and_not_those_in_the_maybeboard(
@@ -374,6 +470,61 @@ def test_settings_offer_commanders_and_tags_and_save_to_the_profile(desk: Desk) 
     refused = save(desk, [["Arcane Signet"]], [], tag_search=False)
     assert refused == {"error": "'Arcane Signet' is not a commander the card data knows"}
     assert desk.settings(DECK)["adjacent"] == [["Tempestra, Dame of Games"]]
+
+
+def test_a_partner_search_offers_any_commander_legal_card_and_not_a_banned_one(desk: Desk) -> None:
+    # A Background is no legendary creature, so only the partner slot offers it.
+    assert desk.find_commanders("raised by")["names"] == []
+    assert desk.find_commanders("raised by", True)["names"] == ["Raised by Giants"]  # noqa: FBT003
+    assert desk.find_commanders("arcane", True)["names"] == ["Arcane Signet"]  # noqa: FBT003
+    assert desk.find_commanders("mana crypt", True)["names"] == []  # noqa: FBT003
+    assert desk.find_commanders("tomb", True)["names"] == ["Ancient Tomb"]  # noqa: FBT003
+
+
+def test_a_pair_saves_its_second_name_as_the_card_data_spells_it(desk: Desk, settings: DeskSettings) -> None:
+    saved = save(desk, [["tempestra, DAME of games", " raised BY giants "]], [], tag_search=False)
+    expected = [["Tempestra, Dame of Games", "Raised by Giants"]]
+    assert saved["adjacent"] == expected
+    assert desk.settings(DECK)["adjacent"] == expected
+    assert '["Tempestra, Dame of Games", "Raised by Giants"]' in profile_file(settings).read_text(
+        encoding="utf-8"
+    )
+    # Any legal card may partner, whatever its type, and a front face stands for its two-faced card.
+    mixed = save(desk, [["Magda, Brazen Outlaw", "arcane signet"]], [], tag_search=False)
+    assert mixed["adjacent"] == [["Magda, Brazen Outlaw", "Arcane Signet"]]
+    faced = save(desk, [["Magda, Brazen Outlaw", "sundering eruption"]], [], tag_search=False)
+    assert faced["adjacent"] == [["Magda, Brazen Outlaw", "Sundering Eruption // Volcanic Fissure"]]
+
+
+@pytest.mark.parametrize(
+    ("second", "message"),
+    [
+        pytest.param(
+            "Nonesuch Relic", "'Nonesuch Relic' is not a legal card the card data knows", id="unknown"
+        ),
+        pytest.param("Mana Crypt", "'Mana Crypt' is not a legal card the card data knows", id="banned"),
+    ],
+)
+def test_a_pair_whose_second_name_is_no_legal_card_is_refused_and_nothing_is_saved(
+    desk: Desk, settings: DeskSettings, second: str, message: str
+) -> None:
+    save(desk, [["Tempestra, Dame of Games"]], ["Stax"], tag_search=False)
+    before = profile_file(settings).read_bytes()
+    refused = save(desk, [["Tempestra, Dame of Games", second]], ["Dice"], tag_search=True)
+    assert refused == {"error": message}
+    assert profile_file(settings).read_bytes() == before
+
+
+def test_a_lone_commander_is_still_held_to_a_commander_and_saved_as_spelled(
+    desk: Desk, settings: DeskSettings
+) -> None:
+    before = profile_file(settings).read_bytes()
+    assert save(desk, [["Raised by Giants"]], [], tag_search=False) == {
+        "error": "'Raised by Giants' is not a commander the card data knows"
+    }
+    assert profile_file(settings).read_bytes() == before
+    saved = save(desk, [["tempestra, dame of games"]], [], tag_search=False)
+    assert saved["adjacent"] == [["Tempestra, Dame of Games"]]
 
 
 def test_searching_decks_by_tag_is_off_in_the_settings_until_saved_on(
@@ -698,6 +849,13 @@ def test_refusals_come_back_as_errors(desk: Desk) -> None:
     assert str(desk.deck(999)["error"]).startswith("deck 999 is not in ")
 
 
+def test_a_damaged_deck_file_is_called_unreadable_not_missing(desk: Desk, settings: DeskSettings) -> None:
+    (settings.workspace / "10000001-sample-deck" / "deck.json").write_text("{damaged", encoding="utf-8")
+
+    assert desk.deck(DECK) == {"error": f"deck {DECK}'s saved copy is unreadable; press Sync"}
+    assert desk.deck(999) == {"error": f"deck 999 is not in {settings.workspace}; press Sync"}
+
+
 def test_search_finds_names_in_colour_and_not_in_the_deck(desk: Desk) -> None:
     assert [c["name"] for c in items(desk.search(DECK, "bolt"), "cards")] == ["Lightning Bolt"]
     assert desk.search(DECK, "rhystic")["cards"] == []
@@ -821,6 +979,56 @@ def test_the_meta_breakdown_ignores_the_decks_grace_cards(
     profile = settings.workspace / "10000001-sample-deck" / "profile.toml"
     profile.write_text('[grace]\n"Arcane Signet" = 4\n"Mind Stone" = 9\n', encoding="utf-8")
     assert desk.meta(DECK) == before
+
+
+def test_an_unchanged_meta_is_not_read_or_worked_out_again(
+    desk: Desk, settings: DeskSettings, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake.topdeck.events = [*magda_events(), *kinnan_events()]
+    fetch_meta(settings, fake)
+    first = desk.meta(DECK)
+    assert first["report"] is not None
+    calls = count_calls(monkeypatch, desk_module, "gather_for", "analyse")
+
+    assert desk.meta(DECK) == first
+    assert desk.deck(DECK)["id"] == DECK
+    assert sum(calls.values()) == 0
+
+
+def test_the_meta_is_worked_out_again_when_the_answers_the_profile_or_the_day_change(
+    settings: DeskSettings, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake.topdeck.events = [*magda_events(), *kinnan_events()]
+    fetch_meta(settings, fake)
+    today = [NOW]
+    desk = Desk(
+        settings,
+        client_factory=fake.client,
+        token_store=MemoryTokenStore({"tester": REFRESH_TOKEN}),
+        now=lambda: today[0],
+        pacer_factory=lambda _: Pacer(0),
+    )
+    desk.meta(DECK)
+    calls = count_calls(monkeypatch, desk_module, "analyse")
+    profile = settings.workspace / "10000001-sample-deck" / "profile.toml"
+
+    profile.write_text('[grace]\n"Mind Stone" = 9\n', encoding="utf-8")
+    desk.meta(DECK)
+    assert calls["analyse"] == 1
+
+    # A cached answer is rewritten, as a sync does with one that has gone stale.
+    [*_, answer] = sorted((settings.cache / CACHE_FOLDER).glob("*.json"))
+    rewritten = answer.stat().st_mtime_ns + 1_000_000_000
+    os.utime(answer, ns=(rewritten, rewritten))
+    desk.meta(DECK)
+    assert calls["analyse"] == 2
+
+    today[0] = NOW + timedelta(days=1)
+    desk.meta(DECK)
+    assert calls["analyse"] == 3
+
+    desk.meta(DECK)
+    assert calls["analyse"] == 3
 
 
 def test_each_board_card_comes_with_the_deck_cards_it_could_replace(desk: Desk) -> None:

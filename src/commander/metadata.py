@@ -22,18 +22,20 @@ from collections import Counter
 from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from concurrent.futures import Future
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from functools import partial
 from pathlib import Path
-
-import httpx
+from typing import TYPE_CHECKING
 
 from commander.archidekt import (
+    ALIKE_READ_DIVISOR,
+    ALIKE_SEARCH_PAGES_PER_BRACKET,
+    MAX_SEARCH_PAGES,
     MIN_DECKS,
     SEARCH_INTERVAL_SECONDS,
-    TAG_READ_DIVISOR,
     TAG_SEARCH_PAGES_PER_BRACKET,
+    TAG_SEARCH_READS,
     VIEW_FLOORS,
     ArchidektError,
     ArchidektSearch,
@@ -46,6 +48,7 @@ from commander.config import MetaSettings
 from commander.credentials import KeyringKeyStore, KeyStore
 from commander.deckcache import (
     NOT_FETCHED,
+    Accepted,
     Answer,
     AnswerSource,
     Clock,
@@ -93,6 +96,9 @@ from commander.tournaments import (
     commander_name,
 )
 
+if TYPE_CHECKING:
+    import httpx
+
 log = logging.getLogger(__name__)
 
 # A deck read answered with one of these means that deck went private or was deleted, not that Archidekt is
@@ -105,6 +111,9 @@ CACHE_FOLDER = "meta"
 # The page cap that a commander's cached Archidekt answer was keyed with before ADR 0050. The key stays as it
 # was so those answers stay valid and each is refreshed on its own day, not all in the next sync.
 _COMMANDER_REQUEST_PAGES = 20
+# The same for a deck-tag answer: the 3 pages a bracket a tag search paged before it was cut to fewer, so the
+# answers stored then stay fresh.
+_TAG_REQUEST_PAGES = 3
 # Meta answers of the retired EDHTop16 provider (ADR 0047), which no run reads again.
 _RETIRED_PREFIX = "edhtop16"
 # The cEDH bracket: the only one the tournaments cover.
@@ -224,7 +233,7 @@ class MetaSources:
 
 
 def topdeck_client(
-    http: httpx.Client,
+    http: "httpx.Client",
     pacer_factory: Callable[[float], Pacer],
     cache_root: Path,
     keys: KeyStore | None = None,
@@ -243,7 +252,7 @@ def topdeck_client(
 
 
 def meta_sources(
-    http: httpx.Client,
+    http: "httpx.Client",
     pacer_factory: Callable[[float], Pacer],
     user: str,
     settings: MetaSettings,
@@ -251,14 +260,17 @@ def meta_sources(
     *,
     waits: WaitListener | None = None,
     rank: Callable[[int], int] | None = None,
+    rank_changes: Callable[[Callable[[], None]], None] | None = None,
 ) -> MetaSources:
     """TopDeck, Archidekt search and Spellbook clients over one HTTP client, each at its own pace.
 
     With `rank`, Archidekt's requests for several decks at once go out by the deck's rank, lowest first
-    (`Pacer.rank_by`)."""
+    (`Pacer.rank_by`); `rank_changes` is given the function to call whenever the ranking changes."""
     archidekt_pacer = pacer_factory(SEARCH_INTERVAL_SECONDS)
     if rank is not None:
         archidekt_pacer.rank_by(rank)
+        if rank_changes is not None:
+            rank_changes(archidekt_pacer.rank_changed)
     return MetaSources(
         topdeck_client(http, pacer_factory, cache_root, waits=waits),
         ArchidektSearch(Fetcher(http), archidekt_pacer),
@@ -291,9 +303,19 @@ def window_start(now: datetime, settings: MetaSettings) -> date:
     return utc_today(now) - timedelta(days=settings.window_days)
 
 
-def _peers_step(name: str) -> str:
+def _own_step(deck: Deck, name: str) -> str:
+    """The step for the deck's own commander's decks; every step names the deck it reads for, because the
+    deck reads run side by side and the progress line shows one of them."""
+    return f"{deck.short_name}: {name} decks"
+
+
+def _alike_step(deck: Deck, name: str) -> str:
     # The short name keeps the progress line within its twelve words (ui.md).
-    return f"Archidekt: recent {short_commander_name(name)} decks"
+    return f"{deck.short_name}: {short_commander_name(name)} decks (alike)"
+
+
+def _tag_step(deck: Deck, tag: str) -> str:
+    return f"{deck.short_name}: {tag} decks (theme)"
 
 
 class _Steps:
@@ -394,7 +416,7 @@ def start_gather(
             )
 
     def peers() -> Answer[PeerLists]:
-        with steps.running(_peers_step(name)):
+        with steps.running(_own_step(deck, name)):
             return _peers(deck, sources, folder, since, now=now, refresh=refresh, offline=offline)
 
     def own_combos() -> Answer[tuple[ComboDetail, ...]]:
@@ -514,7 +536,7 @@ def start_gather_peers(
     steps = _Steps(on_progress, on_done)
 
     def peers() -> Answer[PeerLists]:
-        with steps.running(_peers_step(name)):
+        with steps.running(_own_step(deck, name)):
             return _peers(deck, sources, folder, since, now=now, refresh=refresh, offline=offline)
 
     def lists() -> Answer[CommanderEntries]:
@@ -684,7 +706,7 @@ def gather_adjacent(
     groups_failed = False
     for group in groups:
         name = commander_name(group)
-        with steps.running(_peers_step(name)):
+        with steps.running(_alike_step(deck, name)):
             answer = _group_peers(
                 group,
                 deck.bracket,
@@ -705,7 +727,7 @@ def gather_adjacent(
     own = {name.casefold() for name in deck.commanders}
     tagged: list[TaggedDecks] = []
     for tag in _distinct_tags(tags):
-        with steps.running(f"Archidekt: recent decks tagged {tag}"):
+        with steps.running(_tag_step(deck, tag)):
             answer = _tag_peers(
                 tag, deck.bracket, sources, folder, since, now=now, refresh=refresh, offline=offline
             )
@@ -765,6 +787,22 @@ def _peers(
     )
 
 
+def _group_request(name: str, bracket: int | None, sources: MetaSources, reads: int) -> Mapping[str, object]:
+    """The question a commander's search answers. The page cap stays the value stored answers were keyed with
+    (_COMMANDER_REQUEST_PAGES), whatever the search pages now."""
+    settings = sources.settings
+    return {
+        "commander": name,
+        "brackets": list(brackets_to_read(bracket)),
+        "pages": _COMMANDER_REQUEST_PAGES,
+        "decks": reads,
+        "viewFloors": list(VIEW_FLOORS),
+        "minDecks": MIN_DECKS,
+        "windowDays": settings.window_days,
+        "user": sources.user.casefold(),
+    }
+
+
 def _group_peers(
     group: tuple[str, ...],
     bracket: int | None,
@@ -777,22 +815,30 @@ def _group_peers(
     refresh: bool,
     offline: bool,
 ) -> Answer[PeerLists]:
-    """Recent Archidekt decks led by the commander, or by both partners, at the bracket."""
+    """Recent Archidekt decks led by the commander, or by both partners, at the bracket.
+
+    The deck's own commander (own_id given) is read in full. A commander the profile names as alike
+    (own_id None) is searched smaller and read for an alike_reads(peer_decks) cut of it; an answer stored for
+    the deck-sized question also serves it, cut to that many decks.
+
+    An alike answer has an item of its own, because an item keeps one request and a refetch of the 15-deck
+    alike answer must not replace the 60-deck own one, the stale fallback when the own refetch fails. While
+    the own answer is the newest, it serves the alike question, but it lacks the decks led with a partner or
+    Background, which own answers drop; the alike answer's own fetch brings them in. Alike answers stored in
+    the own item before this stay accepted there (ADR 0053).
+    """
     settings = sources.settings
     name = commander_name(group)
-    request: Mapping[str, object] = {
-        "commander": name,
-        "brackets": list(brackets_to_read(bracket)),
-        "pages": _COMMANDER_REQUEST_PAGES,
-        "decks": settings.peer_decks,
-        "viewFloors": list(VIEW_FLOORS),
-        "minDecks": MIN_DECKS,
-        "windowDays": settings.window_days,
-        "user": sources.user.casefold(),
-    }
-    item = cache_item("archidekt", name, str(bracket))
-    with sources.searches.hold(item):
-        return cached_answer(
+    alike = own_id is None
+    full = _group_request(name, bracket, sources, settings.peer_decks)
+    reads = alike_reads(settings.peer_decks) if alike else settings.peer_decks
+    request = _group_request(name, bracket, sources, reads) if alike else full
+    own_item = cache_item("archidekt", name, str(bracket))
+    item = cache_item("archidekt-alike", name, str(bracket)) if alike else own_item
+    accepted = [Accepted(own_item, request), Accepted(own_item, full)] if alike else []
+    # The commander's one lock, so an alike read waits for the own read of it and finds its answer.
+    with sources.searches.hold(own_item):
+        answer = cached_answer(
             item,
             request,
             _live(
@@ -806,14 +852,18 @@ def _group_peers(
                     since=since,
                     now=now,
                     item=item,
+                    limit=reads,
+                    max_pages=ALIKE_SEARCH_PAGES_PER_BRACKET if alike else MAX_SEARCH_PAGES,
                 ),
             ),
             _peer_cache(folder, "Archidekt decks"),
             now=now,
             refresh=refresh,
-            fresh_for=peer_fresh_for(item, now()),
+            fresh_for=peer_fresh_for(own_item, now()),
             errors=_ERRORS,
+            also_accept=accepted,
         )
+    return _cut_to(answer, reads)
 
 
 def _distinct_tags(tags: Sequence[str]) -> list[str]:
@@ -824,9 +874,23 @@ def _distinct_tags(tags: Sequence[str]) -> list[str]:
     return list(first.values())
 
 
+def alike_reads(peer_decks: int) -> int:
+    """How many decks an alike commander's search reads: a quarter of a commander's, rounded up."""
+    return -(-peer_decks // ALIKE_READ_DIVISOR)
+
+
 def tag_reads(peer_decks: int) -> int:
-    """How many decks a tag search reads: a quarter of a commander's, rounded up."""
-    return -(-peer_decks // TAG_READ_DIVISOR)
+    """How many decks a tag search reads: TAG_SEARCH_READS, and never more than an alike commander's."""
+    return min(TAG_SEARCH_READS, alike_reads(peer_decks))
+
+
+def _cut_to(answer: Answer[PeerLists], reads: int) -> Answer[PeerLists]:
+    """The answer with only its `reads` most viewed decks, for one stored when more were read."""
+    peers = answer.data
+    if peers is None or len(peers.decks) <= reads:
+        return answer
+    ranked = sorted(peers.decks, key=lambda p: (-p.deck.views, p.deck.id))
+    return replace(answer, data=PeerLists(tuple(ranked[:reads]), peers.skipped))
 
 
 def _tag_peers(
@@ -847,11 +911,13 @@ def _tag_peers(
     """
     settings = sources.settings
     key = tag.casefold()
+    # The fingerprint keeps the limits answers were stored under (3 pages a bracket, a quarter of peer_decks
+    # read), so those still count as fresh; the reads are cut to tag_reads on the way out.
     request: Mapping[str, object] = {
         "tag": key,
         "brackets": list(brackets_to_read(bracket)),
-        "pages": TAG_SEARCH_PAGES_PER_BRACKET,
-        "decks": tag_reads(settings.peer_decks),
+        "pages": _TAG_REQUEST_PAGES,
+        "decks": alike_reads(settings.peer_decks),
         "viewFloors": list(VIEW_FLOORS),
         "minDecks": MIN_DECKS,
         "windowDays": settings.window_days,
@@ -859,7 +925,7 @@ def _tag_peers(
     }
     item = cache_item("archidekt-tag", key, str(bracket))
     with sources.searches.hold(item):
-        return cached_answer(
+        answer = cached_answer(
             item,
             request,
             _live(
@@ -880,6 +946,7 @@ def _tag_peers(
             fresh_for=peer_fresh_for(item, now()),
             errors=_ERRORS,
         )
+    return _cut_to(answer, tag_reads(settings.peer_decks))
 
 
 def core_request(commander: MetaCommander) -> dict[str, object] | None:
@@ -1005,25 +1072,37 @@ def _peer_lists(
     since: date,
     now: Clock,
     item: str,
+    limit: int,
+    max_pages: int,
 ) -> PeerLists:
-    settings = sources.settings
-    if settings.peer_decks == 0:
+    if limit == 0:
         return PeerLists((), 0)
     found = sources.archidekt.popular_decks(
-        group[0], brackets=brackets_to_read(bracket), since=_start_of(since), label=item
+        group[0],
+        brackets=brackets_to_read(bracket),
+        since=_start_of(since),
+        label=item,
+        max_pages=max_pages,
     )
     wanted = {name.casefold() for name in group}
-    # The search finds one commander: decks pairing it with a partner or Background are read and dropped, and
-    # so are decks led by only one of a pair.
+    # The search finds one commander. A deck led by a lone alike commander counts whoever it is paired with;
+    # the deck's own commander, and a pair, keep only decks led by exactly those, so a deck pairing it with
+    # a partner or Background and one led by only one of a pair are read and dropped.
+    lone_alike = own_id is None and len(group) == 1
     return _read_peers(
         sources,
         reads,
         found,
-        settings.peer_decks,
+        limit,
         own_id=own_id,
         now=now,
-        keep=lambda read: wanted == {name.casefold() for name in read.commanders},
+        keep=lambda read: _led_by(wanted, read, lone=lone_alike),
     )
+
+
+def _led_by(wanted: set[str], read: DeckRead, *, lone: bool) -> bool:
+    led = {name.casefold() for name in read.commanders}
+    return wanted <= led if lone else wanted == led
 
 
 def _tag_peer_lists(

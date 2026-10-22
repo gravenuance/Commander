@@ -1,7 +1,8 @@
 # 0050: Search Archidekt by view count, not by last edit
 
 **Status:** Accepted · **Date:** 2026-10-21 · Replaces the search order, the incremental search and the weekly
-full search of [ADR 0027](0027-reading-other-players-archidekt-decks.md)
+full search of [ADR 0027](0027-reading-other-players-archidekt-decks.md) · Amended in part by
+[ADR 0053](0053-search-less-for-alike-commanders-and-deck-tags.md) (the tag search's pages and reads)
 
 ## Context
 
@@ -70,3 +71,9 @@ Option 3, in `ArchidektSearch.popular_decks`.
   a commander with many such decks the pages hold fewer in-window decks than before; the 5-page limit bounds
   it.
 - View counts are current at every refresh, not only at a weekly full search.
+
+## Amendment (2026-10-22): the smaller searches are not the commander's
+
+The five pages and the 60 reads are the deck's own commander's. An alike commander is searched three pages a
+bracket and read for 15 decks, and a deck-tag search two pages and 10 reads, not "3 pages per bracket and its
+quarter of `peer_decks` reads" as under *Pages* (ADR 0053). The view bars are the same for all of them.

@@ -119,7 +119,7 @@ def test_a_poll_that_leaves_the_fetch_state_alone_does_not_reread_the_meta() -> 
 def test_a_bracket_4_meta_shows_the_key_cards_and_not_the_sections_it_does_not_read() -> None:
     seen = run("""
     const keys = [{ name: "Magda, Brazen Outlaw", reasons: ["your commander"] }];
-    const titles = () => $("meta-body").querySelectorAll("h3").map((h) => h.textContent);
+    const titles = () => [...$("meta-body").querySelectorAll("h3")].map((h) => h.textContent);
     state.view = { id: 1, bracket: null, effectiveBracket: 4 };
     stub.meta = async () => ({ ...REPORT, keys, cedh: false });
     await metaPanel.load();
@@ -143,8 +143,8 @@ def test_a_rising_combo_carries_a_rising_badge_and_the_others_do_not() -> None:
     const combos = [combo(["Sol Ring", "<b>x</b>"], true), combo(["Mana Vault"], false)];
     stub.meta = async () => ({ ...REPORT, comboGroups: combos.map((c) => ({ shared: [], combos: [c] })) });
     await metaPanel.load();
-    const rows = $("meta-body").querySelectorAll(".meta-card");
-    const badges = (row) => row.querySelectorAll(".badge.rising").map((b) => b.textContent);
+    const rows = [...$("meta-body").querySelectorAll(".meta-card")];
+    const badges = (row) => [...row.querySelectorAll(".badge.rising")].map((b) => b.textContent);
     return rows.map((row) => ({ text: row.textContent, badges: badges(row) }));
     """)
     assert seen == [
@@ -166,11 +166,11 @@ def test_combos_sharing_pieces_sit_under_a_shared_line_with_only_their_other_pie
     ];
     stub.meta = async () => ({ ...REPORT, comboGroups });
     await metaPanel.load();
-    const rows = $("meta-body").querySelector(".meta-rows").children;
+    const rows = [...$("meta-body").querySelector(".meta-rows").children];
     return rows.map((node) => ({
-      shared: node.querySelectorAll(".combo-shared").map((p) => p.textContent),
+      shared: [...node.querySelectorAll(".combo-shared")].map((p) => p.textContent),
       combos: node.matches(".combo-group")
-        ? node.querySelectorAll(".meta-card").map((p) => p.textContent)
+        ? [...node.querySelectorAll(".meta-card")].map((p) => p.textContent)
         : [node.querySelector(".meta-card").textContent],
       title: node.querySelector(".meta-card a").title,
     }));
@@ -195,9 +195,9 @@ const stopper = (card, role) =>
   ({ card, role, exposure: 0.1, decks: [], combos: [], keys: ["Sol Ring"], kinds: [] });
 const STOPPING = { ...REPORT, stoppers: [stopper("Swords", "removal"), stopper("Fierce Guardian", "removal"),
   stopper("Null Rod", "stax"), stopper("Force of Will", "counter")] };
-const groups = () => $("meta-body").querySelectorAll(".role-group");
+const groups = () => [...$("meta-body").querySelectorAll(".role-group")];
 const states = () => groups().map((g) => [g.tagName, g.querySelector("summary").textContent, g.open]);
-const sections = () => $("meta-body").querySelectorAll(".meta-section");
+const sections = () => [...$("meta-body").querySelectorAll(".meta-section")];
 """
 
 ALL_CLOSED = [
@@ -257,7 +257,7 @@ def test_a_grouped_combo_made_of_the_shared_pieces_alone_says_so() -> None:
     const comboGroups = [{ shared: ["Kinnan", "Oracle"], combos: [combo(["Ballista"]), combo([])] }];
     stub.meta = async () => ({ ...REPORT, comboGroups });
     await metaPanel.load();
-    return $("meta-body").querySelectorAll(".meta-card a").map((a) => [a.textContent, a.title]);
+    return [...$("meta-body").querySelectorAll(".meta-card a")].map((a) => [a.textContent, a.title]);
     """)
     assert seen == [
         ["Ballista", "Open on Commander Spellbook: Kinnan + Oracle + Ballista"],

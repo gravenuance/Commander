@@ -2,9 +2,10 @@
 
 import logging
 import sqlite3
+import threading
 import time
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from types import TracebackType
@@ -16,21 +17,22 @@ from commander.models import DeckCard
 log = logging.getLogger(__name__)
 
 # Bump whenever the tables or the meaning of a column change; an old file is rebuilt, never migrated.
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 CARD_DB_FILE = "cards.sqlite"
 # The suffix of a database being built beside the real one; a crash can leave such a file behind.
 BUILD_SUFFIX = ".building"
 _QUERY_CHUNK = 500
+_FRONT_FACE_CHUNK = 100
+_FRONT_FACES_QUERY = (
+    "SELECT oracle_id, name, mana_cost, cmc, type_line, color_identity, game_changer, commander_legal,"
+    " cheapest_cents, edhrec_rank FROM oracle WHERE {} ORDER BY oracle_id"
+)
 _CARD_QUERIES = {
     "oracle_id": "SELECT oracle_id, name, mana_cost, cmc, type_line, color_identity, game_changer,"
     " commander_legal, cheapest_cents, edhrec_rank FROM oracle WHERE oracle_id IN ({}) ORDER BY oracle_id",
     "name_key": "SELECT oracle_id, name, mana_cost, cmc, type_line, color_identity, game_changer,"
     " commander_legal, cheapest_cents, edhrec_rank FROM oracle WHERE name_key IN ({}) ORDER BY oracle_id",
 }
-_FRONT_FACE_QUERY = (
-    "SELECT oracle_id, name, mana_cost, cmc, type_line, color_identity, game_changer, commander_legal,"
-    " cheapest_cents, edhrec_rank FROM oracle WHERE substr(name_key, 1, length(?1)) = ?1 ORDER BY oracle_id"
-)
 _INFO_COLUMNS = (
     "oracle.oracle_id, name, mana_cost, cmc, type_line, color_identity, game_changer, commander_legal,"
     " cheapest_cents, edhrec_rank"
@@ -62,7 +64,9 @@ _SUBTREE_CTE = """WITH RECURSIVE subtree(tag_id) AS (
 )"""
 _TAG_COUNT_QUERY = (
     _SUBTREE_CTE.format("?")  # noqa: S608 — built from constant fragments and placeholders; every value is bound
-    + " SELECT count(DISTINCT oracle_id) FROM tag_member JOIN subtree ON tag_member.tag_id = subtree.tag_id"
+    # CROSS JOIN keeps the subtree first; left alone SQLite scans every tag_member row and probes the subtree.
+    + " SELECT count(DISTINCT oracle_id)"
+    " FROM subtree CROSS JOIN tag_member ON tag_member.tag_id = subtree.tag_id"
 )
 _SUBTREE_SLUGS_QUERY = (
     _SUBTREE_CTE.format("SELECT tag_id FROM tag WHERE slug = ?")  # noqa: S608 — built from constant fragments and placeholders; every value is bound
@@ -103,6 +107,14 @@ ORDER BY instr(name_key, :needle) != 1, edhrec_rank IS NULL, edhrec_rank, name_k
 LIMIT :limit
 """  # noqa: S608 — built from constant fragments; every value is bound
 
+# Any legal card, for the second name of a pair: a partner, a Background or whatever else may sit beside one.
+_LEGAL_SEARCH_QUERY = f"""
+SELECT {_INFO_COLUMNS} FROM oracle
+WHERE commander_legal = 1 AND instr(name_key, :needle) > 0
+ORDER BY instr(name_key, :needle) != 1, edhrec_rank IS NULL, edhrec_rank, name_key
+LIMIT :limit
+"""  # noqa: S608 — built from constant fragments; every value is bound
+
 _TAG_SUGGEST_QUERY = """
 SELECT t.slug, count(m.oracle_id) AS cards FROM tag t LEFT JOIN tag_member m ON m.tag_id = t.tag_id
 WHERE instr(t.slug, :needle) > 0
@@ -113,14 +125,15 @@ LIMIT :limit
 
 # Nonbasic lands that fit a deck, most played first; the caller keeps the ones whose front face is a land.
 _LAND_QUERY = f"""
-SELECT oracle.oracle_id, name, mana_cost, cmc, type_line, oracle_text, produced, rarity, cheapest_cents
+SELECT oracle.oracle_id, name, mana_cost, cmc, type_line, oracle_text, produced, rarity, layout,
+    cheapest_cents
 FROM oracle JOIN card_mana ON card_mana.oracle_id = oracle.oracle_id
 WHERE {_FITS_DECK} AND instr(type_line, 'Land') > 0 AND type_line NOT LIKE 'Basic %'
 ORDER BY edhrec_rank, oracle.oracle_id
 LIMIT :limit
 """  # noqa: S608 — built from constant fragments and placeholders; every value is bound
 _CARD_MANA_QUERY = """
-SELECT o.oracle_id, o.name, o.mana_cost, o.cmc, o.type_line, o.oracle_text, m.produced, m.rarity
+SELECT o.oracle_id, o.name, o.mana_cost, o.cmc, o.type_line, o.oracle_text, m.produced, m.rarity, o.layout
 FROM oracle o JOIN card_mana m ON m.oracle_id = o.oracle_id
 WHERE o.name_key IN ({})
 """
@@ -145,15 +158,14 @@ CREATE TABLE oracle (
     toughness TEXT,
     -- The card's own colours (front face's for a two-faced card), unlike its colour identity.
     colors TEXT NOT NULL,
+    layout TEXT NOT NULL,
     cheapest_cents INTEGER
 );
-CREATE INDEX oracle_name ON oracle (name_key);
 CREATE TABLE card_mana (
     oracle_id TEXT PRIMARY KEY,
     produced TEXT NOT NULL,
     rarity TEXT NOT NULL
 );
-CREATE INDEX oracle_rank ON oracle (edhrec_rank, oracle_id);
 CREATE TABLE printing (
     scryfall_id TEXT PRIMARY KEY,
     oracle_id TEXT NOT NULL,
@@ -167,13 +179,21 @@ CREATE TABLE role_member (role TEXT NOT NULL, oracle_id TEXT NOT NULL, PRIMARY K
     WITHOUT ROWID;
 CREATE TABLE role_available (role TEXT PRIMARY KEY);
 CREATE TABLE tag (tag_id TEXT PRIMARY KEY, slug TEXT NOT NULL);
-CREATE INDEX tag_slug ON tag (slug);
 CREATE TABLE tag_child (parent_id TEXT NOT NULL, child_id TEXT NOT NULL, PRIMARY KEY (parent_id, child_id))
     WITHOUT ROWID;
 CREATE TABLE tag_member (tag_id TEXT NOT NULL, oracle_id TEXT NOT NULL, PRIMARY KEY (tag_id, oracle_id))
     WITHOUT ROWID;
-CREATE INDEX tag_member_card ON tag_member (oracle_id);
 """
+
+# Made after the rows are in, which is quicker than keeping each index up to date through every insert.
+_INDEXES = (
+    "CREATE INDEX oracle_name ON oracle (name_key)",
+    "CREATE INDEX oracle_rank ON oracle (edhrec_rank, oracle_id)",
+    "CREATE INDEX printing_oracle ON printing (oracle_id)",
+    "CREATE INDEX role_member_card ON role_member (oracle_id)",
+    "CREATE INDEX tag_slug ON tag (slug)",
+    "CREATE INDEX tag_member_card ON tag_member (oracle_id)",
+)
 
 
 class CardDataError(Exception):
@@ -291,6 +311,8 @@ class ParsedCard:
     # The mana it can make, as colour letters and C for colourless ("WU"), from Scryfall's produced_mana.
     produced: str = ""
     rarity: str = ""
+    # Scryfall's layout ("normal", "adventure", "split", "modal_dfc"); it decides how a two-part card is cast.
+    layout: str = "normal"
 
 
 @dataclass(slots=True, frozen=True)
@@ -305,6 +327,7 @@ class CardMana:
     oracle_text: str
     produced: str
     rarity: str
+    layout: str = "normal"
 
 
 @dataclass(slots=True, frozen=True)
@@ -368,15 +391,32 @@ class ResolvedCard:
     printing: Printing | None
 
 
+@dataclass(slots=True, eq=False)
+class _BuildAnswers:
+    """Counts that depend only on one build of the card database and cost a table scan to work out."""
+
+    stamp: tuple[object, ...]
+    legal_cards: int | None = None
+    tag_sizes: dict[str, int] = field(default_factory=dict[str, int])
+    theme_sizes: dict[Theme, int] = field(default_factory=dict[Theme, int])
+
+
+# The newest build's answers per database file, so a rebuilt file replaces its old entry.
+_answers: dict[Path, _BuildAnswers] = {}
+_answers_lock = threading.Lock()
+
+
 class CardDb:
     """Read-only view of a built card database."""
 
     def __init__(self, path: Path) -> None:
         if not path.is_file():
             raise CardDataError(f"no card data at {path}; run `cmdr sync` to download it")
+        resolved = path.resolve()
         try:
-            self._db = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
-        except sqlite3.Error as error:
+            stat = resolved.stat()
+            self._db = sqlite3.connect(f"{resolved.as_uri()}?mode=ro", uri=True)
+        except (OSError, sqlite3.Error) as error:
             raise CardDataError(f"cannot open card data {path}: {error}; run `cmdr sync --force`") from error
         try:
             self._query("PRAGMA busy_timeout = 5000")
@@ -389,6 +429,7 @@ class CardDb:
             self._db.close()
             raise CardDataError(f"card data {path} is from another version of cmdr; run `cmdr sync`")
         self._available = frozenset(Role(row[0]) for row in rows if _is_role(row[0]))
+        self._file_stamp = (resolved, stat.st_mtime_ns, stat.st_size)
 
     def __enter__(self) -> Self:
         return self
@@ -423,21 +464,29 @@ class CardDb:
         return {info.oracle_id: info for info in self._cards_where("oracle_id", oracle_ids)}
 
     def cards_named(self, names: Iterable[str]) -> dict[str, CardInfo]:
-        """Cards by name, matched ignoring case; keys are the casefolded names."""
+        """Cards by name, matched ignoring case like `card_named`: a two-faced card answers to its full name
+        or its front face. Keys are the casefolded names as asked."""
+        asked = {name.casefold() for name in names}
         found: dict[str, CardInfo] = {}
-        for info in self._cards_where("name_key", {name.casefold() for name in names}):
+        for info in self._cards_where("name_key", asked):
             # Ordered by oracle id, so a name shared by several cards resolves the same way every time.
             found.setdefault(info.name.casefold(), info)
+        # A front face is the start of a "front // back" name: an index range per name, in chunks to keep the
+        # statement small.
+        fronts = sorted(key for key in asked - found.keys() if " // " not in key)
+        for start in range(0, len(fronts), _FRONT_FACE_CHUNK):
+            chunk = fronts[start : start + _FRONT_FACE_CHUNK]
+            ranges = " OR ".join("(name_key >= ? AND name_key < ?)" for _ in chunk)
+            # "!" sorts just above the space of " // ", so the range holds every name starting "front // ".
+            bounds = [bound for key in chunk for bound in (key + " // ", key + " //!")]
+            for info in self._infos(self._query(_FRONT_FACES_QUERY.format(ranges), bounds)):
+                found.setdefault(front_name(info.name.casefold()), info)
         return found
 
     def card_named(self, name: str) -> CardInfo | None:
         """One card by its full name or, for cards with two faces, its front face; case is ignored."""
         key = name.casefold()
-        found = self.cards_named([key]).get(key)
-        if found is not None or " // " in key:
-            return found
-        rows = self._query(_FRONT_FACE_QUERY, [key + " // "])
-        return self._infos(rows[:1])[0] if rows else None
+        return self.cards_named([key]).get(key)
 
     def printings_of(self, oracle_id: str) -> list[Printing]:
         """Every printing of a card, ordered by set and collector number."""
@@ -500,6 +549,14 @@ class CardDb:
         params = {"needle": needle, "limit": max(1, min(limit, MAX_NAME_MATCHES))}
         return self._infos(self._query_named(_COMMANDER_SEARCH_QUERY, params))
 
+    def search_legal(self, text: str, *, limit: int = MAX_NAME_MATCHES) -> list[CardInfo]:
+        """Commander-legal cards of any type whose name holds text, ranked like `search_commanders`."""
+        needle = text.strip().casefold()
+        if not needle:
+            return []
+        params = {"needle": needle, "limit": max(1, min(limit, MAX_NAME_MATCHES))}
+        return self._infos(self._query_named(_LEGAL_SEARCH_QUERY, params))
+
     def theme_candidates(
         self, theme: Theme, identity: str, *, exclude: Collection[str], max_cents: int | None = None
     ) -> Iterator[CardInfo]:
@@ -540,12 +597,28 @@ class CardDb:
         """How many Commander-legal cards match the theme; 0 for an empty one."""
         if theme.empty:
             return 0
-        cte, condition, params = _theme_sql(theme)
-        sql = f"{cte} SELECT count(*) FROM oracle WHERE commander_legal = 1 AND ({condition})"  # noqa: S608 — built from constant fragments and placeholders; every value is bound
-        return int(self._query_named(sql, params)[0][0])
+        answers = self._build_answers()
+        if (size := answers.theme_sizes.get(theme)) is None:
+            cte, condition, params = _theme_sql(theme)
+            sql = f"{cte} SELECT count(*) FROM oracle WHERE commander_legal = 1 AND ({condition})"  # noqa: S608 — built from constant fragments and placeholders; every value is bound
+            size = answers.theme_sizes[theme] = int(self._query_named(sql, params)[0][0])
+        return size
 
     def legal_cards(self) -> int:
-        return int(self._query("SELECT count(*) FROM oracle WHERE commander_legal = 1")[0][0])
+        answers = self._build_answers()
+        if answers.legal_cards is None:
+            rows = self._query("SELECT count(*) FROM oracle WHERE commander_legal = 1")
+            answers.legal_cards = int(rows[0][0])
+        return answers.legal_cards
+
+    def _build_answers(self) -> _BuildAnswers:
+        """The cached counts of the build this connection reads; a rebuilt file starts with none."""
+        stamp = (*self._file_stamp, self.meta())
+        with _answers_lock:
+            found = _answers.get(self._file_stamp[0])
+            if found is None or found.stamp != stamp:
+                found = _answers[self._file_stamp[0]] = _BuildAnswers(stamp)
+            return found
 
     def tag_lineage(self, oracle_ids: Iterable[str]) -> dict[str, frozenset[str]]:
         """Each card's tag slugs with every tag above them, as a card in combat-ramp is in ramp too."""
@@ -569,10 +642,11 @@ class CardDb:
 
     def tag_sizes(self, slugs: Iterable[str]) -> dict[str, int]:
         """How many cards each tag holds, sub-tags included; slugs Scryfall does not have are left out."""
-        return {
-            slug: int(self._query(_TAG_COUNT_QUERY, [tag_id])[0][0])
-            for slug, tag_id in self.tag_ids(slugs).items()
-        }
+        asked = list(dict.fromkeys(slugs))
+        known = self._build_answers().tag_sizes
+        for slug, tag_id in self.tag_ids(slug for slug in asked if slug not in known).items():
+            known[slug] = int(self._query(_TAG_COUNT_QUERY, [tag_id])[0][0])
+        return {slug: known[slug] for slug in asked if slug in known}
 
     def suggest_tags(self, text: str, *, limit: int = MAX_TAG_MATCHES) -> list[TagCount]:
         """Tags whose slug holds text, quick enough to run on each keystroke: slugs starting with it
@@ -604,7 +678,7 @@ class CardDb:
     ) -> list[tuple[CardMana, int | None]]:
         """Legal nonbasic lands in a colour identity with their cheapest price, the most played first."""
         params = {"identity": identity, "max_cents": max_cents, "limit": limit}
-        return [(CardMana(*row[:8]), row[8]) for row in self._query_named(_LAND_QUERY, params)]
+        return [(CardMana(*row[:9]), row[9]) for row in self._query_named(_LAND_QUERY, params)]
 
     def card_text(self, oracle_id: str) -> CardText | None:
         return self.card_texts([oracle_id]).get(oracle_id)
@@ -693,7 +767,8 @@ def _theme_sql(theme: Theme) -> tuple[str, str, dict[str, object]]:
         cte = _SUBTREE_CTE.format(", ".join(names))
         parts.append(
             "oracle.oracle_id IN"
-            " (SELECT oracle_id FROM tag_member WHERE tag_id IN (SELECT tag_id FROM subtree))"
+            " (SELECT tag_member.oracle_id"
+            " FROM subtree CROSS JOIN tag_member ON tag_member.tag_id = subtree.tag_id)"
         )
     return cte, " OR ".join(parts), params
 
@@ -768,9 +843,11 @@ def _fill(
     tags: Mapping[str, Tag],
     gates: Sequence[TextGate],
 ) -> int:
-    # Built whole and swapped in by rename, never edited in place, so the default rollback journal is enough.
     db = sqlite3.connect(path)
     try:
+        # Built whole and swapped in by rename, and a failed build deletes the file: no journal, no syncing.
+        db.execute("PRAGMA journal_mode = OFF")
+        db.execute("PRAGMA synchronous = OFF")
         db.executescript(_SCHEMA)
         count = 0
         oracle: dict[str, tuple[object, ...]] = {}
@@ -797,7 +874,7 @@ def _fill(
                     if card.printing.regular:
                         _keep_lowest(cheapest, oracle_id, *prices)
             db.executemany(
-                "INSERT INTO oracle VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO oracle VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     (*row, cheapest.get(oracle_id, cheapest_any.get(oracle_id)))
                     for oracle_id, row in oracle.items()
@@ -822,6 +899,8 @@ def _fill(
                     ("built_at", meta.built_at),
                 ],
             )
+            for statement in _INDEXES:
+                db.execute(statement)
             db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     finally:
         db.close()
@@ -871,6 +950,7 @@ def _oracle_row(card: ParsedCard) -> tuple[object, ...]:
         card.power,
         card.toughness,
         card.colors,
+        card.layout,
     )
 
 

@@ -24,6 +24,7 @@ from pathlib import Path
 
 from commander.analysis import game_changers
 from commander.answers import card_key
+from commander.archidekt import MAX_SEARCH_TAGS
 from commander.board import (
     Actor,
     BoardCard,
@@ -38,7 +39,7 @@ from commander.board import (
 from commander.budget import resolved_budget
 from commander.carddb import CardDb
 from commander.deckcache import Clock
-from commander.deckprofile import Profile, read_profile, resolve_themes
+from commander.deckprofile import Profile, read_profile, resolve_spec, resolve_themes
 from commander.deckthemes import ThemeSource, merge_themes
 from commander.meta import (
     MIN_PEER_LISTS,
@@ -272,7 +273,7 @@ class _IdeaJudge:
     # The keys at least half of the alike decks' pool plays; None when a group's decks could not be read or
     # the pool is too small to name staples. The same for each tag's pool.
     adjacent_keys: frozenset[str] | None
-    # A tag with no entry here had its pool read wrongly or not at all.
+    # By casefolded tag; a tag with no entry here had its pool read wrongly or not at all.
     tag_keys: Mapping[str, frozenset[str] | None]
     # The casefolded theme tags the deck carries now; a tagged idea's tag that is not among them is gone.
     deck_tags: frozenset[str]
@@ -296,7 +297,7 @@ class _IdeaJudge:
             case Origin.ADJACENT:
                 keys = self.adjacent_keys
             case Origin.TAGGED:
-                keys = self.tag_keys.get(card.origin_tag or "")
+                keys = self.tag_keys.get((card.origin_tag or "").casefold())
             case Origin.META if self.data.lists.data is not None and self.table:
                 return self.table.is_idea(card.name)
             case Origin.DECKS if self.data.peers.data is not None and self.table:
@@ -338,8 +339,8 @@ def rejudge_ideas(
         table,
         profile,
         None if adjacent is None else pool_staple_keys(adjacent),
-        {pool.tag: pool_staple_keys(pool.decks) for pool in tagged},
-        frozenset(tag.casefold() for tag in _search_tags(stored.deck, profile, db)),
+        {pool.tag.casefold(): pool_staple_keys(pool.decks) for pool in tagged},
+        frozenset(tag.casefold() for tag in search_tags(stored.deck, profile, db)),
     )
 
     open_cards = [
@@ -415,12 +416,20 @@ def relabel_legacy_ideas(stored: StoredDeck, data: MetaData, db: CardDb, *, now:
     return [card for card in relabelled if card is not None]
 
 
-def _search_tags(deck: Deck, profile: Profile, db: CardDb) -> list[str]:
-    """The deck tags whose decks are searched: none while the profile's tag search is off."""
+def search_tags(deck: Deck, profile: Profile, db: CardDb) -> list[str]:
+    """The deck tags whose decks are searched: none while the profile's tag search is off, else at most the
+    MAX_SEARCH_TAGS that the most of the deck's main cards match, ties in Archidekt's tag order."""
     if not profile.tag_search:
         return []
     # Theme tags only: the play style, role and card type tags are too broad to pick decks by (ADR 0009).
-    return [t.name for t in merge_themes(deck, profile, db).used if t.source is ThemeSource.DECK_TAG]
+    themes = [t for t in merge_themes(deck, profile, db).used if t.source is ThemeSource.DECK_TAG]
+    if len(themes) <= 1:
+        return [t.name for t in themes]
+    oracle_ids = [r.info.oracle_id for r in db.resolve(deck.main_cards) if r.info is not None]
+    ids = db.tag_ids([slug for t in themes for slug in t.spec.tags])
+    matches = {t.name: len(db.matching(resolve_spec(t.spec, ids), oracle_ids)) for t in themes}
+    # sorted is stable, so equal counts stay in the order of the deck's tags.
+    return sorted(matches, key=lambda name: -matches[name])[:MAX_SEARCH_TAGS]
 
 
 def gather_idea_pools(
@@ -440,7 +449,7 @@ def gather_idea_pools(
     its theme tags (only when the profile turns the tag search on), gathered first (ADR 0028); a commander or
     tag whose decks cannot be read is named to warn, and the rest carry on."""
     profile = read_profile(stored.folder)
-    tags = _search_tags(stored.deck, profile, db)
+    tags = search_tags(stored.deck, profile, db)
     pools = gather_adjacent(
         stored.deck,
         profile.adjacent,

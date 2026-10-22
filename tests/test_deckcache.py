@@ -5,7 +5,16 @@ from pathlib import Path
 
 import pytest
 
-from commander.deckcache import NOT_FETCHED, Answer, AnswerSource, DeckCache, NotFetchedError, cached_answer
+from commander.deckcache import (
+    NOT_FETCHED,
+    Accepted,
+    Answer,
+    AnswerSource,
+    DeckCache,
+    NotFetchedError,
+    cached_answer,
+    request_key,
+)
 from commander.jsonshape import ShapeError
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
@@ -163,3 +172,40 @@ def test_a_cache_only_miss_is_logged_at_debug_and_a_failed_fetch_at_info(
     with caplog.at_level(logging.DEBUG, logger="commander.deckcache"):
         read_with(cache, cache_only())
     assert caplog.messages == ["test answer for deck 7 not read from the cache: down"]
+
+
+def test_the_newest_of_an_answer_and_its_accepted_ones_stands_and_a_fetch_leaves_the_accepted_in_place(
+    tmp_path: Path,
+) -> None:
+    cache = cache_in(tmp_path)
+    wide: Mapping[str, object] = {"q": 2}
+    narrow: Mapping[str, object] = {"q": 3}
+    cache.save("own", request_key(wide), "wide answer", NOW - timedelta(hours=2))
+    cache.save("alike", request_key(narrow), "alike answer", NOW - timedelta(hours=30))
+
+    def read(fetch: Fetches) -> Answer[str]:
+        return cached_answer(
+            "alike",
+            narrow,
+            fetch,
+            cache,
+            now=lambda: NOW,
+            refresh=False,
+            fresh_for=FRESH_FOR,
+            errors=(ConnectionError,),
+            also_accept=[Accepted("own", wide)],
+        )
+
+    served = read(Fetches("never"))
+    assert (served.data, served.source) == ("wide answer", AnswerSource.CACHED)
+
+    # Both go stale: the newer stands in when the fetch fails, and a good fetch is stored under the own item.
+    cache.save("own", request_key(wide), "wide answer", NOW - timedelta(hours=26))
+    assert read(Fetches(ConnectionError("down"))).data == "wide answer"
+    assert read(Fetches("new alike")).source is AnswerSource.FETCHED
+    kept = cache.load("own", request_key(wide))
+    assert kept is not None
+    assert kept.data == "wide answer"
+    stored = cache.load("alike", request_key(narrow))
+    assert stored is not None
+    assert stored.data == "new alike"

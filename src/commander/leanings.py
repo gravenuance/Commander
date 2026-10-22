@@ -54,11 +54,14 @@ def find_leanings(
     if len(peers) < MIN_PEER_LISTS:
         return ()
     commanders = {card_key(r.card.name) for r in main if COMMANDER_CATEGORY in r.card.categories}
-    own = [
-        r
-        for r in main
-        if r.info is not None and not r.info.is_land and card_key(r.card.name) not in commanders
-    ]
+    # A card filed as several entries (printings) is one card, as it is on the peer side.
+    own = list(
+        {
+            r.card.name: r
+            for r in main
+            if r.info is not None and not r.info.is_land and card_key(r.card.name) not in commanders
+        }.values()
+    )
     lineage = db.tag_lineage(r.info.oracle_id for r in own if r.info is not None)
     held: dict[str, list[str]] = {}
     for r in own:

@@ -42,34 +42,43 @@ def key_cards(
     db: CardDb,
 ) -> tuple[KeyCard, ...]:
     """The commander first, then the cards with the most reasons; the profile's ignored ones left out."""
-    cards = [card for card in deck.main_cards if card.name.casefold() not in _ignored(profile)]
-    infos = db.cards_named(card.name for card in cards)
-    reasons: dict[str, list[str]] = {card.name: [] for card in cards}
+    filed = _categories_by_name(deck, _ignored(profile))
+    infos = db.cards_named(filed)
+    reasons: dict[str, list[str]] = {name: [] for name in filed}
     planned = Counter(card_key(name) for peer in peers for name in set(peer.planned))
     costly = _costly(deck, db)
-    for card in cards:
-        why = reasons[card.name]
-        info = infos.get(card.name.casefold())
+    for name, categories in filed.items():
+        why = reasons[name]
+        info = infos.get(name.casefold())
         if info is not None and info.is_land:
             continue
-        key = card_key(card.name)
-        if COMMANDER_CATEGORY in card.categories:
+        key = card_key(name)
+        if COMMANDER_CATEGORY in categories:
             why.append("your commander")
         combos = [c for c in own_combos if key in {card_key(p.name) for p in c.pieces}]
         if combos:
-            why.append(_combo_reason(card.name, combos))
-        own_plan = [category for category in card.categories if plan_category(category)]
+            why.append(_combo_reason(name, combos))
+        own_plan = [category for category in categories if plan_category(category)]
         if own_plan:
             why.append(f"you file it under {own_plan[0]}")
         if planned[key] >= MIN_PLANNED_PEERS:
             why.append(f"{planned[key]} of {len(peers)} recent decks file it under a combo or win category")
-        if card.name in costly:
-            why.append(costly[card.name])
-        if profile.keeps(card.name, card.categories):
+        if name in costly:
+            why.append(costly[name])
+        if profile.keeps(name, categories):
             why.append("kept by your profile")
     found = [KeyCard(name, tuple(why)) for name, why in reasons.items() if why]
     found.sort(key=lambda k: ("your commander" not in k.reasons, -len(k.reasons), k.name.casefold()))
     return tuple(found)
+
+
+def _categories_by_name(deck: Deck, ignored: frozenset[str]) -> dict[str, tuple[str, ...]]:
+    """The deck's cards not ignored, each once by name, with the categories of all its entries."""
+    filed: dict[str, list[str]] = {}
+    for card in deck.main_cards:
+        if card.name.casefold() not in ignored:
+            filed.setdefault(card.name, []).extend(card.categories)
+    return {name: tuple(dict.fromkeys(categories)) for name, categories in filed.items()}
 
 
 def _ignored(profile: Profile) -> frozenset[str]:

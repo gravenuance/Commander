@@ -1,12 +1,15 @@
 """A swap involving a land is allowed only while the land count and every colour's sources hold."""
 
+from collections.abc import Mapping
 from dataclasses import replace
 
 import pytest
 
+from commander import landswap
 from commander.board import ReplaceOption
-from commander.carddb import CardDb, ResolvedCard, Role
+from commander.carddb import CardDb, CardMana, ResolvedCard, Role
 from commander.landswap import ManaGuard, comparison_lists, mana_guard
+from commander.manabase import ManaBase
 from commander.models import Deck
 from commander.peercounts import PeerCounts
 from commander.targets import MAX_TARGETS, CutRules, TargetSource, role_targets, targets_for, with_ideas
@@ -414,3 +417,65 @@ def test_a_land_count_with_a_part_land_counts_the_whole_lands_above_the_floor() 
     assert spare(38.69) == 1
     assert spare(38.7) == 2
     assert spare(36.69) == 0
+
+
+def test_a_basic_land_filed_as_two_entries_counts_all_its_copies_in_a_swap() -> None:
+    # Ten and nine Plains are the same 19 Plains as one entry: both swaps are allowed alike.
+    split = ManaGuard.of(deck_of(("Plains", 10), ("Plains", 9), ("Island", 18), ("Filler", 62)), CARDS)
+    assert split.allows("Plains", "Filler")
+    assert split.allows("Island", "Filler")
+    # Cutting one of the 19 Plains for a spell still leaves 36 lands, 1.7 short: refused as with one entry.
+    assert not split.allows("Filler", "Plains")
+
+
+def count_analyses(monkeypatch: pytest.MonkeyPatch) -> list[Deck]:
+    """The decks `analyse_mana` is run on from now on, as the guard judges a swap."""
+    runs: list[Deck] = []
+    analysed = landswap.analyse_mana
+
+    def counting(deck: Deck, cards: Mapping[str, CardMana], *, alternative_cost: frozenset[str]) -> ManaBase:
+        runs.append(deck)
+        return analysed(deck, cards, alternative_cost=alternative_cost)
+
+    monkeypatch.setattr(landswap, "analyse_mana", counting)
+    return runs
+
+
+def test_a_swap_asked_again_gets_the_same_answer_without_analysing_the_mana_base_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = guard(20, 18, 61)
+    runs = count_analyses(monkeypatch)
+    answers = [base.allows("Island", "Plains"), base.allows("Plains", "Island")]
+    assert answers == [True, False]
+    assert len(runs) == 2
+    # Both an allowed and a refused swap are remembered; a pair asked the other way round is another swap.
+    assert [base.allows("Island", "Plains"), base.allows("Plains", "Island")] == answers
+    assert len(runs) == 2
+    assert base.allows("Filler", "Plains")
+    assert len(runs) == 3
+
+
+def test_a_guard_given_more_cards_judges_for_itself_and_knows_the_new_cards(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = ManaGuard.of(
+        deck_of(("Plains", 20), ("Island", 18), ("Filler", 61)), by_name(LEADER, PLAINS, ISLAND, FILLER)
+    )
+    runs = count_analyses(monkeypatch)
+    assert base.allows("Island", "Plains")
+    # A card the guard has no mana data for is refused, and the refusal is not remembered.
+    assert not base.allows("Gadget", "Filler")
+    wider = base.with_cards(by_name(GADGET))
+    assert wider.allows("Gadget", "Filler")
+    assert len(runs) == 2
+    # The wider guard has its own answers: it analyses the swap the first guard had already judged.
+    assert wider.allows("Island", "Plains")
+    assert len(runs) == 3
+    assert not base.allows("Gadget", "Filler")
+
+
+def test_a_basic_land_filed_as_two_entries_gets_the_same_answers_asked_twice() -> None:
+    split = ManaGuard.of(deck_of(("Plains", 10), ("Plains", 9), ("Island", 18), ("Filler", 62)), CARDS)
+    swaps = [("Plains", "Filler"), ("Island", "Filler"), ("Filler", "Plains")]
+    assert [split.allows(add, cut) for add, cut in swaps * 2] == [True, True, False] * 2

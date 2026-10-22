@@ -89,10 +89,8 @@ function paintSync(running, blocked, note) {
 
 async function reloadAfterSync() {
   try {
-    await loadDecks();
-    await loadDeck();
-    await metaPanel.load();
-  } catch { /* shown in the status line */ }
+    await refresh();
+  } catch (error) { noteFailure(error); }
 }
 
 // True when an answer asked for under `epoch` belongs to an account the page no longer shows.
@@ -118,8 +116,7 @@ function showSignedOut() {
   state.stamps = {};
   renderDecks();
   renderActivity([]);
-  $("mana").replaceChildren();
-  manaPanel.forget();
+  resetMana();
   showRailFor(false);
   $("deck").hidden = true;
   $("loading").hidden = true;
@@ -186,12 +183,19 @@ async function signOut() {
     showSignedOut();
     renderAccount(answer);
     openSignIn();
-  } catch { /* shown in the status line */ }
+  } catch (error) { noteFailure(error); }
 }
 
+// True while a click on Sync is sent, until the buttons show the sync running; a second click is ignored.
+let syncRequested = false;
+
 async function startSync() {
+  if (syncRequested) return;
+  syncRequested = true;
   try {
     await api("sync");
     await loadAccount();
-  } catch { /* shown in the status line */ }
+  } catch (error) { noteFailure(error); } finally {
+    syncRequested = false;
+  }
 }

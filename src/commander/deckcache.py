@@ -6,7 +6,7 @@ import logging
 import os
 import re
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
@@ -87,6 +87,15 @@ class Answer[T]:
     def __post_init__(self) -> None:
         if (self.data is None) != (self.source is AnswerSource.UNAVAILABLE):
             raise ValueError("an answer is missing exactly when the source is unavailable")
+
+
+@dataclass(slots=True, frozen=True)
+class Accepted:
+    """Another stored answer that serves a request when none is stored under its own: the item it is kept
+    in, and the request it was stored for."""
+
+    item: int | str
+    request: Mapping[str, object]
 
 
 @dataclass(slots=True, frozen=True)
@@ -188,13 +197,18 @@ def cached_answer[T](
     fresh_for: timedelta,
     errors: tuple[type[Exception], ...],
     stale: Callable[[], StaleNote | None] | None = None,
+    also_accept: Sequence[Accepted] = (),
 ) -> Answer[T]:
     """A recent cached answer, else a fresh one; if fetching fails with one of errors, the last good one.
 
     `stale` is asked after a fetch that returned: a note means stored data answered because refreshing failed,
-    so the answer is stale and not cached as fresh."""
+    so the answer is stale and not cached as fresh. An answer stored as one of the `also_accept` ones counts
+    as an answer to this one too, fresh or as the stale fallback, and the newest of them all stands (this
+    request's own on a tie); a fresh answer is stored under its own item and request, so it never replaces
+    an accepted one."""
     key = request_key(request)
-    cached = cache.load(item, key)
+    found = [cache.load(item, key), *(cache.load(a.item, request_key(a.request)) for a in also_accept)]
+    cached = max((c for c in found if c is not None), key=lambda c: c.fetched_at, default=None)
     # A time ahead of the clock (a wrong clock, a hand-edited file) cannot be trusted as recent.
     if cached is not None and not refresh and timedelta(0) <= now() - cached.fetched_at < fresh_for:
         return Answer(cached.data, AnswerSource.CACHED, cached.fetched_at, None)

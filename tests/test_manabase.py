@@ -4,7 +4,10 @@ import pytest
 
 from commander.carddb import CardMana
 from commander.manabase import (
+    Casting,
+    Need,
     analyse_mana,
+    castings,
     cheap_draw,
     cheap_ramp,
     land_count,
@@ -22,8 +25,9 @@ def card(
     *,
     text: str = "",
     produced: str = "",
+    layout: str = "normal",
 ) -> CardMana:
-    return CardMana(f"id-{name}", name, cost, mv, type_line, text, produced, "common")
+    return CardMana(f"id-{name}", name, cost, mv, type_line, text, produced, "common", layout)
 
 
 def deck_of(*cards: tuple[str, int], commander: str = "Leader") -> Deck:
@@ -105,6 +109,110 @@ def test_turn_one_counts_only_untapped_lands() -> None:
     # Brainstorm needs 19 blue sources on turn one; only the 15 Islands enter untapped.
     assert [(n.card, n.have, n.needed) for n in report.turn_one] == [("Brainstorm", 15, 19)]
     assert report.tapped_lands == 10
+
+
+def test_a_split_card_is_judged_by_its_halves_not_by_its_combined_mana_value() -> None:
+    # Printed mana value 4 (two plus two), but a half is cast for two; equal halves both count.
+    split = card("Wear // Tear", "{1}{W} // {1}{U}", 4, "Instant // Instant", layout="split")
+    report = analyse_mana(
+        deck_of(("Plains", 19), ("Island", 18), ("Wear // Tear", 1)), by_name(LEADER, PLAINS, ISLAND, split)
+    )
+    needs = {c.colour: [n for n in c.needs if n.card == "Wear // Tear"] for c in report.colours}
+    # A two-drop with one pip asks 19 of 41 lands, 17.1 of 37: white from the front half, blue from the back.
+    assert needs == {
+        "W": [Need("Wear // Tear", "1C", 17.1, 19.0)],
+        "U": [Need("Wear // Tear", "1C", 17.1, 18.0)],
+    }
+
+
+def test_a_split_card_is_judged_by_its_most_expensive_half_alone() -> None:
+    split = card("Gather // Scatter", "{W} // {2}{W}{W}", 5, "Instant // Instant", layout="split")
+    tapped = card("Tapped Plains", type_line="Land", text="This land enters tapped.", produced="W")
+    deck = deck_of(("Plains", 9), ("Tapped Plains", 10), ("Island", 18), ("Gather // Scatter", 1))
+    report = analyse_mana(deck, by_name(LEADER, PLAINS, ISLAND, tapped, split))
+    white = report.colours[0]
+    # {2}{W}{W} asks 26 of 41 lands, 23.5 of 37; the {W} half is not asked about, so no turn-one check.
+    assert [n for n in white.needs if n.card == "Gather // Scatter"] == [
+        Need("Gather // Scatter", "2CC", 23.5, 19.0)
+    ]
+    assert report.turn_one == ()
+
+
+def test_a_split_card_is_not_asked_for_the_colour_only_its_cheaper_half_uses() -> None:
+    split = card("Dispel // Prayer", "{W} // {U}{U}", 3, "Instant // Instant", layout="split")
+    report = analyse_mana(
+        deck_of(("Plains", 19), ("Island", 18), ("Dispel // Prayer", 1)),
+        by_name(LEADER, PLAINS, ISLAND, split),
+    )
+    needs = {c.colour: [n for n in c.needs if n.card == "Dispel // Prayer"] for c in report.colours}
+    # {U}{U} asks 30 of 41 lands, 27.1 of 37.
+    assert needs == {"W": [], "U": [Need("Dispel // Prayer", "CC", 27.1, 18.0)]}
+
+
+def test_an_adventure_is_judged_by_its_creature_at_the_cards_mana_value() -> None:
+    # Bonecrusher Giant's shape: the creature at three, the one-mana-cheaper adventure beside it.
+    giant = card("Sunlit Giant // Flare", "{2}{W} // {1}{W}", 3, "Creature // Instant", layout="adventure")
+    report = analyse_mana(
+        deck_of(("Plains", 19), ("Island", 18), ("Sunlit Giant // Flare", 1)),
+        by_name(LEADER, PLAINS, ISLAND, giant),
+    )
+    needs = [n for c in report.colours for n in c.needs if n.card == "Sunlit Giant // Flare"]
+    # A three-drop with one pip asks 18 of 41 lands, 16.2 of 37, less than the adventure's 19 would.
+    assert needs == [Need("Sunlit Giant // Flare", "2C", 16.2, 19.0)]
+
+
+def test_an_adventures_one_mana_half_is_no_turn_one_play() -> None:
+    tapped = card("Tapped Plains", type_line="Land", text="This land enters tapped.", produced="W")
+    lands = (("Plains", 9), ("Tapped Plains", 10), ("Island", 18))
+    beast = card("Lovestruck Giant // Pet", "{2}{W} // {W}", 3, "Creature // Sorcery", layout="adventure")
+    deck = deck_of(*lands, ("Lovestruck Giant // Pet", 1))
+    assert analyse_mana(deck, by_name(LEADER, PLAINS, ISLAND, tapped, beast)).turn_one == ()
+    # Cast the creature for one and it is a one-drop: ten of the nineteen white sources enter tapped.
+    drop = card("Giant Killer // Chop Down", "{W} // {2}{W}", 1, "Creature // Instant", layout="adventure")
+    deck = deck_of(*lands, ("Giant Killer // Chop Down", 1))
+    report = analyse_mana(deck, by_name(LEADER, PLAINS, ISLAND, tapped, drop))
+    assert report.turn_one == (Need("Giant Killer // Chop Down", "C", 17.1, 9.0),)
+
+
+@pytest.mark.parametrize(
+    ("cost", "mana_value", "layout", "expected"),
+    [
+        ("{R} // {2}{R}", 3, "split", [Casting(3, {"R": 1})]),
+        ("{2}{R} // {R}", 3, "split", [Casting(3, {"R": 1})]),
+        ("{1}{R} // {1}{U}", 4, "split", [Casting(2, {"R": 1}), Casting(2, {"U": 1})]),
+        ("{2}{R} // {1}{R}", 3, "adventure", [Casting(3, {"R": 1})]),
+        ("{2}{R}", 3, "adventure", [Casting(3, {"R": 1})]),
+        ("{2}{R}", 3, "modal_dfc", [Casting(3, {"R": 1})]),
+        ("{2}{R} // {1}{U}", 3, "transform", [Casting(3, {"R": 1})]),
+        ("{3}{R}", 4, "flip", [Casting(4, {"R": 1})]),
+    ],
+)
+def test_how_a_card_is_judged_follows_its_layout(
+    cost: str, mana_value: int, layout: str, expected: list[Casting]
+) -> None:
+    assert castings(card("Two Parts", cost, mana_value, layout=layout)) == expected
+
+
+CUT_RIBBONS_TEXT = (
+    "Cut deals 4 damage to target creature.\n//\n"
+    "Aftermath (Cast this spell only from your graveyard. Then exile it.)\nEach opponent loses X life."
+)
+DEAD_GONE_TEXT = (
+    "Dead deals 2 damage to target creature.\n//\nReturn target creature you control to its owner's hand."
+)
+
+
+def test_an_aftermath_card_is_judged_by_its_first_half_alone() -> None:
+    # The graveyard half costs {X}{B}{B}, which would tie Cut's mana value 2 and ask for black sources.
+    cost, kinds = "{1}{R} // {X}{B}{B}", "Sorcery // Sorcery"
+    ribbons = card("Cut // Ribbons", cost, 4, kinds, text=CUT_RIBBONS_TEXT, layout="split")
+    assert castings(ribbons) == [Casting(2, {"R": 1})]
+
+
+def test_a_split_card_without_aftermath_keeps_its_most_expensive_half() -> None:
+    cost, kinds = "{R} // {2}{R}", "Instant // Instant"
+    dead = card("Dead // Gone", cost, 4, kinds, text=DEAD_GONE_TEXT, layout="split")
+    assert castings(dead) == [Casting(3, {"R": 1})]
 
 
 def test_fetches_choosing_lands_and_opponent_lands_count_as_karsten_says() -> None:

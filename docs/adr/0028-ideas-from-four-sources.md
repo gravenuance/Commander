@@ -3,7 +3,8 @@
 **Status:** Accepted · **Date:** 2026-10-18 · Its tournament lists now come from TopDeck.gg
 ([ADR 0047](0047-tournament-lists-from-topdeck-with-a-key-per-user.md)) · Replaces [ADR 0014](0014-considered-compiled-on-every-sync.md) and
 [ADR 0015](0015-ideas-from-commanders-that-play-alike.md) · Extended by
-[ADR 0034](0034-fetch-the-decks-you-look-at-first.md) (the order a sync fetches in)
+[ADR 0034](0034-fetch-the-decks-you-look-at-first.md) (the order a sync fetches in) · Amended in part by
+[ADR 0053](0053-search-less-for-alike-commanders-and-deck-tags.md) (the alike and tag search limits)
 
 ## Context
 
@@ -129,3 +130,17 @@ is broad enough to want the pools.
 - `sync --no-ideas` skips the step, `--dry-run` never runs it, and a deck whose sources all fail keeps its
   board as it was.
 - EDHREC is still never asked (ADR 0003); its rank only orders what an idea could replace.
+
+## Amendment (2026-10-22): smaller alike and tag searches
+
+[ADR 0053](0053-search-less-for-alike-commanders-and-deck-tags.md) cut what the two pooled sources search; the
+rest of this record stands.
+
+- **Adjacent decks:** each entry is searched over three pages a bracket and read for a quarter of `peer_decks`
+  (15 of 60), not as the deck's own commander. An entry with one name keeps the decks that commander leads
+  with a partner or Background too; a pair keeps only decks led by exactly that pair (*Decision* says "led by
+  both").
+- **Tag search:** only the deck's three most prevalent theme tags are searched, two pages a bracket and at
+  most 10 reads each, so "three pages per bracket, and reads a quarter of `peer_decks`" under *Tag search*
+  and "up to two searches of three pages and 15 deck reads" under *Consequences* no longer hold. No setting
+  raises the number of tags.

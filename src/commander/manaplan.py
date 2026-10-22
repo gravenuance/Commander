@@ -16,9 +16,9 @@ from commander.manabase import (
     ManaBase,
     Source,
     analyse_mana,
+    castings,
     count_sources,
     deck_entries,
-    fixed_pips,
     info_is_land,
     is_mana_card,
     mostly_untapped,
@@ -255,10 +255,9 @@ def _demands(
         info for _, info, _ in entries if not info_is_land(info) and info.name.casefold() not in alternative
     ]
     found: dict[str, list[_Demand]] = {c: [] for c in colours}
-    for info in spells:
-        pips = fixed_pips(info.mana_cost)
+    for casting in (casting for info in spells for casting in castings(info)):
+        pips, mana_value = casting.pips, casting.mana_value
         gold = sum(1 for c in pips if c in COLORS) > 1
-        mana_value = max(int(info.cmc), 1)
         for colour in colours:
             if colour not in pips:
                 continue
@@ -513,7 +512,7 @@ def _followed(
     cuts: Sequence[str],
 ) -> Deck:
     """The deck as the plan leaves it, so the analysis can be run on it again."""
-    counts: dict[str, int] = {card.name: card.quantity for card in deck.main_cards}
+    counts = deck.main_counts
     for colour, name in names.items():
         counts[name] = counts.get(name, 0) + after[colour] - now[colour]
     basics = set(names.values())

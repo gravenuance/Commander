@@ -58,6 +58,9 @@ function paintRail(tab) {
 }
 
 function renderActivity(entries) {
+  const key = JSON.stringify(entries);
+  if (key === state.activityKey) return;
+  state.activityKey = key;
   const list = $("activity");
   list.replaceChildren(...entries.map((entry) => {
     const when = new Date(entry.at);

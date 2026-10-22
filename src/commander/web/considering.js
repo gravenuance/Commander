@@ -113,13 +113,17 @@ function renderRejected(cards) {
   state.rejectedKey = key;
   $("rejected").hidden = !rejected.length;
   $("count-rejected").textContent = rejected.length ? `(${rejected.length})` : "";
-  $("list-rejected").replaceChildren(...rejected.map((card) => el("li", { class: "rejected-card" },
-    el("p", { class: "rejected-head" },
-      el("span", { class: "card-name", text: card.name }),
-      card.updatedAt ? el("span", { class: "muted small", text: new Date(card.updatedAt).toLocaleDateString(undefined, { dateStyle: "medium" }) }) : null,
-      el("button", { class: "button quiet small", type: "button", text: "Reconsider", "aria-label": `Reconsider ${card.name}`,
-        onclick: () => decide(card, "reopen") })),
-    card.note ? el("p", { class: "muted small rejected-note", text: card.note }) : null)));
+  $("list-rejected").replaceChildren(...rejected.map((card) => {
+    const reconsider = el("button", { class: "button quiet small", type: "button", text: "Reconsider",
+      "aria-label": `Reconsider ${card.name}` });
+    reconsider.addEventListener("click", () => decide(card, "reopen", "", reconsider));
+    return el("li", { class: "rejected-card" },
+      el("p", { class: "rejected-head" },
+        el("span", { class: "card-name", text: card.name }),
+        card.updatedAt ? el("span", { class: "muted small", text: new Date(card.updatedAt).toLocaleDateString(undefined, { dateStyle: "medium" }) }) : null,
+        reconsider),
+      card.note ? el("p", { class: "muted small rejected-note", text: card.note }) : null);
+  }));
 }
 
 function tileFor(card) {
@@ -129,7 +133,93 @@ function tileFor(card) {
   const node = buildTile(card);
   if (known) known.node.replaceWith(node);
   state.tiles.set(card.id, { key, node, card });
+  if (known) carryOver(known.node, node, card);
   return node;
+}
+
+// A tile rebuilt for a changed card keeps what the viewer had open in the old one: the reason being typed
+// (and its focus), the share breakdown, the folds and the category picked for an add without a cut.
+function carryOver(old, node, card) {
+  const was = tileParts.get(old);
+  const folds = new Map([...node.querySelectorAll("details")]
+    .map((fold) => [fold.querySelector("summary").textContent, fold]));
+  for (const fold of old.querySelectorAll("details")) {
+    const same = folds.get(fold.querySelector("summary").textContent);
+    if (fold.open && same) same.open = true;
+  }
+  if (was.form && !was.form.hidden) {
+    const typed = was.form.querySelector("input");
+    const input = showRejectForm(node, card).querySelector("input");
+    input.value = typed.value;
+    if (document.activeElement === typed) input.focus();
+  }
+  if (was.plain && !was.plain.hidden && wantsPlainAdd(card)) {
+    keepChoice(was.plain, showPlainAdd(node, card));
+  }
+  if (openShare !== null && old.contains(openShare.pill)) {
+    const pill = node.querySelector(".share-pill");
+    closeShare(false);
+    if (pill) toggleShare(pill, node.querySelector(".share-pop"));
+  }
+}
+
+// The parts of a tile that paint() shows or hides, by tile. The controls of a selected card are built when
+// it is first selected, since most are never.
+const tileParts = new WeakMap();
+
+function showTargets(node, card) {
+  const parts = tileParts.get(node);
+  if (!parts.targets) {
+    parts.targets = el("div", { class: "targets", role: "group", "aria-label": `Replace with ${card.name}` },
+      ...(card.targets.length
+        ? card.targets.map((t) => el("button", {
+          class: `target ${t.source}`, type: "button", text: t.name, title: t.reason,
+          "aria-label": `Replace ${t.name}: ${t.reason}`, onclick: () => swapIn(card.id, t.name),
+        }))
+        : [el("p", { class: "muted small", text: "Pick the deck card it replaces" })]));
+    parts.anchor.after(parts.targets);
+  }
+  parts.targets.hidden = false;
+  return parts.targets;
+}
+
+// An add without a cut is offered unless the card is queued without a cut to take out.
+const wantsPlainAdd = (card) => !(card.status === "add" && !card.choice);
+
+// Built afresh when the deck gained a category since, so its list is never older than the deck's.
+function showPlainAdd(node, card) {
+  const parts = tileParts.get(node);
+  const key = JSON.stringify(plainCategories(card));
+  if (!parts.plain || parts.plainKey !== key) {
+    const fresh = plainAdd(card);
+    if (parts.plain) {
+      keepChoice(parts.plain, fresh);
+      parts.plain.replaceWith(fresh);
+    } else {
+      (parts.targets ?? parts.anchor).after(fresh);
+    }
+    Object.assign(parts, { plain: fresh, plainKey: key });
+  }
+  parts.plain.hidden = false;
+  return parts.plain;
+}
+
+// The category picked in the old list stays picked in the new one when it is still offered.
+function keepChoice(from, to) {
+  const picked = from.querySelector("select").value;
+  const select = to.querySelector("select");
+  const offered = [...select.querySelectorAll("option")].some((option) => option.getAttribute("value") === picked);
+  if (offered) select.value = picked;
+}
+
+function showRejectForm(node, card) {
+  const parts = tileParts.get(node);
+  if (!parts.form) {
+    parts.form = rejectForm(card);
+    parts.body.append(parts.form);
+  }
+  parts.form.hidden = false;
+  return parts.form;
 }
 
 // A card's controls, and the rows that hold them, so a click in the gap beside one doesn't drop the selection.
@@ -141,10 +231,7 @@ function buildTile(card) {
   const pick = el("button", {
     class: "pick", type: "button", "aria-pressed": "false", title: card.name,
     "aria-label": `${card.name}: show what it could replace`,
-    onclick: () => select(card.id),
   }, el("span", { class: "card-name", text: times(card.copies, card.name) }));
-  pick.addEventListener("focus", () => hover(card.id));
-  pick.addEventListener("blur", () => hover(null));
 
   const meta = el("div", { class: "card-meta" },
     el("span", { class: "type", text: card.typeLine, title: card.typeLine }),
@@ -155,46 +242,68 @@ function buildTile(card) {
       ? el("span", { class: "badge status over", text: "Over budget", title: "Over 25% above the deck's average card" })
       : null);
 
-  const targets = el("div", { class: "targets", hidden: true, role: "group", "aria-label": `Replace with ${card.name}` },
-    ...(card.targets.length
-      ? card.targets.map((t) => el("button", {
-        class: `target ${t.source}`, type: "button", text: t.name, title: t.reason,
-        "aria-label": `Replace ${t.name}: ${t.reason}`, onclick: () => swapIn(card.id, t.name),
-      }))
-      : [el("p", { class: "muted small", text: "Pick the deck card it replaces" })]));
-
   const reasoning = [card.reason, card.note].filter(Boolean).join("\n");
   const doing = card.choice ? `Replacing ${times(card.copies, card.choice)}` : `Adding to ${card.category ?? card.typeCategory ?? "the deck"}`;
+  const replacing = queued ? el("p", { class: "replacing" },
+    el("span", { text: doing }),
+    el("button", { class: "button quiet small", type: "button", text: "Undo", "aria-label": `Undo ${card.name}: ${doing}`,
+      onclick: () => decide(card, "reopen") })) : null;
   const body = el("div", { class: "card-body" },
     el("div", { class: "card-title" }, pick, manaCost(card.manaCost)),
     meta,
-    queued ? el("p", { class: "replacing" },
-      el("span", { text: doing }),
-      el("button", { class: "button quiet small", type: "button", text: "Undo", "aria-label": `Undo ${card.name}: ${doing}`,
-        onclick: () => decide(card, "reopen") })) : null,
-    targets,
-    plainAdd(card),
+    replacing,
     card.text ? el("details", { class: "fold" }, el("summary", { text: "Rules text" }), el("p", { text: card.text })) : null,
     reasoning ? el("details", { class: "fold" }, el("summary", { text: "Reasoning" }), el("p", { text: reasoning })) : null);
 
-  const why = rejectForm(card);
-  body.append(why);
   const reject = el("button", {
-    class: "button quiet icon reject", type: "button", text: "×", title: "Turn down",
-    "aria-label": `Turn down ${card.name}`, onclick: () => {
-      why.hidden = false;
-      why.querySelector("input").focus();
-    },
+    class: "button quiet icon reject", type: "button", text: "×", title: "Turn down", "aria-label": `Turn down ${card.name}`,
   });
   const tile = el("article", { class: `card ${queued ? "queued" : ""}`, role: "listitem", "data-id": card.id, "aria-label": card.name },
     cardImage(card.image, card.name, "art"), body, reject);
-  tile.addEventListener("mouseenter", () => hover(card.id));
-  tile.addEventListener("mouseleave", () => hover(null));
-  // The whole card selects it, except its own controls: a click on one is for that control alone.
-  tile.addEventListener("click", (event) => {
-    if (!event.target.closest(TILE_CONTROLS)) select(card.id);
+  tileParts.set(tile, {
+    pick, body, anchor: replacing ?? meta, targets: null, plain: null, plainKey: null, form: null,
   });
   return tile;
+}
+
+// The tiles' clicks and pointer, heard once per list rather than once per tile. The pointer's tile is
+// whichever one it entered last, so moving from one tile to the next never passes through "no tile";
+// mouseenter does not bubble, hence mouseover.
+function setupTiles() {
+  const tileOf = (node) => node.closest(".card")?.dataset.id ?? null;
+  const isPick = (node) => node.classList?.contains("pick");
+  for (const list of [$("list-considering"), $("list-uncut")]) {
+    list.addEventListener("mouseover", (event) => hover(tileOf(event.target)));
+    list.addEventListener("mouseleave", () => hover(null));
+    // Focus does not bubble either; capturing hears it. Tabbing to the next card's name keeps the grid lit.
+    list.addEventListener("focus", (event) => {
+      if (isPick(event.target)) hover(tileOf(event.target));
+    }, true);
+    list.addEventListener("blur", (event) => {
+      if (isPick(event.target) && !(event.relatedTarget && isPick(event.relatedTarget))) hover(null);
+    }, true);
+    list.addEventListener("click", (event) => clickTile(event.target));
+  }
+}
+
+function clickTile(target) {
+  const tile = target.closest(".card");
+  if (!tile) return;
+  const id = tile.dataset.id;
+  const pill = target.closest(".share-pill");
+  if (pill) toggleShare(pill, tile.querySelector(".share-pop"));
+  else if (target.closest(".pick")) select(id);
+  else if (target.closest(".reject")) askWhy(id);
+  else {
+    // The whole card selects it, except its own controls: a click on one is for that control alone.
+    const control = target.closest(TILE_CONTROLS);
+    if (!control || !tile.contains(control)) select(id);
+  }
+}
+
+function askWhy(id) {
+  const { node, card } = state.tiles.get(id);
+  showRejectForm(node, card).querySelector("input").focus();
 }
 
 /* The share pill and its breakdown */
@@ -225,9 +334,7 @@ function sharePill(card) {
     "aria-label": shown.name,
     title: `${shown.name}: show breakdown`,
   });
-  const pop = sharePopover(card, popId);
-  pill.addEventListener("click", () => toggleShare(pill, pop));
-  return el("span", { class: "share-wrap" }, pill, pop);
+  return el("span", { class: "share-wrap" }, pill, sharePopover(card, popId));
 }
 
 function sharePopover(card, popId) {
@@ -306,7 +413,8 @@ function setupSharePopover() {
 function hover(id) {
   if (state.hovered === id) return;
   state.hovered = id;
-  paint();
+  // A selected card is what the grid shows whatever the pointer is over.
+  if (state.selected === null) paint();
 }
 
 function select(id) {
@@ -322,49 +430,89 @@ function select(id) {
   first.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
 
+// What the last paint showed, so the next one touches only the grid cards and tiles that differ from it.
+// `dirty` holds the grid cards built since, which have shown nothing yet.
+const painted = { selected: null, active: null, taken: new Map(), lit: new Map(), choosing: false, dirty: new Set() };
+
+const sameEntries = (a, b) => a.size === b.size && [...a].every(([key, value]) => b.get(key) === value);
+
+// One grid card: tinted as a target, marked when a queued card takes its place, with a swap button for the
+// selected idea. A clicked idea can replace any deck card not already going out; the suggested ones stand out.
+function paintGridCard(name, node, { lit, taken, active }) {
+  const target = lit.get(name);
+  const out = taken.get(name);
+  const { note, swap } = gridParts.get(node);
+  node.classList.toggle("target", Boolean(target));
+  node.classList.toggle("out", Boolean(out));
+  note.hidden = !out;
+  note.textContent = out ? `→ ${out.name}` : "";
+  const chosen = active && state.selected === active.id && !out && !node.dataset.commander;
+  swap.hidden = !target && !chosen;
+  swap.classList.toggle("any", !target);
+  if (!swap.hidden) {
+    swap.dataset.card = active.id;
+    swap.setAttribute("aria-label", `Replace ${name} with ${active.name}`);
+    swap.title = target ? target.reason : `Replace ${name} (your pick, not suggested)`;
+  }
+}
+
 // Lights the grid for the considering card in focus: targets tinted, cards already queued out marked.
 function paint() {
-  const cards = [...state.tiles.values()].map((t) => t.card);
-  const taken = new Map(cards.filter((c) => c.status === "add" && c.choice).map((c) => [c.choice, c]));
+  const tiles = [...state.tiles.values()];
+  const taken = new Map(tiles.filter(({ card }) => card.status === "add" && card.choice).map(({ card }) => [card.choice, card]));
   const activeId = state.selected ?? state.hovered;
-  const active = cards.find((c) => c.id === activeId) || null;
+  const active = state.tiles.get(activeId)?.card ?? null;
   const lit = new Map(active ? active.targets.filter((t) => !taken.has(t.name) || taken.get(t.name) === active).map((t) => [t.name, t]) : []);
+  const next = { lit, taken, active };
 
-  for (const [name, node] of state.gridCards) {
-    const target = lit.get(name);
-    const out = taken.get(name);
-    node.classList.toggle("target", Boolean(target));
-    node.classList.toggle("out", Boolean(out));
-    const note = node.querySelector(".out-note");
-    note.hidden = !out;
-    note.textContent = out ? `→ ${out.name}` : "";
-    // A clicked idea can replace any deck card not already going out; the suggested ones stand out.
-    const swap = node.querySelector(".swap");
-    const chosen = active && state.selected === active.id && !out && !node.dataset.commander;
-    swap.hidden = !target && !chosen;
-    swap.classList.toggle("any", !target);
-    if (!swap.hidden) {
-      swap.dataset.card = active.id;
-      swap.setAttribute("aria-label", `Replace ${name} with ${active.name}`);
-      swap.title = target ? target.reason : `Replace ${name} (your pick, not suggested)`;
-    }
+  // Choosing a card changes the swap button of every deck card; hovering one changes only its targets.
+  const everyCard = painted.selected !== state.selected || (state.selected !== null && painted.active !== active)
+    || !sameEntries(painted.taken, taken);
+  const names = new Set(everyCard ? state.gridCards.keys() : painted.dirty);
+  if (!everyCard) {
+    for (const name of [...painted.lit.keys(), ...lit.keys()]) if (painted.lit.get(name) !== lit.get(name)) names.add(name);
   }
-  for (const { node, card } of state.tiles.values()) {
-    const on = card.id === state.selected;
-    node.classList.toggle("selected", on);
-    node.classList.toggle("lit", card.id === activeId);
-    node.querySelector(".pick").setAttribute("aria-pressed", String(on));
-    node.querySelector(".targets").hidden = !on;
-    node.querySelector(".add-plain").hidden = !on || (card.status === "add" && !card.choice);
+  for (const name of names) {
+    const node = state.gridCards.get(name);
+    if (node) paintGridCard(name, node, next);
   }
-  $("grid").classList.toggle("choosing", Boolean(active));
+  Object.assign(painted, { selected: state.selected, active, taken, lit });
+  painted.dirty.clear();
+
+  for (const tile of tiles) {
+    const on = tile.card.id === state.selected;
+    const isLit = tile.card.id === activeId;
+    if (tile.shown && tile.shown.on === on && tile.shown.lit === isLit) continue;
+    tile.shown = { on, lit: isLit };
+    const parts = tileParts.get(tile.node);
+    tile.node.classList.toggle("selected", on);
+    tile.node.classList.toggle("lit", isLit);
+    parts.pick.setAttribute("aria-pressed", String(on));
+    if (on) showTargets(tile.node, tile.card);
+    else if (parts.targets) parts.targets.hidden = true;
+    if (on && wantsPlainAdd(tile.card)) showPlainAdd(tile.node, tile.card);
+    else if (parts.plain) parts.plain.hidden = true;
+  }
+  // A category the deck gained since the selected card was last painted.
+  const selected = state.tiles.get(state.selected);
+  if (selected && wantsPlainAdd(selected.card)) showPlainAdd(selected.node, selected.card);
+  const choosing = Boolean(active);
+  if (painted.choosing !== choosing) {
+    painted.choosing = choosing;
+    $("grid").classList.toggle("choosing", choosing);
+  }
 }
 
 // Adding with no cut, filed under one of the deck's categories, its card type's first.
+function plainCategories(card) {
+  const preset = card.category ?? card.typeCategory ?? "";
+  return [...new Set([...(state.view?.categories ?? []), preset].filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
+}
+
 function plainAdd(card) {
   const preset = card.category ?? card.typeCategory ?? "";
-  const categories = [...new Set([...(state.view?.categories ?? []), preset].filter(Boolean))]
-    .sort((a, b) => a.localeCompare(b));
+  const categories = plainCategories(card);
   const select = el("select", { class: "input small", "aria-label": `Category for ${card.name}`, title: "Category it is filed under" },
     ...categories.map((name) => el("option", { value: name, text: name })));
   select.value = preset;
@@ -382,7 +530,7 @@ async function addPlain(card, category) {
       state.selected = null;
       showStatus(`${card.name} queued to add to ${category}`);
       await refresh();
-    } catch { /* shown in the status line */ }
+    } catch (error) { noteFailure(error); }
   });
 }
 
@@ -397,7 +545,7 @@ async function swapIn(cardId, target) {
       state.selected = null;
       showStatus(`${known.card.name} replaces ${target}`);
       await refresh();
-    } catch { /* the status line already says what went wrong */ }
+    } catch (error) { noteFailure(error); }
   });
 }
 
@@ -422,16 +570,39 @@ function rejectForm(card) {
   return form;
 }
 
-async function decide(card, decision, note = "") {
+// Where a row stands in its list, to find the control nearest to it once it is gone.
+function rowSpot(row) {
+  const list = row ? row.parentNode : null;
+  return { list, index: list ? [...list.children].indexOf(row) : -1 };
+}
+
+// The list's toggle, the last stop before the top of the page when a list has emptied; the turned down list
+// hides with its last card, so its stop is the Considering toggle above it.
+const LIST_TOGGLES = { "list-considering": "h-considering", "list-uncut": "h-uncut", "list-rejected": "h-considering" };
+
+// A decision rebuilds or removes the row whose control had focus: keep the keyboard in that list, on the row
+// now at its place or the one before it, and failing that on the list's own toggle.
+function refocusNear({ list, index }) {
+  const active = document.activeElement;
+  if (active && active !== document.body && active.isConnected) return;
+  const rows = list ? [...list.children] : [];
+  const target = rows[Math.min(index, rows.length - 1)]?.querySelector("button")
+    ?? (list && $(LIST_TOGGLES[list.id]));
+  (target ?? $("main")).focus();
+}
+
+// `trigger` is a control outside the card's tile (a rejected card has none) that is held while the call runs.
+async function decide(card, decision, note = "", trigger = null) {
   const tile = state.tiles.get(card.id)?.node;
-  const controls = tile ? [...tile.querySelectorAll("button, input")] : [];
+  const controls = [...(tile ? tile.querySelectorAll("button, input") : []), ...(trigger ? [trigger] : [])];
+  const spot = rowSpot(tile ?? trigger?.closest(".rejected-card"));
   await whileBusy(controls, async () => {
     try {
       await api("decide", state.current, card.id, decision, null, note);
       if (decision === "reject") showStatus(`Turned down ${card.name}`);
       await refresh();
-      $("main").focus();
-    } catch { /* shown in the status line */ }
+      refocusNear(spot);
+    } catch (error) { noteFailure(error); }
   });
 }
 
@@ -469,6 +640,6 @@ async function propose(name) {
         select(answer.card.id);
       }
       showStatus(shown ? `${answer.card.name} is under consideration` : `${answer.card.name} is not under consideration`, !shown);
-    } catch { /* shown in the status line */ }
+    } catch (error) { noteFailure(error); }
   });
 }

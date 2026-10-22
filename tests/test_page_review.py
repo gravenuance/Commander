@@ -122,3 +122,20 @@ def test_marking_cards_applied_closes_the_review_and_says_nothing_was_sent() -> 
         "text": "Marked Arcane Signet applied: the deck on Archidekt already had it, so nothing was sent.",
         "open": False,
     }
+
+
+def test_a_save_that_empties_the_queue_does_not_leave_focus_on_the_disabled_review_button() -> None:
+    seen = page("""
+    const view = (pending) => ({
+      id: 1, short: "D", name: "Deck", url: "https://archidekt.com/decks/1", bracket: null,
+      effectiveBracket: null, archetype: "", tags: [], leanings: [], pending, stats: null, grid: [],
+      cards: [], activity: [], stamp: "s" });
+    state.current = 1;
+    state.view = view(2);
+    renderDeck();
+    $("review").focus();
+    state.view = view(0);
+    renderDeck();
+    return { focus: document.activeElement.id, disabled: $("review").disabled };
+    """)
+    assert seen == {"focus": "main", "disabled": True}

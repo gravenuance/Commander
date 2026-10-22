@@ -15,9 +15,7 @@ from datetime import datetime
 from enum import Enum
 from functools import wraps
 from pathlib import Path
-from typing import cast
-
-import httpx
+from typing import TYPE_CHECKING, cast
 
 from commander.answers import card_key
 from commander.apply import NotYourDeckError, Resolution, SaveError, default_category
@@ -29,6 +27,7 @@ from commander.archidekt_edit import (
 )
 from commander.background import in_background
 from commander.board import (
+    BOARD_FILE,
     Actor,
     BoardCard,
     BoardError,
@@ -44,8 +43,8 @@ from commander.board import (
     count_json,
     files_stamp,
     held_keys,
-    read_activity,
     read_board,
+    read_recent_activity,
 )
 from commander.boardsave import BoardSave, preview_board, save_board
 from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
@@ -59,14 +58,22 @@ from commander.bracket import (
 from commander.bracketcheck import check_bracket, check_json
 from commander.bracketpreview import preview_json, spellbook_preview
 from commander.budget import resolved_budget
-from commander.carddb import CardDataError, CardDb, ResolvedCard
+from commander.carddb import CardDataError, CardDb, CardInfo, CardText, ResolvedCard
 from commander.changetext import change_mark, change_text
 from commander.config import ConfigError, MetaSettings, forget_account, switch_account, validate_user
 from commander.credentials import CredentialError, KeyringKeyStore, KeyStore, TokenStore, check_api_key
 from commander.deckcache import NOT_FETCHED
 from commander.deckexport import cardmarket_wants_text, topdeck_text
 from commander.decklocks import DeckLocks
-from commander.deckprofile import MAX_ADJACENT, MAX_LIST, MAX_TEXT, Profile, ProfileError, read_profile
+from commander.deckprofile import (
+    MAX_ADJACENT,
+    MAX_LIST,
+    MAX_TEXT,
+    PROFILE_FILE,
+    Profile,
+    ProfileError,
+    read_profile,
+)
 from commander.deckthemes import merge_themes
 from commander.deckview import card_image, decklist_json
 from commander.fetchpriority import FetchPriority
@@ -93,7 +100,7 @@ from commander.models import Deck
 from commander.net import Fetcher, NetworkError, Pacer
 from commander.profileedit import save_settings
 from commander.spellbook import SpellbookClient
-from commander.store import StoredDeck, Workspace, WorkspaceError
+from commander.store import SNAPSHOT_FILE, StoredDeck, Workspace, WorkspaceError
 from commander.suggest import deck_identity
 from commander.sync import PullWatch, SyncStatus
 from commander.syncrun import CardState, FetchState, SyncOutcome, SyncServices, run_sync
@@ -109,6 +116,9 @@ from commander.weightedshare import (
     share_tip,
     weighted_shares,
 )
+
+if TYPE_CHECKING:
+    import httpx
 
 log = logging.getLogger(__name__)
 
@@ -275,7 +285,7 @@ class Desk:
         self,
         settings: DeskSettings,
         *,
-        client_factory: Callable[[], httpx.Client],
+        client_factory: Callable[[], "httpx.Client"],
         token_store: TokenStore,
         now: Callable[[], datetime],
         pacer_factory: Callable[[float], Pacer] = Pacer,
@@ -294,6 +304,10 @@ class Desk:
         self._pools: dict[int, tuple[str, MetaData]] = {}
         self._tables: dict[int, tuple[str, ShareTable]] = {}
         self._rules: dict[int, tuple[str, CutRules]] = {}
+        # The deck list's rows by deck folder, each with the stamp of the files it was made from.
+        self._rows: dict[Path, tuple[str, Json]] = {}
+        # Per deck: the meta panel's answer, and the stamp of what it was made from.
+        self._reports: dict[int, tuple[str, Json]] = {}
         self._sync_lock = threading.Lock()
         self._sync = _SyncState()
         # The page errors already logged, as (message, source, line), under their own lock.
@@ -446,6 +460,8 @@ class Desk:
         self._pools.clear()
         self._tables.clear()
         self._rules.clear()
+        self._rows.clear()
+        self._reports.clear()
         with self._sync_lock:
             self._open_deck = None
 
@@ -462,6 +478,10 @@ class Desk:
         step under the lock, so a sync and a write cannot both start. Otherwise a deck's write waits only for
         the sync's own write to that deck (ADR 0042). The refusal is logged with the phase the sync is in, so
         the log shows why.
+
+        Signing in or out takes no deck's lock and does not wait for a deck's write that is running: such a
+        write holds its deck, user, workspace and token before its first call to Archidekt, so it finishes
+        for the account it began with, in that account's folder.
         """
         target = None if deck_id is None else int(deck_id)
         with self._sync_lock:
@@ -581,6 +601,7 @@ class Desk:
         self._pools.pop(deck_id, None)
         self._tables.pop(deck_id, None)
         self._rules.pop(deck_id, None)
+        self._reports.pop(deck_id, None)
         with self._sync_lock:
             if self._open_deck == deck_id:
                 self._open_deck = None
@@ -636,30 +657,42 @@ class Desk:
             return self._deck_rows(None)
 
     def _deck_rows(self, db: CardDb | None) -> Json:
-        rows: list[Json] = []
-        for stored in self._workspace.load_all():
-            row: Json = {
-                "id": stored.deck.id,
-                "short": stored.deck.short_name,
-                "name": stored.deck.name,
-                "queued": 0,
-                "open": 0,
-            }
-            try:
-                board = read_board(stored.folder)
-            except BoardError as error:
-                # One deck's damaged board must not hide the others.
-                log.warning("deck %s: %s", stored.deck.id, error)
-                row["error"] = str(error)
-            else:
-                row["queued"] = board.pending
-                held = held_keys(stored.deck, db) if db else frozenset[str]()
-                row["open"] = sum(
-                    1 for c in board.cards if c.status is Status.OPEN and card_key(c.name) not in held
-                )
-            rows.append(row)
-        rows.sort(key=lambda row: str(row["short"]).casefold())
+        """One row per deck, each kept until its deck, its board or the card data change: the poll asks for
+        the list whenever any deck's stamp changes, which a running sync does every few seconds."""
+        data = "-" if db is None else self._card_data_stamp()
+        kept: dict[Path, tuple[str, Json]] = {}
+        for _, folder in self._workspace.deck_folders():
+            # The stamp comes first: a change while the row is built shows in the next look.
+            stamp = f"{files_stamp(folder, (BOARD_FILE, SNAPSHOT_FILE))}|{data}"
+            known = self._rows.get(folder)
+            if known is None or known[0] != stamp:
+                row = self._deck_row(folder, db)
+                if row is None:
+                    continue
+                known = (stamp, row)
+            kept[folder] = known
+        self._rows = kept
+        rows = sorted((dict(row) for _, row in kept.values()), key=lambda row: str(row["short"]).casefold())
         return {"decks": rows}
+
+    def _deck_row(self, folder: Path, db: CardDb | None) -> Json | None:
+        deck = self._workspace.load_folder(folder)
+        if deck is None:
+            return None
+        row: Json = {"id": deck.id, "short": deck.short_name, "name": deck.name, "queued": 0, "open": 0}
+        try:
+            board = read_board(folder)
+        except BoardError as error:
+            # One deck's damaged board must not hide the others.
+            log.warning("deck %s: %s", deck.id, error)
+            row["error"] = str(error)
+        else:
+            row["queued"] = board.pending
+            held = held_keys(deck, db) if db else frozenset[str]()
+            row["open"] = sum(
+                1 for c in board.cards if c.status is Status.OPEN and card_key(c.name) not in held
+            )
+        return row
 
     @_guarded
     def stamps(self) -> Json:
@@ -679,13 +712,14 @@ class Desk:
             main = db.resolve(stored.deck.main_cards)
             identity = deck_identity(main)
             infos = db.cards(card.oracle_id for card in board.cards)
+            texts = db.card_texts(card.oracle_id for card in board.cards)
             rules = with_ideas(self._deck_rules(stored, main, profile, db), infos.values(), db)
             budget = resolved_budget(playing.bracket, main, profile.max_card_cents)
             shares = self._shares(stored)
             held = held_keys(stored.deck, db)
             cards = [
                 {
-                    **self._card_view(db, card),
+                    **self._card_view(db, card, infos.get(card.oracle_id), texts.get(card.oracle_id)),
                     "held": card_key(card.name) in held,
                     "withinBudget": None
                     if budget.working is None
@@ -706,7 +740,7 @@ class Desk:
                 colours=dict(account or ()),
                 share=lambda name: _share_json(shares.of(name)),
             )
-        activity = read_activity(stored.folder)[-ACTIVITY_SHOWN:]
+        activity = read_recent_activity(stored.folder, ACTIVITY_SHOWN)
         return {
             "id": stored.deck.id,
             "short": stored.deck.short_name,
@@ -768,10 +802,16 @@ class Desk:
         }
 
     @_guarded
-    def find_commanders(self, text: str) -> Json:
-        """Commanders whose name holds text, for the adjacent commanders' autocomplete."""
+    def find_commanders(
+        self,
+        text: str,
+        partner: bool = False,  # noqa: FBT001, FBT002 — the page's bridge passes positionals
+    ) -> Json:
+        """Commanders whose name holds text, for the adjacent commanders' autocomplete; for the second name of
+        a pair (partner), any commander-legal card, since a Background or another partner type sits there."""
         with self._db() as db:
-            found = db.search_commanders(text, limit=MAX_SUGGESTIONS)
+            search = db.search_legal if partner else db.search_commanders
+            found = search(text, limit=MAX_SUGGESTIONS)
         return {"names": [info.name for info in found]}
 
     @_guarded
@@ -801,12 +841,17 @@ class Desk:
             typed = _grace_from_page(grace)
             held = {card_key(name) for name in read_profile(stored.folder).grace}
             cards: dict[str, float] = {}
+            named: list[list[str]] = []
             with self._db() as db:
                 for group in adjacent:
-                    for name in group:
-                        found = {info.name.casefold() for info in db.search_commanders(name)}
-                        if name.strip().casefold() not in found:
-                            return {"error": f"{name!r} is not a commander the card data knows"}
+                    names: list[str] = []
+                    for position, name in enumerate(group):
+                        real = _real_commander_slot(db, name, partner=position > 0)
+                        if real is None:
+                            kind = "a legal card" if position > 0 else "a commander"
+                            return {"error": f"{name!r} is not {kind} the card data knows"}
+                        names.append(real)
+                    named.append(names)
                 for name, factor in typed.items():
                     real = name
                     # A profile card may be newer than the card data: only new ones are looked up.
@@ -821,7 +866,7 @@ class Desk:
             save_settings(
                 stored.folder,
                 stored.deck,
-                adjacent=adjacent,
+                adjacent=named,
                 ignore=ignore,
                 tag_search=tag_search,
                 grace=cards,
@@ -1089,23 +1134,35 @@ class Desk:
         """The deck's meta report from cached answers only; a sync refreshes them."""
         stored = self._stored(deck_id)
         deck = self._effective(stored.deck)
-        data = self._gather(deck)
+        # The page asks again after every board change and save: the answer is kept until what it is made
+        # of changes, which is the deck, its profile, the cached meta answers, the card data or the day.
+        stamp = (
+            f"{files_stamp(stored.folder, (SNAPSHOT_FILE, PROFILE_FILE))}|{cache_stamp(self._settings.cache)}"
+            f"|{self._card_data_stamp()}|{self._now().date()}|{deck.bracket}"
+        )
+        known = self._reports.get(stored.deck.id)
+        if known is not None and known[0] == stamp:
+            return known[1]
+        data = self._pool_of(deck)
         with self._db() as db:
             report = analyse(deck, data, read_profile(stored.folder), db, now=self._now)
         why = _unavailable_reason(data)
         if data.lists.data is None and data.field.data is None and data.peers.data is None:
-            return {"report": None, **why}
-        return {
-            **why,
-            # Whether the most-played commanders and their combos are read: bracket 5 only (ADR 0027).
-            "cedh": deck.bracket == CEDH_BRACKET,
-            "report": report_json(report),
-            "keys": key_card_rows(report.key_cards),
-            "stoppers": stopper_rows(report.own_combos, report.threats),
-            "untouched": untouched(report.key_cards, report.own_combos, report.threats),
-            "comboGroups": combo_groups(report.combos),
-            "racing": report.style.races,
-        }
+            answer: Json = {"report": None, **why}
+        else:
+            answer = {
+                **why,
+                # Whether the most-played commanders and their combos are read: bracket 5 only (ADR 0027).
+                "cedh": deck.bracket == CEDH_BRACKET,
+                "report": report_json(report),
+                "keys": key_card_rows(report.key_cards),
+                "stoppers": stopper_rows(report.own_combos, report.threats),
+                "untouched": untouched(report.key_cards, report.own_combos, report.threats),
+                "comboGroups": combo_groups(report.combos),
+                "racing": report.style.races,
+            }
+        self._reports[stored.deck.id] = (stamp, answer)
+        return answer
 
     def _relabel(self, stored: StoredDeck, card: BoardCard | None) -> Relabel | None:
         """What the cached lists make of a card the user reconsiders; None when it is not one to label."""
@@ -1159,17 +1216,26 @@ class Desk:
         cache = estimate_cache(self._settings.cache / SPELLBOOK_CACHE_FOLDER)
         return cached_floor(deck, cache, now=self._now)
 
+    def _card_data_stamp(self) -> str:
+        """Changes whenever a sync replaces the card database."""
+        card_db = self._settings.card_db
+        return files_stamp(card_db.parent, (card_db.name,))
+
     def _pool(self, deck: Deck) -> MetaData | None:
         """What other players do with the deck's commander, from cache only; None for a deck without one."""
         if not deck.commanders:
             return None
-        playing = self._effective(deck)
-        stamp = f"{cache_stamp(self._settings.cache)}|{playing.bracket}"
-        known = self._pools.get(deck.id)
+        return self._pool_of(self._effective(deck))
+
+    def _pool_of(self, playing: Deck) -> MetaData:
+        """`_pool` for the deck as the panels act on it (`_effective`); the meta panel reads it too. Kept
+        until the cached answers or the day change, since the lists read are those of the last window days."""
+        stamp = f"{cache_stamp(self._settings.cache)}|{playing.bracket}|{self._now().date()}"
+        known = self._pools.get(playing.id)
         if known is not None and known[0] == stamp:
             return known[1]
         data = self._gather(playing)
-        self._pools[deck.id] = (stamp, data)
+        self._pools[playing.id] = (stamp, data)
         return data
 
     def _gather(self, deck: Deck) -> MetaData:
@@ -1184,16 +1250,18 @@ class Desk:
                 offline=True,
             )
 
-    def _meta_sources(self, http: httpx.Client) -> MetaSources:
+    def _meta_sources(self, http: "httpx.Client") -> MetaSources:
         return meta_sources(
             http, self._pacer_factory, self._settings.user or "", self._settings.meta, self._settings.cache
         )
 
     def _stored(self, deck_id: int) -> StoredDeck:
         folder = self._workspace.folder_for(int(deck_id))
-        deck = self._workspace.load(int(deck_id)) if folder else None
-        if folder is None or deck is None:
+        if folder is None:
             raise BoardError(f"deck {deck_id} is not in {self._settings.workspace}; press Sync")
+        deck = self._workspace.load_folder(folder)
+        if deck is None:  # a damaged or missing deck.json, which the next sync fetches again
+            raise BoardError(f"deck {deck_id}'s saved copy is unreadable; press Sync")
         return StoredDeck(folder, deck)
 
     def _user(self) -> str:
@@ -1201,7 +1269,7 @@ class Desk:
             raise ConfigError("Sign in to Archidekt first.")
         return self._settings.user
 
-    def _editor(self, http: httpx.Client, user: str) -> ArchidektEditor:
+    def _editor(self, http: "httpx.Client", user: str) -> ArchidektEditor:
         """An Archidekt editor signed in as the user; the sign-in must be on file."""
         fetcher = Fetcher(http)
         return ArchidektEditor(fetcher, ArchidektAuth(fetcher, self._token_store).access_token(user))
@@ -1248,10 +1316,8 @@ class Desk:
         with self._db() as db:
             yield BoardService(stored.folder, stored.deck, db, now=self._now), db
 
-    def _card_view(self, db: CardDb, card: BoardCard) -> Json:
+    def _card_view(self, db: CardDb, card: BoardCard, info: CardInfo | None, text: CardText | None) -> Json:
         view = card_json(card)
-        info = db.cards([card.oracle_id]).get(card.oracle_id)
-        text = db.card_text(card.oracle_id)
         view.update(
             manaCost=info.mana_cost if info else "",
             typeLine=info.type_line if info else "",
@@ -1291,6 +1357,17 @@ def land_options(db: CardDb, deck: Deck, folder: Path) -> tuple[list[LandOption]
         if mana.name.casefold() not in skip
     ]
     return options, budget.line
+
+
+def _real_commander_slot(db: CardDb, name: str, *, partner: bool) -> str | None:
+    """The card data's spelling of a name in a pair, or None when it may not stand there: the first must be a
+    commander, the second (partner) any commander-legal card, because the pair itself is not checked."""
+    info = db.card_named(name.strip())
+    if info is None or not info.commander_legal:
+        return None
+    if partner or any(found.oracle_id == info.oracle_id for found in db.search_commanders(info.name)):
+        return info.name
+    return None
 
 
 def _grace_from_page(entries: object) -> dict[str, float]:

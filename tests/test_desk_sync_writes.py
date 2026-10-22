@@ -30,7 +30,7 @@ from commander.net import Fetcher, Pacer
 from commander.scryfall import CardRefresh
 from commander.store import StoredDeck, Workspace
 from commander.sync import sync_decks
-from conftest import REFRESH_TOKEN, FakeArchidekt, Json, MemoryTokenStore
+from conftest import PASSWORD, REFRESH_TOKEN, FakeArchidekt, Json, MemoryTokenStore
 from test_cli_apply import run
 from test_desk import DECK, DESK_LOG, NOW, first_card_id, items, logged, probing, reviewed
 from test_syncrun import DOWNLOADED, lists_with, stub_gather, stub_meta
@@ -144,6 +144,45 @@ def test_board_edits_and_a_save_go_through_while_the_sync_fetches_ideas(
     status = desk.sync_status()
     assert (status["running"], status["failed"]) == (False, False)
     assert board_cards(settings)["Arcane Signet"] == (Actor.YOU, Status.APPLIED)
+
+
+def _sign_out(desk: Desk) -> Json:
+    return desk.sign_out()
+
+
+def _sign_in(desk: Desk) -> Json:
+    return desk.sign_in("TESTER", PASSWORD)
+
+
+@pytest.mark.parametrize(("change", "user"), [(_sign_out, None), (_sign_in, "TESTER")], ids=["out", "in"])
+def test_signing_in_or_out_during_a_save_neither_waits_nor_stops_it(
+    *,
+    settings: DeskSettings,
+    fake: FakeArchidekt,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    change: Callable[[Desk], Json],
+    user: str | None,
+) -> None:
+    """Only the sync is waited for (ADR 0042). A save has its deck, user, workspace and token in hand before
+    it calls Archidekt, so it finishes for the account it began with, in that account's folder."""
+    pending: list[Callable[[], None]] = []
+    desk = make_desk(replace(settings, documents=tmp_path / "docs"), fake, pending.append)
+    desk.propose(DECK, "Arcane Signet")
+    desk.decide(DECK, first_card_id(desk), "add", None, "")
+    stamp = reviewed(desk)
+    during: list[Json] = []
+    monkeypatch.setattr(
+        desk_module, "save_board", probing(desk_module.save_board, lambda: during.append(change(desk)))
+    )
+
+    saved = desk.commit(DECK, stamp)
+
+    assert saved["saved"] is True, saved
+    assert [(a.get("error"), a["user"]) for a in during] == [(None, user)]
+    assert desk.account()["user"] == user
+    assert board_cards(settings)["Arcane Signet"] == (Actor.YOU, Status.APPLIED)
+    assert fake.card_writes()
 
 
 def test_signing_out_still_waits_for_the_whole_sync(

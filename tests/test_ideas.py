@@ -20,6 +20,7 @@ from commander.board import (
 )
 from commander.carddb import CardDb
 from commander.deckcache import Answer, AnswerSource
+from commander.deckprofile import Profile
 from commander.ideas import (
     Idea,
     adjacent_ideas,
@@ -28,6 +29,7 @@ from commander.ideas import (
     ideas_summary,
     rejudge_ideas,
     relabel_legacy_ideas,
+    search_tags,
     staple_ideas,
     tagged_ideas,
 )
@@ -324,6 +326,37 @@ def test_one_deck_is_too_little_to_judge_but_two_agreeing_ones_are_enough(
             StoredDeck(folder, deck), meta_data([], decks_playing(total, total)), db, now=lambda: NOW
         )
         assert [c.name for c in added[Origin.DECKS]] == expected
+
+
+def themed_deck(deck: Deck, tags: tuple[str, ...]) -> Deck:
+    """Magda (a Dwarf), Disruptor Flute and High-Speed Hoverbike (both Flash), Battered Golem (a Golem); the
+    Hoverbike is also a Vehicle. So Flash matches two cards and Golems, Dwarves and Vehicles one each."""
+    names = ("Magda, Brazen Outlaw", "Disruptor Flute", "High-Speed Hoverbike", "Battered Golem")
+    cards = tuple(replace(card, in_deck=True) for card in deck.cards if card.name in names)
+    return replace(deck, cards=cards, tags=tags)
+
+
+def test_only_the_three_theme_tags_most_of_the_decks_cards_match_are_searched(deck: Deck, db: CardDb) -> None:
+    themed = themed_deck(deck, ("Golems", "Dwarves", "Flash", "Vehicles"))
+    # Flash matches two cards; the three matching one each keep Archidekt's order, so Vehicles falls out.
+    assert search_tags(themed, Profile(tag_search=True), db) == ["Flash", "Golems", "Dwarves"]
+
+
+def test_a_deck_with_fewer_than_four_theme_tags_searches_all_of_them_by_prevalence(
+    deck: Deck, db: CardDb
+) -> None:
+    themed = themed_deck(deck, ("Dwarves", "Flash"))
+    assert search_tags(themed, Profile(tag_search=True), db) == ["Flash", "Dwarves"]
+
+
+def test_an_ignored_theme_tag_is_not_searched_and_makes_room_for_the_next(deck: Deck, db: CardDb) -> None:
+    themed = themed_deck(deck, ("Golems", "Dwarves", "Flash", "Vehicles"))
+    profile = Profile(tag_search=True, ignore_themes=("Flash",))
+    assert search_tags(themed, profile, db) == ["Golems", "Dwarves", "Vehicles"]
+
+
+def test_no_theme_tag_is_searched_while_the_tag_search_is_off(deck: Deck, db: CardDb) -> None:
+    assert search_tags(themed_deck(deck, ("Flash",)), Profile(), db) == []
 
 
 def tag_pool(tag: str, *decks: list[str]) -> TaggedDecks:
@@ -854,6 +887,21 @@ def test_tagged_ideas_stay_with_the_pool_rule_while_the_tag_search_is_on(
     kept = read_board(tmp_path).find(will)
     assert kept is not None
     assert (kept.status, kept.origin, kept.origin_tag) == (Status.OPEN, Origin.TAGGED, "Dwarves")
+    assert card_state(tmp_path, signet)[0] is Status.REJECTED
+
+
+def test_a_tagged_idea_is_judged_by_its_pool_whatever_the_case_the_tag_is_spelled_in(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    (tmp_path / "profile.toml").write_text(TAG_SEARCH, encoding="utf-8")
+    # Seeded under "dwarves"; the deck's tag, and so the pool's, now reads "Dwarves".
+    will = seed(tmp_path, deck, db, "Jeska's Will", Actor.CMDR, origin=Origin.TAGGED, tag="dwarves")
+    signet = seed(tmp_path, deck, db, "Arcane Signet", Actor.CMDR, origin=Origin.TAGGED, tag="dwarves")
+    dwarves = tag_pool("Dwarves", ["Jeska's Will", "Arcane Signet"], ["Jeska's Will"], ["Jeska's Will"], [])
+
+    assert judge(tmp_path, deck, db, commander_data(), tagged=[dwarves]) == ["Arcane Signet"]
+
+    assert card_state(tmp_path, will)[0] is Status.OPEN
     assert card_state(tmp_path, signet)[0] is Status.REJECTED
 
 

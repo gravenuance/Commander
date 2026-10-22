@@ -14,10 +14,10 @@ from collections.abc import Callable, Generator
 from concurrent.futures import FIRST_COMPLETED, Future, wait
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
+from datetime import date
 from enum import Enum
 from pathlib import Path
-
-import httpx
+from typing import TYPE_CHECKING
 
 from commander.archidekt import ArchidektClient, ArchidektError, AuthError
 from commander.archidekt_edit import ArchidektAuth, ArchidektEditor
@@ -55,6 +55,9 @@ from commander.sync import PRIVATE_NOT_UPDATED, PullWatch, SyncResult, SyncStatu
 from commander.topdeck import KEY_REMEDY
 from commander.viewscore import VIEWS_FILE, ViewScores
 
+if TYPE_CHECKING:
+    import httpx
+
 log = logging.getLogger(__name__)
 
 
@@ -62,7 +65,7 @@ log = logging.getLogger(__name__)
 class SyncServices:
     """What a sync reaches outside the deck folder, injected so tests run it offline."""
 
-    client_factory: Callable[[], httpx.Client]
+    client_factory: Callable[[], "httpx.Client"]
     token_store: TokenStore
     # The card database and the meta answers live here.
     cache: Path
@@ -103,6 +106,9 @@ class CardState(Enum):
 class CardStatus:
     state: CardState
     detail: str
+    # Why the card data was rebuilt, and the day it is next rebuilt for its age; None when they do not apply.
+    reason: str | None = None
+    next_refresh: date | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -171,7 +177,7 @@ def run_sync(
                 log.warning("Archidekt login not usable: %s", login.problem)
                 warnings.append(f"Archidekt login not usable ({login.problem}): {PRIVATE_NOT_UPDATED}")
             results = sync_decks(
-                ArchidektClient(fetcher, token=login.token),
+                ArchidektClient(fetcher, token=login.token, pacer=services.pacer_factory(0.0)),
                 workspace,
                 user,
                 force=options.force,
@@ -304,8 +310,11 @@ def _card_status(job: Future[CardRefresh] | None, options: SyncOptions) -> CardS
         return CardStatus(CardState.FAILED, f"{error}; the previous card data is kept")
     source = f"Scryfall data of {refresh.meta.cards_updated_at[:10]}"
     if refresh.status is RefreshStatus.CURRENT:
-        return CardStatus(CardState.CURRENT, source)
-    return CardStatus(CardState.UPDATED, f"{source}, {refresh.printings or 0:,} printings")
+        due = f", next refresh {refresh.next_due} or with the next new set" if refresh.next_due else ""
+        return CardStatus(CardState.CURRENT, source + due, next_refresh=refresh.next_due)
+    why = f"{refresh.reason}, " if refresh.reason else ""
+    detail = f"{why}{source}, {refresh.printings or 0:,} printings"
+    return CardStatus(CardState.UPDATED, detail, reason=refresh.reason or None)
 
 
 @dataclass(slots=True)
@@ -364,6 +373,7 @@ def _compile_ideas(
             services.cache,
             waits=_TopdeckWaits(phases),
             rank=lambda deck_id: next_up.rank(deck_id, order),
+            rank_changes=next_up.watch,
         )
         waiting = _with_estimated_brackets(waiting, http, services, phases)
         # TopDeck's window is fetched once, on its own thread, while every deck's Archidekt and Spellbook
@@ -397,7 +407,9 @@ def _compile_ideas(
             if tournaments is not None:
                 # The client closes with this block, so TopDeck's thread must be over first.
                 _wait_for(tournaments)
-                tournaments.result()
+                # `start_tournament_refresh` has logged any error; the reads have its failure to report.
+                if tournaments.exception() is not None:
+                    warnings.append("TopDeck's tournament lists were not fetched: unexpected error")
         # Every deck's reads are over, so none is using a cached deck read the prune could remove.
         prune_deck_reads(services.cache, settings, now=services.now)
     return phase
@@ -407,7 +419,7 @@ _ESTIMATES_STEP = "Spellbook: bracket estimates"
 
 
 def _with_estimated_brackets(
-    waiting: list[StoredDeck], http: httpx.Client, services: SyncServices, phases: ActivePhases
+    waiting: list[StoredDeck], http: "httpx.Client", services: SyncServices, phases: ActivePhases
 ) -> list[StoredDeck]:
     """The decks as their reads and ideas see them (ADR 0051): one with no bracket set has its estimate's
     lowest. The estimate comes from the cache while fresh and is otherwise asked of Spellbook; a deck whose
@@ -597,7 +609,15 @@ def _merge_deck(
     deck = read.stored.deck
     try:
         finished = read.read.result()
-        pools, data = finished.pools, finished.data
+    except (BoardError, ProfileError) as error:
+        _not_compiled(read, str(error), warnings, on_deck)
+        return
+    except Exception as error:  # one deck's failed read must not stop the others' merges
+        log.warning("deck %d: its reads failed unexpectedly", deck.id, exc_info=error)
+        _not_compiled(read, f"unexpected {type(error).__name__}: {error}", warnings, on_deck)
+        return
+    pools, data = finished.pools, finished.data
+    try:
         with deck_lock(deck.id):
             current = _current(workspace, read.stored)
             if current is None:
@@ -628,9 +648,7 @@ def _merge_deck(
                 current, data, db, now=services.now, adjacent=pools.decks, tagged=pools.tagged
             )
     except (BoardError, ProfileError) as error:
-        warnings.extend(read.warnings)
-        warnings.append(f"{deck.short_name} ideas not compiled: {error}")
-        on_deck(deck.id, FetchState.INCOMPLETE)
+        _not_compiled(read, str(error), warnings, on_deck)
         return
     if data.lists.data is None and data.peers.data is None:
         why = data.peers.error or data.lists.error
@@ -639,6 +657,12 @@ def _merge_deck(
     key_problem = _note_key_problem(data.lists.key_problem, warnings)
     incomplete = bool(read.warnings) or data.peers.data is None or key_problem
     on_deck(deck.id, FetchState.INCOMPLETE if incomplete else FetchState.DONE)
+
+
+def _not_compiled(read: _ReadingDeck, why: str, warnings: list[str], on_deck: DeckProgress) -> None:
+    warnings.extend(read.warnings)
+    warnings.append(f"{read.stored.deck.short_name} ideas not compiled: {why}")
+    on_deck(read.stored.deck.id, FetchState.INCOMPLETE)
 
 
 _GONE = "the deck left its folder or changed its commander while its ideas were fetched"

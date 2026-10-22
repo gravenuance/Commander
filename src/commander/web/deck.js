@@ -57,10 +57,11 @@ function paintFetchStates(states) {
 
 function renderDecks() {
   const list = $("deck-list");
-  const seen = new Set();
+  // Decks that left go first, so those after them keep their place and a focused one keeps its focus.
+  const seen = new Set(state.decks.map((deck) => String(deck.id)));
+  for (const item of [...list.children]) if (!seen.has(item.dataset.id)) item.remove();
   for (const [index, deck] of state.decks.entries()) {
     const key = String(deck.id);
-    seen.add(key);
     let item = list.querySelector(`li[data-id="${key}"]`);
     if (!item) {
       const button = el("button", { class: "deck-button", type: "button", onclick: () => openDeck(deck.id) });
@@ -80,7 +81,6 @@ function renderDecks() {
     button.setAttribute("aria-label", deckLabel(deck));
     place(list, item, index);
   }
-  for (const item of [...list.children]) if (!seen.has(item.dataset.id)) item.remove();
 }
 
 async function loadDecks() {
@@ -117,8 +117,7 @@ function closeOpenDeckIfGone() {
   closeLabelMenu(false);
   renderDecks();
   renderActivity([]);
-  $("mana").replaceChildren();
-  manaPanel.forget();
+  resetMana();
   showRailFor(false);
   $("deck").hidden = true;
   showStatus(`${name} is no longer among your decks (deleted on Archidekt?), so it is closed.`);
@@ -144,6 +143,8 @@ async function openDeck(id) {
     $("list-uncut").replaceChildren();
     $("grid").replaceChildren();
     closeLabelMenu(false);
+    resetBracket();
+    resetMana();
     renderDecks();
     showRailFor(true);
     metaPanel.render(id, null);
@@ -158,8 +159,11 @@ let deckRequest = 0;
 async function loadDeck() {
   if (state.current === null) return;
   const sent = ++deckRequest;
-  const view = await api("deck", state.current);
-  if (sent !== deckRequest || view.id !== state.current) return;
+  const answer = await window.pywebview.api.deck(state.current);
+  // The deck may have closed or another opened meanwhile, which a refusal then no longer concerns.
+  if (sent !== deckRequest) return;
+  const view = checkAnswer(answer);
+  if (view.id !== state.current) return;
   state.view = view;
   state.stamps[String(view.id)] = view.stamp;
   renderDeck();
@@ -183,6 +187,8 @@ function renderDeck() {
   const pending = view.pending;
   const review = $("review");
   review.disabled = pending === 0;
+  // A save that empties the queue disables the button the closed dialog just returned focus to.
+  if (review.disabled && document.activeElement === review) $("main").focus();
   review.textContent = pending ? `Review ${pending} change${pending === 1 ? "" : "s"}` : "Review changes";
   $("meta").hidden = !META_BRACKETS.includes(view.effectiveBracket);
 
@@ -257,7 +263,7 @@ async function exportDeck() {
     const answer = await api("export", state.current);
     await copyText(answer.text);
     showStatus(`Copied ${answer.cards} cards for TopDeck.gg; queued changes are not included`);
-  } catch { /* shown in the status line */ }
+  } catch (error) { noteFailure(error); }
 }
 
 // Copies every deck's Don't Have cards as a Cardmarket wants list; nothing is marked ordered.
@@ -271,7 +277,7 @@ async function copyCardsToBuy() {
     }
     await copyText(answer.text);
     showStatus(`Copied ${answer.cards} cards for Cardmarket${skipped}`);
-  } catch { /* shown in the status line */ }
+  } catch (error) { noteFailure(error); }
 }
 
 async function copyText(text) {

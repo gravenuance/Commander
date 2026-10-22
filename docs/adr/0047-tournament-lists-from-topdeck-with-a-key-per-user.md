@@ -126,3 +126,11 @@ Option 4, behind the provider seam that stood in front of EDHTop16 (`tournaments
   2026-10-21).
 - The 3-day re-ask means an event that finishes later than that is missed until the window moves past it;
   none of the sampled events ran longer.
+
+## Amendment (2026-10-22): the Archidekt steps name the deck
+
+The reads of a sync run side by side and the line shows one of them, so an Archidekt step named only a
+commander left it unclear which deck was waiting. Its steps now start with the deck: "Chatterfang: Ygra
+decks (alike)", "Chatterfang: Landfall decks (theme)" and, for the deck's own commander, "Edgar: *commander*
+decks", in place of "Archidekt: recent Edgar decks" in the example above (ADR 0053). The TopDeck steps and the
+12-word budget are unchanged.

@@ -1,5 +1,6 @@
 """Typed accessors for untrusted JSON, raising one error type with the path to the bad field."""
 
+import math
 from collections.abc import Mapping, Sequence
 from typing import cast
 
@@ -51,11 +52,20 @@ def opt_int(obj: Mapping[str, object], key: str, where: str) -> int | None:
 
 
 def req_float(obj: Mapping[str, object], key: str, where: str) -> float:
-    """A number; JSON writes whole numbers such as 0 without a fraction, so an integer counts too."""
+    """A finite number; JSON writes whole numbers such as 0 without a fraction, so an integer counts too.
+
+    Python's parser also reads NaN and Infinity, which compare false against everything downstream.
+    """
     value = obj.get(key)
     if not isinstance(value, int | float) or isinstance(value, bool):
         raise ShapeError(f"{where}.{key}: expected a number")
-    return float(value)
+    try:
+        number = float(value)
+    except OverflowError:  # an integer too large for a float
+        number = math.inf
+    if not math.isfinite(number):
+        raise ShapeError(f"{where}.{key}: expected a finite number")
+    return number
 
 
 def opt_float(obj: Mapping[str, object], key: str, where: str) -> float | None:

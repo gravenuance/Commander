@@ -1,18 +1,29 @@
 """Previewing and saving a deck's board against a fake Archidekt whose deck moved on since the last sync."""
 
-from collections.abc import Callable, Iterator
+import json
+from collections.abc import Callable, Iterator, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
-from commander.apply import NotYourDeckError
+from commander.apply import NotYourDeckError, SaveError, SaveReadBackError
 from commander.archidekt import parse_deck
-from commander.archidekt_edit import ArchidektEditor
-from commander.board import Actor, BoardError, BoardService, Status, read_activity, read_board
+from commander.archidekt_edit import ArchidektEditor, CardEdit
+from commander.board import (
+    BOARD_FILE,
+    Actor,
+    BoardError,
+    BoardIOError,
+    BoardService,
+    CountChange,
+    Status,
+    read_activity,
+    read_board,
+)
 from commander.boardsave import BoardPreview, BoardSave, preview_board, save_board
 from commander.carddb import CardDb
-from commander.net import Fetcher
+from commander.net import Fetcher, NetworkError
 from commander.store import StoredDeck, Workspace
 from conftest import ACCESS_TOKEN, DECK_ID, FakeArchidekt, Json, card_entry, put_on_sideboard
 
@@ -321,3 +332,206 @@ def test_a_swap_whose_cut_did_not_land_stays_queued(
     statuses = {c.name: c.status for c in board.cards}
     assert statuses["Lightning Bolt"] is Status.ADD
     assert statuses["Arcane Signet"] is Status.APPLIED
+
+
+def fail_marking_once(service: BoardService, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The next mark_applied fails as a lock timeout would; later ones work."""
+    real = service.mark_applied
+    failed: list[bool] = []
+
+    def flaky(
+        ids: Sequence[str], actor: Actor, snapshot: str | None, *, counts: Sequence[CountChange] = ()
+    ) -> None:
+        if not failed:
+            failed.append(True)
+            raise BoardIOError("the board is busy; try again")
+        real(ids, actor, snapshot, counts=counts)
+
+    monkeypatch.setattr(service, "mark_applied", flaky)
+
+
+def test_a_basic_land_swap_saved_but_not_marked_applied_is_not_sent_again(
+    fake: FakeArchidekt,
+    service: BoardService,
+    stored: StoredDeck,
+    commit: Callable[[], BoardSave],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    queue(service, "Mountain", cut="Disruptor Flute")
+    fail_marking_once(service, monkeypatch)
+    with pytest.raises(BoardIOError):
+        commit()
+    assert (live_quantity(fake, "Mountain"), live_quantity(fake, "Disruptor Flute")) == (7, 0)
+    sent = len(fake.writes)
+
+    saved = commit()
+
+    assert (live_quantity(fake, "Mountain"), live_quantity(fake, "Disruptor Flute")) == (7, 0)
+    assert len(fake.writes) == sent
+    assert saved.applied == ("Mountain",)
+    assert read_board(stored.folder).cards[0].status is Status.APPLIED
+
+
+def test_a_basic_land_swap_whose_read_back_failed_is_not_sent_again(
+    fake: FakeArchidekt, service: BoardService, stored: StoredDeck, commit: Callable[[], BoardSave]
+) -> None:
+    queue(service, "Mountain", cut="Disruptor Flute")
+    fake.fail_reads_after_edit = True
+    with pytest.raises(SaveReadBackError):
+        commit()
+    fake.failing.clear()
+    sent = len(fake.writes)
+
+    saved = commit()
+
+    assert (live_quantity(fake, "Mountain"), live_quantity(fake, "Disruptor Flute")) == (7, 0)
+    assert len(fake.writes) == sent
+    assert saved.applied == ("Mountain",)
+    assert read_board(stored.folder).cards[0].status is Status.APPLIED
+
+
+def test_a_basic_land_swap_that_timed_out_after_archidekt_applied_it_is_not_sent_again(
+    fake: FakeArchidekt,
+    editor: ArchidektEditor,
+    service: BoardService,
+    commit: Callable[[], BoardSave],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    queue(service, "Mountain", cut="Disruptor Flute")
+    real = editor.modify_cards
+
+    def applied_then_timed_out(deck_id: int, edits: Sequence[CardEdit]) -> None:
+        real(deck_id, edits)
+        raise NetworkError("the request timed out")
+
+    monkeypatch.setattr(editor, "modify_cards", applied_then_timed_out)
+    with pytest.raises(SaveError):
+        commit()
+    monkeypatch.undo()
+    sent = len(fake.writes)
+
+    saved = commit()
+
+    assert (live_quantity(fake, "Mountain"), live_quantity(fake, "Disruptor Flute")) == (7, 0)
+    assert len(fake.writes) == sent
+    assert saved.applied == ("Mountain",)
+
+
+def test_a_basic_land_swap_that_never_reached_archidekt_is_sent_on_the_next_save(
+    fake: FakeArchidekt, service: BoardService, stored: StoredDeck, commit: Callable[[], BoardSave]
+) -> None:
+    queue(service, "Mountain", cut="Disruptor Flute")
+    fake.write_status["modifyCards"] = 500
+    with pytest.raises(SaveError):
+        commit()
+    assert (live_quantity(fake, "Mountain"), live_quantity(fake, "Disruptor Flute")) == (6, 1)
+    # The six Mountains held at the send stay noted on the card, and the log says so.
+    assert read_board(stored.folder).cards[0].sent_held == 6
+    assert read_board(stored.folder).cards[0].sent_cut_held == 1
+    sending = [a for a in read_activity(stored.folder) if a.action == "sending to Archidekt"]
+    assert [a.detail for a in sending] == ["Mountain from 6"]
+    fake.write_status.clear()
+
+    saved = commit()
+
+    assert (live_quantity(fake, "Mountain"), live_quantity(fake, "Disruptor Flute")) == (7, 0)
+    assert saved.applied == ("Mountain",)
+    assert read_board(stored.folder).cards[0].sent_held is None
+
+
+def test_researching_an_unsent_swap_reopens_it_and_forgets_the_copies_held_at_the_send(
+    fake: FakeArchidekt, service: BoardService, stored: StoredDeck, commit: Callable[[], BoardSave]
+) -> None:
+    card_id = queue(service, "Mountain", cut="Disruptor Flute")
+    fake.write_status["modifyCards"] = 500
+    with pytest.raises(SaveError):
+        commit()
+    assert read_board(stored.folder).cards[0].sent_held == 6
+
+    researched = service.research(card_id, Actor.CLAUDE, reason="a land that fits the curve")
+
+    assert (researched.status, researched.choice, researched.sent_held) == (Status.OPEN, None, None)
+    assert read_board(stored.folder).cards[0].sent_held is None
+
+
+def test_a_deck_that_gained_a_mountain_by_hand_since_an_unsent_swap_still_cuts_the_swaps_card(
+    fake: FakeArchidekt, service: BoardService, stored: StoredDeck, commit: Callable[[], BoardSave]
+) -> None:
+    queue(service, "Mountain", cut="Disruptor Flute")
+    fake.write_status["modifyCards"] = 500
+    with pytest.raises(SaveError):
+        commit()
+    fake.write_status.clear()
+    # A Mountain was added on Archidekt meanwhile: seven are held, as if the swap's add had landed.
+    mountains = live_entry(fake, "Mountain")
+    assert mountains is not None
+    mountains["quantity"] = 7
+
+    saved = commit()
+
+    assert (live_quantity(fake, "Mountain"), live_quantity(fake, "Disruptor Flute")) == (8, 0)
+    assert saved.applied == ("Mountain",)
+    assert read_board(stored.folder).cards[0].status is Status.APPLIED
+
+
+def test_a_board_from_before_the_cuts_count_was_kept_counts_a_swap_landed_by_its_add_alone(
+    fake: FakeArchidekt, service: BoardService, stored: StoredDeck, commit: Callable[[], BoardSave]
+) -> None:
+    queue(service, "Mountain", cut="Disruptor Flute")
+    fake.write_status["modifyCards"] = 500
+    with pytest.raises(SaveError):
+        commit()
+    fake.write_status.clear()
+    path = stored.folder / BOARD_FILE
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    del raw["cards"][0]["sentCutHeld"]
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    mountains = live_entry(fake, "Mountain")
+    assert mountains is not None
+    mountains["quantity"] = 7
+
+    saved = commit()
+
+    assert (live_quantity(fake, "Mountain"), live_quantity(fake, "Disruptor Flute")) == (7, 1)
+    assert saved.applied == ("Mountain",)
+
+
+def test_a_deck_that_lost_mountains_since_an_unsent_swap_still_gets_the_swap(
+    fake: FakeArchidekt, service: BoardService, commit: Callable[[], BoardSave]
+) -> None:
+    queue(service, "Mountain", cut="Disruptor Flute")
+    fake.write_status["modifyCards"] = 500
+    with pytest.raises(SaveError):
+        commit()
+    fake.write_status.clear()
+    # Two Mountains were cut on Archidekt meanwhile: four are left, fewer than the six noted.
+    mountains = live_entry(fake, "Mountain")
+    assert mountains is not None
+    mountains["quantity"] = 4
+
+    commit()
+
+    assert (live_quantity(fake, "Mountain"), live_quantity(fake, "Disruptor Flute")) == (5, 0)
+
+
+@pytest.mark.parametrize(("cut", "mountains"), [("Battered Golem", 6), ("Mountain", 5)])
+def test_a_swap_of_another_card_saved_but_not_marked_applied_is_not_cut_again(
+    *,
+    fake: FakeArchidekt,
+    service: BoardService,
+    commit: Callable[[], BoardSave],
+    monkeypatch: pytest.MonkeyPatch,
+    cut: str,
+    mountains: int,
+) -> None:
+    queue(service, "Lightning Bolt", cut=cut)
+    fail_marking_once(service, monkeypatch)
+    with pytest.raises(BoardIOError):
+        commit()
+    sent = len(fake.writes)
+
+    saved = commit()
+
+    assert len(fake.writes) == sent
+    assert (live_quantity(fake, "Lightning Bolt"), live_quantity(fake, "Mountain")) == (1, mountains)
+    assert saved.applied == ("Lightning Bolt",)
