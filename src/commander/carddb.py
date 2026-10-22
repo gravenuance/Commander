@@ -21,16 +21,17 @@ CARD_DB_FILE = "cards.sqlite"
 # The suffix of a database being built beside the real one; a crash can leave such a file behind.
 BUILD_SUFFIX = ".building"
 _QUERY_CHUNK = 500
+_FRONT_FACE_CHUNK = 100
+_FRONT_FACES_QUERY = (
+    "SELECT oracle_id, name, mana_cost, cmc, type_line, color_identity, game_changer, commander_legal,"
+    " cheapest_cents, edhrec_rank FROM oracle WHERE {} ORDER BY oracle_id"
+)
 _CARD_QUERIES = {
     "oracle_id": "SELECT oracle_id, name, mana_cost, cmc, type_line, color_identity, game_changer,"
     " commander_legal, cheapest_cents, edhrec_rank FROM oracle WHERE oracle_id IN ({}) ORDER BY oracle_id",
     "name_key": "SELECT oracle_id, name, mana_cost, cmc, type_line, color_identity, game_changer,"
     " commander_legal, cheapest_cents, edhrec_rank FROM oracle WHERE name_key IN ({}) ORDER BY oracle_id",
 }
-_FRONT_FACE_QUERY = (
-    "SELECT oracle_id, name, mana_cost, cmc, type_line, color_identity, game_changer, commander_legal,"
-    " cheapest_cents, edhrec_rank FROM oracle WHERE substr(name_key, 1, length(?1)) = ?1 ORDER BY oracle_id"
-)
 _INFO_COLUMNS = (
     "oracle.oracle_id, name, mana_cost, cmc, type_line, color_identity, game_changer, commander_legal,"
     " cheapest_cents, edhrec_rank"
@@ -423,21 +424,29 @@ class CardDb:
         return {info.oracle_id: info for info in self._cards_where("oracle_id", oracle_ids)}
 
     def cards_named(self, names: Iterable[str]) -> dict[str, CardInfo]:
-        """Cards by name, matched ignoring case; keys are the casefolded names."""
+        """Cards by name, matched ignoring case like `card_named`: a two-faced card answers to its full name
+        or its front face. Keys are the casefolded names as asked."""
+        asked = {name.casefold() for name in names}
         found: dict[str, CardInfo] = {}
-        for info in self._cards_where("name_key", {name.casefold() for name in names}):
+        for info in self._cards_where("name_key", asked):
             # Ordered by oracle id, so a name shared by several cards resolves the same way every time.
             found.setdefault(info.name.casefold(), info)
+        # A front face is the start of a "front // back" name: an index range per name, in chunks to keep the
+        # statement small.
+        fronts = sorted(key for key in asked - found.keys() if " // " not in key)
+        for start in range(0, len(fronts), _FRONT_FACE_CHUNK):
+            chunk = fronts[start : start + _FRONT_FACE_CHUNK]
+            ranges = " OR ".join("(name_key >= ? AND name_key < ?)" for _ in chunk)
+            # "!" sorts just above the space of " // ", so the range holds every name starting "front // ".
+            bounds = [bound for key in chunk for bound in (key + " // ", key + " //!")]
+            for info in self._infos(self._query(_FRONT_FACES_QUERY.format(ranges), bounds)):
+                found.setdefault(front_name(info.name.casefold()), info)
         return found
 
     def card_named(self, name: str) -> CardInfo | None:
         """One card by its full name or, for cards with two faces, its front face; case is ignored."""
         key = name.casefold()
-        found = self.cards_named([key]).get(key)
-        if found is not None or " // " in key:
-            return found
-        rows = self._query(_FRONT_FACE_QUERY, [key + " // "])
-        return self._infos(rows[:1])[0] if rows else None
+        return self.cards_named([key]).get(key)
 
     def printings_of(self, oracle_id: str) -> list[Printing]:
         """Every printing of a card, ordered by set and collector number."""
