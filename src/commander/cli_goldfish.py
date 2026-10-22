@@ -45,9 +45,10 @@ deck. A plan pairs its adds with its removes in order; a remove takes out the co
 its `keep`, and its add brings as many (Cultivate for one of ten Forests plays nine Forests and Cultivate).
 A figure is shown as moved only when the change is larger than the luck of the same draws allows.
 
---cuts plays a card on the deck's board against its cut targets, as the app does when you select it. Targets
-whose scores are within 0.10 of each other are put in the order of what their swaps do to the headline
-figures (ADR 0056); the rest keep the score's order. A card with no targets is an error.
+--cuts plays a card on the deck's board against each of its cut targets and gives the order the app shows.
+Targets scoring at most 0.10 below the first of a run tie with it, and a tie is put in the order of what
+their swaps do to the headline figures (ADR 0056); the rest keep the score's order. A target whose swap
+cannot be played says why and keeps its place. A card with no targets is an error.
 """
 
 _COLUMN = 7

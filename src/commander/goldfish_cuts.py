@@ -30,15 +30,17 @@ class Verdict:
 
 @dataclass(slots=True, frozen=True)
 class RankedCut:
-    """A target in its final place. `verdict` is None for a target that was not played; `why` names the
-    figure that put a target ahead of one the score ranked above it, and is None for any other.
-    `score_place` is where the score put it, counting from 1."""
+    """A target in its final place. `verdict` is None for a target that was not played, and `refused` says
+    why for one whose swap could not be played; `why` names the figure that put a target ahead of one the
+    score ranked above it, and is None for any other. `score_place` is where the score put it, counting
+    from 1."""
 
     target: Target
     verdict: Verdict | None
     score_place: int
     moved_up: bool
     why: str | None
+    refused: str | None = None
 
 
 def verdict_of(comparison: GoldfishComparison) -> Verdict:
@@ -75,29 +77,44 @@ def rank_cuts(
     fewer headline figures worse first, then the one that makes more of them better, else the score's order.
 
     `compare` plays the idea against one target. Only the targets of a group of two or more are played,
-    unless `everything` asks for every target's figures, which then change no order.
+    unless `everything` asks for every target's figures, which then change no order. A target whose swap
+    `compare` left out has no figures to judge it by: it keeps its place, and the others are sorted around it.
     """
     verdicts: dict[int, Verdict] = {}
+    refused: dict[int, str] = {}
     order: list[int] = []
     for group in tie_groups(targets):
         tied = len(group) > 1
         if tied or everything:
-            verdicts.update((i, verdict_of(compare(targets[i]))) for i in group)
+            for i in group:
+                comparison = compare(targets[i])
+                if comparison.left_out:
+                    refused[i] = "; ".join(comparison.left_out)
+                else:
+                    verdicts[i] = verdict_of(comparison)
         members = list(group)
         if tied:
-            members.sort(key=lambda i: (len(verdicts[i].worse), -len(verdicts[i].better)))
+            played = [i for i in members if i in verdicts]
+            ranked = iter(sorted(played, key=lambda i: (len(verdicts[i].worse), -len(verdicts[i].better))))
+            members = [next(ranked) if i in verdicts else i for i in members]
         order.extend(members)
     place = {index: spot for spot, index in enumerate(order)}
-    return [_ranked(targets, index, place, verdicts) for index in order]
+    return [_ranked(targets, index, place, verdicts, refused.get(index)) for index in order]
 
 
 def _ranked(
-    targets: Sequence[Target], index: int, place: dict[int, int], verdicts: dict[int, Verdict]
+    targets: Sequence[Target],
+    index: int,
+    place: dict[int, int],
+    verdicts: dict[int, Verdict],
+    refused: str | None,
 ) -> RankedCut:
+    """The target at `index` in its place, marked when it went ahead of a played target the score ranked
+    above it, whether or not its own place changed (C, B, A from A, B, C moves B up past A)."""
     verdict = verdicts.get(index)
-    if place[index] >= index or verdict is None:
-        return RankedCut(targets[index], verdict, index + 1, moved_up=False, why=None)
-    passed = next(j for j in range(index) if place[j] > place[index])
+    passed = next((j for j in range(index) if j in verdicts and place[j] > place[index]), None)
+    if verdict is None or passed is None:
+        return RankedCut(targets[index], verdict, index + 1, moved_up=False, why=None, refused=refused)
     why = _why(targets, index, passed, verdicts)
     return RankedCut(targets[index], verdict, index + 1, moved_up=True, why=why)
 

@@ -33,15 +33,18 @@ def target(name: str, score: float | None) -> Target:
 
 
 class Plays:
-    """Compares an idea with a target by the figures set for the target, counting the targets played."""
+    """Compares an idea with a target by the figures set for the target, counting the targets played; a
+    target in `refused` is a swap that could not be played and was left out for that reason."""
 
-    def __init__(self, figures: dict[str, list[FigureChange]]) -> None:
+    def __init__(self, figures: dict[str, list[FigureChange]], refused: dict[str, str] | None = None) -> None:
         self.figures = figures
+        self.refused = refused or {}
         self.played: list[str] = []
 
     def __call__(self, cut: Target) -> GoldfishComparison:
         self.played.append(cut.name)
-        return GoldfishComparison(BASE, BASE, tuple(self.figures.get(cut.name, [])), ())
+        left_out = (self.refused[cut.name],) if cut.name in self.refused else ()
+        return GoldfishComparison(BASE, BASE, tuple(self.figures.get(cut.name, [])), (), left_out)
 
 
 def order(ranked: list[RankedCut]) -> list[str]:
@@ -129,6 +132,16 @@ def test_three_in_a_run_are_sorted_and_only_the_one_that_went_up_past_the_others
     assert ranked[0].why == "Commander cast by turn 6 is worse with Island"
 
 
+def test_a_target_that_passed_one_scored_above_it_is_marked_even_when_its_own_place_stays() -> None:
+    targets = [target("Island", 0.50), target("Swamp", 0.48), target("Forest", 0.45)]
+    figures = {"Island": [SCREW_WORSE, MANA_WORSE], "Swamp": [SCREW_WORSE], "Forest": []}
+    ranked = rank_cuts(targets, Plays(figures))
+    assert order(ranked) == ["Forest", "Swamp", "Island"]
+    assert [r.moved_up for r in ranked] == [True, True, False]
+    assert ranked[1].why is not None
+    assert ranked[1].why.endswith("is worse with Island")
+
+
 def test_a_target_that_moved_down_is_not_marked_and_one_that_stayed_put_is_not_either() -> None:
     targets = [target("Island", 0.50), target("Swamp", 0.48), target("Forest", 0.45)]
     figures = {"Island": [SCREW_WORSE], "Swamp": [SCREW_WORSE], "Forest": [SCREW_WORSE]}
@@ -178,6 +191,27 @@ def test_everything_plays_every_target_for_its_figures_and_changes_no_order() ->
     assert order(ranked) == ["Island", "Forest"]
     assert ranked[0].verdict is not None
     assert ranked[0].verdict.worse == (SCREW_WORSE,)
+
+
+def test_a_target_whose_swap_cannot_be_played_keeps_its_place_and_is_never_a_pick() -> None:
+    targets = [target("Island", 0.50), target("Swamp", 0.48), target("Forest", 0.45)]
+    refused = {"Swamp": "the deck holds 1 Swamp and 2 are swapped"}
+    ranked = rank_cuts(targets, Plays({"Island": [SCREW_WORSE]}, refused))
+    assert order(ranked) == ["Forest", "Swamp", "Island"]
+    assert [(r.moved_up, r.verdict is None, r.refused) for r in ranked] == [
+        (True, False, None),
+        (False, True, "the deck holds 1 Swamp and 2 are swapped"),
+        (False, False, None),
+    ]
+    assert ranked[0].why == "Colour screw is worse with Island"
+
+
+def test_a_target_whose_swap_cannot_be_played_is_not_passed_by_one_that_moved_nothing() -> None:
+    targets = [target("Island", 0.50), target("Forest", 0.45)]
+    ranked = rank_cuts(targets, Plays({"Island": [SCREW_WORSE]}, {"Island": "Island is not in the deck"}))
+    assert order(ranked) == ["Island", "Forest"]
+    assert [r.moved_up for r in ranked] == [False, False]
+    assert ranked[0].refused == "Island is not in the deck"
 
 
 def test_picked_targets_are_neither_played_nor_moved() -> None:

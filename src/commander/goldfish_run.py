@@ -4,7 +4,7 @@ the few figures the app shows beside a card, and the results kept between asks."
 import logging
 import threading
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from commander.answers import card_key
 from commander.board import Board, BoardCard, Status
@@ -84,12 +84,13 @@ def compare_swaps(
     the cut card (Cultivate for one of ten Forests plays nine Forests). A swap raises GoldfishError saying
     why when it cuts more copies than the deck holds, a cut that is not in the deck's library, one cut twice,
     an incoming card put in twice, one the deck holds or one the card data lacks. With `lenient` such a swap
-    is logged and left out instead, as the app's board may hold one.
+    is logged and left out instead, as the app's board may hold one, and the comparison's `left_out` says why.
     """
     loaded = played.loaded
     cut_keys: set[str] = set()
     incoming_keys: set[str] = set()
     pairs: list[Swap] = []
+    left_out: list[str] = []
     for request in swaps:
         try:
             pairs.append(_pair(loaded, db, request, cut_keys, incoming_keys))
@@ -97,7 +98,9 @@ def compare_swaps(
             if not lenient:
                 raise
             log.info("goldfish: %s for %s left out of the comparison: %s", request.add, request.cut, error)
-    return compare_deck(loaded.deck, played.report, pairs, seed=seed_of(loaded))
+            left_out.append(str(error))
+    comparison = compare_deck(loaded.deck, played.report, pairs, seed=seed_of(loaded))
+    return replace(comparison, left_out=tuple(left_out)) if left_out else comparison
 
 
 def _pair(

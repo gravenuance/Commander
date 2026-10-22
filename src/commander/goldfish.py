@@ -1396,6 +1396,8 @@ class GoldfishComparison:
     figures: tuple[FigureChange, ...]
     # The games played again, as their indices.
     replayed: tuple[int, ...]
+    # Why each swap asked for that could not be played was left out of the figures.
+    left_out: tuple[str, ...] = ()
 
     @property
     def moved(self) -> tuple[FigureChange, ...]:

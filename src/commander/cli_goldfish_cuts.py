@@ -14,7 +14,7 @@ from commander.deckprofile import read_profile
 from commander.goldfish import GAMES, FigureChange, GoldfishComparison
 from commander.goldfish_cuts import RankedCut, rank_cuts
 from commander.goldfish_json import Json, changes_json, figure_label, value_text
-from commander.goldfish_load import GoldfishError, load_goldfish
+from commander.goldfish_load import load_goldfish
 from commander.goldfish_run import SwapRequest, compare_swaps, headline, run, seed_of
 from commander.models import Deck
 from commander.targets import Target, deck_cut_rules, targets_for, with_ideas
@@ -47,12 +47,10 @@ def cmd_cuts(args: argparse.Namespace, ctx: Context) -> int:
         played = run(loaded)
 
         def compare(target: Target) -> GoldfishComparison:
-            return compare_swaps(played, db, [SwapRequest(card.name, target.name, card.copies)])
+            swap = SwapRequest(card.name, target.name, card.copies)
+            return compare_swaps(played, db, [swap], lenient=True)
 
-        try:
-            ranked = rank_cuts(targets, compare, everything=True)
-        except GoldfishError as error:
-            raise UsageError(str(error)) from error
+        ranked = rank_cuts(targets, compare, everything=True)
     if args.json:
         write_json(_json(deck, card, ranked), ctx.out)
     else:
@@ -83,6 +81,9 @@ def _print(
         print(f"{place}. {cut.target.name}{score}", file=out)
         if cut.moved_up:
             print(f"     goldfish pick, up from place {cut.score_place}: {cut.why}", file=out)
+        if cut.refused is not None:
+            print(f"     cannot be played: {cut.refused}", file=out)
+            continue
         changes, comparison = _headline(cut)
         if comparison is None or not changes:
             print("     no headline figure moved", file=out)
@@ -107,6 +108,7 @@ def _json(deck: Deck, card: BoardCard, ranked: Sequence[RankedCut]) -> Json:
                 "source": cut.target.source.value,
                 "movedUp": cut.moved_up,
                 "why": cut.why,
+                "refused": cut.refused,
                 "figures": changes_json(changes, comparison.base) if comparison is not None else [],
             }
         )

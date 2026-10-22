@@ -258,6 +258,60 @@ def test_a_target_comes_to_the_page_with_the_score_it_was_chosen_by(desk: Desk) 
     assert [(t["name"], t["score"]) for t in cast("list[Json]", signet["targets"])] == [(GOLEM, 0.1)]
 
 
+class Compared:
+    """The real `compare_swaps`, recording each request and why any was left out."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.requests: list[SwapRequest] = []
+        self.left_out: list[str] = []
+        real = desk_module.compare_swaps
+
+        def compare(
+            played: GoldfishRun, db: CardDb, swaps: list[SwapRequest], *, lenient: bool = False
+        ) -> GoldfishComparison:
+            self.requests.extend(swaps)
+            comparison = real(played, db, swaps, lenient=lenient)
+            self.left_out.extend(comparison.left_out)
+            return comparison
+
+        monkeypatch.setattr(desk_module, "compare_swaps", compare)
+
+
+def tile_targets(desk: Desk, name: str) -> list[str]:
+    [tile] = [card for card in items(desk.deck(DECK), "cards") if card["name"] == name]
+    return [str(t["name"]) for t in cast("list[Json]", tile["targets"])]
+
+
+def test_the_cuts_answer_names_the_targets_the_tile_shows_with_other_ideas_on_the_board(desk: Desk) -> None:
+    proposed(desk, "Arcane Signet")
+    bolt = proposed(desk, "Lightning Bolt")
+    answer = cast("list[Json]", desk.goldfish_cuts(DECK, bolt)["cuts"])
+    assert [c["name"] for c in answer] == tile_targets(desk, "Lightning Bolt")
+
+
+def test_tied_targets_are_played_for_real_with_the_ideas_copies_and_one_that_cannot_be_played_stays_put(
+    desk: Desk, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    compared = Compared(monkeypatch)
+    scores = {"Lightning Bolt": 0.50, "Mountain": 0.48, GOLEM: 0.45}
+
+    def targets(*_: object) -> tuple[Target, ...]:
+        return tuple(Target(name, f"{name} goes", TargetSource.ROLE, score) for name, score in scores.items())
+
+    monkeypatch.setattr(desk_module, "targets_for", targets)
+    answer = desk.goldfish_cuts(DECK, proposed(desk, "Arcane Signet"))
+    cuts = cast("list[Json]", answer["cuts"])
+    # The Bolt is not in the deck, so its swap is left out: it keeps first place and is no pick.
+    assert cuts[0] == {"name": "Lightning Bolt", "up": False, "why": None}
+    assert sorted(str(c["name"]) for c in cuts) == sorted(scores)
+    assert [(r.add, r.cut, r.copies) for r in compared.requests] == [
+        ("Arcane Signet", "Lightning Bolt", 1),
+        ("Arcane Signet", "Mountain", 1),
+        ("Arcane Signet", GOLEM, 1),
+    ]
+    assert compared.left_out == ["Lightning Bolt is not in the deck, so it cannot be swapped out"]
+
+
 def test_the_same_swap_is_compared_once_and_a_change_to_the_deck_files_plays_again(
     desk: Desk, plays: Plays
 ) -> None:

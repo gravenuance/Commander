@@ -382,20 +382,47 @@ def stub_targets(monkeypatch: pytest.MonkeyPatch, scores: dict[str, float]) -> l
     Golem; the cuts compared, in order, are the list returned."""
     compared: list[str] = []
 
-    def targets(*_: object) -> tuple[Target, ...]:
-        return tuple(Target(name, f"{name} goes", TargetSource.ROLE, score) for name, score in scores.items())
-
     def compare(
         played: GoldfishRun, _db: CardDb, swaps: list[SwapRequest], *, lenient: bool = False
     ) -> GoldfishComparison:
-        assert not lenient
+        assert lenient
         compared.append(swaps[0].cut)
         figures = (SCREW_WORSE,) if swaps[0].cut == GOLEM else ()
         return GoldfishComparison(played.report, played.report, figures, ())
 
-    monkeypatch.setattr(cli_goldfish_cuts, "targets_for", targets)
+    only_targets(monkeypatch, scores)
     monkeypatch.setattr(cli_goldfish_cuts, "compare_swaps", compare)
     return compared
+
+
+def only_targets(monkeypatch: pytest.MonkeyPatch, scores: dict[str, float]) -> None:
+    """The card's targets with these scores, their swaps played for real."""
+
+    def targets(*_: object) -> tuple[Target, ...]:
+        return tuple(Target(name, f"{name} goes", TargetSource.ROLE, score) for name, score in scores.items())
+
+    monkeypatch.setattr(cli_goldfish_cuts, "targets_for", targets)
+
+
+def test_a_target_whose_swap_cannot_be_played_says_why_and_the_others_are_still_played(
+    home: Path, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    put_on_board(home, fake, "Arcane Signet")
+    only_targets(monkeypatch, {"Lightning Bolt": 0.50, GOLEM: 0.45})
+    result = goldfish(home, fake, "magda", "--cuts", "Arcane Signet")
+    assert (result.code, result.err) == (0, "")
+    assert result.out.splitlines() == [
+        CUTS_HEADER,
+        "1. Lightning Bolt (score 0.50)",
+        "     cannot be played: Lightning Bolt is not in the deck, so it cannot be swapped out",
+        "2. Battered Golem (score 0.45)",
+        "     Worst-tenth mana on turn 3: 3 -> 4",
+    ]
+    document = json.loads(goldfish(home, fake, "magda", "--cuts", "Arcane Signet", "--json").out)
+    assert [(c["name"], c["refused"]) for c in document["cuts"]] == [
+        ("Lightning Bolt", "Lightning Bolt is not in the deck, so it cannot be swapped out"),
+        (GOLEM, None),
+    ]
 
 
 def test_targets_that_tie_come_in_the_order_of_their_figures_and_the_one_moved_up_says_why(

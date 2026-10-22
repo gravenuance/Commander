@@ -67,10 +67,16 @@ Option 2. Decided with the owner on 2026-10-22.
 
 - `cmdr goldfish <deck> --cuts "<card in>"` plays the card against every target, tied or not, and prints
   each target's figures; the page plays only the targets of a tie. The order is the same in both, because a
-  target outside a tie keeps the score's place whatever its figures say. A card the board does not hold, a
-  card with no targets, and a swap the goldfish refuses are usage errors and exit with code 2.
+  target outside a tie keeps the score's place whatever its figures say. A card the board does not hold and
+  a card with no targets are usage errors and exit with code 2.
+- A target whose swap cannot be played (one the deck holds fewer copies of than the card brings, or one no
+  longer in the deck) has no figures. It keeps its place in a tie, the others are sorted around it, and it
+  is never a Goldfish pick; the command line prints why it cannot be played. Counting it as "nothing moved"
+  would put it ahead of any played target with a figure made worse.
 - A target the deck holds several copies of (a basic land, most often) gives up only as many copies as the
   incoming card brings, the rest staying in the deck, as the amendment to ADR 0054 on a swap of some copies
-  sets out. By the same rule, a remove in a plan given to
-  `cmdr goldfish --plan` cuts the copies beyond its `keep`, and the plan's add must bring as many; the owner
-  kept this rule on 2026-10-22. Before, a plan's `keep` was refused.
+  sets out. By the same rule, a remove in a plan given to `cmdr goldfish --plan` cuts the copies beyond its
+  `keep`, and the plan's add must bring as many; the owner kept this rule on 2026-10-22. Before, a plan's
+  `keep` was refused.
+- A target is marked as moved up when it goes ahead of any target the score ranked above it, even if its
+  own place does not change: from A, B, C to C, B, A, both C and B are marked.
