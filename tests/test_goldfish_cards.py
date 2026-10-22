@@ -1330,6 +1330,18 @@ def test_a_land_that_also_searches_by_sacrificing_itself_stays_a_colourless_land
     assert not card.modelled
 
 
+def test_a_land_whose_second_colour_needs_a_land_type_keeps_both_colours() -> None:
+    verge = land(
+        "Hushwood Verge",
+        "Land",
+        "{T}: Add {G}.\n{T}: Add {W}. Activate only if you control a Forest or a Plains.",
+        "WG",
+    )
+    card = one(verge)
+    assert card.land == LandFace(frozenset("GW"), tapped=False, amount=1)
+    assert card.modelled
+
+
 def test_a_land_that_makes_no_mana_is_played_without_adding_any() -> None:
     giant = real("Giant", "{9}", 9, "Creature — Giant", "")
     deck = build(FOREST, MAZE_OF_ITH, giant, copies={"Giant": 5})
@@ -1433,6 +1445,40 @@ def test_a_signet_nets_one_mana_of_either_colour() -> None:
 
 def test_a_talisman_unions_its_abilities_colours() -> None:
     assert one(TALISMAN).mana == ManaAbility(1, frozenset("CUB"), delayed=False, ritual=False)
+
+
+@pytest.mark.parametrize(
+    "rock",
+    [
+        real(
+            "Mox Amber",
+            "{0}",
+            0,
+            "Legendary Artifact",
+            "{T}: Add one mana of any color among legendary creatures and planeswalkers you control.",
+            produced="WUBRG",
+            roles=(RAMP,),
+        ),
+        real(
+            "Flywheel Racer",
+            "{2}",
+            2,
+            "Artifact — Vehicle",
+            "Vigilance\n{T}: Add one mana of any color. Activate only if this permanent is a creature.\n"
+            "Crew 1 (Tap any number of creatures you control with total power 1 or more: This Vehicle "
+            "becomes an artifact creature until end of turn.)",
+            produced="WUBRG",
+            roles=(RAMP,),
+        ),
+    ],
+    ids=lambda c: c.mana.name,
+)
+def test_a_rock_that_needs_a_legendary_creature_or_a_crewed_vehicle_is_not_modelled(rock: Real) -> None:
+    deck = build(rock)
+    card = card_named(deck, rock.mana.name)
+    assert card.mana is None
+    assert not card.modelled
+    assert deck.not_modelled == (rock.mana.name,)
 
 
 def test_a_sacrifice_to_draw_is_neither_a_draw_nor_a_hindrance_to_the_mana() -> None:
@@ -1782,11 +1828,83 @@ def test_a_search_that_sacrifices_a_land_or_an_artifact_is_not_modelled() -> Non
 # --- cards the reading cannot place ---------------------------------------------------------------
 
 
-def test_cost_reducers_and_alternative_costs_are_plain_modelled_spells_when_they_do_not_matter() -> None:
-    deck = build(SCULPTOR, MEDALLION, FIREBLAST, FORCE_OF_WILL, JET_MEDALLION)
+def test_alternative_costs_are_plain_modelled_spells_when_they_do_not_matter() -> None:
+    deck = build(FIREBLAST, FORCE_OF_WILL)
     assert deck.not_modelled == ()
-    assert card_named(deck, "Etherium Sculptor").pips == {"U": 1}
     assert card_named(deck, "Force of Will").mana_value == 5
+
+
+HERALDS_HORN = real(
+    "Herald's Horn",
+    "{3}",
+    3,
+    "Artifact",
+    "As this artifact enters, choose a creature type.\nCreature spells you cast of the chosen type cost {1} "
+    "less to cast.\nAt the beginning of your upkeep, look at the top card of your library. If it's a "
+    "creature card of the chosen type, you may reveal it and put it into your hand.",
+)
+URZAS_INCUBATOR = real(
+    "Urza's Incubator",
+    "{3}",
+    3,
+    "Artifact",
+    "As this artifact enters, choose a creature type.\nCreature spells of the chosen type cost {2} less to "
+    "cast.",
+)
+ELECTROMANCER = real(
+    "Goblin Electromancer",
+    "{U}{R}",
+    2,
+    "Creature — Goblin Wizard",
+    "Instant and sorcery spells you cast cost {1} less to cast.",
+)
+ANIMAR = real(
+    "Animar, Soul of Elements",
+    "{G}{U}{R}",
+    3,
+    "Legendary Creature — Elemental",
+    "Protection from white and from black\nWhenever you cast a creature spell, put a +1/+1 counter on "
+    "Animar.\nCreature spells you cast cost {1} less to cast for each +1/+1 counter on Animar.",
+)
+JHOIRAS_FAMILIAR = real(
+    "Jhoira's Familiar",
+    "{4}",
+    4,
+    "Artifact Creature — Bird",
+    "Flying\nHistoric spells you cast cost {1} less to cast. (Artifacts, legendaries, and Sagas are "
+    "historic.)",
+)
+GHALTA = real(
+    "Ghalta, Primal Hunger",
+    "{10}{G}{G}",
+    12,
+    "Legendary Creature — Elder Dinosaur",
+    "This spell costs {X} less to cast, where X is the total power of creatures you control.\nTrample (This "
+    "creature can deal excess combat damage to the player or planeswalker it's attacking.)",
+)
+
+
+COST_REDUCERS = [
+    SCULPTOR,
+    MEDALLION,
+    JET_MEDALLION,
+    HERALDS_HORN,
+    URZAS_INCUBATOR,
+    ELECTROMANCER,
+    ANIMAR,
+    JHOIRAS_FAMILIAR,
+    GHALTA,
+]
+
+
+@pytest.mark.parametrize("reducer", COST_REDUCERS, ids=lambda c: c.mana.name)
+def test_a_cost_reducer_is_a_spell_with_its_printed_cost_listed_as_not_modelled(reducer: Real) -> None:
+    deck = build(reducer)
+    card = card_named(deck, reducer.mana.name)
+    assert not card.modelled
+    assert card.mana_value == int(reducer.mana.cmc)
+    assert (card.mana, card.land, card.land_ramp, card.tutor, card.draw) == (None,) * 5
+    assert deck.not_modelled == (reducer.mana.name,)
 
 
 @pytest.mark.parametrize("reducer", [SCULPTOR, MEDALLION, FIREBLAST], ids=lambda c: c.mana.name)

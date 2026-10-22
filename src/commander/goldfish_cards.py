@@ -398,13 +398,16 @@ _SACRIFICE_CREATURE = (
 )
 _SACRIFICE_COST = re.compile(rf"as an additional cost to cast this \w+, {_SACRIFICE_CREATURE}")
 # Wording that makes a card more than a plain spell with the cost printed on it: a cost it is cast for
-# instead, a cost reduction, or a cost to pay besides mana and a creature to sacrifice.
+# instead, or a cost to pay besides mana and a creature to sacrifice. Such a card is not modelled only when
+# it matters to the goldfish.
 _UNMODELLED = re.compile(
-    r"costs? (?:\{[^}]+\})+ less|less to cast|rather than pay (?:this spell's|its) mana cost"
+    r"rather than pay (?:this spell's|its) mana cost"
     r"|cast this spell without paying|^(?:affinity|convoke|delve|improvise|emerge|undaunted)\b"
     rf"|as an additional cost to cast this \w+, (?!you may|{_SACRIFICE_CREATURE})",
     re.MULTILINE,
 )
+# A cost reduction, for other spells (Herald's Horn) or this one (Ghalta): the card is never modelled.
+_COST_REDUCER = re.compile(r"costs? (?:\{[^}]+\})+ less|less to cast")
 # A land that returns a land to the hand on entering (Karoo).
 _BOUNCE_LAND = re.compile(r"return (?:an? )?(?:untapped )?\w+ you control to its owner's hand")
 # A land that costs other lands (Lotus Field, Glacial Chasm) or is lost when one is played (City of Traitors).
@@ -539,6 +542,11 @@ _ANY_COLOUR = re.compile(
     r"\bany (?:one )?(?:color|type)\b|the chosen colou?r|any of the exiled card's colou?rs"
 )
 _AMOUNT_WORD = re.compile(r"^(" + "|".join(_NUMBER_WORDS) + r") (?:additional )?mana\b")
+# A count, or a colour or use the game cannot tell: Mox Amber's colours need a legendary creature, Flywheel
+# Racer's mana needs it crewed.
+_NOT_FIXED_MANA = re.compile(
+    rf"{VARIABLE_MANA.pattern}|among legendary|activate only if (?:this \w+|it) is a creature"
+)
 _COST_PART = re.compile(
     r"\{t\}|\{(?P<generic>\d+)\}|pay \d+ life|sacrifice this \w+|exile this card from your hand"
 )
@@ -570,14 +578,15 @@ def _paid(cost: str) -> _Cost | None:
 
 
 def _abilities(text: str) -> list[tuple[str, str, bool]]:
-    """Each line that adds mana: its cost, what it adds, and whether the amount varies. A line whose mana
-    can be spent only on some spells is left out, which undercounts rather than overcounts."""
+    """Each line that adds mana: its cost, what it adds, and whether it is no fixed amount of any colour
+    (a count, or a colour or use the game cannot tell). A line whose mana can be spent only on some spells is
+    left out, which undercounts rather than overcounts."""
     found: list[tuple[str, str, bool]] = []
     for line in text.split("\n"):
         matched = _MANA_ABILITY.match(line)
         if matched is not None and RESTRICTED not in line:
             found.append(
-                (matched.group("cost") or "", matched.group("what"), VARIABLE_MANA.search(line) is not None)
+                (matched.group("cost") or "", matched.group("what"), _NOT_FIXED_MANA.search(line) is not None)
             )
     return found
 
@@ -872,6 +881,8 @@ def _read_spell(card: GoldfishCard, info: CardMana, text: str, context: _Context
     search = _search(text)
     matters = _matters(text, roles, search)
     key_card = card.combo or card.finisher
+    if _COST_REDUCER.search(text):
+        return replace(card, modelled=False)
     if _UNMODELLED.search(text):
         return replace(card, modelled=not (matters or key_card))
     ramp = _land_ramp(search, card.kinds)
