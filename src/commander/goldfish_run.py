@@ -81,15 +81,16 @@ def compare_swaps(
 
     Only a swap of every copy of the cut card can be played: the engine puts the incoming card in each slot
     the cut one held. Anything else raises GoldfishError saying why, as does a cut that is not in the
-    deck's library, one cut twice, an incoming card the deck holds or one the card data lacks. With
-    `lenient` such a swap is logged and left out instead, as the app's board may hold one.
+    deck's library, one cut twice, an incoming card put in twice, one the deck holds or one the card data
+    lacks. With `lenient` such a swap is logged and left out instead, as the app's board may hold one.
     """
     loaded = played.loaded
     cut_keys: set[str] = set()
+    incoming_keys: set[str] = set()
     pairs: list[Swap] = []
     for request in swaps:
         try:
-            pairs.append(_pair(loaded, db, request, cut_keys))
+            pairs.append(_pair(loaded, db, request, cut_keys, incoming_keys))
         except GoldfishError as error:
             if not lenient:
                 raise
@@ -97,8 +98,15 @@ def compare_swaps(
     return compare_deck(loaded.deck, played.report, pairs, seed=seed_of(loaded))
 
 
-def _pair(loaded: GoldfishInput, db: CardDb, request: SwapRequest, cut_keys: set[str]) -> Swap:
-    """The cut card and the incoming one, checking that the swap can be played; adds the cut to `cut_keys`."""
+def _pair(
+    loaded: GoldfishInput,
+    db: CardDb,
+    request: SwapRequest,
+    cut_keys: set[str],
+    incoming_keys: set[str],
+) -> Swap:
+    """The cut card and the incoming one, checking that the swap can be played; a swap that passes adds its
+    cut to `cut_keys` and its incoming card to `incoming_keys`, a refused one adds neither."""
     key = card_key(request.cut)
     cut = next((card for card in loaded.deck.cards if card_key(card.name) == key), None)
     if cut is None:
@@ -116,7 +124,11 @@ def _pair(loaded: GoldfishInput, db: CardDb, request: SwapRequest, cut_keys: set
     in_deck = (*loaded.deck.cards, *loaded.deck.commanders)
     if any(card_key(card.name) == card_key(incoming.name) for card in in_deck):
         raise GoldfishError(f"{incoming.name} is in the deck already")
+    incoming_key = card_key(incoming.name)
+    if incoming_key in incoming_keys:
+        raise GoldfishError(f"{incoming.name} is put in twice")
     cut_keys.add(key)
+    incoming_keys.add(incoming_key)
     return cut, incoming
 
 

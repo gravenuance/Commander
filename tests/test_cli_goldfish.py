@@ -129,6 +129,47 @@ def test_a_plan_pairs_its_adds_with_its_removes_and_names_the_deck(home: Path, f
     assert named.out == by_plan.out
 
 
+def test_typed_swaps_and_a_plans_swaps_are_played_together_the_typed_ones_first(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    text = 'deck = "magda"\nadd = ["Mana Crypt"]\nremove = ["Battered Golem"]\n'
+    result = goldfish(home, fake, "--plan", plan(home, text), "--swap", "Mind Stone=Disruptor Flute")
+    assert (result.code, result.err) == (0, "")
+    assert swapped(result.out)[:3] == [
+        "swaps",
+        "  + Mind Stone  - Disruptor Flute",
+        "  + Mana Crypt  - Battered Golem",
+    ]
+
+
+def test_a_card_put_in_by_a_typed_swap_and_by_the_plan_is_an_error(home: Path, fake: FakeArchidekt) -> None:
+    text = 'deck = "magda"\nadd = ["Mana Crypt"]\nremove = ["Battered Golem"]\n'
+    result = goldfish(home, fake, "--plan", plan(home, text), "--swap", "Mana Crypt=Disruptor Flute")
+    assert (result.code, result.out, result.err) == (2, "", "cmdr: Mana Crypt is put in twice\n")
+
+
+def test_a_plans_removes_from_a_category_outside_the_deck_are_not_paired_with_adds(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    text = (
+        'deck = "magda"\nadd = ["Mana Crypt"]\n'
+        'remove = ["Battered Golem", {name = "Chaos Warp", category = "Maybeboard"}]\n'
+    )
+    result = goldfish(home, fake, "--plan", plan(home, text))
+    assert (result.code, result.err) == (0, "")
+    assert swapped(result.out)[:2] == ["swaps", "  + Mana Crypt  - Battered Golem"]
+    # Too few removes from the deck is still an error: the Maybeboard one does not make up the number.
+    short = (
+        'deck = "magda"\nadd = ["Mana Crypt"]\nremove = [{name = "Chaos Warp", category = "Maybeboard"}]\n'
+    )
+    refused = goldfish(home, fake, "--plan", plan(home, short))
+    assert (refused.code, refused.out) == (2, "")
+    assert refused.err.endswith(
+        "cmdr: the plan adds 1 cards and removes 0 from the deck; "
+        "a goldfish swap pairs each add with a remove, in order\n"
+    )
+
+
 def test_the_figures_are_json_with_the_swaps_and_what_moved(home: Path, fake: FakeArchidekt) -> None:
     result = goldfish(home, fake, "magda", "--swap", "Mana Crypt=Battered Golem", "--json")
     assert (result.code, result.err) == (0, "")
@@ -193,6 +234,14 @@ def test_a_plain_run_is_json_without_swaps(home: Path, fake: FakeArchidekt) -> N
         (
             ("magda", "--swap", "Mana Crypt=Disruptor Flute", "--swap", "Mind Stone=Disruptor Flute"),
             "cmdr: Disruptor Flute is cut twice\n",
+        ),
+        (
+            ("magda", "--swap", "Mana Crypt=Battered Golem", "--swap", "Mana Crypt=Disruptor Flute"),
+            "cmdr: Mana Crypt is put in twice\n",
+        ),
+        (
+            ("magda", "--swap", "Mana Crypt=Battered Golem", "--swap", "mana crypt=Disruptor Flute"),
+            "cmdr: Mana Crypt is put in twice\n",
         ),
     ],
 )

@@ -5,8 +5,11 @@ The fixture deck is Magda with a library of 8 cards: six Mountains, Battered Gol
 hand and the first draw show every card and each card does the same for mana in every game.
 """
 
+import json
 import shutil
 import threading
+import tomllib
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -14,6 +17,9 @@ import pytest
 
 from commander import desk as desk_module
 from commander.desk import Desk, DeskSettings
+from commander.goldfish import POLICY_VERSION
+from commander.models import Deck
+from commander.store import Workspace
 from conftest import PASSWORD, FakeArchidekt, Json, build_card_db
 from test_desk import DECK, deferred_desk, desk, fake, items, make_desk, probing, profile_file, settings
 from test_desk_account import Env
@@ -156,6 +162,66 @@ def test_the_same_swap_is_compared_once_and_a_change_to_the_deck_files_plays_aga
     assert (plays.games, plays.comparisons) == (2, 2)
 
 
+@pytest.mark.parametrize("part", ["bracket", "card data", "cache", "policy"])
+def test_each_part_of_what_the_games_depend_on_plays_them_again_when_it_changes(
+    desk: Desk, plays: Plays, monkeypatch: pytest.MonkeyPatch, part: str
+) -> None:
+    desk.goldfish(DECK)
+    desk.goldfish(DECK)
+    assert plays.games == 1
+
+    def other_bracket(deck: Deck) -> Deck:
+        return replace(deck, bracket=2)
+
+    def other_card_data() -> str:
+        return "another card database"
+
+    def other_cache(folder: Path) -> str:
+        return f"another cache than {folder.name}"
+
+    if part == "bracket":
+        monkeypatch.setattr(desk, "_effective", other_bracket)
+    elif part == "card data":
+        monkeypatch.setattr(desk, "_card_data_stamp", other_card_data)
+    elif part == "cache":
+        monkeypatch.setattr(desk_module, "cache_stamp", other_cache)
+    else:
+        monkeypatch.setattr(desk_module, "POLICY_VERSION", POLICY_VERSION + 1)
+    desk.goldfish(DECK)
+    assert plays.games == 2
+    desk.goldfish(DECK)
+    assert plays.games == 2
+
+
+@pytest.mark.parametrize("ask", ["report", "swap", "review"])
+def test_a_sync_between_reading_the_deck_and_stamping_it_does_not_keep_the_old_games_as_current(
+    desk: Desk, settings: DeskSettings, plays: Plays, monkeypatch: pytest.MonkeyPatch, ask: str
+) -> None:
+    card_id = queue(desk, "Arcane Signet", "Battered Golem")
+    deck_file = next(settings.workspace.glob(f"{DECK}-*")) / "deck.json"
+    load = Workspace.load_folder
+    synced: list[bool] = []
+
+    def load_then_sync(workspace: Workspace, folder: Path) -> Deck | None:
+        found = load(workspace, folder)
+        if not synced:
+            # A sync rewrites the snapshot just after this read.
+            synced.append(True)
+            deck_file.write_text(deck_file.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+        return found
+
+    def ask_for_figures() -> Json:
+        if ask == "report":
+            return desk.goldfish(DECK)
+        return desk.goldfish_swap(DECK, card_id) if ask == "swap" else desk.goldfish_review(DECK)
+
+    monkeypatch.setattr(Workspace, "load_folder", load_then_sync)
+    ask_for_figures()
+    assert (synced, plays.games) == ([True], 1)
+    ask_for_figures()
+    assert plays.games == 2
+
+
 def test_signing_in_again_forgets_the_games_kept_for_the_last_account(
     tmp_path: Path, raw_deck: Json, card_db_file: Path, plays: Plays
 ) -> None:
@@ -248,6 +314,63 @@ def test_a_finisher_the_tagger_marks_is_listed_as_automatic_and_the_owner_can_ta
     text = profile_file(tagged).read_text(encoding="utf-8")
     assert 'finishers = ["Battered Golem"]' in text
     assert "not_finishers = []" in text
+
+
+HAND_WRITTEN = (
+    "# mine, from the pod\n[goldfish]\n# kept\nfinishers = {finishers}\nnot_finishers = {not_finishers}\n"
+)
+
+
+def goldfish_lists(settings: DeskSettings) -> tuple[list[str], list[str]]:
+    """The profile's [goldfish] finishers and not_finishers, as written, names sorted."""
+    table = tomllib.loads(profile_file(settings).read_text(encoding="utf-8"))["goldfish"]
+    return sorted(table["finishers"]), sorted(table["not_finishers"])
+
+
+def write_goldfish(settings: DeskSettings, *, finishers: list[str], not_finishers: list[str]) -> None:
+    profile_file(settings).write_text(
+        HAND_WRITTEN.format(finishers=json.dumps(finishers), not_finishers=json.dumps(not_finishers)),
+        encoding="utf-8",
+    )
+
+
+def test_a_hand_written_not_finisher_for_a_card_the_tagger_does_not_mark_survives_a_save(
+    desk: Desk, settings: DeskSettings
+) -> None:
+    write_goldfish(settings, finishers=[], not_finishers=["Craterhoof Behemoth"])
+    saved = desk.save_finishers(DECK, ["Battered Golem"])
+    assert finishers(saved) == [("Battered Golem", False)]
+    text = profile_file(settings).read_text(encoding="utf-8")
+    assert 'not_finishers = ["Craterhoof Behemoth"]' in text
+    assert 'finishers = ["Battered Golem"]' in text
+    assert "# mine, from the pod" in text
+    assert "# kept" in text
+    # Another save with nothing changed keeps it still.
+    desk.save_finishers(DECK, [])
+    assert 'not_finishers = ["Craterhoof Behemoth"]' in profile_file(settings).read_text(encoding="utf-8")
+
+
+def test_a_card_the_owner_took_out_by_hand_and_then_adds_in_the_app_is_played_again(
+    desk: Desk, settings: DeskSettings
+) -> None:
+    write_goldfish(settings, finishers=[], not_finishers=["Battered Golem"])
+    saved = desk.save_finishers(DECK, ["battered golem"])
+    assert finishers(saved) == [("Battered Golem", False)]
+    assert "not_finishers = []" in profile_file(settings).read_text(encoding="utf-8")
+
+
+def test_a_hand_listed_finisher_the_tagger_also_marks_stays_listed_until_the_owner_takes_it_out(
+    tagged: DeskSettings, fake: FakeArchidekt
+) -> None:
+    desk = make_desk(tagged, fake)
+    write_goldfish(tagged, finishers=["Disruptor Flute"], not_finishers=[])
+    assert finishers(desk.settings(DECK)) == [("Disruptor Flute", True)]
+    kept = desk.save_finishers(DECK, ["Disruptor Flute", "Battered Golem"])
+    assert finishers(kept) == [("Disruptor Flute", True), ("Battered Golem", False)]
+    assert goldfish_lists(tagged) == (["Battered Golem", "Disruptor Flute"], [])
+    out = desk.save_finishers(DECK, ["Battered Golem"])
+    assert (finishers(out), out["finishersRemoved"]) == ([("Battered Golem", False)], ["Disruptor Flute"])
+    assert goldfish_lists(tagged) == (["Battered Golem"], ["Disruptor Flute"])
 
 
 def test_a_finisher_that_is_no_card_or_a_bad_payload_is_refused_and_the_file_stays(

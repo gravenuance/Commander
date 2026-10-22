@@ -19,7 +19,7 @@ from commander.carddb import CARD_DB_FILE, CardDb, Role
 from commander.config import MetaSettings
 from commander.deckprofile import Profile, ThemeSpec
 from commander.desk import Desk, DeskSettings
-from commander.models import Deck
+from commander.models import COMMANDER_CATEGORY, Deck
 from commander.net import Fetcher, Pacer
 from commander.previews import (
     PREVIEWS_FILE,
@@ -185,6 +185,7 @@ def test_with_no_upcoming_set_the_probe_searches_nothing_and_empties_the_cache(t
     outcome = probe(fake, tmp_path, now=RELEASE_DAY)
     assert outcome.state is ProbeState.NO_SEASON
     assert fake.requests == ["https://api.scryfall.com/sets"]
+    assert outcome.requests == 1
     assert read_previews(tmp_path) == PreviewCache(date(2026, 11, 13), ())
 
 
@@ -200,7 +201,7 @@ def test_an_upcoming_set_over_two_pages_is_read_whole_paced_and_cached_without_i
         ProbeState.UPDATED,
         ("trk",),
         8,
-        2,
+        3,
     )
     assert fake.requests == ["https://api.scryfall.com/sets", SEARCH_URL, PAGE_2]
     assert pacer.waits == 2
@@ -226,7 +227,7 @@ def test_a_set_past_the_page_limit_keeps_the_pages_read(
     fake.searches = {SEARCH_URL: first, PAGE_2: second}
     with caplog.at_level(logging.WARNING, logger="commander.scryfall"):
         outcome = probe(fake, tmp_path)
-    assert (outcome.state, outcome.cards, outcome.requests) == (ProbeState.UPDATED, 5, 1)
+    assert (outcome.state, outcome.cards, outcome.requests) == (ProbeState.UPDATED, 5, 2)
     assert PAGE_2 not in fake.requests
     assert "the search for set trk has over 1 pages; the rest is left out" in caplog.messages
 
@@ -278,6 +279,45 @@ def test_a_failed_probe_keeps_the_last_previews_and_tries_again_later_the_same_d
     fake.searches[SEARCH_URL] = search_page()
     fake.failing.clear()
     assert probe(fake, tmp_path).state is ProbeState.UPDATED
+
+
+def test_a_later_page_that_is_not_found_fails_the_probe_and_keeps_the_last_previews(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake = FakeScryfall()
+    fake.searches = {SEARCH_URL: search_page()}
+    probe(fake, tmp_path, now=datetime(2026, 10, 21, 12, 0, tzinfo=UTC))
+    kept = read_previews(tmp_path)
+    # Page 2 is not served, so Scryfall answers 404: only an empty first page may mean "no cards".
+    first, _ = two_pages()
+    fake.searches = {SEARCH_URL: first}
+    with caplog.at_level(logging.WARNING, logger="commander.previews"):
+        outcome = probe(fake, tmp_path)
+    assert outcome.state is ProbeState.FAILED
+    assert fake.requests[-2:] == [SEARCH_URL, PAGE_2]
+    assert read_previews(tmp_path) == kept
+    assert kept.probed_on == date(2026, 10, 21)
+    assert [m for m in caplog.messages if m.startswith("card previews not refreshed")]
+
+
+def test_a_cache_that_cannot_be_written_keeps_the_last_previews_and_its_day(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake = FakeScryfall()
+    fake.searches = {SEARCH_URL: search_page()}
+    probe(fake, tmp_path, now=datetime(2026, 10, 21, 12, 0, tzinfo=UTC))
+    kept = read_previews(tmp_path)
+
+    def disk_full(*_: object, **__: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(previews_module, "write_text_atomic", disk_full)
+    with caplog.at_level(logging.WARNING, logger="commander.previews"):
+        outcome = probe(fake, tmp_path)
+    assert (outcome.state, outcome.problem) == (ProbeState.FAILED, "disk full")
+    assert read_previews(tmp_path) == kept
+    assert kept.probed_on == date(2026, 10, 21)
+    assert "card previews not refreshed, the last ones are kept: disk full" in caplog.messages
 
 
 def test_one_unreadable_card_is_skipped_and_the_rest_of_the_set_is_kept(
@@ -377,6 +417,45 @@ def test_a_deck_with_no_theme_tags_or_none_a_preview_matches_has_no_previews(dec
     assert fits(themed_deck(deck, ("Golems",)), db) == []
 
 
+def test_a_preview_the_deck_already_has_is_not_offered_even_when_the_card_data_does_not_know_it(
+    deck: Deck, db: CardDb
+) -> None:
+    # A spoiled card added on Archidekt: the card data has no printing of it yet, only the name matches.
+    themed = themed_deck(deck, ("Flash", "Treasure"))
+    spoiled = replace(
+        themed.cards[0],
+        name="Captain's Tutelage",
+        categories=("Ramp",),
+        in_deck=True,
+        scryfall_id="0c340eba-645d-416a-9ed4-f2303aa8c919",
+        entry_id=999_999,
+    )
+    held = replace(themed, cards=(*themed.cards, spoiled))
+    assert [name for name, *_ in fits(held, db)] == [
+        "Munitions Enthusiast",
+        "Dahar Master",
+        "Quark, Humble Proprietor",
+    ]
+
+
+def test_a_deck_whose_commander_the_card_data_does_not_know_has_no_previews_and_the_log_says_why(
+    deck: Deck, db: CardDb, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The commander is a preview itself: the card data has no printing of it.
+    themed = themed_deck(deck, ("Flash", "Treasure"))
+    unknown = tuple(
+        replace(c, name="Kirk, Commanding Officer", scryfall_id="0c340eba-645d-416a-9ed4-f2303aa8c919")
+        if COMMANDER_CATEGORY in c.categories
+        else c
+        for c in themed.cards
+    )
+    with caplog.at_level(logging.DEBUG, logger="commander.previews"):
+        assert fits(replace(themed, cards=unknown), db) == []
+    assert caplog.messages == [
+        f"deck {deck.id}: no previews, its commander is missing or not in the card data"
+    ]
+
+
 def test_a_card_leaves_the_previews_on_its_release_day(deck: Deck, db: CardDb) -> None:
     themed = themed_deck(deck, ("Flash", "Treasure"))
     assert fits(themed, db, today=date(2026, 11, 12))
@@ -414,6 +493,39 @@ def test_a_failed_probe_is_a_sync_warning_and_the_sync_carries_on(
     assert outcome.previews.state is ProbeState.FAILED
     assert [w for w in outcome.warnings if w.startswith("card previews not refreshed (")]
     assert read_previews(cache) == kept
+
+
+def test_the_card_data_and_the_probe_of_a_sync_share_one_scryfall_client(
+    tmp_path: Path, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # One client reads the set list once; two would ask Scryfall for /sets twice a day.
+    fake = FakeArchidekt()
+    fake.put(raw_deck)
+    clients: list[ScryfallClient] = []
+
+    def downloaded(client: ScryfallClient, *_: object, **__: object) -> CardRefresh:
+        clients.append(client)
+        return DOWNLOADED
+
+    def probed(client: ScryfallClient, *_: object, **__: object) -> PreviewProbe:
+        clients.append(client)
+        return PreviewProbe(ProbeState.NO_SEASON)
+
+    monkeypatch.setattr(syncrun, "refresh_card_db", downloaded)
+    monkeypatch.setattr(syncrun, "probe_previews", probed)
+    services = syncrun.SyncServices(
+        fake.client, MemoryTokenStore(), tmp_path / "cache", lambda: NOW, lambda _: Pacer(0)
+    )
+    run_sync(
+        services,
+        Workspace(tmp_path / "decks"),
+        "TESTER",
+        MetaSettings(),
+        SyncOptions(ideas=False),
+        on_progress=lambda _: None,
+    )
+    assert len(clients) == 2
+    assert clients[0] is clients[1]
 
 
 def test_an_unexpected_error_in_the_probe_is_logged_and_a_warning_not_a_failed_sync(
@@ -524,6 +636,27 @@ def test_the_deck_view_counts_its_previews_and_the_panel_gets_them_to_look_at(
         "fits": ["Treasure"],
     }
     assert str(cards[1]["text"]).startswith("Flash\nEnchant creature")
+
+
+def test_the_polled_previews_stamp_changes_with_the_cache_file_and_the_local_day(
+    desk_settings: DeskSettings,
+) -> None:
+    clock = [NOW]
+    desk = Desk(
+        desk_settings,
+        client_factory=FakeArchidekt().client,
+        token_store=MemoryTokenStore(),
+        now=lambda: clock[0],
+        pacer_factory=lambda _: Pacer(0),
+    )
+    before = desk.stamps().get("previews")
+    assert before is not None
+    assert desk.stamps().get("previews") == before
+    write_previews(desk_settings.cache, PreviewCache(TODAY, parse_search_page(search_page()).cards))
+    written = desk.stamps().get("previews")
+    assert written != before
+    clock[0] = NOW + timedelta(days=1)
+    assert desk.stamps().get("previews") not in (before, written)
 
 
 def test_off_season_opening_a_deck_does_no_theme_work_for_previews(
