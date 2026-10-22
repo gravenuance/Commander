@@ -339,7 +339,8 @@ def parse_card(raw: object) -> ParsedCard | None:
     """One bulk card object; None for objects that never go in a deck (tokens, digital-only printings)."""
     card = as_object(raw, "card")
     where = f"card {card.get('id')}"
-    if req_str(card, "layout", where) in _NON_CARD_LAYOUTS or card.get("digital") is True:
+    layout = req_str(card, "layout", where)
+    if layout in _NON_CARD_LAYOUTS or card.get("digital") is True:
         return None
     faces = [as_object(face, f"{where}.card_faces") for face in as_list(card.get("card_faces") or [], where)]
     front: Mapping[str, object] = faces[0] if faces else {}
@@ -376,6 +377,7 @@ def parse_card(raw: object) -> ParsedCard | None:
         toughness=opt_str(card, "toughness", where) or opt_str(front, "toughness", where),
         produced="".join(c for c in "WUBRGC" if c in str_list(card, "produced_mana", where)),
         rarity=opt_str(card, "rarity", where) or "",
+        layout=layout,
     )
 
 

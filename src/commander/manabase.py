@@ -552,13 +552,20 @@ def fixed_pips(mana_cost: str) -> dict[str, int]:
 
 
 def castings(info: CardMana) -> list[Casting]:
-    """How a card is cast. A split card (Fire // Ice, cost "{1}{R} // {1}{U}") is cast a half at a time, each
-    at its own mana value; its printed mana value, the halves added up (rule 202.3c), is what it counts as
-    in the library. Any other card is cast at its mana value, by its front face's cost."""
+    """How a card is judged for colour. A split card (Fire // Ice, cost "{1}{R} // {1}{U}") by its most
+    expensive half at that half's own mana value, since its printed mana value is the halves added up (rule
+    202.3c); halves of equal value both count. Any other card, an adventure (Bonecrusher Giant // Stomp)
+    included, by its front face's cost at its mana value."""
     halves = _cost_halves(info.mana_cost)
-    if len(halves) == 1:
+    if info.layout != "split" or len(halves) == 1:
         return [Casting(max(int(info.cmc), 1), fixed_pips(info.mana_cost))]
-    return [Casting(max(_cost_value(half), 1), fixed_pips(half)) for half in halves]
+    values = [max(_cost_value(half), 1) for half in halves]
+    highest = max(values)
+    return [
+        Casting(value, fixed_pips(half))
+        for half, value in zip(halves, values, strict=True)
+        if value == highest
+    ]
 
 
 def _cost_halves(mana_cost: str) -> list[str]:
