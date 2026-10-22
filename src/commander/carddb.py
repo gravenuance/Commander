@@ -107,6 +107,14 @@ ORDER BY instr(name_key, :needle) != 1, edhrec_rank IS NULL, edhrec_rank, name_k
 LIMIT :limit
 """  # noqa: S608 — built from constant fragments; every value is bound
 
+# Any legal card, for the second name of a pair: a partner, a Background or whatever else may sit beside one.
+_LEGAL_SEARCH_QUERY = f"""
+SELECT {_INFO_COLUMNS} FROM oracle
+WHERE commander_legal = 1 AND instr(name_key, :needle) > 0
+ORDER BY instr(name_key, :needle) != 1, edhrec_rank IS NULL, edhrec_rank, name_key
+LIMIT :limit
+"""  # noqa: S608 — built from constant fragments; every value is bound
+
 _TAG_SUGGEST_QUERY = """
 SELECT t.slug, count(m.oracle_id) AS cards FROM tag t LEFT JOIN tag_member m ON m.tag_id = t.tag_id
 WHERE instr(t.slug, :needle) > 0
@@ -540,6 +548,14 @@ class CardDb:
             return []
         params = {"needle": needle, "limit": max(1, min(limit, MAX_NAME_MATCHES))}
         return self._infos(self._query_named(_COMMANDER_SEARCH_QUERY, params))
+
+    def search_legal(self, text: str, *, limit: int = MAX_NAME_MATCHES) -> list[CardInfo]:
+        """Commander-legal cards of any type whose name holds text, ranked like `search_commanders`."""
+        needle = text.strip().casefold()
+        if not needle:
+            return []
+        params = {"needle": needle, "limit": max(1, min(limit, MAX_NAME_MATCHES))}
+        return self._infos(self._query_named(_LEGAL_SEARCH_QUERY, params))
 
     def theme_candidates(
         self, theme: Theme, identity: str, *, exclude: Collection[str], max_cents: int | None = None

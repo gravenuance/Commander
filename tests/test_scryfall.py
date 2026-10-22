@@ -47,8 +47,8 @@ from conftest import (
 
 GOLEM_ORACLE = "066dfefd-eef5-4c81-8e8a-310bac01674f"
 FLUTE_ORACLE = "d6c46906-1339-4440-8cd0-2bb9890d4975"
-# 28 real lines minus the digital-only Magda promo, plus the filler.
-PRINTINGS_IN_FIXTURE = 28 + 10_000
+# 30 real lines minus the digital-only Magda promo, plus the filler.
+PRINTINGS_IN_FIXTURE = 29 + 10_000
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 BULK_URL = "https://api.scryfall.com/bulk-data"
 
@@ -216,7 +216,7 @@ def test_reads_cards_and_tolerates_a_few_bad_lines(tmp_path: Path) -> None:
 def test_refuses_a_file_with_too_many_bad_lines(tmp_path: Path) -> None:
     lines = [*card_lines(), *("{not json" for _ in range(200))]
     cards_gz, _ = write_bulk(tmp_path, cards=lines)
-    with pytest.raises(ScryfallError, match="200 of 10229 entries unreadable"):
+    with pytest.raises(ScryfallError, match="200 of 10230 entries unreadable"):
         list(read_cards(cards_gz))
 
 

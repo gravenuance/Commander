@@ -123,7 +123,9 @@ function addGrace() {
 function addAdjacent(text) {
   const s = settingsState;
   if (s.pairWith !== null && s.adjacent[s.pairWith]) {
-    s.adjacent[s.pairWith] = [s.adjacent[s.pairWith][0], text.trim()];
+    const second = text.split("+").pop().trim();
+    if (!second) return;
+    s.adjacent[s.pairWith] = [s.adjacent[s.pairWith][0], second];
     s.pairWith = null;
     $("settings-adjacent-input").value = "";
     renderSettings();
@@ -177,14 +179,16 @@ function setupSettings() {
     });
   }
   const adjacent = $("settings-adjacent-input");
-  // A partner pair is typed "First + Second": matches are for the name after the last +.
+  // A partner pair is typed "First + Second": matches are for the name after the last +. The second name,
+  // typed or picked through "+ partner", may be any legal card, so the bridge is asked in partner mode.
   combobox(adjacent, $("settings-adjacent-results"), async (text) => {
     const parts = text.split("+");
     const typed = parts.pop().trim();
     if (typed.length < 2) return [];
     const head = parts.map((p) => p.trim()).filter(Boolean);
-    const answer = await api("find_commanders", typed);
-    return answer.names.map((name) => ({ label: name, value: [...head, name].join(" + ") }));
+    const picking = settingsState.pairWith !== null;
+    const answer = await api("find_commanders", typed, picking || head.length > 0);
+    return answer.names.map((name) => ({ label: name, value: picking ? name : [...head, name].join(" + ") }));
   }, addAdjacent);
   combobox($("settings-ignore-input"), $("settings-ignore-results"), async (text) => {
     const needle = text.trim().toLowerCase();

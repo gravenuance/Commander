@@ -213,6 +213,66 @@ def test_removing_a_card_moves_focus_to_the_next_rows_factor_or_to_the_add_field
     assert seen == {"middle": [["A", "C"], True], "last": [["A"], True], "empty": [0, True]}
 
 
+# Typing into the commander box and letting its debounce timer run, as the combobox does after a pause.
+SEARCH_PRELUDE = """
+const finds = () => calls.filter((c) => c[0] === "find_commanders");
+const search = async (text) => {
+  const box = $("settings-adjacent-input");
+  box.focus();
+  box.value = text;
+  await fire(box, "input");
+  await timers.at(-1).fn();
+  return $("settings-adjacent-results").children.map((li) => li.children[0].textContent);
+};
+stub.find_commanders = async (text, partner) => ({
+  names: partner ? [`${text} (any card)`] : [`${text} (commander)`],
+});
+"""
+
+
+def test_the_first_commander_is_searched_among_commanders_only() -> None:
+    seen = run(
+        SEARCH_PRELUDE
+        + """
+    await open();
+    const names = await search("tymna");
+    return { names, finds: finds() };
+    """
+    )
+    assert seen["names"] == ["tymna (commander)"]
+    assert seen["finds"] == [["find_commanders", "tymna", False]]
+
+
+def test_the_partner_slot_searches_any_card_and_takes_the_pick_as_the_second_name() -> None:
+    seen = run(
+        SEARCH_PRELUDE
+        + """
+    await open({ adjacent: [["Tymna the Weaver"]] });
+    await fire($("settings-adjacent").querySelector(".chip-pair"), "click");
+    const names = await search("raised");
+    await fire($("settings-adjacent-results").children[0], "mousedown");
+    return { names, finds: finds(), adjacent: settingsState.adjacent };
+    """
+    )
+    assert seen["names"] == ["raised (any card)"]
+    assert seen["finds"] == [["find_commanders", "raised", True]]
+    assert seen["adjacent"] == [["Tymna the Weaver", "raised (any card)"]]
+
+
+def test_the_name_after_a_plus_is_searched_as_a_partner_and_the_first_name_is_kept() -> None:
+    seen = run(
+        SEARCH_PRELUDE
+        + """
+    await open();
+    const names = await search("Tymna the Weaver + raised");
+    await fire($("settings-adjacent-results").children[0], "mousedown");
+    return { names, finds: finds(), adjacent: settingsState.adjacent };
+    """
+    )
+    assert seen["finds"] == [["find_commanders", "raised", True]]
+    assert seen["adjacent"] == [["Tymna the Weaver", "raised (any card)"]]
+
+
 def test_every_remove_button_of_the_settings_has_a_tooltip_as_well_as_a_name() -> None:
     seen = run("""
     await open({ adjacent: [["Rhys"]], ignore: ["Mountain"] });
