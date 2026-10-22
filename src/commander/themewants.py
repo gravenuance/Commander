@@ -8,11 +8,12 @@ itself.
 
 import re
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cache
 
-from commander.carddb import CardDb
+from commander.carddb import CardDb, Theme
 from commander.deckprofile import ThemeSpec
+from commander.deckthemes import TYPE_NAMES
 from commander.scryfall import SetCard
 
 
@@ -76,12 +77,40 @@ FEEDERS_BY_TAG: Mapping[str, Want] = {
 }
 # The same by type word, casefolded, for a card data that lacks the tag.
 FEEDERS_BY_TYPE: Mapping[str, Want] = {"vehicle": VEHICLE}
+# What a commander's Tagger tags say its deck wants (checked 2026-10-22): its payoff tags want what feeds
+# them, and its Treasure makers want Treasure.
+COMMANDER_WANTS_BY_TAG: Mapping[str, Want] = {**FEEDERS_BY_TAG, "repeatable-treasures": TREASURE}
+# A commander that animates cards wants the ones it can animate: not an Aura, which cannot become a creature.
+ANIMATED_BY_TAG: Mapping[str, Want] = {
+    "animate-artifact": ARTIFACT,
+    "animate-enchantment": Want("enchantment that is no Aura", types=("Enchantment",), not_types=("Aura",)),
+}
+# ...and, when it also cares about high mana values, only those of at least BIG_MANA_VALUE.
+HIGH_VALUE_TAG = "high-mana-value-matters"
+BIG_MANA_VALUE = 4
+TYPAL_PREFIX = "typal-"
 
 
 def spec_wants(spec: ThemeSpec) -> tuple[Want, ...]:
     """The cards feeding a spec's payoff tags and types, each once."""
     wants = [FEEDERS_BY_TAG[tag] for tag in spec.tags if tag in FEEDERS_BY_TAG]
     wants.extend(FEEDERS_BY_TYPE[t.casefold()] for t in spec.types if t.casefold() in FEEDERS_BY_TYPE)
+    return tuple(dict.fromkeys(wants))
+
+
+def commander_wants(db: CardDb, slugs: Iterable[str]) -> tuple[Want, ...]:
+    """The cards a commander with these Tagger tags (sub-tags' parents included) wants in its deck."""
+    tags = sorted(set(slugs))
+    wants = [COMMANDER_WANTS_BY_TAG[tag] for tag in tags if tag in COMMANDER_WANTS_BY_TAG]
+    for tag in tags:
+        if tag in ANIMATED_BY_TAG:
+            animated = ANIMATED_BY_TAG[tag]
+            wants.append(_big(animated) if HIGH_VALUE_TAG in tags else animated)
+    for tag in tags:
+        tribe = tag.removeprefix(TYPAL_PREFIX).replace("-", " ") if tag.startswith(TYPAL_PREFIX) else ""
+        # Only a subtype some card has is a tribe: typal-creature and typal-choose are not.
+        if tribe and tribe not in TYPE_NAMES and db.theme_size(Theme(types=(tribe,))):
+            wants.append(Want(f"{tribe} typal", types=(tribe,)))
     return tuple(dict.fromkeys(wants))
 
 
@@ -119,6 +148,12 @@ def preview_facts(card: SetCard, slugs: frozenset[str]) -> CardFacts:
 def type_words(type_line: str) -> str:
     """The type line's words with a space around each, so "Elf" never matches "Elfball" or "Self"."""
     return f" {type_line.casefold().replace('—', ' ').replace('//', ' ')} "
+
+
+def _big(want: Want) -> Want:
+    return replace(
+        want, name=f"{want.name} of mana value {BIG_MANA_VALUE} or more", min_mana_value=BIG_MANA_VALUE
+    )
 
 
 def _has_word(words: str, word: str) -> bool:

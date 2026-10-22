@@ -1,19 +1,49 @@
 """A deck's themes as the card searches read them: what feeds a payoff tag counts, and the commander asks too
 (ADR 0055)."""
 
+from collections.abc import Iterator
 from dataclasses import replace
+
+import pytest
 
 from commander.carddb import CardDb
 from commander.deckprofile import Profile, ThemeSpec
 from commander.ideas import dominant_card_ids, dominant_tags
 from commander.models import Deck
 from commander.scryfall import parse_search_page
-from commander.themewants import FEEDERS_BY_TAG, LOW_POWER, VEHICLE, CardFacts, preview_facts, spec_wants
-from conftest import BATTERED_GOLEM, DISRUPTOR_FLUTE, HOVERBIKE, MAGDA_ORACLE, load_fixture
+from commander.themewants import (
+    FEEDERS_BY_TAG,
+    LOW_POWER,
+    VEHICLE,
+    CardFacts,
+    Want,
+    commander_wants,
+    preview_facts,
+    spec_wants,
+)
+from conftest import (
+    BATTERED_GOLEM,
+    DISRUPTOR_FLUTE,
+    HOVERBIKE,
+    MAGDA_ORACLE,
+    build_card_db,
+    extra_tag_line,
+    load_fixture,
+)
 from test_ideas import themed_deck
 from test_meta import db, deck
 
 __all__ = ["db", "deck"]  # fixtures shared with test_meta
+
+
+@pytest.fixture(scope="module")
+def low_power_commander_db(tmp_path_factory: pytest.TempPathFactory) -> Iterator[CardDb]:
+    """The card data with a made-up synergy-low-power tag on Magda, the fixture deck's commander."""
+    path = build_card_db(
+        tmp_path_factory.mktemp("lowpowerdb"), [extra_tag_line("synergy-low-power", MAGDA_ORACLE)]
+    )
+    with CardDb(path) as opened:
+        yield opened
 
 
 def previews() -> dict[str, CardFacts]:
@@ -51,6 +81,65 @@ def test_a_deck_tag_for_vehicles_wants_spacecraft_without_the_payoff_tag() -> No
     assert spec_wants(ThemeSpec(types=("Vehicle",))) == (VEHICLE,)
     assert spec_wants(ThemeSpec(types=("Vehicle",), tags=("synergy-vehicle",))) == (VEHICLE,)
     assert spec_wants(ThemeSpec(types=("Dwarf",), tags=("typal-dwarf",))) == ()
+
+
+def wanted_by(wants: tuple[Want, ...], facts: CardFacts) -> bool:
+    return any(want.matches(facts) for want in wants)
+
+
+def test_a_commander_that_animates_enchantments_and_cares_for_big_cards_wants_big_enchantments_but_no_auras(
+    db: CardDb,
+) -> None:
+    saga = previews()["The Wrath of Khan"]  # Enchantment - Saga, mana value 3
+    wants = commander_wants(db, {"animate-enchantment", "high-mana-value-matters"})
+    assert not wanted_by(wants, saga)
+    assert wanted_by(wants, replace(saga, mana_value=4))
+    assert not wanted_by(wants, replace(saga, type_line="Enchantment — Aura", mana_value=6))
+    assert not wanted_by(wants, replace(saga, type_line="Artifact", mana_value=6))
+    # Without the care for big cards, any enchantment that is no Aura will do.
+    assert wanted_by(commander_wants(db, {"animate-enchantment"}), saga)
+
+
+def test_a_commander_that_animates_artifacts_wants_artifacts_of_mana_value_four_or_more(db: CardDb) -> None:
+    cruiser = previews()["D-7 Battle Cruiser"]  # Artifact - Spacecraft, mana value 2
+    wants = commander_wants(db, {"animate-artifact", "high-mana-value-matters"})
+    assert not wanted_by(wants, cruiser)
+    assert wanted_by(wants, replace(cruiser, mana_value=5))
+
+
+def test_a_commanders_payoff_tags_want_what_feeds_them_and_its_treasure_makers_want_treasure(
+    db: CardDb,
+) -> None:
+    facts = previews()
+    quark, telepath, khan = (
+        facts["Quark, Humble Proprietor"],
+        facts["Cloistered Telepath"],
+        facts["The Wrath of Khan"],
+    )
+    assert wanted_by(commander_wants(db, {"synergy-low-power"}), telepath)
+    assert not wanted_by(commander_wants(db, {"synergy-low-power"}), khan)
+    assert wanted_by(commander_wants(db, {"repeatable-treasures"}), quark)
+    assert wanted_by(commander_wants(db, {"synergy-treasure"}), quark)
+    assert not wanted_by(commander_wants(db, {"synergy-treasure"}), telepath)
+    assert commander_wants(db, {"flash", "ramp"}) == ()
+
+
+def test_a_typal_commander_wants_its_type_but_a_typal_tag_that_is_no_type_wants_nothing(db: CardDb) -> None:
+    facts = previews()
+    # Dwarf is a type in the card data; "creature", "choose" and "non-human" are no tribe.
+    magda = replace(facts["Quark, Humble Proprietor"], type_line="Legendary Creature — Dwarf Berserker")
+    assert wanted_by(commander_wants(db, {"typal-dwarf"}), magda)
+    assert not wanted_by(commander_wants(db, {"typal-dwarf"}), facts["Quark, Humble Proprietor"])
+    assert commander_wants(db, {"typal-creature", "typal-choose", "typal-non-human"}) == ()
+
+
+def test_the_commanders_wants_count_with_the_goldfish_synergy_cards_though_the_deck_has_no_theme_tags(
+    deck: Deck, low_power_commander_db: CardDb
+) -> None:
+    # Magda is a made-up synergy-low-power commander here, and no other card of the deck has power 2 or less.
+    themed = themed_deck(deck, ())
+    assert dominant_tags(themed, Profile(), low_power_commander_db) == []
+    assert dominant_card_ids(themed, Profile(), low_power_commander_db) == {MAGDA_ORACLE}
 
 
 def test_every_artifact_of_the_deck_feeds_the_artifacts_tag_though_it_is_a_payoff_tag(
