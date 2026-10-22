@@ -16,6 +16,7 @@ from commander.goldfish import (
     GameOutcome,
     GoldfishReport,
     deck_slots,
+    london_bottom,
     replay_game,
     simulate,
     turns_shown,
@@ -290,6 +291,52 @@ def test_the_london_bottom_puts_the_extra_lands_before_the_spells() -> None:
     # Four lands in hand and two drawn, then the ring's two on top of the lands played.
     assert only_outcome(report).mana == (3, 4, 5, 6, 7, 8, 8, 8)
     assert report.kept_on_five_or_fewer == 1.0
+
+
+def names(cards: Sequence[GoldfishCard]) -> list[str]:
+    return [card.name for card in cards]
+
+
+def creature(name: str, mv: int, *, combo: bool = False, finisher: bool = False) -> GoldfishCard:
+    return make(name, mv=mv, kinds=CREATURE, combo=combo, finisher=finisher)
+
+
+def test_the_london_bottom_puts_the_dearest_spell_first() -> None:
+    hand = [FOREST, FOREST, creature("Two", 2), creature("Five", 5), creature("Three", 3), creature("One", 1)]
+    assert names(london_bottom(hand, 2)) == ["Five", "Three"]
+    assert names(london_bottom(hand, 1)) == ["Five"]
+    assert london_bottom(hand, 0) == []
+
+
+def test_the_london_bottom_puts_lands_past_four_before_any_spell() -> None:
+    hand = [*repeat(FOREST, 6), creature("Nine", 9)]
+    assert names(london_bottom(hand, 2)) == ["Forest", "Forest"]
+    # With five lands one goes first; then four are kept and the dearest spell follows.
+    hand = [*repeat(FOREST, 5), creature("Nine", 9), creature("Two", 2)]
+    assert names(london_bottom(hand, 2)) == ["Forest", "Nine"]
+
+
+def test_the_london_bottom_keeps_combo_pieces_tutors_and_finishers_while_other_spells_remain() -> None:
+    piece = creature("Piece", 6, combo=True)
+    finisher = creature("Finisher", 7, finisher=True)
+    tutor = make("Tutor", mv=5, tutor=Tutor(frozenset(), TutorDestination.HAND))
+    hand = [FOREST, FOREST, piece, finisher, tutor, creature("Three", 3), creature("Two", 2)]
+    # The cheaper plain spells go before the dearer cards that win.
+    assert names(london_bottom(hand, 2)) == ["Three", "Two"]
+
+
+def test_the_london_bottom_puts_the_dearest_of_the_winning_cards_when_only_they_remain() -> None:
+    piece = creature("Piece", 6, combo=True)
+    finisher = creature("Finisher", 7, finisher=True)
+    tutor = make("Tutor", mv=5, tutor=Tutor(frozenset(), TutorDestination.HAND))
+    assert names(london_bottom([FOREST, FOREST, piece, finisher, tutor], 2)) == ["Finisher", "Piece"]
+
+
+def test_the_london_bottom_puts_a_tapped_land_before_an_untapped_one_when_no_spell_is_left() -> None:
+    tapped = land("Tapped", "G", tapped=True)
+    assert names(london_bottom([FOREST, tapped, FOREST], 1)) == ["Tapped"]
+    dual = land("Dual", "GU")
+    assert names(london_bottom([dual, FOREST], 1)) == ["Forest"]
 
 
 def test_a_deck_with_no_cards_plays_out_without_mana() -> None:

@@ -492,6 +492,33 @@ def _piece_ids(combo: GoldfishCombo, by_key: Mapping[str, int]) -> tuple[int, ..
     return ids if len(ids) == len(found) and ids else None
 
 
+def _split_bottom(cards: Sequence[_Card], hand: Sequence[int], count: int) -> tuple[list[int], list[int]]:
+    """The hand kept and the cards put on the bottom, in the order put: lands past four first, then the
+    dearest spell that is not a combo piece, a tutor or a finisher, then the dearest of those, then a land."""
+    kept = list(hand)
+    bottomed: list[int] = []
+    for _ in range(count):
+        if not kept:
+            break
+        lands = [cid for cid in kept if cards[cid].is_land]
+        spells = [cid for cid in kept if not cards[cid].is_land]
+        free = [cid for cid in spells if not cards[cid].win_piece]
+        if len(lands) > _MAX_KEPT_LANDS or not spells:
+            pick = min(lands, key=lambda cid: (_POP[cards[cid].land_mask], cards[cid].land_tapped is False))
+        else:
+            pick = max(free or spells, key=lambda cid: cards[cid].mv)
+        kept.remove(pick)
+        bottomed.append(pick)
+    return kept, bottomed
+
+
+def london_bottom(hand: Sequence[GoldfishCard], count: int) -> list[GoldfishCard]:
+    """The cards of the hand put on the bottom for `count` mulligans past the free one, in the order put."""
+    cards = [_Card(card) for card in hand]
+    _, bottomed = _split_bottom(cards, range(len(hand)), count)
+    return [hand[index] for index in bottomed]
+
+
 # --- one game ---------------------------------------------------------------------------------------------
 
 type _Pick = tuple[int, _Card, tuple[int, ...], tuple[int, int] | None, int, bool]
@@ -594,7 +621,7 @@ class _Game:
             self.shuffles += 1
             bottoms = max(self.shuffles - 1 - _FREE_MULLIGANS, 0)
             hand = lib[:_HAND]
-            kept, bottomed = self._bottom(hand, bottoms)
+            kept, bottomed = _split_bottom(s.cards, hand, bottoms)
             if bottoms >= 2 or s.keeps(kept):  # noqa: PLR2004 — five cards, kept whatever they hold
                 break
         self.lib = lib
@@ -602,28 +629,6 @@ class _Game:
         self.top = len(hand)
         self.hand = kept
         self.hand_size = _HAND - bottoms
-
-    def _bottom(self, hand: list[int], count: int) -> tuple[list[int], list[int]]:
-        """Put `count` cards on the bottom: lands past four first, then the dearest spell that is not a combo
-        piece, a tutor or a finisher, then the dearest of the rest, then a land."""
-        cards = self.s.cards
-        kept = list(hand)
-        bottomed: list[int] = []
-        for _ in range(count):
-            if not kept:
-                break
-            lands = [cid for cid in kept if cards[cid].is_land]
-            spells = [cid for cid in kept if not cards[cid].is_land]
-            free = [cid for cid in spells if not cards[cid].win_piece and not cards[cid].finisher]
-            if len(lands) > _MAX_KEPT_LANDS or not spells:
-                pick = min(
-                    lands, key=lambda cid: (_POP[cards[cid].land_mask], cards[cid].land_tapped is False)
-                )
-            else:
-                pick = max(free or spells, key=lambda cid: cards[cid].mv)
-            kept.remove(pick)
-            bottomed.append(pick)
-        return kept, bottomed
 
     def _take_turn(self) -> None:
         s = self.s
