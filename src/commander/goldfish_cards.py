@@ -165,6 +165,8 @@ class Tutor:
     # of one when `either` ("an artifact or Dragon card").
     subtypes: frozenset[str] = frozenset()
     either: bool = False
+    # Finds any number of cards whose mana values add up to this or less (Protean Hulk: 6).
+    total_mana_value: int | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -235,6 +237,10 @@ class GoldfishCard:
     # which a creature does as it attacks.
     treasure_on_tap: frozenset[str] = frozenset()
     activated_tutor: ActivatedTutor | None = None
+    # A search as the creature dies (Protean Hulk, Academy Rector), which a free sacrifice outlet brings on.
+    dies_tutor: Tutor | None = None
+    # Sacrifices a creature for no mana (Carrion Feeder, Phyrexian Tower, Ashnod's Altar).
+    free_outlet: bool = False
 
     @property
     def permanent(self) -> bool:
@@ -483,6 +489,8 @@ _UNMODELLED = re.compile(
 )
 # A cost reduction, for other spells (Herald's Horn) or this one (Ghalta): the card is never modelled.
 _COST_REDUCER = re.compile(r"costs? (?:\{[^}]+\})+ less|less to cast")
+# An ability that sacrifices a creature for no mana, tapping its permanent at most (Phyrexian Tower).
+_FREE_OUTLET = re.compile(r"^(?:\{t\}, )?sacrifice (?:a|another) creature(?:, \{t\})?: ", re.MULTILINE)
 # An activated ability that taps its permanent and adds no mana (Hermit Druid's "{G}, {T}: Reveal ...").
 _TAP_ABILITY = re.compile(r"^[^:\n]*\{t\}[^:\n]*: (?!add\b)", re.MULTILINE)
 # A land that returns a land to the hand on entering (Karoo).
@@ -531,12 +539,14 @@ def _compile_card(
         name, info.oracle_id, context, copies, commander, mana_value=cost[0], pips=cost[1], kinds=kinds
     )
     power = context.powers.get(info.oracle_id)
-    changeling = _CHANGELING.search(info.oracle_text.casefold()) is not None
+    text = info.oracle_text.casefold()
+    changeling = _CHANGELING.search(text) is not None
     card = replace(
         card,
         x_cost=any(symbol == "X" for symbol in PIP.findall(cost_halves(info.mana_cost)[face])),
         power=int(power) if power is not None and power.isdigit() else None,
         subtypes=frozenset({CHANGELING}) if changeling else _subtypes(info.type_line),
+        free_outlet=card.permanent and _FREE_OUTLET.search(text) is not None,
     )
     if info_is_land(info):
         land, understood = _land_face(info, context)
@@ -931,6 +941,8 @@ class _Search:
     compound: bool
     # Happens on a trigger other than the card's arrival or casting, such as its death (Academy Rector).
     deferred: bool = False
+    # The line before the search: the trigger or the cost and what else happens first.
+    before: str = ""
 
 
 _SEARCH = re.compile(r"search your library(?: and/or graveyard)? for (?P<what>[^.]*)\.")
@@ -960,7 +972,11 @@ _TUTOR_KINDS = {
 }
 _VALUE_LIMIT = re.compile(r"mana value (x|\d+) or less")
 _POWER_LIMIT = re.compile(r"with power (\d+) or less")
-_UNSUPPORTED_CONDITION = re.compile(r"\bwith\b(?! (?:mana value (?:x|\d+)|power \d+) or less\b)")
+_UNSUPPORTED_CONDITION = re.compile(
+    r"\bwith\b(?! (?:mana value (?:x|\d+)|total mana value \d+|power \d+) or less\b)"
+)
+_TOTAL_LIMIT = re.compile(r"with total mana value (\d+) or less")
+_ANY_NUMBER = "any number of "
 _SACRIFICE_VALUE = re.compile(r"where x is (\d+) plus the sacrificed creature's mana value")
 _TAPPED = re.compile(r"\btapped\b")
 _DRAW = re.compile(r"\bdraws? (?:(?P<n>an?|one|two|three|four|five|six|seven|x) cards?|cards)")
@@ -979,7 +995,9 @@ def _search(text: str) -> _Search | None:
         compound = (not cost and "sacrifice" in before) or _SECOND_CARD.search(matched.group(0)) is not None
         deferred = line.startswith("when ") and _ON_CAST.match(line) is None
         rest = line[matched.start() :]
-        return _Search(head, matched.group(0), rest, cost, repeating, compound, deferred=deferred)
+        return _Search(
+            head, matched.group(0), rest, cost, repeating, compound, deferred=deferred, before=before
+        )
     return None
 
 
@@ -1027,7 +1045,9 @@ def _tutor(search: _Search | None, known_subtypes: frozenset[str]) -> Tutor | No
     it is the other choice beside a card type ("an artifact or Dragon card"), which only widens the search."""
     if search is None or search.cost or search.repeating or search.compound or search.deferred:
         return None
-    named = re.findall(r"[a-z]+", search.head)
+    # "Any number of creature cards with total mana value 6 or less" (Protean Hulk).
+    many = search.head.startswith(_ANY_NUMBER)
+    named = re.findall(r"[a-z]+", search.head.removeprefix(_ANY_NUMBER))
     words = [w for w in named if w not in _FILLER]
     finds = frozenset(_TUTOR_KINDS[w] for w in words if w in _TUTOR_KINDS)
     subtypes = frozenset(w for w in words if w not in _TUTOR_KINDS)
@@ -1038,9 +1058,10 @@ def _tutor(search: _Search | None, known_subtypes: frozenset[str]) -> Tutor | No
         return None
     # What the card must have, before the comma that goes on to reveal and place it.
     condition = re.split(r"\bcards?\b", search.sentence, maxsplit=1)[-1].partition(",")[0]
-    if _UNSUPPORTED_CONDITION.search(condition):
+    total = _TOTAL_LIMIT.search(condition)
+    if _UNSUPPORTED_CONDITION.search(condition) or many != (total is not None):
         return None
-    limit = _VALUE_LIMIT.search(search.rest)
+    limit = None if total is not None else _VALUE_LIMIT.search(search.rest)
     over = _SACRIFICE_VALUE.search(search.rest)
     power = _POWER_LIMIT.search(condition)
     x_limited = limit is not None and limit.group(1) == "x" and over is None
@@ -1056,7 +1077,18 @@ def _tutor(search: _Search | None, known_subtypes: frozenset[str]) -> Tutor | No
         max_power=int(power.group(1)) if power is not None else None,
         subtypes=subtypes,
         either=either,
+        total_mana_value=int(total.group(1)) if total is not None else None,
     )
+
+
+def _dies_tutor(search: _Search | None, card: GoldfishCard, known_subtypes: frozenset[str]) -> Tutor | None:
+    """A creature's search as it dies, read as the tutor it would be on casting."""
+    if search is None or not search.deferred or CardKind.CREATURE not in card.kinds:
+        return None
+    trigger = search.before.partition(",")[0]
+    if trigger not in {f"when {name} dies" for name in _names_of_itself(card)}:
+        return None
+    return _tutor(replace(search, deferred=False), known_subtypes)
 
 
 _TREASURE_SACRIFICE = re.compile(r"^sacrifice (a|one|two|three|four|five|six|seven) treasures?$")
@@ -1138,21 +1170,19 @@ def _read_spell(card: GoldfishCard, info: CardMana, text: str, context: _Context
         return replace(card, modelled=not (matters or key_card))
     ramp = _land_ramp(search, card.kinds)
     land_drops = _EXTRA_LAND_DROPS.search(text)
+    searches = ramp is None and Role.TUTOR in roles
     found = {
         "mana": _mana(text, card.kinds, context.identity),
         "land_ramp": ramp,
-        "tutor": _tutor(search, context.subtypes) if ramp is None and Role.TUTOR in roles else None,
+        "tutor": _tutor(search, context.subtypes) if searches else None,
+        "activated_tutor": _activated_tutor(search, card, context.subtypes) if searches else None,
+        "dies_tutor": _dies_tutor(search, card, context.subtypes) if searches else None,
         "draw": _draw(text, card.kinds) if Role.DRAW in roles else None,
     }
-    searches = ramp is None and Role.TUTOR in roles
-    activated = _activated_tutor(search, card, context.subtypes) if searches else None
     treasures = _treasures(text, card)
     extra = _NUMBER_WORDS[land_drops.group(1)] if land_drops else 0
     placed = (
-        extra > 0
-        or activated is not None
-        or treasures != (0, 0, frozenset())
-        or any(value is not None for value in found.values())
+        extra > 0 or treasures != (0, 0, frozenset()) or any(value is not None for value in found.values())
     )
     # A key card cast for a cost the Tagger calls alternative may be cast sooner than its mana value says.
     alternative = bool(context.tags.get(info.oracle_id, frozenset()) & ALTERNATIVE_COST_TAGS)
@@ -1166,7 +1196,6 @@ def _read_spell(card: GoldfishCard, info: CardMana, text: str, context: _Context
         treasures_on_entry=treasures[0],
         treasures_on_attack=treasures[1],
         treasure_on_tap=treasures[2],
-        activated_tutor=activated,
         **found,
     )
 
@@ -1193,9 +1222,7 @@ def _treasures(text: str, card: GoldfishCard) -> tuple[int, int, frozenset[str]]
     one."""
     if not card.permanent:
         return 0, 0, frozenset()
-    name = card.name.casefold()
-    # The card names itself "this creature" ("this artifact" and so on) or by its name or short name.
-    itself = {f"this {kind.value}" for kind in card.kinds} | {name, name.partition(",")[0]}
+    itself = _names_of_itself(card)
     entry, attack = (
         next((found for found in pattern.finditer(text) if found.group("who") in itself), None)
         for pattern in (_ENTRY_TREASURES, _ATTACK_TREASURES)
@@ -1206,6 +1233,12 @@ def _treasures(text: str, card: GoldfishCard) -> tuple[int, int, frozenset[str]]
         _NUMBER_WORDS[attack.group("n")] if attack is not None else 0,
         frozenset({tapped.group("type")}) if tapped is not None else frozenset(),
     )
+
+
+def _names_of_itself(card: GoldfishCard) -> set[str]:
+    """What the card's text calls it: "this creature" ("this artifact" and so on), its name or short name."""
+    name = card.name.casefold()
+    return {f"this {kind.value}" for kind in card.kinds} | {name, name.partition(",")[0]}
 
 
 def _matters(text: str, roles: frozenset[Role], search: _Search | None) -> bool:

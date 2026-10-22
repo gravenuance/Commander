@@ -1140,6 +1140,34 @@ def test_a_creature_attacks_for_its_treasure_only_once_it_is_no_longer_summoning
     assert only_outcome(run(slots, combos=(combo_of(piece),))).combo_turns == (3,)
 
 
+def hulk_landed(piece_value: int, *, outlet: bool) -> list[tuple[int, ...]]:
+    """The combo turns of a deck whose commanders are a one-mana Protean Hulk and a one-mana creature, a
+    free sacrifice outlet or not, and whose library holds seven Forests, four tutors that find nothing and the
+    combo's one piece, a creature too dear to cast by turn five."""
+    hulk = replace(
+        make("Hulk", mv=1, kinds=CREATURE),
+        dies_tutor=Tutor(frozenset({CardKind.CREATURE}), TutorDestination.BATTLEFIELD, total_mana_value=6),
+    )
+    seer = replace(make("Seer", mv=1, kinds=CREATURE), free_outlet=outlet)
+    piece = make("Piece", mv=piece_value, kinds=CREATURE, combo=True)
+    junk = make("Junk", mv=9, tutor=Tutor(frozenset({CardKind.INSTANT}), TutorDestination.HAND))
+    slots = [*repeat(FOREST, 7), piece, *repeat(junk, 4)]
+    report = run(slots, commanders=(hulk, seer), combos=(combo_of(piece),), games=3000)
+    return [o.combo_turns for o in report.outcomes]
+
+
+def test_a_creature_that_searches_as_it_dies_is_sacrificed_to_a_free_outlet_for_its_search() -> None:
+    # The second commander comes on turn two, when the Hulk dies and fetches the piece if it is still among
+    # the three cards of twelve left in the library: a quarter of the games (all but 1 in 792 hands kept).
+    # Four standard errors are 0.032.
+    turns = hulk_landed(6, outlet=True)
+    assert set(turns) == {(0,), (2,)}
+    assert turns.count((2,)) / len(turns) == pytest.approx(0.25, abs=0.032)
+    assert set(hulk_landed(6, outlet=False)) == {(0,)}
+    # A piece dearer than the total is not found.
+    assert set(hulk_landed(7, outlet=True)) == {(0,)}
+
+
 def test_treasures_from_a_dwarf_attacking_pay_for_a_search_that_sacrifices_them() -> None:
     finds = Tutor(frozenset({CardKind.ARTIFACT}), TutorDestination.BATTLEFIELD)
     magda = replace(

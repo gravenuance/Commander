@@ -502,6 +502,7 @@ class _Setup:
         "combo_free",
         "combo_ids",
         "combo_pieces",
+        "deaths",
         "fin_ids",
         "has_needs",
         "has_rituals",
@@ -562,6 +563,8 @@ class _Setup:
         )
         self.fin_ids = tuple(cid for cid, card in enumerate(self.cards) if card.finisher)
         self.tap_pieces = frozenset(cid for cid, card in enumerate(self.cards) if card.src.tap_ability)
+        # Creatures that search as they die, and a free outlet to sacrifice them to.
+        self.deaths = any(c.src.dies_tutor for c in self.cards) and any(c.src.free_outlet for c in self.cards)
         # Attacks make Treasures: a creature's own trigger, or a permanent's for a creature becoming tapped.
         self.attacks = any(c.src.treasures_on_attack or c.src.treasure_on_tap for c in self.cards)
         # One-shot mana beyond the turn's: rituals in hand, life payments, bursts for a land, Treasures.
@@ -909,6 +912,8 @@ class _Game:
             self.pending.extend([card.land_mask] * card.land_amount)
         else:
             self._add_now(card.land_mask, card.land_amount)
+        if self.s.deaths and card.src.free_outlet:
+            self._offer_deaths()
 
     def _choose_land(self) -> int | None:
         """An untapped land that pays a colour a spell in hand lacks, else a tapped one if the turn's spending
@@ -1367,8 +1372,15 @@ class _Game:
             self._draw(card.draw_count)
         if card.finisher and card.permanent:
             self._record_finisher(cid)
-        if card.src.treasures_on_entry:
-            self._make_treasures(card.src.treasures_on_entry)
+        self._arrival_triggers(card.src)
+
+    def _arrival_triggers(self, card: GoldfishCard) -> None:
+        """The Treasures a permanent makes as it comes, and the deaths a free outlet or a creature that
+        searches as it dies brings on."""
+        if card.treasures_on_entry:
+            self._make_treasures(card.treasures_on_entry)
+        if self.s.deaths and (card.free_outlet or card.dies_tutor is not None):
+            self._offer_deaths()
 
     def _make_treasures(self, count: int) -> None:
         """Treasures wait in play as one-shot mana of any colour, and count as artifacts."""
@@ -1438,11 +1450,12 @@ class _Game:
         if self.needing:
             self._meet_needs()
 
-    def _sacrifice(self) -> int:
-        """Sacrifice the cheapest creature, one that makes no mana before a mana creature before a commander,
-        and take away what it gave: its mana, its extra land drops and its draw engine. Returns its mana
-        value. A commander is not cast again (ADR 0054)."""
-        entry = min(self.creatures)
+    def _sacrifice(self, entry: tuple[int, int, int] | None = None) -> int:
+        """Sacrifice a creature of `creatures`, by default the cheapest, one that makes no mana before a mana
+        creature before a commander, and take away what it gave: its mana, its extra land drops and its draw
+        engine. Its search as it dies happens. Returns its mana value. A commander is not cast again (ADR
+        0054)."""
+        entry = min(self.creatures) if entry is None else entry
         self.creatures.remove(entry)
         _, mv, cid = entry
         card = self.s.cards[cid]
@@ -1455,7 +1468,37 @@ class _Game:
             self.drops_left = max(self.drops_left - card.extra_drops, 0)
         if card.engine:
             self.engines -= 1
+        if card.src.dies_tutor is not None:
+            self._search_all(card.src.dies_tutor)
         return mv
+
+    def _offer_deaths(self) -> None:
+        """Sacrifice each creature whose death searches to a free outlet in play, while a combo or a finisher
+        is still to come."""
+        cards = self.s.cards
+        if not (self.open_combos or self.open_fins) or not any(cards[cid].src.free_outlet for cid in self.bf):
+            return
+        for entry in [entry for entry in self.creatures if cards[entry[2]].src.dies_tutor is not None]:
+            if entry in self.creatures:
+                self._sacrifice(entry)
+
+    def _search_all(self, tutor: Tutor) -> None:
+        """A search for one card, or for any number whose mana values add up to the tutor's total."""
+        if tutor.total_mana_value is None:
+            target = self._target(tutor, self.units, 0)
+            if target is not None:
+                self._fetch(tutor, target)
+            return
+        self.tutor_look = True
+        cards = self.s.cards
+        left = tutor.total_mana_value
+        chosen: list[int] = []
+        for cid, _ in self._wanted():
+            if cid not in chosen and cards[cid].mv <= left and _finds(cards[cid], tutor, None):
+                chosen.append(cid)
+                left -= cards[cid].mv
+        for cid in chosen:
+            self._fetch(tutor, (self.lib.index(cid, self.top), cid))
 
     # -- searching ----------------------------------------------------------------------------------------
 

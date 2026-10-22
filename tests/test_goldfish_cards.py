@@ -1925,10 +1925,48 @@ def test_a_tutor_for_a_subtype_of_a_card_type_needs_both() -> None:
     )
 
 
-def test_a_tutor_that_searches_when_its_creature_dies_is_not_modelled() -> None:
+PROTEAN_HULK = real(
+    "Protean Hulk",
+    "{5}{G}{G}",
+    7,
+    "Creature — Beast",
+    "When this creature dies, search your library for any number of creature cards with total mana value 6 "
+    "or less, put them onto the battlefield, then shuffle.",
+    roles=(TUTOR,),
+)
+CARRION_FEEDER = real(
+    "Carrion Feeder",
+    "{B}",
+    1,
+    "Creature — Zombie",
+    "This creature can't block.\nSacrifice a creature: Put a +1/+1 counter on this creature.",
+)
+PHYREXIAN_TOWER = real(
+    "Phyrexian Tower",
+    "",
+    0,
+    "Legendary Land",
+    "{T}: Add {C}.\n{T}, Sacrifice a creature: Add {B}{B}.",
+    produced="BC",
+)
+
+
+def test_a_search_as_the_creature_dies_is_its_death_tutor_and_not_one_on_casting() -> None:
     rector = one(ACADEMY_RECTOR)
     assert rector.tutor is None
-    assert not rector.modelled
+    assert rector.dies_tutor == Tutor(frozenset({CardKind.ENCHANTMENT}), TutorDestination.BATTLEFIELD)
+    assert rector.modelled
+    hulk = one(PROTEAN_HULK)
+    creatures = frozenset({CardKind.CREATURE})
+    assert hulk.dies_tutor == Tutor(creatures, TutorDestination.BATTLEFIELD, total_mana_value=6)
+    assert hulk.modelled
+
+
+def test_a_sacrifice_for_no_mana_is_a_free_outlet_and_one_that_costs_mana_is_not() -> None:
+    assert one(CARRION_FEEDER).free_outlet
+    assert one(PHYREXIAN_TOWER).free_outlet
+    assert not one(DIABOLIC_INTENT).free_outlet
+    assert not one(PROTEAN_HULK).free_outlet
 
 
 def test_a_creature_with_a_tap_ability_other_than_mana_says_so() -> None:
