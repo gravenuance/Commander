@@ -193,6 +193,22 @@ def test_how_a_card_is_judged_follows_its_layout(
     assert castings(card("Two Parts", cost, mana_value, layout=layout)) == expected
 
 
+@pytest.mark.parametrize(
+    ("cost", "mana_value", "expected"),
+    [
+        ("{3}{U/B}{U/B}", 5, {"U/B": 2}),
+        ("{W}{W/U}", 2, {"W": 1, "W/U": 1}),
+        ("{1}{C/W}", 2, {"C/W": 1}),
+        ("{2/W}{2/W}", 4, {}),
+        ("{R/P}{1}", 2, {}),
+    ],
+)
+def test_two_colour_hybrid_pips_are_kept_under_their_symbol_for_the_goldfish(
+    cost: str, mana_value: int, expected: dict[str, int]
+) -> None:
+    assert castings(card("Hybrid", cost, mana_value))[0].pips == expected
+
+
 CUT_RIBBONS_TEXT = (
     "Cut deals 4 damage to target creature.\n//\n"
     "Aftermath (Cast this spell only from your graveyard. Then exile it.)\nEach opponent loses X life."

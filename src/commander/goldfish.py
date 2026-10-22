@@ -3,8 +3,9 @@
 Pure: the input is the compiled cards of `goldfish_cards`, the output a `GoldfishReport` of figures plus the
 outcome of every game. The game loop reads small ints and tuples built once per run, never rules text.
 
-Determinism: game `i` of a run uses `game_rng(seed, i)` and nothing else, and its k-th shuffle is the k-th
-`shuffle` of a list of `len(slots)` items on that stream, whatever was played before. A swap that puts a new
+Determinism: game `i` of a run uses `game_rng(seed, i)` and nothing else, and its k-th shuffle takes
+`8 * len(slots)` bytes from that stream, whatever was played before, as the numbers of a Fisher-Yates from
+the front that is carried out only as far as the game reads (`_Game._settle`). A swap that puts a new
 card into a cut card's slots (`compare`) therefore replays the same shuffles, and a game whose outcome
 records that the cut slot was never reached (`reached`), and whose searches (`land_search`,
 `tutor_look`) never looked at a kind of card the swap changes, is unchanged.
@@ -54,7 +55,8 @@ _BIG_CURVE = 3.5
 # Colours as bits, so a mana unit is one small int: the set of colours it can pay.
 _BITS = {"W": 1, "U": 2, "B": 4, "R": 8, "G": 16, "C": 32}
 _POP = tuple(mask.bit_count() for mask in range(64))
-_POP_KEY = _POP.__getitem__
+# The order units are paid in: colourless first, as it pays only generic mana, then by how many colours.
+_PAY_KEY = tuple(0 if mask == _BITS["C"] else _POP[mask] for mask in range(64)).__getitem__
 _BASICS = frozenset({"plains", "island", "swamp", "mountain", "forest", "wastes"})
 
 # Ranks order what the policy does first: lower goes first. A held card is never cast by the policy.
@@ -66,6 +68,8 @@ _DRAW_RANK = 400
 _COMBO_RANK = 500
 _OTHER_RANK = 600
 _RANK_SPAN = 99
+# Bytes of randomness a shuffle takes per card: one 64-bit number for each step of the Fisher-Yates.
+_STEP_BYTES = 8
 
 
 def turns_shown(bracket: int | None) -> tuple[int, ...]:
@@ -189,36 +193,47 @@ def unit_mask(colours: Iterable[str]) -> int:
     return mask
 
 
+def symbol_mask(symbol: str) -> int:
+    """The units that pay a pip: a colour ("W"), or either colour of a hybrid pip ("W/U")."""
+    return unit_mask(symbol.split("/"))
+
+
 def _hall(needs: Mapping[int, int]) -> tuple[tuple[int, int], ...]:
-    """Hall's condition for paying coloured pips from units that each pay some colours: for every set of
-    pip colours, the units able to pay any of them must number as many as those pips."""
+    """Hall's condition for paying pips from units that each pay some colours: for every set of pip kinds,
+    the units able to pay any of them must number as many as those pips. A pip kind is the mask of the units
+    that pay it, one colour or, for a hybrid pip, two."""
     terms: list[tuple[int, int]] = []
     for size in range(1, len(needs) + 1):
-        for bits in combinations(sorted(needs), size):
-            terms.append((sum(bits), sum(needs[b] for b in bits)))  # noqa: PERF401 — two sums per term
+        for masks in combinations(sorted(needs), size):
+            union = 0
+            for mask in masks:
+                union |= mask
+            terms.append((union, sum(needs[m] for m in masks)))
     return tuple(terms)
 
 
 class Cost:
-    """A cost in the form the payment checks read."""
+    """A cost in the form the payment checks read: `needs` counts the pips that each mask of units can pay."""
 
-    __slots__ = ("generic", "hall", "pip_bits", "single", "total")
+    __slots__ = ("generic", "hall", "pip_masks", "single", "total")
 
     def __init__(self, total: int, needs: Mapping[int, int]) -> None:
         pips = sum(needs.values())
         self.total = max(total, pips)
         self.generic = self.total - pips
         self.hall = _hall(needs)
-        self.pip_bits = tuple(bit for bit in sorted(needs) for _ in range(needs[bit]))
+        self.pip_masks = tuple(mask for mask in sorted(needs) for _ in range(needs[mask]))
         self.single = next(iter(needs)) if len(needs) == 1 else 0
 
 
 def cost_of(total: int, pips: Mapping[str, int]) -> Cost:
+    """A cost of mana value `total` with the pips of a card (`GoldfishCard.pips`): colours, colourless and
+    two-colour hybrid symbols; the rest of the total is generic."""
     needs: dict[int, int] = {}
-    for colour, count in pips.items():
-        bit = _BITS.get(colour, 0)
-        if bit and count > 0:
-            needs[bit] = needs.get(bit, 0) + count
+    for symbol, count in pips.items():
+        mask = symbol_mask(symbol)
+        if mask and count > 0:
+            needs[mask] = needs.get(mask, 0) + count
     return Cost(total, needs)
 
 
@@ -237,19 +252,19 @@ def can_pay(units: Sequence[int], cost: Cost) -> bool:
     return True
 
 
-def _match(units: Sequence[int], bits: Sequence[int]) -> list[int] | None:
-    """Indexes of units paying each pip, found by trying the scarcest colour first and backing out."""
-    scarcity = {bit: sum(1 for unit in units if unit & bit) for bit in set(bits)}
-    order = sorted(bits, key=scarcity.__getitem__)
+def _match(units: Sequence[int], masks: Sequence[int]) -> list[int] | None:
+    """Indexes of units paying each pip, found by trying the scarcest pip first and backing out."""
+    scarcity = {mask: sum(1 for unit in units if unit & mask) for mask in set(masks)}
+    order = sorted(masks, key=scarcity.__getitem__)
     used: list[int] = []
 
     def place(position: int) -> bool:
         if position == len(order):
             return True
-        bit = order[position]
+        mask = order[position]
         tried: set[int] = set()
         for index, unit in enumerate(units):
-            if not unit & bit or unit in tried or index in used:
+            if not unit & mask or unit in tried or index in used:
                 continue
             tried.add(unit)
             used.append(index)
@@ -262,22 +277,22 @@ def _match(units: Sequence[int], bits: Sequence[int]) -> list[int] | None:
 
 
 def sort_units(units: list[int]) -> None:
-    """Order mana units as `pay` expects them: the ones paying the fewest colours first."""
-    units.sort(key=_POP_KEY)
+    """Order mana units as `pay` expects them: colourless first, then the ones paying the fewest colours."""
+    units.sort(key=_PAY_KEY)
 
 
 def pay(units: list[int], cost: Cost) -> None:
-    """Take the cost out of units, which are sorted by how many colours each pays, fewest first: coloured pips
-    use the least flexible unit that can pay them, and generic mana the least flexible of what is left."""
+    """Take the cost out of units, which are in `sort_units` order: coloured pips use the least flexible unit
+    that can pay them, and generic mana the least flexible of what is left."""
     if cost.single:
-        bit = cost.single
-        for _ in cost.pip_bits:
+        mask = cost.single
+        for _ in cost.pip_masks:
             for index, unit in enumerate(units):
-                if unit & bit:
+                if unit & mask:
                     del units[index]
                     break
-    elif cost.pip_bits:
-        chosen = _match(units, cost.pip_bits)
+    elif cost.pip_masks:
+        chosen = _match(units, cost.pip_masks)
         if chosen is None:
             raise AssertionError("a checked cost could not be paid")
         for index in sorted(chosen, reverse=True):
@@ -307,6 +322,7 @@ class _Card:
         "fin_cost",
         "finisher",
         "gain",
+        "hybrids",
         "is_land",
         "keep_syn",
         "key",
@@ -343,10 +359,13 @@ class _Card:
         # Mana a ritual adds, net of the mana its own cost takes.
         self.gain = 0 if mana is None else mana.amount - (0 if spend_from_hand else card.mana_value)
         activation = card.land_ramp.activation if card.land_ramp is not None else 0
-        self.cost = cost_of(0 if spend_from_hand else card.mana_value + activation, card.pips)
+        # A spirit guide is exiled, not cast: its pips are not paid.
+        self.cost = cost_of(0, {}) if spend_from_hand else cost_of(card.mana_value + activation, card.pips)
         fin = card.mana_value + FINISHER_X if card.x_cost else card.mana_value
         self.fin_cost = cost_of(fin, card.pips)
-        self.pip_mask = unit_mask(colour for colour, count in card.pips.items() if count > 0)
+        paid = [symbol for symbol, count in card.pips.items() if count > 0]
+        self.pip_mask = unit_mask(symbol for symbol in paid if "/" not in symbol)
+        self.hybrids = tuple(symbol_mask(symbol) for symbol in paid if "/" in symbol)
         self.is_land = card.land is not None and CardKind.LAND in card.kinds
         self.mdfc = card.land is not None and not self.is_land
         land = card.land
@@ -488,13 +507,13 @@ class _Setup:
         found = self.merged.get(cids)
         if found is None:
             total = 0
-            pips: dict[str, int] = {}
+            needs: dict[int, int] = {}
             for cid in cids:
-                card = self.cards[cid]
-                total += card.cost.total
-                for colour, count in card.src.pips.items():
-                    pips[colour] = pips.get(colour, 0) + count
-            found = self.merged[cids] = cost_of(total, pips)
+                cost = self.cards[cid].cost
+                total += cost.total
+                for mask in cost.pip_masks:
+                    needs[mask] = needs.get(mask, 0) + 1
+            found = self.merged[cids] = Cost(total, needs)
         return found
 
 
@@ -565,11 +584,13 @@ class _Game:
         "pending",
         "pool",
         "pops",
+        "rand",
         "reached",
         "rng",
         "s",
         "screw",
         "searched",
+        "settled",
         "shuffles",
         "sick",
         "top",
@@ -582,6 +603,9 @@ class _Game:
         self.s = setup
         self.rng = rng
         self.lib: list[int] = []
+        # The random numbers of the library's shuffle, one per card, and how many at its front are final.
+        self.rand = memoryview(b"").cast("Q")
+        self.settled = 0
         self.top = 0
         self.hand: list[int] = []
         self.hand_size = _HAND
@@ -603,7 +627,8 @@ class _Game:
         self.fetched: set[int] = set()
         self.searched = False
         self.pops = 0
-        self.dealt: list[int] = []
+        # The library as dealt, once a search has settled it and started taking cards out.
+        self.dealt: list[int] | None = None
         self.reached: set[int] = set()
         self.land_search = False
         self.tutor_look = False
@@ -625,7 +650,11 @@ class _Game:
             self.turn = turn
             self._take_turn()
         depth = self.top + self.pops
-        self.reached.update(self.dealt[:depth])
+        if self.dealt is None:
+            self._settle(depth)
+            self.reached.update(self.lib[: min(depth, len(self.rand))])
+        else:
+            self.reached.update(self.dealt[:depth])
         return GameOutcome(
             hand_size=self.hand_size,
             commander_turns=tuple(self.cmd_turn[cid] for cid in s.cmd_ids),
@@ -647,16 +676,18 @@ class _Game:
         s = self.s
         while True:
             lib = list(s.ids)
-            self.rng.shuffle(lib)
+            # Every shuffle takes the same amount from the stream, however far the game reads into it.
+            self.rand = memoryview(self.rng.randbytes(_STEP_BYTES * len(lib))).cast("Q")
+            self.settled = 0
+            self.lib = lib
             self.shuffles += 1
+            self._settle(_HAND)
             bottoms = max(self.shuffles - 1 - _FREE_MULLIGANS, 0)
             hand = lib[:_HAND]
             self.reached.update(hand)
             kept, bottomed = _split_bottom(s.cards, hand, bottoms)
             if bottoms >= 2 or s.keeps(kept):  # noqa: PLR2004 — five cards, kept whatever they hold
                 break
-        self.dealt = lib[:]
-        self.lib = lib
         self.lib.extend(bottomed)
         self.top = len(hand)
         self.hand = kept
@@ -668,7 +699,7 @@ class _Game:
         if self.pending:
             pool.extend(self.pending)
             self.pending.clear()
-            pool.sort(key=_POP_KEY)
+            pool.sort(key=_PAY_KEY)
         self.sick.clear()
         self._draw(1 + self.engines)
         self.drops_left = 1 + self.extra_drops
@@ -679,14 +710,32 @@ class _Game:
             self._check_screw()
         self.mana.append(len(pool))
 
+    def _settle(self, count: int) -> None:
+        """Shuffle the library down to its first `count` cards, which are then final: a Fisher-Yates from the
+        front, one step per card, so a game pays for the cards it reads and no more."""
+        lib, rand = self.lib, self.rand
+        size = len(rand)
+        for i in range(self.settled, min(count, size)):
+            j = i + rand[i] % (size - i)
+            lib[i], lib[j] = lib[j], lib[i]
+        self.settled = max(self.settled, min(count, size))
+
+    def _open_library(self) -> None:
+        """Settle the whole library before a search reads or takes from it, and keep the order dealt."""
+        if self.dealt is None:
+            self._settle(len(self.rand))
+            self.dealt = self.lib[: len(self.rand)]
+
     def _draw(self, count: int) -> None:
         lib = self.lib
-        for _ in range(count):
-            if self.top >= len(lib):
-                return
-            self.hand.append(lib[self.top])
-            self.top += 1
-        self.check_land = True
+        end = self.top + count
+        if end > self.settled:
+            self._settle(end)
+        left = len(lib) - self.top
+        self.hand.extend(lib[self.top : end])
+        self.top += min(count, left)
+        if count <= left:
+            self.check_land = True
 
     # -- lands --------------------------------------------------------------------------------------------
 
@@ -743,6 +792,7 @@ class _Game:
         for unit in self.pool:
             cover |= unit
         want = 0
+        unmet = 0
         extra = False
         for cid in (*self.hand, *self.cmd_left):
             card = cards[cid]
@@ -750,13 +800,20 @@ class _Game:
                 continue
             if card.cost.total <= have + 2:
                 want |= card.pip_mask
+                unmet |= card.pip_mask & ~cover
+                for hybrid in card.hybrids:
+                    want |= hybrid
+                    # A hybrid pip is met by any one of its colours.
+                    if not hybrid & cover:
+                        unmet |= hybrid
             extra = extra or have < card.cost.total <= have + 1
-        return want, want & ~cover, extra
+        return want, unmet, extra
 
     def _find_land(self, *, basic_only: bool, types: frozenset[str]) -> int:
         """The index in the library of the land to fetch, or -1: the one best for the colours wanted, among
         the lands with one of the basic land types (any land when none are named)."""
         cards = self.s.cards
+        self._open_library()
         first: dict[int, int] = {}
         for index in range(self.top, len(self.lib)):
             cid = self.lib[index]
@@ -803,9 +860,9 @@ class _Game:
     def _add_now(self, mask: int, count: int) -> None:
         added = [mask] * count
         self.pool.extend(added)
-        self.pool.sort(key=_POP_KEY)
+        self.pool.sort(key=_PAY_KEY)
         self.units.extend(added)
-        self.units.sort(key=_POP_KEY)
+        self.units.sort(key=_PAY_KEY)
 
     def _remove_creature_mana(self, cid: int, mask: int, count: int) -> None:
         """Take a sacrificed mana creature's mana away from where it sits: next turn's mana while it is
@@ -835,7 +892,7 @@ class _Game:
                 continue
             pay(trial, card.cost)
             trial.extend([card.mana_mask] * card.mana_amount)
-            trial.sort(key=_POP_KEY)
+            trial.sort(key=_PAY_KEY)
             used.append(cid)
             if can_pay(trial, cost):
                 return tuple(used)
@@ -846,7 +903,7 @@ class _Game:
         self.hand.remove(cid)
         pay(self.units, card.cost)
         self.units.extend([card.mana_mask] * card.mana_amount)
-        self.units.sort(key=_POP_KEY)
+        self.units.sort(key=_PAY_KEY)
 
     # -- what to do ---------------------------------------------------------------------------------------
 
@@ -970,15 +1027,21 @@ class _Game:
             self._record_finisher(cid)
 
     def _sacrifice(self) -> int:
-        """Sacrifice the cheapest creature, one that makes no mana before a mana creature before a commander;
-        returns its mana value."""
+        """Sacrifice the cheapest creature, one that makes no mana before a mana creature before a commander,
+        and take away what it gave: its mana, its extra land drops and its draw engine. Returns its mana
+        value. A commander is not cast again (ADR 0054)."""
         entry = min(self.creatures)
         self.creatures.remove(entry)
-        rank, mv, cid = entry
+        _, mv, cid = entry
+        card = self.s.cards[cid]
         self.bf.discard(cid)
-        if rank == 1:
-            card = self.s.cards[cid]
+        if card.mana_perm:
             self._remove_creature_mana(cid, card.mana_mask, card.mana_amount)
+        if card.extra_drops:
+            self.extra_drops -= card.extra_drops
+            self.drops_left = max(self.drops_left - card.extra_drops, 0)
+        if card.engine:
+            self.engines -= 1
         return mv
 
     # -- searching ----------------------------------------------------------------------------------------
@@ -1022,6 +1085,9 @@ class _Game:
         """What a tutor is after that is in the library, best first, with its place there: the missing
         pieces of the combos with the fewest missing, dearest first, then the finishers not castable yet."""
         s = self.s
+        if not self.open_combos and not s.fin_ids:
+            return []
+        self._open_library()
         cards = s.cards
         where: dict[int, int] = {}
 

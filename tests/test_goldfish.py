@@ -504,6 +504,41 @@ def test_sacrificing_a_mana_creature_takes_only_its_own_mana_not_a_tapped_lands(
     assert only_outcome(run(slots)).mana == (1, 1, 3, 3, 3)
 
 
+def test_sacrificing_a_creature_that_grants_land_drops_takes_the_drops_away() -> None:
+    oracle = make("Oracle", mv=1, pips={"G": 1}, kinds=CREATURE, extra_land_drops=1)
+    sacrifice = make("Sacrifice", mv=1, pips={"G": 1}, needs_sacrifice=True)
+    slots = [*repeat(FOREST, 5), oracle, sacrifice]
+    # Turn one: Forest, Oracle, a second Forest, Sacrifice eats Oracle. Then one land a turn: 2, 3, 4, 5, 5.
+    assert only_outcome(run(slots)).mana == (2, 3, 4, 5, 5)
+
+
+def test_sacrificing_a_mana_commander_takes_its_mana_away() -> None:
+    boss = make(
+        "Boss",
+        mv=1,
+        pips={"G": 1},
+        kinds=CREATURE,
+        mana=ManaAbility(1, frozenset("G"), delayed=False, ritual=False),
+    )
+    sacrifice = make("Sacrifice", mv=1, pips={"G": 1}, needs_sacrifice=True)
+    slots = [*repeat(FOREST, 5), sacrifice, VANILLA]
+    # Turn one: Forest, Boss (its mana comes at once), Sacrifice eats Boss: only the Forest's mana is left.
+    outcome = only_outcome(run(slots, commanders=(boss,)))
+    assert outcome.commander_turns == (1,)
+    assert outcome.mana == (1, 2, 3, 4, 5)
+
+
+def test_a_sacrificed_draw_engine_draws_no_more_cards() -> None:
+    engine = make("Engine", mv=1, pips={"G": 1}, kinds=CREATURE, draw=Draw(1, engine=True))
+    sacrifice = make("Sacrifice", mv=1, pips={"G": 1}, needs_sacrifice=True)
+    report = run([*repeat(FOREST, 16)], commanders=(engine, sacrifice))
+    outcome = only_outcome(report)
+    # Turn one casts the engine, turn two casts Sacrifice after drawing two cards and eats the engine.
+    assert outcome.commander_turns == (1, 2)
+    # Cards drawn: one on turn one, two on turn two, then one a turn: 7 + 1 + 2 + 3.
+    assert outcome.shuffle_depths == (13,)
+
+
 def test_a_ritual_is_cast_only_to_pay_for_something_this_turn() -> None:
     ritual = make(
         "Dark Ritual",
@@ -524,6 +559,7 @@ def test_a_spirit_guide_pays_for_a_two_drop_on_turn_one() -> None:
     guide = make(
         "Elvish Spirit Guide",
         mv=3,
+        pips={"G": 1},
         kinds=CREATURE,
         mana=ManaAbility(1, frozenset("G"), delayed=False, ritual=True, from_hand=True),
     )
@@ -611,6 +647,62 @@ def test_two_coloured_costs_are_paid_from_dual_lands_that_cover_both() -> None:
     report = run([dual, dual, spell, *repeat(VANILLA, 4)], commanders=(boss,))
     assert report.colour_screw == 0.0
     assert only_outcome(report).commander_turns == (2,)
+
+
+def test_a_hybrid_pip_needs_a_unit_of_either_of_its_colours() -> None:
+    oona = goldfish.cost_of(2, {"U/B": 2})
+    assert not goldfish.can_pay([C, C], oona)
+    assert not goldfish.can_pay([W, G], oona)
+    assert not goldfish.can_pay([U, W], oona)
+    assert goldfish.can_pay([U, B_], oona)
+    assert goldfish.can_pay([B_, B_], oona)
+    assert goldfish.can_pay([U | W, B_ | G], oona)
+
+
+def test_a_hybrid_pip_beside_a_fixed_one_is_matched_by_hall() -> None:
+    mixed = goldfish.cost_of(2, {"W": 1, "W/U": 1})
+    assert goldfish.can_pay([W, U], mixed)
+    assert goldfish.can_pay([W, W], mixed)
+    assert not goldfish.can_pay([U, U], mixed)
+    assert not goldfish.can_pay([W, C], mixed)
+
+
+def test_a_hybrid_pip_takes_the_least_flexible_unit_of_either_colour() -> None:
+    units = [C, U, W | G]
+    goldfish.pay(units, goldfish.cost_of(2, {"W/U": 1}))
+    assert units == [W | G]
+
+
+def test_a_hybrid_commander_is_not_cast_from_colourless_mana() -> None:
+    boss = make("Boss", mv=2, pips={"U/B": 2}, kinds=CREATURE)
+    wastes = land("Wastes", "C")
+    for lands in ([wastes, wastes], [FOREST, FOREST]):
+        slots = [*lands, *repeat(VANILLA, 5)]
+        assert only_outcome(run(slots, commanders=(boss,))).commander_turns == (0,)
+
+
+def test_a_hybrid_commander_is_cast_with_either_of_its_colours() -> None:
+    boss = make("Boss", mv=2, pips={"U/B": 2}, kinds=CREATURE)
+    island = land("Island", "U")
+    for slots in ([island, SWAMP], [island, island], [SWAMP, SWAMP]):
+        assert only_outcome(run([*slots, *repeat(VANILLA, 5)], commanders=(boss,))).commander_turns == (2,)
+
+
+def test_a_land_of_a_colour_a_hybrid_spell_asks_for_is_played_first() -> None:
+    boss = make("Boss", mv=2, pips={"G": 1, "U/B": 1}, kinds=CREATURE)
+    plains = land("Plains", "W")
+    island = land("Island", "U")
+    # Turn one takes the Forest. Turn two takes the Island, not the Plains, which pays neither of the hybrid
+    # colours, so the commander comes out on turn two.
+    slots = [FOREST, plains, island, *repeat(VANILLA, 4)]
+    assert only_outcome(run(slots, commanders=(boss,))).commander_turns == (2,)
+
+
+def test_a_hybrid_spell_stuck_on_colours_counts_as_a_screw() -> None:
+    boss = make("Boss", mv=2, pips={"U/B": 1}, kinds=CREATURE)
+    assert run([*repeat(FOREST, 7)], commanders=(boss,)).colour_screw == 1.0
+    island = land("Island", "U")
+    assert run([island, island, *repeat(VANILLA, 5)], commanders=(boss,)).colour_screw == 0.0
 
 
 # --- ways to win -----------------------------------------------------------------------------------------
@@ -864,6 +956,33 @@ def test_generic_mana_comes_out_of_the_units_that_pay_the_fewest_colours() -> No
     units = [C, G, W | U | B_ | R | G]
     goldfish.pay(units, cost(2, G=1))
     assert units == [W | U | B_ | R | G]
+
+
+def test_colourless_mana_is_paid_out_before_a_single_colour() -> None:
+    units = [W, C, W | G, C, U]
+    goldfish.sort_units(units)
+    assert units == [C, C, W, U, W | G]
+    goldfish.pay(units, cost(2))
+    assert units == [W, U, W | G]
+
+
+def test_generic_costs_are_paid_with_colourless_mana_so_the_colours_are_left_for_a_later_spell() -> None:
+    plains = land("Plains", "W")
+    wastes = land("Wastes", "C")
+    stone = make(
+        "Mind Stone", mv=2, kinds=ARTIFACT, mana=ManaAbility(1, frozenset("C"), delayed=False, ritual=False)
+    )
+    vessel = make(
+        "Thought Vessel",
+        mv=2,
+        kinds=ARTIFACT,
+        mana=ManaAbility(1, frozenset("C"), delayed=False, ritual=False),
+    )
+    boss = make("Boss", mv=2, pips={"W": 2}, kinds=CREATURE)
+    slots = [plains, wastes, plains, stone, vessel, VANILLA, VANILLA]
+    # Turn two: Wastes pays for Mind Stone with Plains. Turn three has Plains, Wastes, Plains and the stone;
+    # the vessel takes the two colourless units and the two Plains pay for the commander.
+    assert only_outcome(run(slots, commanders=(boss,))).commander_turns == (3,)
 
 
 def test_a_coloured_pip_takes_the_least_flexible_unit_that_can_pay_it() -> None:

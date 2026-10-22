@@ -190,3 +190,19 @@ nearest turn shown stands in for it.
   differ from the copies the deck holds of its cut (one Forest out of ten), whose cut is not in the deck's
   library or whose card the deck already holds is left out of the figures, and `cmdr goldfish` refuses it
   with the reason.
+
+## Amendment (2026-10-22): engine fixes after review
+
+- A spirit guide is exiled from the hand for its mana and is not cast, so its own coloured pip is not paid.
+- A generic cost is paid with colourless mana first, then with the units that pay the fewest colours, so a
+  Wastes or a Mind Stone pays for a rock before a Plains does.
+- A two-colour hybrid pip ({W/U}, {C/W}) needs a unit of either colour, so Oona is not cast from colourless
+  mana. `manabase.fixed_pips` carries these pips under their symbol ("W/U"); the Mana tab reads colour
+  letters only and shows the same as before. A generic hybrid ({2/W}) and a Phyrexian pip stay generic
+  mana, which can cost more than the cheapest way to pay them.
+- A sacrificed creature takes away what it gave, whatever kind it is: its mana, the extra land drops it granted
+  and the extra card its draw engine drew each turn. A sacrificed commander stays cast, as it is cast once.
+- A shuffle takes eight bytes a card from the game's random stream and is a Fisher-Yates from the front, carried
+  out only as far as the game reads: a mulligan costs the seven cards dealt, not the whole library, and a
+  search settles the rest. The stream a game uses is still fixed by its seed and index, so a swap is played
+  on the same shuffles as before. The cards a seed deals are not the ones it dealt before.

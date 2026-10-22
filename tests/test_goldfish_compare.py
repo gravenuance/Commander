@@ -75,7 +75,23 @@ SOLO = make("Solo Spell", mv=3, pips={"B": 1}, kinds=CREATURE)
 PLAIN = [
     make(f"Spell {i}", mv=1 + i % 7, pips={"GB"[i % 2]: 1}, copies=5 if i < 10 else 4) for i in range(11)
 ]
+PIECE_C = make("Piece C", mv=2, pips={"B": 1}, kinds=CREATURE, combo=True)
 COMBO = GoldfishCombo("1-2", (PIECE_A.name, PIECE_B.name), (), ())
+# A combo the deck cannot assemble: its second piece is not among the cards.
+COMBO_MISSING_C = GoldfishCombo("1-3", (PIECE_A.name, PIECE_C.name), (), ())
+DARK_RITUAL = make(
+    "Dark Ritual",
+    mv=1,
+    pips={"B": 1},
+    kinds=frozenset({CardKind.INSTANT}),
+    mana=ManaAbility(3, frozenset("B"), delayed=False, ritual=True),
+)
+GREEN_SUN = make(
+    "Green Sun's Zenith",
+    mv=1,
+    pips={"G": 1},
+    tutor=Tutor(frozenset({CardKind.CREATURE}), TutorDestination.BATTLEFIELD, x_limited=True),
+)
 
 
 def real_shaped() -> GoldfishDeck:
@@ -102,7 +118,7 @@ def real_shaped() -> GoldfishDeck:
     return GoldfishDeck(
         cards=cards,
         commanders=(BOSS,),
-        combos=(COMBO,),
+        combos=(COMBO, COMBO_MISSING_C),
         left_out_combos=(),
         not_modelled=(),
         average_mana_value=3.0,
@@ -152,6 +168,9 @@ EQUAL_CASES = {
         )
     ],
     "a combo piece cut": [(PIECE_A, make("Filler", mv=3, pips={"G": 1}))],
+    "a combo piece in for a combo that was missing it": [(PLAIN_SPELL, PIECE_C)],
+    "a ritual in": [(PLAIN_SPELL, DARK_RITUAL)],
+    "an X-limited tutor in": [(PLAIN_SPELL, GREEN_SUN)],
     "a finisher cut": [(OVERRUN, make("Filler", mv=5, pips={"G": 1}))],
     "a finisher in": [(PLAIN_SPELL, HOOF)],
     "a finisher for a finisher": [(OVERRUN, HOOF)],
@@ -201,7 +220,12 @@ def expected_replays(result: GoldfishComparison, cut: Card, *, lands: bool, want
         rng = goldfish.game_rng(SEED, index)
         for depth in outcome.shuffle_depths:
             order = list(range(len(slots)))
-            rng.shuffle(order)
+            # A shuffle takes 8 bytes a card from the stream: a Fisher-Yates from the front, step i swapping
+            # slot i with one of the slots from i on, chosen by the i-th number modulo the slots left.
+            numbers = memoryview(rng.randbytes(8 * len(order))).cast("Q")
+            for i in range(len(order)):
+                j = i + numbers[i] % (len(order) - i)
+                order[i], order[j] = order[j], order[i]
             reached = reached or any(slot in cut_slots for slot in order[:depth])
         if reached:
             found.append(index)
@@ -240,11 +264,11 @@ def test_a_library_that_loses_cards_to_searches_reaches_that_much_further() -> N
     outcomes = judged([]).base.outcomes
     searched = [o for o in outcomes if o.searched]
     assert searched
-    # The last shuffle's depth is the cards drawn and the cards taken out: more than the hand and the draws.
-    assert all(o.shuffle_depths[-1] >= 7 for o in outcomes)
-    assert max(o.shuffle_depths[-1] for o in searched) > max(
-        o.shuffle_depths[-1] for o in outcomes if not o.searched
-    )
+    # The last shuffle's depth is the cards drawn and the cards taken out. Bracket 4 plays six turns: seven
+    # cards and one a turn make 13, which no game is short of, and each card a search takes out adds one.
+    assert all(o.shuffle_depths[-1] >= 13 for o in outcomes)
+    assert all(o.shuffle_depths[-1] > 13 for o in searched)
+    assert any(o.shuffle_depths[-1] == 13 for o in outcomes if not o.searched)
 
 
 def test_a_game_whose_hand_holds_the_cut_card_is_replayed() -> None:
