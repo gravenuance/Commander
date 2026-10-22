@@ -76,8 +76,7 @@ starts a download, so a price is up to a week old. The sync report says why the 
 is next due ("next refresh 2026-10-29 or with the next new set"); `sync --force` rebuilds it at once and
 `sync --no-cards` skips the step ([ADR 0001](docs/adr/0001-scryfall-bulk-card-data.md)). If the download
 fails, the previous card data stays in use and `sync` exits with 1. `analyze` and `price` warn when the
-Scryfall file the data was built from is more than three days old, which can show for a few days before the
-weekly rebuild.
+Scryfall file the data was built from is more than eight days old, which means a weekly sync was missed.
 
 - **Prices** are Cardmarket trend prices in EUR, as Scryfall reports them. Each card is priced at the
   printing and finish (foil or not) in your deck. When that printing has no price, the card's cheapest

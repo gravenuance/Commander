@@ -21,7 +21,8 @@ EXIT_FAILURE = 1
 EXIT_USAGE = 2
 EXIT_INTERRUPTED = 130
 
-STALE_CARD_DATA = timedelta(days=3)
+# The card data is rebuilt weekly (ADR 0001): more than a week and a day old, a sync is overdue.
+STALE_CARD_DATA = timedelta(days=8)
 
 ClientFactory = Callable[[], httpx.Client]
 PasswordPrompt = Callable[[str], str]

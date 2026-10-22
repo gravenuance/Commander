@@ -26,6 +26,12 @@
 - The app keeps its window profile on disk (`%LOCALAPPDATA%\Commander\webview`), so card images load from the
   cache after their first view instead of from Scryfall at every launch, and the card size and activity tab it
   remembers survive a restart (ADR 0006).
+- In a deck's Settings, the second name of an alike pair ("+ partner", or after "+") offers any
+  commander-legal card, Backgrounds included, without checking that the two may pair. *Save settings* refuses
+  a name that isn't a legal card in the card data (the first name must still be a commander) and stores each
+  name as the card data spells it.
+- `analyze` and `price` warn about old card data after eight days instead of three, since the weekly rebuild
+  leaves it up to a week old.
 
 ### Faster
 - The card database is built without a rollback journal and indexed after its rows are in (writing 100,000

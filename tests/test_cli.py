@@ -556,11 +556,14 @@ def test_price_json_uses_cents(tmp_path: Path, decks: Path, card_db_file: Path) 
 
 
 def test_old_card_data_gets_a_warning(tmp_path: Path, decks: Path, card_db_file: Path) -> None:
-    later = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
+    later = datetime(2026, 10, 24, 12, 0, tzinfo=UTC)
     result = research(["price"], tmp_path, decks, card_db_file.parent, now=later)
     assert result.code == 0
     assert result.err == "cmdr: card data is from 2026-10-15; run `cmdr sync` for fresh prices\n"
     assert research(["price"], tmp_path, decks, card_db_file.parent).err == ""
+    # A week old is what the weekly rebuild leaves just before a refresh, so it gets no warning yet.
+    week = datetime(2026, 10, 22, 12, 0, tzinfo=UTC)
+    assert research(["price"], tmp_path, decks, card_db_file.parent, now=week).err == ""
 
 
 def test_research_without_card_data_says_to_sync(tmp_path: Path, decks: Path) -> None:
