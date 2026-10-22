@@ -482,6 +482,22 @@ def test_a_spell_that_needs_a_creature_to_sacrifice_waits_for_one() -> None:
     assert only_outcome(run(with_creature)).mana == (2, 3, 4, 5, 5)
 
 
+def test_sacrificing_a_mana_creature_takes_only_its_own_mana_not_a_tapped_lands() -> None:
+    elves = make(
+        "Elves",
+        mv=1,
+        pips={"G": 1},
+        kinds=CREATURE,
+        mana=ManaAbility(1, frozenset("G"), delayed=True, ritual=False),
+    )
+    sacrifice = make("Sacrifice", mv=1, pips={"G": 1}, needs_sacrifice=True)
+    nine_drop = make("Nine", mv=9, kinds=CREATURE)
+    slots = [FOREST, land("Tapped Forest", "G", tapped=True), FOREST, elves, sacrifice, nine_drop, nine_drop]
+    # Turn one: Forest, Elves. Turn two: the tapped land is played, Sacrifice eats Elves, one Forest is left.
+    # Turn three: the tapped land is ready and the third Forest comes down: three. Elves' mana is gone.
+    assert only_outcome(run(slots)).mana == (1, 1, 3, 3, 3)
+
+
 def test_a_ritual_is_cast_only_to_pay_for_something_this_turn() -> None:
     ritual = make(
         "Dark Ritual",

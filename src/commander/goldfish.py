@@ -569,6 +569,7 @@ class _Game:
         "screw",
         "searched",
         "shuffles",
+        "sick",
         "top",
         "turn",
         "tutor_look",
@@ -587,6 +588,8 @@ class _Game:
         self.pool: list[int] = []
         self.units: list[int] = []
         self.pending: list[int] = []
+        # Mana creatures cast this turn, whose mana sits in `pending` until the next turn.
+        self.sick: set[int] = set()
         self.creatures: list[tuple[int, int, int]] = []
         self.engines = 0
         self.extra_drops = 0
@@ -664,6 +667,7 @@ class _Game:
             pool.extend(self.pending)
             self.pending.clear()
             pool.sort(key=_POP_KEY)
+        self.sick.clear()
         self._draw(1 + self.engines)
         self.drops_left = 1 + self.extra_drops
         self.units = list(pool)
@@ -795,11 +799,14 @@ class _Game:
         self.units.extend(added)
         self.units.sort(key=_POP_KEY)
 
-    def _remove_source(self, mask: int, count: int) -> None:
+    def _remove_creature_mana(self, cid: int, mask: int, count: int) -> None:
+        """Take a sacrificed mana creature's mana away from where it sits: next turn's mana while it is
+        summoning sick, else the pool. Mana already in the turn's units can still be spent: the creature was
+        tapped for it before it was sacrificed."""
+        source = self.pending if cid in self.sick else self.pool
         for _ in range(count):
-            for source in (self.pool, self.units, self.pending):
-                if mask in source:
-                    source.remove(mask)
+            if mask in source:
+                source.remove(mask)
 
     def _plan(self, units: list[int], cost: Cost) -> tuple[int, ...] | None:
         """The rituals and spirit guides to use first for a cost to be paid: none when the mana is enough,
@@ -939,6 +946,7 @@ class _Game:
             self.creatures.append((rank, card.mv, cid))
         if card.mana_perm:
             if card.delayed:
+                self.sick.add(cid)
                 self.pending.extend([card.mana_mask] * card.mana_amount)
             else:
                 self._add_now(card.mana_mask, card.mana_amount)
@@ -962,7 +970,7 @@ class _Game:
         self.bf.discard(cid)
         if rank == 1:
             card = self.s.cards[cid]
-            self._remove_source(card.mana_mask, card.mana_amount)
+            self._remove_creature_mana(cid, card.mana_mask, card.mana_amount)
         return mv
 
     # -- searching ----------------------------------------------------------------------------------------
