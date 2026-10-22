@@ -7,6 +7,16 @@ const POLL_MS = 2000;
 // Whether the last reload of the deck list failed, so the next poll asks again whatever the stamps say.
 let decksStale = false;
 
+// The open deck's failed reload: it is asked for again once its stamp changes, or after this many polls, so a
+// deck that stays unreadable neither repeats its error every tick nor holds up the rest of the poll.
+const DECK_RETRY_TICKS = 8;
+let failedDeck = null;
+
+function deckRetryDue(key, stamp) {
+  if (!failedDeck || failedDeck.key !== key || failedDeck.stamp !== stamp) return true;
+  return ++failedDeck.skipped >= DECK_RETRY_TICKS;
+}
+
 async function poll() {
   try {
     const answer = await window.pywebview.api.stamps();
@@ -17,14 +27,17 @@ async function poll() {
       const currentChanged = state.current !== null && stamps[key] !== state.stamps[key];
       // While a save runs, the deck is reloaded when it ends; its old stamp stays so the change is not lost.
       const deferred = currentChanged && state.busy;
+      const reloadDeck = currentChanged && !deferred && deckRetryDue(key, stamps[key]);
       const [decks, deck] = await Promise.allSettled([
         changed ? loadDecks() : null,
-        currentChanged && !deferred ? loadDeck() : null,
+        reloadDeck ? loadDeck() : null,
       ]);
-      // The open deck's stamp is loadDeck's to set, so a failed reload of it is tried again next tick.
+      // The open deck's stamp is loadDeck's to set, so a failed reload of it keeps the old one.
       state.stamps = state.current === null ? stamps : { ...stamps, [key]: state.stamps[key] };
       decksStale = decks.status === "rejected";
-      for (const load of [decks, deck]) if (load.status === "rejected") throw load.reason;
+      if (reloadDeck) failedDeck = deck.status === "rejected" ? { key, stamp: stamps[key], skipped: 0 } : null;
+      // A failed load is the bridge's to show; the rest of the poll still runs, and a script error is logged.
+      for (const load of [decks, deck]) if (load.status === "rejected") noteFailure(load.reason);
       // `cmdr meta` and a running sync fill the same cache; reread the open panel from it.
       if (accountState.syncing) await loadAccount();
       const metaChanged = answer.meta !== state.metaStamp;
