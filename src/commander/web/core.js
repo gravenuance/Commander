@@ -52,7 +52,12 @@ function el(tag, props = {}, ...children) {
 }
 
 async function api(name, ...args) {
-  const answer = await window.pywebview.api[name](...args);
+  return checkAnswer(await window.pywebview.api[name](...args));
+}
+
+// Returns a bridge answer, or shows its refusal and throws it. A caller that may drop a stale answer checks it
+// first, so a refusal nobody wants is not shown.
+function checkAnswer(answer) {
   if (answer && answer.error) {
     showStatus(answer.error, true);
     const refusal = new Error(answer.error);

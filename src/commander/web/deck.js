@@ -159,8 +159,11 @@ let deckRequest = 0;
 async function loadDeck() {
   if (state.current === null) return;
   const sent = ++deckRequest;
-  const view = await api("deck", state.current);
-  if (sent !== deckRequest || view.id !== state.current) return;
+  const answer = await window.pywebview.api.deck(state.current);
+  // The deck may have closed or another opened meanwhile, which a refusal then no longer concerns.
+  if (sent !== deckRequest) return;
+  const view = checkAnswer(answer);
+  if (view.id !== state.current) return;
   state.view = view;
   state.stamps[String(view.id)] = view.stamp;
   renderDeck();

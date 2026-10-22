@@ -24,7 +24,8 @@ async function poll() {
       const stamps = answer.stamps;
       const key = String(state.current);
       const changed = decksStale || JSON.stringify(stamps) !== JSON.stringify(state.stamps);
-      const currentChanged = state.current !== null && stamps[key] !== state.stamps[key];
+      // A deck missing from the stamps was deleted by a sync; the deck list reload closes it.
+      const currentChanged = state.current !== null && key in stamps && stamps[key] !== state.stamps[key];
       // While a save runs, the deck is reloaded when it ends; its old stamp stays so the change is not lost.
       const deferred = currentChanged && state.busy;
       const reloadDeck = currentChanged && !deferred && deckRetryDue(key, stamps[key]);
