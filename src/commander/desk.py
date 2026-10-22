@@ -29,6 +29,7 @@ from commander.archidekt_edit import (
 )
 from commander.background import in_background
 from commander.board import (
+    BOARD_FILE,
     Actor,
     BoardCard,
     BoardError,
@@ -59,7 +60,7 @@ from commander.bracket import (
 from commander.bracketcheck import check_bracket, check_json
 from commander.bracketpreview import preview_json, spellbook_preview
 from commander.budget import resolved_budget
-from commander.carddb import CardDataError, CardDb, ResolvedCard
+from commander.carddb import CardDataError, CardDb, CardInfo, CardText, ResolvedCard
 from commander.changetext import change_mark, change_text
 from commander.config import ConfigError, MetaSettings, forget_account, switch_account, validate_user
 from commander.credentials import CredentialError, KeyringKeyStore, KeyStore, TokenStore, check_api_key
@@ -93,7 +94,7 @@ from commander.models import Deck
 from commander.net import Fetcher, NetworkError, Pacer
 from commander.profileedit import save_settings
 from commander.spellbook import SpellbookClient
-from commander.store import StoredDeck, Workspace, WorkspaceError
+from commander.store import SNAPSHOT_FILE, StoredDeck, Workspace, WorkspaceError
 from commander.suggest import deck_identity
 from commander.sync import PullWatch, SyncStatus
 from commander.syncrun import CardState, FetchState, SyncOutcome, SyncServices, run_sync
@@ -294,6 +295,8 @@ class Desk:
         self._pools: dict[int, tuple[str, MetaData]] = {}
         self._tables: dict[int, tuple[str, ShareTable]] = {}
         self._rules: dict[int, tuple[str, CutRules]] = {}
+        # The deck list's rows by deck folder, each with the stamp of the files it was made from.
+        self._rows: dict[Path, tuple[str, Json]] = {}
         self._sync_lock = threading.Lock()
         self._sync = _SyncState()
         # The page errors already logged, as (message, source, line), under their own lock.
@@ -446,6 +449,7 @@ class Desk:
         self._pools.clear()
         self._tables.clear()
         self._rules.clear()
+        self._rows.clear()
         with self._sync_lock:
             self._open_deck = None
 
@@ -636,30 +640,43 @@ class Desk:
             return self._deck_rows(None)
 
     def _deck_rows(self, db: CardDb | None) -> Json:
-        rows: list[Json] = []
-        for stored in self._workspace.load_all():
-            row: Json = {
-                "id": stored.deck.id,
-                "short": stored.deck.short_name,
-                "name": stored.deck.name,
-                "queued": 0,
-                "open": 0,
-            }
-            try:
-                board = read_board(stored.folder)
-            except BoardError as error:
-                # One deck's damaged board must not hide the others.
-                log.warning("deck %s: %s", stored.deck.id, error)
-                row["error"] = str(error)
-            else:
-                row["queued"] = board.pending
-                held = held_keys(stored.deck, db) if db else frozenset[str]()
-                row["open"] = sum(
-                    1 for c in board.cards if c.status is Status.OPEN and card_key(c.name) not in held
-                )
-            rows.append(row)
-        rows.sort(key=lambda row: str(row["short"]).casefold())
+        """One row per deck, each kept until its deck, its board or the card data change: the poll asks for
+        the list whenever any deck's stamp changes, which a running sync does every few seconds."""
+        card_db = self._settings.card_db
+        data = "-" if db is None else files_stamp(card_db.parent, (card_db.name,))
+        kept: dict[Path, tuple[str, Json]] = {}
+        for _, folder in self._workspace.deck_folders():
+            # The stamp comes first: a change while the row is built shows in the next look.
+            stamp = f"{files_stamp(folder, (BOARD_FILE, SNAPSHOT_FILE))}|{data}"
+            known = self._rows.get(folder)
+            if known is None or known[0] != stamp:
+                row = self._deck_row(folder, db)
+                if row is None:
+                    continue
+                known = (stamp, row)
+            kept[folder] = known
+        self._rows = kept
+        rows = sorted((dict(row) for _, row in kept.values()), key=lambda row: str(row["short"]).casefold())
         return {"decks": rows}
+
+    def _deck_row(self, folder: Path, db: CardDb | None) -> Json | None:
+        deck = self._workspace.load_folder(folder)
+        if deck is None:
+            return None
+        row: Json = {"id": deck.id, "short": deck.short_name, "name": deck.name, "queued": 0, "open": 0}
+        try:
+            board = read_board(folder)
+        except BoardError as error:
+            # One deck's damaged board must not hide the others.
+            log.warning("deck %s: %s", deck.id, error)
+            row["error"] = str(error)
+        else:
+            row["queued"] = board.pending
+            held = held_keys(deck, db) if db else frozenset[str]()
+            row["open"] = sum(
+                1 for c in board.cards if c.status is Status.OPEN and card_key(c.name) not in held
+            )
+        return row
 
     @_guarded
     def stamps(self) -> Json:
@@ -679,13 +696,14 @@ class Desk:
             main = db.resolve(stored.deck.main_cards)
             identity = deck_identity(main)
             infos = db.cards(card.oracle_id for card in board.cards)
+            texts = db.card_texts(card.oracle_id for card in board.cards)
             rules = with_ideas(self._deck_rules(stored, main, profile, db), infos.values(), db)
             budget = resolved_budget(playing.bracket, main, profile.max_card_cents)
             shares = self._shares(stored)
             held = held_keys(stored.deck, db)
             cards = [
                 {
-                    **self._card_view(db, card),
+                    **self._card_view(db, card, infos.get(card.oracle_id), texts.get(card.oracle_id)),
                     "held": card_key(card.name) in held,
                     "withinBudget": None
                     if budget.working is None
@@ -1248,10 +1266,8 @@ class Desk:
         with self._db() as db:
             yield BoardService(stored.folder, stored.deck, db, now=self._now), db
 
-    def _card_view(self, db: CardDb, card: BoardCard) -> Json:
+    def _card_view(self, db: CardDb, card: BoardCard, info: CardInfo | None, text: CardText | None) -> Json:
         view = card_json(card)
-        info = db.cards([card.oracle_id]).get(card.oracle_id)
-        text = db.card_text(card.oracle_id)
         view.update(
             manaCost=info.mana_cost if info else "",
             typeLine=info.type_line if info else "",

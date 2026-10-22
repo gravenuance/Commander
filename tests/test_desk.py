@@ -6,12 +6,13 @@ import logging
 import re
 import shutil
 import threading
+from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from importlib import resources
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -210,6 +211,70 @@ def test_decks_are_listed_by_commander_short_name(desk: Desk) -> None:
     assert desk.decks() == {
         "decks": [{"id": DECK, "short": "Magda", "name": "Sample, deck..", "queued": 0, "open": 0}]
     }
+
+
+def count_calls(monkeypatch: pytest.MonkeyPatch, owner: object, *names: str) -> Counter[str]:
+    """Count the calls to the owner's functions or methods of these names, which still run."""
+    calls = Counter[str]()
+    for name in names:
+        original = getattr(owner, name)
+
+        def counted(*args: Any, _name: str = name, _original: Any = original, **kwargs: Any) -> Any:  # noqa: ANN401
+            calls[_name] += 1
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(owner, name, counted)
+    return calls
+
+
+def test_an_unchanged_deck_is_not_read_again_for_the_list(
+    desk: Desk, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    desk.propose(DECK, "Lightning Bolt")
+    first = desk.decks()
+    calls = count_calls(monkeypatch, desk_module, "read_board", "held_keys")
+
+    assert desk.decks() == first
+    assert sum(calls.values()) == 0
+
+
+def test_the_list_follows_a_deck_changed_by_a_proposal_a_save_or_new_card_data(
+    desk: Desk, settings: DeskSettings
+) -> None:
+    assert items(desk.decks(), "decks")[0]["queued"] == 0
+    desk.propose(DECK, "Lightning Bolt")
+    assert [(r["queued"], r["open"]) for r in items(desk.decks(), "decks")] == [(0, 1)]
+    desk.decide(DECK, first_card_id(desk), "add", "Disruptor Flute", "")
+    assert [(r["queued"], r["open"]) for r in items(desk.decks(), "decks")] == [(1, 0)]
+    # The deck on disk gets the Bolt, as a save puts it there: the card is no idea any more.
+    workspace = Workspace(settings.workspace)
+    saved = workspace.load(DECK)
+    assert saved is not None
+    bolt = replace(saved.main_cards[0], name="Lightning Bolt", categories=("Ramp",), entry_id=1)
+    workspace.save(replace(saved, name="Renamed", cards=(*saved.cards, bolt)))
+
+    [row] = items(desk.decks(), "decks")
+
+    assert (row["name"], row["queued"]) == ("Renamed", 1)
+
+
+def test_a_deck_view_asks_the_card_data_the_same_times_for_few_or_many_board_cards(
+    desk: Desk, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in ("Lightning Bolt", "Arcane Signet"):
+        desk.propose(DECK, name)
+    desk.deck(DECK)  # fills what the desk keeps between views, such as the cut rules
+    calls = count_calls(monkeypatch, CardDb, "cards", "card_text", "card_texts")
+    desk.deck(DECK)
+    few = sum(calls.values())
+    for name in ("Chaos Warp", "Mind Stone", "Jeska's Will", "Splinter Twin"):
+        desk.propose(DECK, name)
+    calls.clear()
+
+    desk.deck(DECK)
+
+    assert few > 0
+    assert sum(calls.values()) == few
 
 
 def test_a_deck_with_a_damaged_board_lists_with_an_error_and_the_others_still_load(
