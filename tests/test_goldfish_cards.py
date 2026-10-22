@@ -1488,6 +1488,83 @@ def test_a_sacrifice_to_draw_is_neither_a_draw_nor_a_hindrance_to_the_mana() -> 
     assert stone.modelled
 
 
+TINDER_WALL = real(
+    "Tinder Wall",
+    "{G}",
+    1,
+    "Creature — Plant Wall",
+    "Defender (This creature can't attack.)\nSacrifice this creature: Add {R}{R}.\n{R}, Sacrifice this "
+    "creature: It deals 2 damage to target creature it's blocking.",
+    produced="R",
+    roles=(RAMP, Role.REMOVAL),
+)
+WILD_CANTOR = real(
+    "Wild Cantor",
+    "{R/G}",
+    1,
+    "Creature — Human Druid",
+    "({R/G} can be paid with either {R} or {G}.)\nSacrifice this creature: Add one mana of any color.",
+    produced="WUBRG",
+    roles=(RAMP,),
+)
+RITE_OF_FLAME = real(
+    "Rite of Flame",
+    "{R}",
+    1,
+    "Sorcery",
+    "Add {R}{R}, then add {R} for each card named Rite of Flame in each graveyard.",
+    produced="R",
+    roles=(RAMP,),
+)
+JESKAS_WILL = real(
+    "Jeska's Will",
+    "{2}{R}",
+    3,
+    "Sorcery",
+    "Choose one. If you control a commander as you cast this spell, you may choose both instead.\n• Add {R} "
+    "for each card in target opponent's hand.\n• Exile the top three cards of your library. You may play "
+    "them this turn.",
+    produced="R",
+    roles=(RAMP,),
+)
+STRIKE_IT_RICH = real(
+    "Strike It Rich",
+    "{R}",
+    1,
+    "Sorcery",
+    "Create a Treasure token. (It's an artifact with \"{T}, Sacrifice this token: Add one mana of any "
+    'color.")\nFlashback {2}{R} (You may cast this card from your graveyard for its flashback cost. Then '
+    "exile it.)",
+    produced="WUBRG",
+    roles=(RAMP,),
+)
+
+
+def test_a_creature_that_sacrifices_itself_for_mana_is_one_shot_mana_at_once() -> None:
+    wall = one(TINDER_WALL)
+    assert wall.mana == ManaAbility(2, frozenset("R"), delayed=False, ritual=True)
+    assert wall.modelled
+    assert one(WILD_CANTOR).mana == ManaAbility(1, frozenset(ALL), delayed=False, ritual=True)
+
+
+def test_a_ritual_keeps_the_fixed_part_of_mana_that_grows_with_a_count() -> None:
+    rite = one(RITE_OF_FLAME)
+    assert rite.mana == ManaAbility(2, frozenset("R"), delayed=False, ritual=True)
+    assert rite.modelled
+
+
+def test_jeskas_will_counts_an_opponents_hand_of_seven() -> None:
+    will = one(JESKAS_WILL)
+    assert will.mana == ManaAbility(7, frozenset("R"), delayed=False, ritual=True)
+    assert will.modelled
+
+
+def test_a_spell_that_makes_a_treasure_is_a_ritual_of_one_mana_of_any_colour() -> None:
+    strike = one(STRIKE_IT_RICH, commander=MAGDA)
+    assert strike.mana == ManaAbility(1, frozenset("R"), delayed=False, ritual=True)
+    assert strike.modelled
+
+
 # --- land ramp ------------------------------------------------------------------------------------
 
 

@@ -550,6 +550,15 @@ _NOT_FIXED_MANA = re.compile(
 _COST_PART = re.compile(
     r"\{t\}|\{(?P<generic>\d+)\}|pay \d+ life|sacrifice this \w+|exile this card from your hand"
 )
+# A mode of a modal spell ("• Add {R} for each ..."), read like a line of its own.
+_MODE_BULLET = re.compile(r"^• ")
+# Mana that grows with a count after a fixed part (Rite of Flame): the fixed part is what is sure.
+_FIXED_THEN_MORE = re.compile(r"((?:\{[wubrgc\d]\})+), then add .*")
+# Mana for each card in an opponent's hand (Jeska's Will), read against a hand of OPPONENT_HAND cards.
+_PER_OPPONENT_CARD = re.compile(r"(\{[wubrgc]\}) for each card in target opponent's hand")
+OPPONENT_HAND = 7
+# Treasure a spell makes, spent at once as mana of any colour; a tapped one waits a turn and is left out.
+_TREASURES = re.compile(r"\bcreate (?P<n>a|an|one|two|three|four|five) treasure tokens?\b")
 
 
 @dataclass(slots=True, frozen=True)
@@ -582,13 +591,24 @@ def _abilities(text: str) -> list[tuple[str, str, bool]]:
     (a count, or a colour or use the game cannot tell). A line whose mana can be spent only on some spells is
     left out, which undercounts rather than overcounts."""
     found: list[tuple[str, str, bool]] = []
-    for line in text.split("\n"):
+    for line in (_MODE_BULLET.sub("", line) for line in text.split("\n")):
         matched = _MANA_ABILITY.match(line)
-        if matched is not None and RESTRICTED not in line:
-            found.append(
-                (matched.group("cost") or "", matched.group("what"), _NOT_FIXED_MANA.search(line) is not None)
-            )
+        if matched is None or RESTRICTED in line:
+            continue
+        cost, what = matched.group("cost") or "", _fixed_mana(matched.group("what"))
+        said = f"{cost}: add {what}.{line[matched.end() :]}"
+        found.append((cost, what, _NOT_FIXED_MANA.search(said) is not None))
     return found
+
+
+def _fixed_mana(what: str) -> str:
+    """What an ability adds, with a count the game can settle replaced by its value: the fixed part of mana
+    that grows after it, a mana for each card of an opponent's hand of OPPONENT_HAND."""
+    if fixed := _FIXED_THEN_MORE.fullmatch(what):
+        return fixed.group(1)
+    if each := _PER_OPPONENT_CARD.fullmatch(what):
+        return each.group(1) * OPPONENT_HAND
+    return what
 
 
 def _net_mana(cost: _Cost, what: str, identity: frozenset[str]) -> tuple[int, frozenset[str]] | None:
@@ -689,9 +709,14 @@ def _mana(text: str, kinds: frozenset[CardKind], identity: frozenset[str]) -> Ma
     best = 0
     colours: set[str] = set()
     delayed = ritual = from_hand = False
-    for cost, what, varies in _abilities(text):
+    abilities = _abilities(text)
+    treasures = _TREASURES.search(text) if spell else None
+    if treasures is not None:
+        abilities.append(("", f"{treasures.group('n')} mana of any color", False))
+    for cost, what, varies in abilities:
         paid = _paid(cost)
-        usable = spell or (paid is not None and (paid.taps or paid.exiles_from_hand))
+        # An ability with none of these costs could be used again and again (Three Tree Mascot's {1}).
+        usable = spell or (paid is not None and (paid.taps or paid.exiles_from_hand or paid.sacrifices))
         found = None if varies or paid is None or not usable else _net_mana(paid, what, identity)
         if paid is None or found is None:
             continue
