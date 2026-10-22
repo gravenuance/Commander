@@ -227,3 +227,123 @@ def test_a_refusal_from_the_bridge_on_a_decision_is_shown_but_not_sent_to_the_ap
       status: $("status-text").textContent };
     """)
     assert seen == {"sent": 0, "status": "Wait for the sync to finish"}
+
+
+FIGURES = """
+const figure = (label, before, after, better = false) => ({
+  kind: "colour_screw", subject: "", turn: null, label, unit: "share", before, after, moved: true, better });
+const queued = (over = {}) => card({
+  id: "q", name: "Chaos Warp", status: "add", choice: "Sol Ring", ...over });
+const fold = (id = "q") => state.tiles.get(id).node.querySelector(".goldfish-fold");
+const asked = () => calls.filter((c) => c[0] === "goldfish_swap");
+"""
+
+
+def test_a_selected_queued_card_with_a_cut_shows_a_closed_goldfish_fold_of_what_the_swap_moves() -> None:
+    seen = run(
+        FIGURES
+        + """
+    stub.goldfish_swap = async () => ({ figures: [figure("Colour screw", 0, 0.25)] });
+    showBoard([queued()]);
+    select("q");
+    await settle();
+    const node = fold();
+    return { summary: node.querySelector("summary").textContent, open: node.open,
+      labels: texts(node, ".figure-label"), changes: texts(node, ".figure-change"),
+      marks: texts(node, ".figure-mark"), asked: asked() };
+    """
+    )
+    assert seen == {
+        "summary": "Goldfish",
+        "open": False,
+        "labels": ["Colour screw"],
+        "changes": ["from 0.0% to → 25.0%"],
+        "marks": ["▼ Worse"],
+        "asked": [["goldfish_swap", 1, "q"]],
+    }
+
+
+def test_there_is_no_goldfish_fold_when_nothing_moved_or_the_games_could_not_be_played() -> None:
+    seen = run(
+        FIGURES
+        + """
+    stub.goldfish_swap = async () => ({ figures: [] });
+    showBoard([queued()]);
+    select("q");
+    await settle();
+    const empty = fold();
+    select("q");
+    stub.goldfish_swap = async () => ({ error: "The deck has no commander." });
+    showBoard([queued({ choice: "Wayfarer" })]);
+    select("q");
+    await settle();
+    return { empty, refused: fold(), toast: $("status").hidden };
+    """
+    )
+    assert seen == {"empty": None, "refused": None, "toast": True}
+
+
+def test_a_card_without_a_cut_is_not_played_and_deselecting_drops_the_fold() -> None:
+    seen = run(
+        FIGURES
+        + """
+    stub.goldfish_swap = async () => ({ figures: [figure("Colour screw", 0, 0.25)] });
+    const plain = card({ id: "p", name: "Plain Add", status: "add", choice: null });
+    showBoard([card({ id: "o", name: "Open Idea" }), plain, queued()]);
+    select("o");
+    select("p");
+    await settle();
+    const open = { asked: asked().length, fold: fold("p") };
+    select("o");
+    select("q");
+    await settle();
+    const shown = fold() !== null;
+    select("q");
+    return { open, shown, dropped: fold() };
+    """
+    )
+    assert seen == {"open": {"asked": 0, "fold": None}, "shown": True, "dropped": None}
+
+
+def test_a_rebuilt_tile_keeps_its_open_fold_and_the_deck_is_not_played_again() -> None:
+    seen = run(
+        FIGURES
+        + """
+    stub.goldfish_swap = async () => ({ figures: [figure("Colour screw", 0, 0.25)] });
+    showBoard([queued()]);
+    select("q");
+    await settle();
+    const first = fold();
+    first.open = true;
+    const old = state.tiles.get("q").node;
+    showBoard([queued({ note: "Chosen because of the colour screw" })]);
+    paint();
+    await settle();
+    const now = fold();
+    return { rebuilt: state.tiles.get("q").node !== old, carried: now === first, open: now.open,
+      inTile: state.tiles.get("q").node.contains(now), asked: asked().length };
+    """
+    )
+    assert seen == {"rebuilt": True, "carried": True, "open": True, "inTile": True, "asked": 1}
+
+
+def test_a_new_snapshot_asks_again_and_a_stale_answer_never_replaces_the_new_one() -> None:
+    seen = run(
+        FIGURES
+        + """
+    let release;
+    const slow = new Promise((resolve) => { release = resolve; });
+    const answers = [slow, { figures: [figure("Colour screw", 0, 0.5)] }];
+    stub.goldfish_swap = async () => answers.shift();
+    showBoard([queued()]);
+    select("q");
+    await settle();
+    state.view = { ...deckView(), stamp: "t" };
+    paint();
+    await settle();
+    release({ figures: [figure("Colour screw", 0, 0.25)] });
+    await settle();
+    return { changes: texts(fold(), ".figure-change"), asked: asked().length };
+    """
+    )
+    assert seen == {"changes": ["from 0.0% to → 50.0%"], "asked": 2}

@@ -1186,3 +1186,6 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .figure-mark { font-weight: 600; text-align: right; }
 .figure-mark.better { color: var(--accent); }
 .figure-mark.worse { color: var(--danger); }
+.goldfish-fold { margin-top: var(--space-1); }
+.review-goldfish { margin: var(--space-3) 0 0; }
+.review-goldfish h3 { margin: 0; font-size: var(--text-m); }

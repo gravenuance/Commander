@@ -156,6 +156,11 @@ function carryOver(old, node, card) {
   if (was.plain && !was.plain.hidden && wantsPlainAdd(card)) {
     keepChoice(was.plain, showPlainAdd(node, card));
   }
+  if (was.goldfish && wantsGoldfish(card)) {
+    const parts = tileParts.get(node);
+    parts.body.append(was.goldfish);
+    Object.assign(parts, { goldfish: was.goldfish, goldfishFigures: was.goldfishFigures });
+  }
   if (openShare !== null && old.contains(openShare.pill)) {
     const pill = node.querySelector(".share-pill");
     closeShare(false);
@@ -262,6 +267,7 @@ function buildTile(card) {
     cardImage(card.image, card.name, "art"), body, reject);
   tileParts.set(tile, {
     pick, body, anchor: replacing ?? meta, targets: null, plain: null, plainKey: null, form: null,
+    goldfish: null, goldfishFigures: null,
   });
   return tile;
 }
@@ -492,15 +498,88 @@ function paint() {
     else if (parts.targets) parts.targets.hidden = true;
     if (on && wantsPlainAdd(tile.card)) showPlainAdd(tile.node, tile.card);
     else if (parts.plain) parts.plain.hidden = true;
+    if (!on) dropGoldfish(tile.node);
   }
   // A category the deck gained since the selected card was last painted.
   const selected = state.tiles.get(state.selected);
   if (selected && wantsPlainAdd(selected.card)) showPlainAdd(selected.node, selected.card);
+  // The figures of a swap, for a selected card queued with a cut; asked again when the deck changed.
+  if (selected && wantsGoldfish(selected.card)) showGoldfish(selected.node, selected.card);
+  else if (selected) dropGoldfish(selected.node);
   const choosing = Boolean(active);
   if (painted.choosing !== choosing) {
     painted.choosing = choosing;
     $("grid").classList.toggle("choosing", choosing);
   }
+}
+
+/* The goldfish figures a queued swap moves (ADR 0054), in a closed fold on the selected tile */
+
+const wantsGoldfish = (card) => card.status === "add" && Boolean(card.choice);
+
+// Bumped when the settings are saved, since the finishers and grace cards change what a swap moves.
+let goldfishEpoch = 0;
+// Per card id: the answer to the last ask, and the key of an ask that is still out.
+const swapFigures = new Map();
+const swapAsked = new Map();
+
+// What the figures depend on: the deck, the swap, the deck's snapshot and the settings.
+const swapKey = (card) => JSON.stringify(
+  [state.current, card.id, card.name, card.choice, card.copies, state.view?.stamp, goldfishEpoch]);
+
+function dropGoldfish(node) {
+  const parts = tileParts.get(node);
+  if (!parts.goldfish) return;
+  parts.goldfish.remove();
+  Object.assign(parts, { goldfish: null, goldfishFigures: null });
+}
+
+// The fold for these figures, closed at first; none when nothing moved. An open fold stays open when its
+// figures are replaced.
+function setGoldfishFold(node, figures) {
+  const parts = tileParts.get(node);
+  if (!figures.length) {
+    dropGoldfish(node);
+    return;
+  }
+  if (parts.goldfish && parts.goldfishFigures === figures) return;
+  const fold = el("details", { class: "fold goldfish-fold" }, el("summary", { text: "Goldfish" }),
+    goldfishFigures(figures));
+  if (parts.goldfish) {
+    fold.open = parts.goldfish.open;
+    parts.goldfish.replaceWith(fold);
+  } else {
+    parts.body.append(fold);
+  }
+  Object.assign(parts, { goldfish: fold, goldfishFigures: figures });
+}
+
+function showGoldfish(node, card) {
+  const key = swapKey(card);
+  const known = swapFigures.get(card.id);
+  if (known && known.key === key) {
+    setGoldfishFold(node, known.figures);
+    return;
+  }
+  if (swapAsked.get(card.id) === key) return;
+  swapAsked.set(card.id, key);
+  askGoldfish(card.id, key);
+}
+
+// Asked of the bridge directly, since a refusal (a deck that cannot be played) is not worth a toast: the
+// card just has no fold. The old fold stays until the answer replaces it.
+async function askGoldfish(id, key) {
+  let figures = [];
+  try {
+    const answer = await window.pywebview.api.goldfish_swap(state.current, id);
+    if (!answer.error) figures = answer.figures;
+  } catch (error) { noteFailure(error); }
+  if (swapAsked.get(id) === key) swapAsked.delete(id);
+  // The card, the deck or its snapshot may have changed while the games played: such an answer is dropped.
+  const now = state.tiles.get(id);
+  if (!now || !wantsGoldfish(now.card) || swapKey(now.card) !== key) return;
+  swapFigures.set(id, { key, figures });
+  if (state.selected === id) setGoldfishFold(now.node, figures);
 }
 
 // Adding with no cut, filed under one of the deck's categories, its card type's first.

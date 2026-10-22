@@ -155,6 +155,8 @@ async function saveSettings() {
   problem.hidden = true;
   try {
     await api("save_settings", s.deck, s.adjacent, s.ignore, s.tagSearch, s.grace);
+    // Grace cards and the like change what a queued swap moves in the goldfish.
+    goldfishEpoch++;
     $("settings-dialog").close();
     showStatus("Settings saved to the deck's profile.toml");
     await refresh();
