@@ -57,6 +57,12 @@ _START_LIFE = 40
 _LIFE_FLOOR = 10
 # Mox Opal's metalcraft.
 _METALCRAFT = 3
+# What one-shot mana is spent on: life alone for anything; rituals and bursts for a mana source, a combo
+# piece, a tutor fetching one, a finisher, the commander or a combo landing; Lion's Eye Diamond only for the
+# last three, which win or are the commander.
+_FOR_NOTHING = 0
+_FOR_PLAY = 1
+_FOR_WIN = 2
 # A one-shot in a plan that is no card in hand: a life payment, or the burst of the creature `_BURST - code`.
 _LIFE = -1
 _BURST = -2
@@ -351,6 +357,7 @@ class _Card:
         "cost",
         "creature",
         "delayed",
+        "discards",
         "draw_count",
         "engine",
         "entry",
@@ -379,7 +386,10 @@ class _Card:
         "needs_sac",
         "permanent",
         "pip_mask",
+        "plus_sacrificed",
+        "purpose",
         "rank",
+        "reach_for",
         "ritual",
         "source",
         "spend_bits",
@@ -435,6 +445,12 @@ class _Card:
         # Fast mana for the keep rule: a cheap mana source other than a land.
         self.fast = mana is not None and not spend_from_hand and card.mana_value <= (_HAND - 5)
         self.win_piece = card.combo or card.tutor is not None or card.finisher
+        self.discards = mana is not None and mana.discards_hand
+        self.plus_sacrificed = mana is not None and mana.plus_sacrificed
+        # What one-shot mana may pay for it: a mana source or a combo piece takes rituals; a tutor takes them
+        # only for a combo piece, which `reach_for` allows for before its target is known.
+        self.purpose = _FOR_PLAY if self.source or card.combo else _FOR_NOTHING
+        self.reach_for = _FOR_PLAY if card.tutor is not None else self.purpose
         self.rank = self._rank()
 
     def _read_land(self, card: GoldfishCard) -> None:
@@ -981,38 +997,21 @@ class _Game:
             if mask in source:
                 source.remove(mask)
 
-    def _plan(self, units: list[int], cost: Cost, paying: Sequence[int]) -> tuple[int, ...] | None:
-        """The rituals and spirit guides to use first for a cost to be paid: none when the mana is enough,
-        None when even they would not make it. `paying` holds the kind bits of each card the cost is for,
-        which a ritual's restricted mana must all allow."""
+    def _plan(
+        self, units: list[int], cost: Cost, paying: Sequence[_Card], purpose: int
+    ) -> tuple[int, ...] | None:
+        """The one-shots to use first for a cost to be paid: none when the mana is enough, None when even they
+        would not make it. `paying` holds the cards the cost is for, whose kinds a ritual's restricted mana
+        must all allow. Rituals and bursts serve a purpose of `_FOR_PLAY` or more, Lion's Eye Diamond only
+        `_FOR_WIN`; life is paid for anything."""
         if can_pay(units, cost):
             return ()
         if not self.s.has_rituals:
             return None
-        cards = self.s.cards
-        rituals = sorted(
-            (cid for cid in self.hand if cards[cid].ritual), key=lambda cid: cards[cid].cost.total
-        )
         trial = list(units)
         used: list[int] = []
-        for cid in rituals:
-            card = cards[cid]
-            spend = card.spend_bits
-            if (spend and not all(kinds & spend for kinds in paying)) or not can_pay(trial, card.cost):
-                continue
-            pay(trial, card.cost)
-            trial.extend([card.mana_mask] * card.mana_amount)
-            trial.sort(key=_PAY_KEY)
-            used.append(cid)
-            if can_pay(trial, cost):
-                return tuple(used)
-        for cid in self._bursts_ready():
-            card = cards[cid]
-            trial.extend([card.mana_mask] * card.mana_amount)
-            trial.sort(key=_PAY_KEY)
-            used.append(_BURST - cid)
-            if can_pay(trial, cost):
-                return tuple(used)
+        if purpose >= _FOR_PLAY and self._plan_rituals(trial, used, cost, paying, purpose):
+            return tuple(used)
         payments, mask = self._life_payments()
         for _ in range(payments):
             trial.append(mask)
@@ -1021,6 +1020,45 @@ class _Game:
             if can_pay(trial, cost):
                 return tuple(used)
         return None
+
+    def _plan_rituals(
+        self, trial: list[int], used: list[int], cost: Cost, paying: Sequence[_Card], purpose: int
+    ) -> bool:
+        """Add to `trial` and `used` the rituals in hand, cheapest first, then the creatures' bursts, until
+        the cost can be paid; whether it can."""
+        cards = self.s.cards
+        # The creatures the rituals may sacrifice, cheapest first, as `_sacrifice` takes them.
+        fodder = sorted(self.creatures)[sum(card.needs_sac for card in paying) :]
+        for cid in sorted(
+            (cid for cid in self.hand if cards[cid].ritual), key=lambda cid: cards[cid].cost.total
+        ):
+            card = cards[cid]
+            spend = card.spend_bits
+            if (
+                (card.discards and purpose < _FOR_WIN)
+                or (card.needs_sac and not fodder)
+                or (spend and not all(c.kind_bits & spend for c in paying))
+                or not can_pay(trial, card.cost)
+            ):
+                continue
+            pay(trial, card.cost)
+            amount = card.mana_amount
+            if card.needs_sac:
+                sacrificed = fodder.pop(0)[1]
+                amount += sacrificed if card.plus_sacrificed else 0
+            trial.extend([card.mana_mask] * amount)
+            trial.sort(key=_PAY_KEY)
+            used.append(cid)
+            if can_pay(trial, cost):
+                return True
+        for cid in self._bursts_ready():
+            card = cards[cid]
+            trial.extend([card.mana_mask] * card.mana_amount)
+            trial.sort(key=_PAY_KEY)
+            used.append(_BURST - cid)
+            if can_pay(trial, cost):
+                return True
+        return False
 
     def _use_ritual(self, code: int) -> None:
         """Use a one-shot of a plan: a ritual from the hand, a life payment or a creature's burst."""
@@ -1038,7 +1076,11 @@ class _Game:
             card = cards[code]
             self.hand.remove(code)
             pay(self.units, card.cost)
-            self.units.extend([card.mana_mask] * card.mana_amount)
+            amount = card.mana_amount
+            if card.needs_sac:
+                sacrificed = self._sacrifice()
+                amount += sacrificed if card.plus_sacrificed else 0
+            self.units.extend([card.mana_mask] * amount)
         self.units.sort(key=_PAY_KEY)
 
     def _bursts_ready(self) -> list[int]:
@@ -1123,46 +1165,64 @@ class _Game:
         s = self.s
         cards = s.cards
         units = self.units
-        reach = len(units)
-        if s.has_rituals:
-            reach += sum(max(cards[cid].gain, 0) for cid in self.hand if cards[cid].ritual)
-            reach += sum(cards[cid].mana_amount for cid in self._bursts_ready())
-            reach += self._life_payments()[0]
+        reach = self._reach()
         best: _Pick | None = None
         best_rank = _HELD
         for cid in self.hand:
             card = cards[cid]
-            if card.rank < best_rank and card.cost.total <= reach:
-                found = self._eligible(cid, card, units)
+            if card.rank < best_rank and card.cost.total <= reach[card.reach_for]:
+                found = self._eligible(cid, card, units, from_command=False)
                 if found is not None:
                     best, best_rank = (cid, card, *found, False), card.rank
         for cid in self.cmd_left:
             card = cards[cid]
             rank = _COMMANDER_RANK + min(card.mv, _RANK_SPAN)
-            if rank < best_rank and card.cost.total <= reach:
-                found = self._eligible(cid, card, units)
+            if rank < best_rank and card.cost.total <= reach[_FOR_WIN]:
+                found = self._eligible(cid, card, units, from_command=True)
                 if found is not None:
                     best, best_rank = (cid, card, *found, True), rank
         return best
 
+    def _reach(self) -> tuple[int, int, int]:
+        """The most mana the turn could still make for each purpose, the one-shots it allows counted."""
+        units = len(self.units)
+        if not self.s.has_rituals:
+            return units, units, units
+        cards = self.s.cards
+        anything = units + self._life_payments()[0]
+        play = anything + sum(cards[cid].mana_amount for cid in self._bursts_ready())
+        win = play
+        biggest = max((mv for _, mv, _ in self.creatures), default=0)
+        for cid in self.hand:
+            card = cards[cid]
+            if not card.ritual or (card.needs_sac and not self.creatures):
+                continue
+            gain = max(card.gain + (biggest if card.plus_sacrificed else 0), 0)
+            win += gain
+            play += 0 if card.discards else gain
+        return anything, play, win
+
     def _eligible(
-        self, cid: int, card: _Card, units: list[int]
+        self, cid: int, card: _Card, units: list[int], *, from_command: bool
     ) -> tuple[tuple[int, ...], tuple[int, int] | None, int] | None:
         """The plan to pay for a card, where its search goes and the card it costs from the hand, if it can be
-        cast now."""
+        cast now. Rituals pay for the commander, a mana source, a combo piece or a tutor fetching one."""
         if (card.aura and not self.lands_in_play) or (card.needs_sac and not self.creatures):
             return None
         target = None
+        purpose = _FOR_WIN if from_command else card.purpose
         if card.src.tutor is not None:
             target = self._target(card, units)
             if target is None:
                 return None
+            if self.s.cards[target[1]].combo:
+                purpose = max(purpose, _FOR_PLAY)
         entry = -1
         if card.entry is not None:
             entry = self._entry_card(cid, card)
             if entry < 0:
                 return None
-        plan = self._plan(units, card.cost, (card.kind_bits,))
+        plan = self._plan(units, card.cost, (card,), purpose)
         if plan is None:
             return None
         return plan, target, entry
@@ -1196,6 +1256,8 @@ class _Game:
             self.hand.remove(cid)
         if entry >= 0:
             self.hand.remove(entry)
+        if any(code >= 0 and self.s.cards[code].discards for code in plan):
+            self.hand.clear()
         if card.needs_sac:
             self._sacrifice()
         if card.src.land_ramp is not None:
@@ -1363,8 +1425,8 @@ class _Game:
             cast = self._pieces_to_cast(k)
             if cast is None:
                 continue
-            kinds = tuple(s.cards[piece].kind_bits for piece in cast)
-            if cast and self._plan(self.units, s.merged_cost(cast), kinds) is None:
+            pieces = tuple(s.cards[piece] for piece in cast)
+            if cast and self._plan(self.units, s.merged_cost(cast), pieces, _FOR_WIN) is None:
                 continue
             self.combo_turn[k] = self.turn
             if any(piece in self.fetched for piece in s.combo_pieces[k] or ()):
@@ -1389,7 +1451,7 @@ class _Game:
             cid = s.fin_ids[position]
             card = s.cards[cid]
             if (cid in self.hand or cid in self.cmd_left) and self._plan(
-                self.units, card.fin_cost, (card.kind_bits,)
+                self.units, card.fin_cost, (card,), _FOR_WIN
             ) is not None:
                 self._record_finisher(cid)
 

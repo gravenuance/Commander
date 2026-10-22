@@ -570,6 +570,79 @@ def test_a_ritual_is_cast_only_to_pay_for_something_this_turn() -> None:
     assert only_outcome(run(slots)).mana == (1, 2, 2, 2, 2)
 
 
+def test_a_ritual_is_kept_from_a_plain_spell_for_the_commander() -> None:
+    ritual = make(
+        "Dark Ritual",
+        mv=1,
+        pips={"B": 1},
+        kinds=frozenset({CardKind.INSTANT}),
+        mana=ManaAbility(3, frozenset("B"), delayed=False, ritual=True),
+    )
+    boss = make("Boss", mv=4, kinds=CREATURE)
+    bear = make("Bear", mv=3, kinds=CREATURE)
+    slots = [*repeat(SWAMP, 4), ritual, bear, VANILLA]
+    # Turn one's Swamp and ritual would cast the three-drop; held, the ritual casts the commander on turn two.
+    assert only_outcome(run(slots, commanders=(boss,))).commander_turns == (2,)
+
+
+def test_a_ritual_that_sacrifices_a_creature_waits_for_one_and_sacrifices_it() -> None:
+    plunge = make(
+        "Infernal Plunge",
+        mv=1,
+        pips={"R": 1},
+        needs_sacrifice=True,
+        mana=ManaAbility(3, frozenset("R"), delayed=False, ritual=True),
+    )
+    boss = make("Boss", mv=3, kinds=CREATURE)
+    slots = [*repeat(MOUNTAIN, 4), plunge, *repeat(VANILLA, 2)]
+    # With no creature to sacrifice, turn one's Mountain and the ritual do not make three.
+    assert only_outcome(run(slots, commanders=(boss,))).commander_turns == (3,)
+    # Turn two sacrifices the mana creature cast on turn one: two Mountains, its mana and the ritual's net two
+    # make five, and its mana is gone from then on.
+    dork = make(
+        "Dork",
+        mv=1,
+        pips={"R": 1},
+        kinds=CREATURE,
+        mana=ManaAbility(1, frozenset("R"), delayed=True, ritual=False),
+    )
+    slots = [*repeat(MOUNTAIN, 4), plunge, dork, VANILLA]
+    outcome = only_outcome(run(slots, commanders=(make("Big", mv=5, kinds=CREATURE),)))
+    assert outcome.commander_turns == (2,)
+    assert outcome.mana == (1, 2, 3, 4, 4)
+
+
+def test_a_ritual_for_a_sacrificed_creature_adds_its_mana_value() -> None:
+    metamorphosis = make(
+        "Metamorphosis",
+        mv=1,
+        pips={"G": 1},
+        needs_sacrifice=True,
+        mana=ManaAbility(1, ANY_COLOUR, delayed=False, ritual=True, spend_on=CREATURE, plus_sacrificed=True),
+    )
+    beast = make("Beast", mv=3, kinds=CREATURE)
+    slots = [*repeat(FOREST, 4), metamorphosis, beast, VANILLA]
+    # Turn three casts the three-drop; turn four sacrifices it for four mana, which with three Forests left
+    # after paying make seven for the six-drop.
+    assert only_outcome(run(slots, commanders=(make("Boss", mv=6, kinds=CREATURE),))).commander_turns == (4,)
+
+
+def test_lions_eye_diamond_casts_the_commander_and_discards_the_hand_but_pays_for_nothing_else() -> None:
+    diamond = make(
+        "Lion's Eye Diamond",
+        kinds=ARTIFACT,
+        mana=ManaAbility(3, ANY_COLOUR, delayed=False, ritual=True, discards_hand=True),
+    )
+    slots = [*repeat(MOUNTAIN, 3), diamond, *repeat(make("Bear", mv=3, kinds=CREATURE), 3)]
+    outcome = only_outcome(run(slots, commanders=(make("Boss", mv=4, kinds=CREATURE),)))
+    # Turn one: a Mountain and the Diamond's three cast the four-drop, and the other Mountains go with the
+    # hand.
+    assert outcome.commander_turns == (1,)
+    assert outcome.mana == (1, 1, 1, 1, 1)
+    # A three-drop is no reason to use it: the Mountains are played as they come.
+    assert only_outcome(run(slots)).mana == (1, 2, 3, 3, 3)
+
+
 def test_a_spirit_guide_pays_for_a_two_drop_on_turn_one() -> None:
     guide = make(
         "Elvish Spirit Guide",

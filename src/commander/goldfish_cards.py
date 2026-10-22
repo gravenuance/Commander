@@ -121,6 +121,10 @@ class ManaAbility:
     life: int = 0
     # The basic land types of a land sacrificed for each use (Orcish Lumberjack: a Forest).
     land_sacrificed: frozenset[str] = frozenset()
+    # Discards the rest of the hand (Lion's Eye Diamond).
+    discards_hand: bool = False
+    # Adds the mana value of the creature sacrificed to cast it (Metamorphosis).
+    plus_sacrificed: bool = False
 
 
 @dataclass(slots=True, frozen=True)
@@ -560,6 +564,7 @@ _NUMBER_WORDS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "fi
 _ANY_COLOUR = re.compile(
     r"\bany (?:one )?(?:color|type)\b|the chosen colou?r|any of the exiled card's colou?rs"
 )
+_NUMBER_NAMES = {n: word for word, n in _NUMBER_WORDS.items() if word not in {"a", "an"}}
 _AMOUNT_WORDS = re.compile(r"\b(" + "|".join(_NUMBER_WORDS) + r") (?:additional )?mana\b")
 # A count, or a colour or use the game cannot tell: Mox Amber's colours need a legendary creature, and a
 # permanent that must be a creature with no crew to make it one.
@@ -572,7 +577,11 @@ _METALCRAFT = re.compile(r"activate only if you control three or more artifacts\
 _COST_PART = re.compile(
     r"\{t\}|\{(?P<generic>\d+)\}|pay (?P<life>\d+) life|sacrifice this \w+|exile this card from your hand"
     r"|(?P<creature>tap an untapped creature you control)"
-    rf"|sacrifice an? (?P<land>{'|'.join(BASIC_TYPES)})"
+    rf"|sacrifice an? (?P<land>{'|'.join(BASIC_TYPES)})|(?P<discard>discard your hand)"
+)
+# Metamorphosis: "Add X mana of any one color, where X is 1 plus the sacrificed creature's mana value".
+_PLUS_SACRIFICED = re.compile(
+    r"x mana of any one colou?r, where x is (?P<n>\d) plus the sacrificed creature's mana value"
 )
 # "Three mana in any combination of {R} and/or {G}".
 _COMBINATION = re.compile(r"(?P<n>\w+) mana in any combination of (?P<symbols>.*)")
@@ -601,33 +610,26 @@ class _Cost:
     taps_creature: bool = False
     # The basic land type of a land it sacrifices.
     land: str = ""
+    discards_hand: bool = False
 
 
 def _paid(cost: str) -> _Cost | None:
     """What an ability costs; None when it asks for more than mana, a tap, life, its own sacrifice, a creature
-    to tap or a land of a basic type to sacrifice."""
-    mana = life = 0
-    taps = sacrifices = from_hand = creature = False
-    land = ""
-    for part in (p.strip() for p in cost.split(",") if p.strip()):
-        matched = _COST_PART.fullmatch(part)
-        if matched is None:
-            return None
-        mana += int(matched.group("generic") or 0)
-        life += int(matched.group("life") or 0)
-        taps = taps or part == "{t}"
-        sacrifices = sacrifices or part.startswith("sacrifice this")
-        from_hand = from_hand or part.startswith("exile")
-        creature = creature or matched.group("creature") is not None
-        land = matched.group("land") or land
+    to tap, a land of a basic type to sacrifice or the hand to discard."""
+    parts = [p.strip() for p in cost.split(",") if p.strip()]
+    found = [_COST_PART.fullmatch(part) for part in parts]
+    matched = [m for m in found if m is not None]
+    if len(matched) != len(found):
+        return None
     return _Cost(
-        mana,
-        taps=taps,
-        sacrifices=sacrifices,
-        exiles_from_hand=from_hand,
-        life=life,
-        taps_creature=creature,
-        land=land,
+        sum(int(m.group("generic") or 0) for m in matched),
+        taps="{t}" in parts,
+        sacrifices=any(part.startswith("sacrifice this") for part in parts),
+        exiles_from_hand=any(part.startswith("exile") for part in parts),
+        life=sum(int(m.group("life") or 0) for m in matched),
+        taps_creature=any(m.group("creature") for m in matched),
+        land=next((m.group("land") for m in matched if m.group("land")), ""),
+        discards_hand=any(m.group("discard") for m in matched),
     )
 
 
@@ -690,6 +692,9 @@ def _fixed_mana(what: str) -> str:
         return fixed.group(1)
     if each := _PER_OPPONENT_CARD.fullmatch(what):
         return each.group(1) * OPPONENT_HAND
+    if plus := _PLUS_SACRIFICED.fullmatch(what):
+        # The rest is the sacrificed creature's, which the game adds when it sacrifices one.
+        return f"{_NUMBER_NAMES[int(plus.group('n'))]} mana of any one color"
     return what
 
 
@@ -828,6 +833,8 @@ def _mana(text: str, kinds: frozenset[CardKind], identity: frozenset[str]) -> Ma
                 needs=ManaNeed.CREATURE if paid.taps_creature else needs,
                 life=0 if paid.taps else paid.life,
                 land_sacrificed=frozenset({paid.land}) if paid.land else frozenset(),
+                discards_hand=paid.discards_hand,
+                plus_sacrificed=spell and _PLUS_SACRIFICED.search(text) is not None,
             )
     if best is None:
         return _mana_aura(text, identity)

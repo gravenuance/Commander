@@ -1678,6 +1678,60 @@ def test_mana_spent_only_on_some_kinds_of_spell_is_counted_for_those_kinds() -> 
     assert omenpaths.modelled
 
 
+LIONS_EYE_DIAMOND = real(
+    "Lion's Eye Diamond",
+    "{0}",
+    0,
+    "Artifact",
+    "Discard your hand, Sacrifice this artifact: Add three mana of any one color. Activate only as an "
+    "instant.",
+    produced="WUBRG",
+    roles=(RAMP,),
+)
+METAMORPHOSIS = real(
+    "Metamorphosis",
+    "{G}",
+    1,
+    "Sorcery",
+    "As an additional cost to cast this spell, sacrifice a creature.\nAdd X mana of any one color, where X "
+    "is 1 plus the sacrificed creature's mana value. Spend this mana only to cast creature spells.",
+    produced="WUBRG",
+    roles=(RAMP,),
+)
+INFERNAL_PLUNGE = real(
+    "Infernal Plunge",
+    "{R}",
+    1,
+    "Sorcery",
+    "As an additional cost to cast this spell, sacrifice a creature.\nAdd {R}{R}{R}.",
+    produced="R",
+    roles=(RAMP,),
+)
+
+
+def test_lions_eye_diamond_is_one_shot_mana_that_discards_the_hand() -> None:
+    diamond = one(LIONS_EYE_DIAMOND)
+    assert diamond.mana == ManaAbility(3, frozenset(ALL), delayed=False, ritual=True, discards_hand=True)
+    assert diamond.modelled
+
+
+def test_a_ritual_that_sacrifices_a_creature_needs_one_and_may_add_its_mana_value() -> None:
+    plunge = one(INFERNAL_PLUNGE)
+    assert plunge.mana == ManaAbility(3, frozenset("R"), delayed=False, ritual=True)
+    assert plunge.needs_sacrifice
+    metamorphosis = one(METAMORPHOSIS)
+    assert metamorphosis.mana == ManaAbility(
+        1,
+        frozenset(ALL),
+        delayed=False,
+        ritual=True,
+        spend_on=frozenset({CardKind.CREATURE}),
+        plus_sacrificed=True,
+    )
+    assert metamorphosis.needs_sacrifice
+    assert metamorphosis.modelled
+
+
 def test_mana_spent_only_on_abilities_is_left_out() -> None:
     card = one(SHANG_CHI)
     assert card.mana is None
