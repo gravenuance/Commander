@@ -429,6 +429,20 @@ def test_a_land_with_two_mana_counts_twice() -> None:
     assert only_outcome(run([tomb, FOREST, *repeat(VANILLA, 5)])).mana == (2, 3, 3, 3, 3)
 
 
+def test_city_of_traitors_is_sacrificed_when_the_next_land_is_played_after_its_mana_is_made() -> None:
+    city = make(
+        "City of Traitors",
+        kinds=frozenset({CardKind.LAND}),
+        land=LandFace(frozenset("C"), tapped=False, amount=2, lost_to_land_drop=True),
+    )
+    boss = make("Boss", mv=3, kinds=CREATURE)
+    outcome = only_outcome(run([city, FOREST, *repeat(VANILLA, 5)], commanders=(boss,)))
+    # Turn two taps the City for two before the Forest goes down: three mana cast the commander, and from then
+    # on the Forest alone is left.
+    assert outcome.commander_turns == (2,)
+    assert outcome.mana == (2, 1, 1, 1, 1)
+
+
 def test_an_untapped_land_is_played_ahead_of_a_tapped_one_when_the_mana_is_wanted() -> None:
     tapped = land("Tapped", "G", tapped=True)
     one_drop = make("One Drop", mv=1, kinds=CREATURE)

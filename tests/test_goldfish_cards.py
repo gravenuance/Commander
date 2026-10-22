@@ -1285,10 +1285,10 @@ def test_a_land_that_makes_its_double_mana_only_by_sacrificing_itself_makes_one(
     assert vein.modelled
 
 
-def test_a_land_that_is_sacrificed_when_another_land_is_played_is_not_modelled() -> None:
+def test_a_land_that_is_sacrificed_when_another_land_is_played_says_so() -> None:
     city = one(CITY_OF_TRAITORS)
-    assert city.land == LandFace(frozenset("C"), tapped=False, amount=2)
-    assert not city.modelled
+    assert city.land == LandFace(frozenset("C"), tapped=False, amount=2, lost_to_land_drop=True)
+    assert city.modelled
 
 
 def test_a_land_makes_the_colours_of_its_mana_abilities_not_those_it_could_make_later() -> None:

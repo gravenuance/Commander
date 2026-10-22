@@ -365,6 +365,7 @@ class _Card:
         "key",
         "kind_bits",
         "land_amount",
+        "land_lost",
         "land_mask",
         "land_tapped",
         "land_types",
@@ -420,15 +421,7 @@ class _Card:
         paid = [symbol for symbol, count in card.pips.items() if count > 0]
         self.pip_mask = unit_mask(symbol for symbol in paid if "/" not in symbol)
         self.hybrids = tuple(symbol_mask(symbol) for symbol in paid if "/" in symbol)
-        self.is_land = card.land is not None and CardKind.LAND in card.kinds
-        self.mdfc = card.land is not None and not self.is_land
-        land = card.land
-        self.land_mask = unit_mask(land.colours) if land is not None else 0
-        self.land_amount = land.amount if land is not None else 0
-        self.land_tapped = land is not None and land.tapped
-        self.land_types = card.land_types
-        name = card.name.casefold()
-        self.basic = name in _BASICS or name.startswith("snow-covered ")
+        self._read_land(card)
         self.creature = CardKind.CREATURE in card.kinds
         self.permanent = card.permanent
         self.extra_drops = card.extra_land_drops
@@ -443,6 +436,18 @@ class _Card:
         self.fast = mana is not None and not spend_from_hand and card.mana_value <= (_HAND - 5)
         self.win_piece = card.combo or card.tutor is not None or card.finisher
         self.rank = self._rank()
+
+    def _read_land(self, card: GoldfishCard) -> None:
+        self.is_land = card.land is not None and CardKind.LAND in card.kinds
+        self.mdfc = card.land is not None and not self.is_land
+        land = card.land
+        self.land_mask = unit_mask(land.colours) if land is not None else 0
+        self.land_amount = land.amount if land is not None else 0
+        self.land_tapped = land is not None and land.tapped
+        self.land_lost = land is not None and land.lost_to_land_drop
+        self.land_types = card.land_types
+        name = card.name.casefold()
+        self.basic = name in _BASICS or name.startswith("snow-covered ")
 
     def _rank(self) -> int:
         card = self.src
@@ -648,6 +653,7 @@ class _Game:
         "lib",
         "life",
         "life_sources",
+        "lost_lands",
         "mana",
         "needing",
         "needs_met",
@@ -704,6 +710,8 @@ class _Game:
         self.extra_drops = 0
         self.drops_left = 0
         self.lands_in_play = 0
+        # Lands in play that are sacrificed when another land is played (City of Traitors).
+        self.lost_lands: list[int] = []
         self.check_land = False
         self.cmd_left = list(setup.cmd_ids)
         self.cmd_turn = dict.fromkeys(setup.cmd_ids, 0)
@@ -829,7 +837,22 @@ class _Game:
                 return
             self.hand.remove(cid)
             self.drops_left -= 1
+            if self.lost_lands:
+                self._lose_to_land_drop()
             self._put_land(cid, cards[cid], tapped=cards[cid].land_tapped)
+            if cards[cid].land_lost:
+                self.lost_lands.append(cid)
+
+    def _lose_to_land_drop(self) -> None:
+        """Sacrifice the lands lost when another is played; the mana they made this turn stays."""
+        cards = self.s.cards
+        for cid in self.lost_lands:
+            card = cards[cid]
+            self.bf.discard(cid)
+            self.lands_in_play -= 1
+            held = self.pending if cid in self.arrived and card.land_tapped else self.pool
+            self._remove_mana(held, card.land_mask, card.land_amount)
+        self.lost_lands.clear()
 
     def _put_land(self, cid: int, card: _Card, *, tapped: bool) -> None:
         self.lands_in_play += 1

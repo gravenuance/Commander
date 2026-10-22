@@ -84,6 +84,8 @@ class LandFace:
     tapped: bool
     # Mana per tap, net of any mana paid for it (Ancient Tomb: 2).
     amount: int = 1
+    # Sacrificed when another land is played (City of Traitors), after its mana that turn is made.
+    lost_to_land_drop: bool = False
 
 
 class ManaNeed(Enum):
@@ -427,10 +429,10 @@ _UNMODELLED = re.compile(
 _COST_REDUCER = re.compile(r"costs? (?:\{[^}]+\})+ less|less to cast")
 # A land that returns a land to the hand on entering (Karoo).
 _BOUNCE_LAND = re.compile(r"return (?:an? )?(?:untapped )?\w+ you control to its owner's hand")
-# A land that costs other lands (Lotus Field, Glacial Chasm) or is lost when one is played (City of Traitors).
-_LAND_SACRIFICE = re.compile(
-    r"when this land enters, sacrifice (?:a|one|two|three) lands?\b|when you play another land, sacrifice"
-)
+# A land that costs other lands (Lotus Field, Glacial Chasm).
+_LAND_SACRIFICE = re.compile(r"when this land enters, sacrifice (?:a|one|two|three) lands?\b")
+# A land lost when another is played (City of Traitors).
+_LOST_TO_LAND_DROP = re.compile(r"when you play another land, sacrifice this land")
 # The cost of a filter land (Fetid Heath): one mana, of a colour or either of two.
 _FILTER_COST = re.compile(r"\{[wubrg](?:/[wubrg])?\}")
 # A land that is whatever land it copies (Vesuva): it makes mana, but no text says how much.
@@ -715,8 +717,7 @@ def _net_mana(cost: _Cost, what: str, identity: frozenset[str]) -> tuple[int, fr
 
 def _land_understood(text: str) -> bool:
     """Whether a land's mana is a fixed amount and the land costs or does nothing the game cannot follow: it
-    does not bounce or sacrifice lands, is not sacrificed when another land is played, and does not search
-    for several lands."""
+    does not bounce or sacrifice lands and does not search for several lands."""
     return (
         _BOUNCE_LAND.search(text) is None
         and _LAND_SACRIFICE.search(text) is None
@@ -770,7 +771,8 @@ def _land_face(info: CardMana, context: _Context) -> tuple[LandFace, bool]:
         colours = colours & (context.identity | {_COLOURLESS}) or colours
     makes_mana = bool(colours) or _COPY_LAND.search(text) is not None
     amount = max((net for net, _ in nets), default=int(makes_mana))
-    return LandFace(colours, tapped, amount), _land_understood(text)
+    lost = _LOST_TO_LAND_DROP.search(text) is not None
+    return LandFace(colours, tapped, amount, lost_to_land_drop=lost), _land_understood(text)
 
 
 _BASIC_SEARCH = re.compile(r"search your library for [^.]*\bbasic\b")
