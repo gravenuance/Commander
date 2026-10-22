@@ -4,19 +4,27 @@ const POLL_MS = 2000;
 
 /* Keeping up with changes from the CLI and Claude */
 
+// Whether the last reload of the deck list failed, so the next poll asks again whatever the stamps say.
+let decksStale = false;
+
 async function poll() {
   try {
     const answer = await window.pywebview.api.stamps();
     if (!answer.error && accountState.active) {
       const stamps = answer.stamps;
       const key = String(state.current);
-      const changed = JSON.stringify(stamps) !== JSON.stringify(state.stamps);
+      const changed = decksStale || JSON.stringify(stamps) !== JSON.stringify(state.stamps);
       const currentChanged = state.current !== null && stamps[key] !== state.stamps[key];
-      // While a save runs, the deck is reloaded when it ends; keep the old stamp so the change is not lost.
+      // While a save runs, the deck is reloaded when it ends; its old stamp stays so the change is not lost.
       const deferred = currentChanged && state.busy;
-      state.stamps = deferred ? { ...stamps, [key]: state.stamps[key] } : stamps;
-      if (changed) await loadDecks();
-      if (currentChanged && !deferred) await loadDeck();
+      const [decks, deck] = await Promise.allSettled([
+        changed ? loadDecks() : null,
+        currentChanged && !deferred ? loadDeck() : null,
+      ]);
+      // The open deck's stamp is loadDeck's to set, so a failed reload of it is tried again next tick.
+      state.stamps = state.current === null ? stamps : { ...stamps, [key]: state.stamps[key] };
+      decksStale = decks.status === "rejected";
+      for (const load of [decks, deck]) if (load.status === "rejected") throw load.reason;
       // `cmdr meta` and a running sync fill the same cache; reread the open panel from it.
       if (accountState.syncing) await loadAccount();
       const metaChanged = answer.meta !== state.metaStamp;

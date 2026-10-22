@@ -89,9 +89,7 @@ function paintSync(running, blocked, note) {
 
 async function reloadAfterSync() {
   try {
-    await loadDecks();
-    await loadDeck();
-    await metaPanel.load();
+    await refresh();
   } catch { /* shown in the status line */ }
 }
 
