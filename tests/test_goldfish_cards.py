@@ -1034,6 +1034,29 @@ def test_a_tapped_dual_taps_for_either_colour_and_enters_tapped() -> None:
     assert one(TRANQUIL_COVE).land == LandFace(frozenset("WU"), tapped=True)
 
 
+def test_a_land_whose_only_condition_is_on_another_line_still_enters_tapped() -> None:
+    plaza = real(
+        "Gateway Plaza",
+        "",
+        0,
+        "Land — Gate",
+        "This land enters tapped.\nWhen this land enters, sacrifice it unless you pay {1}.\n"
+        "{T}: Add one mana of any color.",
+        produced="WUBRG",
+    )
+    field = real(
+        "Field of the Dead",
+        "",
+        0,
+        "Land",
+        "This land enters tapped.\n{T}: Add {C}.\nWhenever this land or another land you control enters, "
+        "if you control seven or more lands with different names, create a 2/2 black Zombie creature token.",
+        produced="C",
+    )
+    assert one(plaza).land == LandFace(frozenset("WUBRG"), tapped=True)
+    assert one(field).land == LandFace(frozenset("C"), tapped=True)
+
+
 def test_a_fetch_land_has_the_colours_it_can_find() -> None:
     assert one(FLOODED_STRAND).land == LandFace(frozenset("WU"), tapped=False)
     assert one(EVOLVING_WILDS).land == LandFace(frozenset("WUBRG"), tapped=True)
