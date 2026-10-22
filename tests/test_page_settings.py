@@ -1,4 +1,5 @@
-"""The app page's settings dialog, grace cards included: its real scripts run under Node (`pagerun`)."""
+"""The app page's settings dialog, grace cards and finishers included: its real scripts run under Node
+(`pagerun`)."""
 
 from pagerun import Answer, needs_node, page
 
@@ -8,6 +9,7 @@ pytestmark = needs_node
 PRELUDE = """
 const answer = (over = {}) => ({
   adjacent: [], ignore: [], tagSearch: false, themes: [], leanings: [], maxAdjacent: 8, maxGrace: 10,
+  finishers: [], finishersRemoved: [],
   grace: [{ name: "Basalt Monolith", factor: 3 }, { name: "Rings of Brighthearth", factor: 2.5 }], ...over,
 });
 let refreshed = 0;
@@ -286,3 +288,196 @@ def test_every_remove_button_of_the_settings_has_a_tooltip_as_well_as_a_name() -
         ["Remove Basalt Monolith", "Remove Basalt Monolith"],
         ["Remove Rings of Brighthearth", "Remove Rings of Brighthearth"],
     ]
+
+
+# The finishers section: the chips, the cards the Tagger marks that were taken out, and the autocomplete.
+FINISHERS_PRELUDE = """
+const finisherChips = () => [...$("settings-finishers").children].map((li) => ({
+  name: li.children[0].textContent, tagged: li.children.length === 3,
+}));
+const leftOut = () => [...$("settings-finishers-left-out").querySelectorAll("button")]
+  .map((b) => b.textContent);
+const marked = [{ name: "Craterhoof Behemoth", auto: true }, { name: "Villainous Wealth", auto: true }];
+const order = () => calls.map((c) => c[0]).filter((name) => name.startsWith("save_"));
+const addFinisherNamed = async (name) => {
+  const box = $("settings-finishers-input");
+  box.value = name;
+  await fire(box, "keydown", { key: "Enter" });
+};
+stub.save_settings = async () => answer();
+stub.save_finishers = async () => answer();
+state.gridCards.set("Craterhoof Behemoth", {});
+state.gridCards.set("Villainous Wealth", {});
+state.gridCards.set("Terror of the Peaks", {});
+state.gridCards.set("Terastodon", {});
+"""
+
+
+def test_the_dialog_lists_the_finishers_as_played_and_the_marked_cards_left_out() -> None:
+    seen = run(
+        FINISHERS_PRELUDE
+        + """
+    await open({ finishers: [...marked, { name: "Terror of the Peaks", auto: false }],
+      finishersRemoved: ["Sun Titan"] });
+    return { chips: finisherChips(), leftOut: leftOut(),
+      labels: [...$("settings-finishers").querySelectorAll(".chip-remove")]
+        .map((b) => [b.getAttribute("aria-label"), b.title]) };
+    """
+    )
+    assert seen["chips"] == [
+        {"name": "Craterhoof Behemoth", "tagged": True},
+        {"name": "Villainous Wealth", "tagged": True},
+        {"name": "Terror of the Peaks", "tagged": False},
+    ]
+    assert seen["leftOut"] == ["+ Sun Titan"]
+    assert seen["labels"][2] == ["Remove Terror of the Peaks", "Remove Terror of the Peaks"]
+
+
+def test_saving_without_touching_the_finishers_does_not_save_them() -> None:
+    seen = run(
+        FINISHERS_PRELUDE
+        + """
+    await open({ finishers: marked });
+    await fire($("settings-save"), "click");
+    return order();
+    """
+    )
+    assert seen == ["save_settings"]
+
+
+def test_removing_a_marked_finisher_leaves_it_out_and_saves_the_rest_after_the_settings() -> None:
+    seen = run(
+        FINISHERS_PRELUDE
+        + """
+    await open({ finishers: marked });
+    await fire($("settings-finishers").children[0].querySelector(".chip-remove"), "click");
+    const after = { chips: finisherChips(), leftOut: leftOut(),
+      focus: document.activeElement === $("settings-finishers-input") };
+    await fire($("settings-save"), "click");
+    return { after, order: order(), sent: calls.find((c) => c[0] === "save_finishers"),
+      closed: !$("settings-dialog").open };
+    """
+    )
+    assert seen["after"] == {
+        "chips": [{"name": "Villainous Wealth", "tagged": True}],
+        "leftOut": ["+ Craterhoof Behemoth"],
+        "focus": True,
+    }
+    assert seen["order"] == ["save_settings", "save_finishers"]
+    assert seen["sent"] == ["save_finishers", 1, ["Villainous Wealth"]]
+    assert seen["closed"] is True
+
+
+def test_putting_back_a_card_left_out_before_saves_it_and_one_left_out_now_saves_nothing() -> None:
+    seen = run(
+        FINISHERS_PRELUDE
+        + """
+    await open({ finishers: [marked[1]], finishersRemoved: ["Craterhoof Behemoth"] });
+    await fire($("settings-finishers-left-out").querySelector("button"), "click");
+    const back = { chips: finisherChips(), leftOut: leftOut() };
+    await fire($("settings-save"), "click");
+    const restored = { order: order(), sent: calls.find((c) => c[0] === "save_finishers") };
+    calls.length = 0;
+    await open({ finishers: marked });
+    await fire($("settings-finishers").children[0].querySelector(".chip-remove"), "click");
+    await fire($("settings-finishers-left-out").querySelector("button"), "click");
+    await fire($("settings-save"), "click");
+    return { back, restored, untouched: order() };
+    """
+    )
+    assert seen["back"] == {
+        "chips": [
+            {"name": "Villainous Wealth", "tagged": True},
+            {"name": "Craterhoof Behemoth", "tagged": True},
+        ],
+        "leftOut": [],
+    }
+    assert seen["restored"] == {
+        "order": ["save_settings", "save_finishers"],
+        "sent": ["save_finishers", 1, ["Villainous Wealth", "Craterhoof Behemoth"]],
+    }
+    assert seen["untouched"] == ["save_settings"]
+
+
+def test_adding_a_card_takes_the_decks_spelling_ignores_a_repeat_and_saves_it_as_a_name() -> None:
+    seen = run(
+        FINISHERS_PRELUDE
+        + """
+    await open({ finishers: marked });
+    await addFinisherNamed("  terror of the peaks ");
+    await addFinisherNamed("TERROR OF THE PEAKS");
+    await addFinisherNamed("Not In The Deck Yet");
+    await addFinisherNamed("   ");
+    const names = finisherChips().map((c) => [c.name, c.tagged]);
+    await fire($("settings-save"), "click");
+    return { names, input: $("settings-finishers-input").value,
+      sent: calls.find((c) => c[0] === "save_finishers") };
+    """
+    )
+    assert seen["names"] == [
+        ["Craterhoof Behemoth", True],
+        ["Villainous Wealth", True],
+        ["Terror of the Peaks", False],
+        ["Not In The Deck Yet", False],
+    ]
+    assert seen["sent"] == [
+        "save_finishers",
+        1,
+        ["Craterhoof Behemoth", "Villainous Wealth", "Terror of the Peaks", "Not In The Deck Yet"],
+    ]
+
+
+def test_removing_a_card_that_was_added_drops_it_without_listing_it_as_left_out() -> None:
+    seen = run(
+        FINISHERS_PRELUDE
+        + """
+    await open({ finishers: marked });
+    await addFinisherNamed("Terastodon");
+    await fire($("settings-finishers").children[2].querySelector(".chip-remove"), "click");
+    await fire($("settings-save"), "click");
+    return { leftOut: leftOut(), order: order() };
+    """
+    )
+    assert seen == {"leftOut": [], "order": ["save_settings"]}
+
+
+def test_the_finisher_box_offers_the_decks_own_cards_not_yet_finishers_without_asking_the_bridge() -> None:
+    seen = run(
+        FINISHERS_PRELUDE
+        + """
+    await open({ finishers: [marked[0]] });
+    const box = $("settings-finishers-input");
+    const offered = async (text) => {
+      box.focus();
+      box.value = text;
+      await fire(box, "input");
+      await timers.at(-1).fn();
+      return [...$("settings-finishers-results").children].map((li) => li.children[0].textContent);
+    };
+    const ter = await offered("ter");
+    const held = await offered("hoof");
+    const short = await offered("t");
+    return { ter, held, short, searched: calls.filter((c) => c[0] === "search").length };
+    """
+    )
+    assert seen == {"ter": ["Terastodon", "Terror of the Peaks"], "held": [], "short": [], "searched": 0}
+
+
+def test_a_refused_finishers_save_shows_in_the_dialog_and_keeps_it_open() -> None:
+    seen = run(
+        FINISHERS_PRELUDE
+        + """
+    stub.save_finishers = async () => ({ error: "No card named 'Nonesuch' (check the spelling)" });
+    await open({ finishers: marked });
+    await addFinisherNamed("Nonesuch");
+    await fire($("settings-save"), "click");
+    return { text: $("settings-error").textContent, open: $("settings-dialog").open, refreshed,
+      chips: finisherChips().length };
+    """
+    )
+    assert seen == {
+        "text": "No card named 'Nonesuch' (check the spelling)",
+        "open": True,
+        "refreshed": 0,
+        "chips": 3,
+    }

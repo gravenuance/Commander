@@ -260,6 +260,19 @@
       <button id="settings-grace-add" class="button" type="button">Add card</button>
     </div>
   </section>
+  <section class="setting" aria-labelledby="settings-finishers-title">
+    <h3 id="settings-finishers-title">Finishers</h3>
+    <p class="muted small">Cards the goldfish counts as a way to win. Cards the Scryfall Tagger marks as finishers
+      are included; take one out to leave it out, or add any card of the deck.</p>
+    <ul id="settings-finishers" class="setting-chips" aria-label="Finishers"></ul>
+    <div class="propose setting-input">
+      <input id="settings-finishers-input" type="search" role="combobox" placeholder="Add a finisher" aria-label="Add a finisher"
+             aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="settings-finishers-results"
+             autocomplete="off" spellcheck="false">
+      <ul id="settings-finishers-results" class="results" role="listbox" aria-label="Matching cards of the deck" hidden></ul>
+    </div>
+    <div id="settings-finishers-left-out" class="setting-offers"></div>
+  </section>
   <p id="settings-error" class="field-error" role="alert" hidden></p>
   <div class="dialog-actions">
     <button id="settings-cancel" class="button" type="button">Cancel</button>
