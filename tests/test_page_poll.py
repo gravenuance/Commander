@@ -97,6 +97,25 @@ def test_a_deck_that_fails_to_load_leaves_the_syncs_progress_and_the_meta_reload
     assert seen == {"account": 1, "meta": 1, "note": "Fetching 2 of 9"}
 
 
+def test_a_deck_opened_while_a_poll_is_out_keeps_the_stamp_it_loaded_with() -> None:
+    seen = run("""
+    state.decks = [...state.decks, { id: 8, short: "B", name: "B", queued: 0 }];
+    state.stamps = { "7": "old", "8": "b1" };
+    stub.stamps = async () => ({ stamps: { "7": "new", "8": "b2" }, meta: null });
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    stub.decks = async () => { await gate; return { decks: state.decks }; };
+    stub.deck = async (id) => (id === 8 ? { ...view("b3"), id: 8 } : view("new"));
+    const polling = poll();
+    await settle();
+    await openDeck(8);
+    release();
+    await polling;
+    return state.stamps;
+    """)
+    assert seen == {"7": "new", "8": "b3"}
+
+
 def test_a_poll_that_loaded_everything_does_not_load_it_again() -> None:
     seen = run("""
     await poll();

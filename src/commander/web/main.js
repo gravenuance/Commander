@@ -33,8 +33,10 @@ async function poll() {
         changed ? loadDecks() : null,
         reloadDeck ? loadDeck() : null,
       ]);
-      // The open deck's stamp is loadDeck's to set, so a failed reload of it keeps the old one.
-      state.stamps = state.current === null ? stamps : { ...stamps, [key]: state.stamps[key] };
+      // The open deck's stamp is loadDeck's to set, so a failed reload of it keeps the old one. The deck open
+      // now may not be the one the poll started with.
+      const open = String(state.current);
+      state.stamps = state.current === null ? stamps : { ...stamps, [open]: state.stamps[open] };
       decksStale = decks.status === "rejected";
       if (reloadDeck) failedDeck = deck.status === "rejected" ? { key, stamp: stamps[key], skipped: 0 } : null;
       // A failed load is the bridge's to show; the rest of the poll still runs, and a script error is logged.
