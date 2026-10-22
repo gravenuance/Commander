@@ -64,3 +64,20 @@ def test_main_counts_sum_a_card_filed_as_several_entries_and_leave_out_the_cards
     )
     deck = Deck(1, "test", "me", 3, "2026-10-16", cards)
     assert deck.main_counts == {"Plains": 19, "Island": 3}
+
+
+def test_main_cards_and_commanders_are_the_deck_cards_in_order_and_follow_a_replaced_card_list() -> None:
+    template = DeckCard("Plains", 1, ("Land",), True, "sid", 1, 1, "tst", "1", "Normal")  # noqa: FBT003 — as the model
+    leader = replace(template, name="Magda, Brazen Outlaw", categories=("Commander",), entry_id=2)
+    out = replace(template, name="Wastes", in_deck=False, entry_id=3)
+    benched = replace(template, name="Sol Ring", categories=("Commander",), in_deck=False, entry_id=4)
+    deck = Deck(1, "test", "me", 3, "2026-10-16", (template, leader, out, benched))
+    assert deck.main_cards == (template, leader)
+    assert deck.commanders == ("Magda, Brazen Outlaw",)
+    assert deck.main_cards is deck.main_cards
+    other = replace(deck, cards=(replace(template, name="Island"), out))
+    assert other.main_cards == (replace(template, name="Island"),)
+    assert other.commanders == ()
+    # The cached lists are no part of what makes two decks equal or of how a deck prints.
+    assert replace(deck, name="test") == deck
+    assert "_main_cards" not in repr(deck)

@@ -9,7 +9,7 @@ colour sources a deck has to spare, for the land cuts of nonland ideas (ADR 0036
 import logging
 import math
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 from commander.carddb import CardDb, CardMana
 from commander.manabase import (
@@ -73,6 +73,11 @@ class ManaGuard:
     # How many sources each colour has beyond what its most demanding spell needs; the colour's lands when
     # no spell needs it.
     slack: Mapping[str, float]
+    # What `allows` answered, by the names as asked. Every other field is fixed for the guard's life, so an
+    # answer never goes stale; `with_cards` makes a guard of its own, with an empty memo.
+    _answers: dict[tuple[str, str], bool] = field(
+        init=False, repr=False, compare=False, default_factory=dict[tuple[str, str], bool]
+    )
 
     @staticmethod
     def of(
@@ -106,6 +111,8 @@ class ManaGuard:
         if added is None or cut_card is None:
             log.warning("No mana data for %s or %s: the swap is refused", add, cut)
             return False
+        if (known := self._answers.get((add, cut))) is not None:
+            return known
         counts = self.deck.main_counts
         counts[cut] = counts.get(cut, 0) - 1
         counts[add] = counts.get(add, 0) + 1
@@ -113,7 +120,9 @@ class ManaGuard:
             deck_with_counts(self.deck, counts), self.cards, alternative_cost=self.alternative_cost
         )
         moves_count = info_is_land(added) != info_is_land(cut_card)
-        return (not moves_count or self._count_holds(after.lands)) and self._sources_hold(after)
+        allowed = (not moves_count or self._count_holds(after.lands)) and self._sources_hold(after)
+        self._answers[add, cut] = allowed
+        return allowed
 
     def spare_lands(self) -> int:
         """How many lands the deck could lose before it falls below its floor: the greater of Karsten's count

@@ -1,6 +1,6 @@
 """Deck data shared by every command."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 COMMANDER_CATEGORY = "Commander"
 # Words in an Archidekt category that file its cards as part of the deck's plan: "Combo Pieces", "WinCons".
@@ -55,12 +55,21 @@ class Deck:
     # login lists an unlisted one (ADR 0040).
     private: bool = False
     unlisted: bool = False
+    # The cards in the deck and the commanders among them, worked out once: a Deck and its DeckCards are
+    # frozen, so they cannot go stale, and `replace` makes them again for the new cards.
+    _main_cards: tuple[DeckCard, ...] = field(init=False, repr=False, compare=False)
+    _commanders: tuple[str, ...] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.id < 1:
             raise ValueError(f"deck id must be positive, got {self.id}")
         if self.bracket is not None and not 1 <= self.bracket <= 5:  # noqa: PLR2004 — brackets run 1..5
             raise ValueError(f"bracket must be 1-5, got {self.bracket}")
+        main = tuple(card for card in self.cards if card.in_deck)
+        object.__setattr__(self, "_main_cards", main)
+        object.__setattr__(
+            self, "_commanders", tuple(card.name for card in main if COMMANDER_CATEGORY in card.categories)
+        )
 
     @property
     def url(self) -> str:
@@ -73,7 +82,7 @@ class Deck:
 
     @property
     def main_cards(self) -> tuple[DeckCard, ...]:
-        return tuple(card for card in self.cards if card.in_deck)
+        return self._main_cards
 
     @property
     def main_counts(self) -> dict[str, int]:
@@ -98,7 +107,7 @@ class Deck:
 
     @property
     def commanders(self) -> tuple[str, ...]:
-        return tuple(card.name for card in self.main_cards if COMMANDER_CATEGORY in card.categories)
+        return self._commanders
 
     @property
     def short_name(self) -> str:
