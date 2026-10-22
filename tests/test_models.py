@@ -3,7 +3,7 @@ from dataclasses import replace
 import pytest
 
 from commander.archidekt import parse_deck
-from commander.models import Deck, short_commander_name
+from commander.models import Deck, DeckCard, short_commander_name
 from conftest import Json
 
 
@@ -52,3 +52,15 @@ def test_a_deck_without_a_commander_goes_by_its_name(deck: Deck) -> None:
 )
 def test_commanders_go_by_the_name_players_use(name: str, short: str) -> None:
     assert short_commander_name(name) == short
+
+
+def test_main_counts_sum_a_card_filed_as_several_entries_and_leave_out_the_cards_outside_the_deck() -> None:
+    template = DeckCard("Plains", 1, ("Land",), True, "sid", 1, 1, "tst", "1", "Normal")  # noqa: FBT003 — as the model
+    cards = (
+        replace(template, quantity=10),
+        replace(template, quantity=9, entry_id=2),
+        replace(template, name="Island", quantity=3),
+        replace(template, name="Wastes", quantity=4, in_deck=False),
+    )
+    deck = Deck(1, "test", "me", 3, "2026-10-16", cards)
+    assert deck.main_counts == {"Plains": 19, "Island": 3}

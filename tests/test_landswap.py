@@ -414,3 +414,12 @@ def test_a_land_count_with_a_part_land_counts_the_whole_lands_above_the_floor() 
     assert spare(38.69) == 1
     assert spare(38.7) == 2
     assert spare(36.69) == 0
+
+
+def test_a_basic_land_filed_as_two_entries_counts_all_its_copies_in_a_swap() -> None:
+    # Ten and nine Plains are the same 19 Plains as one entry: both swaps are allowed alike.
+    split = ManaGuard.of(deck_of(("Plains", 10), ("Plains", 9), ("Island", 18), ("Filler", 62)), CARDS)
+    assert split.allows("Plains", "Filler")
+    assert split.allows("Island", "Filler")
+    # Cutting one of the 19 Plains for a spell still leaves 36 lands, 1.7 short: refused as with one entry.
+    assert not split.allows("Filler", "Plains")

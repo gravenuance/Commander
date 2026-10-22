@@ -76,6 +76,14 @@ class Deck:
         return tuple(card for card in self.cards if card.in_deck)
 
     @property
+    def main_counts(self) -> dict[str, int]:
+        """The copies of each main card by name, a card filed as several entries (printings) summed."""
+        counts: dict[str, int] = {}
+        for card in self.main_cards:
+            counts[card.name] = counts.get(card.name, 0) + card.quantity
+        return counts
+
+    @property
     def labels_known(self) -> bool:
         return all(card.label is not None for card in self.cards)
 

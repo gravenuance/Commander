@@ -513,7 +513,7 @@ def _followed(
     cuts: Sequence[str],
 ) -> Deck:
     """The deck as the plan leaves it, so the analysis can be run on it again."""
-    counts: dict[str, int] = {card.name: card.quantity for card in deck.main_cards}
+    counts = deck.main_counts
     for colour, name in names.items():
         counts[name] = counts.get(name, 0) + after[colour] - now[colour]
     basics = set(names.values())

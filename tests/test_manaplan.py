@@ -223,3 +223,12 @@ def test_a_check_land_is_taken_or_refused_alike_to_close_a_gap_and_to_replace_a_
     report = analyse_mana(sparse, cards, comparison=("recent decks", lists))
     refused = suggest_mana(sparse, cards, report, options=options)
     assert all(swap.add != "Glacial Fortress" for swap in refused.swaps)
+
+
+def test_a_basic_land_filed_as_two_entries_is_planned_as_one() -> None:
+    deck = deck_of(("Plains", 20), ("Plains", 10), ("Island", 8), ("Filler", 60), ("Counterspell", 1))
+    plan = suggestion(deck)
+    # The first test's deck with its 30 Plains in two entries: white stays met, blue is short of Counterspell.
+    assert plan.basics == (BasicCount("W", "Plains", 30, 18, 2), BasicCount("U", "Island", 8, 20))
+    assert plan.colours == (ColourOutcome("W", 0, 0), ColourOutcome("U", 2, 1))
+    assert plan.still_short == ("Counterspell",)

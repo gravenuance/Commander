@@ -106,7 +106,7 @@ class ManaGuard:
         if added is None or cut_card is None:
             log.warning("No mana data for %s or %s: the swap is refused", add, cut)
             return False
-        counts = {card.name: card.quantity for card in self.deck.main_cards}
+        counts = self.deck.main_counts
         counts[cut] = counts.get(cut, 0) - 1
         counts[add] = counts.get(add, 0) + 1
         after = analyse_mana(
