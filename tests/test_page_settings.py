@@ -211,3 +211,17 @@ def test_removing_a_card_moves_focus_to_the_next_rows_factor_or_to_the_add_field
     return { middle, last, empty: [rows().length, document.activeElement === $("settings-grace-name")] };
     """)
     assert seen == {"middle": [["A", "C"], True], "last": [["A"], True], "empty": [0, True]}
+
+
+def test_every_remove_button_of_the_settings_has_a_tooltip_as_well_as_a_name() -> None:
+    seen = run("""
+    await open({ adjacent: [["Rhys"]], ignore: ["Mountain"] });
+    return $("settings-dialog").querySelectorAll(".chip-remove")
+      .map((button) => [button.getAttribute("aria-label"), button.getAttribute("title")]);
+    """)
+    assert seen == [
+        ["Remove Rhys", "Remove Rhys"],
+        ["Remove Mountain", "Remove Mountain"],
+        ["Remove Basalt Monolith", "Remove Basalt Monolith"],
+        ["Remove Rings of Brighthearth", "Remove Rings of Brighthearth"],
+    ]

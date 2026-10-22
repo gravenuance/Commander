@@ -29,7 +29,10 @@ async function openSettings() {
 function renderSettings() {
   const s = settingsState;
   const chip = (text, remove, ...extra) => el("li", { class: "deck-chip setting-chip" }, el("span", { text }), ...extra,
-    el("button", { class: "chip-remove", type: "button", text: "×", "aria-label": `Remove ${text}`, onclick: remove }));
+    el("button", {
+      class: "chip-remove", type: "button", text: "×", "aria-label": `Remove ${text}`, title: `Remove ${text}`,
+      onclick: remove,
+    }));
   $("settings-adjacent").replaceChildren(...s.adjacent.map((group, index) => chip(group.join(" + "), () => {
     s.adjacent.splice(index, 1);
     s.pairWith = null;
@@ -80,6 +83,7 @@ function renderGrace() {
       factor,
       el("button", {
         class: "chip-remove", type: "button", text: "×", "aria-label": `Remove ${card.name}`,
+        title: `Remove ${card.name}`,
         onclick: () => {
           s.grace.splice(index, 1);
           renderGrace();

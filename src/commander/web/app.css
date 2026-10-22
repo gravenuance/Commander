@@ -1108,7 +1108,7 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .setting-chips { list-style: none; margin: 0 0 var(--space-2); padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-1); }
 .setting-chip { display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--text-s); padding: 2px 4px 2px 8px; }
 .chip-remove, .chip-pair { border: none; background: transparent; color: var(--muted); cursor: pointer; font: inherit; padding: 0 4px; border-radius: var(--radius-xs); }
-.chip-remove { font-size: 1rem; line-height: 1; }
+.chip-remove { font-size: 1rem; line-height: 1; min-width: 24px; min-height: 24px; }
 .chip-remove:hover, .chip-pair:hover, .chip-pair[aria-pressed="true"] { background: var(--accent-soft); color: inherit; }
 .setting-input input { width: 100%; }
 .setting-switch { display: flex; align-items: center; gap: var(--space-2); min-height: 24px; font-weight: 600; cursor: pointer; }
