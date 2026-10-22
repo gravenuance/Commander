@@ -219,6 +219,33 @@ def test_a_card_cut_twice_is_an_error_and_the_second_swap_is_left_out_when_lenie
     assert both.replayed == first.replayed
 
 
+def test_a_card_put_in_twice_is_an_error_and_the_second_swap_is_left_out_when_lenient(
+    played: GoldfishRun, db: CardDb
+) -> None:
+    swaps = [SwapRequest("Arcane Signet", "Disruptor Flute"), SwapRequest("Arcane Signet", "Battered Golem")]
+    with pytest.raises(GoldfishError, match="Arcane Signet is put in twice"):
+        compare_swaps(played, db, swaps)
+    both = compare_swaps(played, db, swaps, lenient=True)
+    first = compare_swaps(played, db, swaps[:1])
+    assert both.swapped.mana_median == first.swapped.mana_median
+    assert both.replayed == first.replayed
+
+
+def test_a_swap_refused_for_its_incoming_card_does_not_use_up_its_cut(
+    played: GoldfishRun, db: CardDb
+) -> None:
+    # The second swap fails on the incoming card, so the Flute it would cut is still free for the third.
+    swaps = [
+        SwapRequest("Arcane Signet", "Battered Golem"),
+        SwapRequest("Arcane Signet", "Disruptor Flute"),
+        SwapRequest("Mana Crypt", "Disruptor Flute"),
+    ]
+    both = compare_swaps(played, db, swaps, lenient=True)
+    kept = compare_swaps(played, db, [swaps[0], swaps[2]])
+    assert both.swapped.mana_median == kept.swapped.mana_median
+    assert both.replayed == kept.replayed
+
+
 def test_swaps_are_found_by_any_case_or_the_front_face_of_a_two_faced_name(
     played: GoldfishRun, db: CardDb
 ) -> None:
