@@ -14,6 +14,7 @@ import keyring.backend
 import keyring.errors
 import pytest
 
+from commander import fsutil, net
 from commander.carddb import CARD_DB_FILE, CardDataMeta, write_card_db
 from commander.net import HTTP_OK
 from commander.scryfall import read_cards, read_tags, role_gates, role_members
@@ -442,6 +443,16 @@ def memory_keyring() -> Iterator[MemoryKeyring]:
     keyring.set_keyring(backend)
     yield backend
     keyring.set_keyring(previous)
+
+
+@pytest.fixture(autouse=True)
+def no_retry_waits(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """The backoff waits of every fetcher the code builds itself, and of file replaces, recorded instead of
+    slept."""
+    waits: list[float] = []
+    monkeypatch.setattr(net, "retry_sleep", waits.append)
+    monkeypatch.setattr(fsutil, "retry_sleep", waits.append)
+    return waits
 
 
 class MemoryKeyStore:

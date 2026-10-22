@@ -13,7 +13,7 @@ from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
 from commander.bracket import estimate_cache, estimate_deck
 from commander.cli import main
 from commander.credentials import SERVICE
-from commander.net import Fetcher
+from commander.net import Fetcher, Pacer
 from commander.spellbook import SpellbookClient
 from commander.syncrun import CardState, CardStatus, SyncOutcome
 from conftest import CARDS_URL, REFRESH_TOKEN, FakeArchidekt, FakeSpellbook, Json, MemoryKeyring, card_entry
@@ -50,7 +50,15 @@ def run(
     if cache is not None:
         env["CMDR_CACHE_DIR"] = str(cache)
     factory = (fake or FakeArchidekt()).client
-    code = main(args, env=env, client_factory=factory, stdout=out, stderr=err, now=lambda: now)
+    code = main(
+        args,
+        env=env,
+        client_factory=factory,
+        pacer_factory=lambda _: Pacer(0),
+        stdout=out,
+        stderr=err,
+        now=lambda: now,
+    )
     return Run(code, out.getvalue(), err.getvalue())
 
 

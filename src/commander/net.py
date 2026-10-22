@@ -96,13 +96,16 @@ def make_client() -> httpx.Client:
     )
 
 
+retry_sleep: Callable[[float], None] = time.sleep
+
+
 class Fetcher:
     def __init__(
         self,
         client: httpx.Client,
         *,
         max_attempts: int = MAX_ATTEMPTS,
-        sleep: Callable[[float], None] = time.sleep,
+        sleep: Callable[[float], None] | None = None,
         monotonic: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], float] = time.time,
         jitter: Callable[[], float] = random.random,
@@ -113,7 +116,8 @@ class Fetcher:
         self._slow_after = slow_after
         self._client = client
         self._max_attempts = max_attempts
-        self._sleep = sleep
+        # Read when built, not when defined, so tests can swap the backoff wait for every fetcher at once.
+        self._sleep = sleep if sleep is not None else retry_sleep
         self._monotonic = monotonic
         self._wall_clock = wall_clock
         self._jitter = jitter
