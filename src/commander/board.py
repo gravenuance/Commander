@@ -67,7 +67,14 @@ _LOCK_POLL_SECONDS = 0.05
 # Basic land names, Wastes included, for telling a basic swap; manabase and manaplan list only the five
 # coloured basics, by type or colour, because Wastes has no land type and makes no colour.
 _BASIC_LAND_NAMES = frozenset({"plains", "island", "swamp", "mountain", "forest", "wastes"})
-_THREAD_LOCK = threading.Lock()
+# One thread lock per deck folder, so a lock another process holds on one deck holds up only that deck.
+_THREAD_LOCKS: dict[Path, threading.Lock] = {}
+_THREAD_LOCKS_GUARD = threading.Lock()
+
+
+def _thread_lock(folder: Path) -> threading.Lock:
+    with _THREAD_LOCKS_GUARD:
+        return _THREAD_LOCKS.setdefault(folder.resolve(), threading.Lock())
 
 
 class BoardError(Exception):
@@ -1310,7 +1317,7 @@ def board_lock(folder: Path) -> Generator[None]:
     """Hold the deck's board lock: one thread here, and one process across the CLI and the app. Raises
     BoardIOError when another holds it for longer than LOCK_TIMEOUT_SECONDS."""
     path = folder / LOCK_FILE
-    with _THREAD_LOCK:
+    with _thread_lock(folder):
         deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
         while True:
             try:

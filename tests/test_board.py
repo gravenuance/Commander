@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import threading
 import time
 from collections.abc import Iterator, Sequence
 from dataclasses import replace
@@ -35,6 +36,8 @@ from commander.carddb import CardDb, ResolvedCard
 from commander.models import Deck
 from commander.plan import AddCard, Plan, RemoveCard
 from conftest import Json
+
+WAIT_SECONDS = 30
 
 START = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 
@@ -461,6 +464,45 @@ def test_a_held_lock_makes_the_board_busy(
     with pytest.raises(BoardError, match="the board is busy"):
         service.propose("Lightning Bolt", Actor.YOU)
     assert not (tmp_path / BOARD_FILE).exists()
+
+
+def test_waiting_for_one_decks_lock_does_not_hold_up_another_decks_board(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    held, free = tmp_path / "held", tmp_path / "free"
+    held.mkdir()
+    free.mkdir()
+    (held / LOCK_FILE).write_text("123", encoding="utf-8")  # another process, say the CLI, holds this one
+    monkeypatch.setattr(board_module, "LOCK_TIMEOUT_SECONDS", 60.0)
+    real_sleep = time.sleep
+    polling = threading.Event()
+
+    def poll(seconds: float) -> None:
+        polling.set()
+        real_sleep(seconds)
+
+    monkeypatch.setattr(board_module.time, "sleep", poll)
+    taken = threading.Event()
+
+    def wait_for_held() -> None:
+        with board_module.board_lock(held):
+            pass
+
+    def take_free() -> None:
+        with board_module.board_lock(free):
+            taken.set()
+
+    waiter, other = threading.Thread(target=wait_for_held), threading.Thread(target=take_free)
+    waiter.start()
+    try:
+        assert polling.wait(WAIT_SECONDS)
+        other.start()
+        assert taken.wait(WAIT_SECONDS), "the other deck's board waited for the held lock"
+    finally:
+        (held / LOCK_FILE).unlink()
+        waiter.join(WAIT_SECONDS)
+        if other.is_alive():
+            other.join(WAIT_SECONDS)
 
 
 def test_a_stale_lock_is_cleared(tmp_path: Path, service: BoardService) -> None:
