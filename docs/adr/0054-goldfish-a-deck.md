@@ -165,3 +165,18 @@ The first run on the owner's decks showed four figures off; the owner decided:
 The dominant tags (`ideas.dominant_tags`) are read whatever the profile's tag search setting says; that
 setting only decides whether Archidekt is searched by tag. `POLICY_VERSION` stays 1, since nothing has been
 cached yet.
+
+## Amendment (2026-10-22): what the app shows beside a card
+
+- The fold on a Considering tile and Review show **headline figures** only, and only those that moved:
+  each commander's "cast by" at the bracket's turn (9, 8, 6 and 4 for brackets 1 to 4, the third turn in
+  bracket 5; the nearest turn shown when that one is not shown), the worst tenth of mana at that turn, the
+  colour screw, and each combo's "landed by" at that turn. `cmdr goldfish` and the Goldfish tab show every
+  figure that moved.
+- The owner's finishers are stored in `profile.toml` as a `[goldfish]` table: `finishers` for cards the owner
+  adds, `not_finishers` for Tagger-marked ones the owner takes out. A card in both lists is refused. The table
+  is optional, so older profiles stay valid and `PROFILE_VERSION` stays 1.
+- A swap takes the place of every copy of the card cut, as the engine plays it. A queued card whose copies
+  differ from the copies the deck holds of its cut (one Forest out of ten), whose cut is not in the deck's
+  library or whose card the deck already holds is left out of the figures, and `cmdr goldfish` refuses it
+  with the reason.

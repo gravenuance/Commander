@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- `cmdr goldfish <deck>` plays a deck out 10,000 times against an empty table and reports its opening hands,
+  commander, mana by turn, colour screw and how soon its combos and finishers come together, for the bracket
+  the deck is played at. `--swap "<in>=<out>"` or `--plan plan.toml` lists every figure a swap moves
+  (ADR 0054). A deck's profile can name finishers of its own, and finishers to leave out, under `[goldfish]`.
 - A *Previews* panel in the app shows, while a set is being previewed, up to 6 of its announced cards that
   suit the open deck: in its colours, matching the most of its three main Archidekt tags, then filling a role
   it runs short of. It is only to look at, with no price, and a card leaves it on its release day. The sync

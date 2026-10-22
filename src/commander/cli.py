@@ -35,6 +35,7 @@ from commander.cli_analysis import add_analysis_commands
 from commander.cli_app import add_app_command
 from commander.cli_board import add_board_commands
 from commander.cli_cards import add_card_commands
+from commander.cli_goldfish import add_goldfish_command
 from commander.cli_meta import add_meta_command
 from commander.cli_output import (
     print_apply_outcome,
@@ -118,6 +119,7 @@ examples:
   cmdr bracket magda --details                game changers, tutors and combos of one deck
   cmdr suggest                                combo pieces and roles short of target, every deck
   cmdr suggest magda --max-price 5            ideas and cut candidates for one deck, cards up to EUR 5
+  cmdr goldfish magda                         play a deck out 10,000 times: hands, commander, mana, combos
   cmdr login                                  sign in to Archidekt once, so `apply --save` can edit decks
   cmdr topdeck                                save your TopDeck.gg API key, so `meta` can read events
   cmdr apply plan.toml                        preview a plan's changes against the deck on Archidekt
@@ -289,6 +291,7 @@ def _build_parser() -> argparse.ArgumentParser:
     add_card_commands(commands.add_parser)
     add_profile_commands(commands.add_parser)
     add_toget_commands(commands.add_parser)
+    add_goldfish_command(commands.add_parser)
     add_board_commands(commands.add_parser)
     add_meta_command(commands.add_parser)
     add_app_command(commands.add_parser)
