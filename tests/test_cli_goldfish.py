@@ -138,9 +138,12 @@ def test_the_figures_are_json_with_the_swaps_and_what_moved(home: Path, fake: Fa
     assert document["swaps"] == [{"add": "Mana Crypt", "cut": "Battered Golem", "copies": 1}]
     assert document["report"]["games"] == 10000
     assert document["report"]["mana"] == {"median": [1, 2, 3, 4, 5], "worstTenth": [1, 2, 3, 4, 5]}
-    assert [c["label"] for c in document["changes"]][:2] == [
-        "Median mana on turn 1",
-        "Worst-tenth mana on turn 1",
+    # Mana Crypt's 2 beside a turn-1 Mountain pays Magda's {1}{R} a turn early, in every game.
+    assert [(c["label"], c["before"], c["after"]) for c in document["changes"]][:4] == [
+        ("Commander cast by turn 1", 0.0, 1.0),
+        ("Commander median turn", 2, 1),
+        ("Median mana on turn 1", 1, 3),
+        ("Worst-tenth mana on turn 1", 1, 3),
     ]
     # Bracket 5's headline turn is the third.
     mana = [c for c in document["headline"] if c["kind"] == "mana_worst_tenth"]
