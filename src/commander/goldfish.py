@@ -1351,6 +1351,18 @@ def _is_plain(card: GoldfishCard) -> bool:
     )
 
 
+def _plays_alike(cut: GoldfishCard, incoming: GoldfishCard) -> bool:
+    """Whether two plain spells are played the same in every game: the same mana value, colours and
+    creature status, which are all a plain spell brings to the game."""
+    return (
+        _is_plain(cut)
+        and _is_plain(incoming)
+        and cut.mana_value == incoming.mana_value
+        and cut.pips == incoming.pips
+        and (CardKind.CREATURE in cut.kinds) == (CardKind.CREATURE in incoming.kinds)
+    )
+
+
 def _cuts(slots: Sequence[GoldfishCard], swaps: Sequence[Swap]) -> dict[str, GoldfishCard]:
     """The incoming card for the key of each card cut."""
     held = {card_key(card.name) for card in slots}
@@ -1401,20 +1413,22 @@ def compare(
     plays out as before; only the others are played again. Their outcomes join the base ones to make the
     report `simulate` would give for the swapped slots. A swap that changes the keep rule or the numbering
     of the cards plays every game again. With `skip_irrelevant`, a swap of plain spells for plain spells
-    (`_is_plain`) is taken to change nothing and plays nothing.
+    that play alike (`_plays_alike`) under the same rules changes nothing and plays nothing.
     """
     cuts = _cuts(slots, swaps)
     held = {card_key(card.name): card for card in slots}
-    if not cuts or (
-        skip_irrelevant and all(_is_plain(held[key]) and _is_plain(card) for key, card in cuts.items())
-    ):
-        return GoldfishComparison(base, base, _changes(base, base, ()), ())
+    unchanged = GoldfishComparison(base, base, _changes(base, base, ()), ())
+    if not cuts:
+        return unchanged
     after_slots = [cuts.get(card_key(card.name), card) for card in slots]
     before = _Setup(slots, commanders, combos, base.bracket, average_mana_value)
     after = _Setup(
         after_slots, commanders, combos, base.bracket, swapped_average(slots, swaps, average_mana_value)
     )
-    if _same_rules(before, after):
+    same_rules = _same_rules(before, after)
+    if skip_irrelevant and same_rules and all(_plays_alike(held[key], card) for key, card in cuts.items()):
+        return unchanged
+    if same_rules:
         cut_slots = frozenset(i for i, card in enumerate(slots) if card_key(card.name) in cuts)
         replayed = _reached(
             base, frozenset(before.ids[i] for i in cut_slots), _looked_at(before, after, cut_slots)
