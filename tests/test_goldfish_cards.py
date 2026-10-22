@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from commander.carddb import CardInfo, CardMana, Role
+from commander.goldfish import simulate
 from commander.goldfish_cards import (
     CardKind,
     Draw,
@@ -1034,6 +1035,29 @@ def test_a_tapped_dual_taps_for_either_colour_and_enters_tapped() -> None:
     assert one(TRANQUIL_COVE).land == LandFace(frozenset("WU"), tapped=True)
 
 
+def test_a_land_whose_only_condition_is_on_another_line_still_enters_tapped() -> None:
+    plaza = real(
+        "Gateway Plaza",
+        "",
+        0,
+        "Land — Gate",
+        "This land enters tapped.\nWhen this land enters, sacrifice it unless you pay {1}.\n"
+        "{T}: Add one mana of any color.",
+        produced="WUBRG",
+    )
+    field = real(
+        "Field of the Dead",
+        "",
+        0,
+        "Land",
+        "This land enters tapped.\n{T}: Add {C}.\nWhenever this land or another land you control enters, "
+        "if you control seven or more lands with different names, create a 2/2 black Zombie creature token.",
+        produced="C",
+    )
+    assert one(plaza).land == LandFace(frozenset("WUBRG"), tapped=True)
+    assert one(field).land == LandFace(frozenset("C"), tapped=True)
+
+
 def test_a_fetch_land_has_the_colours_it_can_find() -> None:
     assert one(FLOODED_STRAND).land == LandFace(frozenset("WU"), tapped=False)
     assert one(EVOLVING_WILDS).land == LandFace(frozenset("WUBRG"), tapped=True)
@@ -1162,6 +1186,210 @@ def test_a_modal_card_with_a_land_back_is_its_spell_cost_and_its_land_face() -> 
     assert smashing.modelled
 
 
+def land(name: str, type_line: str, text: str, produced: str, *, roles: Iterable[Role] = ()) -> Real:
+    return real(name, "", 0, type_line, text, produced=produced, roles=roles)
+
+
+# Lands as the card data has them, produced mana included.
+CRYSTAL_VEIN = land("Crystal Vein", "Land", "{T}: Add {C}.\n{T}, Sacrifice this land: Add {C}{C}.", "C")
+CITY_OF_TRAITORS = land(
+    "City of Traitors", "Land", "When you play another land, sacrifice this land.\n{T}: Add {C}{C}.", "C"
+)
+GEMSTONE_CAVERNS = land(
+    "Gemstone Caverns",
+    "Legendary Land",
+    "If this card is in your opening hand and you're not the starting player, you may begin the game with "
+    "Gemstone Caverns on the battlefield with a luck counter on it. If you do, exile a card from your hand.\n"
+    "{T}: Add {C}. If Gemstone Caverns has a luck counter on it, instead add one mana of any color.",
+    "WUBRGC",
+)
+NYKTHOS = land(
+    "Nykthos, Shrine to Nyx",
+    "Legendary Land",
+    "{T}: Add {C}.\n{2}, {T}: Choose a color. Add an amount of mana of that color equal to your devotion to "
+    "that color. (Your devotion to a color is the number of mana symbols of that color in the mana costs of "
+    "permanents you control.)",
+    "WUBRGC",
+)
+THREE_TREE_CITY = land(
+    "Three Tree City",
+    "Legendary Land",
+    "As Three Tree City enters, choose a creature type.\n{T}: Add {C}.\n{2}, {T}: Choose a color. Add an "
+    "amount of mana of that color equal to the number of creatures you control of the chosen type.",
+    "WUBRGC",
+)
+TALON_GATES = land(
+    "Talon Gates of Madara",
+    "Land — Gate",
+    "When this land enters, up to one target creature phases out.\n{T}: Add {C}.\n{1}, {T}: Add one mana of "
+    "any color.\n{4}: Put this card from your hand onto the battlefield.",
+    "WUBRGC",
+)
+ANCIENT_ZIGGURAT = land(
+    "Ancient Ziggurat",
+    "Land",
+    "{T}: Add one mana of any color. Spend this mana only to cast a creature spell.",
+    "WUBRG",
+)
+MAZE_OF_ITH = land(
+    "Maze of Ith",
+    "Land",
+    "{T}: Untap target attacking creature. Prevent all combat damage that would be dealt to and dealt by "
+    "that creature this turn.",
+    "",
+)
+GLACIAL_CHASM = land(
+    "Glacial Chasm",
+    "Land",
+    "Cumulative upkeep—Pay 2 life. (At the beginning of your upkeep, put an age counter on this permanent, "
+    "then sacrifice it unless you pay its upkeep cost for each age counter on it.)\n"
+    "When this land enters, sacrifice a land.\nCreatures you control can't attack.\n"
+    "Prevent all damage that would be dealt to you.",
+    "",
+)
+LOTUS_FIELD = land(
+    "Lotus Field",
+    "Land",
+    "Hexproof\nThis land enters tapped.\nWhen this land enters, sacrifice two lands.\n"
+    "{T}: Add three mana of any one color.",
+    "WUBRG",
+)
+MYRIAD_LANDSCAPE = land(
+    "Myriad Landscape",
+    "Land",
+    "This land enters tapped.\n{T}: Add {C}.\n{2}, {T}, Sacrifice this land: Search your library for up to "
+    "two basic land cards that share a land type, put them onto the battlefield tapped, then shuffle.",
+    "C",
+    roles=(RAMP,),
+)
+KROSAN_VERGE = land(
+    "Krosan Verge",
+    "Land",
+    "This land enters tapped.\n{T}: Add {C}.\n{2}, {T}, Sacrifice this land: Search your library for a "
+    "Forest card and a Plains card, put them onto the battlefield tapped, then shuffle.",
+    "C",
+    roles=(RAMP,),
+)
+EXOTIC_ORCHARD = land(
+    "Exotic Orchard",
+    "Land",
+    "{T}: Add one mana of any color that a land an opponent controls could produce.",
+    "WUBRG",
+)
+
+
+def test_a_land_that_makes_its_double_mana_only_by_sacrificing_itself_makes_one() -> None:
+    vein = one(CRYSTAL_VEIN)
+    assert vein.land == LandFace(frozenset("C"), tapped=False, amount=1)
+    assert vein.modelled
+
+
+def test_a_land_that_is_sacrificed_when_another_land_is_played_is_not_modelled() -> None:
+    city = one(CITY_OF_TRAITORS)
+    assert city.land == LandFace(frozenset("C"), tapped=False, amount=2)
+    assert not city.modelled
+
+
+def test_a_land_makes_the_colours_of_its_mana_abilities_not_those_it_could_make_later() -> None:
+    # Gemstone Caverns makes {C} from the hand; its any colour needs the luck counter of an opening hand.
+    assert one(GEMSTONE_CAVERNS).land == LandFace(frozenset("C"), tapped=False, amount=1)
+    # The coloured ability of Nykthos and Three Tree City is a devotion or creature count, not read as mana.
+    assert one(NYKTHOS).land == LandFace(frozenset("C"), tapped=False, amount=1)
+    assert one(THREE_TREE_CITY).land == LandFace(frozenset("C"), tapped=False, amount=1)
+    # A filter that pays one mana for one mana nets nothing.
+    assert one(TALON_GATES).land == LandFace(frozenset("C"), tapped=False, amount=1)
+
+
+def test_a_land_whose_mana_is_all_restricted_makes_none() -> None:
+    ziggurat = one(ANCIENT_ZIGGURAT)
+    assert ziggurat.land == LandFace(frozenset(), tapped=False, amount=0)
+    assert ziggurat.modelled
+
+
+def test_a_land_with_no_mana_ability_makes_no_mana() -> None:
+    maze = one(MAZE_OF_ITH)
+    assert maze.land == LandFace(frozenset(), tapped=False, amount=0)
+    assert maze.modelled
+    chasm = one(GLACIAL_CHASM)
+    assert chasm.land == LandFace(frozenset(), tapped=False, amount=0)
+
+
+def test_a_land_that_costs_other_lands_as_it_enters_is_not_modelled() -> None:
+    field = one(LOTUS_FIELD)
+    assert field.land == LandFace(frozenset("WUBRG"), tapped=True, amount=3)
+    assert not field.modelled
+    assert not one(GLACIAL_CHASM).modelled
+
+
+@pytest.mark.parametrize("sacrificer", [MYRIAD_LANDSCAPE, KROSAN_VERGE], ids=lambda c: c.mana.name)
+def test_a_land_that_also_searches_by_sacrificing_itself_stays_a_colourless_land_not_modelled(
+    sacrificer: Real,
+) -> None:
+    card = one(sacrificer, commander=LEGION)
+    assert card.land == LandFace(frozenset("C"), tapped=True, amount=1)
+    assert not card.modelled
+
+
+def test_a_land_whose_second_colour_needs_a_land_type_keeps_both_colours() -> None:
+    verge = land(
+        "Hushwood Verge",
+        "Land",
+        "{T}: Add {G}.\n{T}: Add {W}. Activate only if you control a Forest or a Plains.",
+        "WG",
+    )
+    card = one(verge)
+    assert card.land == LandFace(frozenset("GW"), tapped=False, amount=1)
+    assert card.modelled
+
+
+def test_a_land_that_makes_no_mana_is_played_without_adding_any() -> None:
+    giant = real("Giant", "{9}", 9, "Creature — Giant", "")
+    deck = build(FOREST, MAZE_OF_ITH, giant, copies={"Giant": 5})
+    slots = [card_named(deck, "Forest"), card_named(deck, "Maze of Ith"), *[card_named(deck, "Giant")] * 5]
+    # Seven cards are dealt whole: the Forest on turn 1, the Maze on turn 2 adds nothing.
+    report = simulate(slots, (), (), bracket=5, average_mana_value=2.0, games=1, seed=7)
+    assert report.outcomes[0].mana[:4] == (1, 1, 1, 1)
+
+
+def test_a_filter_land_keeps_the_colours_it_filters_to() -> None:
+    heath = land("Fetid Heath", "Land", "{T}: Add {C}.\n{W/B}, {T}: Add {W}{W}, {W}{B}, or {B}{B}.", "WBC")
+    assert one(heath).land == LandFace(frozenset("CWB"), tapped=False, amount=1)
+
+
+def test_a_land_with_another_land_sacrificed_by_an_unrelated_ability_is_still_modelled() -> None:
+    kavaron = land(
+        "Kavaron, Memorial World",
+        "Land — Planet",
+        "This land enters tapped.\n{T}: Add {R}.\nStation (Tap another creature you control: Put charge "
+        "counters equal to its power on this Planet. Station only as a sorcery.)\n12+ | {1}{R}, {T}, "
+        "Sacrifice a land: Create a 2/2 colorless Robot artifact creature token, then creatures you control "
+        "get +1/+0 and gain haste until end of turn.",
+        "R",
+    )
+    assert one(kavaron).modelled
+
+
+def test_a_land_that_copies_another_land_still_makes_one_mana() -> None:
+    vesuva = land(
+        "Vesuva", "Land", "You may have this land enter tapped as a copy of any land on the battlefield.", ""
+    )
+    assert one(vesuva).land == LandFace(frozenset(), tapped=False, amount=1)
+
+
+def test_command_tower_and_exotic_orchard_make_the_commanders_colours() -> None:
+    tower = real(
+        "Command Tower",
+        "",
+        0,
+        "Land",
+        "{T}: Add one mana of any color in your commander's color identity.",
+        produced="WUBRG",
+    )
+    assert one(tower, commander=MAGDA).land == LandFace(frozenset("R"), tapped=False)
+    assert one(EXOTIC_ORCHARD, commander=MAGDA).land == LandFace(frozenset("R"), tapped=False)
+    assert one(EXOTIC_ORCHARD).land == LandFace(frozenset("WUBRG"), tapped=False)
+
+
 # --- mana sources -------------------------------------------------------------------------------------------
 
 
@@ -1217,6 +1445,40 @@ def test_a_signet_nets_one_mana_of_either_colour() -> None:
 
 def test_a_talisman_unions_its_abilities_colours() -> None:
     assert one(TALISMAN).mana == ManaAbility(1, frozenset("CUB"), delayed=False, ritual=False)
+
+
+@pytest.mark.parametrize(
+    "rock",
+    [
+        real(
+            "Mox Amber",
+            "{0}",
+            0,
+            "Legendary Artifact",
+            "{T}: Add one mana of any color among legendary creatures and planeswalkers you control.",
+            produced="WUBRG",
+            roles=(RAMP,),
+        ),
+        real(
+            "Flywheel Racer",
+            "{2}",
+            2,
+            "Artifact — Vehicle",
+            "Vigilance\n{T}: Add one mana of any color. Activate only if this permanent is a creature.\n"
+            "Crew 1 (Tap any number of creatures you control with total power 1 or more: This Vehicle "
+            "becomes an artifact creature until end of turn.)",
+            produced="WUBRG",
+            roles=(RAMP,),
+        ),
+    ],
+    ids=lambda c: c.mana.name,
+)
+def test_a_rock_that_needs_a_legendary_creature_or_a_crewed_vehicle_is_not_modelled(rock: Real) -> None:
+    deck = build(rock)
+    card = card_named(deck, rock.mana.name)
+    assert card.mana is None
+    assert not card.modelled
+    assert deck.not_modelled == (rock.mana.name,)
 
 
 def test_a_sacrifice_to_draw_is_neither_a_draw_nor_a_hindrance_to_the_mana() -> None:
@@ -1344,6 +1606,45 @@ def test_a_permanent_that_keeps_drawing_is_an_engine() -> None:
 def test_a_creature_that_draws_on_arrival_draws_once_and_a_looter_is_an_engine() -> None:
     assert one(MULLDRIFTER).draw == Draw(2, engine=False)
     assert one(MERFOLK_LOOTER).draw == Draw(1, engine=True)
+
+
+EIDOLON_OF_BLOSSOMS = real(
+    "Eidolon of Blossoms",
+    "{2}{G}{G}",
+    4,
+    "Enchantment Creature — Spirit",
+    "Constellation — Whenever this creature or another enchantment you control enters, draw a card.",
+    roles=(DRAW,),
+)
+SETESSAN_CHAMPION = real(
+    "Setessan Champion",
+    "{2}{G}",
+    3,
+    "Creature — Human Warrior",
+    "Constellation — Whenever an enchantment you control enters, put a +1/+1 counter on this creature and "
+    "draw a card.",
+    roles=(DRAW,),
+)
+RANGING_RAPTORS = real(
+    "Ranging Raptors",
+    "{2}{G}",
+    3,
+    "Creature — Dinosaur",
+    "Enrage — Whenever this creature is dealt damage, you may search your library for a basic land card, "
+    "put it onto the battlefield tapped, then shuffle.",
+    roles=(RAMP,),
+)
+
+
+@pytest.mark.parametrize("drawer", [EIDOLON_OF_BLOSSOMS, SETESSAN_CHAMPION], ids=lambda c: c.mana.name)
+def test_a_trigger_behind_an_ability_word_is_a_repeating_draw(drawer: Real) -> None:
+    assert one(drawer).draw == Draw(1, engine=True)
+
+
+def test_a_search_trigger_behind_an_ability_word_repeats_and_is_not_modelled() -> None:
+    raptors = one(RANGING_RAPTORS)
+    assert raptors.land_ramp is None
+    assert not raptors.modelled
 
 
 def test_a_draw_that_costs_mana_each_time_or_varies_is_not_modelled() -> None:
@@ -1563,14 +1864,121 @@ def test_a_search_that_sacrifices_a_land_or_an_artifact_is_not_modelled() -> Non
     assert build(CROP_ROTATION, TINKER, DIABOLIC_INTENT).not_modelled == ("Crop Rotation", "Tinker")
 
 
+ENTISH_RESTORATION = real(
+    "Entish Restoration",
+    "{2}{G}",
+    3,
+    "Instant",
+    "Sacrifice a land. Search your library for up to two basic land cards, put them onto the battlefield "
+    "tapped, then shuffle. If you control a creature with power 4 or greater, instead search your library "
+    "for up to three basic land cards, put them onto the battlefield tapped, then shuffle.",
+    roles=(RAMP,),
+)
+YASHARN = real(
+    "Yasharn, Implacable Earth",
+    "{2}{G}{W}",
+    4,
+    "Legendary Creature — Elemental Boar",
+    "When Yasharn enters, search your library for a basic Forest card and a basic Plains card, reveal those "
+    "cards, put them into your hand, then shuffle.\nPlayers can't pay life or sacrifice nonland permanents "
+    "to cast spells or activate abilities.",
+    roles=(TUTOR,),
+)
+
+
+def test_a_spell_that_sacrifices_a_land_in_its_effect_before_the_search_is_not_modelled() -> None:
+    restoration = one(ENTISH_RESTORATION)
+    assert restoration.land_ramp is None
+    assert not restoration.modelled
+
+
+def test_a_search_for_two_different_land_cards_is_not_modelled() -> None:
+    yasharn = one(YASHARN)
+    assert yasharn.land_ramp is None
+    assert yasharn.tutor is None
+    assert not yasharn.modelled
+
+
 # --- cards the reading cannot place ---------------------------------------------------------------
 
 
-def test_cost_reducers_and_alternative_costs_are_plain_modelled_spells_when_they_do_not_matter() -> None:
-    deck = build(SCULPTOR, MEDALLION, FIREBLAST, FORCE_OF_WILL, JET_MEDALLION)
+def test_alternative_costs_are_plain_modelled_spells_when_they_do_not_matter() -> None:
+    deck = build(FIREBLAST, FORCE_OF_WILL)
     assert deck.not_modelled == ()
-    assert card_named(deck, "Etherium Sculptor").pips == {"U": 1}
     assert card_named(deck, "Force of Will").mana_value == 5
+
+
+HERALDS_HORN = real(
+    "Herald's Horn",
+    "{3}",
+    3,
+    "Artifact",
+    "As this artifact enters, choose a creature type.\nCreature spells you cast of the chosen type cost {1} "
+    "less to cast.\nAt the beginning of your upkeep, look at the top card of your library. If it's a "
+    "creature card of the chosen type, you may reveal it and put it into your hand.",
+)
+URZAS_INCUBATOR = real(
+    "Urza's Incubator",
+    "{3}",
+    3,
+    "Artifact",
+    "As this artifact enters, choose a creature type.\nCreature spells of the chosen type cost {2} less to "
+    "cast.",
+)
+ELECTROMANCER = real(
+    "Goblin Electromancer",
+    "{U}{R}",
+    2,
+    "Creature — Goblin Wizard",
+    "Instant and sorcery spells you cast cost {1} less to cast.",
+)
+ANIMAR = real(
+    "Animar, Soul of Elements",
+    "{G}{U}{R}",
+    3,
+    "Legendary Creature — Elemental",
+    "Protection from white and from black\nWhenever you cast a creature spell, put a +1/+1 counter on "
+    "Animar.\nCreature spells you cast cost {1} less to cast for each +1/+1 counter on Animar.",
+)
+JHOIRAS_FAMILIAR = real(
+    "Jhoira's Familiar",
+    "{4}",
+    4,
+    "Artifact Creature — Bird",
+    "Flying\nHistoric spells you cast cost {1} less to cast. (Artifacts, legendaries, and Sagas are "
+    "historic.)",
+)
+GHALTA = real(
+    "Ghalta, Primal Hunger",
+    "{10}{G}{G}",
+    12,
+    "Legendary Creature — Elder Dinosaur",
+    "This spell costs {X} less to cast, where X is the total power of creatures you control.\nTrample (This "
+    "creature can deal excess combat damage to the player or planeswalker it's attacking.)",
+)
+
+
+COST_REDUCERS = [
+    SCULPTOR,
+    MEDALLION,
+    JET_MEDALLION,
+    HERALDS_HORN,
+    URZAS_INCUBATOR,
+    ELECTROMANCER,
+    ANIMAR,
+    JHOIRAS_FAMILIAR,
+    GHALTA,
+]
+
+
+@pytest.mark.parametrize("reducer", COST_REDUCERS, ids=lambda c: c.mana.name)
+def test_a_cost_reducer_is_a_spell_with_its_printed_cost_listed_as_not_modelled(reducer: Real) -> None:
+    deck = build(reducer)
+    card = card_named(deck, reducer.mana.name)
+    assert not card.modelled
+    assert card.mana_value == int(reducer.mana.cmc)
+    assert (card.mana, card.land, card.land_ramp, card.tutor, card.draw) == (None,) * 5
+    assert deck.not_modelled == (reducer.mana.name,)
 
 
 @pytest.mark.parametrize("reducer", [SCULPTOR, MEDALLION, FIREBLAST], ids=lambda c: c.mana.name)

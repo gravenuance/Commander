@@ -417,8 +417,11 @@ def searched_colours(text: str) -> set[str]:
 
 
 def tapped_share(text: str, lands: DeckLands) -> float:
-    # Evolving Wilds and its kind put the land they find onto the battlefield tapped.
-    if not any(phrase in text for phrase in _TAPPED):
+    # Only the line that says the land enters tapped can make it so conditionally: another line's "unless"
+    # (Gateway Plaza's sacrifice, Field of the Dead's token) leaves it always tapped. Evolving Wilds and its
+    # kind put the land they find onto the battlefield tapped.
+    text = "\n".join(line for line in text.split("\n") if any(phrase in line for phrase in _TAPPED))
+    if not text:
         return 0.0
     # A shock land enters untapped whenever its owner pays the life.
     if "you may pay" in text:

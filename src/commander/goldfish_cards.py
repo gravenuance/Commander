@@ -398,15 +398,26 @@ _SACRIFICE_CREATURE = (
 )
 _SACRIFICE_COST = re.compile(rf"as an additional cost to cast this \w+, {_SACRIFICE_CREATURE}")
 # Wording that makes a card more than a plain spell with the cost printed on it: a cost it is cast for
-# instead, a cost reduction, or a cost to pay besides mana and a creature to sacrifice.
+# instead, or a cost to pay besides mana and a creature to sacrifice. Such a card is not modelled only when
+# it matters to the goldfish.
 _UNMODELLED = re.compile(
-    r"costs? (?:\{[^}]+\})+ less|less to cast|rather than pay (?:this spell's|its) mana cost"
+    r"rather than pay (?:this spell's|its) mana cost"
     r"|cast this spell without paying|^(?:affinity|convoke|delve|improvise|emerge|undaunted)\b"
     rf"|as an additional cost to cast this \w+, (?!you may|{_SACRIFICE_CREATURE})",
     re.MULTILINE,
 )
+# A cost reduction, for other spells (Herald's Horn) or this one (Ghalta): the card is never modelled.
+_COST_REDUCER = re.compile(r"costs? (?:\{[^}]+\})+ less|less to cast")
 # A land that returns a land to the hand on entering (Karoo).
 _BOUNCE_LAND = re.compile(r"return (?:an? )?(?:untapped )?\w+ you control to its owner's hand")
+# A land that costs other lands (Lotus Field, Glacial Chasm) or is lost when one is played (City of Traitors).
+_LAND_SACRIFICE = re.compile(
+    r"when this land enters, sacrifice (?:a|one|two|three) lands?\b|when you play another land, sacrifice"
+)
+# The cost of a filter land (Fetid Heath): one mana, of a colour or either of two.
+_FILTER_COST = re.compile(r"\{[wubrg](?:/[wubrg])?\}")
+# A land that is whatever land it copies (Vesuva): it makes mana, but no text says how much.
+_COPY_LAND = re.compile(r"as a copy of any land")
 _EXTRA_LAND_DROPS = re.compile(r"you may play (an|one|two|three) additional lands? on each of your turns")
 # A card from the hand a permanent costs as it enters: Chrome Mox's imprint, Mox Diamond.
 _ENTRY_COSTS = (
@@ -531,6 +542,11 @@ _ANY_COLOUR = re.compile(
     r"\bany (?:one )?(?:color|type)\b|the chosen colou?r|any of the exiled card's colou?rs"
 )
 _AMOUNT_WORD = re.compile(r"^(" + "|".join(_NUMBER_WORDS) + r") (?:additional )?mana\b")
+# A count, or a colour or use the game cannot tell: Mox Amber's colours need a legendary creature, Flywheel
+# Racer's mana needs it crewed.
+_NOT_FIXED_MANA = re.compile(
+    rf"{VARIABLE_MANA.pattern}|among legendary|activate only if (?:this \w+|it) is a creature"
+)
 _COST_PART = re.compile(
     r"\{t\}|\{(?P<generic>\d+)\}|pay \d+ life|sacrifice this \w+|exile this card from your hand"
 )
@@ -562,14 +578,15 @@ def _paid(cost: str) -> _Cost | None:
 
 
 def _abilities(text: str) -> list[tuple[str, str, bool]]:
-    """Each line that adds mana: its cost, what it adds, and whether the amount varies. A line whose mana
-    can be spent only on some spells is left out, which undercounts rather than overcounts."""
+    """Each line that adds mana: its cost, what it adds, and whether it is no fixed amount of any colour
+    (a count, or a colour or use the game cannot tell). A line whose mana can be spent only on some spells is
+    left out, which undercounts rather than overcounts."""
     found: list[tuple[str, str, bool]] = []
     for line in text.split("\n"):
         matched = _MANA_ABILITY.match(line)
         if matched is not None and RESTRICTED not in line:
             found.append(
-                (matched.group("cost") or "", matched.group("what"), VARIABLE_MANA.search(line) is not None)
+                (matched.group("cost") or "", matched.group("what"), _NOT_FIXED_MANA.search(line) is not None)
             )
     return found
 
@@ -593,36 +610,66 @@ def _net_mana(cost: _Cost, what: str, identity: frozenset[str]) -> tuple[int, fr
 
 
 def _land_understood(text: str) -> bool:
-    """Whether a land's mana is a fixed amount and it does not bounce a land."""
-    return _BOUNCE_LAND.search(text) is None and not any(varies for _, _, varies in _abilities(text))
+    """Whether a land's mana is a fixed amount and the land costs or does nothing the game cannot follow: it
+    does not bounce or sacrifice lands, is not sacrificed when another land is played, and does not search
+    for several lands."""
+    return (
+        _BOUNCE_LAND.search(text) is None
+        and _LAND_SACRIFICE.search(text) is None
+        and _SEARCHES_SEVERAL.search(text) is None
+        and not any(varies for _, _, varies in _abilities(text))
+    )
+
+
+def _land_faces(info: CardMana) -> list[str]:
+    """The casefolded text of each face a card is played as a land by: a land's own land faces (a Pathway's
+    two), a modal card's land back."""
+    faces = [REMINDER_TEXT.sub("", face).casefold() for face in info.oracle_text.split(FACE_SEPARATOR)]
+    if not info_is_land(info):
+        return faces[-1:]
+    types = info.type_line.split(" // ")
+    return [face for face, kind in zip(faces, types, strict=False) if "Land" in kind.split()] or faces[:1]
+
+
+def _land_nets(text: str, identity: frozenset[str]) -> list[tuple[int, frozenset[str]]]:
+    """The net mana and colours of a land's abilities that make more than they cost and leave the land."""
+    return [
+        found
+        for cost, what, varies in _abilities(text)
+        if not varies
+        and (paid := _paid(_FILTER_COST.sub("{1}", cost))) is not None
+        and not paid.sacrifices
+        and (found := _net_mana(paid, what, identity))
+    ]
 
 
 def _land_face(info: CardMana, context: _Context) -> tuple[LandFace, bool]:
     """The land a card is played as and whether its text is understood; a modal card whose back is a land is
-    played as its back."""
-    faces = info.oracle_text.split(FACE_SEPARATOR)
-    text = REMINDER_TEXT.sub("", faces[0] if info_is_land(info) else faces[-1]).casefold()
-    made = set(info.produced)
-    colours = frozenset(land_colours(info, text, made, len(context.identity)))
+    played as its back.
+
+    Colours and amount come from the mana abilities read from its text, as the game can use them: Scryfall's
+    produced mana is only the fallback for a land with none (a basic land, whose ability is reminder text),
+    and a land whose mana is all restricted (Ancient Ziggurat) makes none."""
+    faces = _land_faces(info)
+    text = faces[0]
+    nets = [net for face in faces for net in _land_nets(face, context.identity)]
     tapped = not mostly_untapped(tapped_share(text, context.lands))
-    nets = [
-        found
-        for cost, what, varies in _abilities(text)
-        if not varies
-        and (paid := _paid(cost)) is not None
-        and (found := _net_mana(paid, what, context.identity))
-    ]
-    if RESTRICTED in text and nets:
-        # Cavern of Souls: only its unrestricted mana counts.
+    if nets or RESTRICTED in text:
         colours = frozenset(c for _, got in nets for c in got)
-    colours |= _fetchable_colours(text, context)
+    else:
+        colours = frozenset(land_colours(info, text, set(info.produced), len(context.identity)))
+    if _SEARCHES_SEVERAL.search(text) is None:
+        colours |= _fetchable_colours(text, context)
     if context.identity:
         colours = colours & (context.identity | {_COLOURLESS}) or colours
-    amount = max((net for net, _ in nets), default=1)
+    makes_mana = bool(colours) or _COPY_LAND.search(text) is not None
+    amount = max((net for net, _ in nets), default=int(makes_mana))
     return LandFace(colours, tapped, amount), _land_understood(text)
 
 
 _BASIC_SEARCH = re.compile(r"search your library for [^.]*\bbasic\b")
+# A land that finds more than one land (Krosan Verge, Myriad Landscape) is no stand-in for the one it finds.
+_SEARCHES_SEVERAL = re.compile(r"search your library for [^.]*(?:\b(?:two|three|four)\b|put them)")
 
 
 def _fetchable_colours(text: str, context: _Context) -> frozenset[str]:
@@ -685,9 +732,16 @@ class _Search:
     cost: str
     # Happens again and again ("whenever ...", "at the beginning of ...").
     repeating: bool
+    # Does more than find one set of cards: it sacrifices something first (Entish Restoration) or looks for
+    # a second kind of card (Yasharn).
+    compound: bool
 
 
 _SEARCH = re.compile(r"search your library(?: and/or graveyard)? for (?P<what>[^.]*)\.")
+# A leading ability word ("Enrage — ", "Constellation — "), which says nothing about when the text happens.
+_ABILITY_WORD = re.compile(r"^[^—\n]+ — ")
+_REPEATING = ("whenever", "at the beginning")
+_SECOND_CARD = re.compile(r"\bcards? and (?:an?|one) ")
 _LAND_WORDS = frozenset({"land", "plains", "island", "swamp", "mountain", "forest"})
 _COUNT_WORDS = {"two": 2, "three": 3, "four": 4}
 _FILLER = frozenset(
@@ -714,15 +768,16 @@ _OPPONENT_DRAWS = re.compile(r"opponents? draws?")
 
 
 def _search(text: str) -> _Search | None:
-    for line in text.split("\n"):
+    for line in (_ABILITY_WORD.sub("", line, count=1) for line in text.split("\n")):
         matched = _SEARCH.search(line)
         if matched is None:
             continue
         before = line[: matched.start()]
         cost = before.partition(":")[0] if ":" in before else ""
         head = re.split(r"\bcards?\b", matched.group("what"), maxsplit=1)[0]
-        repeating = line.startswith(("whenever", "at the beginning"))
-        return _Search(head, matched.group(0), line[matched.start() :], cost, repeating)
+        repeating = line.startswith(_REPEATING)
+        compound = (not cost and "sacrifice" in before) or _SECOND_CARD.search(matched.group(0)) is not None
+        return _Search(head, matched.group(0), line[matched.start() :], cost, repeating, compound)
     return None
 
 
@@ -739,7 +794,7 @@ def _land_words(search: _Search | None) -> list[str] | None:
 def _land_ramp(search: _Search | None, kinds: frozenset[CardKind]) -> LandRamp | None:
     """A search for lands put onto the battlefield or into the hand, when the game can follow it."""
     words = _land_words(search)
-    if search is None or search.repeating or words is None:
+    if search is None or search.repeating or search.compound or words is None:
         return None
     cost = _paid(search.cost)
     # An ability must sacrifice its permanent for the lands, and a creature cannot tap the turn it comes.
@@ -766,7 +821,7 @@ def _land_ramp(search: _Search | None, kinds: frozenset[CardKind]) -> LandRamp |
 
 def _tutor(search: _Search | None) -> Tutor | None:
     """A search for a card of some type, when the game can follow where it goes."""
-    if search is None or search.cost or search.repeating:
+    if search is None or search.cost or search.repeating or search.compound:
         return None
     named = re.findall(r"[a-z]+", search.head)
     words = [w for w in named if w not in _FILLER]
@@ -801,7 +856,7 @@ def _draw(text: str, kinds: frozenset[CardKind]) -> Draw | None:
     for a count that varies."""
     spell = CardKind.INSTANT in kinds or CardKind.SORCERY in kinds
     arrival: Draw | None = None
-    for line in text.split("\n"):
+    for line in (_ABILITY_WORD.sub("", line, count=1) for line in text.split("\n")):
         matched = _DRAW.search(line)
         if matched is None or _OPPONENT_DRAWS.search(line):
             continue
@@ -817,7 +872,7 @@ def _draw(text: str, kinds: frozenset[CardKind]) -> Draw | None:
             paid = _paid(cost)
             if paid is not None and not paid.mana and not paid.sacrifices:
                 return Draw(count, engine=True)
-        elif line.startswith(("whenever", "at the beginning")):
+        elif line.startswith(_REPEATING):
             return Draw(count, engine=True)
         elif "enters" in line:
             arrival = Draw(count, engine=False)
@@ -834,6 +889,8 @@ def _read_spell(card: GoldfishCard, info: CardMana, text: str, context: _Context
     search = _search(text)
     matters = _matters(text, roles, search)
     key_card = card.combo or card.finisher
+    if _COST_REDUCER.search(text):
+        return replace(card, modelled=False)
     if _UNMODELLED.search(text):
         return replace(card, modelled=not (matters or key_card))
     ramp = _land_ramp(search, card.kinds)

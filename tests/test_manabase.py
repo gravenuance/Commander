@@ -300,6 +300,33 @@ def test_lands_that_fetch_tapped_or_enter_tapped_on_a_count_are_tapped_or_someti
     assert report.tapped_lands == 1 + 4 * 0.25
 
 
+# Lands whose "enters tapped" line has no condition, with an "unless" or "if you control" on another line.
+ALWAYS_TAPPED = {
+    "Gateway Plaza": [
+        "This land enters tapped.",
+        "When this land enters, sacrifice it unless you pay {1}.",
+        "{T}: Add one mana of any color.",
+    ],
+    "Field of the Dead": [
+        "This land enters tapped.",
+        "{T}: Add {C}.",
+        "Whenever this land or another land you control enters, if you control seven or more lands with different names, create a 2/2 black Zombie creature token.",  # noqa: E501 — an oracle text
+    ],
+    "Karoo": [
+        "This land enters tapped.",
+        "When this land enters, sacrifice it unless you return an untapped Plains you control to its owner's hand.",  # noqa: E501 — an oracle text
+        "{T}: Add {C}{W}.",
+    ],
+}
+
+
+@pytest.mark.parametrize("name", list(ALWAYS_TAPPED))
+def test_a_land_that_always_enters_tapped_is_tapped_whatever_other_lines_say(name: str) -> None:
+    land = card(name, type_line="Land", text="\n".join(ALWAYS_TAPPED[name]), produced="C")
+    report = analyse_mana(deck_of((name, 1), ("Plains", 1)), by_name(LEADER, land, PLAINS))
+    assert report.tapped_lands == 1
+
+
 FILLER = card("Filler", "{2}", 2, "Artifact")
 CLIFFTOP = card(
     "Clifftop Retreat",
