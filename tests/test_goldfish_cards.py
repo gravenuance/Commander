@@ -1065,6 +1065,15 @@ BREEDING_POOL = real(
     produced="GU",
     identity="GU",
 )
+BANT_PANORAMA = real(
+    "Bant Panorama",
+    "",
+    0,
+    "Land",
+    "{T}: Add {C}.\n{1}, {T}, Sacrifice this land: Search your library for a basic Forest, Plains, or "
+    "Island card, put it onto the battlefield tapped, then shuffle.",
+    produced="C",
+)
 WINDSWEPT_HEATH = real(
     "Windswept Heath",
     "",
@@ -1088,6 +1097,12 @@ def test_a_fetch_land_finds_only_lands_of_the_types_it_names() -> None:
     deck = build(WINDSWEPT_HEATH, WATERY_GRAVE, BREEDING_POOL, FOREST, commander=GLARB)
     # Forest or Plains: the Forest and Breeding Pool, not the Island-Swamp.
     assert card_named(deck, "Windswept Heath").land == LandFace(frozenset("GU"), tapped=False)
+
+
+def test_a_panorama_finds_the_basics_of_its_types_and_no_typed_nonbasic_land() -> None:
+    deck = build(BANT_PANORAMA, WATERY_GRAVE)
+    # Basic Forest, Plains or Island: G, W and U, plus its own colourless; Watery Grave's Swamp adds no B.
+    assert card_named(deck, "Bant Panorama").land == LandFace(frozenset("CGWU"), tapped=True)
 
 
 def test_a_fetch_land_for_any_basic_keeps_its_reading_beside_typed_lands() -> None:

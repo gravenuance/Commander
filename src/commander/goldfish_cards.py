@@ -618,12 +618,17 @@ def _land_face(info: CardMana, context: _Context) -> tuple[LandFace, bool]:
     return LandFace(colours, tapped, amount), _land_understood(text)
 
 
+_BASIC_SEARCH = re.compile(r"search your library for [^.]*\bbasic\b")
+
+
 def _fetchable_colours(text: str, context: _Context) -> frozenset[str]:
     """The colours of the deck's lands that a land searching by basic land type can fetch: those with one of
-    the types it names. Its own colours (the types' basic lands) are added by the caller's reading."""
+    the types it names. A search for basic lands finds only those types' basics."""
     if "search your library" not in text:
         return frozenset()
     searched = {land_type for land_type in BASIC_TYPES if land_type in text}
+    if _BASIC_SEARCH.search(text):
+        return frozenset(BASIC_TYPES[land_type] for land_type in searched)
     return frozenset(c for types, made in context.typed_lands if types & searched for c in made)
 
 
