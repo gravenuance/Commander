@@ -190,3 +190,13 @@ nearest turn shown stands in for it.
   differ from the copies the deck holds of its cut (one Forest out of ten), whose cut is not in the deck's
   library or whose card the deck already holds is left out of the figures, and `cmdr goldfish` refuses it
   with the reason.
+
+## Amendment (2026-10-22): payment fixes after review
+
+- A spirit guide is exiled from the hand for its mana and is not cast, so its own coloured pip is not paid.
+- A generic cost is paid with colourless mana first, then with the units that pay the fewest colours, so a
+  Wastes or a Mind Stone pays for a rock before a Plains does.
+- A two-colour hybrid pip ({W/U}, {C/W}) needs a unit of either colour, so Oona is not cast from colourless
+  mana. `manabase.fixed_pips` carries these pips under their symbol ("W/U"); the Mana tab reads colour
+  letters only and shows the same as before. A generic hybrid ({2/W}) and a Phyrexian pip stay generic
+  mana, which can cost more than the cheapest way to pay them.

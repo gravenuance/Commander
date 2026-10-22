@@ -614,6 +614,62 @@ def test_two_coloured_costs_are_paid_from_dual_lands_that_cover_both() -> None:
     assert only_outcome(report).commander_turns == (2,)
 
 
+def test_a_hybrid_pip_needs_a_unit_of_either_of_its_colours() -> None:
+    oona = goldfish.cost_of(2, {"U/B": 2})
+    assert not goldfish.can_pay([C, C], oona)
+    assert not goldfish.can_pay([W, G], oona)
+    assert not goldfish.can_pay([U, W], oona)
+    assert goldfish.can_pay([U, B_], oona)
+    assert goldfish.can_pay([B_, B_], oona)
+    assert goldfish.can_pay([U | W, B_ | G], oona)
+
+
+def test_a_hybrid_pip_beside_a_fixed_one_is_matched_by_hall() -> None:
+    mixed = goldfish.cost_of(2, {"W": 1, "W/U": 1})
+    assert goldfish.can_pay([W, U], mixed)
+    assert goldfish.can_pay([W, W], mixed)
+    assert not goldfish.can_pay([U, U], mixed)
+    assert not goldfish.can_pay([W, C], mixed)
+
+
+def test_a_hybrid_pip_takes_the_least_flexible_unit_of_either_colour() -> None:
+    units = [C, U, W | G]
+    goldfish.pay(units, goldfish.cost_of(2, {"W/U": 1}))
+    assert units == [W | G]
+
+
+def test_a_hybrid_commander_is_not_cast_from_colourless_mana() -> None:
+    boss = make("Boss", mv=2, pips={"U/B": 2}, kinds=CREATURE)
+    wastes = land("Wastes", "C")
+    for lands in ([wastes, wastes], [FOREST, FOREST]):
+        slots = [*lands, *repeat(VANILLA, 5)]
+        assert only_outcome(run(slots, commanders=(boss,))).commander_turns == (0,)
+
+
+def test_a_hybrid_commander_is_cast_with_either_of_its_colours() -> None:
+    boss = make("Boss", mv=2, pips={"U/B": 2}, kinds=CREATURE)
+    island = land("Island", "U")
+    for slots in ([island, SWAMP], [island, island], [SWAMP, SWAMP]):
+        assert only_outcome(run([*slots, *repeat(VANILLA, 5)], commanders=(boss,))).commander_turns == (2,)
+
+
+def test_a_land_of_a_colour_a_hybrid_spell_asks_for_is_played_first() -> None:
+    boss = make("Boss", mv=2, pips={"G": 1, "U/B": 1}, kinds=CREATURE)
+    plains = land("Plains", "W")
+    island = land("Island", "U")
+    # Turn one takes the Forest. Turn two takes the Island, not the Plains, which pays neither of the hybrid
+    # colours, so the commander comes out on turn two.
+    slots = [FOREST, plains, island, *repeat(VANILLA, 4)]
+    assert only_outcome(run(slots, commanders=(boss,))).commander_turns == (2,)
+
+
+def test_a_hybrid_spell_stuck_on_colours_counts_as_a_screw() -> None:
+    boss = make("Boss", mv=2, pips={"U/B": 1}, kinds=CREATURE)
+    assert run([*repeat(FOREST, 7)], commanders=(boss,)).colour_screw == 1.0
+    island = land("Island", "U")
+    assert run([island, island, *repeat(VANILLA, 5)], commanders=(boss,)).colour_screw == 0.0
+
+
 # --- ways to win -----------------------------------------------------------------------------------------
 
 

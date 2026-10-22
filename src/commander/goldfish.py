@@ -190,36 +190,47 @@ def unit_mask(colours: Iterable[str]) -> int:
     return mask
 
 
+def symbol_mask(symbol: str) -> int:
+    """The units that pay a pip: a colour ("W"), or either colour of a hybrid pip ("W/U")."""
+    return unit_mask(symbol.split("/"))
+
+
 def _hall(needs: Mapping[int, int]) -> tuple[tuple[int, int], ...]:
-    """Hall's condition for paying coloured pips from units that each pay some colours: for every set of
-    pip colours, the units able to pay any of them must number as many as those pips."""
+    """Hall's condition for paying pips from units that each pay some colours: for every set of pip kinds,
+    the units able to pay any of them must number as many as those pips. A pip kind is the mask of the units
+    that pay it, one colour or, for a hybrid pip, two."""
     terms: list[tuple[int, int]] = []
     for size in range(1, len(needs) + 1):
-        for bits in combinations(sorted(needs), size):
-            terms.append((sum(bits), sum(needs[b] for b in bits)))  # noqa: PERF401 — two sums per term
+        for masks in combinations(sorted(needs), size):
+            union = 0
+            for mask in masks:
+                union |= mask
+            terms.append((union, sum(needs[m] for m in masks)))
     return tuple(terms)
 
 
 class Cost:
-    """A cost in the form the payment checks read."""
+    """A cost in the form the payment checks read: `needs` counts the pips that each mask of units can pay."""
 
-    __slots__ = ("generic", "hall", "pip_bits", "single", "total")
+    __slots__ = ("generic", "hall", "pip_masks", "single", "total")
 
     def __init__(self, total: int, needs: Mapping[int, int]) -> None:
         pips = sum(needs.values())
         self.total = max(total, pips)
         self.generic = self.total - pips
         self.hall = _hall(needs)
-        self.pip_bits = tuple(bit for bit in sorted(needs) for _ in range(needs[bit]))
+        self.pip_masks = tuple(mask for mask in sorted(needs) for _ in range(needs[mask]))
         self.single = next(iter(needs)) if len(needs) == 1 else 0
 
 
 def cost_of(total: int, pips: Mapping[str, int]) -> Cost:
+    """A cost of mana value `total` with the pips of a card (`GoldfishCard.pips`): colours, colourless and
+    two-colour hybrid symbols; the rest of the total is generic."""
     needs: dict[int, int] = {}
-    for colour, count in pips.items():
-        bit = _BITS.get(colour, 0)
-        if bit and count > 0:
-            needs[bit] = needs.get(bit, 0) + count
+    for symbol, count in pips.items():
+        mask = symbol_mask(symbol)
+        if mask and count > 0:
+            needs[mask] = needs.get(mask, 0) + count
     return Cost(total, needs)
 
 
@@ -238,19 +249,19 @@ def can_pay(units: Sequence[int], cost: Cost) -> bool:
     return True
 
 
-def _match(units: Sequence[int], bits: Sequence[int]) -> list[int] | None:
-    """Indexes of units paying each pip, found by trying the scarcest colour first and backing out."""
-    scarcity = {bit: sum(1 for unit in units if unit & bit) for bit in set(bits)}
-    order = sorted(bits, key=scarcity.__getitem__)
+def _match(units: Sequence[int], masks: Sequence[int]) -> list[int] | None:
+    """Indexes of units paying each pip, found by trying the scarcest pip first and backing out."""
+    scarcity = {mask: sum(1 for unit in units if unit & mask) for mask in set(masks)}
+    order = sorted(masks, key=scarcity.__getitem__)
     used: list[int] = []
 
     def place(position: int) -> bool:
         if position == len(order):
             return True
-        bit = order[position]
+        mask = order[position]
         tried: set[int] = set()
         for index, unit in enumerate(units):
-            if not unit & bit or unit in tried or index in used:
+            if not unit & mask or unit in tried or index in used:
                 continue
             tried.add(unit)
             used.append(index)
@@ -271,14 +282,14 @@ def pay(units: list[int], cost: Cost) -> None:
     """Take the cost out of units, which are in `sort_units` order: coloured pips use the least flexible unit
     that can pay them, and generic mana the least flexible of what is left."""
     if cost.single:
-        bit = cost.single
-        for _ in cost.pip_bits:
+        mask = cost.single
+        for _ in cost.pip_masks:
             for index, unit in enumerate(units):
-                if unit & bit:
+                if unit & mask:
                     del units[index]
                     break
-    elif cost.pip_bits:
-        chosen = _match(units, cost.pip_bits)
+    elif cost.pip_masks:
+        chosen = _match(units, cost.pip_masks)
         if chosen is None:
             raise AssertionError("a checked cost could not be paid")
         for index in sorted(chosen, reverse=True):
@@ -308,6 +319,7 @@ class _Card:
         "fin_cost",
         "finisher",
         "gain",
+        "hybrids",
         "is_land",
         "keep_syn",
         "key",
@@ -348,7 +360,9 @@ class _Card:
         self.cost = cost_of(0, {}) if spend_from_hand else cost_of(card.mana_value + activation, card.pips)
         fin = card.mana_value + FINISHER_X if card.x_cost else card.mana_value
         self.fin_cost = cost_of(fin, card.pips)
-        self.pip_mask = unit_mask(colour for colour, count in card.pips.items() if count > 0)
+        paid = [symbol for symbol, count in card.pips.items() if count > 0]
+        self.pip_mask = unit_mask(symbol for symbol in paid if "/" not in symbol)
+        self.hybrids = tuple(symbol_mask(symbol) for symbol in paid if "/" in symbol)
         self.is_land = card.land is not None and CardKind.LAND in card.kinds
         self.mdfc = card.land is not None and not self.is_land
         land = card.land
@@ -494,8 +508,8 @@ class _Setup:
             for cid in cids:
                 cost = self.cards[cid].cost
                 total += cost.total
-                for bit in cost.pip_bits:
-                    needs[bit] = needs.get(bit, 0) + 1
+                for mask in cost.pip_masks:
+                    needs[mask] = needs.get(mask, 0) + 1
             found = self.merged[cids] = Cost(total, needs)
         return found
 
@@ -745,6 +759,7 @@ class _Game:
         for unit in self.pool:
             cover |= unit
         want = 0
+        unmet = 0
         extra = False
         for cid in (*self.hand, *self.cmd_left):
             card = cards[cid]
@@ -752,8 +767,14 @@ class _Game:
                 continue
             if card.cost.total <= have + 2:
                 want |= card.pip_mask
+                unmet |= card.pip_mask & ~cover
+                for hybrid in card.hybrids:
+                    want |= hybrid
+                    # A hybrid pip is met by any one of its colours.
+                    if not hybrid & cover:
+                        unmet |= hybrid
             extra = extra or have < card.cost.total <= have + 1
-        return want, want & ~cover, extra
+        return want, unmet, extra
 
     def _find_land(self, *, basic_only: bool, types: frozenset[str]) -> int:
         """The index in the library of the land to fetch, or -1: the one best for the colours wanted, among
