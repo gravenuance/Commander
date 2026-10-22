@@ -25,6 +25,24 @@ const VOID_TAGS = new Set(["meta", "link", "br", "hr", "img", "input"]);
 const NON_BUBBLING = new Set(["mouseenter", "mouseleave", "focus", "blur", "scroll"]);
 const ENTITIES = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'" };
 
+// What a browser's querySelectorAll and children answer: indexed and iterable, but not an Array, so map, some,
+// filter and the like are missing (a NodeList has forEach, entries, keys and values; an HTMLCollection does not).
+class FakeNodeList {
+  constructor(nodes, { forEach = true } = {}) {
+    nodes.forEach((node, index) => { this[index] = node; });
+    Object.defineProperty(this, "length", { value: nodes.length });
+    if (!forEach) return;
+    Object.defineProperty(this, "forEach", {
+      value: (callback, thisArg) => nodes.forEach((node, index) => callback.call(thisArg, node, index, this)),
+    });
+    Object.defineProperty(this, "entries", { value: () => nodes.entries() });
+    Object.defineProperty(this, "keys", { value: () => nodes.keys() });
+    Object.defineProperty(this, "values", { value: () => nodes.values() });
+  }
+  item(index) { return this[index] ?? null; }
+  [Symbol.iterator]() { return Array.prototype.values.call(this); }
+}
+
 class FakeText {
   constructor(data) {
     this.data = data;
@@ -93,7 +111,8 @@ class FakeElement {
   }
 
   // The tree.
-  get children() { return this.childNodes.filter((n) => n instanceof FakeElement); }
+  #elements() { return this.childNodes.filter((n) => n instanceof FakeElement); }
+  get children() { return new FakeNodeList(this.#elements(), { forEach: false }); }
   get firstChild() { return this.childNodes[0] ?? null; }
   get parentElement() { return this.parentNode; }
   get isConnected() {
@@ -102,7 +121,7 @@ class FakeElement {
     return node === this.ownerDocument.documentElement;
   }
   get previousElementSibling() {
-    const siblings = this.parentNode?.children ?? [];
+    const siblings = this.parentNode?.#elements() ?? [];
     return siblings[siblings.indexOf(this) - 1] ?? null;
   }
   get textContent() { return this.childNodes.map((n) => n.textContent).join(""); }
@@ -112,7 +131,12 @@ class FakeElement {
     if (text !== "" && text !== null && text !== undefined) this.#adopt(new FakeText(String(text)), null);
   }
   #adopt(child, before) {
-    child.parentNode?.removeChild?.(child);
+    if (child.parentNode) {
+      // As in Chromium, a node that is moved loses focus, and so does one that holds the focused node.
+      const doc = this.ownerDocument;
+      if (child instanceof FakeElement && child.contains(doc.activeElement)) doc.activeElement = doc.body;
+      child.parentNode.removeChild?.(child);
+    }
     child.parentNode = this;
     const at = before === null ? this.childNodes.length : this.childNodes.indexOf(before);
     this.childNodes.splice(at, 0, child);
@@ -175,8 +199,8 @@ class FakeElement {
     for (let node = this; node instanceof FakeElement; node = node.parentNode) if (node.matches(selector)) return node;
     return null;
   }
-  querySelectorAll(selector) { return walk(this).filter((node) => node.matches(selector)); }
-  querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
+  querySelectorAll(selector) { return new FakeNodeList(walk(this).filter((node) => node.matches(selector))); }
+  querySelector(selector) { return walk(this).find((node) => node.matches(selector)) ?? null; }
 
   // Events bubble to the document (all but NON_BUBBLING), with capture listeners of the ancestors first.
   addEventListener(type, listener, capture = false) {
@@ -243,7 +267,8 @@ async function fire(node, type, init = {}) {
 function walk(root) {
   const found = [];
   const visit = (node) => {
-    for (const child of node.children) {
+    for (const child of node.childNodes) {
+      if (!(child instanceof FakeElement)) continue;
       found.push(child);
       visit(child);
     }

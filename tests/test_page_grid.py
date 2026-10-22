@@ -68,6 +68,30 @@ def test_cards_added_removed_and_reordered_in_a_group_land_in_the_new_order() ->
     }
 
 
+def test_a_card_leaving_above_a_focused_card_does_not_take_its_focus_with_it() -> None:
+    seen = run("""
+    renderGrid([group(names.map((name) => gcard(name)))]);
+    const step = state.gridCards.get("Cultivate").querySelector(".count-step");
+    step.focus();
+    renderGrid([group(names.filter((name) => name !== "Ayula").map((name) => gcard(name)))]);
+    return { order: order(), kept: document.activeElement === step };
+    """)
+    assert seen == {"order": ["Birds", "Cultivate", "Dryad"], "kept": True}
+
+
+def test_a_group_leaving_above_a_focused_group_does_not_take_its_focus_with_it() -> None:
+    seen = run("""
+    const creatures = group([gcard("Ayula")]);
+    const ramp = group([gcard("Cultivate", { category: "Ramp" })], { key: "Ramp", name: "Ramp" });
+    renderGrid([creatures, ramp]);
+    const toggle = state.groups.get("Ramp").node.querySelector(".group-toggle");
+    toggle.focus();
+    renderGrid([ramp]);
+    return { groups: [...state.groups.keys()], kept: document.activeElement === toggle };
+    """)
+    assert seen == {"groups": ["Ramp"], "kept": True}
+
+
 def test_a_changed_group_header_shows_the_new_count_and_price_and_keeps_its_cards() -> None:
     seen = run("""
     renderGrid([group([gcard("Ayula"), gcard("Birds")])]);

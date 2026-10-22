@@ -19,7 +19,7 @@ const open = async (over) => {
   stub.settings = async () => answer(over);
   await openSettings();
 };
-const rows = () => $("settings-grace").children.map((li) => ({
+const rows = () => [...$("settings-grace").children].map((li) => ({
   name: li.querySelector(".grace-name").textContent,
   factor: li.querySelector("input").value,
   factorLabel: li.querySelector("input").getAttribute("aria-label"),
@@ -170,7 +170,8 @@ def test_a_card_name_is_shown_as_text_never_as_markup() -> None:
     seen = run("""
     await open({ grace: [{ name: "<img src=x onerror=boom()> & <b>Sol</b>", factor: 2 }] });
     const row = $("settings-grace").children[0];
-    return { tags: row.children.map((c) => c.tagName), name: row.querySelector(".grace-name").textContent,
+    return { tags: [...row.children].map((c) => c.tagName),
+      name: row.querySelector(".grace-name").textContent,
       nested: row.querySelector(".grace-name").children.length };
     """)
     assert seen["tags"] == ["SPAN", "INPUT", "BUTTON"]
@@ -222,7 +223,7 @@ const search = async (text) => {
   box.value = text;
   await fire(box, "input");
   await timers.at(-1).fn();
-  return $("settings-adjacent-results").children.map((li) => li.children[0].textContent);
+  return [...$("settings-adjacent-results").children].map((li) => li.children[0].textContent);
 };
 stub.find_commanders = async (text, partner) => ({
   names: partner ? [`${text} (any card)`] : [`${text} (commander)`],
@@ -276,7 +277,7 @@ def test_the_name_after_a_plus_is_searched_as_a_partner_and_the_first_name_is_ke
 def test_every_remove_button_of_the_settings_has_a_tooltip_as_well_as_a_name() -> None:
     seen = run("""
     await open({ adjacent: [["Rhys"]], ignore: ["Mountain"] });
-    return $("settings-dialog").querySelectorAll(".chip-remove")
+    return [...$("settings-dialog").querySelectorAll(".chip-remove")]
       .map((button) => [button.getAttribute("aria-label"), button.getAttribute("title")]);
     """)
     assert seen == [

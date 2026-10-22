@@ -105,6 +105,6 @@ def test_an_estimate_with_notes_but_no_causes_shows_only_the_notes() -> None:
     renderBracket(1, { estimate: { tag: "Core", brackets: "2+" }, notes: ["Set to 2 on Archidekt"],
       causes: [], unavailable: "", effectiveBracket: 2 }, true);
     const detail = $("bracket-detail");
-    return { children: detail.children.map((c) => c.tagName), text: detail.textContent };
+    return { children: [...detail.children].map((c) => c.tagName), text: detail.textContent };
     """)
     assert seen == {"children": ["P"], "text": "Set to 2 on Archidekt"}

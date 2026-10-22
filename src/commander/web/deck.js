@@ -57,10 +57,11 @@ function paintFetchStates(states) {
 
 function renderDecks() {
   const list = $("deck-list");
-  const seen = new Set();
+  // Decks that left go first, so those after them keep their place and a focused one keeps its focus.
+  const seen = new Set(state.decks.map((deck) => String(deck.id)));
+  for (const item of [...list.children]) if (!seen.has(item.dataset.id)) item.remove();
   for (const [index, deck] of state.decks.entries()) {
     const key = String(deck.id);
-    seen.add(key);
     let item = list.querySelector(`li[data-id="${key}"]`);
     if (!item) {
       const button = el("button", { class: "deck-button", type: "button", onclick: () => openDeck(deck.id) });
@@ -80,7 +81,6 @@ function renderDecks() {
     button.setAttribute("aria-label", deckLabel(deck));
     place(list, item, index);
   }
-  for (const item of [...list.children]) if (!seen.has(item.dataset.id)) item.remove();
 }
 
 async function loadDecks() {
@@ -159,8 +159,11 @@ let deckRequest = 0;
 async function loadDeck() {
   if (state.current === null) return;
   const sent = ++deckRequest;
-  const view = await api("deck", state.current);
-  if (sent !== deckRequest || view.id !== state.current) return;
+  const answer = await window.pywebview.api.deck(state.current);
+  // The deck may have closed or another opened meanwhile, which a refusal then no longer concerns.
+  if (sent !== deckRequest) return;
+  const view = checkAnswer(answer);
+  if (view.id !== state.current) return;
   state.view = view;
   state.stamps[String(view.id)] = view.stamp;
   renderDeck();
@@ -260,7 +263,7 @@ async function exportDeck() {
     const answer = await api("export", state.current);
     await copyText(answer.text);
     showStatus(`Copied ${answer.cards} cards for TopDeck.gg; queued changes are not included`);
-  } catch { /* shown in the status line */ }
+  } catch (error) { noteFailure(error); }
 }
 
 // Copies every deck's Don't Have cards as a Cardmarket wants list; nothing is marked ordered.
@@ -274,7 +277,7 @@ async function copyCardsToBuy() {
     }
     await copyText(answer.text);
     showStatus(`Copied ${answer.cards} cards for Cardmarket${skipped}`);
-  } catch { /* shown in the status line */ }
+  } catch (error) { noteFailure(error); }
 }
 
 async function copyText(text) {

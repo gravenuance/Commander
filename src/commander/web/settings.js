@@ -23,7 +23,7 @@ async function openSettings() {
     renderGrace();
     $("settings-dialog").showModal();
     $("settings-adjacent-input").focus();
-  } catch { /* shown in the status line */ }
+  } catch (error) { noteFailure(error); }
 }
 
 function renderSettings() {

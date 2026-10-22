@@ -90,7 +90,7 @@ function paintSync(running, blocked, note) {
 async function reloadAfterSync() {
   try {
     await refresh();
-  } catch { /* shown in the status line */ }
+  } catch (error) { noteFailure(error); }
 }
 
 // True when an answer asked for under `epoch` belongs to an account the page no longer shows.
@@ -183,7 +183,7 @@ async function signOut() {
     showSignedOut();
     renderAccount(answer);
     openSignIn();
-  } catch { /* shown in the status line */ }
+  } catch (error) { noteFailure(error); }
 }
 
 // True while a click on Sync is sent, until the buttons show the sync running; a second click is ignored.
@@ -195,7 +195,7 @@ async function startSync() {
   try {
     await api("sync");
     await loadAccount();
-  } catch { /* shown in the status line */ } finally {
+  } catch (error) { noteFailure(error); } finally {
     syncRequested = false;
   }
 }

@@ -12,8 +12,8 @@ const decks = [
 ];
 const account = (over = {}) => ({ user: "TESTER", signedIn: true,
   sync: { running: false, progress: "", summary: "", failed: false, decks: {} }, ...over });
-const icons = () => $("deck-list").querySelectorAll(".fetch-icon");
-const rowLabels = () => $("deck-list").children.map((li) => li.firstChild.getAttribute("aria-label"));
+const icons = () => [...$("deck-list").querySelectorAll(".fetch-icon")];
+const rowLabels = () => [...$("deck-list").children].map((li) => li.firstChild.getAttribute("aria-label"));
 """
 
 
@@ -61,19 +61,32 @@ def test_the_deck_list_paints_a_labelled_icon_per_fetch_state() -> None:
     assert painted["labels"] == ["Magda, Sample, deck..", "Ellivere, Second"]
 
 
+def test_a_deck_leaving_above_a_focused_deck_does_not_take_its_focus_with_it() -> None:
+    seen = run("""
+    state.decks = decks;
+    renderDecks();
+    const button = $("deck-list").children[1].firstChild;
+    button.focus();
+    state.decks = decks.slice(1);
+    renderDecks();
+    return { rows: $("deck-list").children.length, kept: document.activeElement === button };
+    """)
+    assert seen == {"rows": 1, "kept": True}
+
+
 def test_a_fetch_state_change_touches_only_its_own_deck_and_a_redraw_keeps_the_icon() -> None:
     seen = run("""
     state.decks = decks;
     renderDecks();
     paintFetchStates({ "1": "queued", "2": "queued" });
-    const buttons = $("deck-list").children.map((li) => li.firstChild);
+    const buttons = [...$("deck-list").children].map((li) => li.firstChild);
     buttons[1].setAttribute("aria-label", "untouched");
     paintFetchStates({ "1": "done", "2": "queued" });
     const labels = rowLabels();
     state.decks = decks.map((d) => ({ ...d, queued: d.id }));
     renderDecks();
     return { labels, redrawn: icons().map((i) => i.getAttribute("aria-label")),
-      sameRows: $("deck-list").children.every((li, i) => li.firstChild === buttons[i]) };
+      sameRows: [...$("deck-list").children].every((li, i) => li.firstChild === buttons[i]) };
     """)
     assert seen["labels"] == ["Magda, Sample, deck.., Fetched", "untouched"]
     assert seen["redrawn"] == ["Fetched", "Waiting to fetch"]
@@ -255,3 +268,9 @@ def test_a_second_click_on_sync_while_the_first_request_is_out_sends_nothing() -
     return { whileOut, after: sent() };
     """)
     assert seen == {"whileOut": 1, "after": 2}
+
+
+def test_the_sign_in_username_offers_no_names_typed_before() -> None:
+    # The page's WebView profile persists, so its form history would suggest another account's name.
+    seen = run("""return $("signin-user").getAttribute("autocomplete");""")
+    assert seen == "off"
