@@ -9,6 +9,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import UTC
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Protocol
@@ -501,6 +502,8 @@ def _retry_after_seconds(value: str | None, now: float) -> float | None:
     except (TypeError, ValueError):
         log.info("ignoring unreadable Retry-After header: %r", value)
         return None
+    if when.tzinfo is None:  # a "-0000" zone parses naive, and timestamp() would read it as local time
+        when = when.replace(tzinfo=UTC)
     return max(0.0, when.timestamp() - now)
 
 
