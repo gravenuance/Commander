@@ -116,8 +116,7 @@ function showSignedOut() {
   state.stamps = {};
   renderDecks();
   renderActivity([]);
-  $("mana").replaceChildren();
-  manaPanel.forget();
+  resetMana();
   showRailFor(false);
   $("deck").hidden = true;
   $("loading").hidden = true;

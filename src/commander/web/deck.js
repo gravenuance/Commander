@@ -117,8 +117,7 @@ function closeOpenDeckIfGone() {
   closeLabelMenu(false);
   renderDecks();
   renderActivity([]);
-  $("mana").replaceChildren();
-  manaPanel.forget();
+  resetMana();
   showRailFor(false);
   $("deck").hidden = true;
   showStatus(`${name} is no longer among your decks (deleted on Archidekt?), so it is closed.`);
@@ -144,6 +143,8 @@ async function openDeck(id) {
     $("list-uncut").replaceChildren();
     $("grid").replaceChildren();
     closeLabelMenu(false);
+    resetBracket();
+    resetMana();
     renderDecks();
     showRailFor(true);
     metaPanel.render(id, null);

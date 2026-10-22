@@ -8,6 +8,11 @@ const KARSTEN_SOURCES = "https://www.tcgplayer.com/content/article/How-Many-Sour
 
 const manaPanel = panel((deck) => api("mana", deck), renderMana, { wanted: () => railTab === "mana" });
 
+function resetMana() {
+  $("mana").replaceChildren();
+  manaPanel.forget();
+}
+
 function renderMana(deck, m) {
   const l = m.lands;
   const c = m.comparison;

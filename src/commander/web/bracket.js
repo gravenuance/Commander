@@ -15,6 +15,18 @@ function setupBracket() {
   });
 }
 
+// Empties the chip and its detail, so another deck never shows this deck's estimate while its own is read.
+function resetBracket() {
+  const chip = $("bracket-check");
+  chip.hidden = true;
+  chip.removeAttribute("aria-controls");
+  chip.removeAttribute("aria-expanded");
+  $("bracket-detail").hidden = true;
+  $("bracket-detail").replaceChildren();
+  Object.assign(bracketState, { deck: null, marks: new Map() });
+  bracketPanel.forget();
+}
+
 function renderBracket(deck, b, newDeck) {
   Object.assign(bracketState, { deck, marks: bracketMarks(b.causes) });
   const chip = $("bracket-check");
