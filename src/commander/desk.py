@@ -955,27 +955,28 @@ class Desk:
         """How the deck plays out over 10,000 goldfish games (ADR 0054): opening hands, the commander, mana,
         colour screw and ways to win by turn. Played on the first ask and kept until the deck, its profile,
         the card data, its bracket or the policy change; only cached data is read."""
-        played = self._goldfish_run(self._stored(deck_id))
+        stored, stamp = self._stored_for_goldfish(deck_id)
+        played = self._goldfish_run(stored, stamp)
         return goldfish_report_json(played.report, played.loaded.deck, seed_of(played.loaded))
 
     @_guarded
     def goldfish_swap(self, deck_id: int, card_id: str) -> Json:
         """The headline figures that move when a queued card takes the place of its chosen cut: {"figures":
         [...]}, empty when nothing moves, the card has no cut or the swap cannot be played."""
-        stored = self._stored(deck_id)
+        stored, stamp = self._stored_for_goldfish(deck_id)
         card = read_board(stored.folder).find(card_id)
         if card is None:
             raise BoardError(f"no card {card_id!r} on the board")
         swap = swap_of(card)
-        return self._goldfish_figures(stored, [] if swap is None else [swap])
+        return self._goldfish_figures(stored, stamp, [] if swap is None else [swap])
 
     @_guarded
     def goldfish_review(self, deck_id: int) -> Json:
         """`goldfish_swap` for every card queued with a cut on the board, taken together."""
-        stored = self._stored(deck_id)
-        return self._goldfish_figures(stored, queued_swaps(read_board(stored.folder)))
+        stored, stamp = self._stored_for_goldfish(deck_id)
+        return self._goldfish_figures(stored, stamp, queued_swaps(read_board(stored.folder)))
 
-    def _goldfish_figures(self, stored: StoredDeck, swaps: list[SwapRequest]) -> Json:
+    def _goldfish_figures(self, stored: StoredDeck, stamp: str, swaps: list[SwapRequest]) -> Json:
         if not swaps:
             return {"figures": []}
         deck_id = stored.deck.id
@@ -985,26 +986,27 @@ class Desk:
                 return compare_swaps(played, db, swaps, lenient=True)
 
         comparison = self._goldfish.compared(
-            deck_id,
-            self._goldfish_stamp(stored),
-            tuple(swaps),
-            lambda: self._play_goldfish(stored),
-            compare,
+            deck_id, stamp, tuple(swaps), lambda: self._play_goldfish(stored), compare
         )
         return {"figures": changes_json(headline(comparison), comparison.base)}
 
-    def _goldfish_run(self, stored: StoredDeck) -> GoldfishRun:
-        return self._goldfish.played(
-            stored.deck.id, self._goldfish_stamp(stored), lambda: self._play_goldfish(stored)
-        )
+    def _goldfish_run(self, stored: StoredDeck, stamp: str) -> GoldfishRun:
+        return self._goldfish.played(stored.deck.id, stamp, lambda: self._play_goldfish(stored))
 
-    def _goldfish_stamp(self, stored: StoredDeck) -> str:
-        """What the games depend on: the deck's snapshot and profile, the card data, the cached combos and
-        estimate (through the meta stamp and the bracket) and the policy."""
-        return (
-            f"{files_stamp(stored.folder, ('deck.json', 'profile.toml'))}|{self._card_data_stamp()}"
-            f"|{cache_stamp(self._settings.cache)}|{self._effective(stored.deck).bracket}|{POLICY_VERSION}"
-        )
+    def _stored_for_goldfish(self, deck_id: int) -> tuple[StoredDeck, str]:
+        """The deck and the stamp of what its games depend on: the snapshot and profile, the card data, the
+        cached combos and estimate (through the meta stamp and the bracket) and the policy. The files are
+        stamped before the deck is read, so a sync in between leaves a stamp older than the deck, which only
+        plays again, never one newer that would keep the old deck's figures."""
+        folder = self._workspace.folder_for(int(deck_id))
+        taken = "-"  # a deck that is not there, which _stored refuses
+        if folder is not None:
+            taken = (
+                f"{files_stamp(folder, ('deck.json', 'profile.toml'))}|{self._card_data_stamp()}"
+                f"|{cache_stamp(self._settings.cache)}"
+            )
+        stored = self._stored(deck_id)
+        return stored, f"{taken}|{self._effective(stored.deck).bracket}|{POLICY_VERSION}"
 
     def _play_goldfish(self, stored: StoredDeck) -> GoldfishRun:
         with self._db() as db:

@@ -7,6 +7,7 @@ hand and the first draw show every card and each card does the same for mana in 
 
 import shutil
 import threading
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -14,6 +15,9 @@ import pytest
 
 from commander import desk as desk_module
 from commander.desk import Desk, DeskSettings
+from commander.goldfish import POLICY_VERSION
+from commander.models import Deck
+from commander.store import Workspace
 from conftest import PASSWORD, FakeArchidekt, Json, build_card_db
 from test_desk import DECK, deferred_desk, desk, fake, items, make_desk, probing, profile_file, settings
 from test_desk_account import Env
@@ -154,6 +158,66 @@ def test_the_same_swap_is_compared_once_and_a_change_to_the_deck_files_plays_aga
     desk.save_finishers(DECK, ["Battered Golem"])
     desk.goldfish_swap(DECK, card_id)
     assert (plays.games, plays.comparisons) == (2, 2)
+
+
+@pytest.mark.parametrize("part", ["bracket", "card data", "cache", "policy"])
+def test_each_part_of_what_the_games_depend_on_plays_them_again_when_it_changes(
+    desk: Desk, plays: Plays, monkeypatch: pytest.MonkeyPatch, part: str
+) -> None:
+    desk.goldfish(DECK)
+    desk.goldfish(DECK)
+    assert plays.games == 1
+
+    def other_bracket(deck: Deck) -> Deck:
+        return replace(deck, bracket=2)
+
+    def other_card_data() -> str:
+        return "another card database"
+
+    def other_cache(folder: Path) -> str:
+        return f"another cache than {folder.name}"
+
+    if part == "bracket":
+        monkeypatch.setattr(desk, "_effective", other_bracket)
+    elif part == "card data":
+        monkeypatch.setattr(desk, "_card_data_stamp", other_card_data)
+    elif part == "cache":
+        monkeypatch.setattr(desk_module, "cache_stamp", other_cache)
+    else:
+        monkeypatch.setattr(desk_module, "POLICY_VERSION", POLICY_VERSION + 1)
+    desk.goldfish(DECK)
+    assert plays.games == 2
+    desk.goldfish(DECK)
+    assert plays.games == 2
+
+
+@pytest.mark.parametrize("ask", ["report", "swap", "review"])
+def test_a_sync_between_reading_the_deck_and_stamping_it_does_not_keep_the_old_games_as_current(
+    desk: Desk, settings: DeskSettings, plays: Plays, monkeypatch: pytest.MonkeyPatch, ask: str
+) -> None:
+    card_id = queue(desk, "Arcane Signet", "Battered Golem")
+    deck_file = next(settings.workspace.glob(f"{DECK}-*")) / "deck.json"
+    load = Workspace.load_folder
+    synced: list[bool] = []
+
+    def load_then_sync(workspace: Workspace, folder: Path) -> Deck | None:
+        found = load(workspace, folder)
+        if not synced:
+            # A sync rewrites the snapshot just after this read.
+            synced.append(True)
+            deck_file.write_text(deck_file.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+        return found
+
+    def ask_for_figures() -> Json:
+        if ask == "report":
+            return desk.goldfish(DECK)
+        return desk.goldfish_swap(DECK, card_id) if ask == "swap" else desk.goldfish_review(DECK)
+
+    monkeypatch.setattr(Workspace, "load_folder", load_then_sync)
+    ask_for_figures()
+    assert (synced, plays.games) == ([True], 1)
+    ask_for_figures()
+    assert plays.games == 2
 
 
 def test_signing_in_again_forgets_the_games_kept_for_the_last_account(
