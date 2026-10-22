@@ -165,3 +165,17 @@ The first run on the owner's decks showed four figures off; the owner decided:
 The dominant tags (`ideas.dominant_tags`) are read whatever the profile's tag search setting says; that
 setting only decides whether Archidekt is searched by tag. `POLICY_VERSION` stays 1, since nothing has been
 cached yet.
+
+## Amendment (2026-10-22): headline figures for a swap
+
+One ramp swap on a real deck moved 20 figures, every turn of every mana column among them, which is too much
+for a fold on a card. The owner decided that the Goldfish fold on a Considering card and the block in Review
+show only these headline figures, and of them only the ones that moved:
+
+- each commander cast by the bracket's turn;
+- the worst tenth of mana on the bracket's turn;
+- colour screw;
+- each combo landed by the bracket's turn.
+
+The bracket's turn is 9, 8, 6 and 4 for brackets 1 to 4, and turn 3 for bracket 5. The Goldfish tab and
+`cmdr goldfish --swap` still give every figure.
