@@ -2,9 +2,10 @@
 
 import logging
 import sqlite3
+import threading
 import time
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from types import TracebackType
@@ -378,15 +379,32 @@ class ResolvedCard:
     printing: Printing | None
 
 
+@dataclass(slots=True, eq=False)
+class _BuildAnswers:
+    """Counts that depend only on one build of the card database and cost a table scan to work out."""
+
+    stamp: tuple[object, ...]
+    legal_cards: int | None = None
+    tag_sizes: dict[str, int] = field(default_factory=dict[str, int])
+    theme_sizes: dict[Theme, int] = field(default_factory=dict[Theme, int])
+
+
+# The newest build's answers per database file, so a rebuilt file replaces its old entry.
+_answers: dict[Path, _BuildAnswers] = {}
+_answers_lock = threading.Lock()
+
+
 class CardDb:
     """Read-only view of a built card database."""
 
     def __init__(self, path: Path) -> None:
         if not path.is_file():
             raise CardDataError(f"no card data at {path}; run `cmdr sync` to download it")
+        resolved = path.resolve()
         try:
-            self._db = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
-        except sqlite3.Error as error:
+            stat = resolved.stat()
+            self._db = sqlite3.connect(f"{resolved.as_uri()}?mode=ro", uri=True)
+        except (OSError, sqlite3.Error) as error:
             raise CardDataError(f"cannot open card data {path}: {error}; run `cmdr sync --force`") from error
         try:
             self._query("PRAGMA busy_timeout = 5000")
@@ -399,6 +417,7 @@ class CardDb:
             self._db.close()
             raise CardDataError(f"card data {path} is from another version of cmdr; run `cmdr sync`")
         self._available = frozenset(Role(row[0]) for row in rows if _is_role(row[0]))
+        self._file_stamp = (resolved, stat.st_mtime_ns, stat.st_size)
 
     def __enter__(self) -> Self:
         return self
@@ -558,12 +577,28 @@ class CardDb:
         """How many Commander-legal cards match the theme; 0 for an empty one."""
         if theme.empty:
             return 0
-        cte, condition, params = _theme_sql(theme)
-        sql = f"{cte} SELECT count(*) FROM oracle WHERE commander_legal = 1 AND ({condition})"  # noqa: S608 — built from constant fragments and placeholders; every value is bound
-        return int(self._query_named(sql, params)[0][0])
+        answers = self._build_answers()
+        if (size := answers.theme_sizes.get(theme)) is None:
+            cte, condition, params = _theme_sql(theme)
+            sql = f"{cte} SELECT count(*) FROM oracle WHERE commander_legal = 1 AND ({condition})"  # noqa: S608 — built from constant fragments and placeholders; every value is bound
+            size = answers.theme_sizes[theme] = int(self._query_named(sql, params)[0][0])
+        return size
 
     def legal_cards(self) -> int:
-        return int(self._query("SELECT count(*) FROM oracle WHERE commander_legal = 1")[0][0])
+        answers = self._build_answers()
+        if answers.legal_cards is None:
+            rows = self._query("SELECT count(*) FROM oracle WHERE commander_legal = 1")
+            answers.legal_cards = int(rows[0][0])
+        return answers.legal_cards
+
+    def _build_answers(self) -> _BuildAnswers:
+        """The cached counts of the build this connection reads; a rebuilt file starts with none."""
+        stamp = (*self._file_stamp, self.meta())
+        with _answers_lock:
+            found = _answers.get(self._file_stamp[0])
+            if found is None or found.stamp != stamp:
+                found = _answers[self._file_stamp[0]] = _BuildAnswers(stamp)
+            return found
 
     def tag_lineage(self, oracle_ids: Iterable[str]) -> dict[str, frozenset[str]]:
         """Each card's tag slugs with every tag above them, as a card in combat-ramp is in ramp too."""
@@ -587,10 +622,11 @@ class CardDb:
 
     def tag_sizes(self, slugs: Iterable[str]) -> dict[str, int]:
         """How many cards each tag holds, sub-tags included; slugs Scryfall does not have are left out."""
-        return {
-            slug: int(self._query(_TAG_COUNT_QUERY, [tag_id])[0][0])
-            for slug, tag_id in self.tag_ids(slugs).items()
-        }
+        asked = list(dict.fromkeys(slugs))
+        known = self._build_answers().tag_sizes
+        for slug, tag_id in self.tag_ids(slug for slug in asked if slug not in known).items():
+            known[slug] = int(self._query(_TAG_COUNT_QUERY, [tag_id])[0][0])
+        return {slug: known[slug] for slug in asked if slug in known}
 
     def suggest_tags(self, text: str, *, limit: int = MAX_TAG_MATCHES) -> list[TagCount]:
         """Tags whose slug holds text, quick enough to run on each keystroke: slugs starting with it

@@ -2,9 +2,10 @@ import json
 import logging
 import sqlite3
 import threading
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -322,6 +323,73 @@ def test_tag_sizes_count_cards_with_sub_tags_and_leave_out_unknown_slugs(card_db
     with CardDb(card_db_file) as db:
         # Same counts as find_tags: Magda sits in ramp through combat-ramp and is counted once.
         assert db.tag_sizes(["ramp", "combat-ramp", "no-such-tag"]) == {"ramp": 7, "combat-ramp": 1}
+
+
+def tagged_tag_line(slug: str, *oracle_ids: str) -> str:
+    return json.dumps(
+        {
+            "object": "tag",
+            "id": "dddddddd-0000-4000-8000-000000009999",
+            "slug": slug,
+            "type": "oracle",
+            "child_ids": [],
+            "taggings": [{"oracle_id": oracle_id, "weight": "median"} for oracle_id in oracle_ids],
+        }
+    )
+
+
+def counts_of(db_file: Path) -> tuple[dict[str, int], int, int]:
+    with CardDb(db_file) as db:
+        return (
+            db.tag_sizes(["ramp", "combat-ramp", "no-such-tag", "filler-9999"]),
+            db.theme_size(Theme(types=("Artifact",))),
+            db.legal_cards(),
+        )
+
+
+def test_a_builds_counts_are_scanned_once_however_many_connections_ask(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_file = build_card_db(tmp_path, extra_tags=[tagged_tag_line("filler-9999", MAGDA_ORACLE)])
+    with sqlite3.connect(db_file) as plain:
+        legal = plain.execute("SELECT count(*) FROM oracle WHERE commander_legal = 1").fetchone()[0]
+        artifacts = plain.execute(
+            "SELECT count(*) FROM oracle WHERE commander_legal = 1 AND type_line LIKE '%Artifact%'"
+        ).fetchone()[0]
+    counting: list[str] = []
+    for name in ("_query", "_query_named"):
+        monkeypatch.setattr(CardDb, name, _spy(getattr(CardDb, name), counting))
+    expected = ({"ramp": 7, "combat-ramp": 1, "filler-9999": 1}, artifacts, legal)
+    assert counts_of(db_file) == expected
+    # Three tag counts, one theme count, one legal-card count.
+    assert sum("count(" in sql for sql in counting) == 5
+    counting.clear()
+    assert counts_of(db_file) == expected
+    assert counts_of(db_file) == expected
+    assert not any("count(" in sql for sql in counting)
+
+
+def _spy(original: Callable[..., list[Any]], seen: list[str]) -> Callable[..., list[Any]]:
+    def spy(self: CardDb, sql: str, *args: object) -> list[Any]:
+        seen.append(sql)
+        return original(self, sql, *args)
+
+    return spy
+
+
+def test_a_rebuilt_database_is_not_served_the_old_builds_counts(tmp_path: Path) -> None:
+    # The same meta both times, as a rebuild within one bulk update has: only the file tells the builds apart.
+    first = build_card_db(tmp_path, extra_tags=[tagged_tag_line("filler-9999")])
+    before = counts_of(first)
+    assert before[0] == {"ramp": 7, "combat-ramp": 1, "filler-9999": 0}
+    second = build_card_db(
+        tmp_path,
+        extra_tags=[tagged_tag_line("filler-9999", MAGDA_ORACLE)],
+        extra_cards=[filler_card(40_001), filler_card(40_002)],
+    )
+    assert second == first
+    after = counts_of(second)
+    assert after == ({"ramp": 7, "combat-ramp": 1, "filler-9999": 1}, before[1] + 2, before[2] + 2)
 
 
 def _plan(db_file: Path, sql: str, params: Sequence[object] | Mapping[str, object]) -> str:
