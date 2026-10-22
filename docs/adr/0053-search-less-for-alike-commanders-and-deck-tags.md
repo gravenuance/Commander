@@ -44,7 +44,11 @@ Option 3, chosen by the owner. The deck's own commander is unchanged: five searc
   of being searched again in the same sync (ADR 0050 did the same for its page cap). A deck-tag answer keeps
   the old fingerprint (3 pages, a quarter of `peer_decks`). An alike search that has no answer of its own
   accepts the one stored for the same commander as the deck's own search
-  (`deckcache.cached_answer(also_accept=...)`), so it is not searched again for the alike deck.
+  (`deckcache.cached_answer(also_accept=...)`), so it is not searched again for the alike deck. An alike
+  answer is stored in an item of its own (`archidekt-alike-*`), because an item keeps one request: in the
+  commander's own item, an alike refetch replaced the 60-deck answer that stands in as stale when the
+  commander's own refetch fails. The newest of the alike item and the accepted own answers serves the alike
+  search; alike answers stored in the own item before this stay accepted.
 - **The progress line names the deck:** the reads of a sync run side by side and the line shows one of them
   (ADR 0049), so each step starts with the deck: "Chatterfang: Ygra decks (alike)", "Chatterfang: Landfall
   decks (theme)", and "Chatterfang: *commander* decks" for its own commander. These replace "Archidekt:

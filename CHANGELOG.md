@@ -21,7 +21,8 @@
 - A card with two parts is judged for colour by one part, in the Mana tab, its turn-one check and the
   suggested changes (ADR 0019): an adventure (Bonecrusher Giant // Stomp) by its creature at the card's mana
   value, so Stomp no longer makes it a one-drop; a split card (Dead // Gone, Fire // Ice) by its most
-  expensive half, both halves when they tie; any other card by its front face. The card database keeps
+  expensive half, both halves when they tie; an aftermath card (Cut // Ribbons) by its first half, since the
+  second is cast only from the graveyard; any other card by its front face. The card database keeps
   Scryfall's layout for it.
 - The app keeps its window profile on disk (`%LOCALAPPDATA%\Commander\webview`), so card images load from the
   cache after their first view instead of from Scryfall at every launch, and the card size and activity tab it
@@ -85,7 +86,22 @@
 - Each "Not in deck" stack has its own id, so a toggle controls its own stack when categories such as Ramp 1
   and Ramp 2 slug alike. The settings chips' remove buttons have a tooltip and a 24 px target.
 - Keyboard focus stays where it was after Save (on Review, which a save leaves disabled), after a decision in
-  the Considering list, and after "Put N swaps on the board" in the Mana plan.
+  the Considering list, and after "Put N swaps on the board" in the Mana plan. A card, group or deck leaving
+  above the focused one no longer takes the focus with it.
+- The Considering list redraws after a decision or a sync in the app, where it threw on the WebView's node
+  lists and kept its old tiles. Page errors other than the bridge's reach the app log.
+- The page keeps polling when the open deck fails to load, and retries it on its next change or after a
+  while. A deck deleted while open keeps its notice instead of an older answer drawing over it, and a poll
+  keeps the stamp of the deck now open, not the one it started with.
+- The sign-in username no longer suggests names typed before, which the kept window profile would offer
+  across accounts.
+- Research on a basic land swap that was already sent no longer fails, and such a swap counts as landed only
+  when its added land rose and its cut fell, not when a land of that kind was added by hand.
+- The card data is due by calendar day, so the next refresh date the sync report names holds whatever hour
+  the data was built.
+- An alike commander's Archidekt answer is stored apart from the commander's own, so refetching it no longer
+  evicts the deck's own answer, which then could not stand in as stale when its own refetch failed
+  (ADR 0053).
 
 ## 1.0.0 - 2026-10-21
 

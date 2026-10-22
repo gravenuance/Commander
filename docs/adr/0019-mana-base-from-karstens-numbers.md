@@ -110,6 +110,8 @@ suggested changes (ADR 0024) judge a card's colour by it (`manabase.castings`). 
 - **A split card** (Dead // Gone, Fire // Ice) by its most expensive half, at that half's own mana value,
   since the printed mana value is the halves added up (rule 202.3c). Halves of equal value both count, and a
   colour takes the harder of them.
+- **An aftermath card** (Cut // Ribbons), whose layout is also `split`, by its first half at that half's own
+  mana value, since its second half is cast only from the graveyard; its Aftermath line tells it apart.
 - **Every other layout,** a modal double-faced card included, by its front face's cost at the card's mana
   value.
 
