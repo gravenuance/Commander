@@ -1608,6 +1608,45 @@ def test_a_creature_that_draws_on_arrival_draws_once_and_a_looter_is_an_engine()
     assert one(MERFOLK_LOOTER).draw == Draw(1, engine=True)
 
 
+EIDOLON_OF_BLOSSOMS = real(
+    "Eidolon of Blossoms",
+    "{2}{G}{G}",
+    4,
+    "Enchantment Creature — Spirit",
+    "Constellation — Whenever this creature or another enchantment you control enters, draw a card.",
+    roles=(DRAW,),
+)
+SETESSAN_CHAMPION = real(
+    "Setessan Champion",
+    "{2}{G}",
+    3,
+    "Creature — Human Warrior",
+    "Constellation — Whenever an enchantment you control enters, put a +1/+1 counter on this creature and "
+    "draw a card.",
+    roles=(DRAW,),
+)
+RANGING_RAPTORS = real(
+    "Ranging Raptors",
+    "{2}{G}",
+    3,
+    "Creature — Dinosaur",
+    "Enrage — Whenever this creature is dealt damage, you may search your library for a basic land card, "
+    "put it onto the battlefield tapped, then shuffle.",
+    roles=(RAMP,),
+)
+
+
+@pytest.mark.parametrize("drawer", [EIDOLON_OF_BLOSSOMS, SETESSAN_CHAMPION], ids=lambda c: c.mana.name)
+def test_a_trigger_behind_an_ability_word_is_a_repeating_draw(drawer: Real) -> None:
+    assert one(drawer).draw == Draw(1, engine=True)
+
+
+def test_a_search_trigger_behind_an_ability_word_repeats_and_is_not_modelled() -> None:
+    raptors = one(RANGING_RAPTORS)
+    assert raptors.land_ramp is None
+    assert not raptors.modelled
+
+
 def test_a_draw_that_costs_mana_each_time_or_varies_is_not_modelled() -> None:
     for card in (one(KENRITH), one(SEA_GATE), one(JAYEMDAE_TOME)):
         assert card.draw is None
@@ -1823,6 +1862,41 @@ def test_a_search_that_sacrifices_a_land_or_an_artifact_is_not_modelled() -> Non
     assert not tinker.needs_sacrifice
     assert tinker.tutor is None
     assert build(CROP_ROTATION, TINKER, DIABOLIC_INTENT).not_modelled == ("Crop Rotation", "Tinker")
+
+
+ENTISH_RESTORATION = real(
+    "Entish Restoration",
+    "{2}{G}",
+    3,
+    "Instant",
+    "Sacrifice a land. Search your library for up to two basic land cards, put them onto the battlefield "
+    "tapped, then shuffle. If you control a creature with power 4 or greater, instead search your library "
+    "for up to three basic land cards, put them onto the battlefield tapped, then shuffle.",
+    roles=(RAMP,),
+)
+YASHARN = real(
+    "Yasharn, Implacable Earth",
+    "{2}{G}{W}",
+    4,
+    "Legendary Creature — Elemental Boar",
+    "When Yasharn enters, search your library for a basic Forest card and a basic Plains card, reveal those "
+    "cards, put them into your hand, then shuffle.\nPlayers can't pay life or sacrifice nonland permanents "
+    "to cast spells or activate abilities.",
+    roles=(TUTOR,),
+)
+
+
+def test_a_spell_that_sacrifices_a_land_in_its_effect_before_the_search_is_not_modelled() -> None:
+    restoration = one(ENTISH_RESTORATION)
+    assert restoration.land_ramp is None
+    assert not restoration.modelled
+
+
+def test_a_search_for_two_different_land_cards_is_not_modelled() -> None:
+    yasharn = one(YASHARN)
+    assert yasharn.land_ramp is None
+    assert yasharn.tutor is None
+    assert not yasharn.modelled
 
 
 # --- cards the reading cannot place ---------------------------------------------------------------

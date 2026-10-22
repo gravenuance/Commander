@@ -732,9 +732,16 @@ class _Search:
     cost: str
     # Happens again and again ("whenever ...", "at the beginning of ...").
     repeating: bool
+    # Does more than find one set of cards: it sacrifices something first (Entish Restoration) or looks for
+    # a second kind of card (Yasharn).
+    compound: bool
 
 
 _SEARCH = re.compile(r"search your library(?: and/or graveyard)? for (?P<what>[^.]*)\.")
+# A leading ability word ("Enrage — ", "Constellation — "), which says nothing about when the text happens.
+_ABILITY_WORD = re.compile(r"^[^—\n]+ — ")
+_REPEATING = ("whenever", "at the beginning")
+_SECOND_CARD = re.compile(r"\bcards? and (?:an?|one) ")
 _LAND_WORDS = frozenset({"land", "plains", "island", "swamp", "mountain", "forest"})
 _COUNT_WORDS = {"two": 2, "three": 3, "four": 4}
 _FILLER = frozenset(
@@ -761,15 +768,16 @@ _OPPONENT_DRAWS = re.compile(r"opponents? draws?")
 
 
 def _search(text: str) -> _Search | None:
-    for line in text.split("\n"):
+    for line in (_ABILITY_WORD.sub("", line, count=1) for line in text.split("\n")):
         matched = _SEARCH.search(line)
         if matched is None:
             continue
         before = line[: matched.start()]
         cost = before.partition(":")[0] if ":" in before else ""
         head = re.split(r"\bcards?\b", matched.group("what"), maxsplit=1)[0]
-        repeating = line.startswith(("whenever", "at the beginning"))
-        return _Search(head, matched.group(0), line[matched.start() :], cost, repeating)
+        repeating = line.startswith(_REPEATING)
+        compound = (not cost and "sacrifice" in before) or _SECOND_CARD.search(matched.group(0)) is not None
+        return _Search(head, matched.group(0), line[matched.start() :], cost, repeating, compound)
     return None
 
 
@@ -786,7 +794,7 @@ def _land_words(search: _Search | None) -> list[str] | None:
 def _land_ramp(search: _Search | None, kinds: frozenset[CardKind]) -> LandRamp | None:
     """A search for lands put onto the battlefield or into the hand, when the game can follow it."""
     words = _land_words(search)
-    if search is None or search.repeating or words is None:
+    if search is None or search.repeating or search.compound or words is None:
         return None
     cost = _paid(search.cost)
     # An ability must sacrifice its permanent for the lands, and a creature cannot tap the turn it comes.
@@ -813,7 +821,7 @@ def _land_ramp(search: _Search | None, kinds: frozenset[CardKind]) -> LandRamp |
 
 def _tutor(search: _Search | None) -> Tutor | None:
     """A search for a card of some type, when the game can follow where it goes."""
-    if search is None or search.cost or search.repeating:
+    if search is None or search.cost or search.repeating or search.compound:
         return None
     named = re.findall(r"[a-z]+", search.head)
     words = [w for w in named if w not in _FILLER]
@@ -848,7 +856,7 @@ def _draw(text: str, kinds: frozenset[CardKind]) -> Draw | None:
     for a count that varies."""
     spell = CardKind.INSTANT in kinds or CardKind.SORCERY in kinds
     arrival: Draw | None = None
-    for line in text.split("\n"):
+    for line in (_ABILITY_WORD.sub("", line, count=1) for line in text.split("\n")):
         matched = _DRAW.search(line)
         if matched is None or _OPPONENT_DRAWS.search(line):
             continue
@@ -864,7 +872,7 @@ def _draw(text: str, kinds: frozenset[CardKind]) -> Draw | None:
             paid = _paid(cost)
             if paid is not None and not paid.mana and not paid.sacrifices:
                 return Draw(count, engine=True)
-        elif line.startswith(("whenever", "at the beginning")):
+        elif line.startswith(_REPEATING):
             return Draw(count, engine=True)
         elif "enters" in line:
             arrival = Draw(count, engine=False)
