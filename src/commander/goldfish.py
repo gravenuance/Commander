@@ -54,7 +54,8 @@ _BIG_CURVE = 3.5
 # Colours as bits, so a mana unit is one small int: the set of colours it can pay.
 _BITS = {"W": 1, "U": 2, "B": 4, "R": 8, "G": 16, "C": 32}
 _POP = tuple(mask.bit_count() for mask in range(64))
-_POP_KEY = _POP.__getitem__
+# The order units are paid in: colourless first, as it pays only generic mana, then by how many colours.
+_PAY_KEY = tuple(0 if mask == _BITS["C"] else _POP[mask] for mask in range(64)).__getitem__
 _BASICS = frozenset({"plains", "island", "swamp", "mountain", "forest", "wastes"})
 
 # Ranks order what the policy does first: lower goes first. A held card is never cast by the policy.
@@ -262,13 +263,13 @@ def _match(units: Sequence[int], bits: Sequence[int]) -> list[int] | None:
 
 
 def sort_units(units: list[int]) -> None:
-    """Order mana units as `pay` expects them: the ones paying the fewest colours first."""
-    units.sort(key=_POP_KEY)
+    """Order mana units as `pay` expects them: colourless first, then the ones paying the fewest colours."""
+    units.sort(key=_PAY_KEY)
 
 
 def pay(units: list[int], cost: Cost) -> None:
-    """Take the cost out of units, which are sorted by how many colours each pays, fewest first: coloured pips
-    use the least flexible unit that can pay them, and generic mana the least flexible of what is left."""
+    """Take the cost out of units, which are in `sort_units` order: coloured pips use the least flexible unit
+    that can pay them, and generic mana the least flexible of what is left."""
     if cost.single:
         bit = cost.single
         for _ in cost.pip_bits:
@@ -669,7 +670,7 @@ class _Game:
         if self.pending:
             pool.extend(self.pending)
             self.pending.clear()
-            pool.sort(key=_POP_KEY)
+            pool.sort(key=_PAY_KEY)
         self.sick.clear()
         self._draw(1 + self.engines)
         self.drops_left = 1 + self.extra_drops
@@ -804,9 +805,9 @@ class _Game:
     def _add_now(self, mask: int, count: int) -> None:
         added = [mask] * count
         self.pool.extend(added)
-        self.pool.sort(key=_POP_KEY)
+        self.pool.sort(key=_PAY_KEY)
         self.units.extend(added)
-        self.units.sort(key=_POP_KEY)
+        self.units.sort(key=_PAY_KEY)
 
     def _remove_creature_mana(self, cid: int, mask: int, count: int) -> None:
         """Take a sacrificed mana creature's mana away from where it sits: next turn's mana while it is
@@ -836,7 +837,7 @@ class _Game:
                 continue
             pay(trial, card.cost)
             trial.extend([card.mana_mask] * card.mana_amount)
-            trial.sort(key=_POP_KEY)
+            trial.sort(key=_PAY_KEY)
             used.append(cid)
             if can_pay(trial, cost):
                 return tuple(used)
@@ -847,7 +848,7 @@ class _Game:
         self.hand.remove(cid)
         pay(self.units, card.cost)
         self.units.extend([card.mana_mask] * card.mana_amount)
-        self.units.sort(key=_POP_KEY)
+        self.units.sort(key=_PAY_KEY)
 
     # -- what to do ---------------------------------------------------------------------------------------
 

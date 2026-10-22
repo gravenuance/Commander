@@ -867,6 +867,33 @@ def test_generic_mana_comes_out_of_the_units_that_pay_the_fewest_colours() -> No
     assert units == [W | U | B_ | R | G]
 
 
+def test_colourless_mana_is_paid_out_before_a_single_colour() -> None:
+    units = [W, C, W | G, C, U]
+    goldfish.sort_units(units)
+    assert units == [C, C, W, U, W | G]
+    goldfish.pay(units, cost(2))
+    assert units == [W, U, W | G]
+
+
+def test_generic_costs_are_paid_with_colourless_mana_so_the_colours_are_left_for_a_later_spell() -> None:
+    plains = land("Plains", "W")
+    wastes = land("Wastes", "C")
+    stone = make(
+        "Mind Stone", mv=2, kinds=ARTIFACT, mana=ManaAbility(1, frozenset("C"), delayed=False, ritual=False)
+    )
+    vessel = make(
+        "Thought Vessel",
+        mv=2,
+        kinds=ARTIFACT,
+        mana=ManaAbility(1, frozenset("C"), delayed=False, ritual=False),
+    )
+    boss = make("Boss", mv=2, pips={"W": 2}, kinds=CREATURE)
+    slots = [plains, wastes, plains, stone, vessel, VANILLA, VANILLA]
+    # Turn two: Wastes pays for Mind Stone with Plains. Turn three has Plains, Wastes, Plains and the stone;
+    # the vessel takes the two colourless units and the two Plains pay for the commander.
+    assert only_outcome(run(slots, commanders=(boss,))).commander_turns == (3,)
+
+
 def test_a_coloured_pip_takes_the_least_flexible_unit_that_can_pay_it() -> None:
     units = [U, W | U, W | G]
     goldfish.pay(units, cost(2, U=1, W=1))
