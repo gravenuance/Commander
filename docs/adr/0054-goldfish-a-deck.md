@@ -1,6 +1,6 @@
 # 0054: Goldfish a deck to see how it develops and how soon it wins
 
-**Status:** Proposed · **Date:** 2026-10-22
+**Status:** Accepted · **Date:** 2026-10-22
 
 ## Context
 
