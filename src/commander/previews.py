@@ -15,9 +15,7 @@ from pathlib import Path
 
 from commander.carddb import CardDb, ResolvedCard, Role, name_keys
 from commander.deckprofile import Profile, ThemeSpec
-from commander.deckthemes import ThemeSource, merge_themes
 from commander.fsutil import write_text_atomic
-from commander.ideas import dominant_tags
 from commander.jsonshape import (
     ShapeError,
     as_object,
@@ -33,6 +31,7 @@ from commander.models import Deck
 from commander.net import NetworkError, Pacer
 from commander.scryfall import ScryfallClient, ScryfallError, SetCard, SetInfo, is_scryfall_id
 from commander.suggest import deck_identity, name_keys_of, short_roles
+from commander.themereading import read_deck_themes
 
 log = logging.getLogger(__name__)
 
@@ -206,14 +205,9 @@ def fitting_previews(
     # The theme work only when there is something to match it against.
     if not live:
         return []
-    names = dominant_tags(deck, profile, db)
-    if not names:
+    themes = read_deck_themes(deck, profile, db).themes
+    if not themes:
         return []
-    specs = {
-        t.name: t.spec
-        for t in merge_themes(deck, profile, db).used
-        if t.source is ThemeSource.DECK_TAG and t.name in names
-    }
     ids = [c.oracle_id for c in live]
     lineage = db.tag_lineage(ids)
     roles = db.roles(ids)
@@ -223,7 +217,7 @@ def fitting_previews(
         slugs = lineage.get(card.oracle_id, frozenset())
         if _matches(profile.exclude, card, slugs):
             continue
-        matched = tuple(name for name in names if name in specs and _matches(specs[name], card, slugs))
+        matched = tuple(theme.name for theme in themes if _matches(theme.spec, card, slugs))
         if matched:
             fills = bool(roles.get(card.oracle_id, frozenset()) & short)
             fits.append(PreviewFit(card, matched, fills))

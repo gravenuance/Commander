@@ -36,6 +36,7 @@ from commander.store import Workspace
 from commander.suggest import DEFAULT_TARGETS
 from commander.syncrun import SyncOptions, run_sync
 from conftest import (
+    BATTERED_GOLEM,
     FakeArchidekt,
     FakeScryfall,
     Json,
@@ -71,8 +72,9 @@ MUNITIONS = "0013f005-2b49-48a4-8a74-9bbdadc88c9f"  # Munitions Enthusiast, red
 QUARK = "61703e94-cb57-44d8-b37b-7b14b3cfd86d"  # Quark, Humble Proprietor, red
 IMPULSE = "584cf0fd-112a-4ca6-9c0e-1f3228a7d325"  # Reckless Impulse, a reprint already legal
 RAMP_TAG = "2f3e4ad7-5e60-41b4-bdbc-653f16869cf6"
-# Made up for these tests: the tag a Treasure deck tag stands for, on most red previews, the reprint and the
-# red-white Kirk; and Munitions Enthusiast as ramp, a role the small test decks run short of.
+# Made up for these tests: the tag a Treasure deck tag stands for, on most red previews, the reprint, the
+# red-white Kirk and the deck's Battered Golem; and Munitions Enthusiast as ramp, a role the small test decks
+# run short of.
 TREASURE_TAG = json.dumps(
     {
         "object": "tag",
@@ -80,7 +82,9 @@ TREASURE_TAG = json.dumps(
         "slug": "synergy-treasure",
         "type": "oracle",
         "child_ids": [],
-        "taggings": [{"oracle_id": o} for o in (TUTELAGE, DAHAR, KIRK, MUNITIONS, QUARK, IMPULSE)],
+        "taggings": [
+            {"oracle_id": o} for o in (TUTELAGE, DAHAR, KIRK, MUNITIONS, QUARK, IMPULSE, BATTERED_GOLEM)
+        ],
     }
 )
 
@@ -372,7 +376,7 @@ def fits(
 def test_previews_rank_by_the_dominant_tags_they_match_then_a_short_role_then_name(
     deck: Deck, db: CardDb
 ) -> None:
-    # Flash matches two of the deck's cards, Treasure none, so the deck's dominant tags are Flash, Treasure.
+    # Flash matches two of the deck's cards, Treasure one, so the deck's dominant tags are Flash, Treasure.
     # Captain's Tutelage has Flash and the treasure tag; Munitions Enthusiast is ramp, which the deck lacks.
     # Cloistered Telepath has Flash and Kirk the treasure tag, but neither is in Magda's red; Reckless Impulse
     # is tagged too, but it is a reprint already out; The Wrath of Khan and D-7 Battle Cruiser match nothing.
@@ -672,9 +676,9 @@ def test_off_season_opening_a_deck_does_no_theme_work_for_previews(
     desk_settings: DeskSettings, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def no_theme_work(*_: object, **__: object) -> list[str]:
-        raise AssertionError("dominant_tags ran with no previews cached")
+        raise AssertionError("the themes were read with no previews cached")
 
-    monkeypatch.setattr(previews_module, "dominant_tags", no_theme_work)
+    monkeypatch.setattr(previews_module, "read_deck_themes", no_theme_work)
     write_previews(desk_settings.cache, PreviewCache(TODAY, ()))
     assert make_desk(desk_settings).deck(int(raw_deck["id"]))["previews"] == 0
 

@@ -24,7 +24,6 @@ from pathlib import Path
 
 from commander.analysis import game_changers
 from commander.answers import card_key
-from commander.archidekt import MAX_SEARCH_TAGS
 from commander.board import (
     Actor,
     BoardCard,
@@ -39,8 +38,7 @@ from commander.board import (
 from commander.budget import resolved_budget
 from commander.carddb import CardDb
 from commander.deckcache import Clock
-from commander.deckprofile import Profile, read_profile, resolve_spec, resolve_themes
-from commander.deckthemes import ThemeSource, merge_themes
+from commander.deckprofile import Profile, read_profile, resolve_themes
 from commander.meta import (
     MIN_PEER_LISTS,
     Basis,
@@ -63,6 +61,7 @@ from commander.models import Deck, short_commander_name
 from commander.playstyle import Fit
 from commander.store import StoredDeck
 from commander.suggest import IdeaFilter, name_keys_of
+from commander.themereading import read_deck_themes
 from commander.weightedshare import NO_SHARES, ShareTable, SourceShare, weighted_shares
 
 MAX_PER_SOURCE = 50
@@ -425,33 +424,17 @@ def search_tags(deck: Deck, profile: Profile, db: CardDb) -> list[str]:
 
 
 def dominant_tags(deck: Deck, profile: Profile, db: CardDb) -> list[str]:
-    """The deck's dominant theme tags, whether or not the tag search is on: at most the MAX_SEARCH_TAGS deck
-    tags that the most of its main cards match, ties in Archidekt's tag order, after the profile's ignore
-    list and [exclude]."""
-    # Theme tags only: the play style, role and card type tags are too broad to pick decks by (ADR 0009).
-    themes = [t for t in merge_themes(deck, profile, db).used if t.source is ThemeSource.DECK_TAG]
-    if len(themes) <= 1:
-        return [t.name for t in themes]
-    oracle_ids = [r.info.oracle_id for r in db.resolve(deck.main_cards) if r.info is not None]
-    ids = db.tag_ids([slug for t in themes for slug in t.spec.tags])
-    matches = {t.name: len(db.matching(resolve_spec(t.spec, ids), oracle_ids)) for t in themes}
-    # sorted is stable, so equal counts stay in the order of the deck's tags.
-    return sorted(matches, key=lambda name: -matches[name])[:MAX_SEARCH_TAGS]
+    """The deck's dominant theme tags, whether or not the tag search is on: its themes' first tags, as
+    `themereading.read_deck_themes` reads them (at most MAX_SEARCH_TAGS)."""
+    return read_deck_themes(deck, profile, db).names
 
 
 def dominant_card_ids(deck: Deck, profile: Profile, db: CardDb, also: Iterable[str] = ()) -> frozenset[str]:
     """Oracle ids of the deck's main cards, and of the cards `also` names by oracle id, matching one of its
     `dominant_tags`."""
-    names = set(dominant_tags(deck, profile, db))
-    themes = [t for t in merge_themes(deck, profile, db).used if t.source is ThemeSource.DECK_TAG]
-    themes = [t for t in themes if t.name in names]
     oracle_ids = [r.info.oracle_id for r in db.resolve(deck.main_cards) if r.info is not None]
     oracle_ids.extend(also)
-    ids = db.tag_ids([slug for t in themes for slug in t.spec.tags])
-    found: set[str] = set()
-    for theme in themes:
-        found |= db.matching(resolve_spec(theme.spec, ids), oracle_ids)
-    return frozenset(found)
+    return read_deck_themes(deck, profile, db).matching(db, oracle_ids)
 
 
 def gather_idea_pools(

@@ -1,5 +1,6 @@
 """Compiling Considering from the meta and recent Archidekt decks (ADR 0028)."""
 
+from collections.abc import Iterator
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
@@ -41,6 +42,7 @@ from commander.models import Deck
 from commander.store import StoredDeck
 from commander.tournaments import Entry
 from commander.weightedshare import ShareTable, SourceShare, WeightedShare, weighted_shares
+from conftest import BATTERED_GOLEM, build_card_db, extra_tag_line
 from test_meta import NOW, SINCE, db, deck, entry, meta_data, peer
 
 __all__ = ["db", "deck"]  # fixtures shared with test_meta
@@ -367,6 +369,30 @@ def test_the_dominant_tags_do_not_depend_on_the_tag_search(deck: Deck, db: CardD
     assert dominant_tags(themed, Profile(tag_search=True), db) == search_tags(
         themed, Profile(tag_search=True), db
     )
+
+
+@pytest.fixture(scope="module")
+def power_db(tmp_path_factory: pytest.TempPathFactory) -> Iterator[CardDb]:
+    """The card data with a made-up power-matters tag on Battered Golem."""
+    tag = extra_tag_line("power-matters", BATTERED_GOLEM)
+    path = build_card_db(tmp_path_factory.mktemp("powerdb"), [tag])
+    with CardDb(path) as opened:
+        yield opened
+
+
+def test_a_deck_tag_none_of_the_decks_cards_match_is_not_a_dominant_tag(deck: Deck, db: CardDb) -> None:
+    # The fixture deck holds no Elemental.
+    assert dominant_tags(themed_deck(deck, ("Flash", "Elementals")), Profile(), db) == ["Flash"]
+    assert dominant_tags(themed_deck(deck, ("Elementals",)), Profile(), db) == []
+    assert dominant_card_ids(themed_deck(deck, ("Elementals",)), Profile(), db) == frozenset()
+
+
+def test_deck_tags_with_the_same_meaning_take_one_place_among_the_dominant_tags(
+    deck: Deck, power_db: CardDb
+) -> None:
+    # Stompy and Power Matters both ask for the power-matters tag; Flash matches two cards, the rest one.
+    themed = themed_deck(deck, ("Flash", "Stompy", "Power Matters", "Dwarves"))
+    assert dominant_tags(themed, Profile(), power_db) == ["Flash", "Stompy", "Dwarves"]
 
 
 def test_the_cards_matching_the_dominant_tags_are_found_with_the_tag_search_off(
@@ -769,13 +795,15 @@ def test_a_tagged_idea_is_judged_by_its_tags_pool_only_when_that_pool_was_read(
     deck: Deck, db: CardDb, tmp_path: Path
 ) -> None:
     (tmp_path / "profile.toml").write_text(TAG_SEARCH, encoding="utf-8")
+    # Magda is a Dwarf and Disruptor Flute has Flash, so both tags are searched.
+    deck = replace(deck, tags=("Dwarves", "Flash"))
     weak = seed(tmp_path, deck, db, "Arcane Signet", Actor.CMDR, origin=Origin.TAGGED, tag="Dwarves")
     strong = seed(tmp_path, deck, db, "Jeska's Will", Actor.CMDR, origin=Origin.TAGGED, tag="Dwarves")
-    other = seed(tmp_path, deck, db, "Chaos Warp", Actor.CMDR, origin=Origin.TAGGED, tag="Vehicles")
+    other = seed(tmp_path, deck, db, "Chaos Warp", Actor.CMDR, origin=Origin.TAGGED, tag="Flash")
     data = meta_data([], [peer(1, ["Mind Stone"])])
     dwarves = tag_pool("Dwarves", ["Jeska's Will"], ["Jeska's Will", "Arcane Signet"], ["Jeska's Will"], [])
 
-    # Dwarves's pool was read, the Vehicles pool was not: a card in 1 of 4 decks fails, one in 3 of 4 stays.
+    # Dwarves's pool was read, the Flash pool was not: a card in 1 of 4 decks fails, one in 3 of 4 stays.
     assert judge(tmp_path, deck, db, data, tagged=[dwarves]) == ["Arcane Signet"]
 
     assert card_state(tmp_path, weak) == (Status.REJECTED, "no longer makes the cut")

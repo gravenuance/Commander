@@ -125,6 +125,7 @@ class FeatureKind(Enum):
 
 
 Feature = tuple[FeatureKind, str]
+SpecKey = tuple[frozenset[str], ...]
 
 
 @dataclass(slots=True, frozen=True)
@@ -220,12 +221,15 @@ def merge_themes(deck: Deck, profile: Profile, db: CardDb) -> MergedThemes:
 
 def _same_meaning_once(themes: Sequence[DerivedTheme]) -> list[tuple[str, ThemeSpec]]:
     """One label per meaning: deck tags Power Matters and Stompy, both power-matters, become one."""
-    groups: dict[tuple[frozenset[str], ...], tuple[list[str], ThemeSpec]] = {}
+    groups: dict[SpecKey, tuple[list[str], ThemeSpec]] = {}
     for theme in themes:
-        spec = theme.spec
-        key = tuple(frozenset(v.casefold() for v in part) for part in (spec.types, spec.keywords, spec.tags))
-        groups.setdefault(key, ([], theme.spec))[0].append(theme.name)
+        groups.setdefault(spec_key(theme.spec), ([], theme.spec))[0].append(theme.name)
     return [("/".join(names), spec) for names, spec in groups.values()]
+
+
+def spec_key(spec: ThemeSpec) -> SpecKey:
+    """What a spec asks for, without order or case: two specs with one key ask for the same cards."""
+    return tuple(frozenset(v.casefold() for v in part) for part in (spec.types, spec.keywords, spec.tags))
 
 
 def derive_themes(deck: Deck, db: CardDb, rules: CoverRules = CoverRules()) -> DeckThemes:  # noqa: B008 — frozen, so one shared default is safe
