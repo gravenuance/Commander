@@ -193,6 +193,7 @@ class FakeElement {
     const fire = (node, capture) => {
       for (const entry of node.listeners.get(event.type) ?? []) {
         if (entry.capture !== capture) continue;
+        event.currentTarget = node;
         const out = entry.listener.call(node, event);
         if (out && typeof out.then === "function") event.pending.push(out);
         if (event.stopped) return false;

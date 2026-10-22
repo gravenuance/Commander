@@ -60,7 +60,7 @@ function renderMana(deck, m) {
 // The suggested mana base below bracket 5 (ADR 0024): land count, basics by colour, then named swaps.
 function planSection(deck, p) {
   const section = el("section", { class: "mana-section mana-plan", "aria-labelledby": "mana-plan-title" },
-    el("h3", { id: "mana-plan-title", text: "Suggested changes" }));
+    el("h3", { id: "mana-plan-title", tabindex: "-1", text: "Suggested changes" }));
   if (p.unchanged) {
     section.append(el("p", { class: "muted small", text: "Meets Karsten's numbers; nothing to change." }));
     return section;
@@ -119,7 +119,13 @@ async function manaToBoard(deck, button) {
     const n = answer.added.length;
     showStatus(`${n} swap${n === 1 ? "" : "s"} put under Considering`);
     if (deck === state.current) await loadDeck();
-    manaPanel.load();
+    await manaPanel.load();
+    // The clicked button went with the old panel; keep the keyboard in the plan.
+    const active = document.activeElement;
+    const lost = !active || active === document.body || !active.isConnected;
+    if (lost && deck === state.current) {
+      ($("mana").querySelector(".button.primary") ?? $("mana-plan-title"))?.focus();
+    }
   } catch {
     button.disabled = false; /* shown in the status line */
   }

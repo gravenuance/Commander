@@ -104,3 +104,26 @@ def test_returning_to_a_deck_draws_its_bracket_estimate_again() -> None:
     return { hidden: $("bracket-check").hidden, text: $("bracket-check").textContent };
     """)
     assert seen == {"hidden": False, "text": "Estimate 4+"}
+
+
+def test_putting_the_mana_swaps_on_the_board_moves_focus_to_the_plans_heading() -> None:
+    seen = run("""
+    const swap = {
+      add: "Sol Ring", cut: "Wayfarer", copies: 1, reason: "r", cents: null, withinBudget: true };
+    const plan = (board) => ({
+      unchanged: false, landChange: 0, lands: 36, cutCandidates: [], basics: [], colours: [], stillShort: [],
+      budgetCents: null, swaps: [{ ...swap, board }] });
+    let boarded = false;
+    railTab = "mana";
+    stub.mana = async () => ({ ...mana, plan: plan(boarded ? "added" : null) });
+    stub.mana_to_board = async () => { boarded = true; return { added: ["Sol Ring"] }; };
+    stub.deck = async () => view(1);
+    await manaPanel.load();
+    const button = $("mana").querySelector(".button.primary");
+    button.focus();
+    await fire(button, "click");
+    const active = document.activeElement;
+    return { id: active.id, buttonGone: $("mana").querySelector(".button.primary") === null,
+      focusable: active.getAttribute("tabindex") };
+    """)
+    assert seen == {"id": "mana-plan-title", "buttonGone": True, "focusable": "-1"}
