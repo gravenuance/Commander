@@ -110,3 +110,97 @@ def test_undoing_a_queued_card_keeps_focus_on_its_tile() -> None:
     return focused();
     """)
     assert seen == "Queued: show what it could replace"
+
+
+def test_a_refresh_that_changes_a_card_keeps_the_reason_being_typed_and_its_focus() -> None:
+    seen = run("""
+    showBoard([card({ id: "a", name: "Card a", reason: "old" })]);
+    const tile = state.tiles.get("a").node;
+    await fire(tile.querySelector(".reject"), "click");
+    const input = tile.querySelector(".reject-form input");
+    input.value = "too slow";
+    input.focus();
+    showBoard([card({ id: "a", name: "Card a", reason: "new" })]);
+    const again = state.tiles.get("a").node;
+    const form = again.querySelector(".reject-form");
+    const typed = form.querySelector("input");
+    return { replaced: again !== tile, formShown: !form.hidden, typed: typed.value,
+      focusKept: document.activeElement === typed && typed.isConnected };
+    """)
+    assert seen == {"replaced": True, "formShown": True, "typed": "too slow", "focusKept": True}
+
+
+def test_a_refresh_that_changes_a_card_keeps_its_share_breakdown_open() -> None:
+    seen = run("""
+    const idea = (reason) => card({ id: "a", reason, share: combined(0.6, 3, 5, { meta: part(0.6, 3, 5) }) });
+    const parts = () => {
+      const tile = state.tiles.get("a").node;
+      return { pill: tile.querySelector(".share-pill"), pop: tile.querySelector(".share-pop") };
+    };
+    showBoard([idea("old")]);
+    await fire(parts().pill, "click");
+    showBoard([idea("new")]);
+    const open = { expanded: parts().pill.getAttribute("aria-expanded"), hidden: parts().pop.hidden };
+    await fire(parts().pill, "click");
+    const closed = { expanded: parts().pill.getAttribute("aria-expanded"), hidden: parts().pop.hidden };
+    return { open, closed };
+    """)
+    assert seen == {
+        "open": {"expanded": "true", "hidden": False},
+        "closed": {"expanded": "false", "hidden": True},
+    }
+
+
+def test_a_refresh_that_changes_a_card_keeps_the_folds_the_viewer_opened() -> None:
+    seen = run("""
+    const idea = (reason) => card({ id: "a", text: "Add {C}.", reason });
+    const folds = () => state.tiles.get("a").node.querySelectorAll("details");
+    showBoard([idea("old")]);
+    folds()[1].open = true;
+    showBoard([idea("new")]);
+    return folds().map((fold) => fold.open);
+    """)
+    assert seen == [False, True]
+
+
+def test_a_category_added_by_a_sync_is_offered_by_the_selected_card_without_a_cut() -> None:
+    seen = run("""
+    const options = () => texts(state.tiles.get("a").node.querySelector(".add-plain select"), "option");
+    showBoard([card({ id: "a", targets: [] })]);
+    select("a");
+    const before = options();
+    state.view = { ...deckView(), categories: ["Ramp", "Draw"] };
+    renderConsidering(board);
+    paint();
+    return { before, after: options(), selected: state.selected };
+    """)
+    assert seen == {"before": ["Ramp"], "after": ["Draw", "Ramp"], "selected": "a"}
+
+
+def test_a_tile_builds_its_cuts_category_list_and_reason_form_only_when_they_are_needed() -> None:
+    seen = run("""
+    showBoard([card({ id: "a", targets: [] }), card({ id: "b" })]);
+    const has = (id) => ["targets", "add-plain", "reject-form"]
+      .map((cls) => state.tiles.get(id).node.querySelector(`.${cls}`) !== null);
+    const built = { a: has("a"), b: has("b") };
+    select("a");
+    const afterSelect = { a: has("a"), b: has("b") };
+    await fire(state.tiles.get("b").node.querySelector(".reject"), "click");
+    return { built, afterSelect, afterReject: has("b") };
+    """)
+    assert seen == {
+        "built": {"a": [False, False, False], "b": [False, False, False]},
+        "afterSelect": {"a": [True, True, False], "b": [False, False, False]},
+        "afterReject": [False, False, True],
+    }
+
+
+def test_a_category_added_by_a_sync_is_offered_to_a_card_selected_afterwards() -> None:
+    seen = run("""
+    showBoard([card({ id: "a", targets: [] })]);
+    state.view = { ...deckView(), categories: ["Ramp", "Draw"] };
+    renderConsidering(board);
+    select("a");
+    return texts(state.tiles.get("a").node.querySelector(".add-plain select"), "option");
+    """)
+    assert seen == ["Draw", "Ramp"]

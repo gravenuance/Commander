@@ -133,6 +133,10 @@ class FakeElement {
     child.parentNode = null;
   }
   remove() { this.parentNode?.removeChild(this); }
+  after(node) {
+    const siblings = this.parentNode.childNodes;
+    this.parentNode.insertBefore(node, siblings[siblings.indexOf(this) + 1] ?? null);
+  }
   replaceWith(node) {
     const parent = this.parentNode;
     parent.insertBefore(node, this);

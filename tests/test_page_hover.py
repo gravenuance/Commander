@@ -17,7 +17,6 @@ const idea = (id, targets, over = {}) => card({
   targets: targets.map((n) => ({ name: `Creature ${n}`, reason: `why ${n}`, source: "cmdr" })) });
 const ideas = [idea("a", [1, 2, 3]), idea("b", [4, 5, 6]), idea("c", [7, 8, 9])];
 const creatures = Array.from({ length: 20 }, (_, i) => deckCard(`Creature ${i}`));
-setupHover();
 state.current = 1;
 state.view = { id: 1, grace: null, categories: ["Ramp"], cards: ideas, labels: [] };
 renderGrid([{ key: "Creature", name: "Creature", inDeck: true, count: 20, cents: 0, cards: creatures }]);

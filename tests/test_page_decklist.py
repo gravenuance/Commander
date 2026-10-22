@@ -190,10 +190,11 @@ def test_adding_without_a_cut_offers_the_decks_categories_preset_to_the_cards_ty
     const idea = card({ typeCategory: "Artifact", category: null, targets: [] });
     const tile = buildTile(idea);
     state.tiles.set(idea.id, { key: "", node: tile, card: idea });
-    const select = tile.querySelector(".add-plain select");
-    const options = texts(select, "option");
-    const preset = select.value;
-    select.value = "Ramp";
+    select(idea.id);
+    const category = tile.querySelector(".add-plain select");
+    const options = texts(category, "option");
+    const preset = category.value;
+    category.value = "Ramp";
     stub.decide = async () => ({ card: {} });
     stub.decks = async () => ({ decks: [] });
     stub.deck = async () => ({ id: 99 });
