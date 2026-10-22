@@ -993,15 +993,21 @@ class _Game:
             self._record_finisher(cid)
 
     def _sacrifice(self) -> int:
-        """Sacrifice the cheapest creature, one that makes no mana before a mana creature before a commander;
-        returns its mana value."""
+        """Sacrifice the cheapest creature, one that makes no mana before a mana creature before a commander,
+        and take away what it gave: its mana, its extra land drops and its draw engine. Returns its mana
+        value. A commander is not cast again (ADR 0054)."""
         entry = min(self.creatures)
         self.creatures.remove(entry)
-        rank, mv, cid = entry
+        _, mv, cid = entry
+        card = self.s.cards[cid]
         self.bf.discard(cid)
-        if rank == 1:
-            card = self.s.cards[cid]
+        if card.mana_perm:
             self._remove_creature_mana(cid, card.mana_mask, card.mana_amount)
+        if card.extra_drops:
+            self.extra_drops -= card.extra_drops
+            self.drops_left = max(self.drops_left - card.extra_drops, 0)
+        if card.engine:
+            self.engines -= 1
         return mv
 
     # -- searching ----------------------------------------------------------------------------------------

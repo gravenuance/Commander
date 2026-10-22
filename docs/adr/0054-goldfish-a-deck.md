@@ -200,3 +200,5 @@ nearest turn shown stands in for it.
   mana. `manabase.fixed_pips` carries these pips under their symbol ("W/U"); the Mana tab reads colour
   letters only and shows the same as before. A generic hybrid ({2/W}) and a Phyrexian pip stay generic
   mana, which can cost more than the cheapest way to pay them.
+- A sacrificed creature takes away what it gave, whatever kind it is: its mana, the extra land drops it granted
+  and the extra card its draw engine drew each turn. A sacrificed commander stays cast, as it is cast once.

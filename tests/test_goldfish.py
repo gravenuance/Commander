@@ -504,6 +504,41 @@ def test_sacrificing_a_mana_creature_takes_only_its_own_mana_not_a_tapped_lands(
     assert only_outcome(run(slots)).mana == (1, 1, 3, 3, 3)
 
 
+def test_sacrificing_a_creature_that_grants_land_drops_takes_the_drops_away() -> None:
+    oracle = make("Oracle", mv=1, pips={"G": 1}, kinds=CREATURE, extra_land_drops=1)
+    sacrifice = make("Sacrifice", mv=1, pips={"G": 1}, needs_sacrifice=True)
+    slots = [*repeat(FOREST, 5), oracle, sacrifice]
+    # Turn one: Forest, Oracle, a second Forest, Sacrifice eats Oracle. Then one land a turn: 2, 3, 4, 5, 5.
+    assert only_outcome(run(slots)).mana == (2, 3, 4, 5, 5)
+
+
+def test_sacrificing_a_mana_commander_takes_its_mana_away() -> None:
+    boss = make(
+        "Boss",
+        mv=1,
+        pips={"G": 1},
+        kinds=CREATURE,
+        mana=ManaAbility(1, frozenset("G"), delayed=False, ritual=False),
+    )
+    sacrifice = make("Sacrifice", mv=1, pips={"G": 1}, needs_sacrifice=True)
+    slots = [*repeat(FOREST, 5), sacrifice, VANILLA]
+    # Turn one: Forest, Boss (its mana comes at once), Sacrifice eats Boss: only the Forest's mana is left.
+    outcome = only_outcome(run(slots, commanders=(boss,)))
+    assert outcome.commander_turns == (1,)
+    assert outcome.mana == (1, 2, 3, 4, 5)
+
+
+def test_a_sacrificed_draw_engine_draws_no_more_cards() -> None:
+    engine = make("Engine", mv=1, pips={"G": 1}, kinds=CREATURE, draw=Draw(1, engine=True))
+    sacrifice = make("Sacrifice", mv=1, pips={"G": 1}, needs_sacrifice=True)
+    report = run([*repeat(FOREST, 16)], commanders=(engine, sacrifice))
+    outcome = only_outcome(report)
+    # Turn one casts the engine, turn two casts Sacrifice after drawing two cards and eats the engine.
+    assert outcome.commander_turns == (1, 2)
+    # Cards drawn: one on turn one, two on turn two, then one a turn: 7 + 1 + 2 + 3.
+    assert outcome.shuffle_depths == (13,)
+
+
 def test_a_ritual_is_cast_only_to_pay_for_something_this_turn() -> None:
     ritual = make(
         "Dark Ritual",
