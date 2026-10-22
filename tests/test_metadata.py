@@ -10,7 +10,7 @@ import pytest
 
 from commander.archidekt import ArchidektSearch, PeerDeck
 from commander.config import MetaSettings
-from commander.deckcache import AnswerSource, request_key
+from commander.deckcache import AnswerSource, cache_item, request_key
 from commander.deckreads import FOLDER as DECK_READS_FOLDER
 from commander.deckreads import DeckRead, DeckReads
 from commander.metadata import (
@@ -670,6 +670,35 @@ def test_an_alike_searchs_smaller_answer_does_not_stand_in_for_the_commanders_ow
     assert len(rig.archidekt.searches) == searched
 
 
+def test_an_alike_refetch_never_evicts_the_commanders_own_stored_answer(rig: Rig) -> None:
+    rig.settings = replace(SETTINGS, peer_decks=60)
+    rig.archidekt.page = popular_page(70)
+    rig.gather()
+    rig.now = NOW + timedelta(days=4)
+    searched = len(rig.archidekt.searches)
+    assert len(adjacent(rig, (ELLIVERE,)).decks) == 15
+    assert len(rig.archidekt.searches) > searched
+    # The own refetch fails now, and the stale 60 decks still answer.
+    rig.archidekt.status = 503
+    peers = rig.gather().peers
+    assert peers.source is AnswerSource.STALE
+    assert peers.data is not None
+    assert len(peers.data.decks) == 60
+
+
+def test_an_alike_answer_stored_with_the_commanders_own_stays_fresh_for_the_alike_search(rig: Rig) -> None:
+    # Before alike answers had an item of their own, a 15-deck answer sat in the commander's own file.
+    rig.settings = replace(SETTINGS, peer_decks=60)
+    rig.archidekt.page = popular_page(70)
+    adjacent(rig, (ELLIVERE,))
+    [alike] = (rig.cache / CACHE_FOLDER).glob("archidekt-alike-*.json")
+    alike.rename(alike.with_name(f"{cache_item('archidekt', ELLIVERE, '5')}.json"))
+    requests = len(rig.archidekt.requests)
+    found = adjacent(rig, (ELLIVERE,))
+    assert len(rig.archidekt.requests) == requests
+    assert len(found.decks) == 15
+
+
 # The fingerprint of a tag answer as stored while a tag search paged 3 pages a bracket and read 15 decks.
 LARGER_TAG_REQUEST = {
     "tag": "landfall",
@@ -1034,7 +1063,7 @@ def searched_groups(rig: Rig, since: int) -> list[str]:
 def oldest_group_answer(rig: Rig) -> timedelta:
     stamps = [
         datetime.fromisoformat(json.loads(p.read_text(encoding="utf-8"))["fetchedAt"])
-        for p in (rig.cache / CACHE_FOLDER).glob("archidekt-fictional-*")
+        for p in (rig.cache / CACHE_FOLDER).glob("archidekt-alike-fictional-*")
     ]
     return rig.now - min(stamps)
 
