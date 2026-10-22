@@ -184,6 +184,8 @@ function renderDeck() {
   const pending = view.pending;
   const review = $("review");
   review.disabled = pending === 0;
+  // A save that empties the queue disables the button the closed dialog just returned focus to.
+  if (review.disabled && document.activeElement === review) $("main").focus();
   review.textContent = pending ? `Review ${pending} change${pending === 1 ? "" : "s"}` : "Review changes";
   $("meta").hidden = !META_BRACKETS.includes(view.effectiveBracket);
 
