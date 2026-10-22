@@ -20,6 +20,7 @@ from commander.goldfish_cards import (
     ManaAbility,
     Tutor,
     TutorDestination,
+    compile_card,
     compile_deck,
 )
 from commander.models import Deck
@@ -866,6 +867,81 @@ def one(card: Real, *, commander: Real = LEGION) -> GoldfishCard:
 
 def card_named(deck: GoldfishDeck, name: str) -> GoldfishCard:
     return next(c for c in (*deck.cards, *deck.commanders) if c.name == name)
+
+
+def incoming(
+    card: Real,
+    *deck_cards: Real,
+    commander: Real = LEGION,
+    copies: int = 1,
+    combos: tuple[ComboDetail, ...] = (),
+    synergy: Iterable[str] = (),
+    added: Iterable[str] = (),
+    removed: Iterable[str] = (),
+) -> GoldfishCard:
+    """The card compiled for a swap into the deck of the commander and `deck_cards`, which it is not in."""
+    deck = deck_of(*((c.mana.name, 1) for c in deck_cards), commander=commander.mana.name)
+    known = [commander, *deck_cards, card]
+    return compile_card(
+        card.mana.name,
+        deck,
+        by_name(*(c.mana for c in known)),
+        {c.mana.oracle_id: info_of(c) for c in known},
+        {c.mana.oracle_id: c.tags for c in known},
+        copies=copies,
+        combos=combos,
+        synergy=list(synergy),
+        finishers_added=added,
+        finishers_removed=removed,
+    )
+
+
+def test_a_card_compiled_for_a_swap_is_the_record_it_has_once_in_the_deck() -> None:
+    others = (FOREST, SOL_RING)
+    for card in (ARCANE_SIGNET, CULTIVATE, HARMONIZE, DEMONIC_TUTOR):
+        assert incoming(card, *others) == card_named(build(*others, card), card.mana.name)
+
+
+def test_a_card_compiled_for_a_swap_takes_the_copies_it_is_given() -> None:
+    assert incoming(HARMONIZE, FOREST, copies=3).copies == 3
+
+
+def test_a_fetch_land_compiled_for_a_swap_finds_the_typed_lands_of_the_deck() -> None:
+    card = incoming(FLOODED_STRAND, WATERY_GRAVE, BREEDING_POOL, commander=GLARB)
+    # Plains and Island by type; Watery Grave and Breeding Pool are Islands, so B and G come too, but no W.
+    assert card.land == LandFace(frozenset("UBG"), tapped=False)
+    assert incoming(FLOODED_STRAND, commander=GLARB).land == LandFace(frozenset("U"), tapped=False)
+
+
+def test_a_card_compiled_for_a_swap_is_read_in_the_decks_colour_identity() -> None:
+    assert incoming(COMMAND_TOWER, commander=MAGDA).land == LandFace(frozenset("R"), tapped=False)
+
+
+def test_synergy_and_finishers_apply_to_a_card_compiled_for_a_swap() -> None:
+    assert incoming(HARMONIZE, synergy=["id-Harmonize"]).synergy
+    assert not incoming(HARMONIZE, synergy=["id-Other"]).synergy
+    assert incoming(SOL_RING, added=["Sol Ring"]).finisher
+    assert not incoming(CRATERHOOF, removed=["Craterhoof Behemoth"]).finisher
+
+
+def test_a_card_compiled_for_a_swap_is_no_combo_piece_of_a_combo_the_deck_lacks() -> None:
+    # The deck's combos are those of its own cards; a combo with the incoming card in it is left out.
+    assert not incoming(BATTERED_GOLEM, commander=MAGDA, combos=combo_details()).combo
+
+
+def test_a_card_the_card_data_lacks_is_a_plain_spell_when_compiled_for_a_swap() -> None:
+    deck = deck_of(("Forest", 1), commander=LEGION.mana.name)
+    known = [LEGION, FOREST]
+    card = compile_card(
+        "Unknown Card",
+        deck,
+        by_name(*(c.mana for c in known)),
+        {c.mana.oracle_id: info_of(c) for c in known},
+        {},
+    )
+    assert not card.modelled
+    assert card.mana is None
+    assert card.name == "Unknown Card"
 
 
 # --- lands -------------------------------------------------------------------------------------------------

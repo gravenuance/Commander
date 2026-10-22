@@ -239,21 +239,16 @@ def compile_deck(
     taken from the cards the Tagger tags make finishers. A card the card data lacks is a plain spell of the
     deck's average mana value, not modelled.
     """
-    entries = deck_entries(deck, cards)
-    average = land_count(without_commanders(entries)).average_mana_value
-    kept, left_out = _split_combos(combos, deck)
-    context = _Context(
-        identity=_identity(deck, cards, infos),
-        lands=DeckLands.of(without_commanders(entries)),
-        infos=infos,
-        tags=tags,
-        synergy=frozenset(synergy),
-        finishers_added=frozenset(card_key(name) for name in finishers_added),
-        finishers_removed=frozenset(card_key(name) for name in finishers_removed),
-        combo_pieces=frozenset(card_key(name) for combo in kept for name in combo.pieces),
-        unknown_mana_value=max(round(average), 1),
+    context, kept, left_out, average = _deck_context(
+        deck,
+        cards,
+        infos,
+        tags,
+        combos=combos,
+        synergy=synergy,
+        finishers_added=finishers_added,
+        finishers_removed=finishers_removed,
     )
-    context = replace(context, typed_lands=_typed_lands(deck, cards, context))
     commanders = {card_key(name) for name in deck.commanders}
     compiled: dict[str, GoldfishCard] = {}
     for card in deck.main_cards:
@@ -275,6 +270,66 @@ def compile_deck(
         not_modelled=tuple(sorted({r.name for r in records if not r.modelled})),
         average_mana_value=average,
     )
+
+
+def _deck_context(
+    deck: Deck,
+    cards: Mapping[str, CardMana],
+    infos: Mapping[str, CardInfo],
+    tags: Mapping[str, frozenset[str]],
+    *,
+    combos: Sequence[ComboDetail],
+    synergy: Collection[str],
+    finishers_added: Iterable[str],
+    finishers_removed: Iterable[str],
+) -> tuple[_Context, list[GoldfishCombo], list[GoldfishCombo], float]:
+    """What every card of the deck is read against, the deck's kept and left-out combos and its average mana
+    value."""
+    entries = deck_entries(deck, cards)
+    average = land_count(without_commanders(entries)).average_mana_value
+    kept, left_out = _split_combos(combos, deck)
+    context = _Context(
+        identity=_identity(deck, cards, infos),
+        lands=DeckLands.of(without_commanders(entries)),
+        infos=infos,
+        tags=tags,
+        synergy=frozenset(synergy),
+        finishers_added=frozenset(card_key(name) for name in finishers_added),
+        finishers_removed=frozenset(card_key(name) for name in finishers_removed),
+        combo_pieces=frozenset(card_key(name) for combo in kept for name in combo.pieces),
+        unknown_mana_value=max(round(average), 1),
+    )
+    return replace(context, typed_lands=_typed_lands(deck, cards, context)), kept, left_out, average
+
+
+def compile_card(
+    name: str,
+    deck: Deck,
+    cards: Mapping[str, CardMana],
+    infos: Mapping[str, CardInfo],
+    tags: Mapping[str, frozenset[str]],
+    *,
+    copies: int = 1,
+    combos: Sequence[ComboDetail] = (),
+    synergy: Collection[str] = (),
+    finishers_added: Iterable[str] = (),
+    finishers_removed: Iterable[str] = (),
+) -> GoldfishCard:
+    """One card read as `compile_deck` reads the deck's own: its identity, the typed lands fetches find, the
+    combos, synergy and finishers. For a card that is not in the deck, a swap's incoming card; `cards` and
+    `infos` must hold it as well as the deck. A combo is the deck's own, so the card is no piece of one that
+    names it. A card the card data lacks is a plain spell, not modelled."""
+    context = _deck_context(
+        deck,
+        cards,
+        infos,
+        tags,
+        combos=combos,
+        synergy=synergy,
+        finishers_added=finishers_added,
+        finishers_removed=finishers_removed,
+    )[0]
+    return _compile_card(name, cards.get(name.casefold()), copies, context, commander=False)
 
 
 def _identity(deck: Deck, cards: Mapping[str, CardMana], infos: Mapping[str, CardInfo]) -> frozenset[str]:
