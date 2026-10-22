@@ -463,21 +463,37 @@ def test_the_finisher_box_offers_the_decks_own_cards_not_yet_finishers_without_a
     assert seen == {"ter": ["Terastodon", "Terror of the Peaks"], "held": [], "short": [], "searched": 0}
 
 
-def test_a_refused_finishers_save_shows_in_the_dialog_and_keeps_it_open() -> None:
+def test_a_refused_finishers_save_says_the_other_settings_were_saved_and_refreshes_the_deck() -> None:
     seen = run(
         FINISHERS_PRELUDE
         + """
     stub.save_finishers = async () => ({ error: "No card named 'Nonesuch' (check the spelling)" });
     await open({ finishers: marked });
     await addFinisherNamed("Nonesuch");
+    const epoch = goldfishEpoch;
     await fire($("settings-save"), "click");
     return { text: $("settings-error").textContent, open: $("settings-dialog").open, refreshed,
-      chips: finisherChips().length };
+      chips: finisherChips().length, epochBumped: goldfishEpoch === epoch + 1 };
     """
     )
     assert seen == {
-        "text": "No card named 'Nonesuch' (check the spelling)",
+        "text": "Other settings saved; the finishers were not: No card named 'Nonesuch' (check the spelling)",
         "open": True,
-        "refreshed": 0,
+        "refreshed": 1,
         "chips": 3,
+        "epochBumped": True,
     }
+
+
+def test_putting_a_left_out_card_back_keeps_focus_in_the_finishers_section() -> None:
+    seen = run(
+        FINISHERS_PRELUDE
+        + """
+    await open({ finishers: [marked[1]], finishersRemoved: ["Craterhoof Behemoth"] });
+    const offer = $("settings-finishers-left-out").querySelector("button");
+    offer.focus();
+    await fire(offer, "click");
+    return { box: document.activeElement === $("settings-finishers-input"), offerGone: !offer.isConnected };
+    """
+    )
+    assert seen == {"box": True, "offerGone": True}

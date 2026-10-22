@@ -122,6 +122,7 @@ function addFinisher(text) {
     s.finishers.push({ name: [...state.gridCards.keys()].find(same) ?? typed, auto: false });
   }
   renderFinishers();
+  input.focus();
 }
 
 // The deck's own cards that hold the text and are not finishers yet. The bridge's card search leaves out the
@@ -226,11 +227,18 @@ async function saveSettings() {
   try {
     await api("save_settings", s.deck, s.adjacent, s.ignore, s.tagSearch, s.grace);
     // Grace cards and the like change what a queued swap moves in the goldfish.
-    // The finishers are saved by their own call, and only when the viewer changed them.
-    if (finishersKey() !== s.finishersWas) {
-      await api("save_finishers", s.deck, s.finishers.map((f) => f.name));
-    }
     goldfishEpoch++;
+    // The finishers are saved by their own call, and only when the viewer changed them. When it is refused
+    // the rest is saved already, so the deck is refreshed and the dialog says which part is not.
+    if (finishersKey() !== s.finishersWas) {
+      try {
+        await api("save_finishers", s.deck, s.finishers.map((f) => f.name));
+      } catch (error) {
+        await refresh();
+        const why = error instanceof Error ? error.message : String(error);
+        throw new Error(`Other settings saved; the finishers were not: ${why}`);
+      }
+    }
     $("settings-dialog").close();
     showStatus("Settings saved to the deck's profile.toml");
     await refresh();
