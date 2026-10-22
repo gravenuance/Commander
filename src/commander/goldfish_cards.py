@@ -515,6 +515,8 @@ def _kinds(type_line: str) -> frozenset[CardKind]:
 # A mana ability or a spell's added mana, from the start of a line: an optional cost, then "add".
 _MANA_ABILITY = re.compile(r"(?:(?P<cost>[^:]+): )?add (?P<what>[^.]*)\.")
 _SYMBOL = re.compile(r"\{([wubrgc]|\d+)\}")
+# "Add {R}, {G}, or {W}": one mana of a choice, so the options are split before their symbols are counted.
+_MANA_OPTION_SEPARATOR = re.compile(r",\s*(?:or\s+)?|\s+or\s+")
 _NUMBER_WORDS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7}
 _ANY_COLOUR = re.compile(
     r"\bany (?:one )?(?:color|type)\b|the chosen colou?r|any of the exiled card's colou?rs"
@@ -572,7 +574,7 @@ def _net_mana(cost: _Cost, what: str, identity: frozenset[str]) -> tuple[int, fr
     else:
         made = 0
         found: set[str] = set()
-        for option in what.split(" or "):
+        for option in _MANA_OPTION_SEPARATOR.split(what):
             symbols = _SYMBOL.findall(option)
             made = max(made, sum(int(s) if s.isdigit() else 1 for s in symbols))
             found.update(_COLOURLESS if s.isdigit() else s.upper() for s in symbols)

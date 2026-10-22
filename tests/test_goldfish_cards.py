@@ -177,6 +177,24 @@ SEA_GATE = real(
 )
 
 SOL_RING = real("Sol Ring", "{1}", 1, "Artifact", "{T}: Add {C}{C}.", produced="C", roles=(RAMP,))
+JUNGLE_SHRINE = real(
+    "Jungle Shrine",
+    "",
+    0,
+    "Land",
+    "This land enters tapped.\n{T}: Add {R}, {G}, or {W}.",
+    produced="RGW",
+)
+NOBLE_HIERARCH = real(
+    "Noble Hierarch",
+    "{G}",
+    1,
+    "Creature — Human Druid",
+    "Exalted (Whenever a creature you control attacks alone, that creature gets +1/+1 until end of "
+    "turn.)\n{T}: Add {G}, {W}, or {U}.",
+    produced="GWU",
+    roles=(RAMP,),
+)
 ARCANE_SIGNET = real(
     "Arcane Signet",
     "{2}",
@@ -1093,6 +1111,14 @@ def test_arcane_signet_makes_any_colour_of_the_commanders_identity() -> None:
     assert one(ARCANE_SIGNET, commander=MAGDA).mana == ManaAbility(
         1, frozenset("R"), delayed=False, ritual=False
     )
+
+
+def test_a_choice_of_coloured_mana_is_one_mana_not_one_per_option() -> None:
+    shrine = one(JUNGLE_SHRINE)
+    assert shrine.land == LandFace(frozenset("RGW"), tapped=True, amount=1)
+    hierarch = one(NOBLE_HIERARCH)
+    assert hierarch.mana == ManaAbility(1, frozenset("GWU"), delayed=True, ritual=False)
+    assert one(SOL_RING).mana == ManaAbility(2, frozenset("C"), delayed=False, ritual=False)
 
 
 def test_a_mana_creature_is_delayed_by_summoning_sickness() -> None:
