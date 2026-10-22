@@ -1163,18 +1163,21 @@ class _Game:
 
     def _bursts_ready(self) -> list[int]:
         """The creatures that can sacrifice a land for their mana now: in play since the turn began, not used
-        this turn, with a land of their type in play."""
+        this turn, each with a land of its type in play that no other of them takes."""
         if not self.bursts:
             return []
         cards = self.s.cards
-        types = {t for cid in self.bf if cards[cid].is_land for t in cards[cid].land_types}
-        return [
-            cid
-            for cid in self.bursts
-            if cid not in self.arrived
-            and cid not in self.burst_used
-            and not types.isdisjoint(cards[cid].burst_types)
-        ]
+        lands = [cid for cid in self.bf if cards[cid].is_land]
+        ready: list[int] = []
+        for cid in self.bursts:
+            if cid in self.arrived or cid in self.burst_used:
+                continue
+            types = cards[cid].burst_types
+            land = next((lid for lid in lands if not types.isdisjoint(cards[lid].land_types)), None)
+            if land is not None:
+                lands.remove(land)
+                ready.append(cid)
+        return ready
 
     def _life_payments(self, gone: Collection[int] = ()) -> tuple[int, int]:
         """How many life payments for mana the life allows down to the floor, and the mana each makes, from

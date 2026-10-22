@@ -745,6 +745,23 @@ def test_a_creature_that_sacrifices_a_land_for_mana_does_it_once_its_turn_has_pa
     assert outcome.mana == (1, 1, 2, 2, 2)
 
 
+def test_two_creatures_that_sacrifice_a_forest_share_the_one_forest_there_is() -> None:
+    def jack(name: str) -> GoldfishCard:
+        mana = ManaAbility(
+            3, frozenset("RG"), delayed=True, ritual=False, land_sacrificed=frozenset({"forest"})
+        )
+        return make(name, mv=1, pips={"R": 1}, kinds=CREATURE, mana=mana)
+
+    forest = replace(FOREST, land_types=frozenset({"forest"}))
+    giant = make("Giant", mv=20, kinds=CREATURE)
+    slots = [MOUNTAIN, forest, jack("Jack"), jack("Jill"), *repeat(giant, 3)]
+    # One Forest feeds one of them, once: turn three has the two lands and 3 mana, and never 6.
+    five = only_outcome(run(slots, commanders=(make("Five", mv=5, kinds=CREATURE),)))
+    assert five.commander_turns == (3,)
+    six = only_outcome(run(slots, commanders=(make("Six", mv=6, kinds=CREATURE),)))
+    assert six.commander_turns == (0,)
+
+
 def test_mana_spent_only_on_creatures_casts_a_creature_and_its_rest_pays_for_nothing_else() -> None:
     def surge(spend_on: frozenset[CardKind]) -> GoldfishCard:
         mana = ManaAbility(7, ANY_COLOUR, delayed=False, ritual=True, spend_on=spend_on)
