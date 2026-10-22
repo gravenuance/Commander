@@ -1245,9 +1245,11 @@ class Desk:
 
     def _stored(self, deck_id: int) -> StoredDeck:
         folder = self._workspace.folder_for(int(deck_id))
-        deck = self._workspace.load(int(deck_id)) if folder else None
-        if folder is None or deck is None:
+        if folder is None:
             raise BoardError(f"deck {deck_id} is not in {self._settings.workspace}; press Sync")
+        deck = self._workspace.load_folder(folder)
+        if deck is None:  # a damaged or missing deck.json, which the next sync fetches again
+            raise BoardError(f"deck {deck_id}'s saved copy is unreadable; press Sync")
         return StoredDeck(folder, deck)
 
     def _user(self) -> str:

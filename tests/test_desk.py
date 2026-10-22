@@ -794,6 +794,13 @@ def test_refusals_come_back_as_errors(desk: Desk) -> None:
     assert str(desk.deck(999)["error"]).startswith("deck 999 is not in ")
 
 
+def test_a_damaged_deck_file_is_called_unreadable_not_missing(desk: Desk, settings: DeskSettings) -> None:
+    (settings.workspace / "10000001-sample-deck" / "deck.json").write_text("{damaged", encoding="utf-8")
+
+    assert desk.deck(DECK) == {"error": f"deck {DECK}'s saved copy is unreadable; press Sync"}
+    assert desk.deck(999) == {"error": f"deck 999 is not in {settings.workspace}; press Sync"}
+
+
 def test_search_finds_names_in_colour_and_not_in_the_deck(desk: Desk) -> None:
     assert [c["name"] for c in items(desk.search(DECK, "bolt"), "cards")] == ["Lightning Bolt"]
     assert desk.search(DECK, "rhystic")["cards"] == []
