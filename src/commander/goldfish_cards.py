@@ -9,6 +9,7 @@ import re
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from enum import Enum
+from typing import NamedTuple
 
 from commander.answers import card_key
 from commander.carddb import COLORS, FACE_SEPARATOR, CardInfo, CardMana, Role, back_is_land, front_type
@@ -102,6 +103,8 @@ class ManaAbility:
     # An Aura that adds this mana whenever its land is tapped (Wild Growth): it needs a land in play and its
     # mana comes the turn it lands.
     on_land: bool = False
+    # The kinds of spell the mana may be spent on (Geosurge: artifact and creature); empty for any.
+    spend_on: frozenset[CardKind] = frozenset()
 
 
 @dataclass(slots=True, frozen=True)
@@ -541,7 +544,7 @@ _NUMBER_WORDS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "fi
 _ANY_COLOUR = re.compile(
     r"\bany (?:one )?(?:color|type)\b|the chosen colou?r|any of the exiled card's colou?rs"
 )
-_AMOUNT_WORD = re.compile(r"^(" + "|".join(_NUMBER_WORDS) + r") (?:additional )?mana\b")
+_AMOUNT_WORDS = re.compile(r"\b(" + "|".join(_NUMBER_WORDS) + r") (?:additional )?mana\b")
 # A count, or a colour or use the game cannot tell: Mox Amber's colours need a legendary creature, Flywheel
 # Racer's mana needs it crewed.
 _NOT_FIXED_MANA = re.compile(
@@ -557,6 +560,7 @@ _FIXED_THEN_MORE = re.compile(r"((?:\{[wubrgc\d]\})+), then add .*")
 # Mana for each card in an opponent's hand (Jeska's Will), read against a hand of OPPONENT_HAND cards.
 _PER_OPPONENT_CARD = re.compile(r"(\{[wubrgc]\}) for each card in target opponent's hand")
 OPPONENT_HAND = 7
+_SPEND_ON = re.compile(r"spend this mana only to cast ([a-z, ]+?) spells\b")
 # Treasure a spell makes, spent at once as mana of any colour; a tapped one waits a turn and is left out.
 _TREASURES = re.compile(r"\bcreate (?P<n>a|an|one|two|three|four|five) treasure tokens?\b")
 
@@ -586,19 +590,44 @@ def _paid(cost: str) -> _Cost | None:
     return _Cost(mana, taps=taps, sacrifices=sacrifices, exiles_from_hand=from_hand)
 
 
-def _abilities(text: str) -> list[tuple[str, str, bool]]:
-    """Each line that adds mana: its cost, what it adds, and whether it is no fixed amount of any colour
-    (a count, or a colour or use the game cannot tell). A line whose mana can be spent only on some spells is
-    left out, which undercounts rather than overcounts."""
-    found: list[tuple[str, str, bool]] = []
+class _ManaLine(NamedTuple):
+    """A line that adds mana: its cost, what it adds, whether that is no fixed amount of any colour (a count,
+    or a colour or use the game cannot tell), and the kinds of spell alone it may pay for (empty for any)."""
+
+    cost: str
+    what: str
+    varies: bool
+    spend_on: frozenset[CardKind]
+
+
+def _abilities(text: str) -> list[_ManaLine]:
+    """Each line that adds mana. A line whose mana can be spent only on something other than spells of some
+    card types is left out, which undercounts rather than overcounts."""
+    found: list[_ManaLine] = []
     for line in (_MODE_BULLET.sub("", line) for line in text.split("\n")):
         matched = _MANA_ABILITY.match(line)
-        if matched is None or RESTRICTED in line:
+        if matched is None:
             continue
+        spend_on = frozenset[CardKind]()
+        if RESTRICTED in line:
+            spend_on = _spend_on(line)
+            if not spend_on:
+                continue
         cost, what = matched.group("cost") or "", _fixed_mana(matched.group("what"))
         said = f"{cost}: add {what}.{line[matched.end() :]}"
-        found.append((cost, what, _NOT_FIXED_MANA.search(said) is not None))
+        found.append(_ManaLine(cost, what, _NOT_FIXED_MANA.search(said) is not None, spend_on))
     return found
+
+
+def _spend_on(line: str) -> frozenset[CardKind]:
+    """The card types of the spells a line's mana is restricted to; empty for any other restriction."""
+    matched = _SPEND_ON.search(line)
+    if matched is None:
+        return frozenset()
+    words = [w for w in re.findall(r"[a-z]+", matched.group(1)) if w != "or"]
+    if not words or any(w not in _KIND_WORDS for w in words):
+        return frozenset()
+    return frozenset(_KIND_WORDS[w] for w in words)
 
 
 def _fixed_mana(what: str) -> str:
@@ -615,8 +644,9 @@ def _net_mana(cost: _Cost, what: str, identity: frozenset[str]) -> tuple[int, fr
     """The net mana of one ability and the colours it can make; None when it nets nothing or is no fixed
     amount of mana."""
     if _ANY_COLOUR.search(what):
-        said = _AMOUNT_WORD.match(what)
-        made, colours = (_NUMBER_WORDS[said.group(1)] if said else 1), (identity or _ALL_COLOURS)
+        # "Two mana of any one color and two mana of any other color" is four.
+        said = _AMOUNT_WORDS.findall(what)
+        made, colours = (sum(_NUMBER_WORDS[n] for n in said) or 1), (identity or _ALL_COLOURS)
     else:
         made = 0
         found: set[str] = set()
@@ -637,7 +667,7 @@ def _land_understood(text: str) -> bool:
         _BOUNCE_LAND.search(text) is None
         and _LAND_SACRIFICE.search(text) is None
         and _SEARCHES_SEVERAL.search(text) is None
-        and not any(varies for _, _, varies in _abilities(text))
+        and not any(line.varies for line in _abilities(text) if not line.spend_on)
     )
 
 
@@ -655,8 +685,9 @@ def _land_nets(text: str, identity: frozenset[str]) -> list[tuple[int, frozenset
     """The net mana and colours of a land's abilities that make more than they cost and leave the land."""
     return [
         found
-        for cost, what, varies in _abilities(text)
+        for cost, what, varies, spend_on in _abilities(text)
         if not varies
+        and not spend_on
         and (paid := _paid(_FILTER_COST.sub("{1}", cost))) is not None
         and not paid.sacrifices
         and (found := _net_mana(paid, what, identity))
@@ -709,16 +740,21 @@ def _mana(text: str, kinds: frozenset[CardKind], identity: frozenset[str]) -> Ma
     best = 0
     colours: set[str] = set()
     delayed = ritual = from_hand = False
+    spend: frozenset[CardKind] = frozenset()
     abilities = _abilities(text)
     treasures = _TREASURES.search(text) if spell else None
     if treasures is not None:
-        abilities.append(("", f"{treasures.group('n')} mana of any color", False))
-    for cost, what, varies in abilities:
+        made = f"{treasures.group('n')} mana of any color"
+        abilities.append(_ManaLine("", made, varies=False, spend_on=frozenset()))
+    for cost, what, varies, spend_on in abilities:
         paid = _paid(cost)
         # An ability with none of these costs could be used again and again (Three Tree Mascot's {1}).
         usable = spell or (paid is not None and (paid.taps or paid.exiles_from_hand or paid.sacrifices))
         found = None if varies or paid is None or not usable else _net_mana(paid, what, identity)
         if paid is None or found is None:
+            continue
+        # Restricted mana is followed only for one shot, spent on the spell it is made for.
+        if spend_on and not (spell or paid.sacrifices):
             continue
         colours |= found[1]
         if found[0] > best:
@@ -726,9 +762,12 @@ def _mana(text: str, kinds: frozenset[CardKind], identity: frozenset[str]) -> Ma
             delayed = CardKind.CREATURE in kinds and paid.taps
             ritual = spell or paid.sacrifices or paid.exiles_from_hand or "doesn't untap" in text
             from_hand = paid.exiles_from_hand
+            spend = spend_on
     if best == 0:
         return _mana_aura(text, identity)
-    return ManaAbility(best, frozenset(colours), delayed=delayed, ritual=ritual, from_hand=from_hand)
+    return ManaAbility(
+        best, frozenset(colours), delayed=delayed, ritual=ritual, from_hand=from_hand, spend_on=spend
+    )
 
 
 def _mana_aura(text: str, identity: frozenset[str]) -> ManaAbility | None:

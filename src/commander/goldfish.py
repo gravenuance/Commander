@@ -54,9 +54,26 @@ _BIG_CURVE = 3.5
 
 # Colours as bits, so a mana unit is one small int: the set of colours it can pay.
 _BITS = {"W": 1, "U": 2, "B": 4, "R": 8, "G": 16, "C": 32}
-_POP = tuple(mask.bit_count() for mask in range(64))
-# The order units are paid in: colourless first, as it pays only generic mana, then by how many colours.
-_PAY_KEY = tuple(0 if mask == _BITS["C"] else _POP[mask] for mask in range(64)).__getitem__
+_COLOUR_BITS = 63
+# A unit a ritual made that may be spent only on some kinds of spell, and is lost once that spell is paid.
+_RESTRICTED = 64
+_MASKS = 128
+_POP = tuple((mask & _COLOUR_BITS).bit_count() for mask in range(_MASKS))
+# The order units are paid in: restricted ones first, as they are lost after the spell they were made for,
+# then colourless, as it pays only generic mana, then by how many colours.
+_PAY_KEY = tuple(
+    -1 if mask & _RESTRICTED else 0 if mask == _BITS["C"] else _POP[mask] for mask in range(_MASKS)
+).__getitem__
+_KIND_BITS = {kind: 1 << index for index, kind in enumerate(CardKind)}
+
+
+def _kind_bits(kinds: Iterable[CardKind]) -> int:
+    bits = 0
+    for kind in kinds:
+        bits |= _KIND_BITS[kind]
+    return bits
+
+
 _BASICS = frozenset({"plains", "island", "swamp", "mountain", "forest", "wastes"})
 
 # Ranks order what the policy does first: lower goes first. A held card is never cast by the policy.
@@ -335,6 +352,7 @@ class _Card:
         "is_land",
         "keep_syn",
         "key",
+        "kind_bits",
         "land_amount",
         "land_mask",
         "land_tapped",
@@ -349,6 +367,7 @@ class _Card:
         "pip_mask",
         "rank",
         "ritual",
+        "spend_bits",
         "src",
         "win_piece",
     )
@@ -363,6 +382,11 @@ class _Card:
         self.mana_perm = mana is not None and not self.ritual
         self.mana_amount = mana.amount if mana is not None else 0
         self.mana_mask = unit_mask(mana.colours) if mana is not None else 0
+        # The kinds of spell a ritual's mana may pay for, 0 for any; its units are then marked restricted.
+        self.spend_bits = _kind_bits(mana.spend_on) if mana is not None else 0
+        if self.spend_bits:
+            self.mana_mask |= _RESTRICTED
+        self.kind_bits = _kind_bits(card.kinds)
         self.delayed = mana is not None and mana.delayed
         self.aura = mana is not None and mana.on_land
         # Mana a ritual adds, net of the mana its own cost takes.
@@ -885,9 +909,10 @@ class _Game:
             if mask in source:
                 source.remove(mask)
 
-    def _plan(self, units: list[int], cost: Cost) -> tuple[int, ...] | None:
+    def _plan(self, units: list[int], cost: Cost, paying: Sequence[int]) -> tuple[int, ...] | None:
         """The rituals and spirit guides to use first for a cost to be paid: none when the mana is enough,
-        None when even they would not make it."""
+        None when even they would not make it. `paying` holds the kind bits of each card the cost is for,
+        which a ritual's restricted mana must all allow."""
         if can_pay(units, cost):
             return ()
         if not self.s.has_rituals:
@@ -900,7 +925,8 @@ class _Game:
         used: list[int] = []
         for cid in rituals:
             card = cards[cid]
-            if not can_pay(trial, card.cost):
+            spend = card.spend_bits
+            if (spend and not all(kinds & spend for kinds in paying)) or not can_pay(trial, card.cost):
                 continue
             pay(trial, card.cost)
             trial.extend([card.mana_mask] * card.mana_amount)
@@ -974,7 +1000,7 @@ class _Game:
             entry = self._entry_card(cid, card)
             if entry < 0:
                 return None
-        plan = self._plan(units, card.cost)
+        plan = self._plan(units, card.cost, (card.kind_bits,))
         if plan is None:
             return None
         return plan, target, entry
@@ -999,6 +1025,8 @@ class _Game:
         pay(units, card.cost)
         if target is not None and card.src.tutor is not None and card.src.tutor.x_limited:
             del units[: self.s.cards[target[1]].mv]
+        if units and units[0] & _RESTRICTED:
+            units[:] = [unit for unit in units if not unit & _RESTRICTED]
         if from_command:
             self.cmd_left.remove(cid)
             self.cmd_turn[cid] = self.turn
@@ -1150,7 +1178,10 @@ class _Game:
         s = self.s
         for k in list(self.open_combos):
             cast = self._pieces_to_cast(k)
-            if cast is None or (cast and self._plan(self.units, s.merged_cost(cast)) is None):
+            if cast is None:
+                continue
+            kinds = tuple(s.cards[piece].kind_bits for piece in cast)
+            if cast and self._plan(self.units, s.merged_cost(cast), kinds) is None:
                 continue
             self.combo_turn[k] = self.turn
             if any(piece in self.fetched for piece in s.combo_pieces[k] or ()):
@@ -1173,8 +1204,9 @@ class _Game:
         s = self.s
         for position in list(self.open_fins):
             cid = s.fin_ids[position]
+            card = s.cards[cid]
             if (cid in self.hand or cid in self.cmd_left) and self._plan(
-                self.units, s.cards[cid].fin_cost
+                self.units, card.fin_cost, (card.kind_bits,)
             ) is not None:
                 self._record_finisher(cid)
 

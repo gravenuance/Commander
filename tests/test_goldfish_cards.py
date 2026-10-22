@@ -1565,6 +1565,62 @@ def test_a_spell_that_makes_a_treasure_is_a_ritual_of_one_mana_of_any_colour() -
     assert strike.modelled
 
 
+GEOSURGE = real(
+    "Geosurge",
+    "{R}{R}{R}{R}",
+    4,
+    "Sorcery",
+    "Add {R}{R}{R}{R}{R}{R}{R}. Spend this mana only to cast artifact or creature spells.",
+    produced="R",
+    roles=(RAMP,),
+)
+OPEN_THE_OMENPATHS = real(
+    "Open the Omenpaths",
+    "{2}{R}",
+    3,
+    "Instant",
+    "Choose one —\n• Add two mana of any one color and two mana of any other color. Spend this mana only to "
+    "cast creature or enchantment spells.\n• Creatures you control get +1/+0 until end of turn.",
+    produced="WUBRG",
+    roles=(RAMP,),
+)
+SHANG_CHI = real(
+    "Shang-Chi, Master of Kung Fu",
+    "{1}{G}",
+    2,
+    "Legendary Creature — Human Warrior Hero",
+    "You may activate abilities of creatures you control as though those creatures had haste.\n{T}: Add two "
+    "mana of any one color. Spend this mana only to activate abilities of creature sources.",
+    produced="WUBRG",
+    roles=(RAMP,),
+)
+
+
+def test_mana_spent_only_on_some_kinds_of_spell_is_counted_for_those_kinds() -> None:
+    assert one(GEOSURGE).mana == ManaAbility(
+        7,
+        frozenset("R"),
+        delayed=False,
+        ritual=True,
+        spend_on=frozenset({CardKind.ARTIFACT, CardKind.CREATURE}),
+    )
+    omenpaths = one(OPEN_THE_OMENPATHS)
+    assert omenpaths.mana == ManaAbility(
+        4,
+        frozenset(ALL),
+        delayed=False,
+        ritual=True,
+        spend_on=frozenset({CardKind.CREATURE, CardKind.ENCHANTMENT}),
+    )
+    assert omenpaths.modelled
+
+
+def test_mana_spent_only_on_abilities_is_left_out() -> None:
+    card = one(SHANG_CHI)
+    assert card.mana is None
+    assert not card.modelled
+
+
 # --- land ramp ------------------------------------------------------------------------------------
 
 

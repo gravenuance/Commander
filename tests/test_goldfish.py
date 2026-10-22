@@ -572,6 +572,22 @@ def test_a_spirit_guide_pays_for_a_two_drop_on_turn_one() -> None:
     assert only_outcome(run(without, commanders=(boss,))).commander_turns == (2,)
 
 
+def test_mana_spent_only_on_creatures_casts_a_creature_and_its_rest_pays_for_nothing_else() -> None:
+    def surge(spend_on: frozenset[CardKind]) -> GoldfishCard:
+        mana = ManaAbility(7, ANY_COLOUR, delayed=False, ritual=True, spend_on=spend_on)
+        return make("Surge", mv=4, pips={"R": 4}, mana=mana)
+
+    beast = make("Beast", mv=5, kinds=CREATURE)
+    relic = make("Relic", mv=2, pips={"G": 2}, kinds=ARTIFACT)
+    slots = [*repeat(MOUNTAIN, 4), surge(CREATURE), *repeat(VANILLA, 2)]
+    # Four Mountains pay for the surge on turn four; its seven mana casts the five-drop creature, and the two
+    # left over cannot pay for the green artifact, which the Mountains never could.
+    assert only_outcome(run(slots, commanders=(beast, relic))).commander_turns == (4, 0)
+    # Restricted to artifacts, it pays for the green artifact and not for the creature.
+    slots = [*repeat(MOUNTAIN, 4), surge(ARTIFACT), *repeat(VANILLA, 2)]
+    assert only_outcome(run(slots, commanders=(beast, relic))).commander_turns == (0, 4)
+
+
 def test_the_commander_is_cast_once_on_the_first_turn_its_colours_are_paid() -> None:
     boss = make("Boss", mv=3, pips={"R": 1}, kinds=CREATURE)
     slots = [MOUNTAIN, FOREST, FOREST, *repeat(VANILLA, 4)]
