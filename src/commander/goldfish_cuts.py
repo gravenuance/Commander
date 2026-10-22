@@ -32,8 +32,8 @@ class Verdict:
 class RankedCut:
     """A target in its final place. `verdict` is None for a target that was not played, and `refused` says
     why for one whose swap could not be played; `why` names the figure that put a target ahead of one the
-    score ranked above it, and is None for any other. `score_place` is where the score put it, counting
-    from 1."""
+    score ranked above it, `ahead_of` the first such one, and both are None for any other. `score_place` is
+    where the score put it, counting from 1."""
 
     target: Target
     verdict: Verdict | None
@@ -41,6 +41,7 @@ class RankedCut:
     moved_up: bool
     why: str | None
     refused: str | None = None
+    ahead_of: str | None = None
 
 
 def verdict_of(comparison: GoldfishComparison) -> Verdict:
@@ -116,7 +117,9 @@ def _ranked(
     if verdict is None or passed is None:
         return RankedCut(targets[index], verdict, index + 1, moved_up=False, why=None, refused=refused)
     why = _why(targets, index, passed, verdicts)
-    return RankedCut(targets[index], verdict, index + 1, moved_up=True, why=why)
+    return RankedCut(
+        targets[index], verdict, index + 1, moved_up=True, why=why, ahead_of=targets[passed].name
+    )
 
 
 def _why(targets: Sequence[Target], ahead: int, behind: int, verdicts: dict[int, Verdict]) -> str:

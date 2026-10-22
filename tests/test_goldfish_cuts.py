@@ -140,6 +140,8 @@ def test_a_target_that_passed_one_scored_above_it_is_marked_even_when_its_own_pl
     assert [r.moved_up for r in ranked] == [True, True, False]
     assert ranked[1].why is not None
     assert ranked[1].why.endswith("is worse with Island")
+    # Swamp keeps place 2, so what it went ahead of is named rather than a place it came up from.
+    assert [r.ahead_of for r in ranked] == ["Island", "Island", None]
 
 
 def test_a_target_that_moved_down_is_not_marked_and_one_that_stayed_put_is_not_either() -> None:

@@ -990,17 +990,17 @@ class Desk:
         figure that decided it. Targets that tie on score are played against the card; the meta's order
         stands for the rest. Empty for a card with no targets."""
         stored, stamp = self._stored_for_goldfish(deck_id)
-        board = read_board(stored.folder)
-        card = board.find(card_id)
+        card = read_board(stored.folder).find(card_id)
         if card is None:
             raise BoardError(f"no card {card_id!r} on the board")
         profile = read_profile(stored.folder)
         with self._db() as db:
             main = db.resolve(stored.deck.main_cards)
-            # The rules hold every board card's ideas, as in `deck`, so the targets are the tile's.
-            infos = db.cards(c.oracle_id for c in board.cards)
-            rules = with_ideas(self._deck_rules(stored, main, profile, db), infos.values(), db)
-            targets = targets_for(card, infos.get(card.oracle_id), main, rules)
+            # One card's ideas give the same targets as the view's rules for every board card: themes and
+            # mana data are read per card.
+            info = db.cards([card.oracle_id]).get(card.oracle_id)
+            rules = with_ideas(self._deck_rules(stored, main, profile, db), [info] if info else [], db)
+            targets = targets_for(card, info, main, rules)
 
         def compare(target: Target) -> GoldfishComparison:
             return self._goldfish_comparison(

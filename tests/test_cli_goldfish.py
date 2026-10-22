@@ -435,16 +435,17 @@ def test_targets_that_tie_come_in_the_order_of_their_figures_and_the_one_moved_u
     assert result.out.splitlines() == [
         CUTS_HEADER,
         "1. Disruptor Flute (score 0.45)",
-        "     goldfish pick, up from place 2: Colour screw is worse with Battered Golem",
+        "     goldfish pick, ahead of Battered Golem: Colour screw is worse with Battered Golem",
         "     no headline figure moved",
         "2. Battered Golem (score 0.50)",
         "     Colour screw: 0.0% -> 30.0%",
     ]
     assert compared == [GOLEM, FLUTE]
     document = json.loads(goldfish(home, fake, "magda", "--cuts", "Arcane Signet", "--json").out)
-    assert [(c["name"], c["place"], c["scorePlace"], c["movedUp"]) for c in document["cuts"]] == [
-        (FLUTE, 1, 2, True),
-        (GOLEM, 2, 1, False),
+    fields = ("name", "place", "scorePlace", "movedUp", "aheadOf")
+    assert [tuple(c[f] for f in fields) for c in document["cuts"]] == [
+        (FLUTE, 1, 2, True, GOLEM),
+        (GOLEM, 2, 1, False, None),
     ]
 
 

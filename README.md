@@ -578,7 +578,7 @@ else in the file stay as they are.
 
 The right-hand rail has three tabs. **Activity** lists what changed on the board. **Goldfish** plays the
 deck out 10,000 times when opened and shows what `cmdr goldfish` reports (see [Goldfish](#goldfish));
-**Play the deck again** runs it anew. **Mana** checks the mana
+when the deck cannot be played, **Play the deck again** tries once more. **Mana** checks the mana
 base against Frank Karsten's published numbers
 ([ADR 0019](docs/adr/0019-mana-base-from-karstens-numbers.md)):
 - **Lands:** the land count, beside his land count formula and the median of other lists of the commander
@@ -668,7 +668,7 @@ base against Frank Karsten's published numbers
   when something moved.
 
 The window follows changes made with the CLI or by Claude within a couple of seconds. The rail on the
-right opens the open deck's activity and mana base; it is hidden while no deck is open.
+right opens the open deck's activity, goldfish and mana base; it is hidden while no deck is open.
 
 The app draws its page with Microsoft Edge WebView2, part of Windows 11, through
 [pywebview](https://pywebview.flowrl.com); it opens no network port. It logs to
@@ -781,9 +781,9 @@ sets the finishers. See
 `--cuts "<card>"` plays a card on the deck's board against each deck card it could replace and prints the
 headline figures each swap moves, in the order the app shows the targets. Targets scoring at most 0.10 below
 the first of a run tie with it, and a tie is ordered by those figures: fewer made worse first, then more made
-better, else the score's order. A target that moved up says which figure put it there, and one whose swap
-cannot be played says why and keeps its place. The goldfish never offers a card the score did not
-([ADR 0056](docs/adr/0056-goldfish-breaks-ties-between-cut-targets.md)).
+better, else the score's order. A target that moved up names the target it went ahead of and the figure
+that put it there, and one whose swap cannot be played says why and keeps its place. The goldfish never
+offers a card the score did not ([ADR 0056](docs/adr/0056-goldfish-breaks-ties-between-cut-targets.md)).
 
 ### Deck folders
 

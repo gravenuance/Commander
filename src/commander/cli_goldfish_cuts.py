@@ -80,7 +80,7 @@ def _print(
         score = "" if cut.target.score is None else f" (score {cut.target.score:.2f})"
         print(f"{place}. {cut.target.name}{score}", file=out)
         if cut.moved_up:
-            print(f"     goldfish pick, up from place {cut.score_place}: {cut.why}", file=out)
+            print(f"     goldfish pick, ahead of {cut.ahead_of}: {cut.why}", file=out)
         if cut.refused is not None:
             print(f"     cannot be played: {cut.refused}", file=out)
             continue
@@ -108,6 +108,7 @@ def _json(deck: Deck, card: BoardCard, ranked: Sequence[RankedCut]) -> Json:
                 "source": cut.target.source.value,
                 "movedUp": cut.moved_up,
                 "why": cut.why,
+                "aheadOf": cut.ahead_of,
                 "refused": cut.refused,
                 "figures": changes_json(changes, comparison.base) if comparison is not None else [],
             }
