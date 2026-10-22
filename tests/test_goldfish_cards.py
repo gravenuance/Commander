@@ -892,6 +892,62 @@ def test_a_fetch_land_has_the_colours_it_can_find() -> None:
     assert one(EVOLVING_WILDS).land == LandFace(frozenset("WUBRG"), tapped=True)
 
 
+GLARB = real(
+    "Glarb, Calamity's Augur",
+    "{2}{B}{G}{U}",
+    5,
+    "Legendary Creature — Frog Horror",
+    "Deathtouch\nYou may look at the top card of your library any time.",
+    identity="BGU",
+)
+WATERY_GRAVE = real(
+    "Watery Grave",
+    "",
+    0,
+    "Land — Island Swamp",
+    "({T}: Add {U} or {B}.)\nAs this land enters, you may pay 2 life. If you don't, it enters tapped.",
+    produced="UB",
+    identity="UB",
+)
+BREEDING_POOL = real(
+    "Breeding Pool",
+    "",
+    0,
+    "Land — Forest Island",
+    "({T}: Add {G} or {U}.)\nAs this land enters, you may pay 2 life. If you don't, it enters tapped.",
+    produced="GU",
+    identity="GU",
+)
+WINDSWEPT_HEATH = real(
+    "Windswept Heath",
+    "",
+    0,
+    "Land",
+    "{T}, Pay 1 life, Sacrifice this land: Search your library for a Forest or Plains card, put it onto the "
+    "battlefield, then shuffle.",
+)
+
+
+def test_a_fetch_land_finds_the_typed_lands_of_the_deck_within_the_identity() -> None:
+    deck = build(FLOODED_STRAND, WATERY_GRAVE, BREEDING_POOL, commander=GLARB)
+    # Plains and Island by type; Watery Grave and Breeding Pool are Islands, so B and G come too, but no W.
+    assert card_named(deck, "Flooded Strand").land == LandFace(frozenset("UBG"), tapped=False)
+    assert card_named(build(FLOODED_STRAND, commander=GLARB), "Flooded Strand").land == LandFace(
+        frozenset("U"), tapped=False
+    )
+
+
+def test_a_fetch_land_finds_only_lands_of_the_types_it_names() -> None:
+    deck = build(WINDSWEPT_HEATH, WATERY_GRAVE, BREEDING_POOL, FOREST, commander=GLARB)
+    # Forest or Plains: the Forest and Breeding Pool, not the Island-Swamp.
+    assert card_named(deck, "Windswept Heath").land == LandFace(frozenset("GU"), tapped=False)
+
+
+def test_a_fetch_land_for_any_basic_keeps_its_reading_beside_typed_lands() -> None:
+    deck = build(EVOLVING_WILDS, WATERY_GRAVE, commander=GLARB)
+    assert card_named(deck, "Evolving Wilds").land == LandFace(frozenset("UBG"), tapped=True)
+
+
 def test_lands_for_any_colour_are_limited_to_the_commanders_identity() -> None:
     assert one(COMMAND_TOWER).land == LandFace(frozenset("WUBRG"), tapped=False)
     assert one(COMMAND_TOWER, commander=MAGDA).land == LandFace(frozenset("R"), tapped=False)

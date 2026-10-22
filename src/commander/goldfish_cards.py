@@ -11,9 +11,10 @@ from dataclasses import dataclass, replace
 from enum import Enum
 
 from commander.answers import card_key
-from commander.carddb import COLORS, FACE_SEPARATOR, CardInfo, CardMana, Role, back_is_land
+from commander.carddb import COLORS, FACE_SEPARATOR, CardInfo, CardMana, Role, back_is_land, front_type
 from commander.manabase import (
     ALTERNATIVE_COST_TAGS,
+    BASIC_TYPES,
     PIP,
     REMINDER_TEXT,
     RESTRICTED,
@@ -211,6 +212,9 @@ class _Context:
     finishers_removed: frozenset[str]
     combo_pieces: frozenset[str]
     unknown_mana_value: int
+    # The deck's lands with basic land types: the types each has and the colours it makes, for the lands that
+    # fetch by type.
+    typed_lands: tuple[tuple[frozenset[str], frozenset[str]], ...] = ()
 
 
 def compile_deck(
@@ -246,6 +250,7 @@ def compile_deck(
         combo_pieces=frozenset(card_key(name) for combo in kept for name in combo.pieces),
         unknown_mana_value=max(round(average), 1),
     )
+    context = replace(context, typed_lands=_typed_lands(deck, cards, context))
     commanders = {card_key(name) for name in deck.commanders}
     compiled: dict[str, GoldfishCard] = {}
     for card in deck.main_cards:
@@ -277,6 +282,28 @@ def _identity(deck: Deck, cards: Mapping[str, CardMana], infos: Mapping[str, Car
         if info is not None and info.oracle_id in infos:
             found.update(infos[info.oracle_id].color_identity)
     return frozenset(found & _ALL_COLOURS)
+
+
+def _land_types(info: CardMana) -> frozenset[str]:
+    """The basic land types a land has, from its front face."""
+    return frozenset(BASIC_TYPES).intersection(
+        re.findall(r"[a-z]+", front_type(info.type_line).casefold().partition("—")[2])
+    )
+
+
+def _typed_lands(
+    deck: Deck, cards: Mapping[str, CardMana], context: _Context
+) -> tuple[tuple[frozenset[str], frozenset[str]], ...]:
+    found: list[tuple[frozenset[str], frozenset[str]]] = []
+    commanders = {card_key(name) for name in deck.commanders}
+    for card in deck.main_cards:
+        info = cards.get(card.name.casefold())
+        if info is None or card_key(card.name) in commanders or not info_is_land(info):
+            continue
+        types = _land_types(info)
+        if types:
+            found.append((types, _land_face(info, context)[0].colours))
+    return tuple(found)
 
 
 def _split_combos(
@@ -516,10 +543,20 @@ def _land_face(info: CardMana, context: _Context) -> tuple[LandFace, bool]:
     if RESTRICTED in text and nets:
         # Cavern of Souls: only its unrestricted mana counts.
         colours = frozenset(c for _, got in nets for c in got)
+    colours |= _fetchable_colours(text, context)
     if context.identity:
         colours = colours & (context.identity | {_COLOURLESS}) or colours
     amount = max((net for net, _ in nets), default=1)
     return LandFace(colours, tapped, amount), _land_understood(text)
+
+
+def _fetchable_colours(text: str, context: _Context) -> frozenset[str]:
+    """The colours of the deck's lands that a land searching by basic land type can fetch: those with one of
+    the types it names. Its own colours (the types' basic lands) are added by the caller's reading."""
+    if "search your library" not in text:
+        return frozenset()
+    searched = {land_type for land_type in BASIC_TYPES if land_type in text}
+    return frozenset(c for types, made in context.typed_lands if types & searched for c in made)
 
 
 def _mana(text: str, kinds: frozenset[CardKind], identity: frozenset[str]) -> ManaAbility | None:
