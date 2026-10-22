@@ -3,6 +3,7 @@
 import copy
 import json
 import logging
+import os
 import re
 import shutil
 import threading
@@ -916,6 +917,56 @@ def test_the_meta_breakdown_ignores_the_decks_grace_cards(
     profile = settings.workspace / "10000001-sample-deck" / "profile.toml"
     profile.write_text('[grace]\n"Arcane Signet" = 4\n"Mind Stone" = 9\n', encoding="utf-8")
     assert desk.meta(DECK) == before
+
+
+def test_an_unchanged_meta_is_not_read_or_worked_out_again(
+    desk: Desk, settings: DeskSettings, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake.topdeck.events = [*magda_events(), *kinnan_events()]
+    fetch_meta(settings, fake)
+    first = desk.meta(DECK)
+    assert first["report"] is not None
+    calls = count_calls(monkeypatch, desk_module, "gather_for", "analyse")
+
+    assert desk.meta(DECK) == first
+    assert desk.deck(DECK)["id"] == DECK
+    assert sum(calls.values()) == 0
+
+
+def test_the_meta_is_worked_out_again_when_the_answers_the_profile_or_the_day_change(
+    settings: DeskSettings, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake.topdeck.events = [*magda_events(), *kinnan_events()]
+    fetch_meta(settings, fake)
+    today = [NOW]
+    desk = Desk(
+        settings,
+        client_factory=fake.client,
+        token_store=MemoryTokenStore({"tester": REFRESH_TOKEN}),
+        now=lambda: today[0],
+        pacer_factory=lambda _: Pacer(0),
+    )
+    desk.meta(DECK)
+    calls = count_calls(monkeypatch, desk_module, "analyse")
+    profile = settings.workspace / "10000001-sample-deck" / "profile.toml"
+
+    profile.write_text('[grace]\n"Mind Stone" = 9\n', encoding="utf-8")
+    desk.meta(DECK)
+    assert calls["analyse"] == 1
+
+    # A cached answer is rewritten, as a sync does with one that has gone stale.
+    [*_, answer] = sorted((settings.cache / CACHE_FOLDER).glob("*.json"))
+    rewritten = answer.stat().st_mtime_ns + 1_000_000_000
+    os.utime(answer, ns=(rewritten, rewritten))
+    desk.meta(DECK)
+    assert calls["analyse"] == 2
+
+    today[0] = NOW + timedelta(days=1)
+    desk.meta(DECK)
+    assert calls["analyse"] == 3
+
+    desk.meta(DECK)
+    assert calls["analyse"] == 3
 
 
 def test_each_board_card_comes_with_the_deck_cards_it_could_replace(desk: Desk) -> None:

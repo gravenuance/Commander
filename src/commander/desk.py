@@ -67,7 +67,15 @@ from commander.credentials import CredentialError, KeyringKeyStore, KeyStore, To
 from commander.deckcache import NOT_FETCHED
 from commander.deckexport import cardmarket_wants_text, topdeck_text
 from commander.decklocks import DeckLocks
-from commander.deckprofile import MAX_ADJACENT, MAX_LIST, MAX_TEXT, Profile, ProfileError, read_profile
+from commander.deckprofile import (
+    MAX_ADJACENT,
+    MAX_LIST,
+    MAX_TEXT,
+    PROFILE_FILE,
+    Profile,
+    ProfileError,
+    read_profile,
+)
 from commander.deckthemes import merge_themes
 from commander.deckview import card_image, decklist_json
 from commander.fetchpriority import FetchPriority
@@ -297,6 +305,8 @@ class Desk:
         self._rules: dict[int, tuple[str, CutRules]] = {}
         # The deck list's rows by deck folder, each with the stamp of the files it was made from.
         self._rows: dict[Path, tuple[str, Json]] = {}
+        # Per deck: the meta panel's answer, and the stamp of what it was made from.
+        self._reports: dict[int, tuple[str, Json]] = {}
         self._sync_lock = threading.Lock()
         self._sync = _SyncState()
         # The page errors already logged, as (message, source, line), under their own lock.
@@ -450,6 +460,7 @@ class Desk:
         self._tables.clear()
         self._rules.clear()
         self._rows.clear()
+        self._reports.clear()
         with self._sync_lock:
             self._open_deck = None
 
@@ -585,6 +596,7 @@ class Desk:
         self._pools.pop(deck_id, None)
         self._tables.pop(deck_id, None)
         self._rules.pop(deck_id, None)
+        self._reports.pop(deck_id, None)
         with self._sync_lock:
             if self._open_deck == deck_id:
                 self._open_deck = None
@@ -642,8 +654,7 @@ class Desk:
     def _deck_rows(self, db: CardDb | None) -> Json:
         """One row per deck, each kept until its deck, its board or the card data change: the poll asks for
         the list whenever any deck's stamp changes, which a running sync does every few seconds."""
-        card_db = self._settings.card_db
-        data = "-" if db is None else files_stamp(card_db.parent, (card_db.name,))
+        data = "-" if db is None else self._card_data_stamp()
         kept: dict[Path, tuple[str, Json]] = {}
         for _, folder in self._workspace.deck_folders():
             # The stamp comes first: a change while the row is built shows in the next look.
@@ -1107,23 +1118,35 @@ class Desk:
         """The deck's meta report from cached answers only; a sync refreshes them."""
         stored = self._stored(deck_id)
         deck = self._effective(stored.deck)
-        data = self._gather(deck)
+        # The page asks again after every board change and save: the answer is kept until what it is made
+        # of changes, which is the deck, its profile, the cached meta answers, the card data or the day.
+        stamp = (
+            f"{files_stamp(stored.folder, (SNAPSHOT_FILE, PROFILE_FILE))}|{cache_stamp(self._settings.cache)}"
+            f"|{self._card_data_stamp()}|{self._now().date()}|{deck.bracket}"
+        )
+        known = self._reports.get(stored.deck.id)
+        if known is not None and known[0] == stamp:
+            return known[1]
+        data = self._pool_of(deck)
         with self._db() as db:
             report = analyse(deck, data, read_profile(stored.folder), db, now=self._now)
         why = _unavailable_reason(data)
         if data.lists.data is None and data.field.data is None and data.peers.data is None:
-            return {"report": None, **why}
-        return {
-            **why,
-            # Whether the most-played commanders and their combos are read: bracket 5 only (ADR 0027).
-            "cedh": deck.bracket == CEDH_BRACKET,
-            "report": report_json(report),
-            "keys": key_card_rows(report.key_cards),
-            "stoppers": stopper_rows(report.own_combos, report.threats),
-            "untouched": untouched(report.key_cards, report.own_combos, report.threats),
-            "comboGroups": combo_groups(report.combos),
-            "racing": report.style.races,
-        }
+            answer: Json = {"report": None, **why}
+        else:
+            answer = {
+                **why,
+                # Whether the most-played commanders and their combos are read: bracket 5 only (ADR 0027).
+                "cedh": deck.bracket == CEDH_BRACKET,
+                "report": report_json(report),
+                "keys": key_card_rows(report.key_cards),
+                "stoppers": stopper_rows(report.own_combos, report.threats),
+                "untouched": untouched(report.key_cards, report.own_combos, report.threats),
+                "comboGroups": combo_groups(report.combos),
+                "racing": report.style.races,
+            }
+        self._reports[stored.deck.id] = (stamp, answer)
+        return answer
 
     def _relabel(self, stored: StoredDeck, card: BoardCard | None) -> Relabel | None:
         """What the cached lists make of a card the user reconsiders; None when it is not one to label."""
@@ -1177,17 +1200,26 @@ class Desk:
         cache = estimate_cache(self._settings.cache / SPELLBOOK_CACHE_FOLDER)
         return cached_floor(deck, cache, now=self._now)
 
+    def _card_data_stamp(self) -> str:
+        """Changes whenever a sync replaces the card database."""
+        card_db = self._settings.card_db
+        return files_stamp(card_db.parent, (card_db.name,))
+
     def _pool(self, deck: Deck) -> MetaData | None:
         """What other players do with the deck's commander, from cache only; None for a deck without one."""
         if not deck.commanders:
             return None
-        playing = self._effective(deck)
-        stamp = f"{cache_stamp(self._settings.cache)}|{playing.bracket}"
-        known = self._pools.get(deck.id)
+        return self._pool_of(self._effective(deck))
+
+    def _pool_of(self, playing: Deck) -> MetaData:
+        """`_pool` for the deck as the panels act on it (`_effective`); the meta panel reads it too. Kept
+        until the cached answers or the day change, since the lists read are those of the last window days."""
+        stamp = f"{cache_stamp(self._settings.cache)}|{playing.bracket}|{self._now().date()}"
+        known = self._pools.get(playing.id)
         if known is not None and known[0] == stamp:
             return known[1]
         data = self._gather(playing)
-        self._pools[deck.id] = (stamp, data)
+        self._pools[playing.id] = (stamp, data)
         return data
 
     def _gather(self, deck: Deck) -> MetaData:
