@@ -142,3 +142,26 @@ the command line.
 - Combat wins are not judged. A deck that wins fast by attacking is not warned about.
 - Revisit the 25% threshold and the bracket turns if Wizards changes the brackets (the system is still a
   beta), and the keep rules if the opening-hand figures look wrong to the owner on real decks.
+
+## Amendment (2026-10-22): after the first figures on real decks
+
+The first run on the owner's decks showed four figures off; the owner decided:
+
+- **Colour screw** counts a game only when the colours cost a play: by the middle turn shown, a turn ended
+  with mana unspent while a spell the policy would cast, or the uncast commander, cost no more than that
+  turn's mana but could not be paid in its colours. Cards the policy holds (finishers, combo instants and
+  sorceries, rituals, spirit guides) are left out. The first definition, any spell in hand short of colours,
+  gave 29 to 62% and said nothing.
+- **Keep rule, brackets 4 and 5:** a finisher is a way to win too. A deck with neither a combo nor a finisher
+  uses the bracket 3 clause in its place (a dominant-tag card or a draw card), with its own bracket's land and
+  source counts. Before, a stax deck with few tutors (Ellivere) went to five cards in half of its games. The
+  dominant-tag clause is still waived for a deck that has no such card at all.
+- **Fetch lands** that search for basic land types give the colours of the deck's own lands with those types
+  (Flooded Strand finds Watery Grave and Breeding Pool), within the commander's identity, not only the types'
+  colours.
+- **A commander that is a combo piece** counts only once it is on the battlefield or can be cast that turn
+  with the other pieces, unless Spellbook lists it as needed only in the command zone.
+
+The dominant tags (`ideas.dominant_tags`) are read whatever the profile's tag search setting says; that
+setting only decides whether Archidekt is searched by tag. `POLICY_VERSION` stays 1, since nothing has been
+cached yet.
