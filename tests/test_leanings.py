@@ -101,6 +101,14 @@ def test_too_few_peer_decks_or_cards_or_peers_playing_as_many_make_no_leaning(db
     assert find_leanings(main, playing, db) == ()
 
 
+def test_a_card_filed_as_two_entries_counts_as_one_card(db: CardDb) -> None:
+    twice = deck_card("Filler Card 2")
+    # Two cards in three entries are short of MIN_CARDS.
+    assert find_leanings(resolved(db, [*deck_cards(1, 2), twice]), peers(5), db) == ()
+    found = find_leanings(resolved(db, [*deck_cards(1, 2, 3), twice]), peers(5), db)
+    assert [leaning.cards for leaning in found] == [("Filler Card 1", "Filler Card 2", "Filler Card 3")]
+
+
 def test_name_trivia_cycles_narrow_tags_and_ignored_ones_are_never_leanings(db: CardDb) -> None:
     main = resolved(db, deck_cards(1, 2, 3, 4, 5))
     tags = [leaning.tag for leaning in find_leanings(main, peers(5), db)]
