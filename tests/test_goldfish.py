@@ -524,6 +524,7 @@ def test_a_spirit_guide_pays_for_a_two_drop_on_turn_one() -> None:
     guide = make(
         "Elvish Spirit Guide",
         mv=3,
+        pips={"G": 1},
         kinds=CREATURE,
         mana=ManaAbility(1, frozenset("G"), delayed=False, ritual=True, from_hand=True),
     )

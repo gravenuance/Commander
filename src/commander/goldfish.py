@@ -343,7 +343,8 @@ class _Card:
         # Mana a ritual adds, net of the mana its own cost takes.
         self.gain = 0 if mana is None else mana.amount - (0 if spend_from_hand else card.mana_value)
         activation = card.land_ramp.activation if card.land_ramp is not None else 0
-        self.cost = cost_of(0 if spend_from_hand else card.mana_value + activation, card.pips)
+        # A spirit guide is exiled, not cast: its pips are not paid.
+        self.cost = cost_of(0, {}) if spend_from_hand else cost_of(card.mana_value + activation, card.pips)
         fin = card.mana_value + FINISHER_X if card.x_cost else card.mana_value
         self.fin_cost = cost_of(fin, card.pips)
         self.pip_mask = unit_mask(colour for colour, count in card.pips.items() if count > 0)
@@ -488,13 +489,13 @@ class _Setup:
         found = self.merged.get(cids)
         if found is None:
             total = 0
-            pips: dict[str, int] = {}
+            needs: dict[int, int] = {}
             for cid in cids:
-                card = self.cards[cid]
-                total += card.cost.total
-                for colour, count in card.src.pips.items():
-                    pips[colour] = pips.get(colour, 0) + count
-            found = self.merged[cids] = cost_of(total, pips)
+                cost = self.cards[cid].cost
+                total += cost.total
+                for bit in cost.pip_bits:
+                    needs[bit] = needs.get(bit, 0) + 1
+            found = self.merged[cids] = Cost(total, needs)
         return found
 
 
