@@ -125,3 +125,16 @@ def test_a_category_outside_the_deck_keeps_its_own_cards_apart_from_a_deck_group
     return { deck: order("Ramp"), outside: order("outside:Ramp"), mapped: [...state.gridCards.keys()] };
     """)
     assert seen == {"deck": ["Ayula"], "outside": ["Birds"], "mapped": ["Ayula"]}
+
+
+def test_categories_whose_names_differ_only_in_digits_or_punctuation_get_their_own_stack_ids() -> None:
+    seen = run("""
+    const outside = (name) => group([gcard(name)], { key: `outside:${name}`, name, inDeck: false });
+    renderGrid([outside("Ramp 1"), outside("Ramp 2"), outside("Ramp-1")]);
+    const sections = ["Ramp 1", "Ramp 2", "Ramp-1"].map((name) => state.groups.get(`outside:${name}`).node);
+    const ids = sections.map((node) => node.querySelector(".stack").id);
+    const controls = sections.map((node) =>
+      node.querySelector(".group-toggle").getAttribute("aria-controls"));
+    return { distinct: new Set(ids).size, controlsOwn: controls.every((id, i) => id === ids[i]) };
+    """)
+    assert seen == {"distinct": 3, "controlsOwn": True}

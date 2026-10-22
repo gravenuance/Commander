@@ -76,12 +76,16 @@ function renderGrid(groups) {
   for (const [name, node] of state.gridCards) if (before.get(name) !== node) painted.dirty.add(name);
 }
 
+// Numbered so categories whose names slug alike ("Ramp 1", "Ramp-1") never share a stack id.
+let stackCount = 0;
+
 // The group's section with an empty stack; syncHeader and syncStack fill it and keep it up to date.
 function buildGroup(group) {
   const id = groupKey(group);
   const inDeck = group.inDeck !== false;
   const stack = el("ul", {
-    class: "stack", id: `stack-${id.toLowerCase().replace(/[^a-z]+/g, "-")}`, hidden: state.collapsed.has(id),
+    class: "stack", id: `stack-${++stackCount}-${id.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+    hidden: state.collapsed.has(id),
   });
   const title = el("h3", { class: "group-title" });
   return {
