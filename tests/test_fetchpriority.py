@@ -34,3 +34,12 @@ def test_ranks_follow_a_preference_set_later() -> None:
     assert [priority.rank(deck, [1, 2]) for deck in (1, 2)] == [1, 2]
     priority.prefer(2)
     assert [priority.rank(deck, [1, 2]) for deck in (1, 2)] == [1, 0]
+
+
+def test_a_watcher_hears_each_new_preference_after_it_is_set() -> None:
+    priority = FetchPriority()
+    seen: list[int] = []
+    priority.watch(lambda: seen.append(priority.rank(2, [1, 2])))
+    priority.prefer(2)
+    priority.prefer(1)
+    assert seen == [0, 2]

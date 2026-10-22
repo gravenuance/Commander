@@ -713,3 +713,26 @@ def test_a_deck_without_a_commander_is_left_out() -> None:
     event["standings"][0]["deckObj"]["Commanders"] = {}
     [record] = parse_tournaments([event])
     assert record.decks == ()
+
+
+class LockedStore(TournamentStore):
+    """A store that cannot be written, as when an indexer holds the file or the disk is full."""
+
+    def save(self, record: object) -> None:  # noqa: ARG002
+        raise PermissionError("denied")
+
+
+def test_a_store_that_cannot_be_written_is_a_topdeck_error_and_the_client_then_sends_nothing_more(
+    tmp_path: Path,
+) -> None:
+    fake = FakeTopdeck()
+    client = TopdeckClient(
+        Fetcher(fake.client(), max_attempts=1), Pacer(0), LockedStore(tmp_path), MemoryKeyStore()
+    )
+    client.load(since=SINCE, until=UNTIL)
+    assert len(fake.requests) == 1
+    with pytest.raises(TopdeckError, match="could not be stored: denied"):
+        ask(client)
+    with pytest.raises(TopdeckError, match="could not be stored"):
+        ask(client, KINNAN)
+    assert len(fake.requests) == 1

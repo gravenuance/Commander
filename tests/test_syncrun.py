@@ -481,20 +481,45 @@ def test_a_deck_whose_read_fails_is_incomplete_with_its_warnings_and_the_others_
     assert outcome.warnings == ["a source was unavailable", "Magda ideas not compiled: board.json is damaged"]
 
 
-def test_an_unexpected_error_in_a_decks_read_ends_the_sync_instead_of_being_lost(
-    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+def test_an_unexpected_error_in_a_decks_read_is_logged_and_that_deck_alone_is_incomplete(
+    tmp_path: Path,
+    raw_deck: Json,
+    card_db_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     fake = three_decks(tmp_path, raw_deck, card_db_file)
     stub_meta(monkeypatch)
+    merged: list[int] = []
 
     def gather_pools(stored: StoredDeck, *_: object, **__: object) -> AdjacentDecks:
         if stored.deck.id == 102:
             raise RuntimeError("the read broke")
         return AdjacentDecks((), ())
 
+    def compile_ideas(stored: StoredDeck, *_: object, **__: object) -> dict[Origin, list[BoardCard]]:
+        merged.append(stored.deck.id)
+        return {}
+
     monkeypatch.setattr(syncrun, "gather_idea_pools", gather_pools)
-    with pytest.raises(RuntimeError, match="the read broke"):
-        sync_ideas(tmp_path, fake)
+    monkeypatch.setattr(syncrun, "compile_ideas", compile_ideas)
+    states: dict[int, str] = {}
+    with caplog.at_level(logging.WARNING, logger="commander.syncrun"):
+        outcome = run_sync(
+            services(tmp_path, fake),
+            Workspace(tmp_path / "decks"),
+            "TESTER",
+            MetaSettings(),
+            SyncOptions(cards=False),
+            on_deck=lambda deck_id, state: states.__setitem__(deck_id, state.value),
+            on_progress=lambda _: None,
+        )
+    assert states == {101: "done", 102: "incomplete", 103: "done"}
+    assert sorted(merged) == [101, 103]
+    assert outcome.warnings == ["Magda ideas not compiled: unexpected RuntimeError: the read broke"]
+    [record] = [r for r in caplog.records if r.name == "commander.syncrun"]
+    assert record.exc_info is not None
+    assert str(record.exc_info[1]) == "the read broke"
 
 
 def test_decks_whose_tournament_lists_hit_a_key_problem_are_incomplete_and_the_sync_warns_once(
@@ -603,10 +628,14 @@ def test_an_error_mid_sync_waits_for_topdeck_before_the_client_closes_and_logs_w
     def start_gather(deck: Deck, *_: object, **__: object) -> Callable[[], object]:
         if deck.id == DECK_IDS[1]:
             failing.set()
-            raise RuntimeError("the second deck's reads broke")
         return lambda: SimpleNamespace(
             lists=SimpleNamespace(data=1, error=None, key_problem=False), peers=SimpleNamespace(data=1)
         )
+
+    def compile_ideas(stored: StoredDeck, *_: object, **__: object) -> dict[Origin, list[BoardCard]]:
+        if stored.deck.id == DECK_IDS[1]:
+            raise RuntimeError("the second deck's merge broke")
+        return {}
 
     def open_client() -> httpx.Client:
         clients.append(fake.client())
@@ -615,8 +644,9 @@ def test_an_error_mid_sync_waits_for_topdeck_before_the_client_closes_and_logs_w
     monkeypatch.setattr(syncrun, "meta_sources", sources)
     monkeypatch.setattr(syncrun, "start_tournament_refresh", start_topdeck)
     monkeypatch.setattr(syncrun, "start_gather_for", start_gather)
+    monkeypatch.setattr(syncrun, "compile_ideas", compile_ideas)
     with caplog.at_level(logging.WARNING, logger="commander.metadata"):
-        with pytest.raises(RuntimeError, match="second deck's reads broke"):
+        with pytest.raises(RuntimeError, match="second deck's merge broke"):
             run_sync(
                 replace(services(tmp_path, fake), client_factory=open_client),
                 Workspace(tmp_path / "decks"),

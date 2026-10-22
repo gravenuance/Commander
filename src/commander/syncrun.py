@@ -175,7 +175,7 @@ def run_sync(
                 log.warning("Archidekt login not usable: %s", login.problem)
                 warnings.append(f"Archidekt login not usable ({login.problem}): {PRIVATE_NOT_UPDATED}")
             results = sync_decks(
-                ArchidektClient(fetcher, token=login.token),
+                ArchidektClient(fetcher, token=login.token, pacer=services.pacer_factory(0.0)),
                 workspace,
                 user,
                 force=options.force,
@@ -371,6 +371,7 @@ def _compile_ideas(
             services.cache,
             waits=_TopdeckWaits(phases),
             rank=lambda deck_id: next_up.rank(deck_id, order),
+            rank_changes=next_up.watch,
         )
         waiting = _with_estimated_brackets(waiting, http, services, phases)
         # TopDeck's window is fetched once, on its own thread, while every deck's Archidekt and Spellbook
@@ -404,7 +405,9 @@ def _compile_ideas(
             if tournaments is not None:
                 # The client closes with this block, so TopDeck's thread must be over first.
                 _wait_for(tournaments)
-                tournaments.result()
+                # `start_tournament_refresh` has logged any error; the reads have its failure to report.
+                if tournaments.exception() is not None:
+                    warnings.append("TopDeck's tournament lists were not fetched: unexpected error")
         # Every deck's reads are over, so none is using a cached deck read the prune could remove.
         prune_deck_reads(services.cache, settings, now=services.now)
     return phase
@@ -604,7 +607,15 @@ def _merge_deck(
     deck = read.stored.deck
     try:
         finished = read.read.result()
-        pools, data = finished.pools, finished.data
+    except (BoardError, ProfileError) as error:
+        _not_compiled(read, str(error), warnings, on_deck)
+        return
+    except Exception as error:  # one deck's failed read must not stop the others' merges
+        log.warning("deck %d: its reads failed unexpectedly", deck.id, exc_info=error)
+        _not_compiled(read, f"unexpected {type(error).__name__}: {error}", warnings, on_deck)
+        return
+    pools, data = finished.pools, finished.data
+    try:
         with deck_lock(deck.id):
             current = _current(workspace, read.stored)
             if current is None:
@@ -635,9 +646,7 @@ def _merge_deck(
                 current, data, db, now=services.now, adjacent=pools.decks, tagged=pools.tagged
             )
     except (BoardError, ProfileError) as error:
-        warnings.extend(read.warnings)
-        warnings.append(f"{deck.short_name} ideas not compiled: {error}")
-        on_deck(deck.id, FetchState.INCOMPLETE)
+        _not_compiled(read, str(error), warnings, on_deck)
         return
     if data.lists.data is None and data.peers.data is None:
         why = data.peers.error or data.lists.error
@@ -646,6 +655,12 @@ def _merge_deck(
     key_problem = _note_key_problem(data.lists.key_problem, warnings)
     incomplete = bool(read.warnings) or data.peers.data is None or key_problem
     on_deck(deck.id, FetchState.INCOMPLETE if incomplete else FetchState.DONE)
+
+
+def _not_compiled(read: _ReadingDeck, why: str, warnings: list[str], on_deck: DeckProgress) -> None:
+    warnings.extend(read.warnings)
+    warnings.append(f"{read.stored.deck.short_name} ideas not compiled: {why}")
+    on_deck(read.stored.deck.id, FetchState.INCOMPLETE)
 
 
 _GONE = "the deck left its folder or changed its commander while its ideas were fetched"

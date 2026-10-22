@@ -85,6 +85,15 @@ def test_honours_retry_after_http_date() -> None:
     assert sleeps == [10.0]
 
 
+def test_a_retry_after_date_without_a_zone_counts_as_utc_not_local_time() -> None:
+    # "-0000" parses to a naive datetime, which would be read in the machine's own time zone.
+    retry = httpx.Response(429, headers={"Retry-After": "Thu, 15 Oct 2026 12:00:10 -0000"})
+    script = Script(retry, httpx.Response(200, json=[]))
+    sleeps: list[float] = []
+    fetcher(script, sleeps, now=1_792_065_600.0).get_json(URL)
+    assert sleeps == [10.0]
+
+
 def test_caps_retry_after() -> None:
     script = Script(httpx.Response(429, headers={"Retry-After": "3600"}), httpx.Response(200, json=[]))
     sleeps: list[float] = []
