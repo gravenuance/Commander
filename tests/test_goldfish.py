@@ -6,6 +6,7 @@ errors, which a fixed seed keeps from ever flaking.
 """
 
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from math import comb
 
 import pytest
@@ -28,7 +29,9 @@ from commander.goldfish_cards import (
     GoldfishCard,
     GoldfishCombo,
     GoldfishDeck,
+    LandDestination,
     LandFace,
+    LandRamp,
     ManaAbility,
     Tutor,
     TutorDestination,
@@ -58,6 +61,8 @@ def make(
     extra_land_drops: int = 0,
     needs_sacrifice: bool = False,
     entry_cost: EntryCost | None = None,
+    land_ramp: LandRamp | None = None,
+    land_types: frozenset[str] = frozenset(),
 ) -> GoldfishCard:
     return GoldfishCard(
         name=name,
@@ -70,7 +75,7 @@ def make(
         kinds=kinds,
         land=land,
         mana=mana,
-        land_ramp=None,
+        land_ramp=land_ramp,
         tutor=tutor,
         draw=draw,
         combo=combo,
@@ -80,6 +85,7 @@ def make(
         extra_land_drops=extra_land_drops,
         needs_sacrifice=needs_sacrifice,
         entry_cost=entry_cost,
+        land_types=land_types,
     )
 
 
@@ -802,6 +808,31 @@ def test_a_tutor_goes_for_a_finisher_when_no_combo_piece_is_missing() -> None:
     slots = [*repeat(FOREST, 5), tutor, finisher, VANILLA, VANILLA]
     report = run(slots, games=500, seed=2)
     assert any(o.searched for o in report.outcomes)
+
+
+def typed_search(*land_types: str) -> GoldfishCard:
+    return make(
+        "Search",
+        mv=2,
+        land_ramp=LandRamp(
+            1, basic_only=False, destination=LandDestination.UNTAPPED, land_types=frozenset(land_types)
+        ),
+    )
+
+
+def test_a_typed_land_search_fetches_only_lands_of_its_types() -> None:
+    tomb = land("Tomb", "C", amount=2)
+    report = run([typed_search("forest"), *repeat(tomb, 49)], games=300, seed=3)
+    # No Forest to find: every game plays a Tomb a turn for two mana, whether or not the search is cast.
+    assert all(o.mana == (2, 4, 6, 8, 10) for o in report.outcomes)
+    assert any(o.searched for o in report.outcomes)
+
+
+def test_a_typed_land_search_fetches_a_land_with_one_of_its_types() -> None:
+    forest = replace(FOREST, land_types=frozenset({"forest"}))
+    report = run([typed_search("plains", "forest"), *repeat(forest, 49)], games=300, seed=3)
+    # Cast on turn two with two Forests out, the search puts a third untapped.
+    assert any(o.mana[1] == 3 for o in report.outcomes)
 
 
 # --- the payment solver ----------------------------------------------------------------------------------

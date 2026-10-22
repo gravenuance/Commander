@@ -117,6 +117,8 @@ class LandRamp:
     to_hand: int = 0
     # Mana to pay after casting a permanent that sacrifices itself to search (Wayfarer's Bauble).
     activation: int = 0
+    # The basic land types a found land must have (Nature's Lore: forest); empty for any land.
+    land_types: frozenset[str] = frozenset()
 
 
 @dataclass(slots=True, frozen=True)
@@ -173,6 +175,8 @@ class GoldfishCard:
     # Casting it needs a creature to sacrifice (Diabolic Intent, Culling the Weak).
     needs_sacrifice: bool = False
     entry_cost: EntryCost | None = None
+    # The basic land types of a land (Breeding Pool: forest and island), which a typed search matches.
+    land_types: frozenset[str] = frozenset()
 
     @property
     def permanent(self) -> bool:
@@ -443,7 +447,7 @@ def _compile_card(
     )
     if info_is_land(info):
         land, understood = _land_face(info, context)
-        return replace(card, land=land, modelled=understood)
+        return replace(card, land=land, land_types=_land_types(info), modelled=understood)
     card = _read_spell(card, info, _face_text(info, face), context)
     if back_is_land(info.type_line):
         land, understood = _land_face(info, context)
@@ -755,7 +759,9 @@ def _land_ramp(search: _Search | None, kinds: frozenset[CardKind]) -> LandRamp |
         destination = LandDestination.TAPPED
     else:
         destination = LandDestination.UNTAPPED
-    return LandRamp(count, "basic" in words, destination, to_hand, cost.mana)
+    # "A Forest card" names the types; "a land card" or "a basic land card" takes any.
+    types = frozenset[str]() if "land" in words else frozenset(BASIC_TYPES).intersection(words)
+    return LandRamp(count, "basic" in words, destination, to_hand, cost.mana, types)
 
 
 def _tutor(search: _Search | None) -> Tutor | None:

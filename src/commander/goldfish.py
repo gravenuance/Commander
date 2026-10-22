@@ -313,6 +313,7 @@ class _Card:
         "land_amount",
         "land_mask",
         "land_tapped",
+        "land_types",
         "mana_amount",
         "mana_mask",
         "mana_perm",
@@ -352,6 +353,7 @@ class _Card:
         self.land_mask = unit_mask(land.colours) if land is not None else 0
         self.land_amount = land.amount if land is not None else 0
         self.land_tapped = land is not None and land.tapped
+        self.land_types = card.land_types
         name = card.name.casefold()
         self.basic = name in _BASICS or name.startswith("snow-covered ")
         self.creature = CardKind.CREATURE in card.kinds
@@ -751,14 +753,20 @@ class _Game:
             extra = extra or have < card.cost.total <= have + 1
         return want, want & ~cover, extra
 
-    def _find_land(self, *, basic_only: bool) -> int:
-        """The index in the library of the land to fetch, or -1: the one best for the colours wanted."""
+    def _find_land(self, *, basic_only: bool, types: frozenset[str]) -> int:
+        """The index in the library of the land to fetch, or -1: the one best for the colours wanted, among
+        the lands with one of the basic land types (any land when none are named)."""
         cards = self.s.cards
         first: dict[int, int] = {}
         for index in range(self.top, len(self.lib)):
             cid = self.lib[index]
             card = cards[cid]
-            if cid not in first and card.is_land and (card.basic or not basic_only):
+            if (
+                cid not in first
+                and card.is_land
+                and (card.basic or not basic_only)
+                and (not types or not types.isdisjoint(card.land_types))
+            ):
                 first[cid] = index
         if not first:
             return -1
@@ -982,7 +990,7 @@ class _Game:
         self.searched = self.land_search = True
         cards = self.s.cards
         for index in range(ramp.count):
-            found = self._find_land(basic_only=ramp.basic_only)
+            found = self._find_land(basic_only=ramp.basic_only, types=ramp.land_types)
             if found < 0:
                 return
             cid = self.lib.pop(found)

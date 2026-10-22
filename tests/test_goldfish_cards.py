@@ -1238,12 +1238,29 @@ def test_cultivate_puts_one_land_tapped_and_one_in_hand_and_is_no_tutor() -> Non
 
 def test_land_ramp_reads_basics_typed_lands_tapped_and_untapped() -> None:
     assert one(RAMPANT_GROWTH).land_ramp == LandRamp(1, basic_only=True, destination=LandDestination.TAPPED)
-    assert one(NATURES_LORE).land_ramp == LandRamp(1, basic_only=False, destination=LandDestination.UNTAPPED)
-    assert one(FARSEEK).land_ramp == LandRamp(1, basic_only=False, destination=LandDestination.TAPPED)
-    assert one(SKYSHROUD_CLAIM).land_ramp == LandRamp(
-        2, basic_only=False, destination=LandDestination.UNTAPPED
+    forest = frozenset({"forest"})
+    assert one(NATURES_LORE).land_ramp == LandRamp(
+        1, basic_only=False, destination=LandDestination.UNTAPPED, land_types=forest
     )
-    assert one(WOOD_ELVES).land_ramp == LandRamp(1, basic_only=False, destination=LandDestination.UNTAPPED)
+    assert one(FARSEEK).land_ramp == LandRamp(
+        1,
+        basic_only=False,
+        destination=LandDestination.TAPPED,
+        land_types=frozenset({"plains", "island", "swamp", "mountain"}),
+    )
+    assert one(SKYSHROUD_CLAIM).land_ramp == LandRamp(
+        2, basic_only=False, destination=LandDestination.UNTAPPED, land_types=forest
+    )
+    assert one(WOOD_ELVES).land_ramp == LandRamp(
+        1, basic_only=False, destination=LandDestination.UNTAPPED, land_types=forest
+    )
+
+
+def test_a_land_record_carries_its_basic_land_types() -> None:
+    assert one(FOREST).land_types == {"forest"}
+    assert one(BREEDING_POOL).land_types == {"forest", "island"}
+    assert one(COMMAND_TOWER).land_types == frozenset()
+    assert one(SOL_RING).land_types == frozenset()
 
 
 def test_a_permanent_that_sacrifices_itself_for_lands_carries_its_activation_cost() -> None:
