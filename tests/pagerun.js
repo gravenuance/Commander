@@ -43,7 +43,9 @@ class FakeElement {
     this.value = "";
     this.offsetTop = 0;
     this.offsetHeight = 0;
+    this.offsetWidth = 0;
   }
+  getBoundingClientRect() { return { top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0 }; }
 
   // Attributes, and the properties the page uses that reflect them.
   setAttribute(name, value) { this.attrs.set(name, String(value)); }
@@ -300,6 +302,8 @@ async function main() {
   });
   const window = new FakeElement(document, "window");
   window.pywebview = { api: bridge };
+  window.innerWidth = 1280;
+  window.innerHeight = 800;
   const sandbox = {
     document, window, console: { log() {}, warn() {}, error() {} }, navigator: {},
     setTimeout: (fn, ms) => timers.push({ fn, ms }),

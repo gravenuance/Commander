@@ -176,7 +176,7 @@ function buildGridCard(card, aside = null) {
   // A label is set on an entry in the deck; a card still to come in gets Don't Have when it is saved.
   if (inDeck && !incoming) {
     flag = el("button", {
-      class: `flag ${label ? "set" : ""}`, type: "button", "aria-haspopup": "menu",
+      class: `flag ${label ? "set" : ""}`, type: "button", "aria-haspopup": "menu", "aria-expanded": "false",
       "aria-label": `Label for ${card.name}: ${label || "none"}`, title: label || "Set label",
     });
     if (label && COLOUR.test(card.labelColour)) setLabelColour(flag, card.labelColour);
@@ -292,7 +292,10 @@ function setupLabelMenu() {
     if (menuState.flag && !menu.contains(event.target) && event.target !== menuState.flag) closeLabelMenu(false);
   });
   window.addEventListener("resize", () => closeLabelMenu(false));
-  $("grid").addEventListener("scroll", () => closeLabelMenu(false), true);
+  // The scroller is the grid's pane (or the main area on a narrow window), and scroll events do not bubble.
+  document.addEventListener("scroll", (event) => {
+    if (!menu.contains(event.target)) closeLabelMenu(false);
+  }, true);
 }
 
 async function chooseLabel(name, current, label) {
