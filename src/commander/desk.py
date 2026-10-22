@@ -921,7 +921,9 @@ class Desk:
     def save_finishers(self, deck_id: int, finishers: object) -> Json:
         """Set the cards the goldfish plays as finishers to exactly these names ([str]): the Tagger-marked
         ones left out of the list go into profile.toml's [goldfish] not_finishers, the others into finishers.
-        Comments stay. Answers as `settings` does."""
+        What the owner wrote by hand stays unless this list decides it: a not_finishers entry for a card the
+        Tagger does not mark (cut, or never marked) until the list names the card, a finishers entry for a
+        marked card while the list keeps it. Comments stay. Answers as `settings` does."""
         with self._writing("finishers save", "save the finishers", deck_id) as busy:
             if busy:
                 return busy
@@ -942,11 +944,15 @@ class Desk:
                             return {"error": f"No card named {name!r} (check the spelling)"}
                         real = info.name
                     wanted.setdefault(card_key(real), real)
+            kept_added = [n for n in profile.finishers if card_key(n) in tagged and card_key(n) in wanted]
+            kept_removed = [
+                n for n in profile.not_finishers if card_key(n) not in tagged and card_key(n) not in wanted
+            ]
             save_finishers(
                 stored.folder,
                 stored.deck,
-                added=[name for key, name in wanted.items() if key not in tagged],
-                removed=[name for key, name in tagged.items() if key not in wanted],
+                added=[*(name for key, name in wanted.items() if key not in tagged), *kept_added],
+                removed=[*(name for key, name in tagged.items() if key not in wanted), *kept_removed],
             )
         return self.settings(deck_id)
 

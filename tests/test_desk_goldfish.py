@@ -5,8 +5,10 @@ The fixture deck is Magda with a library of 8 cards: six Mountains, Battered Gol
 hand and the first draw show every card and each card does the same for mana in every game.
 """
 
+import json
 import shutil
 import threading
+import tomllib
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -312,6 +314,63 @@ def test_a_finisher_the_tagger_marks_is_listed_as_automatic_and_the_owner_can_ta
     text = profile_file(tagged).read_text(encoding="utf-8")
     assert 'finishers = ["Battered Golem"]' in text
     assert "not_finishers = []" in text
+
+
+HAND_WRITTEN = (
+    "# mine, from the pod\n[goldfish]\n# kept\nfinishers = {finishers}\nnot_finishers = {not_finishers}\n"
+)
+
+
+def goldfish_lists(settings: DeskSettings) -> tuple[list[str], list[str]]:
+    """The profile's [goldfish] finishers and not_finishers, as written, names sorted."""
+    table = tomllib.loads(profile_file(settings).read_text(encoding="utf-8"))["goldfish"]
+    return sorted(table["finishers"]), sorted(table["not_finishers"])
+
+
+def write_goldfish(settings: DeskSettings, *, finishers: list[str], not_finishers: list[str]) -> None:
+    profile_file(settings).write_text(
+        HAND_WRITTEN.format(finishers=json.dumps(finishers), not_finishers=json.dumps(not_finishers)),
+        encoding="utf-8",
+    )
+
+
+def test_a_hand_written_not_finisher_for_a_card_the_tagger_does_not_mark_survives_a_save(
+    desk: Desk, settings: DeskSettings
+) -> None:
+    write_goldfish(settings, finishers=[], not_finishers=["Craterhoof Behemoth"])
+    saved = desk.save_finishers(DECK, ["Battered Golem"])
+    assert finishers(saved) == [("Battered Golem", False)]
+    text = profile_file(settings).read_text(encoding="utf-8")
+    assert 'not_finishers = ["Craterhoof Behemoth"]' in text
+    assert 'finishers = ["Battered Golem"]' in text
+    assert "# mine, from the pod" in text
+    assert "# kept" in text
+    # Another save with nothing changed keeps it still.
+    desk.save_finishers(DECK, [])
+    assert 'not_finishers = ["Craterhoof Behemoth"]' in profile_file(settings).read_text(encoding="utf-8")
+
+
+def test_a_card_the_owner_took_out_by_hand_and_then_adds_in_the_app_is_played_again(
+    desk: Desk, settings: DeskSettings
+) -> None:
+    write_goldfish(settings, finishers=[], not_finishers=["Battered Golem"])
+    saved = desk.save_finishers(DECK, ["battered golem"])
+    assert finishers(saved) == [("Battered Golem", False)]
+    assert "not_finishers = []" in profile_file(settings).read_text(encoding="utf-8")
+
+
+def test_a_hand_listed_finisher_the_tagger_also_marks_stays_listed_until_the_owner_takes_it_out(
+    tagged: DeskSettings, fake: FakeArchidekt
+) -> None:
+    desk = make_desk(tagged, fake)
+    write_goldfish(tagged, finishers=["Disruptor Flute"], not_finishers=[])
+    assert finishers(desk.settings(DECK)) == [("Disruptor Flute", True)]
+    kept = desk.save_finishers(DECK, ["Disruptor Flute", "Battered Golem"])
+    assert finishers(kept) == [("Disruptor Flute", True), ("Battered Golem", False)]
+    assert goldfish_lists(tagged) == (["Battered Golem", "Disruptor Flute"], [])
+    out = desk.save_finishers(DECK, ["Battered Golem"])
+    assert (finishers(out), out["finishersRemoved"]) == ([("Battered Golem", False)], ["Disruptor Flute"])
+    assert goldfish_lists(tagged) == (["Battered Golem"], ["Disruptor Flute"])
 
 
 def test_a_finisher_that_is_no_card_or_a_bad_payload_is_refused_and_the_file_stays(
