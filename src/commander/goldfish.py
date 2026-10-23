@@ -156,7 +156,7 @@ def chosen_creature_type(slots: Sequence[GoldfishCard], commanders: Sequence[Gol
     makers = Counter(
         t
         for card in everyone
-        if card.treasures_on_attack or card.treasure_on_tap or card.entry_trigger
+        if card.treasures_on_attack or card.treasure_on_tap or card.treasures_on_entry
         for t in _creature_types(card)
     )
     return max(own, key=lambda t: (makers[t] + (t in tapped), held[t]))

@@ -288,6 +288,26 @@ def test_the_type_a_chosen_type_doubler_names() -> None:
     assert chosen_creature_type([], []) is None
 
 
+def test_the_type_a_chosen_type_doubler_names_counts_only_triggers_that_make_treasures() -> None:
+    both = replace(make("Both", kinds=CREATURE), subtypes=frozenset({"dwarf", "elf"}))
+    barbarian = replace(
+        make("Barbarian", kinds=CREATURE),
+        subtypes=frozenset({"dwarf"}),
+        treasures_on_entry=1,
+        entry_trigger=True,
+    )
+    # Elves that draw as they enter are more numerous and make triggers, but no Treasures.
+    drifter = replace(
+        make("Drifter", kinds=CREATURE),
+        subtypes=frozenset({"elf"}),
+        draw=Draw(1, engine=False),
+        entry_trigger=True,
+    )
+    assert chosen_creature_type([barbarian, drifter, drifter], [both]) == "dwarf"
+    # Without the Treasures the type the deck has most of breaks the tie.
+    assert chosen_creature_type([drifter, drifter], [both]) == "elf"
+
+
 # --- other effects of a permanent that enters ---------------------------------------------------------------
 
 
