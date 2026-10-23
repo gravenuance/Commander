@@ -303,8 +303,9 @@ reading and the policy now follow, and `POLICY_VERSION` is 5.
     (Goreclaw: power 4 or greater), a sacrifice for the discount (Rottenmouth Viper), and the cost of an
     ability. A Class such as Artist's Talent keeps its reduction behind a level that nothing here pays for.
   - In a swap, two plain spells that play alike must also have the same card types, subtypes, power and
-    toughness when the deck holds a reducer, a discount or such a shrinking, as those are what they read; a
-    reducer or a discount is no plain spell.
+    toughness when the deck holds a reducer, a discount, such a shrinking or a permanent that makes a Treasure
+    for each creature of a type becoming tapped (Magda), as those are what they read; a reducer or a discount
+    is no plain spell.
 
 On the three decks, 10,000 games each: Etali's commander by turn five rose from 25% to 59% and Magda's combos
 by turn five from 9% to 55%; Ribbit's Hermit Druid line fell from 10.5% to 8.9% by turn five. The cards not

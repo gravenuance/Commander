@@ -2791,8 +2791,8 @@ def _acts_beyond_its_cost(card: GoldfishCard) -> bool:
 def _plays_alike(cut: GoldfishCard, incoming: GoldfishCard, *, exact: bool = False) -> bool:
     """Whether two plain spells are played the same in every game: the same mana value, colours and
     creature status, which are all a plain spell brings to the game. With `exact`, because a card of the
-    deck takes mana off spells by their types, or counts or shrinks creatures, also the same types,
-    subtypes, power and toughness."""
+    deck takes mana off spells by their types, counts or shrinks creatures, or makes a Treasure for each
+    creature of a type that taps, also the same types, subtypes, power and toughness."""
     return (
         _is_plain(cut)
         and _is_plain(incoming)
@@ -2900,7 +2900,10 @@ def compare(
         late=[cut.incoming for cut in cuts.values() if cut.partial],
     )
     same_rules = _same_rules(before, after, some)
-    exact = any(c.src.reducers or c.src.discount is not None or c.shrink for c in before.cards)
+    exact = any(
+        c.src.reducers or c.src.discount is not None or c.shrink or c.src.treasure_on_tap
+        for c in before.cards
+    )
     if (
         skip_irrelevant
         and same_rules

@@ -504,6 +504,11 @@ EXACT_CASES = {
         creature("Tough", toughness=3),
         creature("Frail", toughness=1),
     ),
+    "a tapped subtype": (
+        dataclasses.replace(make("Tapper", mv=2, kinds=ARTIFACT), treasure_on_tap=frozenset({"dwarf"})),
+        creature("Bear", subtypes=frozenset({"bear"})),
+        creature("Dwarf", subtypes=frozenset({"dwarf"})),
+    ),
 }
 
 
