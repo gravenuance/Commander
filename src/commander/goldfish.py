@@ -1714,24 +1714,16 @@ class _Game:
         cards = s.cards
         units = self.units
         have = len(units)
-        reach: tuple[int, int, int] | None = None
         cutting = self.cutting
-
-        def within(total: int, purpose: int) -> bool:
-            # Every reach is at least the mana there is, so only a dearer card makes it worth working out.
-            nonlocal reach
-            if total <= have:
-                return True
-            if reach is None:
-                reach = self._reach()
-            return total <= reach[purpose]
-
+        # Every reach is at least the mana there is, so it is worked out, once, for a dearer card only.
+        reach: tuple[int, int, int] | None = None
         best: _Pick | None = None
         best_rank = _HELD
         for cid in self.hand:
             card = cards[cid]
-            if card.rank < best_rank and within(
-                self._cost(card).total if cutting else card.cost.total, card.reach_for
+            if card.rank < best_rank and (
+                (total := self._cost(card).total if cutting else card.cost.total) <= have
+                or total <= (reach := reach or self._reach())[card.reach_for]
             ):
                 found = self._eligible(cid, card, units, from_command=False)
                 if found is not None:
@@ -1739,7 +1731,10 @@ class _Game:
         for cid in self.cmd_left:
             card = cards[cid]
             rank = _COMMANDER_RANK + min(card.mv, _RANK_SPAN)
-            if rank < best_rank and within(self._cost(card).total if cutting else card.cost.total, _FOR_WIN):
+            if rank < best_rank and (
+                (total := self._cost(card).total if cutting else card.cost.total) <= have
+                or total <= (reach := reach or self._reach())[_FOR_WIN]
+            ):
                 found = self._eligible(cid, card, units, from_command=True)
                 if found is not None:
                     best, best_rank = (cid, card, *found, True), rank
