@@ -15,10 +15,10 @@
   generic mana off the spells they name, Ghalta, The Great Henge, Bolt Bend, Blasphemous Act and Sunderflock
   cost less by the creatures in play, and Heartless Summoning shrinks every creature, killing those of
   toughness 1. It also counts cards that make more Treasures per event or a trigger happen again, cards that
-  become a copy of the creature making the most Treasures or enter as a copy and stay one, and Peter
-  Parker's Camera. Under *Not modelled* it lists the reducers it cannot read (a chosen creature type, a
-  Class level, a sacrifice) and a card the Tagger says doubles, copies or makes more mana that it does not
-  follow (ADR 0054).
+  become a copy of the creature making the most Treasures or enter as a copy and stay one (paid for at the
+  reduced cost, and reducing as the card they copy does), and Peter Parker's Camera. Under *Not modelled* it
+  lists the reducers it cannot read (a chosen creature type, a Class level, a sacrifice) and a card the
+  Tagger says doubles, copies or makes more mana that it does not follow (ADR 0054).
 - A Goldfish tab in the app shows the same figures. A queued idea with a cut shows the headline figures its
   swap moves in a *Goldfish* fold, and Review shows them for all queued swaps together, each only when
   something moved. The deck's Settings edit its finishers as chips.

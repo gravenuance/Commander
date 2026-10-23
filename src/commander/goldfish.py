@@ -753,9 +753,9 @@ class _Setup:
             for cid, card in enumerate(self.cards)
             if card.copy is not None and card.copy.kind in {CopyKind.COMBAT, CopyKind.ACTIVATED}
         )
+        self._make_clones()
         self._match_reducers()
         self._set_keep_rule()
-        self._make_clones()
 
     def _make_clones(self) -> None:
         """Add after the deck's cards, which keep their numbers, a card for each way a card that enters as a
@@ -792,12 +792,12 @@ class _Setup:
         self.cloners = any(card.cloner for card in self.cards)
         self.land_cloners = any(card.land_cloner for card in self.cards)
 
-    def cost_with(self, cid: int, extra: int) -> Cost:
-        """The cost of a card with more generic mana to pay (the X of a clone that copies for its mana)."""
-        found = self.xcosts.get((cid, extra))
+    def cost_of_total(self, cid: int, total: int) -> Cost:
+        """The cost of a card with its coloured pips and `total` mana in all (a clone that copies for its
+        mana pays more than the card costs)."""
+        found = self.xcosts.get((cid, total))
         if found is None:
-            card = self.cards[cid]
-            found = self.xcosts[(cid, extra)] = cost_of(card.cost.total + extra, card.src.pips)
+            found = self.xcosts[(cid, total)] = cost_of(total, self.cards[cid].src.pips)
         return found
 
     def _named_type(self, card: GoldfishCard) -> GoldfishCard:
@@ -810,15 +810,17 @@ class _Setup:
 
     def _match_reducers(self) -> None:
         """Give each spell the permanents that can take mana off its cost, and note whether any cost can
-        change; the costs of cards cast together are kept by the cards and the cuts."""
+        change; the costs of cards cast together are kept by the cards and the cuts. A clone reduces as the
+        card it copies does, and is never cast, so only the deck's own cards are reduced."""
         self.merged: dict[tuple[int, ...], Cost] = {}
         self.merged_cut: dict[tuple[tuple[int, ...], tuple[int, ...]], Cost] = {}
+        cast = self.cards[: self.real]
         for source_id, source in enumerate(self.cards):
             for reducer in source.src.reducers:
-                for card in self.cards:
+                for card in cast:
                     if not card.is_land and _reduces(reducer, card.src):
                         card.cutters += ((source_id, reducer.amount),)
-        self.has_cuts = any(card.cutters or card.src.discount is not None for card in self.cards)
+        self.has_cuts = any(card.cutters or card.src.discount is not None for card in cast)
 
     def _set_keep_rule(self) -> None:
         rule = self.keep_bracket
@@ -1737,17 +1739,18 @@ class _Game:
         if effect is None:
             return None
         left = s.horizon - self.turn
+        base = self._cost(card)
         best: _Clone | None = None
         for target in sorted(self.bf):
             clone = s.clones.get((cid, target))
             if clone is None:
                 continue
-            extra = max(s.cards[target].mv - card.cost.total, 0) if effect.mana_spent else 0
-            cost = card.cost.total + extra
+            extra = max(s.cards[target].mv - base.total, 0) if effect.mana_spent else 0
+            cost = base.total + extra
             value = self._clone_value(s.cards[clone], left)
             if value <= cost or (best is not None and value <= best.value):
                 continue
-            if can_pay(self.units, s.cost_with(cid, extra) if extra else card.cost):
+            if can_pay(self.units, s.cost_of_total(cid, cost) if extra else base):
                 mana = s.cards[clone].mana_perm
                 rank = (_MANA_RANK if mana else _COMBO_RANK) + min(cost, _RANK_SPAN)
                 best = _Clone(clone, extra, value, rank)

@@ -344,8 +344,14 @@ triggers, or copy a permanent, played as plain spells. The owner decided how eac
   the mana left over after the first main phase, or with Treasures when that costs less than the search
   does (or the search is paid by loyalty), and the largest Treasure trigger of combat when that makes more
   than the copy costs. Mana abilities cannot be copied, and arrival triggers are not.
-- **With the cost reducers.** A creature of toughness 1 that enters under Heartless Summoning still has its
-  arrival effects repeated by the doublers, as they would be for any arrival.
+- **With the cost reducers.** A card that enters as a copy is cast for the cost the reducers in play leave,
+  and a Mockingbird pays X on top of that; what it is worth is weighed against what it costs. The copy has
+  the features of the card it copies, its reductions included, so a copied Medallion that also makes mana
+  reduces as the original does; a permanent that is a copy for one turn (Gogo, Hall of Echoes, Cursed
+  Mirror) copies the creature that makes the most Treasures and none other, so it reduces nothing. The
+  costs of abilities (Hall of Echoes' {5}, the Camera's {2}) are not reduced, as the cost reducers above
+  leave them out. A creature of toughness 1 that enters under Heartless Summoning still has its arrival
+  effects repeated by the doublers, as they would be for any arrival.
 - **Not modelled.** A card the Tagger says doubles tokens or triggers, makes more mana or copies a permanent
   (tags `token-increaser`, `token-doubler`, `trigger-doubler`, `mana-increaser`, `clone`, `copy-creature`,
   `copy-artifact`, `copy-permanent`, `copy-ability`, `copy-land`) and whose effect the reading did not take

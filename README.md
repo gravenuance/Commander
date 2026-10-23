@@ -781,8 +781,9 @@ creatures the deck has out; Heartless Summoning also kills a creature of toughne
 Cards that make more Treasures per event (Xorn, Parallel Lives) or a trigger happen again (Panharmonicon,
 Roaming Throne), that become a copy of the creature making the most Treasures (Gogo, Hall of Echoes, Cursed
 Mirror), that enter as a copy and stay one (Sculpting Steel, Phantasmal Image, Mockingbird, Vesuva) and Peter
-Parker's Camera are played as they read. A card the Tagger says does one of those or makes more mana, and
-that the reading does not follow, is listed under `Not modelled` once the deck has what it works on.
+Parker's Camera are played as they read; a card that enters as a copy is paid for at the reduced cost and
+reduces as the card it copies does. A card the Tagger says does one of those or makes more mana, and that
+the reading does not follow, is listed under `Not modelled` once the deck has what it works on.
 
 `--swap "<card in>=<card out>"` (repeated for more) or `--plan plan.toml` (the plan `apply` reads: its adds
 paired with its removes, in order) plays the same games again with the swaps made and lists every figure that
