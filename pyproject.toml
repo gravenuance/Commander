@@ -1,6 +1,6 @@
 [project]
 name = "commander"
-version = "1.2.0"
+version = "1.2.1"
 description = "Track Archidekt Commander decks and research upgrades, prices and brackets."
 readme = "README.md"
 license = "MIT"
