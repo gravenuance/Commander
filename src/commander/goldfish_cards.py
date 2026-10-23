@@ -6,6 +6,7 @@ A card the reading cannot place stays a plain spell, flagged `modelled=False` an
 """
 
 import re
+from collections import Counter
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import Enum
@@ -246,6 +247,98 @@ class Reducer:
     amount: int
 
 
+class CopyKind(Enum):
+    """When and how long a card becomes a copy of another permanent."""
+
+    # At the beginning of combat, until end of turn (Gogo, Mysterious Mime).
+    COMBAT = "becomes a copy at the beginning of combat"
+    # By paying mana, until end of turn (Hall of Echoes).
+    ACTIVATED = "becomes a copy for mana"
+    # As it enters, until end of turn (Cursed Mirror).
+    TURN = "becomes a copy as it enters, until end of turn"
+    # Enters as a copy and stays one (Sculpting Steel, Phantasmal Image, Vesuva).
+    ENTERS = "enters as a copy"
+
+
+class CopyOf(Enum):
+    CREATURE = "creature"
+    ARTIFACT = "artifact"
+    ARTIFACT_OR_CREATURE = "artifact or creature"
+    LAND = "land"
+
+
+@dataclass(slots=True, frozen=True)
+class CopyEffect:
+    """A card that becomes a copy of a permanent in play."""
+
+    kind: CopyKind
+    of: CopyOf
+    # Generic mana paid to become the copy (Hall of Echoes: 5).
+    cost: int = 0
+    # The copy has haste (Cursed Mirror), so it attacks the turn it comes.
+    haste: bool = False
+    # The legend rule does not apply to it: it copies a legendary permanent and both stay (Gogo is renamed,
+    # Hall of Echoes lifts the rule). Any other copy of a legendary permanent is sacrificed.
+    legend_exempt: bool = False
+    # The copy enters tapped (Vesuva).
+    tapped: bool = False
+    # Only a permanent of a mana value up to the mana spent on the copy can be copied (Mockingbird).
+    mana_spent: bool = False
+
+
+class TriggerCause(Enum):
+    """What a trigger doubler waits for."""
+
+    # Any triggered ability of the creatures it names (Roaming Throne, Delney, Twinflame Travelers).
+    ANY = "any trigger"
+    # A permanent entering (Panharmonicon, Elesh Norn, Yarok).
+    ENTERING = "a permanent entering"
+    # A creature attacking (Windcrag Siege's Mardu mode).
+    ATTACKING = "a creature attacking"
+
+
+@dataclass(slots=True, frozen=True)
+class TriggerDoubler:
+    """A permanent under which a triggered ability of the permanents you control triggers an additional time,
+    for each doubler in play. `cause` says which triggers, and the rest limit them to the triggers of some
+    creatures."""
+
+    cause: TriggerCause
+    # What the entering permanent must be one of, for ENTERING; empty for any permanent.
+    entering: frozenset[CardKind] = frozenset()
+    # Only the triggers of creatures with this subtype, with the type this creature names as it enters
+    # (Roaming Throne), or with power at most this.
+    subtype: str | None = None
+    chosen_type: bool = False
+    max_power: int | None = None
+    # Not the doubler's own triggers.
+    another: bool = False
+
+
+class Unread(Enum):
+    """An effect the Tagger says a card has that changes what the goldfish counts, which the reading of the
+    card leaves out."""
+
+    # More tokens, so more Treasures.
+    TOKENS = "makes more tokens"
+    # A trigger that happens an additional time.
+    TRIGGERS = "makes triggers happen again"
+    # More mana from a permanent tapped for it.
+    MANA = "makes more mana"
+    # A copy of a permanent, or of a land.
+    COPY = "copies a permanent"
+    COPY_LAND = "copies a land"
+
+
+@dataclass(slots=True, frozen=True)
+class AbilityCopy:
+    """A permanent that copies an activated or triggered ability you control for `cost` generic mana and a
+    counter taken from it, and so many times as it has `counters` (Peter Parker's Camera)."""
+
+    cost: int
+    counters: int
+
+
 @dataclass(slots=True, frozen=True)
 class GoldfishCard:
     """One card of the deck as the game loop reads it. The cost is the one it is cast for: a two-part card by
@@ -307,6 +400,19 @@ class GoldfishCard:
     shrink: int = 0
     # The front face's toughness, None for a card with none or one that varies (*).
     toughness: int | None = None
+    legendary: bool = False
+    # A permanent whose arrival effects the goldfish counts are triggers of it entering: Treasures, a search,
+    # lands fetched or cards drawn, which a trigger doubler repeats.
+    entry_trigger: bool = False
+    # Treasures made are this many more per event (Xorn), and this many times as many (Parallel Lives).
+    treasure_extra: int = 0
+    treasure_factor: int = 1
+    trigger_doubler: TriggerDoubler | None = None
+    copy: CopyEffect | None = None
+    ability_copy: AbilityCopy | None = None
+    # What the Tagger says it does that the record leaves out. A deck lists the card as not modelled when it
+    # has what the effect works on.
+    unread: frozenset[Unread] = frozenset()
 
     @property
     def permanent(self) -> bool:
@@ -406,7 +512,7 @@ def compile_deck(
         compiled[key] = (
             replace(record, copies=compiled[key].copies + record.copies) if key in compiled else record
         )
-    records = list(compiled.values())
+    records = _unread_flagged(list(compiled.values()))
     return GoldfishDeck(
         cards=tuple(r for r in records if not r.commander),
         commanders=tuple(r for r in records if r.commander),
@@ -470,7 +576,8 @@ def compile_card(
     """One card read as `compile_deck` reads the deck's own: its identity, the typed lands fetches find, the
     combos, synergy and finishers. For a card that is not in the deck, a swap's incoming card; `cards`,
     `infos`, `powers` and `toughnesses` must hold it as well as the deck. A combo is the deck's own, so the
-    card is no piece of one that names it. A card the card data lacks is a plain spell, not modelled."""
+    card is no piece of one that names it. A card the card data lacks is a plain spell, not modelled, and so
+    is one with an effect the goldfish does not follow (`_unread_effects`), whatever the deck holds."""
     context = _deck_context(
         deck,
         cards,
@@ -483,7 +590,8 @@ def compile_card(
         powers=powers or {},
         toughnesses=toughnesses or {},
     )[0]
-    return _compile_card(name, cards.get(name.casefold()), copies, context, commander=False)
+    card = _compile_card(name, cards.get(name.casefold()), copies, context, commander=False)
+    return replace(card, modelled=False) if card.unread else card
 
 
 def _identity(deck: Deck, cards: Mapping[str, CardMana], infos: Mapping[str, CardInfo]) -> frozenset[str]:
@@ -593,6 +701,16 @@ _FOR_OPPONENT = re.compile(r"(?:its|that creature's|that permanent's) controller
 def _compile_card(
     name: str, info: CardMana | None, copies: int, context: _Context, *, commander: bool
 ) -> GoldfishCard:
+    card = _read_card(name, info, copies, context, commander=commander)
+    if info is None:
+        return card
+    tags = context.tags.get(info.oracle_id, frozenset())
+    return replace(card, unread=_unread_effects(card, info.oracle_text.casefold(), tags))
+
+
+def _read_card(
+    name: str, info: CardMana | None, copies: int, context: _Context, *, commander: bool
+) -> GoldfishCard:
     if info is None:
         return _plain(
             name,
@@ -620,10 +738,13 @@ def _compile_card(
         toughness=_stat(context.toughnesses.get(info.oracle_id)) or None,
         subtypes=frozenset({CHANGELING}) if changeling else _subtypes(info.type_line),
         free_outlet=card.permanent and _FREE_OUTLET.search(text) is not None,
+        legendary=_legendary(info.type_line),
     )
     if info_is_land(info):
         land, understood = _land_face(info, context)
-        return replace(card, land=land, land_types=_land_types(info), modelled=understood)
+        return replace(
+            card, land=land, land_types=_land_types(info), modelled=understood, copy=_copy_effect(text)
+        )
     card = _read_spell(card, info, _face_text(info, face), context)
     if back_is_land(info.type_line):
         land, understood = _land_face(info, context)
@@ -1280,6 +1401,13 @@ def _read_spell(card: GoldfishCard, info: CardMana, text: str, context: _Context
         "draw": _draw(text, card.kinds) if Role.DRAW in roles else None,
     }
     treasures = _treasures(text, card)
+    tokens = _token_increase(text)
+    drawn = found["draw"]
+    arrives = card.permanent and (
+        treasures[0] > 0
+        or (isinstance(drawn, Draw) and not drawn.engine)
+        or ((found["land_ramp"] is not None or found["tutor"] is not None) and _search_is_trigger(search))
+    )
     extra = _NUMBER_WORDS[land_drops.group(1)] if land_drops else 0
     placed = (
         extra > 0 or treasures != (0, 0, frozenset()) or any(value is not None for value in found.values())
@@ -1297,6 +1425,12 @@ def _read_spell(card: GoldfishCard, info: CardMana, text: str, context: _Context
         treasures_on_attack=treasures[1],
         treasure_on_tap=treasures[2],
         **reductions._asdict(),
+        entry_trigger=arrives,
+        treasure_extra=tokens[0],
+        treasure_factor=tokens[1],
+        trigger_doubler=_trigger_doubler(text),
+        copy=_copy_effect(text),
+        ability_copy=_ability_copy(text),
         **found,
     )
 
@@ -1337,10 +1471,229 @@ def _treasures(text: str, card: GoldfishCard) -> tuple[int, int, frozenset[str]]
     )
 
 
+_TREASURE_PLUS = re.compile(
+    r"if you would create (?:one or more )?treasure tokens?, instead create those tokens plus an additional "
+    r"treasure token"
+)
+_TOKEN_MULTIPLE = re.compile(
+    r"if (?:an effect would create one or more|one or more) (?P<kind>[a-z]+ )?tokens (?:would be created )?"
+    r"under your control, (?:it creates )?(?P<times>twice|three times) that many"
+)
+_MULTIPLES = {"twice": 2, "three times": 3}
+# A replacement that leaves the Treasures as they are (Academy Manufactor: one of each, the Treasure too).
+_TOKEN_NEUTRAL = re.compile(r"instead create one of each")
+# The kinds of token a Treasure is counted among.
+_TREASURE_KINDS = frozenset({"", "artifact", "treasure"})
+_ENTERING_DOUBLER = re.compile(
+    r"if (?P<cause>an? [a-z]+(?: or [a-z]+)?) (?P<event>entering|attacking) causes a triggered ability of a "
+    r"permanent you control to trigger, that ability triggers an additional time"
+)
+_SOURCE_DOUBLER = re.compile(
+    r"if a triggered ability of (?:another creature you control of (?P<chosen>the chosen type)"
+    r"|a creature you control with power (?P<power>\d+) or less"
+    r"|another (?P<subtype>[a-z]+) you control) triggers, (?:it|that ability) triggers an additional time"
+)
+
+
+def _token_increase(text: str) -> tuple[int, int]:
+    """The Treasures a permanent adds to each creation, and the number of times it multiplies them by."""
+    multiple = _TOKEN_MULTIPLE.search(text)
+    counted = multiple is not None and (multiple.group("kind") or "").strip() in _TREASURE_KINDS
+    factor = _MULTIPLES[multiple.group("times")] if multiple is not None and counted else 1
+    return (1 if _TREASURE_PLUS.search(text) else 0), factor
+
+
+def _trigger_doubler(text: str) -> TriggerDoubler | None:
+    """The triggers a permanent makes happen an additional time, when the reading can follow which."""
+    entering = _ENTERING_DOUBLER.search(text)
+    if entering is not None:
+        if entering.group("event") == "attacking":
+            return TriggerDoubler(TriggerCause.ATTACKING) if entering.group("cause") == "a creature" else None
+        words = [w for w in re.findall(r"[a-z]+", entering.group("cause")) if w not in {"a", "an", "or"}]
+        kinds = frozenset(_KIND_WORDS[w] for w in words if w in _KIND_WORDS)
+        known = len(kinds) == len([w for w in words if w != "permanent"])
+        return TriggerDoubler(TriggerCause.ENTERING, kinds) if known else None
+    source = _SOURCE_DOUBLER.search(text)
+    if source is None:
+        return None
+    if source.group("power") is not None:
+        return TriggerDoubler(TriggerCause.ANY, max_power=int(source.group("power")))
+    subtype = source.group("subtype")
+    return TriggerDoubler(
+        TriggerCause.ANY,
+        subtype=subtype if subtype not in {None, "creature"} else None,
+        chosen_type=source.group("chosen") is not None,
+        another=True,
+    )
+
+
+_COMBAT_COPY = re.compile(
+    r"^at the beginning of combat on your turn, you may have [^.]*? become a copy of another target "
+    r"creature you control until end of turn(?P<renamed>, except its name is)?",
+    re.MULTILINE,
+)
+_ACTIVATED_COPY = re.compile(
+    r"^\{(?P<cost>\d+)\}: this \w+ becomes a copy of target creature you control until end of turn\.",
+    re.MULTILINE,
+)
+_ENTERS_COPY = re.compile(
+    r"^as this \w+ enters, you may have it become a copy of any creature on the battlefield until end of "
+    r"turn(?P<haste>, except it has haste)?",
+    re.MULTILINE,
+)
+_LEGEND_RULE_LIFTED = re.compile(r'the "legend rule" doesn\'t apply')
+_ENTERS_AS_COPY = re.compile(
+    r"you may have this \w+ enter (?P<tapped>tapped )?as a copy of any "
+    r"(?P<of>artifact or creature|artifact|creature|land) on the battlefield"
+    r"(?P<spent> with mana value less than or equal to the amount of mana spent to cast this creature)?"
+)
+_COPIED = {kind.value: kind for kind in CopyOf}
+_ABILITY_COPY = re.compile(
+    r"^\{(?P<cost>\d+)\}, \{t\}, remove an? \w+ counter from this \w+: copy target activated or triggered "
+    r"ability you control",
+    re.MULTILINE,
+)
+_COUNTERS = re.compile(r"^this \w+ enters with (?P<n>[a-z]+) \w+ counters on it", re.MULTILINE)
+
+
+def _ability_copy(text: str) -> AbilityCopy | None:
+    """The copy of an ability a permanent makes for a counter on it, when it says how many it enters with."""
+    copying = _ABILITY_COPY.search(text)
+    counters = _COUNTERS.search(text)
+    if copying is None or counters is None or counters.group("n") not in _NUMBER_WORDS:
+        return None
+    return AbilityCopy(int(copying.group("cost")), _NUMBER_WORDS[counters.group("n")])
+
+
+def _copy_effect(text: str) -> CopyEffect | None:
+    """The copy a card becomes of a creature until end of turn, when the reading can follow it."""
+    combat = _COMBAT_COPY.search(text)
+    if combat is not None:
+        return CopyEffect(
+            CopyKind.COMBAT,
+            CopyOf.CREATURE,
+            haste="gain haste" in text,
+            legend_exempt=combat.group("renamed") is not None,
+        )
+    activated = _ACTIVATED_COPY.search(text)
+    if activated is not None:
+        return CopyEffect(
+            CopyKind.ACTIVATED,
+            CopyOf.CREATURE,
+            cost=int(activated.group("cost")),
+            legend_exempt=_LEGEND_RULE_LIFTED.search(text) is not None,
+        )
+    entering = _ENTERS_COPY.search(text)
+    if entering is not None:
+        return CopyEffect(CopyKind.TURN, CopyOf.CREATURE, haste=entering.group("haste") is not None)
+    stays = _ENTERS_AS_COPY.search(text)
+    if stays is not None:
+        return CopyEffect(
+            CopyKind.ENTERS,
+            _COPIED[stays.group("of")],
+            tapped=stays.group("tapped") is not None,
+            mana_spent=stays.group("spent") is not None,
+        )
+    return None
+
+
+def _search_is_trigger(search: _Search | None) -> bool:
+    """Whether a search happens by itself as a permanent arrives, with no cost to pay."""
+    return search is not None and not (search.cost or search.repeating or search.deferred)
+
+
+def _legendary(type_line: str) -> bool:
+    return "legendary" in front_type(type_line).casefold().partition("—")[0].split()
+
+
 def _names_of_itself(card: GoldfishCard) -> set[str]:
     """What the card's text calls it: "this creature" ("this artifact" and so on), its name or short name."""
     name = card.name.casefold()
     return {f"this {kind.value}" for kind in card.kinds} | {name, name.partition(",")[0]}
+
+
+# --- effects the reading does not follow --------------------------------------------------------------------
+
+
+# The Tagger tags that name them. The reading follows only some of the cards that carry each.
+_UNREAD_TAGS = {
+    "token-increaser": Unread.TOKENS,
+    "token-doubler": Unread.TOKENS,
+    "trigger-doubler": Unread.TRIGGERS,
+    "mana-increaser": Unread.MANA,
+    "clone": Unread.COPY,
+    "copy-creature": Unread.COPY,
+    "copy-artifact": Unread.COPY,
+    "copy-permanent": Unread.COPY,
+    "copy-ability": Unread.COPY,
+    "copy-land": Unread.COPY_LAND,
+}
+
+
+def _unread_effects(card: GoldfishCard, text: str, tags: Collection[str]) -> frozenset[Unread]:
+    """The effects the Tagger says a card has that its record leaves out: those it carries the tag of and the
+    reading did not take."""
+    found = {_UNREAD_TAGS[tag] for tag in tags if tag in _UNREAD_TAGS}
+    if (
+        card.treasure_extra
+        or card.treasure_factor > 1
+        or _TOKEN_MULTIPLE.search(text)
+        or _TOKEN_NEUTRAL.search(text)
+    ):
+        found.discard(Unread.TOKENS)
+    if card.trigger_doubler is not None:
+        found.discard(Unread.TRIGGERS)
+    if card.mana is not None or card.land is not None:
+        found.discard(Unread.MANA)
+    if card.copy is not None or card.ability_copy is not None:
+        found -= {Unread.COPY, Unread.COPY_LAND}
+    return frozenset(found)
+
+
+def _worth_copying(card: GoldfishCard) -> bool:
+    """Whether a copy of the permanent would give the goldfish something to count."""
+    return (
+        card.permanent
+        and card.land is None
+        and (
+            card.mana is not None
+            or card.treasures_on_entry > 0
+            or card.treasures_on_attack > 0
+            or bool(card.treasure_on_tap)
+            or card.treasure_extra > 0
+            or card.treasure_factor > 1
+            or card.trigger_doubler is not None
+            or card.entry_trigger
+            or card.extra_land_drops > 0
+            or (card.draw is not None and card.draw.engine)
+        )
+    )
+
+
+def _worked_on(card: GoldfishCard) -> frozenset[Unread]:
+    """The unread effects that this card gives something to work on."""
+    treasures = bool(card.treasures_on_entry or card.treasures_on_attack or card.treasure_on_tap)
+    worked = {
+        Unread.TOKENS: treasures,
+        Unread.TRIGGERS: treasures or card.entry_trigger or card.dies_tutor is not None,
+        Unread.MANA: card.mana is not None or card.land is not None,
+        Unread.COPY: _worth_copying(card),
+        Unread.COPY_LAND: card.land is not None,
+    }
+    return frozenset(effect for effect, found in worked.items() if found)
+
+
+def _unread_flagged(records: list[GoldfishCard]) -> list[GoldfishCard]:
+    """The cards of a deck, those with an effect that is not read marked not modelled when another card of the
+    deck has what the effect works on: Treasures, a trigger the goldfish counts, mana, a permanent worth
+    copying, or a land."""
+    worked = Counter(effect for card in records for effect in _worked_on(card))
+    flagged: list[GoldfishCard] = []
+    for card in records:
+        own = _worked_on(card)
+        relevant = any(worked[effect] - (effect in own) > 0 for effect in card.unread)
+        flagged.append(replace(card, modelled=False) if card.modelled and relevant else card)
+    return flagged
 
 
 def _matters(text: str, roles: frozenset[Role], search: _Search | None) -> bool:

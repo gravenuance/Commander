@@ -309,3 +309,50 @@ reading and the policy now follow, and `POLICY_VERSION` is 5.
 On the three decks, 10,000 games each: Etali's commander by turn five rose from 25% to 59% and Magda's combos
 by turn five from 9% to 55%; Ribbit's Hermit Druid line fell from 10.5% to 8.9% by turn five. The cards not
 modelled went from 26, 16 and 14 to 12, 8 and 13. A run takes 1.8 to 2.6 seconds, up from 1.4 to 1.5.
+
+## Amendment (2026-10-23): doublers, copies and the effects the reading does not follow
+
+The owner's pass over the Magda, Gator Skin Boots and Ribbit decks found cards that double Treasures and
+triggers, or copy a permanent, played as plain spells. The owner decided how each is played, and
+`POLICY_VERSION` is 7 (the cost reducers above made it 6).
+
+- **Treasures per event.** Xorn makes one Treasure more in every creation, and Parallel Lives and Mondrak
+  twice as many. Ojer Taq (creature tokens only) and Academy Manufactor ("one of each", the Treasure too)
+  leave the Treasures as they are. With both kinds in play the additions come first, then the multiples,
+  the order that makes the most.
+- **Trigger doublers.** A permanent that makes a trigger happen an additional time (Panharmonicon, Yarok,
+  Windcrag Siege, Delney, Twinflame Travelers, Roaming Throne) repeats a permanent's arrival effects
+  (Treasures, a search, lands fetched, cards drawn) and the Treasure triggers of an attack or a tap, once
+  more for each doubler in play that names the cause and the permanent. A doubler of "another" creature
+  (Twinflame Travelers, Roaming Throne) does not repeat its own triggers. Roaming Throne names the
+  commander's creature type; of several, the type the deck's Treasure triggers gain most from; with no type
+  of its own, the type most of the deck's creatures have. A doubler of deaths (Teysa Karlov) is not read.
+- **A commander or land that becomes a copy of a creature until end of turn.** Gogo (at the beginning of
+  combat), Hall of Echoes (for {5}) and Cursed Mirror (as it enters, with haste) become a copy of the
+  creature that makes the most Treasures, and none that makes none. A copy of a legendary creature stays
+  only where the legend rule does not apply (Gogo is renamed; Hall of Echoes lifts it), else it is not
+  made.
+- **A card that enters as a copy and stays one** (Sculpting Steel, Phantasmal Image, Mockingbird, Phyrexian
+  Metamorph, Vesuva). It copies the permanent in play that is worth most for the mana, counting what the
+  copy makes in the turns left (mana from its next turn if it is a creature, Treasures, cards, lands, land
+  drops, a doubler), and only when that is more than the copy costs; nothing is copied that is legendary or a
+  copy itself. Mockingbird copies a creature of up to the mana spent, paying X for it. Vesuva enters tapped
+  as the land that makes the most of the colours the hand wants. A combo piece, a finisher or a commander
+  is cast as itself.
+- **Peter Parker's Camera** copies an ability of its controller's for {2}, a tap and one of its three
+  counters, once a turn. It copies a search paid for with Treasures or loyalty for a second card, paid with
+  the mana left over after the first main phase, or with Treasures when that costs less than the search
+  does (or the search is paid by loyalty), and the largest Treasure trigger of combat when that makes more
+  than the copy costs. Mana abilities cannot be copied, and arrival triggers are not.
+- **With the cost reducers.** A creature of toughness 1 that enters under Heartless Summoning still has its
+  arrival effects repeated by the doublers, as they would be for any arrival.
+- **Not modelled.** A card the Tagger says doubles tokens or triggers, makes more mana or copies a permanent
+  (tags `token-increaser`, `token-doubler`, `trigger-doubler`, `mana-increaser`, `clone`, `copy-creature`,
+  `copy-artifact`, `copy-permanent`, `copy-ability`, `copy-land`) and whose effect the reading did not take
+  is listed once the deck has what the effect works on: Treasures, a trigger the goldfish counts, a mana
+  source or land, a permanent worth copying, another land. A card swapped in is listed whatever the deck
+  holds. This lists Kiki-Jiki, Chatterfang and the token copies of creatures; the goldfish still plays them
+  as plain spells.
+
+Still not followed: token copies of creatures (Kiki-Jiki, Ashling, myriad), copies of spells, doublers of
+death triggers, doublers of mana, and the legend rule beyond what is above.

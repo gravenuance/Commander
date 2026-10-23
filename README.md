@@ -778,6 +778,11 @@ each creature that is no longer summoning sick attacks every turn for its Treasu
 counted. Cost reducers count: a Medallion or Goblin Anarchomancer takes generic mana off the spells it names
 while it is in play, and Ghalta, The Great Henge, Bolt Bend, Blasphemous Act and Sunderflock cost less by the
 creatures the deck has out; Heartless Summoning also kills a creature of toughness 1, mana creature or not.
+Cards that make more Treasures per event (Xorn, Parallel Lives) or a trigger happen again (Panharmonicon,
+Roaming Throne), that become a copy of the creature making the most Treasures (Gogo, Hall of Echoes, Cursed
+Mirror), that enter as a copy and stay one (Sculpting Steel, Phantasmal Image, Mockingbird, Vesuva) and Peter
+Parker's Camera are played as they read. A card the Tagger says does one of those or makes more mana, and
+that the reading does not follow, is listed under `Not modelled` once the deck has what it works on.
 
 `--swap "<card in>=<card out>"` (repeated for more) or `--plan plan.toml` (the plan `apply` reads: its adds
 paired with its removes, in order) plays the same games again with the swaps made and lists every figure that
