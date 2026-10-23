@@ -437,6 +437,102 @@ def test_an_artifact_that_makes_more_mana_than_the_copy_gains_is_not_a_copy() ->
     assert landed([*repeat(FOREST, 3), raider(1), rock, piece(3)]) == (2,)
 
 
+# --- clones that stay copies --------------------------------------------------------------------------------
+
+
+def rock(name: str, amount: int, *, mv: int = 1, legendary: bool = False) -> GoldfishCard:
+    mana = ManaAbility(amount, frozenset("C"), delayed=False, ritual=False)
+    return replace(make(name, mv=mv, kinds=ARTIFACT, mana=mana), legendary=legendary)
+
+
+def elf(name: str, amount: int, *, mv: int = 1, legendary: bool = False) -> GoldfishCard:
+    mana = ManaAbility(amount, frozenset("G"), delayed=True, ritual=False)
+    return replace(make(name, mv=mv, kinds=CREATURE, mana=mana), legendary=legendary)
+
+
+def clone(name: str, of: CopyOf, *, mv: int, kinds: frozenset[CardKind], **effect: bool) -> GoldfishCard:
+    return replace(make(name, mv=mv, kinds=kinds), copy=CopyEffect(CopyKind.ENTERS, of, **effect))
+
+
+GIANT = make("Giant", mv=20, kinds=CREATURE)
+
+
+def mana_of(slots: Sequence[GoldfishCard], *, bracket: int = 5) -> tuple[int, ...]:
+    return only_outcome(run(slots, bracket=bracket)).mana
+
+
+def test_an_artifact_that_enters_as_a_copy_is_a_copy_of_the_artifact_that_makes_the_most_mana() -> None:
+    steel = clone("Steel", CopyOf.ARTIFACT, mv=3, kinds=ARTIFACT)
+    slots = [*repeat(FOREST, 4), rock("Ring", 2), steel, GIANT]
+    # The Ring comes on turn one: 1 Forest and 2. Steel comes on turn two as a second Ring, 2 more at once.
+    # The fourth Forest is the last land.
+    assert mana_of(slots) == (3, 6, 7, 8, 8)
+    # As a plain artifact it adds nothing.
+    assert mana_of([*repeat(FOREST, 4), rock("Ring", 2), replace(steel, copy=None), GIANT]) == (3, 4, 5, 6, 6)
+
+
+def test_a_copy_is_made_only_when_what_it_makes_in_the_turns_left_is_more_than_it_costs() -> None:
+    stone = rock("Stone", 1)
+    # Steel is first cast on turn two with 3 mana, and a Stone makes 1 a turn for turns two to five: 4.
+    cheap = clone("Steel", CopyOf.ARTIFACT, mv=3, kinds=ARTIFACT)
+    assert mana_of([*repeat(FOREST, 4), stone, cheap, GIANT]) == (2, 4, 5, 6, 6)
+    # With 4 mana it is first cast on turn three, and the Stone makes 1 a turn for turns three to five: 3.
+    dear = clone("Steel", CopyOf.ARTIFACT, mv=4, kinds=ARTIFACT)
+    assert mana_of([*repeat(FOREST, 4), stone, dear, GIANT]) == (2, 3, 4, 5, 5)
+
+
+def test_a_copy_of_a_legendary_permanent_is_not_made() -> None:
+    steel = clone("Steel", CopyOf.ARTIFACT, mv=3, kinds=ARTIFACT)
+    assert mana_of([*repeat(FOREST, 4), rock("Ring", 2, legendary=True), steel, GIANT]) == (3, 4, 5, 6, 6)
+
+
+def test_a_creature_that_enters_as_a_copy_makes_its_mana_from_the_turn_after() -> None:
+    image = clone("Image", CopyOf.CREATURE, mv=2, kinds=CREATURE)
+    # The Elf comes on turn one and Image on turn two as a second Elf; both make their mana from turn three.
+    assert mana_of([*repeat(FOREST, 4), elf("Elf", 1), image, GIANT]) == (1, 3, 5, 6, 6)
+    assert mana_of([*repeat(FOREST, 4), elf("Elf", 1, legendary=True), image, GIANT]) == (1, 3, 4, 5, 5)
+
+
+def test_a_creature_that_enters_as_a_copy_copies_the_creature_that_makes_the_most_mana() -> None:
+    image = clone("Image", CopyOf.CREATURE, mv=3, kinds=CREATURE)
+    slots = [*repeat(FOREST, 3), elf("Small Elf", 1), elf("Big Elf", 2, mv=2), image]
+    # Turn three has 3 Forests, 1 and 2: 6, and Image copies the elf of 2 for 8 from turn four.
+    assert mana_of(slots) == (1, 3, 6, 8, 8)
+
+
+def test_a_clone_that_copies_for_the_mana_it_spends_can_copy_a_creature_of_that_mana_value() -> None:
+    bird = clone("Bird", CopyOf.CREATURE, mv=1, kinds=CREATURE, mana_spent=True)
+    slots = [*repeat(FOREST, 4), elf("Big Elf", 3, mv=3), bird, GIANT]
+    # Bracket 4 plays six turns. The Big Elf comes on turn three. Turn four has 4 Forests and its 3: 7, and
+    # the bird spends 3 as a second Big Elf, whose 3 come from turn five.
+    assert mana_of(slots, bracket=4) == (1, 2, 3, 7, 10, 10)
+    # As a plain creature it adds nothing.
+    plain = [*repeat(FOREST, 4), elf("Big Elf", 3, mv=3), replace(bird, copy=None), GIANT]
+    assert mana_of(plain, bracket=4) == (1, 2, 3, 7, 7, 7)
+    # The 3 it spends leave 4 of turn four's 7, short of a commander of 5, which comes on turn five.
+    boss = make("Boss", mv=5, kinds=CREATURE)
+    assert only_outcome(run(slots, commanders=(boss,), bracket=4)).commander_turns == (5,)
+
+
+TOMB = land("Tomb", "C", amount=2)
+VESUVA = replace(land("Vesuva", ""), copy=CopyEffect(CopyKind.ENTERS, CopyOf.LAND, tapped=True))
+
+
+def test_a_land_that_enters_tapped_as_a_copy_copies_the_land_that_makes_the_most_mana() -> None:
+    slots = [TOMB, FOREST, VESUVA, *repeat(GIANT, 4)]
+    # The Tomb is played on turn one for 2. Vesuva comes on turn two, tapped, as a second Tomb: its 2 come on
+    # turn three, with the Forest's 1.
+    assert mana_of(slots) == (2, 2, 5, 5, 5)
+    # A legendary land is not copied. Turn two plays the Forest, and Vesuva comes on turn three, tapped, as a
+    # second Forest.
+    assert mana_of([replace(TOMB, legendary=True), FOREST, VESUVA, *repeat(GIANT, 4)]) == (2, 3, 3, 4, 4)
+    # With no copy the land makes 1, untapped, as it always has.
+    assert mana_of([TOMB, FOREST, replace(VESUVA, copy=None), *repeat(GIANT, 4)]) == (2, 3, 4, 4, 4)
+    # With the Tomb and a Forest out it copies the Tomb. A spell of 3 on turn two needs the Forest untapped.
+    spell = make("Spell", mv=3, kinds=CREATURE)
+    assert mana_of([FOREST, TOMB, VESUVA, spell, *repeat(GIANT, 3)]) == (2, 3, 3, 5, 5)
+
+
 # --- a swap -------------------------------------------------------------------------------------------------
 
 

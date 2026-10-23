@@ -220,6 +220,7 @@ class CopyKind(Enum):
 class CopyOf(Enum):
     CREATURE = "creature"
     ARTIFACT = "artifact"
+    ARTIFACT_OR_CREATURE = "artifact or creature"
     LAND = "land"
 
 
@@ -1432,6 +1433,12 @@ _ENTERS_COPY = re.compile(
     re.MULTILINE,
 )
 _LEGEND_RULE_LIFTED = re.compile(r'the "legend rule" doesn\'t apply')
+_ENTERS_AS_COPY = re.compile(
+    r"you may have this \w+ enter (?P<tapped>tapped )?as a copy of any "
+    r"(?P<of>artifact or creature|artifact|creature|land) on the battlefield"
+    r"(?P<spent> with mana value less than or equal to the amount of mana spent to cast this creature)?"
+)
+_COPIED = {kind.value: kind for kind in CopyOf}
 
 
 def _copy_effect(text: str) -> CopyEffect | None:
@@ -1455,6 +1462,14 @@ def _copy_effect(text: str) -> CopyEffect | None:
     entering = _ENTERS_COPY.search(text)
     if entering is not None:
         return CopyEffect(CopyKind.TURN, CopyOf.CREATURE, haste=entering.group("haste") is not None)
+    stays = _ENTERS_AS_COPY.search(text)
+    if stays is not None:
+        return CopyEffect(
+            CopyKind.ENTERS,
+            _COPIED[stays.group("of")],
+            tapped=stays.group("tapped") is not None,
+            mana_spent=stays.group("spent") is not None,
+        )
     return None
 
 

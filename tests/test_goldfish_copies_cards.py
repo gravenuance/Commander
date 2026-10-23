@@ -255,3 +255,76 @@ def test_an_artifact_that_becomes_a_copy_as_it_enters_keeps_its_mana() -> None:
     assert mirror.mana is not None
     assert mirror.mana.amount == 1
     assert mirror.modelled
+
+
+# --- clones that stay copies --------------------------------------------------------------------------------
+
+SCULPTING_STEEL = real(
+    "Sculpting Steel",
+    "{3}",
+    3,
+    "Artifact",
+    "You may have this artifact enter as a copy of any artifact on the battlefield.",
+    tags=("clone", "copy-artifact"),
+)
+PHANTASMAL_IMAGE = real(
+    "Phantasmal Image",
+    "{1}{U}",
+    2,
+    "Creature — Illusion",
+    "You may have this creature enter as a copy of any creature on the battlefield, except it's an Illusion "
+    'in addition to its other types and it has "When this creature becomes the target of a spell or '
+    'ability, sacrifice it."',
+    identity="U",
+    tags=("clone", "copy-creature"),
+)
+MOCKINGBIRD = real(
+    "Mockingbird",
+    "{X}{U}",
+    1,
+    "Creature — Bird Bard",
+    "Flying\nYou may have this creature enter as a copy of any creature on the battlefield with mana value "
+    "less than or equal to the amount of mana spent to cast this creature, except it's a Bird in addition "
+    "to its other types and it has flying.",
+    identity="U",
+    tags=("clone", "copy-creature"),
+)
+PHYREXIAN_METAMORPH = real(
+    "Phyrexian Metamorph",
+    "{3}{U/P}",
+    4,
+    "Artifact Creature — Phyrexian Shapeshifter",
+    "({U/P} can be paid with either {U} or 2 life.)\nYou may have this creature enter as a copy of any "
+    "artifact or creature on the battlefield, except it's an artifact in addition to its other types.",
+    identity="U",
+    tags=("clone", "copy-artifact"),
+)
+VESUVA = real(
+    "Vesuva",
+    "",
+    0,
+    "Land",
+    "You may have this land enter tapped as a copy of any land on the battlefield.",
+    tags=("clone", "copy-land"),
+)
+
+
+@pytest.mark.parametrize(
+    ("card", "expected"),
+    [
+        (SCULPTING_STEEL, CopyEffect(CopyKind.ENTERS, CopyOf.ARTIFACT)),
+        (PHANTASMAL_IMAGE, CopyEffect(CopyKind.ENTERS, CopyOf.CREATURE)),
+        (MOCKINGBIRD, CopyEffect(CopyKind.ENTERS, CopyOf.CREATURE, mana_spent=True)),
+        (PHYREXIAN_METAMORPH, CopyEffect(CopyKind.ENTERS, CopyOf.ARTIFACT_OR_CREATURE)),
+        (VESUVA, CopyEffect(CopyKind.ENTERS, CopyOf.LAND, tapped=True)),
+    ],
+    ids=lambda x: x.mana.name if isinstance(x, Real) else "",
+)
+def test_a_card_that_enters_as_a_copy_is_read_with_what_it_copies(card: Real, expected: CopyEffect) -> None:
+    read = one(card, commander=BLUE)
+    assert read.copy == expected
+    assert read.modelled
+    assert not read.legendary
+
+
+BLUE = real("Blue Commander", "{U}", 1, "Legendary Creature — Merfolk", "", identity="U")

@@ -26,6 +26,7 @@ from commander.goldfish_cards import (
     NON_CREATURE_SUBTYPES,
     CardKind,
     CopyKind,
+    CopyOf,
     EntryCost,
     GoldfishCard,
     GoldfishCombo,
@@ -394,6 +395,7 @@ class _Card:
         "banked",
         "basic",
         "burst_types",
+        "cloner",
         "colours",
         "combo",
         "copy",
@@ -421,6 +423,7 @@ class _Card:
         "key",
         "kind_bits",
         "land_amount",
+        "land_cloner",
         "land_lost",
         "land_mask",
         "land_tapped",
@@ -538,12 +541,21 @@ class _Card:
         self.factor = card.treasure_factor
         self.increases = card.treasure_extra > 0 or card.treasure_factor > 1
         self.doubler = card.trigger_doubler
-        self.copy = card.copy
-        self.copy_cost = cost_of(card.copy.cost, {}) if card.copy is not None and card.copy.cost else None
+        effect = card.copy
+        self.copy = effect
+        self.copy_cost = cost_of(effect.cost, {}) if effect is not None and effect.cost else None
+        # Enters as a copy and stays one. A combo piece, a finisher or a commander is cast as itself.
+        enters = (
+            effect is not None
+            and effect.kind is CopyKind.ENTERS
+            and not (card.combo or card.finisher or card.commander)
+        )
+        self.land_cloner = enters and effect is not None and effect.of is CopyOf.LAND
+        self.cloner = enters and not self.land_cloner
 
     def _rank(self) -> int:
         card = self.src
-        if self.is_land or card.finisher or self.ritual or (card.combo and not card.permanent):
+        if self.is_land or card.finisher or self.ritual or self.cloner or (card.combo and not card.permanent):
             return _HELD
         cost = min(self.cost.total, _RANK_SPAN)
         if self.source or card.land_ramp is not None or card.extra_land_drops:
@@ -559,6 +571,34 @@ class _Card:
         return _HELD if waits else _OTHER_RANK + _RANK_SPAN - min(card.mana_value, _RANK_SPAN)
 
 
+def _copyable(card: _Card, of: CopyOf) -> bool:
+    """Whether a permanent that is worth copying, as the game follows it, can be copied by a card that enters
+    as a copy of an `of`: not a legendary one, which the legend rule would take the copy for, and not a card
+    that copies itself."""
+    src = card.src
+    if src.legendary or src.copy is not None or not card.permanent:
+        return False
+    if of is CopyOf.LAND:
+        return card.is_land
+    kinds = {
+        CopyOf.CREATURE: card.creature,
+        CopyOf.ARTIFACT: card.artifact,
+        CopyOf.ARTIFACT_OR_CREATURE: card.creature or card.artifact,
+    }
+    # Only what the game counts is worth a clone: mana, Treasures, extra cards or land drops, doublers.
+    worth = (
+        card.mana_perm
+        or card.engine
+        or card.extra_drops
+        or card.increases
+        or card.doubler is not None
+        or card.entry_trigger
+        or src.treasures_on_attack
+        or bool(src.treasure_on_tap)
+    )
+    return kinds[of] and bool(worth) and not card.is_land
+
+
 class _Setup:
     """Everything about a run that does not change from game to game."""
 
@@ -567,6 +607,8 @@ class _Setup:
         "average",
         "cards",
         "chosen",
+        "cloners",
+        "clones",
         "cmd_ids",
         "cmd_set",
         "combat_copiers",
@@ -575,6 +617,7 @@ class _Setup:
         "combo_pieces",
         "deaths",
         "doubling",
+        "entries",
         "fin_ids",
         "has_needs",
         "has_rituals",
@@ -583,6 +626,7 @@ class _Setup:
         "ids",
         "increasing",
         "keep_bracket",
+        "land_cloners",
         "max_lands",
         "merged",
         "mid",
@@ -590,8 +634,10 @@ class _Setup:
         "min_sources",
         "need_syn",
         "need_win",
+        "real",
         "shown",
         "tap_pieces",
+        "xcosts",
     )
 
     def __init__(
@@ -655,6 +701,7 @@ class _Setup:
         # Permanents that make a trigger happen more often, and those that make more Treasures.
         self.doubling = any(card.doubler is not None for card in self.cards)
         self.increasing = any(card.increases for card in self.cards)
+        self.entries = any(card.entry_trigger for card in self.cards)
         # Cards that become a copy of a creature at the beginning of combat, or for mana before it.
         self.combat_copiers = tuple(
             cid
@@ -663,6 +710,50 @@ class _Setup:
         )
         self.merged: dict[tuple[int, ...], Cost] = {}
         self._set_keep_rule()
+        self._make_clones()
+
+    def _make_clones(self) -> None:
+        """Add after the deck's cards, which keep their numbers, a card for each way a card that enters as a
+        copy can copy another. A clone has the features of the card it copies, none of its roles as a combo
+        piece, finisher or commander, and a land's enters tapped when the copying card says so."""
+        self.real = len(self.cards)
+        self.clones: dict[tuple[int, int], int] = {}
+        self.xcosts: dict[tuple[int, int], Cost] = {}
+        for cid in range(self.real):
+            copier = self.cards[cid]
+            effect = copier.copy
+            if effect is None or not (copier.cloner or copier.land_cloner):
+                continue
+            for target in range(self.real):
+                found = self.cards[target]
+                if not _copyable(found, effect.of):
+                    continue
+                src = replace(
+                    found.src,
+                    name=f"{copier.src.name} (as {found.src.name})",
+                    oracle_id="",
+                    copies=1,
+                    commander=False,
+                    combo=False,
+                    finisher=False,
+                    synergy=False,
+                    copy=None,
+                    land=replace(found.src.land, tapped=True)
+                    if effect.tapped and found.src.land is not None
+                    else found.src.land,
+                )
+                self.clones[(cid, target)] = len(self.cards)
+                self.cards.append(_Card(src))
+        self.cloners = any(card.cloner for card in self.cards)
+        self.land_cloners = any(card.land_cloner for card in self.cards)
+
+    def cost_with(self, cid: int, extra: int) -> Cost:
+        """The cost of a card with more generic mana to pay (the X of a clone that copies for its mana)."""
+        found = self.xcosts.get((cid, extra))
+        if found is None:
+            card = self.cards[cid]
+            found = self.xcosts[(cid, extra)] = cost_of(card.cost.total + extra, card.src.pips)
+        return found
 
     def _named_type(self, card: GoldfishCard) -> GoldfishCard:
         """The card, with the creature type named for it if it is a creature that is of the type chosen."""
@@ -763,6 +854,16 @@ class _Body(NamedTuple):
 
     card: int
     who: int
+
+
+class _Clone(NamedTuple):
+    """The permanent a card entering as a copy is to be: its number, the extra mana the copy costs, what it
+    is worth and the rank it is cast at."""
+
+    cid: int
+    extra: int
+    value: int
+    rank: int
 
 
 class _Copy(NamedTuple):
@@ -1015,9 +1116,28 @@ class _Game:
             self.drops_left -= 1
             if self.lost_lands:
                 self._lose_to_land_drop()
+            if cards[cid].land_cloner:
+                cid = self._copied_land(cid, *self._colour_wants()[:2])
             self._put_land(cid, cards[cid], tapped=cards[cid].land_tapped)
             if cards[cid].land_lost:
                 self.lost_lands.append(cid)
+
+    def _copied_land(self, cid: int, want: int, lack: int) -> int:
+        """The land that a land card entering as a copy of a land is: a copy of the land in play that makes
+        the most mana of the colours wanted, else the card itself."""
+        s = self.s
+        best = cid
+        best_key = (-1, -1, -1)
+        for target in sorted(self.bf):
+            clone = s.clones.get((cid, target))
+            if clone is None:
+                continue
+            card = s.cards[clone]
+            mask = card.land_mask
+            key = (_POP[mask & lack], _POP[mask & want], _POP[mask] * card.land_amount)
+            if key > best_key:
+                best, best_key = clone, key
+        return best
 
     def _lose_to_land_drop(self) -> None:
         """Sacrifice the lands lost when another is played; the mana they made this turn stays."""
@@ -1052,15 +1172,20 @@ class _Game:
         if len(lands) == 1:
             return next(iter(lands))
         want, lack, extra = self._colour_wants()
-        untapped = [cid for cid in lands if not cards[cid].land_tapped]
-        tapped = [cid for cid in lands if cards[cid].land_tapped]
+        # A land card that enters as a copy is the land it would copy.
+        look = {
+            cid: cards[self._copied_land(cid, want, lack)] if cards[cid].land_cloner else cards[cid]
+            for cid in lands
+        }
+        untapped = [cid for cid in lands if not look[cid].land_tapped]
+        tapped = [cid for cid in lands if look[cid].land_tapped]
 
         def score(cid: int) -> tuple[int, int, int]:
-            mask = cards[cid].land_mask
-            return _POP[mask & lack], _POP[mask & want], _POP[mask] * cards[cid].land_amount
+            mask = look[cid].land_mask
+            return _POP[mask & lack], _POP[mask & want], _POP[mask] * look[cid].land_amount
 
         best_untapped = max(untapped, key=score, default=None)
-        if best_untapped is not None and _POP[cards[best_untapped].land_mask & lack]:
+        if best_untapped is not None and _POP[look[best_untapped].land_mask & lack]:
             return best_untapped
         if tapped and (best_untapped is None or not extra):
             return max(tapped, key=score)
@@ -1437,7 +1562,55 @@ class _Game:
                 found = self._eligible(cid, card, units, from_command=True)
                 if found is not None:
                     best, best_rank = (cid, card, *found, True), rank
+        if s.cloners:
+            for cid in self.hand:
+                card = cards[cid]
+                choice = self._clone_choice(card, cid) if card.cloner else None
+                if choice is not None and choice.rank < best_rank:
+                    best, best_rank = (cid, card, (), None, -1, False), choice.rank
         return best
+
+    def _clone_choice(self, card: _Card, cid: int) -> _Clone | None:
+        """The permanent in play a card that enters as a copy of one is to copy, when it is worth the mana:
+        what the copy makes in the turns left, as `_clone_value` counts it, is more than the card costs, and
+        the card can be paid for from the turn's mana. The most valuable is taken, the first on a tie. A clone
+        that copies for the mana it spends pays as much as the permanent copied costs."""
+        s = self.s
+        effect = card.copy
+        if effect is None:
+            return None
+        left = s.horizon - self.turn
+        best: _Clone | None = None
+        for target in sorted(self.bf):
+            clone = s.clones.get((cid, target))
+            if clone is None:
+                continue
+            extra = max(s.cards[target].mv - card.cost.total, 0) if effect.mana_spent else 0
+            cost = card.cost.total + extra
+            value = self._clone_value(s.cards[clone], left)
+            if value <= cost or (best is not None and value <= best.value):
+                continue
+            if can_pay(self.units, s.cost_with(cid, extra) if extra else card.cost):
+                mana = s.cards[clone].mana_perm
+                rank = (_MANA_RANK if mana else _COMBO_RANK) + min(cost, _RANK_SPAN)
+                best = _Clone(clone, extra, value, rank)
+        return best
+
+    def _clone_value(self, clone: _Card, left: int) -> int:
+        """What a permanent that comes now is worth in mana: the mana it makes in the `left` turns after this
+        one, and from this one if it taps at once; the Treasures, cards and lands as it enters; each turn
+        left that it draws, adds a land drop, makes Treasures as it attacks or taps, or changes how many
+        Treasures are made or how often a trigger happens."""
+        src = clone.src
+        value = clone.mana_amount * (left if clone.delayed else left + 1) if clone.mana_perm else 0
+        value += src.treasures_on_entry + clone.draw_count + (src.land_ramp.count if src.land_ramp else 0)
+        value += 1 if src.tutor is not None else 0
+        per_turn = clone.extra_drops + (1 if clone.engine else 0)
+        if self.s.attacks and clone.creature:
+            per_turn += src.treasures_on_attack + (1 if src.treasure_on_tap else 0)
+        if (clone.increases or clone.doubler is not None) and (self.s.attacks or self.s.entries):
+            per_turn += 1
+        return value + per_turn * left
 
     def _reach(self) -> tuple[int, int, int]:
         """The most mana the turn could still make for each purpose, the one-shots it allows counted."""
@@ -1499,9 +1672,12 @@ class _Game:
     def _cast(self, pick: _Pick) -> None:
         cid, card, plan, target, entry, from_command = pick
         units = self.units
+        clone = self._clone_choice(card, cid) if card.cloner else None
         for ritual in plan:
             self._use_ritual(ritual)
         pay(units, card.cost)
+        if clone is not None:
+            del units[: clone.extra]
         if target is not None and card.src.tutor is not None and card.src.tutor.x_limited:
             del units[: self.s.cards[target[1]].mv]
         if units and units[0] & _RESTRICTED:
@@ -1517,6 +1693,11 @@ class _Game:
             self.hand.clear()
         if card.needs_sac:
             self._sacrifice()
+        if clone is not None:
+            # It comes as the permanent it copies, and searches as that one does.
+            cid, card = clone.cid, self.s.cards[clone.cid]
+            tutor = card.src.tutor
+            target = self._target(tutor, units, 0) if tutor is not None else None
         self._search_on_entry(cid, card, target)
         self._enter(cid, card, from_command=from_command)
 
@@ -2515,7 +2696,7 @@ def compare_deck(
 def _same_rules(before: _Setup, after: _Setup, some: frozenset[int]) -> bool:
     """Whether the swap leaves the rules every game is played by as they were: the same card number in each
     slot but those of `some` (a card put in some slots of another), which hold the new numbers after all the
-    old ones; the same keep rule and the same free combo pieces."""
+    old ones; the same keep rule, the same free combo pieces and the same creature type named."""
 
     def rules(setup: _Setup) -> tuple[int, int, int, bool, bool, str | None]:
         return (
@@ -2527,7 +2708,7 @@ def _same_rules(before: _Setup, after: _Setup, some: frozenset[int]) -> bool:
             setup.chosen,
         )
 
-    old = len(before.cards)
+    old = before.real
     new = {after.ids[i] for i in some}
     return (
         all(a == b for i, (a, b) in enumerate(zip(before.ids, after.ids, strict=True)) if i not in some)
