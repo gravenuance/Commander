@@ -2,6 +2,7 @@
 
 import pytest
 
+from commander.goldfish import compare_deck, goldfish
 from commander.goldfish_cards import (
     AbilityCopy,
     CardKind,
@@ -28,6 +29,7 @@ from test_goldfish_cards import (
     WOOD_ELVES,
     Real,
     build,
+    card_named,
     incoming,
     one,
     real,
@@ -477,6 +479,35 @@ def test_a_copy_effect_that_is_read_is_never_listed() -> None:
     assert not flagged((FOREST,), VESUVA)
 
 
-def test_a_swapped_in_card_with_an_effect_that_is_not_read_is_not_modelled() -> None:
-    assert not incoming(CHATTERFANG, GRIZZLY_BEARS).modelled
+def swapped_listing(deck_cards: tuple[Real, ...], cut: Real, new: Real) -> tuple[str, ...]:
+    """The cards the comparison of a swap lists under not modelled, for the deck of these cards."""
+    deck = build(*deck_cards)
+    base = goldfish(deck, bracket=3, seed=1, games=20)
+    others = tuple(c for c in deck_cards if c is not cut)
+    swap = (card_named(deck, cut.mana.name), incoming(new, *others))
+    return compare_deck(deck, base, [swap], seed=1).swapped.not_modelled
+
+
+def test_a_swap_that_takes_out_what_an_effect_works_on_lists_the_effect_no_more() -> None:
+    assert build(PLUNDERING_BARBARIAN, CHATTERFANG).not_modelled == (CHATTERFANG.mana.name,)
+    assert swapped_listing((PLUNDERING_BARBARIAN, CHATTERFANG), PLUNDERING_BARBARIAN, GRIZZLY_BEARS) == ()
+
+
+def test_a_swap_that_puts_in_what_an_effect_works_on_lists_the_effect() -> None:
+    assert build(GRIZZLY_BEARS, CHATTERFANG).not_modelled == ()
+    assert swapped_listing((GRIZZLY_BEARS, CHATTERFANG), GRIZZLY_BEARS, PLUNDERING_BARBARIAN) == (
+        CHATTERFANG.mana.name,
+    )
+
+
+def test_a_swapped_in_card_with_an_effect_not_read_is_listed_only_if_the_deck_has_what_it_works_on() -> None:
+    assert swapped_listing((GRIZZLY_BEARS, FOREST), FOREST, CHATTERFANG) == ()
+    assert swapped_listing((PLUNDERING_BARBARIAN, FOREST), FOREST, CHATTERFANG) == (CHATTERFANG.mana.name,)
     assert incoming(XORN, GRIZZLY_BEARS).modelled
+
+
+def test_a_swap_of_plain_spells_that_play_alike_still_lists_the_card_not_read() -> None:
+    hill_giant = real("Hill Giant", "{2}{G}", 3, "Creature — Giant", "")
+    assert swapped_listing((PLUNDERING_BARBARIAN, hill_giant), hill_giant, CHATTERFANG) == (
+        CHATTERFANG.mana.name,
+    )

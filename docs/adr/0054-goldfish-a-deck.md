@@ -358,8 +358,9 @@ triggers, or copy a permanent, played as plain spells. The owner decided how eac
   (tags `token-increaser`, `token-doubler`, `trigger-doubler`, `mana-increaser`, `clone`, `copy-creature`,
   `copy-artifact`, `copy-permanent`, `copy-ability`, `copy-land`) and whose effect the reading did not take
   is listed once the deck has what the effect works on: Treasures, a trigger the goldfish counts, a mana
-  source or land, a permanent worth copying, another land. A card swapped in is listed whatever the deck
-  holds. This lists Kiki-Jiki, Chatterfang and the token copies of creatures; the goldfish still plays them
+  source or land, a permanent worth copying, another land. The figures of a swap list what the swapped deck
+  would: a card swapped in is listed only if that deck has what its effect works on, and a card in the deck
+  is no longer listed when the swap takes that away. This lists Kiki-Jiki, Chatterfang and the token copies of creatures; the goldfish still plays them
   as plain spells.
 
 Still not followed: token copies of creatures (Kiki-Jiki, Ashling, myriad), copies of spells, doublers of

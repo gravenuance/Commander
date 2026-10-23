@@ -379,7 +379,12 @@ def test_a_swap_of_some_copies_that_moves_the_average_across_the_land_count_line
 
 
 def test_a_card_cut_in_part_stays_among_the_cards_not_modelled_and_one_cut_whole_does_not() -> None:
-    deck = dataclasses.replace(DECK, not_modelled=(PLAIN_SPELL.name,))
+    unread = dataclasses.replace(PLAIN_SPELL, modelled=False)
+    deck = dataclasses.replace(
+        DECK,
+        cards=tuple(unread if card.name == PLAIN_SPELL.name else card for card in DECK.cards),
+        not_modelled=(PLAIN_SPELL.name,),
+    )
     some = judged([PartialSwap(PLAIN_SPELL, TALISMAN, 2)], deck=deck)
     whole = judged([(PLAIN_SPELL, TALISMAN)], deck=deck)
     assert some.swapped.not_modelled == (PLAIN_SPELL.name,)

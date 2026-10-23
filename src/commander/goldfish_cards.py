@@ -413,6 +413,9 @@ class GoldfishCard:
     # What the Tagger says it does that the record leaves out. A deck lists the card as not modelled when it
     # has what the effect works on.
     unread: frozenset[Unread] = frozenset()
+    # Not modelled only because the deck has what an unread effect works on, so it is modelled again in a
+    # deck without (`flag_unread`).
+    flagged: bool = False
 
     @property
     def permanent(self) -> bool:
@@ -512,7 +515,7 @@ def compile_deck(
         compiled[key] = (
             replace(record, copies=compiled[key].copies + record.copies) if key in compiled else record
         )
-    records = _unread_flagged(list(compiled.values()))
+    records = flag_unread(compiled.values())
     return GoldfishDeck(
         cards=tuple(r for r in records if not r.commander),
         commanders=tuple(r for r in records if r.commander),
@@ -576,8 +579,9 @@ def compile_card(
     """One card read as `compile_deck` reads the deck's own: its identity, the typed lands fetches find, the
     combos, synergy and finishers. For a card that is not in the deck, a swap's incoming card; `cards`,
     `infos`, `powers` and `toughnesses` must hold it as well as the deck. A combo is the deck's own, so the
-    card is no piece of one that names it. A card the card data lacks is a plain spell, not modelled, and so
-    is one with an effect the goldfish does not follow (`_unread_effects`), whatever the deck holds."""
+    card is no piece of one that names it. A card the card data lacks is a plain spell, not modelled. One with
+    an effect the goldfish does not follow (`_unread_effects`) is flagged with the cards of the swapped deck
+    (`flag_unread`)."""
     context = _deck_context(
         deck,
         cards,
@@ -590,8 +594,7 @@ def compile_card(
         powers=powers or {},
         toughnesses=toughnesses or {},
     )[0]
-    card = _compile_card(name, cards.get(name.casefold()), copies, context, commander=False)
-    return replace(card, modelled=False) if card.unread else card
+    return _compile_card(name, cards.get(name.casefold()), copies, context, commander=False)
 
 
 def _identity(deck: Deck, cards: Mapping[str, CardMana], infos: Mapping[str, CardInfo]) -> frozenset[str]:
@@ -1683,16 +1686,18 @@ def _worked_on(card: GoldfishCard) -> frozenset[Unread]:
     return frozenset(effect for effect, found in worked.items() if found)
 
 
-def _unread_flagged(records: list[GoldfishCard]) -> list[GoldfishCard]:
-    """The cards of a deck, those with an effect that is not read marked not modelled when another card of the
-    deck has what the effect works on: Treasures, a trigger the goldfish counts, mana, a permanent worth
-    copying, or a land."""
-    worked = Counter(effect for card in records for effect in _worked_on(card))
+def flag_unread(records: Iterable[GoldfishCard]) -> list[GoldfishCard]:
+    """The cards of a deck, one record each, those with an effect that is not read marked not modelled when
+    another card of the deck has what the effect works on: Treasures, a trigger the goldfish counts, mana, a
+    permanent worth copying, or a land. Cards flagged for another deck are flagged again for this one."""
+    cards = list(records)
+    worked = Counter(effect for card in cards for effect in _worked_on(card))
     flagged: list[GoldfishCard] = []
-    for card in records:
+    for card in cards:
         own = _worked_on(card)
         relevant = any(worked[effect] - (effect in own) > 0 for effect in card.unread)
-        flagged.append(replace(card, modelled=False) if card.modelled and relevant else card)
+        read = card.modelled or card.flagged
+        flagged.append(replace(card, modelled=read and not relevant, flagged=read and relevant))
     return flagged
 
 

@@ -41,6 +41,7 @@ from commander.goldfish_cards import (
     TriggerDoubler,
     Tutor,
     TutorDestination,
+    flag_unread,
 )
 
 # Raised whenever the policy or the recognition changes, so kept results are not mixed with new ones.
@@ -2959,12 +2960,15 @@ def compare(
         c.src.reducers or c.src.discount is not None or c.shrink or c.src.treasure_on_tap
         for c in before.cards
     )
+    not_modelled = _not_modelled(after_slots, commanders)
     if (
         skip_irrelevant
         and same_rules
         and all(_plays_alike(held[key], cut.incoming, exact=exact) for key, cut in cuts.items())
     ):
-        return unchanged
+        # No figure moves, but the cards listed under not modelled may.
+        listed = base if not_modelled == base.not_modelled else replace(base, not_modelled=not_modelled)
+        return replace(unchanged, swapped=listed)
     if same_rules:
         whole = frozenset(before.ids[i] for cut in cuts.values() if not cut.partial for i in cut.slots)
         looked = _looked_at(before, after, frozenset(replaced))
@@ -2979,11 +2983,15 @@ def compare(
         fresh[index] if index in fresh else _carried(outcome, old, new)
         for index, outcome in enumerate(base.outcomes)
     )
-    gone = {held[key].name for key, cut in cuts.items() if not cut.partial}
-    lacking = {cut.incoming.name for cut in cuts.values() if not cut.incoming.modelled}
-    not_modelled = tuple(sorted((set(base.not_modelled) - gone) | lacking))
     swapped = _report(after, base.bracket, outcomes, not_modelled, combos)
     return GoldfishComparison(base, swapped, _changes(base, swapped, replayed), replayed)
+
+
+def _not_modelled(slots: Sequence[GoldfishCard], commanders: Sequence[GoldfishCard]) -> tuple[str, ...]:
+    """The cards a deck of these slots lists as not modelled, as `compile_deck` does: the effects not read
+    count for what the swapped deck holds."""
+    records = {card.name.casefold(): card for card in (*slots, *commanders)}
+    return tuple(sorted(card.name for card in flag_unread(records.values()) if not card.modelled))
 
 
 def compare_deck(
