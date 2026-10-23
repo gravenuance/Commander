@@ -228,22 +228,28 @@ partial swaps set. Cultivate in for one of ten Forests plays nine Forests and Cu
 
 The owner's pass over three bracket 5 decks (Etali, Magda, Ribbit) found fast mana undercounted, tutors and
 Treasure engines left out, and Hermit Druid landing a turn early. The owner decided how each is played; the
-reading and the policy now follow, and `POLICY_VERSION` is 4.
+reading and the policy now follow, and `POLICY_VERSION` is 5.
 
-- **One-shot mana.** A creature or artifact that sacrifices itself for mana, a spell that makes more Treasures
-  than it costs, Rite of Flame and Jeska's Will are rituals; Jeska's Will counts an opponent's hand as seven
-  cards. A spell that nets no mana (Manamorphose, Deadly Dispute with its one Treasure) is no ritual: it is
-  cast for its card, gives back the mana it makes and leaves its Treasures in play. Mana that may be spent
-  only on some kinds of spell (Geosurge, Open the Omenpaths) pays only for those and is gone once that spell
-  is paid. Mana that needs a creature to tap (Springleaf Drum) or three artifacts (Mox Opal) comes while they
-  are there, and a Drum or a crew taps no creature that is tapped for its own mana or whose own ability needs
-  it to tap (a summoning-sick mana creature can be tapped, as it cannot tap for itself); mana paid for with
-  life (Treasonous Ogre) is used down to 10 life; Orcish Lumberjack sacrifices a Forest, and two of them need
-  a Forest each. City of Traitors is sacrificed when the next land is played. "Any combination of colors"
-  (Manamorphose, Sage of the Maze, Dawn's Reflection) is the deck's colours. A nonland card's mana that
-  needs a condition the game cannot follow ("Activate only if ...", Fanatic of Rhonas' ferocious mana;
-  "Activate only once each turn", Kozilek's Translator) is left out, so Fanatic makes one mana and Circle of
-  Elders none; a land's conditional second colour still counts (Hushwood Verge).
+- **One-shot mana.** A creature or artifact that sacrifices itself for more mana than it cost, a spell that
+  makes more Treasures than it costs, Rite of Flame and Jeska's Will are rituals; Jeska's Will counts an
+  opponent's hand as seven cards. A spell that nets no mana (Manamorphose, Deadly Dispute with its one
+  Treasure) is no ritual: it is cast for its card, gives back the mana it makes and leaves its Treasures in
+  play. A permanent that nets no mana (Wild Cantor, Reckless Barbarian) is cast only with the mana a turn
+  leaves over, once its other plays are chosen, paid from the turn's ordinary mana alone (no ritual,
+  Treasure, life payment or burst), and gives nothing as it comes; it then holds its own mana in play as a
+  Treasure does, without being an artifact. It is spent under the ritual policy below and leaves play when it
+  is, and until then it is a creature that may attack, be tapped by a Drum or a crew, or be sacrificed (its
+  mana gone with it). Mana that may be spent only on some kinds of spell (Geosurge, Open the Omenpaths) pays
+  only for those and is gone once that spell is paid. Mana that needs a creature to tap (Springleaf Drum) or
+  three artifacts (Mox Opal) comes while they are there, and a Drum or a crew taps no creature that is
+  tapped for its own mana or whose own ability needs it to tap (a summoning-sick mana creature can be
+  tapped, as it cannot tap for itself); mana paid for with life (Treasonous Ogre) is used down to 10 life;
+  Orcish Lumberjack sacrifices a Forest, and two of them need a Forest each. City of Traitors is sacrificed
+  when the next land is played. "Any combination of colors" (Manamorphose, Sage of the Maze, Dawn's
+  Reflection) is the deck's colours. A nonland card's mana that needs a condition the game cannot follow
+  ("Activate only if ...", Fanatic of Rhonas' ferocious mana; "Activate only once each turn", Kozilek's
+  Translator) is left out, so Fanatic makes one mana and Circle of Elders none; a land's conditional second
+  colour still counts (Hushwood Verge).
 - **Ritual policy.** Rituals, Treasures and the like are spent only on the commander, a mana source, a combo
   piece, a finisher or a tutor that fetches a piece; Lion's Eye Diamond only on a combo landing or the
   commander, as it discards the hand. Life payments pay for anything.

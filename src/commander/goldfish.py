@@ -35,7 +35,7 @@ from commander.goldfish_cards import (
 )
 
 # Raised whenever the policy or the recognition changes, so kept results are not mixed with new ones.
-POLICY_VERSION = 4
+POLICY_VERSION = 5
 GAMES = 10_000
 # The turn by which a bracket expects to be able to play before winning or losing (Wizards, 2025-10-21).
 BRACKET_TURN = {1: 9, 2: 8, 3: 6, 4: 4}
@@ -67,11 +67,12 @@ _CARD_COLOURS = frozenset("WUBRG")
 _FOR_NOTHING = 0
 _FOR_PLAY = 1
 _FOR_WIN = 2
-# A one-shot in a plan that is no card in hand: a life payment, a Treasure, or the burst of the creature
-# `_BURST - code`.
+# A one-shot in a plan that is no card in hand: a life payment, a Treasure, the burst of the creature
+# `_BURST - code`, or the mana of the permanent `_BANKED - code` that sacrifices itself.
 _LIFE = -1
 _TREASURE = -2
 _BURST = -3
+_BANKED = -(10**6)
 
 # Colours as bits, so a mana unit is one small int: the set of colours it can pay.
 _BITS = {"W": 1, "U": 2, "B": 4, "R": 8, "G": 16, "C": 32}
@@ -359,6 +360,7 @@ class _Card:
     __slots__ = (
         "artifact",
         "aura",
+        "banked",
         "basic",
         "burst_types",
         "colours",
@@ -402,6 +404,7 @@ class _Card:
         "refund",
         "ritual",
         "source",
+        "spare",
         "spend_bits",
         "src",
         "win_piece",
@@ -431,13 +434,7 @@ class _Card:
         self.kind_bits = _kind_bits(card.kinds)
         self.delayed = mana is not None and mana.delayed
         self.aura = mana is not None and mana.on_land
-        # Mana a ritual adds, net of the mana its own cost takes.
-        self.gain = 0 if mana is None else mana.amount - (0 if spend_from_hand else card.mana_value)
-        # A one-shot that nets no mana (Manamorphose) is cast for its card and gives its mana back as it
-        # resolves, unless its mana is restricted, which is then still held for what it can pay.
-        keeps = mana is not None and (self.gain > 0 or mana.plus_sacrificed or bool(mana.spend_on))
-        self.ritual = one_shot and keeps
-        self.refund = one_shot and not keeps
+        self._read_one_shot(card, one_shot=one_shot, spend_from_hand=spend_from_hand)
         activation = card.land_ramp.activation if card.land_ramp is not None else 0
         # A spirit guide is exiled, not cast: its pips are not paid.
         self.cost = cost_of(0, {}) if spend_from_hand else cost_of(card.mana_value + activation, card.pips)
@@ -468,6 +465,20 @@ class _Card:
         self.purpose = _FOR_PLAY if self.source or card.combo else _FOR_NOTHING
         self.reach_for = _FOR_PLAY if card.tutor is not None else self.purpose
         self.rank = self._rank()
+        # Cast only with the mana a turn leaves over, as it is for nothing else.
+        self.spare = self.banked and self.rank >= _HELD and not card.finisher
+
+    def _read_one_shot(self, card: GoldfishCard, *, one_shot: bool, spend_from_hand: bool) -> None:
+        mana = card.mana
+        # Mana a ritual adds, net of the mana its own cost takes.
+        self.gain = 0 if mana is None else mana.amount - (0 if spend_from_hand else card.mana_value)
+        # A one-shot that nets no mana is, as a spell (Manamorphose), cast for its card and gives its mana
+        # back as it resolves; as a permanent (Wild Cantor) it is cast with spare mana and keeps its mana in
+        # play to be sacrificed for. Restricted mana is held in the hand for what it can pay.
+        keeps = mana is not None and (self.gain > 0 or mana.plus_sacrificed or bool(mana.spend_on))
+        self.ritual = one_shot and keeps
+        self.refund = one_shot and not keeps and not card.permanent
+        self.banked = one_shot and not keeps and card.permanent
 
     def _read_land(self, card: GoldfishCard) -> None:
         self.is_land = card.land is not None and CardKind.LAND in card.kinds
@@ -494,7 +505,9 @@ class _Card:
             return _DRAW_RANK + cost
         if card.combo:
             return _COMBO_RANK + cost
-        return _OTHER_RANK + _RANK_SPAN - min(card.mana_value, _RANK_SPAN)
+        # A banked permanent with nothing else about it waits for spare mana.
+        waits = self.banked and not (self.needs_sac or self.entry is not None or self.aura)
+        return _HELD if waits else _OTHER_RANK + _RANK_SPAN - min(card.mana_value, _RANK_SPAN)
 
 
 class _Setup:
@@ -513,6 +526,7 @@ class _Setup:
         "fin_ids",
         "has_needs",
         "has_rituals",
+        "has_spare",
         "horizon",
         "ids",
         "keep_bracket",
@@ -574,11 +588,13 @@ class _Setup:
         self.deaths = any(c.src.dies_tutor for c in self.cards) and any(c.src.free_outlet for c in self.cards)
         # Attacks make Treasures: a creature's own trigger, or a permanent's for a creature becoming tapped.
         self.attacks = any(c.src.treasures_on_attack or c.src.treasure_on_tap for c in self.cards)
-        # One-shot mana beyond the turn's: rituals in hand, life payments, bursts for a land, Treasures.
+        # One-shot mana beyond the turn's: rituals in hand, life payments, bursts for a land, Treasures and
+        # permanents that sacrifice themselves.
         self.has_rituals = self.attacks or any(
-            card.ritual or card.life_cost or card.burst_types or card.src.treasures_on_entry
+            card.ritual or card.banked or card.life_cost or card.burst_types or card.src.treasures_on_entry
             for card in self.cards
         )
+        self.has_spare = any(card.spare for card in self.cards)
         self.has_needs = any(card.need for card in self.cards)
         self.merged: dict[tuple[int, ...], Cost] = {}
         self._set_keep_rule()
@@ -675,6 +691,7 @@ class _Game:
         "activators",
         "arrived",
         "artifacts",
+        "banked",
         "bf",
         "burst_used",
         "bursts",
@@ -753,6 +770,8 @@ class _Game:
         self.bursts: list[int] = []
         self.burst_used: set[int] = set()
         self.treasures = 0
+        # Permanents in play that sacrifice themselves for the mana they cost, which they hold until then.
+        self.banked: list[int] = []
         # Permanents in play with a search paid for by Treasures or loyalty, and those whose loyalty is spent.
         self.activators: list[int] = []
         self.loyalty_used: set[int] = set()
@@ -860,6 +879,8 @@ class _Game:
             self._act()
         if self.turn <= s.mid and not self.screw:
             self._check_screw()
+        if s.has_spare:
+            self._cast_spare()
         self.mana.append(len(pool))
 
     def _settle(self, count: int) -> None:
@@ -1084,8 +1105,9 @@ class _Game:
         purpose: int,
         sacrifices: bool,
     ) -> bool:
-        """Add to `trial` and `used` the rituals in hand, cheapest first, then the creatures' bursts, until
-        the cost can be paid; whether it can. The creatures the rituals sacrifice go into `gone`."""
+        """Add to `trial` and `used` the Treasures, the rituals in hand cheapest first, then the permanents
+        that sacrifice themselves and the creatures' bursts, until the cost can be paid; whether it can. The
+        creatures the rituals sacrifice go into `gone`."""
         for _ in range(self._treasures_for(purpose)):
             trial.append(_ANY_COLOUR)
             trial.sort(key=_PAY_KEY)
@@ -1120,19 +1142,26 @@ class _Game:
             used.append(cid)
             if can_pay(trial, cost):
                 return True
-        for cid in self._bursts_ready():
-            if cid in gone:
-                continue
+        # The creatures sacrificed for their own mana leave the cards paid for enough to sacrifice.
+        sacrificed = 0
+        for code, cid in (
+            *((_BANKED - cid, cid) for cid in self.banked),
+            *((_BURST - cid, cid) for cid in self._bursts_ready()),
+        ):
             card = cards[cid]
+            if cid in gone or (code <= _BANKED and card.creature and len(gone) + sacrificed >= spare):
+                continue
+            sacrificed += code <= _BANKED and card.creature
             trial.extend([card.mana_mask] * card.mana_amount)
             trial.sort(key=_PAY_KEY)
-            used.append(_BURST - cid)
+            used.append(code)
             if can_pay(trial, cost):
                 return True
         return False
 
     def _use_ritual(self, code: int) -> None:
-        """Use a one-shot of a plan: a ritual from the hand, a life payment or a creature's burst."""
+        """Use a one-shot of a plan: a ritual from the hand, a life payment, a Treasure, a creature's burst or
+        a permanent sacrificed for its mana."""
         cards = self.s.cards
         if code == _LIFE:
             source = cards[min(self.life_sources, key=lambda cid: cards[cid].life_cost)]
@@ -1141,6 +1170,8 @@ class _Game:
         elif code == _TREASURE:
             self._spend_treasures(1)
             self.units.append(_ANY_COLOUR)
+        elif code <= _BANKED:
+            self._spend_banked(_BANKED - code)
         elif code <= _BURST:
             cid = _BURST - code
             self.burst_used.add(cid)
@@ -1156,6 +1187,32 @@ class _Game:
                 amount += sacrificed if card.plus_sacrificed else 0
             self.units.extend([card.mana_mask] * amount)
         self.units.sort(key=_PAY_KEY)
+
+    def _spend_banked(self, cid: int) -> None:
+        """Sacrifice a permanent in play for the mana it holds."""
+        card = self.s.cards[cid]
+        entry = next((entry for entry in self.creatures if entry[2] == cid), None)
+        if entry is not None:
+            self._sacrifice(entry)
+        else:
+            self.bf.discard(cid)
+            self._track_sources(cid, card, gone=True)
+        self.units.extend([card.mana_mask] * card.mana_amount)
+
+    def _cast_spare(self) -> None:
+        """Cast the permanents that sacrifice themselves for mana, the most mana first, from the mana the turn
+        has left over: no ritual, Treasure or burst is spent on them. One that comes may open a play."""
+        cards = self.s.cards
+        while True:
+            best = max(
+                (cid for cid in self.hand if cards[cid].spare and can_pay(self.units, cards[cid].cost)),
+                key=lambda cid: cards[cid].mana_amount,
+                default=None,
+            )
+            if best is None:
+                return
+            self._cast((best, cards[best], (), None, -1, False))
+            self._act()
 
     def _treasures_for(self, purpose: int) -> int:
         """The Treasures a cost may spend: as rituals, none on a plain spell, and while a search paid for by
@@ -1293,7 +1350,7 @@ class _Game:
             return units, units, units
         cards = self.s.cards
         anything = units + self._life_payments()[0]
-        play = anything + sum(cards[cid].mana_amount for cid in self._bursts_ready())
+        play = anything + sum(cards[cid].mana_amount for cid in (*self.banked, *self._bursts_ready()))
         win = play + self.treasures
         play += self._treasures_for(_FOR_PLAY)
         biggest = max((mv for _, mv, _ in self.creatures), default=0)
@@ -1376,7 +1433,7 @@ class _Game:
             self.bf.add(cid)
             self.arrived.add(cid)
         if card.creature:
-            rank = 2 if from_command else (1 if card.source else 0)
+            rank = 2 if from_command else (1 if card.source or card.banked else 0)
             self.creatures.append((rank, card.mv, cid))
         self._track_sources(cid, card)
         if card.mana_perm:
@@ -1487,6 +1544,7 @@ class _Game:
             (card.need is not None, self.needing),
             (bool(card.life_cost), self.life_sources),
             (bool(card.burst_types), self.bursts),
+            (card.banked, self.banked),
             (card.src.activated_tutor is not None, self.activators),
         ):
             if held:

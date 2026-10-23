@@ -593,6 +593,127 @@ def test_a_spell_that_makes_no_more_mana_than_it_costs_gives_its_mana_back() -> 
     assert only_outcome(run(slots, combos=(combo_of(piece),))).combo_turns == (2,)
 
 
+def cantor(
+    mv: int = 1, pips: Mapping[str, int] | None = None, colours: frozenset[str] = ANY_COLOUR
+) -> GoldfishCard:
+    """Wild Cantor (mv 1) or Reckless Barbarian (mv 2, two mana): a creature that sacrifices itself for the
+    mana it cost, so that it nets none."""
+    return make(
+        "Cantor",
+        mv=mv,
+        pips=pips or {"G": 1},
+        kinds=CREATURE,
+        mana=ManaAbility(mv, colours, delayed=False, ritual=True),
+    )
+
+
+def test_a_creature_that_sacrifices_itself_for_its_cost_is_cast_with_spare_mana_and_kept() -> None:
+    boss = make("Boss", mv=3)
+    slots = [*repeat(FOREST, 4), cantor(), *repeat(VANILLA, 2)]
+    # Turn one's Forest is spare and pays for the Cantor, which gives nothing yet; turn two's two Forests and
+    # its mana pay for the three-drop, where the Forests alone would on turn three.
+    outcome = only_outcome(run(slots, commanders=(boss,)))
+    assert outcome.commander_turns == (2,)
+    assert outcome.mana == (1, 2, 3, 4, 4)
+
+
+def test_a_creature_that_sacrifices_itself_for_its_cost_is_not_cast_by_a_ritual() -> None:
+    ritual = make(
+        "Dark Ritual",
+        mv=1,
+        pips={"B": 1},
+        kinds=frozenset({CardKind.INSTANT}),
+        mana=ManaAbility(3, frozenset("B"), delayed=False, ritual=True),
+    )
+    barbarian = make(
+        "Barbarian",
+        mv=2,
+        pips={"B": 2},
+        kinds=CREATURE,
+        mana=ManaAbility(2, frozenset("B"), delayed=False, ritual=True),
+    )
+    boss = make("Boss", mv=6)
+    slots = [*repeat(SWAMP, 4), ritual, barbarian, VANILLA]
+    # Turn one's Swamp cannot pay for the barbarian, and the ritual is not spent on it. Turn two's two Swamps
+    # do. Turn three: three Swamps and its two make five, and the ritual makes six; had the ritual been spent
+    # on turn one, the six would come on turn four.
+    assert only_outcome(run(slots, commanders=(boss,))).commander_turns == (3,)
+
+
+def test_a_creature_that_sacrifices_itself_for_its_cost_is_not_cast_by_a_treasure() -> None:
+    maker = replace(make("Maker", mv=1, kinds=CREATURE), treasures_on_entry=1)
+    barbarian = cantor(3)
+    boss = make("Boss", mv=6)
+    slots = [*repeat(FOREST, 4), maker, barbarian, VANILLA]
+    # Turn two's two Forests and the Treasure could pay for the barbarian, but the Treasure is kept: it is
+    # cast on turn three, and turn four's four Forests, the Treasure and its three make eight, for the six.
+    assert only_outcome(run(slots, commanders=(boss,))).commander_turns == (4,)
+
+
+def test_a_creature_that_sacrifices_itself_for_its_cost_is_cast_after_the_spells_it_crowds() -> None:
+    lossy = make(
+        "Lossy",
+        mv=2,
+        pips={"B": 2},
+        kinds=CREATURE,
+        mana=ManaAbility(1, frozenset("B"), delayed=False, ritual=True),
+    )
+    piece = make("Piece", mv=2, pips={"B": 2}, kinds=CREATURE, combo=True)
+    slots = [*repeat(SWAMP, 3), lossy, piece, *repeat(VANILLA, 2)]
+    # Turn two's two Swamps pay for the piece, not for the creature that would give back one mana of two.
+    assert only_outcome(run(slots, combos=(combo_of(piece),))).combo_turns == (2,)
+
+
+def test_a_creature_that_sacrifices_itself_for_mana_is_not_spent_where_a_spell_needs_it_to_sacrifice() -> (
+    None
+):
+    boss = make("Boss", mv=3, needs_sacrifice=True)
+    slots = [*repeat(FOREST, 4), cantor(), *repeat(VANILLA, 2)]
+    # Turn two's two Forests and the Cantor's mana would make the three, but then nothing is left to
+    # sacrifice for the boss: it is cast on turn three, eating the Cantor.
+    assert only_outcome(run(slots, commanders=(boss,))).commander_turns == (3,)
+
+
+def test_a_creature_that_sacrificed_itself_for_mana_is_no_longer_there_to_attack() -> None:
+    raider = replace(cantor(), treasures_on_attack=1)
+    piece = make("Piece", mv=4, kinds=CREATURE, combo=True)
+    boss = make("Boss", mv=3)
+    slots = [*repeat(FOREST, 4), raider, piece, VANILLA]
+    # Turn two's two Forests and its mana pay for the boss before combat, so it does not attack for a
+    # Treasure, and turn three's three Forests fall short of the piece's four until turn four.
+    outcome = only_outcome(run(slots, commanders=(boss,), combos=(combo_of(piece),)))
+    assert outcome.commander_turns == (2,)
+    assert outcome.combo_turns == (4,)
+
+
+def test_a_creature_that_sacrifices_itself_for_mana_is_sacrificed_after_a_creature_that_does_not() -> None:
+    bear = make("Bear", mv=1, kinds=CREATURE)
+    plunge = make(
+        "Infernal Plunge",
+        mv=1,
+        pips={"R": 1},
+        needs_sacrifice=True,
+        mana=ManaAbility(3, frozenset("R"), delayed=False, ritual=True),
+    )
+    boss = make("Boss", mv=6)
+    slots = [*repeat(MOUNTAIN, 4), cantor(pips={"R": 1}), bear, plunge]
+    # The bear is cast on turn one and the Cantor with the spare Mountain on turn two. Turn three: three
+    # Mountains and the ritual that sacrifices the bear make five, and the Cantor's mana makes the six.
+    assert only_outcome(run(slots, commanders=(boss,))).commander_turns == (3,)
+
+
+def test_a_creature_that_sacrifices_itself_for_mana_is_no_artifact() -> None:
+    opal = make(
+        "Opal",
+        kinds=ARTIFACT,
+        mana=ManaAbility(1, ANY_COLOUR, delayed=False, ritual=False, needs=ManaNeed.ARTIFACTS),
+    )
+    trinket = make("Trinket", mv=1, kinds=ARTIFACT)
+    slots = [MOUNTAIN, MOUNTAIN, opal, trinket, cantor(), *repeat(VANILLA, 2)]
+    # The Opal and the trinket are two artifacts, and the Cantor from turn two does not make a third.
+    assert only_outcome(run(slots)).mana == (1, 2, 2, 2, 2)
+
+
 def test_a_ritual_is_kept_from_a_plain_spell_for_the_commander() -> None:
     ritual = make(
         "Dark Ritual",
