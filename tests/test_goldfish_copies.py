@@ -12,6 +12,7 @@ import pytest
 from commander.goldfish import chosen_creature_type, compare
 from commander.goldfish_cards import (
     CHANGELING,
+    AbilityCopy,
     ActivatedTutor,
     CardKind,
     CopyEffect,
@@ -531,6 +532,82 @@ def test_a_land_that_enters_tapped_as_a_copy_copies_the_land_that_makes_the_most
     # With the Tomb and a Forest out it copies the Tomb. A spell of 3 on turn two needs the Forest untapped.
     spell = make("Spell", mv=3, kinds=CREATURE)
     assert mana_of([FOREST, TOMB, VESUVA, spell, *repeat(GIANT, 3)]) == (2, 3, 3, 5, 5)
+
+
+# --- a copy of an ability -----------------------------------------------------------------------------------
+
+CAMERA = replace(make("Camera", mv=1, kinds=ARTIFACT), ability_copy=AbilityCopy(cost=2, counters=3))
+PLAIN_CAMERA = replace(CAMERA, ability_copy=None)
+
+
+def camera_turn(camera: GoldfishCard, mv: int) -> int:
+    """The turn a piece of this mana value lands, in the games that keep their seven cards, which all agree.
+    Turn one: a Forest and the Vault's 4 cast the Raider and the camera. From turn two the Vault and the
+    Forests (3 at most) make 6, 7, 7 ... and the Raider makes 3 Treasures as it attacks."""
+    the_piece = piece(mv)
+    slots = [*repeat(FOREST, 3), VAULT, raider(3), camera, the_piece]
+    outcomes = run(slots, combos=(combo_of(the_piece),), games=60).outcomes
+    turns = {o.combo_turns for o in outcomes if o.hand_size == 7}
+    assert len(turns) == 1
+    return turns.pop()[0]
+
+
+def test_a_copy_of_the_attack_trigger_is_paid_for_with_the_mana_left_over() -> None:
+    # Turn two: 6 mana and 3 Treasures make 9, short of 10. With a copy, 2 of the 6 pay for 3 more Treasures
+    # at once: 4 and 6 make 10.
+    assert camera_turn(PLAIN_CAMERA, 10) == 3
+    assert camera_turn(CAMERA, 10) == 2
+    # With 11 it is turn three either way.
+    assert camera_turn(CAMERA, 11) == 3
+
+
+def test_a_camera_copies_an_ability_only_as_often_as_it_has_counters() -> None:
+    # Without a copy, 7 mana and the 12 Treasures of four attacks make 19 on turn five, short of 20.
+    assert camera_turn(PLAIN_CAMERA, 20) == 0
+    # A copy each turn doubles the Treasures: turn four has 7 - 2 mana and 18 Treasures, 23 (turn three 17).
+    # One copy leaves turn four 7 and 12, 19, and turn five 7 and 15, 22.
+    assert camera_turn(CAMERA, 20) == 4
+    assert camera_turn(replace(CAMERA, ability_copy=AbilityCopy(cost=2, counters=1)), 20) == 5
+
+
+def test_a_copy_of_a_trigger_that_makes_no_more_than_it_costs_is_not_made() -> None:
+    # The Raider's 2 Treasures cost 2 to copy: there is nothing to gain, so no counter is spent and turn two's
+    # 6 mana and 2 Treasures stay 8.
+    the_piece = piece(8)
+    slots = [*repeat(FOREST, 3), VAULT, raider(2), CAMERA, the_piece]
+    outcomes = run(slots, combos=(combo_of(the_piece),), games=60).outcomes
+    assert {o.combo_turns for o in outcomes if o.hand_size == 7} == {(2,)}
+
+
+def search_copy(camera: GoldfishCard, relics: int, *, diggers: int = 1) -> list[int]:
+    """The turn the combo of the relics lands in each of 3000 games, or 99. The diggers are the commanders:
+    each searches once for a relic, which comes onto the battlefield. A land of the deck makes 7 mana."""
+    finds = Tutor(frozenset({CardKind.ARTIFACT}), TutorDestination.BATTLEFIELD)
+    commanders = tuple(
+        replace(make(f"Digger {i}", mv=1, kinds=ARTIFACT), activated_tutor=ActivatedTutor(finds, loyalty=1))
+        for i in range(diggers)
+    )
+    pieces = [make(f"Relic {i}", mv=20, kinds=ARTIFACT, combo=True) for i in range(relics)]
+    big = land("Big", "C", amount=7)
+    slots = [big, big, camera, *pieces, *repeat(GIANT, 24)]
+    report = run(slots, commanders=commanders, combos=(combo_of(*pieces),), games=3000, seed=11)
+    return [outcome.combo_turns[0] or 99 for outcome in report.outcomes]
+
+
+def test_a_search_is_copied_for_a_second_card_when_the_mana_for_it_is_left_over() -> None:
+    # One search finds one relic, and a relic in the hand is too dear to cast: two relics never land alone.
+    assert set(search_copy(PLAIN_CAMERA, 2)) == {99}
+    with_camera = search_copy(CAMERA, 2)
+    assert any(turn < 99 for turn in with_camera)
+    # The camera and the search are on the battlefield when the second relic is fetched, on turn one at the
+    # earliest.
+    assert min(with_camera) == 1
+
+
+def test_a_camera_is_tapped_for_one_copy_each_turn() -> None:
+    # Two diggers and a camera find 3 relics a turn, not 4, on the turn all three are in play.
+    assert min(search_copy(CAMERA, 3, diggers=2)) == 1
+    assert min(search_copy(CAMERA, 4, diggers=2)) > 1
 
 
 # --- a swap -------------------------------------------------------------------------------------------------

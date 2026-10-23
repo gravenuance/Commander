@@ -273,6 +273,15 @@ class TriggerDoubler:
 
 
 @dataclass(slots=True, frozen=True)
+class AbilityCopy:
+    """A permanent that copies an activated or triggered ability you control for `cost` generic mana and a
+    counter taken from it, and so many times as it has `counters` (Peter Parker's Camera)."""
+
+    cost: int
+    counters: int
+
+
+@dataclass(slots=True, frozen=True)
 class GoldfishCard:
     """One card of the deck as the game loop reads it. The cost is the one it is cast for: a two-part card by
     the rule of ADR 0019 (for halves of equal value the first, as in Fire // Ice), and a modal card with a
@@ -334,6 +343,7 @@ class GoldfishCard:
     treasure_factor: int = 1
     trigger_doubler: TriggerDoubler | None = None
     copy: CopyEffect | None = None
+    ability_copy: AbilityCopy | None = None
 
     @property
     def permanent(self) -> bool:
@@ -1324,6 +1334,7 @@ def _read_spell(card: GoldfishCard, info: CardMana, text: str, context: _Context
         treasure_factor=tokens[1],
         trigger_doubler=_trigger_doubler(text),
         copy=_copy_effect(text),
+        ability_copy=_ability_copy(text),
         **found,
     )
 
@@ -1439,6 +1450,21 @@ _ENTERS_AS_COPY = re.compile(
     r"(?P<spent> with mana value less than or equal to the amount of mana spent to cast this creature)?"
 )
 _COPIED = {kind.value: kind for kind in CopyOf}
+_ABILITY_COPY = re.compile(
+    r"^\{(?P<cost>\d+)\}, \{t\}, remove an? \w+ counter from this \w+: copy target activated or triggered "
+    r"ability you control",
+    re.MULTILINE,
+)
+_COUNTERS = re.compile(r"^this \w+ enters with (?P<n>[a-z]+) \w+ counters on it", re.MULTILINE)
+
+
+def _ability_copy(text: str) -> AbilityCopy | None:
+    """The copy of an ability a permanent makes for a counter on it, when it says how many it enters with."""
+    copying = _ABILITY_COPY.search(text)
+    counters = _COUNTERS.search(text)
+    if copying is None or counters is None or counters.group("n") not in _NUMBER_WORDS:
+        return None
+    return AbilityCopy(int(copying.group("cost")), _NUMBER_WORDS[counters.group("n")])
 
 
 def _copy_effect(text: str) -> CopyEffect | None:

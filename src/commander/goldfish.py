@@ -24,6 +24,7 @@ from commander.answers import card_key
 from commander.goldfish_cards import (
     CHANGELING,
     NON_CREATURE_SUBTYPES,
+    ActivatedTutor,
     CardKind,
     CopyKind,
     CopyOf,
@@ -615,6 +616,7 @@ class _Setup:
         "combo_free",
         "combo_ids",
         "combo_pieces",
+        "copying",
         "deaths",
         "doubling",
         "entries",
@@ -702,6 +704,7 @@ class _Setup:
         self.doubling = any(card.doubler is not None for card in self.cards)
         self.increasing = any(card.increases for card in self.cards)
         self.entries = any(card.entry_trigger for card in self.cards)
+        self.copying = any(card.src.ability_copy is not None for card in self.cards)
         # Cards that become a copy of a creature at the beginning of combat, or for mana before it.
         self.combat_copiers = tuple(
             cid
@@ -898,6 +901,8 @@ class _Game:
         "engines",
         "extra_drops",
         "fetched",
+        "film",
+        "film_used",
         "fin_turn",
         "hand",
         "hand_size",
@@ -972,6 +977,9 @@ class _Game:
         # Permanents in play that make triggers happen again, and that make more Treasures.
         self.doublers: list[int] = []
         self.increasers: list[int] = []
+        # Permanents in play that copy an ability by the counters each has left, and those used this turn.
+        self.film: dict[int, int] = {}
+        self.film_used: set[int] = set()
         # The permanents that are copies of a creature until the turn ends.
         self.turn_copies: list[_Copy] = []
         self.engines = self.extra_drops = self.drops_left = self.lands_in_play = 0
@@ -986,10 +994,8 @@ class _Game:
         # The library as dealt, once a search has settled it and started taking cards out.
         self.dealt: list[int] | None = None
         self.reached: set[int] = set()
-        self.land_search = False
-        self.tutor_look = False
-        self.screw = 0
-        self.turn = 0
+        self.land_search = self.tutor_look = False
+        self.screw = self.turn = 0
         self.mana: list[int] = []
         self.open_combos = [k for k, pieces in enumerate(setup.combo_pieces) if pieces is not None]
         self.combo_turn = [0] * len(setup.combo_pieces)
@@ -1060,6 +1066,7 @@ class _Game:
         self.arrived.clear()
         self.burst_used.clear()
         self.turn_copies.clear()
+        self.film_used.clear()
         if self.needing:
             self._meet_needs()
         self._draw(1 + self.engines)
@@ -1072,7 +1079,7 @@ class _Game:
             self._activate()
         self._act()
         attacked = s.attacks and self._attack()
-        if (self.activators and self._activate()) or attacked:
+        if (self.activators and self._activate(spare=True)) or attacked:
             self._act()
         if self.turn <= s.mid and not self.screw:
             self._check_screw()
@@ -1838,14 +1845,29 @@ class _Game:
         copies = list(self.turn_copies)
         if self.s.combat_copiers:
             attackers = self._copy_in_combat(attackers, copies)
-        made = self._combat_treasures(attackers, copies)
+        yields = self._combat_yields(attackers, copies)
+        made = sum(yields)
+        if self.s.copying and yields:
+            made += self._copy_trigger(max(yields))
         if made:
             self._make_treasures(made)
         return made > 0
 
+    def _copy_trigger(self, yielded: int) -> int:
+        """The Treasures a copy of the largest of the combat's Treasure triggers makes, when a permanent that
+        copies abilities can pay for it and it makes more than it costs."""
+        cid = self._ready_film()
+        if cid is None or yielded <= self._ability_copy_cost(cid):
+            return 0
+        return yielded if self._pay_ability_copy(cid, spare=True, treasures=True) else 0
+
     def _combat_treasures(self, attackers: Sequence[int], copies: Sequence[_Copy]) -> int:
-        """The Treasures a combat of these attackers makes with these copies in play: those of the creatures'
-        own triggers and one for each creature that becomes tapped, for each permanent that makes them."""
+        return sum(self._combat_yields(attackers, copies))
+
+    def _combat_yields(self, attackers: Sequence[int], copies: Sequence[_Copy]) -> list[int]:
+        """The Treasures each trigger of a combat of these attackers makes with these copies in play: those of
+        the creatures' own triggers and one for each creature that becomes tapped, for each permanent that
+        makes them."""
         cards = self.s.cards
         bodies = [_Body(cid, cid) for cid in attackers]
         bodies += [_Body(copy.card, copy.who) for copy in copies if copy.attacks]
@@ -1861,19 +1883,18 @@ class _Game:
             if card.increases:
                 increasers.append(copy.card)
         increase = self._increase(increasers)
-        made = 0
+        made: list[int] = []
         for body in bodies:
             base = cards[body.card].src.treasures_on_attack
             if base:
-                made += self._treasures_of(
-                    base, 1 + self._extra_times(body, TriggerCause.ATTACKING, doublers), increase
-                )
+                again = 1 + self._extra_times(body, TriggerCause.ATTACKING, doublers)
+                made.append(self._treasures_of(base, again, increase))
         for source in sources:
             types = cards[source.card].src.treasure_on_tap
             taps = sum(1 for body in bodies if _has_type(cards[body.card].src, types))
             if taps:
                 again = 1 + self._extra_times(source, TriggerCause.ATTACKING, doublers)
-                made += self._treasures_of(1, taps * again, increase)
+                made.extend([self._treasures_of(1, again, increase)] * taps)
         return made
 
     def _can_attack(self, cid: int) -> bool:
@@ -1995,9 +2016,10 @@ class _Game:
         spare = sorted((cid for cid in ready if self._tappable(cid)), key=gain)[: max(taps, 0)]
         return [cid for cid in ready if cid not in spare]
 
-    def _activate(self) -> bool:
+    def _activate(self, *, spare: bool = False) -> bool:
         """Use each permanent's search paid for by Treasures or loyalty while it can pay and finds a card;
-        whether any did."""
+        whether any did. A permanent that copies abilities copies each search for a second card, with the
+        mana the turn has left over if `spare`, else with Treasures."""
         cards = self.s.cards
         used = False
         for cid in list(self.activators):
@@ -2013,7 +2035,44 @@ class _Game:
                 self._spend_treasures(ability.treasures)
                 self._fetch(ability.tutor, target)
                 used = True
+                if self.s.copying:
+                    self._copy_search(ability, spare=spare)
         return used
+
+    def _copy_search(self, ability: ActivatedTutor, *, spare: bool) -> None:
+        """Copy the search just made, for a second card, when there is one to find. Treasures pay for the copy
+        only where it costs less than the search does, the loyalty of the search being worth any cost."""
+        cid = self._ready_film()
+        if cid is None or self._target(ability.tutor, self.units, 0) is None:
+            return
+        treasures = ability.loyalty > 0 or self._ability_copy_cost(cid) < ability.treasures
+        if not self._pay_ability_copy(cid, spare=spare, treasures=treasures):
+            return
+        target = self._target(ability.tutor, self.units, 0)
+        if target is not None:
+            self._fetch(ability.tutor, target)
+
+    def _ready_film(self) -> int | None:
+        """A permanent that copies an ability, with a counter left, not used this turn."""
+        return next((cid for cid, left in self.film.items() if left and cid not in self.film_used), None)
+
+    def _ability_copy_cost(self, cid: int) -> int:
+        ability = self.s.cards[cid].src.ability_copy
+        return ability.cost if ability is not None else 0
+
+    def _pay_ability_copy(self, cid: int, *, spare: bool, treasures: bool) -> bool:
+        """Pay for the copy of an ability and take a counter: from the mana left over if `spare`, else from
+        the Treasures if `treasures`; whether it was paid."""
+        cost = self._ability_copy_cost(cid)
+        if spare and can_pay(self.units, cost_of(cost, {})):
+            pay(self.units, cost_of(cost, {}))
+        elif treasures and self.treasures >= cost:
+            self._spend_treasures(cost)
+        else:
+            return False
+        self.film[cid] -= 1
+        self.film_used.add(cid)
+        return True
 
     def _spend_treasures(self, count: int) -> None:
         if not count:
@@ -2039,6 +2098,12 @@ class _Game:
         ):
             if held:
                 (kept.remove if gone else kept.append)(cid)
+        ability = card.src.ability_copy
+        if ability is not None:
+            if gone:
+                del self.film[cid]
+            else:
+                self.film[cid] = ability.counters
         if gone and cid in self.needs_met:
             self.needs_met.discard(cid)
             self._remove_creature_mana(cid, card.mana_mask, card.mana_amount)
@@ -2541,6 +2606,7 @@ def _acts_beyond_its_cost(card: GoldfishCard) -> bool:
         or card.free_outlet
         or card.tap_ability
         or card.copy is not None
+        or card.ability_copy is not None
     )
 
 

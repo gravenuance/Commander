@@ -2,7 +2,15 @@
 
 import pytest
 
-from commander.goldfish_cards import CardKind, CopyEffect, CopyKind, CopyOf, TriggerCause, TriggerDoubler
+from commander.goldfish_cards import (
+    AbilityCopy,
+    CardKind,
+    CopyEffect,
+    CopyKind,
+    CopyOf,
+    TriggerCause,
+    TriggerDoubler,
+)
 from test_goldfish_cards import (
     CULTIVATE,
     DOCKSIDE,
@@ -328,3 +336,23 @@ def test_a_card_that_enters_as_a_copy_is_read_with_what_it_copies(card: Real, ex
 
 
 BLUE = real("Blue Commander", "{U}", 1, "Legendary Creature — Merfolk", "", identity="U")
+
+
+# --- copies of an ability -----------------------------------------------------------------------------------
+
+PETER_PARKERS_CAMERA = real(
+    "Peter Parker's Camera",
+    "{1}",
+    1,
+    "Artifact",
+    "This artifact enters with three film counters on it.\n{2}, {T}, Remove a film counter from this "
+    "artifact: Copy target activated or triggered ability you control. You may choose new targets for the "
+    "copy.",
+    tags=("copy-ability",),
+)
+
+
+def test_an_artifact_that_copies_an_ability_for_the_counters_on_it_is_read() -> None:
+    camera = one(PETER_PARKERS_CAMERA)
+    assert camera.ability_copy == AbilityCopy(cost=2, counters=3)
+    assert camera.modelled
