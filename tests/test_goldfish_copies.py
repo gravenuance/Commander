@@ -431,6 +431,15 @@ def test_an_artifact_that_enters_as_a_copy_copies_no_legendary_creature() -> Non
     assert landed([*repeat(FOREST, 3), legendary, CURSED_MIRROR, piece(4)]) == (3,)
 
 
+def test_an_artifact_cast_after_combat_gains_nothing_from_the_attack_it_missed() -> None:
+    # The Mirror costs 3: turn two has 2 Forests, so it comes after the raider's attack, whose 3 Treasures
+    # pay for it. A copy of the raider would attack for 3 Treasures more, but combat is over: the Mirror makes
+    # its 2 mana, which with the 2 Forests are the 4 of turn two.
+    two_mana = ManaAbility(2, frozenset("C"), delayed=False, ritual=False)
+    big = replace(CURSED_MIRROR, mana_value=3, mana=two_mana)
+    assert mana_of([*repeat(FOREST, 3), raider(3), big, GIANT])[1] == 4
+
+
 def test_an_artifact_that_makes_more_mana_than_the_copy_gains_is_not_a_copy() -> None:
     # The Mirror makes 2 mana and a copy of the raider gains 1 Treasure: it stays an artifact, and turn two
     # has its 2 mana and the raider's Treasure for the 3.

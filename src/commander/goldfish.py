@@ -975,6 +975,7 @@ class _Game:
         "check_land",
         "cmd_left",
         "cmd_turn",
+        "combat_done",
         "combo_fetched",
         "combo_turn",
         "creatures",
@@ -1070,6 +1071,8 @@ class _Game:
         self.film_used: set[int] = set()
         # The permanents that are copies of a creature until the turn ends.
         self.turn_copies: list[_Copy] = []
+        # Whether this turn's combat is over: a permanent that enters now gains nothing from it.
+        self.combat_done = False
         self.engines = self.extra_drops = self.drops_left = self.lands_in_play = 0
         # Lands in play that are sacrificed when another land is played (City of Traitors).
         self.lost_lands: list[int] = []
@@ -1159,6 +1162,7 @@ class _Game:
         self.burst_used.clear()
         self.turn_copies.clear()
         self.film_used.clear()
+        self.combat_done = False
         if self.needing:
             self._meet_needs()
         self._draw(1 + self.engines)
@@ -1171,6 +1175,7 @@ class _Game:
             self._activate()
         self._act()
         attacked = s.attacks and self._attack()
+        self.combat_done = True
         if (self.activators and self._activate(spare=True)) or attacked:
             self._act()
         if self.turn <= s.mid and not self.screw:
@@ -2169,7 +2174,9 @@ class _Game:
         if effect is None:
             return False
         cards = self.s.cards
-        attackers = self._attackers()
+        # After combat a copy has no attack to make Treasures in.
+        combat = not self.combat_done
+        attackers = self._attackers() if combat else []
         base = self._combat_treasures(attackers, self.turn_copies)
         who = -1 - len(self.turn_copies)
         best: tuple[int, int] | None = None
@@ -2183,7 +2190,7 @@ class _Game:
                 times = 1 + self._copy_times(_Body(target, who))
                 arrival = self._treasures_of(entering.src.treasures_on_entry, times)
             copy = _Copy(target, who, effect.haste)
-            attack = self._combat_treasures(attackers, [*self.turn_copies, copy]) - base
+            attack = self._combat_treasures(attackers, [*self.turn_copies, copy]) - base if combat else 0
             if arrival + attack > best_gain:
                 best, best_gain = (target, arrival), arrival + attack
         if best is None:

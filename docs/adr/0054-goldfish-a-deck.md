@@ -332,7 +332,8 @@ triggers, or copy a permanent, played as plain spells. The owner decided how eac
   combat), Hall of Echoes (for {5}) and Cursed Mirror (as it enters, with haste) become a copy of the
   creature that makes the most Treasures, and none that makes none. A copy of a legendary creature stays
   only where the legend rule does not apply (Gogo is renamed; Hall of Echoes lifts it), else it is not
-  made.
+  made. A Cursed Mirror cast after combat gains nothing from the attack it missed: it is a copy only for the
+  Treasures the creature makes as it arrives.
 - **A card that enters as a copy and stays one** (Sculpting Steel, Phantasmal Image, Mockingbird, Phyrexian
   Metamorph, Vesuva). It copies the permanent in play that is worth most for the mana, counting what the
   copy makes in the turns left (mana from its next turn if it is a creature, Treasures, cards, lands, land
