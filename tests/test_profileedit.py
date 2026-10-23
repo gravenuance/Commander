@@ -429,3 +429,11 @@ def test_a_quoted_or_spaced_grace_header_is_edited_in_place(tmp_path: Path, head
     expected = f'version = 1\n{header}\n"A" = 3\n"B" = 2\n\n[ideas]\n'
     assert path.read_text(encoding="utf-8").startswith(expected)
     assert read_profile(tmp_path).grace == {"A": 3.0, "B": 2.0}
+
+
+def test_saving_the_settings_leaves_a_retired_goldfish_table_as_the_owner_wrote_it(tmp_path: Path) -> None:
+    retired = '\n[goldfish]\n# mine, from the pod\nfinishers = ["Overrun"]\n'
+    path = write(tmp_path, "version = 1\n[grace]\n" + retired)
+    settings_with(tmp_path, {"A": 2})
+    assert retired in path.read_text(encoding="utf-8")
+    assert read_profile(tmp_path).grace == {"A": 2.0}

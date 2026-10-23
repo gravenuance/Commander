@@ -90,13 +90,12 @@ tags (Bello animates big artifacts and enchantments; Arabella counts creatures w
 makes Treasure and leads Dwarves). The top three took tags that match no deck card (Bello's Elementals),
 Tokens and Go-wide shared `repeatable-creature-tokens` and Power Matters and Stompy shared a spec, so they
 filled places and scored twice, and the name tie-break let generic colourless artifacts crowd every artifact
-deck. The owner decided that one reading of the deck's themes feeds the previews, the goldfish's synergy
-cards (`ideas.dominant_card_ids`) and the Archidekt tag search (`ideas.search_tags`).
+deck. The owner decided that one reading of the deck's themes feeds the previews and the Archidekt tag search
+(`ideas.search_tags`); the goldfish's synergy cards read it too until ADR 0057 removed the goldfish.
 
-- **One reading** (`themereading.read_deck_themes`; `ideas.dominant_tags` and `dominant_card_ids` keep their
-  signatures and call it). A theme is a deck tag from `merge_themes`. Tags with the same spec (types,
-  keywords and tags, without order or case) are one theme, named by the first, which is the one the Archidekt
-  search takes. A theme matching none of the deck's main cards is dropped (`MIN_DECK_MATCHES = 1`). The
+- **One reading** (`themereading.read_deck_themes`; `ideas.search_tags` calls it). A theme is a deck tag from
+  `merge_themes`. Tags with the same spec (types, keywords and tags, without order or case) are one theme,
+  named by the first, which is the one the Archidekt search takes. A theme matching none of the deck's main cards is dropped (`MIN_DECK_MATCHES = 1`). The
   rest go by the cards matched, ties in Archidekt's tag order, and the first `MAX_SEARCH_TAGS` stay.
 - **Feeders** (`themewants`). A `Want` is a kind of card read from its type, tags, rules text, power and
   mana value. A theme also matches the cards that feed its payoff tags, beside the payoff tags themselves:
@@ -111,7 +110,7 @@ cards (`ideas.dominant_card_ids`) and the Archidekt tag search (`ideas.search_ta
   them; `animate-artifact` and `animate-enchantment` want artifacts that are no Equipment and enchantments
   that are no Aura, only those with mana value 4 or more when the commander also has
   `high-mana-value-matters`; `typal-X` wants the type X, when some card has it as a type (`typal-creature`
-  and `typal-choose` are no tribes). The goldfish's synergy cards include the deck's cards a commander wants.
+  and `typal-choose` are no tribes).
 - **Ranking.** A preview shows when it matches a theme or the commander. Order: the most distinct features it
   matches, that is the types, keywords, tags and wants of all the shown themes together, so Tokens and
   Go-wide sharing a tag count it once, and the commander wanting it counts as one more; then the commander
@@ -128,9 +127,6 @@ Consequences:
 - A deck tag some card of the deck does not match is no longer searched on Archidekt, so a tagged idea of such
   a tag is tested by the commander's own lists, as for any tag that left the three. A deck with few matching
   tags searches fewer.
-- The goldfish's synergy cards (ADR 0054: the dominant-tag card of the keep rule and the synergy figures)
-  grow for decks of artifacts, enchantments or small creatures, and with the commander's wants; its tests of
-  the engine are unchanged.
 - On the owner's eleven decks the main tags changed for seven: Magda (Artifacts, Dwarves, Treasure), Bello
   (Enchantments, Attack Triggers), Arabella (Weenies first), Ellivere (Auras gives way to Enchantments),
   Chatterfang (Artifacts for Aristocrats), Ashling (Blink matches no card) and Pantlaza (Stompy shares Power

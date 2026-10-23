@@ -1,6 +1,6 @@
 # 0056: The goldfish breaks ties between cut targets
 
-**Status:** Accepted · **Date:** 2026-10-22 · Builds on [ADR 0036](0036-surplus-cuts-on-one-score.md) (the
+**Status:** Superseded by [ADR 0057](0057-remove-the-goldfish.md) · **Date:** 2026-10-22 · Builds on [ADR 0036](0036-surplus-cuts-on-one-score.md) (the
 score and the four targets) and [ADR 0054](0054-goldfish-a-deck.md) (the swap figures)
 
 ## Context

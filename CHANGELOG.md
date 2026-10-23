@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 1.2.1 - 2026-10-24
+
+### Removed
+- The goldfish (ADR 0054, ADR 0056), which read too few cards to give figures that hold for other decks than
+  the owner's (ADR 0057). `cmdr goldfish` with `--swap`, `--plan` and `--cuts` is gone, and so are the
+  app's Goldfish tab, the Goldfish fold on a queued idea, the Goldfish block in Review, the *Goldfish pick*
+  mark and the Finishers section of Settings. An idea's cut targets are in score order again. A profile's
+  `[goldfish]` table is ignored, and nothing writes it any more, so a profile that still has it reads as before.
+  The code is in git history at the tag `v1.2.0`.
+
 ## 1.2.0 - 2026-10-23
 
 ### Added
