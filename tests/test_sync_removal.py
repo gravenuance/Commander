@@ -12,7 +12,7 @@ import pytest
 from commander import board as board_module
 from commander import store as store_module
 from commander.archidekt import ArchidektClient, parse_deck
-from commander.net import Fetcher, NetworkError
+from commander.net import Fetcher, NetworkError, Pacer
 from commander.store import SNAPSHOT_FILE, StoredDeck, Workspace
 from commander.sync import PullWatch, SyncResult, SyncStatus, sync_decks
 from conftest import ACCESS_TOKEN, DECK_ID, FakeArchidekt, Json
@@ -20,6 +20,16 @@ from conftest import ACCESS_TOKEN, DECK_ID, FakeArchidekt, Json
 GONE_ID = 222
 GONE_FOLDER = "222-other"
 SYNC_LOG = "commander.sync"
+
+
+def instant_pacer() -> Pacer:
+    """A pacer whose clock moves on by whatever it sleeps, so a 429's cool-down costs no real time."""
+    clock = [0.0]
+
+    def sleep(seconds: float) -> None:
+        clock[0] += seconds
+
+    return Pacer(0.0, sleep=sleep, monotonic=lambda: clock[0])
 
 
 def fake_with_two_decks(raw_deck: Json) -> FakeArchidekt:
@@ -42,7 +52,9 @@ def pull(
     """One sync_decks over the fake, as the signed-in owner unless told otherwise."""
     with httpx.Client(transport=httpx.MockTransport(handler or fake.handler)) as http:
         client = ArchidektClient(
-            Fetcher(http, sleep=lambda _: None), token=ACCESS_TOKEN if signed_in else None
+            Fetcher(http, sleep=lambda _: None),
+            token=ACCESS_TOKEN if signed_in else None,
+            pacer=instant_pacer(),
         )
         return sync_decks(
             client, workspace or Workspace(root / "decks"), "TESTER", dry_run=dry_run, watch=watch
@@ -165,7 +177,9 @@ def test_an_anonymous_listing_after_a_refused_login_deletes_nothing(tmp_path: Pa
     warnings: list[str] = []
 
     with httpx.Client(transport=httpx.MockTransport(fake.handler)) as http:
-        client = ArchidektClient(Fetcher(http, sleep=lambda _: None), token=ACCESS_TOKEN)
+        client = ArchidektClient(
+            Fetcher(http, sleep=lambda _: None), token=ACCESS_TOKEN, pacer=instant_pacer()
+        )
         results = sync_decks(client, Workspace(tmp_path / "decks"), "TESTER", warn=warnings.append)
 
     assert warnings == ["Archidekt refused the login: private and unlisted decks were not updated"]
