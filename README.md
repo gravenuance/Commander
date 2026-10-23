@@ -776,7 +776,8 @@ and `Not modelled` lists the cards the reading could not place. One-shot mana (r
 Diamond) goes only to the commander, mana sources, combo pieces, finishers and the tutors that fetch them, and
 each creature that is no longer summoning sick attacks every turn, unblocked, for its Treasure triggers and
 for the Treasures made when creatures deal combat damage (Ragavan, Professional Face-Breaker, Knuckles the
-Echidna), though no win by damage is judged. Cost reducers count: a Medallion or Goblin Anarchomancer takes generic mana off the spells it names
+Echidna), though no win by damage is judged. Carpet of Flowers makes 2 mana a turn from the turn after it
+is cast, as if the opponent had two Islands. Cost reducers count: a Medallion or Goblin Anarchomancer takes generic mana off the spells it names
 while it is in play, and Ghalta, The Great Henge, Bolt Bend, Blasphemous Act and Sunderflock cost less by the
 creatures the deck has out; Heartless Summoning also kills a creature of toughness 1, mana creature or not.
 Cards that make more Treasures per event (Xorn, Parallel Lives) or a trigger happen again (Panharmonicon,

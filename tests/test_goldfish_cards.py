@@ -3046,6 +3046,52 @@ def test_a_treasure_for_each_dwarf_tapped_and_a_search_for_five_treasures_are_re
     assert magda.modelled
 
 
+CARPET_OF_FLOWERS = real(
+    "Carpet of Flowers",
+    "{G}",
+    1,
+    "Enchantment",
+    "At the beginning of each of your main phases, if you haven't added mana with this ability this turn, "
+    "you may add X mana of any one color, where X is the number of Islands target opponent controls.",
+    identity="G",
+    roles=(RAMP,),
+)
+
+
+def test_carpet_of_flowers_makes_two_mana_of_one_colour_once_a_turn_from_the_turn_after_it_comes() -> None:
+    # The owner decided it counts two Islands, in every bracket. It makes the mana as a main phase begins, and
+    # only once a turn: from the next turn, as a creature's does, and not twice.
+    carpet = one(CARPET_OF_FLOWERS)
+    assert carpet.mana == ManaAbility(2, frozenset(ALL), delayed=True, ritual=False)
+    assert carpet.modelled
+    assert build(CARPET_OF_FLOWERS).not_modelled == ()
+
+
+def test_carpet_of_flowers_adds_two_to_the_mana_of_each_turn_after_the_one_it_comes() -> None:
+    giant = real("Giant", "{9}", 9, "Creature — Giant", "")
+    deck = build(FOREST, CARPET_OF_FLOWERS, giant, copies={"Forest": 4, "Giant": 2})
+    forest, carpet, big = (card_named(deck, name) for name in ("Forest", "Carpet of Flowers", "Giant"))
+    slots = [forest] * 4 + [carpet, big, big]
+    report = simulate(slots, (), (), bracket=5, average_mana_value=2.0, games=1, seed=7)
+    # The Carpet comes on turn one with the first Forest; its 2 mana join a Forest more each turn.
+    assert report.outcomes[0].mana == (1, 4, 5, 6, 6)
+
+
+def test_a_trigger_that_adds_mana_as_a_main_phase_begins_for_another_count_is_not_read() -> None:
+    other = real(
+        "Forest Carpet",
+        "{G}",
+        1,
+        "Enchantment",
+        "At the beginning of each of your main phases, if you haven't added mana with this ability this "
+        "turn, you may add X mana of any one color, where X is the number of Forests you control.",
+        identity="G",
+        roles=(RAMP,),
+    )
+    assert one(other).mana is None
+    assert not one(other).modelled
+
+
 TEZZERET = real(
     "Tezzeret, Cruel Captain",
     "{3}",

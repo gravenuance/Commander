@@ -1162,8 +1162,26 @@ def _mana(
                 plus_sacrificed=spell and _PLUS_SACRIFICED.search(text) is not None,
             )
     if best is None:
-        return _mana_aura(text, identity)
+        return _mana_aura(text, identity) or _main_phase_mana(text, identity)
     return replace(best, colours=frozenset(colours))
+
+
+# Carpet of Flowers: mana as a main phase begins, once a turn, for the Islands an opponent controls.
+_MAIN_PHASE_MANA = re.compile(
+    r"^at the beginning of each of your main phases, if you haven't added mana with this ability this turn, "
+    r"you may add x mana of any one colou?r, where x is the number of islands target opponent controls\.",
+    re.MULTILINE,
+)
+# The owner decided that an opponent counts two Islands, in every bracket.
+OPPONENT_ISLANDS = 2
+
+
+def _main_phase_mana(text: str, identity: frozenset[str]) -> ManaAbility | None:
+    """The mana a permanent makes once a turn as a main phase begins, so from the turn after it comes: the
+    first main phase it is in play for is the next turn's, or the second one's of this."""
+    if _MAIN_PHASE_MANA.search(text) is None:
+        return None
+    return ManaAbility(OPPONENT_ISLANDS, identity or _ALL_COLOURS, delayed=True, ritual=False)
 
 
 def _mana_aura(text: str, identity: frozenset[str]) -> ManaAbility | None:

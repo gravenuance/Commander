@@ -287,6 +287,12 @@ reading and the policy now follow, and `POLICY_VERSION` is 5.
   Face-Breaker and Knuckles come off "Not modelled". The plays-alike rule of a swap (below) also tells two
   plain creatures apart by power in a deck with a trigger for the damage of other creatures, as power decides
   whether a creature sets it off; a trigger for a creature's own damage does not.
+- **Carpet of Flowers** (the owner's decision) makes 2 mana of any one colour of the deck's, in every bracket:
+  the owner counts an opponent's Islands, and the goldfish has no opponents, so it counts two. The mana comes
+  once a turn as a main phase begins, so from the turn after the Carpet is cast, as a creature's does; the
+  second main phase of the turn it comes, where a Carpet cast in the first would add its mana, is left out,
+  as the game follows no mana that belongs to one phase of a turn. The mana is of any colour, not of one
+  colour for both. Another count (the Forests you control) is not read.
 - **Searches paid for by a permanent.** Magda's "sacrifice five Treasures" search is used as each main phase
   begins while there are five, and Treasures are kept for it rather than spent on anything but a win or the
   commander. Loyalty is not in the card data, so a -N search is taken as payable once when N is at most the

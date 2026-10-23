@@ -11,8 +11,8 @@
   a plan's remove with `keep` cuts the copies beyond it. It counts one-shot mana (self-sacrificing creatures,
   Treasures, rituals, mana spent only on some spells, life paid for mana down to 10), tutors for a colour, a
   power or a subtype, Treasures from attacks and from combat damage (Ragavan, Professional Face-Breaker,
-  Knuckles the Echidna), searches paid for with Treasures or loyalty, and Protean Hulk's
-  search when a free sacrifice outlet is in play. It counts cost reducers too: Medallions and the like take
+  Knuckles the Echidna), Carpet of Flowers as 2 mana a turn, searches paid for with Treasures or loyalty,
+  and Protean Hulk's search when a free sacrifice outlet is in play. It counts cost reducers too: Medallions and the like take
   generic mana off the spells they name, Ghalta, The Great Henge, Bolt Bend, Blasphemous Act and Sunderflock
   cost less by the creatures in play, and Heartless Summoning shrinks every creature, killing those of
   toughness 1. It also counts cards that make more Treasures per event or a trigger happen again, cards that
