@@ -18,6 +18,7 @@ from commander.goldfish_cards import (
     Draw,
     EntryCost,
     GoldfishCard,
+    GoldfishCombo,
     GoldfishDeck,
     LandDestination,
     LandFace,
@@ -3090,6 +3091,48 @@ def test_a_trigger_that_adds_mana_as_a_main_phase_begins_for_another_count_is_no
     )
     assert one(other).mana is None
     assert not one(other).modelled
+
+
+OIN_THE_BRAVE = real(
+    "Óin the Brave",
+    "{1}{R}",
+    2,
+    "Legendary Creature — Dwarf Warrior",
+    "Storied (If you control three or more artifacts, legendaries, and/or Sagas, you have an enduring story "
+    "for the rest of the game.)\nAs long as you have an enduring story, Óin gets +1/+0 and has haste.\n"
+    "{1}, {T}, Discard a card: Draw a card.",
+    identity="R",
+    roles=(DRAW,),
+    power="1",
+    toughness="3",
+)
+MOUNTAIN = real("Mountain", "", 0, "Basic Land — Mountain", "({T}: Add {R}.)", produced="R", identity="R")
+GIANT_PIECE = real("Giant Piece", "{7}", 7, "Creature — Giant", "", identity="R", power="7", toughness="7")
+
+
+def test_oin_the_brave_is_a_dwarf_whose_attack_makes_magdas_treasure_though_its_own_ability_is_unread() -> (
+    None
+):
+    deck = build(MOUNTAIN, OIN_THE_BRAVE, GIANT_PIECE, commander=MAGDA, copies={"Mountain": 4})
+    oin = card_named(deck, "Óin the Brave")
+    assert oin.subtypes == {"dwarf", "warrior"}
+    assert not oin.modelled
+    assert deck.not_modelled == ("Óin the Brave",)
+    piece = replace(card_named(deck, "Giant Piece"), combo=True)
+    combo = (GoldfishCombo("1-2", ("Giant Piece",), (), ()),)
+
+    def landed_with(dwarf: GoldfishCard) -> tuple[int, ...]:
+        slots = [card_named(deck, "Mountain")] * 4 + [dwarf, piece]
+        report = simulate(slots, deck.commanders, combo, bracket=5, average_mana_value=2.0, games=1, seed=7)
+        assert report.outcomes[0].commander_turns == (2,)
+        return report.outcomes[0].combo_turns
+
+    # Magda comes on turn two and attacks from turn three for 1 Treasure, Oin comes on turn three and attacks
+    # from turn four: 2 more. Turn four has 4 Mountains and the first, and after the attack 7 for the piece.
+    assert landed_with(oin) == (4,)
+    # Were it no Dwarf only Magda's tapping would make a Treasure, one each turn: 4 Mountains and 2 Treasures
+    # and the third from turn five's attack make the 7 there.
+    assert landed_with(replace(oin, subtypes=frozenset({"warrior"}))) == (5,)
 
 
 TEZZERET = real(
