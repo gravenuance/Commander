@@ -1,5 +1,5 @@
-"""The themes of a deck as every card search reads them (ADR 0055): the previews, the goldfish's synergy
-cards and the Archidekt idea search all take the deck's dominant themes from here.
+"""The themes of a deck as every card search reads them (ADR 0055): the previews and the Archidekt idea
+search both take the deck's dominant themes from here.
 
 A theme is one of the deck's Archidekt theme tags. Tags that ask for the same cards are one theme, and a tag
 that none of the deck's cards match is no theme, so neither takes one of the few places. A theme matches the
@@ -45,17 +45,6 @@ class DeckReading:
     def names(self) -> list[str]:
         """The deck tags the themes stand for, which the Archidekt search takes."""
         return [theme.name for theme in self.themes]
-
-    def matching(self, db: CardDb, oracle_ids: Iterable[str]) -> frozenset[str]:
-        """The given cards that match one of the themes or that the commander wants."""
-        ids = list(oracle_ids)
-        needs_facts = bool(self.commander) or any(spec_wants(theme.spec) for theme in self.themes)
-        facts = card_facts(db, ids) if needs_facts else {}
-        found: set[str] = set()
-        for theme in self.themes:
-            found |= _cards_matching(db, theme.spec, ids, facts)
-        found |= _wanted(self.commander, ids, facts)
-        return frozenset(found)
 
 
 def read_deck_themes(deck: Deck, profile: Profile, db: CardDb) -> DeckReading:

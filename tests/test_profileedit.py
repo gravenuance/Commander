@@ -7,7 +7,7 @@ import pytest
 
 from commander.deckprofile import ProfileError, read_profile
 from commander.models import Deck
-from commander.profileedit import ensure_grace_table, save_finishers, save_settings
+from commander.profileedit import ensure_grace_table, save_settings
 
 DECK = Deck(1, "Test deck", "me", 3, "2026-10-16", ())
 PROFILE = """\
@@ -429,61 +429,3 @@ def test_a_quoted_or_spaced_grace_header_is_edited_in_place(tmp_path: Path, head
     expected = f'version = 1\n{header}\n"A" = 3\n"B" = 2\n\n[ideas]\n'
     assert path.read_text(encoding="utf-8").startswith(expected)
     assert read_profile(tmp_path).grace == {"A": 3.0, "B": 2.0}
-
-
-def test_finishers_are_written_into_a_goldfish_table_and_every_comment_stays(tmp_path: Path) -> None:
-    path = write(tmp_path, PROFILE + '\n[goldfish]\n# mine, from the pod\nfinishers = ["Overrun"]\n')
-    profile = save_finishers(
-        tmp_path, DECK, added=["Craterhoof Behemoth", "overrun"], removed=["Triumph of the Hordes"]
-    )
-    text = path.read_text(encoding="utf-8")
-    assert "# Chatterfang's profile: the owner's own notes." in text
-    assert 'types = ["Squirrel"]  # the tribe' in text
-    assert "# mine, from the pod" in text
-    assert profile.finishers == ("Craterhoof Behemoth", "overrun")
-    assert profile.not_finishers == ("Triumph of the Hordes",)
-    assert read_profile(tmp_path) == profile
-
-
-def test_a_profile_without_a_goldfish_table_gets_one_at_the_end_with_the_rest_untouched(
-    tmp_path: Path,
-) -> None:
-    path = write(tmp_path, PROFILE)
-    save_finishers(tmp_path, DECK, added=["Craterhoof Behemoth"], removed=[])
-    text = path.read_text(encoding="utf-8")
-    assert text.startswith(PROFILE)
-    assert text.count("[goldfish]") == 1
-    profile = read_profile(tmp_path)
-    assert profile.finishers == ("Craterhoof Behemoth",)
-    assert profile.adjacent == (("The Gitrog Monster",),)
-
-
-def test_a_deck_without_a_profile_gets_the_template_with_its_finishers(tmp_path: Path) -> None:
-    save_finishers(tmp_path, DECK, added=[], removed=["Overrun"])
-    text = (tmp_path / "profile.toml").read_text(encoding="utf-8")
-    assert "# What Test deck" in text
-    assert "`cmdr goldfish` plays these cards as finishers" in text
-    assert read_profile(tmp_path).not_finishers == ("Overrun",)
-
-
-def test_repeats_and_blanks_are_dropped_from_the_finishers(tmp_path: Path) -> None:
-    profile = save_finishers(tmp_path, DECK, added=["Overrun", "OVERRUN ", " "], removed=[""])
-    assert profile.finishers == ("Overrun",)
-    assert profile.not_finishers == ()
-
-
-def test_a_card_in_both_finisher_lists_raises_and_leaves_the_file_alone(tmp_path: Path) -> None:
-    write(tmp_path, PROFILE)
-    with pytest.raises(ProfileError, match=r"in both goldfish\.finishers and goldfish\.not_finishers"):
-        save_finishers(tmp_path, DECK, added=["Overrun"], removed=["overrun"])
-    assert (tmp_path / "profile.toml").read_text(encoding="utf-8") == PROFILE
-
-
-def test_saving_finishers_leaves_the_settings_and_grace_as_they_were(tmp_path: Path) -> None:
-    write(tmp_path, 'version = 1\n[grace]\n"Sol Ring" = 3\n[ideas]\ncommanders = ["Ygra, Eater of All"]\n')
-    save_finishers(tmp_path, DECK, added=["Overrun"], removed=[])
-    profile = read_profile(tmp_path)
-    assert profile.grace == {"Sol Ring": 3.0}
-    assert profile.adjacent == (("Ygra, Eater of All",),)
-    save_settings(tmp_path, DECK, adjacent=[], ignore=[], tag_search=False)
-    assert read_profile(tmp_path).finishers == ("Overrun",)

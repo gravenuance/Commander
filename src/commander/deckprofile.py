@@ -1,7 +1,6 @@
 """Deck profiles: what one deck wants from suggestions and from the ideas sync compiles, kept by hand as
 profile.toml (ADR 0005): role targets, themes, exclusions, kept cards, key cards to leave out and the
-commanders that play alike, grace cards that weigh the lists holding them more (ADR 0039) and the
-finishers the goldfish plays (ADR 0054)."""
+commanders that play alike and grace cards that weigh the lists holding them more (ADR 0039)."""
 
 import tomllib
 from collections.abc import Iterable, Mapping, Sequence
@@ -41,16 +40,16 @@ _TOP_KEYS = frozenset(
         "key_cards",
         "ideas",
         "grace",
-        "goldfish",
     }
 )
+# Tables that older versions wrote and nothing reads now (ADR 0057): a profile that still has one stays valid.
+_RETIRED_KEYS = frozenset({"goldfish"})
 _THEME_KEYS = frozenset({"types", "keywords", "tags"})
 _THEMES_KEYS = _THEME_KEYS | {"ignore"}
 _EXCLUDE_KEYS = _THEME_KEYS | {"cards"}
 _KEEP_KEYS = frozenset({"cards", "categories"})
 _IDEAS_KEYS = frozenset({"commanders", "tag_search"})
 _KEY_CARDS_KEYS = frozenset({"ignore"})
-_GOLDFISH_KEYS = frozenset({"finishers", "not_finishers"})
 
 
 class ProfileError(ConfigError):
@@ -95,10 +94,6 @@ class Profile:
     tag_search: bool = False
     # Cards that weigh a list holding them more in this deck's shares (ADR 0039): name as written, factor.
     grace: Mapping[str, float] = field(default_factory=dict[str, float])
-    # Cards the goldfish plays as finishers besides the Tagger-tagged ones, and tagged ones it plays as
-    # ordinary spells (ADR 0054).
-    finishers: tuple[str, ...] = ()
-    not_finishers: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.bracket_ceiling is not None and not 1 <= self.bracket_ceiling <= 5:  # noqa: PLR2004 — brackets 1..5
@@ -164,7 +159,7 @@ def read_profile_text(path: Path) -> str | None:
 
 
 def parse_profile(raw: Mapping[str, object], where: str) -> Profile:
-    unknown = sorted(set(raw) - _TOP_KEYS)
+    unknown = sorted(set(raw) - _TOP_KEYS - _RETIRED_KEYS)
     if unknown:
         raise ProfileError(f"{where}: unknown key {unknown[0]!r}; use {', '.join(sorted(_TOP_KEYS))}")
     themes = _table(raw, "themes", _THEMES_KEYS, where)
@@ -172,12 +167,6 @@ def parse_profile(raw: Mapping[str, object], where: str) -> Profile:
     keep = _table(raw, "keep", _KEEP_KEYS, where)
     ideas = _table(raw, "ideas", _IDEAS_KEYS, where)
     key_cards = _table(raw, "key_cards", _KEY_CARDS_KEYS, where)
-    goldfish = _table(raw, "goldfish", _GOLDFISH_KEYS, where)
-    finishers = _strings(goldfish, "finishers", "goldfish", where)
-    not_finishers = _strings(goldfish, "not_finishers", "goldfish", where)
-    both = {card_key(name) for name in finishers} & {card_key(name) for name in not_finishers}
-    if both:
-        raise ProfileError(f"{where}: {min(both)!r} is in both goldfish.finishers and goldfish.not_finishers")
     return Profile(
         archetype=_text(raw.get("archetype"), "archetype", where) or "",
         bracket_ceiling=_whole(raw.get("bracket_ceiling"), "bracket_ceiling", where, 1, 5),
@@ -193,8 +182,6 @@ def parse_profile(raw: Mapping[str, object], where: str) -> Profile:
         adjacent=_commander_groups(ideas.get("commanders"), where),
         tag_search=_flag(ideas.get("tag_search"), "ideas.tag_search", where),
         grace=_grace(raw.get("grace"), where),
-        finishers=finishers,
-        not_finishers=not_finishers,
     )
 
 
@@ -280,12 +267,6 @@ ignore = []
 [ideas]
 commanders = []
 # tag_search = true
-
-# `cmdr goldfish` plays these cards as finishers, which win once cast, besides the ones the Tagger marks
-# (overrun, alternate win condition, mass theft). not_finishers: marked cards that do not win this deck.
-[goldfish]
-finishers = []
-not_finishers = []
 """
 
 

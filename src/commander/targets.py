@@ -60,8 +60,6 @@ class Target:
     name: str
     reason: str
     source: TargetSource
-    # What the cut scored (ADR 0036); None for a picked one, which has no score.
-    score: float | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -234,7 +232,7 @@ def role_targets(info: CardInfo, main: Sequence[ResolvedCard], rules: CutRules) 
         if c.group is not None:
             groups.add(c.group)
         if _sound(info, c.cut, rules):
-            taken.append(Target(c.cut.card.name, c.reason, TargetSource.ROLE, c.score))
+            taken.append(Target(c.cut.card.name, c.reason, TargetSource.ROLE))
     return tuple(taken)
 
 

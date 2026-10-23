@@ -95,7 +95,6 @@ _MANA_PAID = re.compile(r"\{(?!t\})[^}]+\}")
 RESTRICTED = "spend this mana only"
 PIP = re.compile(r"\{([^}]+)\}")
 _HALF_SEPARATOR = " // "
-_HYBRID_SIDES = 2
 # An aftermath card has layout "split" like Fire // Ice; only the Aftermath keyword line of its text tells.
 _AFTERMATH = re.compile(r"^aftermath\b", re.IGNORECASE | re.MULTILINE)
 BASIC_TYPES = {"plains": "W", "island": "U", "swamp": "B", "mountain": "R", "forest": "G"}
@@ -548,12 +547,10 @@ def is_mana_card(info: CardMana) -> bool:
 
 
 def fixed_pips(mana_cost: str) -> dict[str, int]:
-    """Fixed coloured and colourless pips of the front face, and two-colour hybrid pips under their symbol
-    ("W/U"), which only the goldfish reads; generic hybrid, Phyrexian and X pips are left out."""
+    """Fixed coloured and colourless pips of the front face; hybrid, Phyrexian and X pips are left out."""
     pips: dict[str, int] = {}
     for symbol in PIP.findall(front_face(mana_cost)):
-        sides = symbol.split("/")
-        if len(sides) <= _HYBRID_SIDES and all(side in COLORS or side == "C" for side in sides):
+        if symbol in COLORS or symbol == "C":
             pips[symbol] = pips.get(symbol, 0) + 1
     return pips
 

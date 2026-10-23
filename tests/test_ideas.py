@@ -26,8 +26,6 @@ from commander.ideas import (
     Idea,
     adjacent_ideas,
     compile_ideas,
-    dominant_card_ids,
-    dominant_tags,
     idea_labels,
     ideas_summary,
     rejudge_ideas,
@@ -363,12 +361,9 @@ def test_no_theme_tag_is_searched_while_the_tag_search_is_off(deck: Deck, db: Ca
     assert search_tags(themed_deck(deck, ("Flash",)), Profile(), db) == []
 
 
-def test_the_dominant_tags_do_not_depend_on_the_tag_search(deck: Deck, db: CardDb) -> None:
+def test_the_searched_tags_are_the_decks_dominant_themes_in_order(deck: Deck, db: CardDb) -> None:
     themed = themed_deck(deck, ("Golems", "Dwarves", "Flash", "Vehicles"))
-    assert dominant_tags(themed, Profile(), db) == ["Flash", "Golems", "Dwarves"]
-    assert dominant_tags(themed, Profile(tag_search=True), db) == search_tags(
-        themed, Profile(tag_search=True), db
-    )
+    assert search_tags(themed, Profile(tag_search=True), db) == ["Flash", "Golems", "Dwarves"]
 
 
 @pytest.fixture(scope="module")
@@ -382,9 +377,9 @@ def power_db(tmp_path_factory: pytest.TempPathFactory) -> Iterator[CardDb]:
 
 def test_a_deck_tag_none_of_the_decks_cards_match_is_not_a_dominant_tag(deck: Deck, db: CardDb) -> None:
     # The fixture deck holds no Elemental.
-    assert dominant_tags(themed_deck(deck, ("Flash", "Elementals")), Profile(), db) == ["Flash"]
-    assert dominant_tags(themed_deck(deck, ("Elementals",)), Profile(), db) == []
-    assert dominant_card_ids(themed_deck(deck, ("Elementals",)), Profile(), db) == frozenset()
+    on = Profile(tag_search=True)
+    assert search_tags(themed_deck(deck, ("Flash", "Elementals")), on, db) == ["Flash"]
+    assert search_tags(themed_deck(deck, ("Elementals",)), on, db) == []
 
 
 def test_deck_tags_with_the_same_meaning_take_one_place_among_the_dominant_tags(
@@ -392,18 +387,7 @@ def test_deck_tags_with_the_same_meaning_take_one_place_among_the_dominant_tags(
 ) -> None:
     # Stompy and Power Matters both ask for the power-matters tag; Flash matches two cards, the rest one.
     themed = themed_deck(deck, ("Flash", "Stompy", "Power Matters", "Dwarves"))
-    assert dominant_tags(themed, Profile(), power_db) == ["Flash", "Stompy", "Dwarves"]
-
-
-def test_the_cards_matching_the_dominant_tags_are_found_with_the_tag_search_off(
-    deck: Deck, db: CardDb
-) -> None:
-    themed = themed_deck(deck, ("Golems", "Dwarves", "Flash", "Vehicles"))
-    found = dominant_card_ids(themed, Profile(), db)
-    names = {info.name for info in db.cards(found).values()}
-    # Flash, Golems and Dwarves are the dominant tags; Vehicles falls out, and the Hoverbike is Flash too.
-    assert names == {"Magda, Brazen Outlaw", "Disruptor Flute", "High-Speed Hoverbike", "Battered Golem"}
-    assert dominant_card_ids(themed_deck(deck, ()), Profile(), db) == frozenset()
+    assert search_tags(themed, Profile(tag_search=True), power_db) == ["Flash", "Stompy", "Dwarves"]
 
 
 def tag_pool(tag: str, *decks: list[str]) -> TaggedDecks:

@@ -20,7 +20,6 @@ from commander.metadata import (
     MetaSources,
     PeerLists,
     cache_stamp,
-    cached_own_combos,
     gather,
     gather_adjacent,
     gather_for,
@@ -974,20 +973,6 @@ def test_combos_are_looked_for_in_each_top_commanders_core_cards(rig: Rig) -> No
     assert again.combos.source is AnswerSource.CACHED
     assert again.own_combos.source is AnswerSource.CACHED
     assert len(rig.spellbook.combo_bodies) == 3
-
-
-def test_the_decks_own_combos_are_read_from_the_cache_alone_however_old(rig: Rig) -> None:
-    deck = ellivere_deck()
-    assert cached_own_combos(deck, rig.cache, now=lambda: NOW) is None
-    rig.gather()
-    asked = len(rig.spellbook.combo_bodies)
-    later = NOW + timedelta(days=90)
-    found = cached_own_combos(deck, rig.cache, now=lambda: later)
-    assert found is not None
-    assert [c.id for c in found] == ["513-5034--46", "129-4131", "4222-5168"]
-    # Nothing was asked of Spellbook, and a changed deck has no stored answer.
-    assert len(rig.spellbook.combo_bodies) == asked
-    assert cached_own_combos(replace(deck, cards=deck.cards[:-1]), rig.cache, now=lambda: NOW) is None
 
 
 def test_combos_without_meta_lists_are_unavailable(rig: Rig) -> None:

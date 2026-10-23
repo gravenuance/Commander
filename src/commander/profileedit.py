@@ -63,22 +63,6 @@ def save_settings(
     return profile
 
 
-def save_finishers(folder: Path, deck: Deck, *, added: Sequence[str], removed: Sequence[str]) -> Profile:
-    """Set the cards played as finishers beside the Tagger-tagged ones ([goldfish] finishers) and the tagged
-    ones that are not ([goldfish] not_finishers), ADR 0054. Everything else in the file, comments included,
-    stays as it was; a deck without a profile gets the commented template first. A bad value raises
-    ProfileError and leaves the file alone."""
-    path = profile_path(folder)
-    source, _ = _editable(path, deck)
-    doc = _parse(source, path)
-    table = _table(doc, "goldfish")
-    table["finishers"] = _array(_once(name.strip() for name in added if name.strip()))
-    table["not_finishers"] = _array(_once(name.strip() for name in removed if name.strip()))
-    profile = parse_profile(cast("dict[str, object]", doc.unwrap()), str(path))
-    write_text_atomic(path, _bom(path) + tomlkit.dumps(doc))
-    return profile
-
-
 def _editable(path: Path, deck: Deck) -> tuple[str, Profile]:
     """The profile's text, or the template for a deck without one, and what it reads as. The file as it
     stands must be a profile before it is edited, so a wrong shape is an error here."""

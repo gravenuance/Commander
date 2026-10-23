@@ -9,9 +9,9 @@ import pytest
 from commander.carddb import CardDb
 from commander.deckprofile import Profile, ThemeSpec
 from commander.deckthemes import merge_themes
-from commander.ideas import dominant_card_ids, dominant_tags
 from commander.models import Deck
 from commander.scryfall import parse_search_page
+from commander.themereading import read_deck_themes
 from commander.themewants import (
     FEEDERS_BY_TAG,
     LOW_POWER,
@@ -147,13 +147,13 @@ def test_a_typal_commander_wants_its_type_but_a_typal_tag_that_is_no_type_wants_
     assert commander_wants(db, {"typal-creature", "typal-choose", "typal-non-human"}) == ()
 
 
-def test_the_commanders_wants_count_with_the_goldfish_synergy_cards_though_the_deck_has_no_theme_tags(
+def test_the_commanders_wants_are_read_though_the_deck_has_no_theme_tags(
     deck: Deck, low_power_commander_db: CardDb
 ) -> None:
-    # Magda is a made-up synergy-low-power commander here, and no other card of the deck has power 2 or less.
-    themed = themed_deck(deck, ())
-    assert dominant_tags(themed, Profile(), low_power_commander_db) == []
-    assert dominant_card_ids(themed, Profile(), low_power_commander_db) == {MAGDA_ORACLE}
+    # Magda is a made-up synergy-low-power commander here.
+    reading = read_deck_themes(themed_deck(deck, ()), Profile(), low_power_commander_db)
+    assert reading.names == []
+    assert reading.commander == (LOW_POWER,)
 
 
 def test_suggests_themes_still_name_the_payoff_tags_alone(deck: Deck, db: CardDb) -> None:
@@ -170,19 +170,19 @@ def test_every_artifact_of_the_deck_feeds_the_artifacts_tag_though_it_is_a_payof
     deck: Deck, db: CardDb
 ) -> None:
     # The card data has no synergy-artifact tag here, so only the artifacts themselves can match.
-    themed = themed_deck(deck, ("Artifacts",))
-    assert dominant_tags(themed, Profile(), db) == ["Artifacts"]
-    assert dominant_card_ids(themed, Profile(), db) == {DISRUPTOR_FLUTE, HOVERBIKE, BATTERED_GOLEM}
+    reading = read_deck_themes(themed_deck(deck, ("Artifacts",)), Profile(), db)
+    assert reading.names == ["Artifacts"]
+    assert reading.themes[0].cards == {DISRUPTOR_FLUTE, HOVERBIKE, BATTERED_GOLEM}
 
 
 def test_a_creature_with_power_two_or_less_feeds_the_weenies_tag(deck: Deck, db: CardDb) -> None:
     # Magda is a 2-power creature; the Golem has 3 and the Hoverbike is no creature.
-    themed = themed_deck(deck, ("Weenies",))
-    assert dominant_tags(themed, Profile(), db) == ["Weenies"]
-    assert dominant_card_ids(themed, Profile(), db) == {MAGDA_ORACLE}
+    reading = read_deck_themes(themed_deck(deck, ("Weenies",)), Profile(), db)
+    assert reading.names == ["Weenies"]
+    assert reading.themes[0].cards == {MAGDA_ORACLE}
 
 
 def test_a_card_that_creates_treasure_feeds_the_treasure_tag(deck: Deck, db: CardDb) -> None:
     # Magda's text creates a Treasure; the card data holds no repeatable-treasures tag for her.
-    themed = themed_deck(deck, ("Treasure",))
-    assert dominant_card_ids(themed, Profile(), db) == {MAGDA_ORACLE}
+    reading = read_deck_themes(themed_deck(deck, ("Treasure",)), Profile(), db)
+    assert reading.themes[0].cards == {MAGDA_ORACLE}

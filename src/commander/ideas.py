@@ -17,7 +17,7 @@ replace. Every sync also re-judges the open ideas by cmdr or from the old Maybeb
 longer passes its source's test is turned down (`rejudge_ideas`).
 """
 
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -420,21 +420,7 @@ def search_tags(deck: Deck, profile: Profile, db: CardDb) -> list[str]:
     MAX_SEARCH_TAGS that the most of the deck's main cards match, ties in Archidekt's tag order."""
     if not profile.tag_search:
         return []
-    return dominant_tags(deck, profile, db)
-
-
-def dominant_tags(deck: Deck, profile: Profile, db: CardDb) -> list[str]:
-    """The deck's dominant theme tags, whether or not the tag search is on: its themes' first tags, as
-    `themereading.read_deck_themes` reads them (at most MAX_SEARCH_TAGS)."""
     return read_deck_themes(deck, profile, db).names
-
-
-def dominant_card_ids(deck: Deck, profile: Profile, db: CardDb, also: Iterable[str] = ()) -> frozenset[str]:
-    """Oracle ids of the deck's main cards, and of the cards `also` names by oracle id, that match one of its
-    `dominant_tags`, feed one or are wanted by the commander (`DeckReading.matching`)."""
-    oracle_ids = [r.info.oracle_id for r in db.resolve(deck.main_cards) if r.info is not None]
-    oracle_ids.extend(also)
-    return read_deck_themes(deck, profile, db).matching(db, oracle_ids)
 
 
 def gather_idea_pools(
