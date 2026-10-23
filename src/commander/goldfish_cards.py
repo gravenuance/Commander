@@ -324,8 +324,9 @@ def compile_deck(
 
     cards holds the deck's cards by casefolded name, infos their Tagger roles by oracle id (`CardDb.cards`),
     and tags each card's tag slugs with every tag above them (`CardDb.tag_lineage`). synergy is the oracle ids
-    of the cards matching the deck's dominant tags (`ideas.search_tags`). The finisher names are added to and
-    taken from the cards the Tagger tags make finishers. powers holds the cards' printed power by oracle id
+    of the cards matching or feeding the deck's dominant tags, or that its commander wants
+    (`ideas.dominant_card_ids`). The finisher names are added to and taken from the cards the Tagger tags
+    make finishers. powers holds the cards' printed power by oracle id
     (`CardDb.card_texts`); a card it lacks has none. A card the card data lacks is a plain spell of the deck's
     average mana value, not modelled.
     """

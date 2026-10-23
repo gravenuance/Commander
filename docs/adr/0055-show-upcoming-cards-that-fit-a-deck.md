@@ -128,8 +128,9 @@ Consequences:
 - A deck tag some card of the deck does not match is no longer searched on Archidekt, so a tagged idea of such
   a tag is tested by the commander's own lists, as for any tag that left the three. A deck with few matching
   tags searches fewer.
-- The goldfish's synergy cards grow for decks of artifacts, enchantments or small creatures, and with the
-  commander's wants; its tests of the engine are unchanged.
+- The goldfish's synergy cards (ADR 0054: the dominant-tag card of the keep rule and the synergy figures)
+  grow for decks of artifacts, enchantments or small creatures, and with the commander's wants; its tests of
+  the engine are unchanged.
 - On the owner's eleven decks the main tags changed for seven: Magda (Artifacts, Dwarves, Treasure), Bello
   (Enchantments, Attack Triggers), Arabella (Weenies first), Ellivere (Auras gives way to Enchantments),
   Chatterfang (Artifacts for Aristocrats), Ashling (Blink matches no card) and Pantlaza (Stompy shares Power
