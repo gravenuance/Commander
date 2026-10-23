@@ -2064,6 +2064,8 @@ class _Game:
         the creatures' own triggers and one for each creature that becomes tapped, for each permanent that
         makes them."""
         cards = self.s.cards
+        if not (copies or self.doublers or self.increasers):
+            return self._plain_yields(attackers)
         bodies = [_Body(cid, cid) for cid in attackers]
         bodies += [_Body(copy.card, copy.who) for copy in copies if copy.attacks]
         sources = [_Body(cid, cid) for cid in self.bf if cards[cid].src.treasure_on_tap]
@@ -2090,6 +2092,17 @@ class _Game:
             if taps:
                 again = 1 + self._extra_times(source, TriggerCause.ATTACKING, doublers)
                 made.extend([self._treasures_of(1, again, increase)] * taps)
+        return made
+
+    def _plain_yields(self, attackers: Sequence[int]) -> list[int]:
+        """`_combat_yields` with no copy, doubler or increaser in play: each trigger makes the Treasures it
+        prints, once."""
+        cards = self.s.cards
+        made = [base for base in (cards[cid].src.treasures_on_attack for cid in attackers) if base]
+        for cid in self.bf:
+            types = cards[cid].src.treasure_on_tap
+            if types:
+                made.extend([1] * sum(1 for body in attackers if _has_type(cards[body].src, types)))
         return made
 
     def _can_attack(self, cid: int) -> bool:
