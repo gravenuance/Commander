@@ -2182,20 +2182,24 @@ class _Game:
         Those tapped for mana or a burst do not, and nor do as many others as Drums and crews tap, the
         summoning-sick ones first and then those with the least to gain from attacking."""
         cards = self.s.cards
-        types = frozenset(t for cid in self.bf for t in cards[cid].src.treasure_on_tap)
         ready = [
             cid
             for _, _, cid in self.creatures
             if cid not in self.arrived and cid not in self.burst_used and not self._taps_for_mana(cid)
         ]
         taps = sum(1 for cid in self.needs_met if cards[cid].need is ManaNeed.CREATURE)
+        if taps <= 0:
+            return ready
         taps -= sum(1 for _, _, cid in self.creatures if cid in self.arrived and self._tappable(cid))
+        if taps <= 0:
+            return ready
+        types = frozenset(t for cid in self.bf for t in cards[cid].src.treasure_on_tap)
 
         def gain(cid: int) -> int:
             src = cards[cid].src
             return src.treasures_on_attack + (1 if types and _has_type(src, types) else 0)
 
-        spare = sorted((cid for cid in ready if self._tappable(cid)), key=gain)[: max(taps, 0)]
+        spare = sorted((cid for cid in ready if self._tappable(cid)), key=gain)[:taps]
         return [cid for cid in ready if cid not in spare]
 
     def _activate(self, *, spare: bool = False) -> bool:
