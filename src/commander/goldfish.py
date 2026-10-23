@@ -17,25 +17,28 @@ from dataclasses import dataclass
 from enum import Enum
 from itertools import combinations
 from math import sqrt
-from typing import NamedTuple
+from typing import NamedTuple, Self
 
 from commander.answers import card_key
 from commander.goldfish_cards import (
     CHANGELING,
     NON_CREATURE_SUBTYPES,
     CardKind,
+    Discount,
     EntryCost,
     GoldfishCard,
     GoldfishCombo,
     GoldfishDeck,
     LandDestination,
     ManaNeed,
+    Measure,
+    Reducer,
     Tutor,
     TutorDestination,
 )
 
 # Raised whenever the policy or the recognition changes, so kept results are not mixed with new ones.
-POLICY_VERSION = 5
+POLICY_VERSION = 6
 GAMES = 10_000
 # The turn by which a bracket expects to be able to play before winning or losing (Wizards, 2025-10-21).
 BRACKET_TURN = {1: 9, 2: 8, 3: 6, 4: 4}
@@ -265,15 +268,20 @@ def _hall(needs: Mapping[int, int]) -> tuple[tuple[int, int], ...]:
 class Cost:
     """A cost in the form the payment checks read: `needs` counts the pips that each mask of units can pay."""
 
-    __slots__ = ("generic", "hall", "pip_masks", "single", "total")
+    __slots__ = ("generic", "hall", "needs", "pip_masks", "single", "total")
 
     def __init__(self, total: int, needs: Mapping[int, int]) -> None:
         pips = sum(needs.values())
+        self.needs = dict(needs)
         self.total = max(total, pips)
         self.generic = self.total - pips
         self.hall = _hall(needs)
         self.pip_masks = tuple(mask for mask in sorted(needs) for _ in range(needs[mask]))
         self.single = next(iter(needs)) if len(needs) == 1 else 0
+
+    def less(self, amount: int) -> Self:
+        """The cost with up to `amount` of its generic mana taken off: coloured pips are never reduced."""
+        return type(self)(self.total - min(amount, self.generic), self.needs)
 
 
 def cost_of(total: int, pips: Mapping[str, int]) -> Cost:
@@ -367,14 +375,17 @@ class _Card:
         "combo",
         "cost",
         "creature",
+        "cutters",
         "delayed",
         "discards",
+        "discount_types",
         "draw_count",
         "engine",
         "entry",
         "extra_drops",
         "fast",
         "fin_cost",
+        "fin_less",
         "finisher",
         "gain",
         "hybrids",
@@ -387,6 +398,7 @@ class _Card:
         "land_mask",
         "land_tapped",
         "land_types",
+        "less",
         "life_cost",
         "mana_amount",
         "mana_mask",
@@ -403,10 +415,12 @@ class _Card:
         "reach_for",
         "refund",
         "ritual",
+        "shrink",
         "source",
         "spare",
         "spend_bits",
         "src",
+        "toughness",
         "win_piece",
     )
 
@@ -440,6 +454,7 @@ class _Card:
         self.cost = cost_of(0, {}) if spend_from_hand else cost_of(card.mana_value + activation, card.pips)
         fin = card.mana_value + FINISHER_X if card.x_cost else card.mana_value
         self.fin_cost = cost_of(fin, card.pips)
+        self._read_reductions(card)
         paid = [symbol for symbol, count in card.pips.items() if count > 0]
         self.pip_mask = unit_mask(symbol for symbol in paid if "/" not in symbol)
         self.hybrids = tuple(symbol_mask(symbol) for symbol in paid if "/" in symbol)
@@ -467,6 +482,26 @@ class _Card:
         self.rank = self._rank()
         # Cast only with the mana a turn leaves over, as it is for nothing else.
         self.spare = self.banked and self.rank >= _HELD and not card.finisher
+
+    def _read_reductions(self, card: GoldfishCard) -> None:
+        # The costs a cost reducer leaves, by the mana it takes off; `cutters` holds the permanents that can
+        # reduce this card's, each with its amount, once the setup has matched them with the cards.
+        self.cutters: tuple[tuple[int, int], ...] = ()
+        self.less: dict[int, Cost] = {}
+        self.fin_less: dict[int, Cost] = {}
+        self.discount_types: frozenset[str] = (
+            frozenset({card.discount.subtype}) if card.discount is not None else frozenset()
+        )
+        self.shrink = card.shrink
+        self.toughness = card.toughness
+
+    def cheaper(self, cut: int, *, finisher: bool = False) -> Cost:
+        """The cost (the finisher's, with X at its most) less `cut` generic mana."""
+        kept = self.fin_less if finisher else self.less
+        found = kept.get(cut)
+        if found is None:
+            found = kept[cut] = (self.fin_cost if finisher else self.cost).less(cut)
+        return found
 
     def _read_one_shot(self, card: GoldfishCard, *, one_shot: bool, spend_from_hand: bool) -> None:
         mana = card.mana
@@ -524,6 +559,7 @@ class _Setup:
         "combo_pieces",
         "deaths",
         "fin_ids",
+        "has_cuts",
         "has_needs",
         "has_rituals",
         "has_spare",
@@ -532,6 +568,7 @@ class _Setup:
         "keep_bracket",
         "max_lands",
         "merged",
+        "merged_cut",
         "mid",
         "min_lands",
         "min_sources",
@@ -596,8 +633,20 @@ class _Setup:
         )
         self.has_spare = any(card.spare for card in self.cards)
         self.has_needs = any(card.need for card in self.cards)
-        self.merged: dict[tuple[int, ...], Cost] = {}
+        self._match_reducers()
         self._set_keep_rule()
+
+    def _match_reducers(self) -> None:
+        """Give each spell the permanents that can take mana off its cost, and note whether any cost can
+        change; the costs of cards cast together are kept by the cards and the cuts."""
+        self.merged: dict[tuple[int, ...], Cost] = {}
+        self.merged_cut: dict[tuple[tuple[int, ...], tuple[int, ...]], Cost] = {}
+        for source_id, source in enumerate(self.cards):
+            for reducer in source.src.reducers:
+                for card in self.cards:
+                    if not card.is_land and _reduces(reducer, card.src):
+                        card.cutters += ((source_id, reducer.amount),)
+        self.has_cuts = any(card.cutters or card.src.discount is not None for card in self.cards)
 
     def _set_keep_rule(self) -> None:
         rule = self.keep_bracket
@@ -631,18 +680,36 @@ class _Setup:
             return False
         return (win > 0 or not self.need_win) and (syn > 0 or not self.need_syn)
 
-    def merged_cost(self, cids: tuple[int, ...]) -> Cost:
-        found = self.merged.get(cids)
+    def merged_cost(self, cids: tuple[int, ...], cuts: tuple[int, ...] = ()) -> Cost:
+        """The cost of casting the cards together; `cuts` is the generic mana each has had taken off."""
+        found = self.merged_cut.get((cids, cuts)) if cuts else self.merged.get(cids)
         if found is None:
             total = 0
             needs: dict[int, int] = {}
-            for cid in cids:
-                cost = self.cards[cid].cost
+            for index, cid in enumerate(cids):
+                card = self.cards[cid]
+                cost = card.cheaper(cuts[index]) if cuts else card.cost
                 total += cost.total
                 for mask in cost.pip_masks:
                     needs[mask] = needs.get(mask, 0) + 1
-            found = self.merged[cids] = Cost(total, needs)
+            found = Cost(total, needs)
+            if cuts:
+                self.merged_cut[cids, cuts] = found
+            else:
+                self.merged[cids] = found
         return found
+
+
+def _reduces(reducer: Reducer, card: GoldfishCard) -> bool:
+    """Whether the card, cast, is a spell of one of the kinds the reducer names."""
+    colours = {letter for symbol, count in card.pips.items() if count > 0 for letter in symbol}
+    return any(
+        kind.kinds <= card.kinds
+        and kind.not_kinds.isdisjoint(card.kinds)
+        and kind.colours <= colours
+        and (not kind.subtype or _has_type(card, frozenset({kind.subtype})))
+        for kind in reducer.spells
+    )
 
 
 def _piece_ids(combo: GoldfishCombo, by_key: Mapping[str, int]) -> tuple[int, ...] | None:
@@ -701,6 +768,7 @@ class _Game:
         "combo_fetched",
         "combo_turn",
         "creatures",
+        "cutting",
         "dealt",
         "drops_left",
         "engines",
@@ -731,6 +799,7 @@ class _Game:
         "screw",
         "searched",
         "settled",
+        "shrink",
         "shuffles",
         "sick",
         "top",
@@ -764,6 +833,9 @@ class _Game:
         # Mana sources needing other permanents in the order they came, and those whose mana is in the pool.
         self.needing: list[int] = []
         self.needs_met: set[int] = set()
+        # Whether any cost can change, and the -N/-N the permanents in play give every creature.
+        self.cutting = setup.has_cuts
+        self.shrink = 0
         self.life = _START_LIFE
         self.life_sources: list[int] = []
         # Creatures making a burst of mana for a land sacrificed, and those used this turn.
@@ -775,10 +847,7 @@ class _Game:
         # Permanents in play with a search paid for by Treasures or loyalty, and those whose loyalty is spent.
         self.activators: list[int] = []
         self.loyalty_used: set[int] = set()
-        self.engines = 0
-        self.extra_drops = 0
-        self.drops_left = 0
-        self.lands_in_play = 0
+        self.engines = self.extra_drops = self.drops_left = self.lands_in_play = 0
         # Lands in play that are sacrificed when another land is played (City of Traitors).
         self.lost_lands: list[int] = []
         self.check_land = False
@@ -974,6 +1043,7 @@ class _Game:
         """The colours the spells in hand and the commanders ask for, those the mana lacks, and whether a
         spell would be cast only with one more mana."""
         cards = self.s.cards
+        cutting = self.cutting
         have = len(self.pool)
         cover = 0
         for unit in self.pool:
@@ -985,7 +1055,8 @@ class _Game:
             card = cards[cid]
             if card.is_land or (card.rank >= _HELD and cid not in self.s.cmd_set):
                 continue
-            if card.cost.total <= have + 2:
+            total = self._cost(card).total if cutting else card.cost.total
+            if total <= have + 2:
                 want |= card.pip_mask
                 unmet |= card.pip_mask & ~cover
                 for hybrid in card.hybrids:
@@ -993,7 +1064,7 @@ class _Game:
                     # A hybrid pip is met by any one of its colours.
                     if not hybrid & cover:
                         unmet |= hybrid
-            extra = extra or have < card.cost.total <= have + 1
+            extra = extra or have < total <= have + 1
         return want, unmet, extra
 
     def _find_land(self, *, basic_only: bool, types: frozenset[str]) -> int:
@@ -1033,14 +1104,70 @@ class _Game:
         if not self.units:
             return
         cards = self.s.cards
+        cutting = self.cutting
         for cid in (*self.hand, *self.cmd_left):
             card = cards[cid]
-            cost = card.cost
+            cost = self._cost(card) if cutting else card.cost
             if (card.rank >= _HELD and cid not in self.cmd_left) or not cost.hall:
                 continue
             if cost.total <= len(self.pool) and not can_pay(self.pool, cost):
                 self.screw = self.turn
                 return
+
+    # -- costs --------------------------------------------------------------------------------------------
+
+    def _cut(self, card: _Card) -> int:
+        """The generic mana off a card's cost now: what the cost reducers in play take off, and the discount
+        the card gives itself."""
+        cut = 0
+        for source, amount in card.cutters:
+            if source in self.bf:
+                cut += amount
+        own = card.src.discount
+        return cut if own is None else cut + self._discount(own, card.discount_types)
+
+    def _discount(self, own: Discount, types: frozenset[str]) -> int:
+        """What a card that costs less by its creatures takes off its cost: the creatures are those in play,
+        their power less any shrinking."""
+        cards = self.s.cards
+        shrink = self.shrink
+        measure = own.measure
+        if measure is Measure.CREATURES:
+            value = len(self.creatures)
+        elif measure is Measure.GREATEST_VALUE:
+            value = max((mv for _, mv, cid in self.creatures if _has_type(cards[cid].src, types)), default=0)
+        else:
+            powers = [max((cards[cid].src.power or 0) - shrink, 0) for _, _, cid in self.creatures]
+            value = sum(powers) if measure is Measure.TOTAL_POWER else max(powers, default=0)
+        if own.at_least is not None:
+            return own.step if value >= own.at_least else 0
+        return own.step * value
+
+    def _cost(self, card: _Card) -> Cost:
+        """The cost to pay for a card now."""
+        if not self.cutting:
+            return card.cost
+        cut = self._cut(card)
+        return card.cheaper(cut) if cut else card.cost
+
+    def _priced(self, card: _Card) -> int:
+        """The mana value of a card in the library less what the reducers in play take off its cost."""
+        if not self.cutting:
+            return card.mv
+        return card.mv - min(self._cut(card), card.cost.generic)
+
+    def _fin_cost(self, card: _Card) -> Cost:
+        """The cost to pay for a finisher now, with X at its most."""
+        cut = self._cut(card) if self.cutting else 0
+        return card.cheaper(cut, finisher=True) if cut else card.fin_cost
+
+    def _shrink_creatures(self) -> None:
+        """Sacrifice the creatures in play whose toughness the shrinking takes."""
+        cards = self.s.cards
+        for entry in list(self.creatures):
+            toughness = cards[entry[2]].toughness
+            if entry in self.creatures and toughness is not None and toughness <= self.shrink:
+                self._sacrifice(entry)
 
     # -- mana ---------------------------------------------------------------------------------------------
 
@@ -1119,19 +1246,24 @@ class _Game:
         # the cards paid for sacrifice themselves.
         fodder = sorted(self.creatures)
         spare = len(fodder) - sum(card.needs_sac for card in paying)
-        for cid in sorted(
-            (cid for cid in self.hand if cards[cid].ritual), key=lambda cid: cards[cid].cost.total
-        ):
+        cutting = self.cutting
+        rituals = [
+            (self._cost(cards[cid]) if cutting else cards[cid].cost, cid)
+            for cid in self.hand
+            if cards[cid].ritual
+        ]
+        rituals.sort(key=lambda priced: priced[0].total)
+        for ritual_cost, cid in rituals:
             card = cards[cid]
             spend = card.spend_bits
             if (
                 (card.discards and purpose < _FOR_WIN)
                 or (card.needs_sac and (not sacrifices or len(gone) >= spare))
                 or (spend and not all(c.kind_bits & spend for c in paying))
-                or not can_pay(trial, card.cost)
+                or not can_pay(trial, ritual_cost)
             ):
                 continue
-            pay(trial, card.cost)
+            pay(trial, ritual_cost)
             amount = card.mana_amount
             if card.needs_sac:
                 _, sacrificed, victim = fodder[len(gone)]
@@ -1180,7 +1312,7 @@ class _Game:
         else:
             card = cards[code]
             self.hand.remove(code)
-            pay(self.units, card.cost)
+            pay(self.units, self._cost(card))
             amount = card.mana_amount
             if card.needs_sac:
                 sacrificed = self._sacrifice()
@@ -1204,11 +1336,10 @@ class _Game:
         has left over: no ritual, Treasure or burst is spent on them. One that comes may open a play."""
         cards = self.s.cards
         while True:
-            best = max(
-                (cid for cid in self.hand if cards[cid].spare and can_pay(self.units, cards[cid].cost)),
-                key=lambda cid: cards[cid].mana_amount,
-                default=None,
+            affordable = (
+                cid for cid in self.hand if cards[cid].spare and can_pay(self.units, self._cost(cards[cid]))
             )
+            best = max(affordable, key=lambda cid: cards[cid].mana_amount, default=None)
             if best is None:
                 return
             self._cast((best, cards[best], (), None, -1, False))
@@ -1326,18 +1457,25 @@ class _Game:
         cards = s.cards
         units = self.units
         reach = self._reach()
+        cutting = self.cutting
         best: _Pick | None = None
         best_rank = _HELD
         for cid in self.hand:
             card = cards[cid]
-            if card.rank < best_rank and card.cost.total <= reach[card.reach_for]:
+            if (
+                card.rank < best_rank
+                and (self._cost(card).total if cutting else card.cost.total) <= reach[card.reach_for]
+            ):
                 found = self._eligible(cid, card, units, from_command=False)
                 if found is not None:
                     best, best_rank = (cid, card, *found, False), card.rank
         for cid in self.cmd_left:
             card = cards[cid]
             rank = _COMMANDER_RANK + min(card.mv, _RANK_SPAN)
-            if rank < best_rank and card.cost.total <= reach[_FOR_WIN]:
+            if (
+                rank < best_rank
+                and (self._cost(card).total if cutting else card.cost.total) <= reach[_FOR_WIN]
+            ):
                 found = self._eligible(cid, card, units, from_command=True)
                 if found is not None:
                     best, best_rank = (cid, card, *found, True), rank
@@ -1358,7 +1496,8 @@ class _Game:
             card = cards[cid]
             if not card.ritual or (card.needs_sac and not self.creatures):
                 continue
-            gain = max(card.gain + (biggest if card.plus_sacrificed else 0), 0)
+            saved = card.cost.total - self._cost(card).total if self.cutting else 0
+            gain = max(card.gain + saved + (biggest if card.plus_sacrificed else 0), 0)
             win += gain
             play += 0 if card.discards else gain
         return anything, play, win
@@ -1371,9 +1510,10 @@ class _Game:
         if (card.aura and not self.lands_in_play) or (card.needs_sac and not self.creatures):
             return None
         target = None
+        cost = self._cost(card) if self.cutting else card.cost
         purpose = _FOR_WIN if from_command else card.purpose
         if card.src.tutor is not None:
-            target = self._target(card.src.tutor, units, card.cost.total)
+            target = self._target(card.src.tutor, units, cost.total)
             if target is None:
                 return None
             if self.s.cards[target[1]].combo:
@@ -1383,7 +1523,7 @@ class _Game:
             entry = self._entry_card(cid, card)
             if entry < 0:
                 return None
-        plan = self._plan(units, card.cost, (card,), purpose)
+        plan = self._plan(units, cost, (card,), purpose)
         if plan is None:
             return None
         return plan, target, entry
@@ -1403,9 +1543,11 @@ class _Game:
     def _cast(self, pick: _Pick) -> None:
         cid, card, plan, target, entry, from_command = pick
         units = self.units
+        # The cost is the one the pick was planned for, before the rituals of the plan change the board.
+        cost = self._cost(card) if self.cutting else card.cost
         for ritual in plan:
             self._use_ritual(ritual)
-        pay(units, card.cost)
+        pay(units, cost)
         if target is not None and card.src.tutor is not None and card.src.tutor.x_limited:
             del units[: self.s.cards[target[1]].mv]
         if units and units[0] & _RESTRICTED:
@@ -1428,6 +1570,16 @@ class _Game:
         self._enter(cid, card, from_command=from_command)
 
     def _enter(self, cid: int, card: _Card, *, from_command: bool = False) -> None:
+        """A resolved card comes in, unless the shrinking kills it as it enters: then only what it does as it
+        enters happens."""
+        if self.shrink and card.creature and card.toughness is not None and card.toughness <= self.shrink:
+            if card.draw_count and not card.engine:
+                self._draw(card.draw_count)
+            self._arrival_triggers(card.src)
+        else:
+            self._come_in(cid, card, from_command=from_command)
+
+    def _come_in(self, cid: int, card: _Card, *, from_command: bool) -> None:
         """What a resolved card leaves behind: the permanent, its mana, land drops and cards drawn."""
         if card.permanent:
             self.bf.add(cid)
@@ -1536,8 +1688,9 @@ class _Game:
             self._meet_needs()
 
     def _track_sources(self, cid: int, card: _Card, *, gone: bool = False) -> None:
-        """Count a permanent coming or going among the artifacts and the mana sources that are no fixed part
-        of each turn's mana, and settle which sources needing other permanents make mana."""
+        """Count a permanent coming or going among the artifacts, the mana sources that are no fixed part of
+        each turn's mana and the shrinking of the creatures, and settle which sources needing other permanents
+        make mana."""
         if card.artifact:
             self.artifacts += -1 if gone else 1
         for held, kept in (
@@ -1552,6 +1705,10 @@ class _Game:
         if gone and cid in self.needs_met:
             self.needs_met.discard(cid)
             self._remove_creature_mana(cid, card.mana_mask, card.mana_amount)
+        if card.shrink:
+            self.shrink += -card.shrink if gone else card.shrink
+            if not gone:
+                self._shrink_creatures()
         if self.needing:
             self._meet_needs()
 
@@ -1646,7 +1803,7 @@ class _Game:
             found = cards[cid]
             if not _finds(found, tutor, limit):
                 continue
-            if anywhere or found.mv <= reach:
+            if anywhere or self._priced(found) <= reach:
                 return index, cid
             first = first or (index, cid)
         return first
@@ -1708,8 +1865,11 @@ class _Game:
             if cast is None:
                 continue
             pieces = tuple(s.cards[piece] for piece in cast)
-            if cast and self._plan(self.units, s.merged_cost(cast), pieces, _FOR_WIN) is None:
-                continue
+            if cast:
+                cuts = tuple(self._cut(piece) for piece in pieces) if self.cutting else ()
+                merged = s.merged_cost(cast, cuts if any(cuts) else ())
+                if self._plan(self.units, merged, pieces, _FOR_WIN) is None:
+                    continue
             self.combo_turn[k] = self.turn
             if any(piece in self.fetched for piece in s.combo_pieces[k] or ()):
                 self.combo_fetched |= 1 << k
@@ -1739,7 +1899,7 @@ class _Game:
             cid = s.fin_ids[position]
             card = s.cards[cid]
             if (cid in self.hand or cid in self.cmd_left) and self._plan(
-                self.units, card.fin_cost, (card,), _FOR_WIN
+                self.units, self._fin_cost(card), (card,), _FOR_WIN
             ) is not None:
                 self._record_finisher(cid)
 
@@ -2031,18 +2191,32 @@ def _is_plain(card: GoldfishCard) -> bool:
         and not card.extra_land_drops
         and not card.needs_sacrifice
         and card.entry_cost is None
+        and not card.reducers
+        and card.discount is None
+        and not card.shrink
     )
 
 
-def _plays_alike(cut: GoldfishCard, incoming: GoldfishCard) -> bool:
+def _plays_alike(cut: GoldfishCard, incoming: GoldfishCard, *, exact: bool = False) -> bool:
     """Whether two plain spells are played the same in every game: the same mana value, colours and
-    creature status, which are all a plain spell brings to the game."""
+    creature status, which are all a plain spell brings to the game. With `exact`, because a card of the
+    deck takes mana off spells by their types, or counts or shrinks creatures, also the same types,
+    subtypes, power and toughness."""
     return (
         _is_plain(cut)
         and _is_plain(incoming)
         and cut.mana_value == incoming.mana_value
         and cut.pips == incoming.pips
         and (CardKind.CREATURE in cut.kinds) == (CardKind.CREATURE in incoming.kinds)
+        and (
+            not exact
+            or (
+                cut.kinds == incoming.kinds
+                and cut.subtypes == incoming.subtypes
+                and cut.power == incoming.power
+                and cut.toughness == incoming.toughness
+            )
+        )
     )
 
 
@@ -2135,10 +2309,11 @@ def compare(
         late=[cut.incoming for cut in cuts.values() if cut.partial],
     )
     same_rules = _same_rules(before, after, some)
+    exact = any(c.src.reducers or c.src.discount is not None or c.shrink for c in before.cards)
     if (
         skip_irrelevant
         and same_rules
-        and all(_plays_alike(held[key], cut.incoming) for key, cut in cuts.items())
+        and all(_plays_alike(held[key], cut.incoming, exact=exact) for key, cut in cuts.items())
     ):
         return unchanged
     if same_rules:

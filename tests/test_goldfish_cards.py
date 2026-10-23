@@ -12,6 +12,7 @@ from commander.goldfish import simulate
 from commander.goldfish_cards import (
     ActivatedTutor,
     CardKind,
+    Discount,
     Draw,
     EntryCost,
     GoldfishCard,
@@ -21,6 +22,9 @@ from commander.goldfish_cards import (
     LandRamp,
     ManaAbility,
     ManaNeed,
+    Measure,
+    Reducer,
+    SpellKind,
     Tutor,
     TutorDestination,
     compile_card,
@@ -40,6 +44,7 @@ class Real:
     roles: frozenset[Role]
     tags: frozenset[str]
     power: str | None = None
+    toughness: str | None = None
 
 
 def real(
@@ -55,9 +60,10 @@ def real(
     roles: Iterable[Role] = (),
     tags: Iterable[str] = (),
     power: str | None = None,
+    toughness: str | None = None,
 ) -> Real:
     mana = CardMana(f"id-{name}", name, cost, mana_value, type_line, text, produced, "common", layout)
-    return Real(mana, identity, frozenset(roles), frozenset(tags), power)
+    return Real(mana, identity, frozenset(roles), frozenset(tags), power, toughness)
 
 
 RAMP, DRAW, TUTOR = Role.RAMP, Role.DRAW, Role.TUTOR
@@ -916,6 +922,7 @@ def compile_for(
         finishers_added=added,
         finishers_removed=removed,
         powers={c.mana.oracle_id: c.power for c in known},
+        toughnesses={c.mana.oracle_id: c.toughness for c in known},
     )
 
 
@@ -972,6 +979,7 @@ def incoming(
         finishers_added=added,
         finishers_removed=removed,
         powers={c.mana.oracle_id: c.power for c in known},
+        toughnesses={c.mana.oracle_id: c.toughness for c in known},
     )
 
 
@@ -2505,31 +2513,290 @@ GHALTA = real(
 )
 
 
-COST_REDUCERS = [
-    SCULPTOR,
-    MEDALLION,
-    JET_MEDALLION,
+HEARTLESS_SUMMONING = real(
+    "Heartless Summoning",
+    "{1}{B}",
+    2,
+    "Enchantment",
+    "Creature spells you cast cost {2} less to cast.\nCreatures you control get -1/-1.",
+)
+KINJALLIS_CALLER = real(
+    "Kinjalli's Caller",
+    "{W}",
+    1,
+    "Creature — Human Cleric",
+    "Dinosaur spells you cast cost {1} less to cast.",
+    power="0",
+    toughness="3",
+)
+OTEPEC_HUNTMASTER = real(
+    "Otepec Huntmaster",
+    "{1}{R}",
+    2,
+    "Creature — Human Shaman",
+    "Dinosaur spells you cast cost {1} less to cast.\n{T}: Target Dinosaur gains haste until end of turn.",
+    power="1",
+    toughness="2",
+)
+ANARCHOMANCER = real(
+    "Goblin Anarchomancer",
+    "{R}{G}",
+    2,
+    "Creature — Goblin Shaman",
+    "Each spell you cast that's red or green costs {1} less to cast.",
+)
+ARTISTS_TALENT = real(
+    "Artist's Talent",
+    "{1}{R}",
+    2,
+    "Enchantment — Class",
+    "(Gain the next level as a sorcery to add its ability.)\nWhenever you cast a noncreature spell, you may "
+    "discard a card. If you do, draw a card.\n{2}{R}: Level 2\nNoncreature spells you cast cost {1} less to "
+    "cast.\n{2}{R}: Level 3\nIf a source you control would deal noncombat damage to an opponent or a "
+    "permanent an opponent controls, it deals that much damage plus 2 instead.",
+)
+LYSE_HEXT = real(
+    "Lyse Hext",
+    "{1}{W}{U}",
+    3,
+    "Legendary Creature — Human Rebel Monk",
+    "Prowess (Whenever you cast a noncreature spell, this creature gets +1/+1 until end of turn.)\n"
+    "Noncreature spells you cast cost {1} less to cast.\nAs long as you've cast two or more noncreature "
+    "spells this turn, Lyse Hext has double strike.",
+)
+OKETRAS_MONUMENT = real(
+    "Oketra's Monument",
+    "{3}",
+    3,
+    "Legendary Artifact",
+    "White creature spells you cast cost {1} less to cast.\nWhenever you cast a creature spell, create a 1/1 "
+    "white Warrior creature token with vigilance.",
+)
+DANITHA = real(
+    "Danitha Capashen, Paragon",
+    "{2}{W}",
+    3,
+    "Legendary Creature — Human Knight",
+    "First strike, vigilance, lifelink\nAura and Equipment spells you cast cost {1} less to cast.",
+)
+HELM_OF_AWAKENING = real("Helm of Awakening", "{2}", 2, "Artifact", "Spells cost {1} less to cast.")
+GORECLAW = real(
+    "Goreclaw, Terror of Qal Sisma",
+    "{3}{G}",
+    4,
+    "Legendary Creature — Bear",
+    "Creature spells you cast with power 4 or greater cost {2} less to cast.\nWhenever Goreclaw attacks, "
+    "each creature you control with power 4 or greater gets +1/+1 and gains trample until end of turn.",
+)
+GREAT_HENGE = real(
+    "The Great Henge",
+    "{7}{G}{G}",
+    9,
+    "Legendary Artifact",
+    "This spell costs {X} less to cast, where X is the greatest power among creatures you control.\n{T}: Add "
+    "{G}{G}. You gain 2 life.\nWhenever a nontoken creature you control enters, put a +1/+1 counter on it "
+    "and draw a card.",
+    produced="G",
+    roles=(DRAW, RAMP),
+)
+BOLT_BEND = real(
+    "Bolt Bend",
+    "{3}{R}",
+    4,
+    "Instant",
+    "This spell costs {3} less to cast if you control a creature with power 4 or greater.\nChange the target "
+    "of target spell or ability with a single target.",
+)
+BLASPHEMOUS_ACT = real(
+    "Blasphemous Act",
+    "{8}{R}",
+    9,
+    "Sorcery",
+    "This spell costs {1} less to cast for each creature on the battlefield.\nBlasphemous Act deals 13 "
+    "damage to each creature.",
+)
+SUNDERFLOCK = real(
+    "Sunderflock",
+    "{7}{U}{U}",
+    9,
+    "Creature — Elemental",
+    "This spell costs {X} less to cast, where X is the greatest mana value among Elementals you control.\n"
+    "Flying\nWhen this creature enters, if you cast it, return all non-Elemental creatures to their owners' "
+    "hands.",
+    power="5",
+    toughness="5",
+)
+ROTTENMOUTH_VIPER = real(
+    "Rottenmouth Viper",
+    "{5}{B}",
+    6,
+    "Creature — Elemental Snake",
+    "As an additional cost to cast this spell, you may sacrifice any number of nonland permanents. This "
+    "spell costs {1} less to cast for each permanent sacrificed this way.\nWhenever this creature enters or "
+    "attacks, put a blight counter on it. Then for each blight counter on it, each opponent loses 4 life "
+    "unless that player sacrifices a nonland permanent of their choice or discards a card.",
+)
+
+# Reducers whose wording the reading does not follow: a chosen type, a count of counters, a historic spell,
+# a power condition on the spell, a Class level, a sacrifice for the discount.
+UNREAD_REDUCERS = [
     HERALDS_HORN,
     URZAS_INCUBATOR,
-    ELECTROMANCER,
     ANIMAR,
     JHOIRAS_FAMILIAR,
-    GHALTA,
+    GORECLAW,
+    ARTISTS_TALENT,
+    ROTTENMOUTH_VIPER,
 ]
 
 
-@pytest.mark.parametrize("reducer", COST_REDUCERS, ids=lambda c: c.mana.name)
-def test_a_cost_reducer_is_a_spell_with_its_printed_cost_listed_as_not_modelled(reducer: Real) -> None:
+def spells(*kinds: SpellKind) -> tuple[SpellKind, ...]:
+    return kinds
+
+
+def reads(card: Real) -> GoldfishCard:
+    """The record of a card the reading follows, after checking it is modelled and listed nowhere."""
+    deck = build(card)
+    found = card_named(deck, card.mana.name)
+    assert found.modelled
+    assert deck.not_modelled == ()
+    return found
+
+
+@pytest.mark.parametrize("reducer", UNREAD_REDUCERS, ids=lambda c: c.mana.name)
+def test_a_cost_reducer_the_reading_does_not_follow_is_listed_as_not_modelled(reducer: Real) -> None:
     deck = build(reducer)
     card = card_named(deck, reducer.mana.name)
     assert not card.modelled
     assert card.mana_value == int(reducer.mana.cmc)
     assert (card.mana, card.land, card.land_ramp, card.tutor, card.draw) == (None,) * 5
+    assert (card.reducers, card.discount, card.shrink) == ((), None, 0)
     assert deck.not_modelled == (reducer.mana.name,)
 
 
-@pytest.mark.parametrize("reducer", [SCULPTOR, MEDALLION, FIREBLAST], ids=lambda c: c.mana.name)
-def test_a_cost_reducer_or_alternative_cost_that_is_a_finisher_is_not_modelled(reducer: Real) -> None:
+def test_creature_spells_cost_less_and_the_creatures_shrink_with_heartless_summoning() -> None:
+    card = reads(HEARTLESS_SUMMONING)
+    assert card.reducers == (Reducer(spells(SpellKind(kinds=frozenset({CardKind.CREATURE}))), 2),)
+    assert card.shrink == 1
+    assert card.discount is None
+
+
+def test_a_dinosaur_reducer_names_the_subtype_and_a_creature_reducer_has_its_toughness() -> None:
+    for reducer in (KINJALLIS_CALLER, OTEPEC_HUNTMASTER):
+        card = reads(reducer)
+        assert card.reducers == (Reducer(spells(SpellKind(subtype="dinosaur")), 1),)
+        assert card.shrink == 0
+    assert (reads(KINJALLIS_CALLER).power, reads(KINJALLIS_CALLER).toughness) == (0, 3)
+    assert (reads(OTEPEC_HUNTMASTER).power, reads(OTEPEC_HUNTMASTER).toughness) == (1, 2)
+
+
+def test_a_printed_toughness_of_nothing_is_a_toughness_that_other_cards_set() -> None:
+    elder = real(
+        "Faeburrow Elder",
+        "{1}{G}{W}",
+        3,
+        "Creature — Treefolk Druid",
+        "Vigilance\nFaeburrow Elder gets +1/+1 for each color among other permanents you control.",
+        power="0",
+        toughness="0",
+    )
+    card = reads(elder)
+    assert (card.power, card.toughness) == (0, None)
+    assert reads(KINJALLIS_CALLER).toughness == 3
+
+
+def test_a_reducer_for_red_or_green_spells_names_each_colour() -> None:
+    card = reads(ANARCHOMANCER)
+    red, green = SpellKind(colours=frozenset("R")), SpellKind(colours=frozenset("G"))
+    assert card.reducers == (Reducer(spells(red, green), 1),)
+
+
+def test_a_medallion_reduces_the_spells_of_its_colour_and_a_sculptor_its_artifacts() -> None:
+    assert reads(JET_MEDALLION).reducers == (Reducer(spells(SpellKind(colours=frozenset("B"))), 1),)
+    artifact = SpellKind(kinds=frozenset({CardKind.ARTIFACT}))
+    assert reads(SCULPTOR).reducers == (Reducer(spells(artifact), 1),)
+
+
+def test_instant_and_sorcery_spells_are_two_kinds_and_noncreature_spells_exclude_creatures() -> None:
+    instant = SpellKind(kinds=frozenset({CardKind.INSTANT}))
+    sorcery = SpellKind(kinds=frozenset({CardKind.SORCERY}))
+    assert reads(ELECTROMANCER).reducers == (Reducer(spells(instant, sorcery), 1),)
+    noncreature = SpellKind(not_kinds=frozenset({CardKind.CREATURE}))
+    assert reads(LYSE_HEXT).reducers == (Reducer(spells(noncreature), 1),)
+
+
+def test_a_white_creature_spell_must_be_both_and_aura_and_equipment_spells_are_two_subtypes() -> None:
+    white_creature = SpellKind(kinds=frozenset({CardKind.CREATURE}), colours=frozenset("W"))
+    assert reads(OKETRAS_MONUMENT).reducers == (Reducer(spells(white_creature), 1),)
+    assert reads(DANITHA).reducers == (
+        Reducer(spells(SpellKind(subtype="aura"), SpellKind(subtype="equipment")), 1),
+    )
+
+
+def test_spells_without_a_kind_are_every_spell() -> None:
+    assert reads(HELM_OF_AWAKENING).reducers == (Reducer(spells(SpellKind()), 1),)
+
+
+def test_a_reducer_that_can_also_be_cast_for_nothing_keeps_its_reduction() -> None:
+    # Made up: the text of a medallion with the wording of an alternative cost.
+    text = JET_MEDALLION.mana.oracle_text + "\nYou may cast this spell without paying its mana cost."
+    card = reads(real("Free Medallion", "{2}", 2, "Artifact", text))
+    assert card.reducers == (Reducer(spells(SpellKind(colours=frozenset("B"))), 1),)
+
+
+def test_a_discount_of_two_kinds_or_for_a_word_the_reading_does_not_know_is_not_read() -> None:
+    # Made up: Bolt Bend's text with a second discount of its own, and a medallion for nonland spells.
+    twice = (
+        BOLT_BEND.mana.oracle_text
+        + "\nThis spell costs {X} less to cast, where X is the total power of creatures you control."
+    )
+    nonland = "Nonland spells you cast cost {1} less to cast."
+    for text in (twice, nonland):
+        card = card_named(build(real("Odd Card", "{2}", 2, "Artifact", text)), "Odd Card")
+        assert not card.modelled
+        assert (card.reducers, card.discount) == ((), None)
+
+
+def test_ghalta_costs_its_total_power_less() -> None:
+    card = reads(GHALTA)
+    assert card.discount == Discount(Measure.TOTAL_POWER)
+    assert card.reducers == ()
+
+
+def test_the_great_henge_costs_its_greatest_power_less_and_is_still_a_rock_that_draws() -> None:
+    card = reads(GREAT_HENGE)
+    assert card.discount == Discount(Measure.GREATEST_POWER)
+    assert card.mana is not None
+    assert card.mana.amount == 2
+
+
+def test_bolt_bend_costs_three_less_with_a_creature_of_power_four_or_more() -> None:
+    assert reads(BOLT_BEND).discount == Discount(Measure.GREATEST_POWER, step=3, at_least=4)
+
+
+def test_blasphemous_act_costs_one_less_for_each_creature() -> None:
+    assert reads(BLASPHEMOUS_ACT).discount == Discount(Measure.CREATURES, step=1)
+
+
+def test_sunderflock_costs_the_greatest_mana_value_among_its_elementals_less() -> None:
+    card = reads(SUNDERFLOCK)
+    assert card.discount == Discount(Measure.GREATEST_VALUE, subtype="elemental")
+    assert card.power == 5
+
+
+def test_a_card_that_reduces_nothing_has_no_reducer_discount_or_shrink() -> None:
+    card = reads(SOL_RING)
+    assert (card.reducers, card.discount, card.shrink, card.toughness) == ((), None, 0, None)
+
+
+@pytest.mark.parametrize("text", ["Creatures you control get -1/-0.", "Creatures you control get -0/-2."])
+def test_a_shrinking_that_takes_a_different_number_off_each_stat_is_no_shrinking(text: str) -> None:
+    # Made up: only -N/-N takes a toughness off the creatures as much as their power.
+    assert reads(real("Odd Enchantment", "{1}{B}", 2, "Enchantment", text)).shrink == 0
+
+
+@pytest.mark.parametrize("reducer", [HERALDS_HORN, FIREBLAST], ids=lambda c: c.mana.name)
+def test_an_unread_cost_reducer_or_alternative_cost_that_is_a_finisher_is_not_modelled(reducer: Real) -> None:
     deck = build(reducer, added=[reducer.mana.name])
     card = card_named(deck, reducer.mana.name)
     assert not card.modelled
@@ -2539,7 +2806,12 @@ def test_a_cost_reducer_or_alternative_cost_that_is_a_finisher_is_not_modelled(r
     assert deck.not_modelled == (reducer.mana.name,)
 
 
-def test_a_cost_reducer_that_is_a_combo_piece_is_not_modelled() -> None:
+def test_a_cost_reducer_that_is_read_stays_modelled_as_a_finisher_or_a_combo_piece() -> None:
+    deck = build(SCULPTOR, added=["Etherium Sculptor"])
+    card = card_named(deck, "Etherium Sculptor")
+    assert card.finisher
+    assert card.modelled
+    assert deck.not_modelled == ()
     combo = ComboDetail(
         "5-6",
         (
@@ -2551,12 +2823,29 @@ def test_a_cost_reducer_that_is_a_combo_piece_is_not_modelled() -> None:
         "",
     )
     deck = build(SCULPTOR, SOL_RING, combos=(combo,))
-    assert deck.not_modelled == ("Etherium Sculptor",)
+    assert deck.not_modelled == ()
 
 
-def test_a_cost_reducer_the_tagger_calls_ramp_is_not_modelled() -> None:
+def test_a_cost_reducer_that_is_not_read_and_a_combo_piece_is_not_modelled() -> None:
+    combo = ComboDetail(
+        "5-6",
+        (
+            ComboPiece("Herald's Horn", "Artifact", ("B",)),
+            ComboPiece("Sol Ring", "Artifact", ("B",)),
+        ),
+        (),
+        (),
+        "",
+    )
+    deck = build(HERALDS_HORN, SOL_RING, combos=(combo,))
+    assert deck.not_modelled == ("Herald's Horn",)
+
+
+def test_a_cost_reducer_the_tagger_calls_ramp_is_read_by_its_text() -> None:
     tagged = real("Jet Medallion", "{2}", 2, "Artifact", JET_MEDALLION.mana.oracle_text, roles=(RAMP,))
-    assert not one(tagged).modelled
+    assert one(tagged).modelled
+    unread = real("Herald's Horn", "{3}", 3, "Artifact", HERALDS_HORN.mana.oracle_text, roles=(RAMP,))
+    assert not one(unread).modelled
 
 
 def test_a_free_spell_tag_does_not_keep_a_readable_card_out() -> None:

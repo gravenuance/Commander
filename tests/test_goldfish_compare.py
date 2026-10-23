@@ -25,6 +25,7 @@ from commander.goldfish import (
 )
 from commander.goldfish_cards import (
     CardKind,
+    Discount,
     Draw,
     GoldfishCard,
     GoldfishCombo,
@@ -32,6 +33,9 @@ from commander.goldfish_cards import (
     LandDestination,
     LandRamp,
     ManaAbility,
+    Measure,
+    Reducer,
+    SpellKind,
     Tutor,
     TutorDestination,
 )
@@ -78,6 +82,19 @@ PLAIN = [
 ]
 PIECE_C = make("Piece C", mv=2, pips={"B": 1}, kinds=CREATURE, combo=True)
 COMBO = GoldfishCombo("1-2", (PIECE_A.name, PIECE_B.name), (), ())
+BLACK_MEDALLION = make(
+    "Black Medallion",
+    mv=2,
+    kinds=ARTIFACT,
+    reducers=(Reducer((SpellKind(colours=frozenset("B")),), 1),),
+)
+ARTIFACT_MEDALLION = make(
+    "Artifact Medallion",
+    mv=2,
+    kinds=ARTIFACT,
+    reducers=(Reducer((SpellKind(kinds=ARTIFACT),), 1),),
+)
+BY_CREATURES = Discount(Measure.CREATURES)
 # A combo the deck cannot assemble: its second piece is not among the cards.
 COMBO_MISSING_C = GoldfishCombo("1-3", (PIECE_A.name, PIECE_C.name), (), ())
 DARK_RITUAL = make(
@@ -194,6 +211,8 @@ EQUAL_CASES = {
     "a draw engine cut": [(RHYSTIC, make("Filler", mv=3, pips={"B": 1}))],
     "a plan of two swaps": [(PLAIN_SPELL, TALISMAN), (SOLO, make("Other Spell", mv=6, pips={"B": 2}))],
     "a card already in the deck": [(PLAIN_SPELL, SOL_RING)],
+    "a cost reducer in": [(PLAIN_SPELL, BLACK_MEDALLION)],
+    "a spell that costs less by the creatures in": [(PLAIN_SPELL, make("Act", mv=9, discount=BY_CREATURES))],
 }
 
 
@@ -461,6 +480,70 @@ def test_a_plain_swap_that_moves_the_average_across_the_land_count_line_is_playe
 
 def test_a_plain_spell_for_a_ramp_card_is_not_short_circuited() -> None:
     assert judged([(PLAIN_SPELL, TALISMAN)]).replayed
+
+
+def creature(name: str, **stats: object) -> Card:
+    return make(name, mv=4, pips={"B": 1}, kinds=CREATURE, **stats)  # type: ignore[arg-type]
+
+
+# A card of the deck that looks at the types, power or toughness of other cards, the plain creature the
+# swap cuts and the plain creature that comes in, who differ in just that.
+EXACT_CASES = {
+    "a subtype": (
+        make("Raptor Hall", mv=2, kinds=ARTIFACT, reducers=(Reducer((SpellKind(subtype="dinosaur"),), 1),)),
+        creature("Bear", subtypes=frozenset({"bear"})),
+        creature("Raptor", subtypes=frozenset({"dinosaur"})),
+    ),
+    "a power": (
+        make("Henge", mv=9, discount=Discount(Measure.GREATEST_POWER)),
+        creature("Small", power=1),
+        creature("Big", power=5),
+    ),
+    "a toughness": (
+        make("Shrinker", mv=2, kinds=ARTIFACT, shrink=1),
+        creature("Tough", toughness=3),
+        creature("Frail", toughness=1),
+    ),
+}
+
+
+@pytest.mark.parametrize(("looker", "cut", "incoming"), EXACT_CASES.values(), ids=EXACT_CASES.keys())
+def test_two_plain_creatures_a_card_of_the_deck_tells_apart_by_their_stats_are_not_played_alike(
+    looker: Card, cut: Card, incoming: Card
+) -> None:
+    def deck_with(special: Card) -> GoldfishDeck:
+        cards = tuple(
+            special if card is SOLO else cut if card is PLAIN_SPELL else card for card in DECK.cards
+        )
+        return dataclasses.replace(DECK, cards=cards)
+
+    swaps = [(cut, incoming)]
+    deck = deck_with(looker)
+    result = judged(swaps, deck=deck)
+    assert result.replayed
+    assert result.swapped == played_whole(swaps, deck=deck)
+    # Where no card cares, the two play alike and nothing is played again.
+    assert judged(swaps, deck=deck_with(FILLER)).replayed == ()
+
+
+def test_a_cost_reducer_or_a_spell_that_costs_less_is_not_a_plain_spell() -> None:
+    assert judged([(PLAIN_SPELL, BLACK_MEDALLION)]).replayed
+    assert judged([(PLAIN_SPELL, make("Act", mv=4, pips={"B": 1}, discount=BY_CREATURES))]).replayed
+    assert judged([(PLAIN_SPELL, make("Shrinker", mv=4, pips={"B": 1}, shrink=1))]).replayed
+
+
+def test_two_plain_spells_a_reducer_in_the_deck_tells_apart_are_not_played_alike() -> None:
+    deck = dataclasses.replace(
+        DECK, cards=tuple(ARTIFACT_MEDALLION if card is SOLO else card for card in DECK.cards)
+    )
+    relic = make("Black Relic", mv=4, pips={"B": 1}, kinds=ARTIFACT)
+    swaps = [(PLAIN_SPELL, relic)]
+    # The reducer takes mana off artifact spells, so a sorcery and an artifact of the same cost differ.
+    result = judged(swaps, deck=deck)
+    assert result.replayed
+    assert result.swapped == played_whole(swaps, deck=deck)
+    # Without a reducer they do not, whatever their types.
+    assert judged(swaps).replayed == ()
 
 
 def test_a_plain_spell_that_matches_the_decks_tags_is_not_irrelevant() -> None:
