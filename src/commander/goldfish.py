@@ -675,6 +675,7 @@ class _Setup:
         "need_syn",
         "need_win",
         "real",
+        "ritual_cards",
         "shown",
         "tap_pieces",
         "xcosts",
@@ -746,6 +747,8 @@ class _Setup:
             card.ritual or card.banked or card.life_cost or card.burst_types or card.src.treasures_on_entry
             for card in self.cards
         )
+        # A ritual in the deck at all, so a deck without one never looks for them in the hand.
+        self.ritual_cards = any(card.ritual for card in self.cards)
         self.has_spare = any(card.spare for card in self.cards)
         self.has_needs = any(card.need for card in self.cards)
         # Permanents that make a trigger happen more often, and those that make more Treasures.
@@ -1784,17 +1787,23 @@ class _Game:
         if not self.s.has_rituals:
             return units, units, units
         cards = self.s.cards
-        anything = units + self._life_payments()[0]
-        play = anything + sum(cards[cid].mana_amount for cid in (*self.banked, *self._bursts_ready()))
+        anything = units + (self._life_payments()[0] if self.life_sources else 0)
+        play = anything
+        if self.banked or self.bursts:
+            play += sum(cards[cid].mana_amount for cid in (*self.banked, *self._bursts_ready()))
         win = play + self.treasures
         play += self._treasures_for(_FOR_PLAY)
-        biggest = max((mv for _, mv, _ in self.creatures), default=0)
+        if not self.s.ritual_cards:
+            return anything, play, win
+        biggest = None
         for cid in self.hand:
             card = cards[cid]
             if not card.ritual or (card.needs_sac and not self.creatures):
                 continue
+            if card.plus_sacrificed and biggest is None:
+                biggest = max((mv for _, mv, _ in self.creatures), default=0)
             saved = card.cost.total - self._cost(card).total if self.cutting else 0
-            gain = max(card.gain + saved + (biggest if card.plus_sacrificed else 0), 0)
+            gain = max(card.gain + saved + ((biggest or 0) if card.plus_sacrificed else 0), 0)
             win += gain
             play += 0 if card.discards else gain
         return anything, play, win
