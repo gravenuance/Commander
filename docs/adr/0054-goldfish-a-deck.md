@@ -97,8 +97,8 @@ is parsed during play. The Mana tab's reading of lands, colours, tapped lands, r
 - **Finishers:** cards with the Tagger tags `overrun`, `alternate-win-condition` or `theft-mass`, plus the
   ones the owner adds in the deck's Settings ("Finishers" chips, stored in `profile.toml`), minus the ones the
   owner removes there. A finisher with X in its cost counts as castable once X can be 10 or more.
-- **Everything else** is a spell with a mana cost. Cards the recognition cannot place, such as cost reducers
-  and cards cast for an alternative cost, are listed under "Not modelled".
+- **Everything else** is a spell with a mana cost. Cards the recognition cannot place, such as cards cast for
+  an alternative cost or cost reducers worded in ways it does not follow, are listed under "Not modelled".
 
 **Figures.** The turns shown follow the bracket: turns 1 to 5 in bracket 5, else the two turns either side of
 the bracket's turn (2 to 6 in bracket 4, 4 to 8 in bracket 3, 6 to 10 in bracket 2, 7 to 11 in bracket 1).
@@ -137,8 +137,8 @@ the command line.
   tab costs a run of about a second; a swap costs a fraction of that.
 - The figures describe one fixed policy against an empty table. Real games with interaction are slower, so
   a turn shown here is the earliest a deck gets there, not a promise. The tab says which keep rule ran.
-- The recognition misses cards. "Not modelled" lists them, so a deck with many cost reducers or alternative
-  costs can be read with that in mind. A change to the policy or to the recognition raises `POLICY_VERSION`.
+- The recognition misses cards. "Not modelled" lists them, so a deck with many alternative costs can be read
+  with that in mind. A change to the policy or to the recognition raises `POLICY_VERSION`.
 - Combat wins are not judged. A deck that wins fast by attacking is not warned about.
 - Revisit the 25% threshold and the bracket turns if Wizards changes the brackets (the system is still a
   beta), and the keep rules if the opening-hand figures look wrong to the owner on real decks.
@@ -277,6 +277,34 @@ reading and the policy now follow, and `POLICY_VERSION` is 5.
   dies, a sacrifice for a spell's cost too. Protean Hulk fetches the missing creature pieces, best first, up
   to six mana value in all. Flash is not modelled, and nothing tutors for the Hulk, so a deck without an
   outlet and seven mana does not see it.
+- **Cost reducers.** The owner decided that cost reducers are counted, and `POLICY_VERSION` is 6. A spell is
+  paid for at its printed cost less the generic mana the reducers take off, which never goes below the
+  coloured pips or below 0, and the reductions of several reducers add up.
+  - A permanent that says "<kind> spells you cast cost {N} less" takes N off each spell of the kind from
+    the moment it is in play: a card type or "noncreature", a colour, a subtype (a changeling has every
+    creature type), joined by "and" or "or" (Instant and sorcery, red or green) or together (white creature),
+    or no word at all for every spell. A reducer in the hand does nothing, and a reducer never reduces its
+    own cost. A creature that is sacrificed stops reducing.
+  - A spell that says "costs {X} less, where X is" the greatest power or the total power of the creatures you
+    control, or the greatest mana value among the creatures of a subtype you control (Sunderflock:
+    Elementals), "{N} less for each creature on the battlefield" (the goldfish's own creatures, as nobody else
+    has any) or "{N} less if you control a creature with power P or more" (Bolt Bend) takes that off when it
+    is cast, from the creatures in play and their printed power (0 for a power that varies).
+  - Every place that prices a card reads the reduced cost: whether a card can be picked, the plan of rituals
+    and Treasures, the mana a ritual gains, the check that a tutor's pick is castable within the turns
+    shown, the pieces of a combo cast together, a finisher's cost, the colour screw and the land played. A
+    deck with no reducer or discount runs none of this.
+  - "Creatures you control get -N/-N" (Heartless Summoning) takes N off their power in those counts. A
+    creature whose printed toughness is N or less dies as it enters while the effect is in play, doing only
+    what it does as it enters, and dies when the effect comes, with its mana, so a mana creature of toughness
+    1 gives none under Heartless Summoning. A printed toughness of 0 is left alone: other cards set it.
+  - Left out, and so still under "Not modelled": a chosen creature type (Herald's Horn, Urza's Incubator), a
+    cost reduced for each counter (Animar), "historic" and "colorless" spells, a condition on the spell cast
+    (Goreclaw: power 4 or greater), a sacrifice for the discount (Rottenmouth Viper), and the cost of an
+    ability. A Class such as Artist's Talent keeps its reduction behind a level that nothing here pays for.
+  - In a swap, two plain spells that play alike must also have the same card types, subtypes, power and
+    toughness when the deck holds a reducer, a discount or such a shrinking, as those are what they read; a
+    reducer or a discount is no plain spell.
 
 On the three decks, 10,000 games each: Etali's commander by turn five rose from 25% to 59% and Magda's combos
 by turn five from 9% to 55%; Ribbit's Hermit Druid line fell from 10.5% to 8.9% by turn five. The cards not

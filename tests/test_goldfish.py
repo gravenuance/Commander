@@ -26,6 +26,7 @@ from commander.goldfish_cards import (
     CHANGELING,
     ActivatedTutor,
     CardKind,
+    Discount,
     Draw,
     EntryCost,
     GoldfishCard,
@@ -36,6 +37,9 @@ from commander.goldfish_cards import (
     LandRamp,
     ManaAbility,
     ManaNeed,
+    Measure,
+    Reducer,
+    SpellKind,
     Tutor,
     TutorDestination,
 )
@@ -43,6 +47,7 @@ from commander.goldfish_cards import (
 SPELL = frozenset({CardKind.SORCERY})
 CREATURE = frozenset({CardKind.CREATURE})
 ARTIFACT = frozenset({CardKind.ARTIFACT})
+ENCHANTMENT = frozenset({CardKind.ENCHANTMENT})
 ANY_COLOUR = frozenset("WUBRG")
 
 
@@ -66,6 +71,12 @@ def make(
     entry_cost: EntryCost | None = None,
     land_ramp: LandRamp | None = None,
     land_types: frozenset[str] = frozenset(),
+    power: int | None = None,
+    toughness: int | None = None,
+    subtypes: frozenset[str] = frozenset(),
+    reducers: tuple[Reducer, ...] = (),
+    discount: Discount | None = None,
+    shrink: int = 0,
 ) -> GoldfishCard:
     return GoldfishCard(
         name=name,
@@ -89,6 +100,12 @@ def make(
         needs_sacrifice=needs_sacrifice,
         entry_cost=entry_cost,
         land_types=land_types,
+        power=power,
+        toughness=toughness,
+        subtypes=subtypes,
+        reducers=reducers,
+        discount=discount,
+        shrink=shrink,
     )
 
 
@@ -992,6 +1009,322 @@ def test_two_commanders_are_figured_apart() -> None:
     report = run([*repeat(FOREST, 7)], commanders=(small, big))
     assert [c.name for c in report.commanders] == ["Small", "Big"]
     assert [c.median_turn for c in report.commanders] == [1, 2]
+
+
+# --- cost reducers ---------------------------------------------------------------------------------------
+
+CREATURES = SpellKind(kinds=CREATURE)
+BLACK = SpellKind(colours=frozenset("B"))
+BLUE = SpellKind(colours=frozenset("U"))
+NONCREATURE = SpellKind(not_kinds=CREATURE)
+DINOSAURS = SpellKind(subtype="dinosaur")
+BLACK_CREATURES = SpellKind(kinds=CREATURE, colours=frozenset("B"))
+ANY_SPELL = SpellKind()
+# A black creature of mana value 4, which is the commander of the reducer tests.
+BOSS = make("Boss", mv=4, pips={"B": 1}, kinds=CREATURE, subtypes=frozenset({"dinosaur", "cleric"}))
+
+
+def reducer(name: str, mv: int, amount: int, *spells: SpellKind) -> GoldfishCard:
+    """A mana-value-`mv` artifact that takes `amount` generic mana off the spells of these kinds."""
+    return make(name, mv=mv, kinds=ARTIFACT, reducers=(Reducer(spells, amount),))
+
+
+def boss_turn(*extra: GoldfishCard, boss: GoldfishCard = BOSS) -> int:
+    """The turn the boss is cast with four Swamps, the extra cards and fillers that are too dear to cast."""
+    slots = [*repeat(SWAMP, 4), *extra]
+    slots += repeat(VANILLA, 7 - len(slots))
+    return only_outcome(run(slots, commanders=(boss,))).commander_turns[0]
+
+
+def commander_turn(slots: Sequence[GoldfishCard], commander: GoldfishCard) -> int:
+    return only_outcome(run(slots, commanders=(commander,))).commander_turns[0]
+
+
+def test_a_reducer_in_play_takes_generic_mana_off_the_spell_it_names() -> None:
+    medallion = reducer("Medallion", 2, 1, BLACK)
+    # The medallion is cast on turn two, so on turn three the boss costs {2}{B}, three mana, not four.
+    assert boss_turn(medallion) == 3
+    assert boss_turn(replace(medallion, reducers=())) == 4
+
+
+@pytest.mark.parametrize(
+    "spells", [(BLUE,), (NONCREATURE,), (DINOSAURS, BLUE)], ids=["blue", "noncreature", "other"]
+)
+def test_a_reducer_leaves_the_spells_it_does_not_name_at_their_cost(spells: tuple[SpellKind, ...]) -> None:
+    plain = replace(BOSS, subtypes=frozenset({"cleric"}))
+    assert boss_turn(reducer("Medallion", 2, 1, *spells), boss=plain) == 4
+
+
+@pytest.mark.parametrize(
+    "spells",
+    [(CREATURES,), (BLACK,), (DINOSAURS,), (BLUE, BLACK), (BLACK_CREATURES,), (ANY_SPELL,)],
+    ids=["creatures", "black", "subtype", "black or blue", "black creatures", "every spell"],
+)
+def test_a_reducer_takes_mana_off_each_kind_of_spell_it_names(spells: tuple[SpellKind, ...]) -> None:
+    assert boss_turn(reducer("Medallion", 2, 1, *spells)) == 3
+
+
+def test_a_changeling_is_every_creature_type_and_so_a_dinosaur() -> None:
+    changeling = replace(BOSS, subtypes=frozenset({CHANGELING}))
+    assert boss_turn(reducer("Medallion", 2, 1, DINOSAURS), boss=changeling) == 3
+
+
+def test_a_reducer_in_the_hand_takes_nothing_off() -> None:
+    assert boss_turn(reducer("Medallion", 9, 3, ANY_SPELL)) == 4
+
+
+def test_a_reducer_takes_off_only_generic_mana() -> None:
+    # {B} with no black mana stays out of reach however much is taken off.
+    boss = make("Boss", mv=3, pips={"B": 1}, kinds=CREATURE)
+    slots = [*repeat(FOREST, 4), reducer("Pendant", 1, 5, ANY_SPELL), *repeat(VANILLA, 2)]
+    assert commander_turn(slots, boss) == 0
+
+
+def test_a_cost_cannot_fall_below_nothing() -> None:
+    boss = make("Boss", mv=2, kinds=CREATURE)
+    slots = [*repeat(FOREST, 4), reducer("Pendant", 1, 5, ANY_SPELL), *repeat(VANILLA, 2)]
+    # The pendant takes turn one's mana, and the free boss is cast the moment it is in play.
+    assert commander_turn(slots, boss) == 1
+
+
+def test_several_reducers_add_up() -> None:
+    boss = make("Boss", mv=6, pips={"B": 1}, kinds=CREATURE)
+    pendant = reducer("Pendant", 1, 1, BLACK)
+    orb = reducer("Orb", 2, 2, CREATURES)
+    # Turn one the pendant, turn two the orb: three less on turn three, not the one or two of either alone.
+    assert boss_turn(pendant, orb, boss=boss) == 3
+    assert boss_turn(orb, boss=boss) == 4
+
+
+def test_a_commander_that_is_a_reducer_takes_mana_off_the_other_commander() -> None:
+    medallion = reducer("Medallion", 2, 1, BLACK)
+    slots = [*repeat(SWAMP, 4), *repeat(VANILLA, 3)]
+    assert only_outcome(run(slots, commanders=(medallion, BOSS))).commander_turns == (2, 3)
+
+
+def test_a_card_costs_less_by_the_greatest_power_among_the_creatures_in_play() -> None:
+    henge = make("Henge", mv=9, pips={"G": 2}, kinds=ARTIFACT, discount=Discount(Measure.GREATEST_POWER))
+    big = make("Big", mv=1, kinds=CREATURE, power=4)
+    small = make("Small", mv=1, kinds=CREATURE, power=1)
+    # Turn one's Big and turn two's Small are out, so the nine costs five less its greatest power, 4: not the
+    # four the powers add up to.
+    assert commander_turn([*repeat(FOREST, 5), big, small], henge) == 5
+    assert commander_turn([*repeat(FOREST, 5), small, small], henge) == 0
+
+
+def test_a_card_costs_less_by_the_total_power_of_the_creatures_in_play() -> None:
+    ghalta = make("Ghalta", mv=8, kinds=CREATURE, discount=Discount(Measure.TOTAL_POWER))
+    three = make("Three", mv=1, kinds=CREATURE, power=3)
+    two = make("Two", mv=1, kinds=CREATURE, power=2)
+    # Both are out by turn two; on turn three the eight costs three, not the five the greatest power leaves.
+    assert commander_turn([*repeat(FOREST, 4), three, two, VANILLA], ghalta) == 3
+
+
+def test_a_card_costs_less_by_the_greatest_mana_value_among_creatures_of_its_subtype() -> None:
+    flock = make(
+        "Flock", mv=5, kinds=CREATURE, discount=Discount(Measure.GREATEST_VALUE, subtype="elemental")
+    )
+    spark = make("Spark", mv=1, kinds=CREATURE, subtypes=frozenset({"elemental"}))
+    goblin = make("Goblin", mv=2, kinds=CREATURE, subtypes=frozenset({"goblin"}))
+    shifter = make("Shifter", mv=2, kinds=CREATURE, subtypes=frozenset({CHANGELING}))
+    # The Spark's one is the greatest among Elementals, so the five costs four and is cast on turn four; the
+    # Goblin's two does not count. A changeling is an Elemental, and its two makes the five cost three.
+    assert commander_turn([*repeat(FOREST, 4), spark, goblin, VANILLA], flock) == 4
+    assert commander_turn([*repeat(FOREST, 4), spark, shifter, VANILLA], flock) == 3
+
+
+def test_a_card_costs_three_less_only_with_a_creature_of_power_four_or_more() -> None:
+    bend = make("Bend", mv=4, kinds=SPELL, discount=Discount(Measure.GREATEST_POWER, step=3, at_least=4))
+    four = make("Four", mv=1, kinds=CREATURE, power=4)
+    three = make("Three", mv=1, kinds=CREATURE, power=3)
+    assert commander_turn([*repeat(FOREST, 4), four, *repeat(VANILLA, 2)], bend) == 2
+    assert commander_turn([*repeat(FOREST, 4), three, *repeat(VANILLA, 2)], bend) == 4
+
+
+def test_a_card_costs_one_less_for_each_creature_in_play() -> None:
+    act = make("Act", mv=6, kinds=SPELL, discount=Discount(Measure.CREATURES))
+    pup = make("Pup", mv=1, kinds=CREATURE)
+    # Two one-drops by turn two make the six cost four, cast on turn four; with one it would never be cast.
+    assert commander_turn([*repeat(FOREST, 4), pup, pup, VANILLA], act) == 4
+    assert commander_turn([*repeat(FOREST, 4), pup, VANILLA, VANILLA], act) == 0
+
+
+def test_a_reduced_cost_is_planned_with_the_rituals_that_reach_it() -> None:
+    ritual = make(
+        "Dark Ritual",
+        mv=1,
+        pips={"B": 1},
+        kinds=frozenset({CardKind.INSTANT}),
+        mana=ManaAbility(3, frozenset("B"), delayed=False, ritual=True),
+    )
+    boss = make("Boss", mv=6, kinds=CREATURE)
+    pendant = reducer("Pendant", 1, 3, CREATURES)
+    # Turn two's two Swamps and the ritual make four mana, which pays the six less three; the ritual's gain
+    # alone, with two, would not reach the printed six.
+    slots = [*repeat(SWAMP, 4), pendant, ritual, make("Filler", mv=9)]
+    assert commander_turn(slots, boss) == 2
+
+
+def test_a_ritual_that_costs_less_gains_more_and_is_paid_for_at_its_reduced_cost() -> None:
+    ritual = make(
+        "Cabal Ritual",
+        mv=3,
+        pips={"B": 1},
+        kinds=frozenset({CardKind.INSTANT}),
+        mana=ManaAbility(5, frozenset("B"), delayed=False, ritual=True),
+    )
+    boss = make("Boss", mv=6, kinds=CREATURE)
+    charm = reducer("Charm", 1, 2, SpellKind(kinds=frozenset({CardKind.INSTANT})))
+    # The charm makes the ritual cost {B}, so turn two's two Swamps pay for it and have its five: six mana for
+    # the boss. At the printed {2}{B} it could not be paid for with two, and its net gain of two would not
+    # reach the six either.
+    slots = [*repeat(SWAMP, 4), charm, ritual, make("Filler", mv=9)]
+    assert commander_turn(slots, boss) == 2
+
+
+def test_a_shrinker_that_is_sacrificed_stops_shrinking() -> None:
+    shrinker = make("Shrinker", mv=1, kinds=CREATURE, shrink=1, toughness=3)
+    sacrifice = make("Sacrifice", mv=2, kinds=SPELL, needs_sacrifice=True)
+    # Turn one the Shrinker, turn two the spell that sacrifices it (the only creature), and turn three Birds,
+    # which live at toughness one: mana 1, 2 and 3 from the lands, and on turn four the fourth land and Birds.
+    slots = [*repeat(FOREST, 4), shrinker, sacrifice, birds(3, 1)]
+    assert only_outcome(run(slots)).mana[:4] == (1, 2, 3, 5)
+
+
+def test_the_pieces_of_a_combo_are_paid_for_at_their_reduced_cost_together() -> None:
+    a = make("A", mv=3, pips={"B": 1}, kinds=SPELL, combo=True)
+    b = make("B", mv=3, pips={"B": 1}, kinds=SPELL, combo=True)
+    medallion = reducer("Medallion", 2, 1, BLACK)
+    # Turn four's four mana pays for the two threes less one each; at the printed six they are never cast.
+    combos = (combo_of(a, b),)
+    assert only_outcome(run([*repeat(SWAMP, 4), medallion, a, b], combos=combos)).combo_turns == (4,)
+    plain = replace(medallion, reducers=())
+    assert only_outcome(run([*repeat(SWAMP, 4), plain, a, b], combos=combos)).combo_turns == (0,)
+
+
+def test_a_finisher_is_castable_at_its_reduced_cost() -> None:
+    finisher = make("Overrun", mv=6, pips={"B": 1}, finisher=True)
+    medallion = reducer("Medallion", 2, 1, BLACK)
+    # Cast on turn two, the medallion makes the six cost five, which turn five's five Swamps pay.
+    assert only_outcome(run([*repeat(SWAMP, 5), medallion, finisher])).finisher_turns == (5,)
+    plain = replace(medallion, reducers=())
+    assert only_outcome(run([*repeat(SWAMP, 5), plain, finisher])).finisher_turns == (0,)
+
+
+def test_a_tutor_to_the_hand_fetches_a_piece_a_reducer_has_made_castable_in_time() -> None:
+    first = make("First", mv=1, kinds=CREATURE, combo=True)
+    second = make("Second", mv=1, kinds=CREATURE, combo=True)
+    dear = make("Dear", mv=9, kinds=CREATURE, combo=True)
+    cheap = make("Cheap", mv=1, kinds=CREATURE, combo=True)
+    tutor = make("Tutor", mv=2, tutor=Tutor(frozenset({CardKind.CREATURE}), TutorDestination.HAND))
+    combos = (
+        GoldfishCombo("1", ("First", "Dear"), (), (), command_zone=("First",)),
+        GoldfishCombo("2", ("Second", "Cheap"), (), (), command_zone=("Second",)),
+    )
+
+    def fetched_dear(*spells: SpellKind) -> int:
+        slots = [*repeat(FOREST, 10), tutor, dear, cheap, reducer("Pendant", 1, 6, *spells)]
+        report = run(slots, commanders=(first, second), combos=combos, games=2000, seed=3)
+        return sum(1 for outcome in report.outcomes if outcome.combo_fetched & 1)
+
+    # The commanders take turn one's mana, so the pendant comes on turn two and the tutor, free with it, is
+    # cast with no mana to spare: the nine-drop, three with the pendant, is within the three turns left, but
+    # only if the pendant is counted in the tutor's own cost and in the nine-drop's. Then the tutor fetches
+    # it rather than the one-drop (428 games in 2,000, against 327 when either is read at the printed cost),
+    # and a pendant for blue spells never does.
+    assert fetched_dear(CREATURES, SpellKind(kinds=SPELL)) > 400
+    assert fetched_dear(BLUE) == 0
+
+
+def test_the_land_played_pays_the_colour_a_spell_at_its_reduced_cost_asks_for() -> None:
+    boss = make("Boss", mv=6, pips={"B": 1}, kinds=CREATURE)
+    pendant = reducer("Pendant", 1, 5, BLACK)
+    # Turn one's Forest pays for the pendant; on turn two the boss costs {B}, one mana, so the Swamp is played
+    # and the boss cast, though at the printed six it asks for no colour yet and the Forest, first in the
+    # deck, would be played.
+    slots = [FOREST, FOREST, SWAMP, pendant, *repeat(VANILLA, 3)]
+    assert commander_turn(slots, boss) == 2
+
+
+def test_a_spell_in_the_hand_is_cast_at_its_reduced_cost() -> None:
+    rock = make(
+        "Rock", mv=4, kinds=ARTIFACT, mana=ManaAbility(2, frozenset("C"), delayed=False, ritual=False)
+    )
+    pendant = reducer("Pendant", 1, 2, SpellKind(kinds=ARTIFACT))
+    slots = [*repeat(FOREST, 4), pendant, rock, make("Filler", mv=9)]
+    # The pendant is cast on turn one and the rock, then two, on turn two: its mana counts from there. Cast
+    # at its printed four it would come on turn four.
+    assert only_outcome(run(slots)).mana == (1, 4, 5, 6, 6)
+
+
+def test_the_mana_left_after_a_reduced_cost_is_paid_is_left_to_be_spent() -> None:
+    stuck = make("Stuck", mv=4, pips={"B": 1})
+    green = make("Green", mv=4, pips={"G": 1})
+    pendant = reducer("Pendant", 1, 1, SpellKind(colours=frozenset("G")))
+    # Turn two has four mana, two Forests and the ring's two, and the green spell costs three: one is left
+    # while the black spell, at the four that turn's mana makes, still has no black to be paid with. Paying
+    # the printed four would leave nothing.
+    slots = [*repeat(FOREST, 3), SOL_RING, pendant, green, stuck]
+    assert only_outcome(run(slots)).colour_screw_turn == 2
+
+
+def test_a_creature_that_dies_as_it_enters_still_draws_the_card_it_draws_as_it_enters() -> None:
+    shrinker = make("Shrinker", mv=1, kinds=ENCHANTMENT, shrink=1)
+
+    def depths(toughness: int) -> list[tuple[int, ...]]:
+        cantrip = make("Cantrip", mv=2, kinds=CREATURE, draw=Draw(1, engine=False), toughness=toughness)
+        slots = [*repeat(FOREST, 18), shrinker, cantrip]
+        return [o.shuffle_depths for o in run(slots, games=200, seed=4).outcomes]
+
+    # A cantrip that lives and one that dies both draw: the games reach as far into the library either way,
+    # and some of them as far as the draws of five turns and the card drawn on entering allow.
+    assert depths(1) == depths(2)
+    assert any(depth[-1] == 13 for depth in depths(1))
+
+
+def test_a_creature_reducer_leaves_a_noncreature_spell_at_its_cost() -> None:
+    spell = make("Boss", mv=4, pips={"B": 1}, kinds=SPELL)
+    assert boss_turn(reducer("Medallion", 2, 1, CREATURES), boss=spell) == 4
+    assert boss_turn(reducer("Medallion", 2, 1, NONCREATURE), boss=spell) == 3
+
+
+def test_a_spell_short_of_colours_at_its_reduced_cost_is_a_screw() -> None:
+    stuck = make("Stuck", mv=3, pips={"B": 1}, kinds=CREATURE)
+    slots = [*repeat(FOREST, 4), reducer("Pendant", 1, 1, ANY_SPELL), stuck, VANILLA]
+    # From turn two the pendant makes the three cost two, which the two Forests have the mana for.
+    assert only_outcome(run(slots)).colour_screw_turn == 2
+
+
+# --- creatures that shrink the others (Heartless Summoning) ---
+
+
+def birds(mv: int, toughness: int) -> GoldfishCard:
+    mana = ManaAbility(1, frozenset("G"), delayed=True, ritual=False)
+    return make("Birds", mv=mv, kinds=CREATURE, mana=mana, toughness=toughness)
+
+
+def test_a_creature_in_play_whose_toughness_the_shrinking_takes_dies_with_its_mana() -> None:
+    shrinker = make("Shrinker", mv=2, kinds=ENCHANTMENT, shrink=1)
+    # Turn one's Birds makes mana from turn two on, until the Shrinker comes on turn two and kills it.
+    assert only_outcome(run([*repeat(FOREST, 5), birds(1, 1), shrinker])).mana == (1, 2, 3, 4, 5)
+    # With a toughness of two it lives: its mana is in the pool from turn two.
+    assert only_outcome(run([*repeat(FOREST, 5), birds(1, 2), shrinker])).mana == (1, 3, 4, 5, 6)
+
+
+def test_a_creature_cast_while_the_shrinking_is_in_play_dies_on_entering() -> None:
+    shrinker = make("Shrinker", mv=1, kinds=ENCHANTMENT, shrink=1)
+    assert only_outcome(run([*repeat(FOREST, 5), shrinker, birds(2, 1)])).mana == (1, 2, 3, 4, 5)
+    assert only_outcome(run([*repeat(FOREST, 5), shrinker, birds(2, 2)])).mana == (1, 2, 4, 5, 6)
+
+
+def test_the_shrinking_takes_power_off_the_creatures_a_discount_counts() -> None:
+    bend = make("Bend", mv=5, kinds=SPELL, discount=Discount(Measure.GREATEST_POWER, step=3, at_least=4))
+    big = make("Big", mv=2, kinds=CREATURE, power=4, toughness=5)
+    shrinker = make("Shrinker", mv=1, kinds=ENCHANTMENT, shrink=1)
+    other = make("Other", mv=1, kinds=ENCHANTMENT)
+    # A four-power creature is three-power under the shrinking, short of the four the discount asks for.
+    assert commander_turn([*repeat(FOREST, 4), shrinker, big, VANILLA], bend) == 0
+    assert commander_turn([*repeat(FOREST, 4), other, big, VANILLA], bend) == 3
 
 
 # --- colours ---------------------------------------------------------------------------------------------

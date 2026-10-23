@@ -108,7 +108,7 @@ def test_the_report_is_json_for_the_tab(played: GoldfishRun) -> None:
     document = goldfish_report_json(played.report, played.loaded.deck, 10000001)
     assert document["games"] == 50
     assert document["seed"] == 10000001
-    assert document["policyVersion"] == 5
+    assert document["policyVersion"] == 6
     assert document["bracket"] == 5
     assert document["keepBracket"] == 5
     assert document["bracketTurn"] is None

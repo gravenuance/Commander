@@ -775,7 +775,9 @@ It reads the card data and the caches alone and fetches nothing; the same deck a
 and `Not modelled` lists the cards the reading could not place. One-shot mana (rituals, Treasures, Lion's Eye
 Diamond) goes only to the commander, mana sources, combo pieces, finishers and the tutors that fetch them, and
 each creature that is no longer summoning sick attacks every turn for its Treasure triggers, with no damage
-counted.
+counted. Cost reducers count: a Medallion or Goblin Anarchomancer takes generic mana off the spells it names
+while it is in play, and Ghalta, The Great Henge, Bolt Bend, Blasphemous Act and Sunderflock cost less by the
+creatures the deck has out; Heartless Summoning also kills a creature of toughness 1, mana creature or not.
 
 `--swap "<card in>=<card out>"` (repeated for more) or `--plan plan.toml` (the plan `apply` reads: its adds
 paired with its removes, in order) plays the same games again with the swaps made and lists every figure that

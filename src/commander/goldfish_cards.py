@@ -204,6 +204,48 @@ class Draw:
     engine: bool
 
 
+class Measure(Enum):
+    """What a spell that costs less by its creatures counts among the creatures you control."""
+
+    GREATEST_POWER = "greatest power"
+    TOTAL_POWER = "total power"
+    # The greatest mana value among those with a subtype (Sunderflock: Elementals).
+    GREATEST_VALUE = "greatest mana value"
+    CREATURES = "number of creatures"
+
+
+@dataclass(slots=True, frozen=True)
+class Discount:
+    """A spell that costs generic mana less by what the creatures its controller has are: `step` less for
+    each unit of the measure (Ghalta: total power), or, with `at_least`, `step` less once when the measure
+    reaches it (Bolt Bend: {3} less with a creature of power 4 or more)."""
+
+    measure: Measure
+    step: int = 1
+    subtype: str = ""
+    at_least: int | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class SpellKind:
+    """The spells a cost reducer names. A spell is of the kind when it meets every criterion set."""
+
+    kinds: frozenset[CardKind] = frozenset()
+    not_kinds: frozenset[CardKind] = frozenset()
+    # The colours the spell must have.
+    colours: frozenset[str] = frozenset()
+    # A subtype the spell must have, casefolded.
+    subtype: str = ""
+
+
+@dataclass(slots=True, frozen=True)
+class Reducer:
+    """A permanent that takes `amount` generic mana off each spell of any of its kinds while it is in play."""
+
+    spells: tuple[SpellKind, ...]
+    amount: int
+
+
 @dataclass(slots=True, frozen=True)
 class GoldfishCard:
     """One card of the deck as the game loop reads it. The cost is the one it is cast for: a two-part card by
@@ -257,6 +299,14 @@ class GoldfishCard:
     dies_tutor: Tutor | None = None
     # Sacrifices a creature for no mana (Carrion Feeder, Phyrexian Tower, Ashnod's Altar).
     free_outlet: bool = False
+    # Takes generic mana off other spells while in play (Jet Medallion), and off its own cost by what the
+    # creatures in play are (Ghalta).
+    reducers: tuple[Reducer, ...] = ()
+    discount: Discount | None = None
+    # Every creature its controller has gets -N/-N while it is in play (Heartless Summoning: 1).
+    shrink: int = 0
+    # The front face's toughness, None for a card with none or one that varies (*).
+    toughness: int | None = None
 
     @property
     def permanent(self) -> bool:
@@ -302,8 +352,9 @@ class _Context:
     # The deck's lands with basic land types: the types each has and the colours it makes, for the lands that
     # fetch by type.
     typed_lands: tuple[tuple[frozenset[str], frozenset[str]], ...] = ()
-    # Each card's printed power by oracle id.
+    # Each card's printed power and toughness by oracle id.
     powers: Mapping[str, str | None] = field(default_factory=dict[str, str | None])
+    toughnesses: Mapping[str, str | None] = field(default_factory=dict[str, str | None])
     # The subtypes the cards have, which a tutor may name.
     subtypes: frozenset[str] = frozenset()
 
@@ -319,6 +370,7 @@ def compile_deck(
     finishers_added: Iterable[str] = (),
     finishers_removed: Iterable[str] = (),
     powers: Mapping[str, str | None] | None = None,
+    toughnesses: Mapping[str, str | None] | None = None,
 ) -> GoldfishDeck:
     """The deck's cards as records, from data already loaded.
 
@@ -326,9 +378,9 @@ def compile_deck(
     and tags each card's tag slugs with every tag above them (`CardDb.tag_lineage`). synergy is the oracle ids
     of the cards matching or feeding the deck's dominant tags, or that its commander wants
     (`ideas.dominant_card_ids`). The finisher names are added to and taken from the cards the Tagger tags
-    make finishers. powers holds the cards' printed power by oracle id
-    (`CardDb.card_texts`); a card it lacks has none. A card the card data lacks is a plain spell of the deck's
-    average mana value, not modelled.
+    make finishers. powers and toughnesses hold the cards' printed power and toughness by oracle id
+    (`CardDb.card_texts`); a card they lack has none. A card the card data lacks is a plain spell of the
+    deck's average mana value, not modelled.
     """
     context, kept, left_out, average = _deck_context(
         deck,
@@ -340,6 +392,7 @@ def compile_deck(
         finishers_added=finishers_added,
         finishers_removed=finishers_removed,
         powers=powers or {},
+        toughnesses=toughnesses or {},
     )
     commanders = {card_key(name) for name in deck.commanders}
     compiled: dict[str, GoldfishCard] = {}
@@ -375,6 +428,7 @@ def _deck_context(
     finishers_added: Iterable[str],
     finishers_removed: Iterable[str],
     powers: Mapping[str, str | None],
+    toughnesses: Mapping[str, str | None],
 ) -> tuple[_Context, list[GoldfishCombo], list[GoldfishCombo], float]:
     """What every card of the deck is read against, the deck's kept and left-out combos and its average mana
     value."""
@@ -392,6 +446,7 @@ def _deck_context(
         combo_pieces=frozenset(card_key(name) for combo in kept for name in combo.pieces),
         unknown_mana_value=max(round(average), 1),
         powers=powers,
+        toughnesses=toughnesses,
         subtypes=frozenset(word for info in cards.values() for word in _subtypes(info.type_line)),
     )
     return replace(context, typed_lands=_typed_lands(deck, cards, context)), kept, left_out, average
@@ -410,11 +465,12 @@ def compile_card(
     finishers_added: Iterable[str] = (),
     finishers_removed: Iterable[str] = (),
     powers: Mapping[str, str | None] | None = None,
+    toughnesses: Mapping[str, str | None] | None = None,
 ) -> GoldfishCard:
     """One card read as `compile_deck` reads the deck's own: its identity, the typed lands fetches find, the
     combos, synergy and finishers. For a card that is not in the deck, a swap's incoming card; `cards`,
-    `infos` and `powers` must hold it as well as the deck. A combo is the deck's own, so the card is no piece
-    of one that names it. A card the card data lacks is a plain spell, not modelled."""
+    `infos`, `powers` and `toughnesses` must hold it as well as the deck. A combo is the deck's own, so the
+    card is no piece of one that names it. A card the card data lacks is a plain spell, not modelled."""
     context = _deck_context(
         deck,
         cards,
@@ -425,6 +481,7 @@ def compile_card(
         finishers_added=finishers_added,
         finishers_removed=finishers_removed,
         powers=powers or {},
+        toughnesses=toughnesses or {},
     )[0]
     return _compile_card(name, cards.get(name.casefold()), copies, context, commander=False)
 
@@ -504,8 +561,6 @@ _UNMODELLED = re.compile(
     rf"|as an additional cost to cast this \w+, (?!you may|{_SACRIFICE_CREATURE})",
     re.MULTILINE,
 )
-# A cost reduction, for other spells (Herald's Horn) or this one (Ghalta): the card is never modelled.
-_COST_REDUCER = re.compile(r"costs? (?:\{[^}]+\})+ less|less to cast")
 # An ability that sacrifices a creature for no mana, tapping its permanent at most (Phyrexian Tower).
 _FREE_OUTLET = re.compile(r"^(?:\{t\}, )?sacrifice (?:a|another) creature(?:, \{t\})?: ", re.MULTILINE)
 # An activated ability that taps its permanent and adds no mana (Hermit Druid's "{G}, {T}: Reveal ...").
@@ -555,13 +610,14 @@ def _compile_card(
     card = _plain(
         name, info.oracle_id, context, copies, commander, mana_value=cost[0], pips=cost[1], kinds=kinds
     )
-    power = context.powers.get(info.oracle_id)
     text = info.oracle_text.casefold()
     changeling = _CHANGELING.search(text) is not None
     card = replace(
         card,
         x_cost=any(symbol == "X" for symbol in PIP.findall(cost_halves(info.mana_cost)[face])),
-        power=int(power) if power is not None and power.isdigit() else None,
+        power=_stat(context.powers.get(info.oracle_id)),
+        # A printed toughness of 0 is a creature whose toughness is set by other cards (Faeburrow Elder).
+        toughness=_stat(context.toughnesses.get(info.oracle_id)) or None,
         subtypes=frozenset({CHANGELING}) if changeling else _subtypes(info.type_line),
         free_outlet=card.permanent and _FREE_OUTLET.search(text) is not None,
     )
@@ -573,6 +629,11 @@ def _compile_card(
         land, understood = _land_face(info, context)
         return replace(card, land=land, modelled=card.modelled and understood)
     return card
+
+
+def _stat(printed: str | None) -> int | None:
+    """A printed power or toughness, None when the card has none or it varies (*)."""
+    return int(printed) if printed is not None and printed.isdigit() else None
 
 
 def _plain(
@@ -1198,12 +1259,15 @@ def _read_spell(card: GoldfishCard, info: CardMana, text: str, context: _Context
         context.infos[info.oracle_id].roles if info.oracle_id in context.infos else frozenset()
     )
     search = _search(text)
-    matters = _matters(text, roles, search)
     key_card = card.combo or card.finisher
-    if _COST_REDUCER.search(text):
+    reductions = _reductions(text, card)
+    if reductions is None:
         return replace(card, modelled=False)
+    # The Tagger calls a cost reducer ramp; its reduction is all the ramp it has.
+    reducing = bool(reductions.reducers) or reductions.discount is not None
+    matters = _matters(text, roles - {Role.RAMP} if reducing else roles, search)
     if _UNMODELLED.search(text):
-        return replace(card, modelled=not (matters or key_card))
+        return replace(card, modelled=not (matters or key_card), **reductions._asdict())
     ramp = _land_ramp(search, card.kinds)
     land_drops = _EXTRA_LAND_DROPS.search(text)
     searches = ramp is None and Role.TUTOR in roles
@@ -1232,6 +1296,7 @@ def _read_spell(card: GoldfishCard, info: CardMana, text: str, context: _Context
         treasures_on_entry=treasures[0],
         treasures_on_attack=treasures[1],
         treasure_on_tap=treasures[2],
+        **reductions._asdict(),
         **found,
     )
 
@@ -1284,3 +1349,114 @@ def _matters(text: str, roles: frozenset[Role], search: _Search | None) -> bool:
     ramp = Role.RAMP in roles and _FOR_OPPONENT.search(text) is None
     draws = Role.DRAW in roles and re.search(r"\bdraws?\b", text) is not None
     return ramp or draws or Role.TUTOR in roles or bool(_abilities(text)) or _land_words(search) is not None
+
+
+# A sentence that reduces a cost: for other spells (Jet Medallion) or this one (Ghalta).
+_COST_REDUCER = re.compile(r"costs? (?:\{[^}]+\})+ less|less to cast")
+_SENTENCE_BREAK = re.compile(r"(?<=\.) |\n")
+# "Creature spells you cast cost {2} less to cast." The kind before "spells" is optional ("Spells cost ...").
+_STATIC_REDUCER = re.compile(
+    r"^(?:(?P<what>[a-z -]+?) )?spells? (?:you cast )?costs? \{(?P<n>\d+)\} less to cast\.?$"
+)
+_THATS_REDUCER = re.compile(
+    r"^each spell you cast that's (?P<what>[a-z -]+?) costs? \{(?P<n>\d+)\} less to cast\.?$"
+)
+_ALTERNATIVES = re.compile(r"\s+(?:and|or)\s+")
+_SPELL_COLOURS = {word: colour for word, colour in _COLOUR_WORDS.items() if colour in _ALL_COLOURS}
+# Words before "spells" that name no subtype and that the reading does not follow.
+_NOT_SUBTYPES = frozenset(
+    {"this", "historic", "legendary", "multicolored", "monocolored", "colorless", "permanent"}
+)
+_SELF_REDUCTION = re.compile(r"^this spell costs \{(?P<n>\d+|x)\} less to cast(?P<rest>.*?)\.?$")
+_MEASURES = (
+    (re.compile(r"^, where x is the greatest power among creatures you control$"), Measure.GREATEST_POWER),
+    (re.compile(r"^, where x is the total power of creatures you control$"), Measure.TOTAL_POWER),
+    (re.compile(r"^, where x is the number of creatures you control$"), Measure.CREATURES),
+)
+_GREATEST_VALUE = re.compile(r"^, where x is the greatest mana value among (?P<kind>[a-z]+?)s you control$")
+_POWER_CONDITION = re.compile(r" if you control a creature with power (?P<power>\d+) or greater$")
+_PER_CREATURE = re.compile(r" for each creature (?:on the battlefield|you control)$")
+_SHRINK = re.compile(r"^creatures you control get -(\d+)/-\1\.?$", re.MULTILINE)
+
+
+class _Reductions(NamedTuple):
+    reducers: tuple[Reducer, ...] = ()
+    discount: Discount | None = None
+    shrink: int = 0
+
+
+def _reductions(text: str, card: GoldfishCard) -> _Reductions | None:
+    """The cost reductions a card's text gives, or None when a sentence reducing a cost is not followed. The
+    reduction of a Class sits behind a level that nothing here pays for."""
+    reducers: list[Reducer] = []
+    discount: Discount | None = None
+    for sentence in _SENTENCE_BREAK.split(text):
+        if not _COST_REDUCER.search(sentence):
+            continue
+        static = _static_reducer(sentence)
+        own = _self_discount(sentence)
+        if "class" in card.subtypes or (static is None and own is None) or (own is not None and discount):
+            return None
+        if static is not None:
+            reducers.append(static)
+        discount = own or discount
+    shrink = _SHRINK.search(text)
+    return _Reductions(tuple(reducers), discount, int(shrink.group(1)) if shrink else 0)
+
+
+def _static_reducer(sentence: str) -> Reducer | None:
+    found = _STATIC_REDUCER.match(sentence) or _THATS_REDUCER.match(sentence)
+    if found is None:
+        return None
+    spells = _spell_kinds(found.group("what") or "")
+    return Reducer(spells, int(found.group("n"))) if spells else None
+
+
+def _spell_kinds(what: str) -> tuple[SpellKind, ...] | None:
+    """The kinds of spell a phrase names ("instant and sorcery", "red or green", "creature"), none for a word
+    the reading does not follow; no words name every spell."""
+    kinds: list[SpellKind] = []
+    for words in _ALTERNATIVES.split(what) if what else [""]:
+        kind = _spell_kind(words.split())
+        if kind is None:
+            return None
+        kinds.append(kind)
+    return tuple(kinds)
+
+
+def _spell_kind(words: Iterable[str]) -> SpellKind | None:
+    kinds: set[CardKind] = set()
+    not_kinds: set[CardKind] = set()
+    colours: set[str] = set()
+    subtype = ""
+    for word in words:
+        card_kind = _KIND_WORDS.get(word)
+        if card_kind is not None and card_kind is not CardKind.LAND:
+            kinds.add(card_kind)
+        elif word.startswith("non") and _KIND_WORDS.get(word[3:]) not in {None, CardKind.LAND}:
+            not_kinds.add(_KIND_WORDS[word[3:]])
+        elif word in _SPELL_COLOURS:
+            colours.add(_SPELL_COLOURS[word])
+        elif word.isalpha() and word not in _NOT_SUBTYPES and not word.startswith("non") and not subtype:
+            subtype = word
+        else:
+            return None
+    return SpellKind(frozenset(kinds), frozenset(not_kinds), frozenset(colours), subtype)
+
+
+def _self_discount(sentence: str) -> Discount | None:
+    found = _SELF_REDUCTION.match(sentence)
+    if found is None:
+        return None
+    amount, rest = found.group("n"), found.group("rest")
+    if amount == "x":
+        for pattern, measure in _MEASURES:
+            if pattern.match(rest):
+                return Discount(measure)
+        value = _GREATEST_VALUE.match(rest)
+        return Discount(Measure.GREATEST_VALUE, subtype=value.group("kind")) if value else None
+    step = int(amount)
+    power = _POWER_CONDITION.match(rest)
+    if power is not None:
+        return Discount(Measure.GREATEST_POWER, step, at_least=int(power.group("power")))
+    return Discount(Measure.CREATURES, step) if _PER_CREATURE.match(rest) else None

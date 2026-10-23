@@ -32,6 +32,7 @@ class CardContext:
     infos: Mapping[str, CardInfo]
     tags: Mapping[str, frozenset[str]]
     powers: Mapping[str, str | None]
+    toughnesses: Mapping[str, str | None]
     combos: tuple[ComboDetail, ...]
     finishers_added: tuple[str, ...]
     finishers_removed: tuple[str, ...]
@@ -66,7 +67,7 @@ def load_goldfish(
     ids = [info.oracle_id for info in cards.values()]
     infos = db.cards(ids)
     tags = db.tag_lineage(ids)
-    powers = _powers(db, ids)
+    powers, toughnesses = _stats(db, ids)
     bracket = cached_effective_deck(deck, estimate_cache(cache_root / ESTIMATE_FOLDER), now=now).bracket
     combos = cached_own_combos(deck, cache_root, now=now) or ()
     compiled = compile_deck(
@@ -79,15 +80,23 @@ def load_goldfish(
         finishers_added=added,
         finishers_removed=removed,
         powers=powers,
+        toughnesses=toughnesses,
     )
-    context = CardContext(deck, profile, cards, infos, tags, powers, tuple(combos), added, removed)
+    context = CardContext(
+        deck, profile, cards, infos, tags, powers, toughnesses, tuple(combos), added, removed
+    )
     return GoldfishInput(compiled, bracket, context)
 
 
-def _powers(db: CardDb, ids: Iterable[str]) -> dict[str, str | None]:
-    """Each card's printed power by oracle id, which a tutor for a creature with power up to some is read
-    against."""
-    return {oracle_id: text.power for oracle_id, text in db.card_texts(ids).items()}
+def _stats(db: CardDb, ids: Iterable[str]) -> tuple[dict[str, str | None], dict[str, str | None]]:
+    """Each card's printed power and toughness by oracle id: a tutor for a creature with power up to some is
+    read against the powers, a cost that falls with the creatures' power and the shrinking of them against
+    both."""
+    texts = db.card_texts(ids)
+    return (
+        {oracle_id: text.power for oracle_id, text in texts.items()},
+        {oracle_id: text.toughness for oracle_id, text in texts.items()},
+    )
 
 
 def tagged_finishers(deck: Deck, db: CardDb) -> list[str]:
@@ -106,6 +115,7 @@ def incoming_card(loaded: GoldfishInput, db: CardDb, name: str, copies: int = 1)
         raise GoldfishError(f"{name!r} is no card the card data knows")
     context = loaded.context
     ids = [info.oracle_id]
+    new_powers, new_toughnesses = _stats(db, ids)
     return compile_card(
         info.name,
         context.deck,
@@ -117,5 +127,6 @@ def incoming_card(loaded: GoldfishInput, db: CardDb, name: str, copies: int = 1)
         synergy=dominant_card_ids(context.deck, context.profile, db, also=ids),
         finishers_added=context.finishers_added,
         finishers_removed=context.finishers_removed,
-        powers={**context.powers, **_powers(db, ids)},
+        powers={**context.powers, **new_powers},
+        toughnesses={**context.toughnesses, **new_toughnesses},
     )

@@ -11,7 +11,11 @@
   a plan's remove with `keep` cuts the copies beyond it. It counts one-shot mana (self-sacrificing creatures,
   Treasures, rituals, mana spent only on some spells, life paid for mana down to 10), tutors for a colour, a
   power or a subtype, Treasures from attacks, searches paid for with Treasures or loyalty, and Protean Hulk's
-  search when a free sacrifice outlet is in play.
+  search when a free sacrifice outlet is in play. It counts cost reducers too: Medallions and the like take
+  generic mana off the spells they name, Ghalta, The Great Henge, Bolt Bend, Blasphemous Act and Sunderflock
+  cost less by the creatures in play, and Heartless Summoning shrinks every creature, killing those of
+  toughness 1. Reducers it cannot read (a chosen creature type, a Class level, a sacrifice) stay under *Not
+  modelled*.
 - A Goldfish tab in the app shows the same figures. A queued idea with a cut shows the headline figures its
   swap moves in a *Goldfish* fold, and Review shows them for all queued swaps together, each only when
   something moved. The deck's Settings edit its finishers as chips.
