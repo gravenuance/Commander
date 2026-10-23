@@ -480,7 +480,9 @@ lacks that its profile, bracket ceiling and budget allow:
 - **tagged decks** ("Archidekt: tagged *tag*"), only for a deck that sets `[ideas] tag_search = true` (the
   Settings switch *Search decks by tag*; off when missing): the deck's theme tags (the Archidekt deck tags
   that became themes, not play styles, roles or card types) are searched for recent decks of other
-  commanders, but only the three that the most of the deck's main cards match (ties in Archidekt's tag order);
+  commanders, but only the three that the most of the deck's main cards match (ties in Archidekt's tag order;
+  a tag no card matches is left out, tags that ask for the same cards count once, and the cards that feed a
+  tag count as its cards: every artifact for *Artifacts*, every creature with power 2 or less for *Weenies*);
   no setting searches more. Each tag is a pool, read at the deck's bracket and the one above, two search pages
   per bracket (most viewed first, with the same view bars) and up to 10 decks. Cards at least half a pool
   plays become ideas, labelled with the tag. Write the tag under `[themes] ignore` to stop using it. It is off
@@ -615,8 +617,11 @@ base against Frank Karsten's published numbers
   opened) with their reasons, and Reconsider brings one back. Considering, Meta, each Meta section and each
   category under *What stops you* fold, and stay as you left them.
   While a set is being previewed, a folded *Previews* panel below *No cut yet* shows up to 6 of its announced
-  cards that suit the deck: in its colours, matching the most of its three main Archidekt tags, then filling
-  a role it runs short of. They are only to look at: a preview cannot be added or priced, and it leaves the
+  cards that suit the deck: in its colours, first those its commander asks for (a commander that animates
+  big artifacts or enchantments, makes Treasure, cares for creatures with power 2 or less, or leads a tribe),
+  then the most matches of its three main Archidekt tags (the cards that feed a tag count, so a Spacecraft
+  fits *Vehicles*), then filling a role it runs short of, then coloured before colourless, then by name. They
+  are only to look at: a preview cannot be added or priced, and it leaves the
   panel on its release day, after which the usual ideas can bring it. The sync fetches them from Scryfall at
   most once a day, and only while a set is upcoming
   ([ADR 0055](docs/adr/0055-show-upcoming-cards-that-fit-a-deck.md)).

@@ -172,9 +172,12 @@ class SetCard:
     oracle_id: str
     name: str
     mana_cost: str
+    mana_value: float
     type_line: str
     # Faces of a two-faced card are joined by FACE_SEPARATOR.
     oracle_text: str
+    # The front face's power as printed ("2", "*"); None for a card without one.
+    power: str | None
     keywords: tuple[str, ...]
     color_identity: str
     set_code: str
@@ -471,9 +474,11 @@ def parse_set_card(raw: object, where: str) -> SetCard | None:
         oracle_id=oracle_id,
         name=req_str(card, "name", where),
         mana_cost=opt_str(card, "mana_cost", where) or opt_str(front, "mana_cost", where) or "",
+        mana_value=req_float(card, "cmc", where) if "cmc" in card else req_float(front, "cmc", where),
         type_line=opt_str(card, "type_line", where)
         or " // ".join(req_str(f, "type_line", where) for f in faces),
         oracle_text=_oracle_text(card, faces, where),
+        power=opt_str(card, "power", where) or opt_str(front, "power", where),
         keywords=str_list(card, "keywords", where),
         color_identity=_colors(str_list(card, "color_identity", where)),
         set_code=req_str(card, "set", where),

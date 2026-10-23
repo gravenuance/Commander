@@ -21,6 +21,14 @@
   fetches the upcoming sets' cards from Scryfall at most once a day, and makes no card search between
   seasons (ADR 0055).
 
+### Changed
+- A deck's three main tags, which the Previews panel, the goldfish's synergy cards and the tag search read,
+  now count the cards that feed a tag (every artifact for Artifacts, every creature with power 2 or less for
+  Weenies, Treasure makers, Spacecraft for Vehicles), leave out a tag none of the deck's cards match, and
+  count tags that ask for the same cards once. The commander's own Tagger tags say what else the deck wants
+  (big non-Aura enchantments for Bello, small creatures for Arabella), and Previews show those cards first,
+  then rank by distinct matches and put colourless cards last among equals (ADR 0055).
+
 ## 1.1.0 - 2026-10-22
 
 ### Changed

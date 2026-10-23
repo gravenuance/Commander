@@ -4,7 +4,7 @@ import copy
 import json
 import logging
 import shutil
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -24,6 +24,7 @@ from commander.net import Fetcher, Pacer
 from commander.previews import (
     PREVIEWS_FILE,
     PreviewCache,
+    PreviewFit,
     PreviewProbe,
     ProbeState,
     fitting_previews,
@@ -31,16 +32,19 @@ from commander.previews import (
     read_previews,
     write_previews,
 )
-from commander.scryfall import CardRefresh, ScryfallClient, ShapeError, parse_search_page
+from commander.scryfall import CardRefresh, ScryfallClient, SetCard, ShapeError, parse_search_page
 from commander.store import Workspace
 from commander.suggest import DEFAULT_TARGETS
 from commander.syncrun import SyncOptions, run_sync
 from conftest import (
+    BATTERED_GOLEM,
+    MAGDA_ORACLE,
     FakeArchidekt,
     FakeScryfall,
     Json,
     MemoryTokenStore,
     build_card_db,
+    extra_tag_line,
     load_fixture,
     tag_lines,
 )
@@ -71,8 +75,9 @@ MUNITIONS = "0013f005-2b49-48a4-8a74-9bbdadc88c9f"  # Munitions Enthusiast, red
 QUARK = "61703e94-cb57-44d8-b37b-7b14b3cfd86d"  # Quark, Humble Proprietor, red
 IMPULSE = "584cf0fd-112a-4ca6-9c0e-1f3228a7d325"  # Reckless Impulse, a reprint already legal
 RAMP_TAG = "2f3e4ad7-5e60-41b4-bdbc-653f16869cf6"
-# Made up for these tests: the tag a Treasure deck tag stands for, on most red previews, the reprint and the
-# red-white Kirk; and Munitions Enthusiast as ramp, a role the small test decks run short of.
+# Made up for these tests: the tag a Treasure deck tag stands for, on most red previews, the reprint, the
+# red-white Kirk and the deck's Battered Golem; and Munitions Enthusiast as ramp, a role the small test decks
+# run short of.
 TREASURE_TAG = json.dumps(
     {
         "object": "tag",
@@ -80,7 +85,9 @@ TREASURE_TAG = json.dumps(
         "slug": "synergy-treasure",
         "type": "oracle",
         "child_ids": [],
-        "taggings": [{"oracle_id": o} for o in (TUTELAGE, DAHAR, KIRK, MUNITIONS, QUARK, IMPULSE)],
+        "taggings": [
+            {"oracle_id": o} for o in (TUTELAGE, DAHAR, KIRK, MUNITIONS, QUARK, IMPULSE, BATTERED_GOLEM)
+        ],
     }
 )
 
@@ -94,6 +101,33 @@ def ramp_with_munitions() -> str:
 @pytest.fixture(scope="module")
 def previews_db_file(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return build_card_db(tmp_path_factory.mktemp("previewsdb"), [TREASURE_TAG, ramp_with_munitions()])
+
+
+@pytest.fixture(scope="module")
+def commander_db_file(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The same with Magda, the commander, made a synergy-low-power commander."""
+    tags = [TREASURE_TAG, ramp_with_munitions(), extra_tag_line("synergy-low-power", MAGDA_ORACLE)]
+    return build_card_db(tmp_path_factory.mktemp("commanderdb"), tags)
+
+
+@pytest.fixture
+def commander_db(commander_db_file: Path) -> Iterator[CardDb]:
+    with CardDb(commander_db_file) as opened:
+        yield opened
+
+
+@pytest.fixture(scope="module")
+def tokens_db(tmp_path_factory: pytest.TempPathFactory) -> Iterator[CardDb]:
+    """The same with two made-up tags: repeatable-creature-tokens on the deck's Golem, Dahar Master and Quark,
+    and anthem on Quark."""
+    tags = [
+        TREASURE_TAG,
+        ramp_with_munitions(),
+        extra_tag_line("repeatable-creature-tokens", BATTERED_GOLEM, DAHAR, QUARK),
+        extra_tag_line("anthem", QUARK),
+    ]
+    with CardDb(build_card_db(tmp_path_factory.mktemp("tokensdb"), tags)) as opened:
+        yield opened
 
 
 @pytest.fixture(autouse=True)
@@ -166,6 +200,15 @@ def test_a_search_page_reads_the_real_answer_and_knows_a_reprint_from_a_preview(
     assert tutelage.type_line == "Enchantment — Aura"
     assert by_name["Kirk, Commanding Officer"].color_identity == "WR"
     assert by_name["Reckless Impulse"].already_out
+
+
+def test_a_preview_keeps_its_mana_value_and_power_through_the_cache(tmp_path: Path) -> None:
+    page = parse_search_page(search_page())
+    by_name = {card.name: card for card in page.cards}
+    shown = [by_name["D-7 Battle Cruiser"], by_name["Quark, Humble Proprietor"], by_name["Reckless Impulse"]]
+    assert [(c.mana_value, c.power) for c in shown] == [(2.0, "3"), (3.0, "1"), (2.0, None)]
+    write_previews(tmp_path, PreviewCache(TODAY, page.cards))
+    assert read_previews(tmp_path).cards == page.cards
 
 
 def test_a_next_page_that_is_not_scryfalls_search_is_refused() -> None:
@@ -347,32 +390,103 @@ def test_a_cache_of_another_version_or_unreadable_counts_as_none(tmp_path: Path)
 def fits(
     deck: Deck, db: CardDb, *, today: date = TODAY, profile: Profile | None = None
 ) -> list[tuple[str, ...]]:
-    main = db.resolve(deck.main_cards)
-    found = fitting_previews(
+    return [(fit.card.name, *fit.tags) for fit in found_fits(deck, db, today=today, profile=profile)]
+
+
+def found_fits(
+    deck: Deck,
+    db: CardDb,
+    *,
+    today: date = TODAY,
+    profile: Profile | None = None,
+    cards: Sequence[SetCard] | None = None,
+) -> list[PreviewFit]:
+    return fitting_previews(
         deck,
-        main,
+        db.resolve(deck.main_cards),
         profile or Profile(),
         db,
-        parse_search_page(search_page()).cards,
+        parse_search_page(search_page()).cards if cards is None else cards,
         today=today,
         targets=DEFAULT_TARGETS,
     )
-    return [(fit.card.name, *fit.tags) for fit in found]
 
 
-def test_previews_rank_by_the_dominant_tags_they_match_then_a_short_role_then_name(
-    deck: Deck, db: CardDb
-) -> None:
-    # Flash matches two of the deck's cards, Treasure none, so the deck's dominant tags are Flash, Treasure.
-    # Captain's Tutelage has Flash and the treasure tag; Munitions Enthusiast is ramp, which the deck lacks.
-    # Cloistered Telepath has Flash and Kirk the treasure tag, but neither is in Magda's red; Reckless Impulse
-    # is tagged too, but it is a reprint already out; The Wrath of Khan and D-7 Battle Cruiser match nothing.
+def test_previews_rank_by_the_features_they_match_then_a_short_role_then_name(deck: Deck, db: CardDb) -> None:
+    # Flash matches two of the deck's cards, Treasure two (Magda makes one, the Golem has the tag), so the
+    # deck's dominant tags are Flash, Treasure. Captain's Tutelage has Flash and the treasure tag, and Quark
+    # the treasure tag and a Treasure maker's text: two features each, so by name. Munitions Enthusiast and
+    # Dahar Master have the tag alone, and Munitions is ramp, which the deck lacks. Cloistered Telepath has
+    # Flash and Kirk the treasure tag, but neither is in Magda's red; Reckless Impulse is tagged too, but it
+    # is a reprint already out; The Wrath of Khan and D-7 Battle Cruiser match nothing.
     assert fits(themed_deck(deck, ("Flash", "Treasure")), db) == [
         ("Captain's Tutelage", "Flash", "Treasure"),
+        ("Quark, Humble Proprietor", "Treasure"),
         ("Munitions Enthusiast", "Treasure"),
         ("Dahar Master", "Treasure"),
-        ("Quark, Humble Proprietor", "Treasure"),
     ]
+
+
+def test_a_commanders_wants_rank_first_and_show_a_card_no_deck_tag_matches(
+    deck: Deck, commander_db: CardDb
+) -> None:
+    # Magda is a made-up synergy-low-power commander: Quark, with 1 power, is wanted, and ahead of Captain's
+    # Tutelage, which matches as many tag features but sorts before him. With Flash alone no tag of the deck
+    # names him, and his one feature, the want, ties with Tutelage's Flash and breaks the tie.
+    shown = found_fits(themed_deck(deck, ("Flash", "Treasure")), commander_db)
+    assert [(f.card.name, f.fits_commander) for f in shown] == [
+        ("Quark, Humble Proprietor", True),
+        ("Captain's Tutelage", False),
+        ("Munitions Enthusiast", False),
+        ("Dahar Master", False),
+    ]
+    only = found_fits(themed_deck(deck, ("Flash",)), commander_db)
+    assert [(f.card.name, f.tags, f.fits_commander) for f in only] == [
+        ("Quark, Humble Proprietor", (), True),
+        ("Captain's Tutelage", ("Flash",), False),
+    ]
+
+
+def test_a_commanders_want_counts_as_one_more_feature_and_breaks_a_tie_first(
+    deck: Deck, commander_db: CardDb
+) -> None:
+    # Quark without his Treasure text and tag matches no deck tag; the low-power commander wants him, which
+    # counts one feature: behind Captain's Tutelage's two, ahead of Munitions Enthusiast's one, though
+    # Munitions fills the deck's short ramp role.
+    cards = [
+        replace(card, oracle_id="00000000-0000-0000-0000-00000000000a", oracle_text="")
+        if card.name == "Quark, Humble Proprietor"
+        else card
+        for card in parse_search_page(search_page()).cards
+    ]
+    shown = found_fits(themed_deck(deck, ("Flash", "Treasure")), commander_db, cards=cards)
+    assert [(f.card.name, f.fits_commander) for f in shown] == [
+        ("Captain's Tutelage", False),
+        ("Quark, Humble Proprietor", True),
+        ("Munitions Enthusiast", False),
+        ("Dahar Master", False),
+    ]
+
+
+def test_tags_that_share_a_feature_count_it_once(deck: Deck, tokens_db: CardDb) -> None:
+    # Tokens and Go-wide both ask for repeatable-creature-tokens, which Dahar Master has alone. Quark has it
+    # and anthem: two features, so he comes first though Dahar sorts before him by name.
+    assert fits(themed_deck(deck, ("Tokens", "Go-wide")), tokens_db) == [
+        ("Quark, Humble Proprietor", "Tokens", "Go-wide"),
+        ("Dahar Master", "Tokens", "Go-wide"),
+    ]
+
+
+def test_a_colourless_preview_comes_after_the_coloured_ones_that_fit_as_well(deck: Deck, db: CardDb) -> None:
+    colourless = [
+        replace(card, color_identity="") if card.name == "Captain's Tutelage" else card
+        for card in parse_search_page(search_page()).cards
+    ]
+    themed = themed_deck(deck, ("Treasure",))
+    profile = Profile(exclude_cards=("Quark, Humble Proprietor",))
+    found = found_fits(themed, db, profile=profile, cards=colourless)
+    # Tutelage sorts first by name; being colourless it goes last. Munitions Enthusiast is ramp.
+    assert [f.card.name for f in found] == ["Munitions Enthusiast", "Dahar Master", "Captain's Tutelage"]
 
 
 def test_at_most_the_shown_number_of_previews_fit(
@@ -381,12 +495,26 @@ def test_at_most_the_shown_number_of_previews_fit(
     monkeypatch.setattr(previews_module, "SHOWN", 2)
     assert [name for name, *_ in fits(themed_deck(deck, ("Flash", "Treasure")), db)] == [
         "Captain's Tutelage",
-        "Munitions Enthusiast",
+        "Quark, Humble Proprietor",
     ]
 
 
 def test_dominant_tags_count_with_the_tag_search_off(deck: Deck, db: CardDb) -> None:
     assert fits(themed_deck(deck, ("Treasure",)), db, profile=Profile(tag_search=False))
+
+
+def test_a_spacecraft_is_a_vehicle_and_an_artifact_feeds_the_artifacts_tag_of_a_preview(
+    deck: Deck, db: CardDb
+) -> None:
+    # The deck's Hoverbike is a Vehicle and its artifacts are Flute, Hoverbike and Golem.
+    assert fits(themed_deck(deck, ("Vehicles",)), db) == [("D-7 Battle Cruiser", "Vehicles")]
+    assert fits(themed_deck(deck, ("Artifacts",)), db) == [("D-7 Battle Cruiser", "Artifacts")]
+
+
+def test_a_red_preview_with_power_two_or_less_feeds_the_weenies_tag(deck: Deck, db: CardDb) -> None:
+    # Magda has 2 power. Quark has 1; Munitions Enthusiast has 3, Dahar Master 4, and the blue Telepath is
+    # out of Magda's colours.
+    assert fits(themed_deck(deck, ("Weenies",)), db) == [("Quark, Humble Proprietor", "Weenies")]
 
 
 def test_an_ignored_tag_finds_no_previews(deck: Deck, db: CardDb) -> None:
@@ -402,8 +530,8 @@ def test_the_profiles_excluded_cards_keywords_and_tags_never_show_as_previews(de
     by_card = Profile(exclude_cards=("Dahar Master",))
     assert [name for name, *_ in fits(themed, db, profile=by_card)] == [
         "Captain's Tutelage",
-        "Munitions Enthusiast",
         "Quark, Humble Proprietor",
+        "Munitions Enthusiast",
     ]
     # Munitions Enthusiast has trample; ramp is its role, through the ramp tag.
     by_keyword = Profile(exclude=ThemeSpec(keywords=("Trample",)))
@@ -432,9 +560,9 @@ def test_a_preview_the_deck_already_has_is_not_offered_even_when_the_card_data_d
     )
     held = replace(themed, cards=(*themed.cards, spoiled))
     assert [name for name, *_ in fits(held, db)] == [
+        "Quark, Humble Proprietor",
         "Munitions Enthusiast",
         "Dahar Master",
-        "Quark, Humble Proprietor",
     ]
 
 
@@ -585,7 +713,12 @@ def test_a_sync_without_card_data_does_not_probe(tmp_path: Path, raw_deck: Json)
 
 @pytest.fixture
 def desk_settings(tmp_path: Path, raw_deck: Json, previews_db_file: Path) -> DeskSettings:
-    # The fixture deck is tagged Dwarves, Vehicles and cEDH; Treasure is added, which no card of it matches.
+    return settings_with(tmp_path, raw_deck, previews_db_file)
+
+
+def settings_with(tmp_path: Path, raw_deck: Json, db_file: Path) -> DeskSettings:
+    # The fixture deck is tagged Dwarves, Vehicles and cEDH; Treasure is added, which Magda's text and the
+    # Golem's made-up tag match. No card of it is a Vehicle, so that tag is no theme.
     raw_deck["deckTags"].append(
         {"id": 1, "tag": 99, "deck": raw_deck["id"], "name": "Treasure", "position": "M"}
     )
@@ -593,7 +726,7 @@ def desk_settings(tmp_path: Path, raw_deck: Json, previews_db_file: Path) -> Des
     fake.put(raw_deck)
     cache = tmp_path / "cache"
     cache.mkdir()
-    shutil.copy(previews_db_file, cache / CARD_DB_FILE)
+    shutil.copy(db_file, cache / CARD_DB_FILE)
     result = run(["sync", "--no-cards", "--no-ideas", "--workspace", str(tmp_path / "decks")], tmp_path, fake)
     assert result.code == 0, result.err
     return DeskSettings(tmp_path / "decks", cache / CARD_DB_FILE, "TESTER")
@@ -619,23 +752,39 @@ def test_the_deck_view_counts_its_previews_and_the_panel_gets_them_to_look_at(
     write_previews(desk_settings.cache, PreviewCache(TODAY, parse_search_page(search_page()).cards))
     assert desk.deck(deck_id)["previews"] == 4
     cards = cast("list[Json]", desk.previews(deck_id)["cards"])
+    # Quark has the treasure tag and makes Treasure; Munitions Enthusiast is ramp, which the deck lacks.
     assert [c["name"] for c in cards] == [
+        "Quark, Humble Proprietor",
         "Munitions Enthusiast",
         "Captain's Tutelage",
         "Dahar Master",
-        "Quark, Humble Proprietor",
     ]
-    assert cards[1] == {
+    assert cards[2] == {
         "name": "Captain's Tutelage",
         "manaCost": "{1}{R}",
         "typeLine": "Enchantment — Aura",
-        "text": cards[1]["text"],
+        "text": cards[2]["text"],
         "image": "https://cards.scryfall.io/normal/front/0/c/0c340eba-645d-416a-9ed4-f2303aa8c919.jpg",
         "set": "Star Trek",
         "out": "2026-11-13",
         "fits": ["Treasure"],
     }
-    assert str(cards[1]["text"]).startswith("Flash\nEnchant creature")
+    assert str(cards[2]["text"]).startswith("Flash\nEnchant creature")
+
+
+def test_the_panel_names_the_commander_among_the_tags_a_preview_fits(
+    tmp_path: Path, raw_deck: Json, commander_db_file: Path
+) -> None:
+    settings = settings_with(tmp_path, raw_deck, commander_db_file)
+    write_previews(settings.cache, PreviewCache(TODAY, parse_search_page(search_page()).cards))
+    cards = cast("list[Json]", make_desk(settings).previews(int(raw_deck["id"]))["cards"])
+    # Quark is a Treasure maker and has 1 power, which Magda, a made-up synergy-low-power commander, wants.
+    assert {c["name"]: c["fits"] for c in cards} == {
+        "Quark, Humble Proprietor": ["Treasure", "Magda"],
+        "Captain's Tutelage": ["Treasure"],
+        "Munitions Enthusiast": ["Treasure"],
+        "Dahar Master": ["Treasure"],
+    }
 
 
 def test_the_polled_previews_stamp_changes_with_the_cache_file_and_the_local_day(
@@ -663,9 +812,9 @@ def test_off_season_opening_a_deck_does_no_theme_work_for_previews(
     desk_settings: DeskSettings, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def no_theme_work(*_: object, **__: object) -> list[str]:
-        raise AssertionError("dominant_tags ran with no previews cached")
+        raise AssertionError("the themes were read with no previews cached")
 
-    monkeypatch.setattr(previews_module, "dominant_tags", no_theme_work)
+    monkeypatch.setattr(previews_module, "read_deck_themes", no_theme_work)
     write_previews(desk_settings.cache, PreviewCache(TODAY, ()))
     assert make_desk(desk_settings).deck(int(raw_deck["id"]))["previews"] == 0
 
@@ -710,8 +859,8 @@ def test_the_config_files_targets_decide_which_roles_run_short(
     desk = make_desk(replace(desk_settings, targets={Role.RAMP: 0}))
     # With no ramp wanted, Munitions Enthusiast fills no short role and ranks by its name.
     assert [c["name"] for c in cast("list[Json]", desk.previews(int(raw_deck["id"]))["cards"])] == [
+        "Quark, Humble Proprietor",
         "Captain's Tutelage",
         "Dahar Master",
         "Munitions Enthusiast",
-        "Quark, Humble Proprietor",
     ]

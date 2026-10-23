@@ -79,3 +79,61 @@ Option 3, decided with the owner on 2026-10-22.
 The owner decided after the review that previews honour the deck profile's exclusions like every other
 suggestion: a card named in `exclude_cards`, or with one of the `[exclude]` types, keywords or tags (sub-tags
 included), is never shown.
+
+## Amendment (2026-10-22): themes read from what feeds them and from the commander
+
+Run on the owner's eleven decks, the panel showed too little that suited them. `OVERRIDES` (ADR 0009) maps a
+deck tag to the Tagger tag of its *payoffs* (Artifacts → `synergy-artifact`), so the cards that *feed* the
+theme never matched: Magda has 37 artifacts and Artifacts matched 10, Bello has 27 enchantments and matched 8,
+and no preview carried `synergy-low-power`, though over twenty fit Arabella. Nothing read the commander's own
+tags (Bello animates big artifacts and enchantments; Arabella counts creatures with power 2 or less; Magda
+makes Treasure and leads Dwarves). The top three took tags that match no deck card (Bello's Elementals),
+Tokens and Go-wide shared `repeatable-creature-tokens` and Power Matters and Stompy shared a spec, so they
+filled places and scored twice, and the name tie-break let generic colourless artifacts crowd every artifact
+deck. The owner decided that one reading of the deck's themes feeds the previews, the goldfish's synergy
+cards (`ideas.dominant_card_ids`) and the Archidekt tag search (`ideas.search_tags`).
+
+- **One reading** (`themereading.read_deck_themes`; `ideas.dominant_tags` and `dominant_card_ids` keep their
+  signatures and call it). A theme is a deck tag from `merge_themes`. Tags with the same spec (types,
+  keywords and tags, without order or case) are one theme, named by the first, which is the one the Archidekt
+  search takes. A theme matching none of the deck's main cards is dropped (`MIN_DECK_MATCHES = 1`). The
+  rest go by the cards matched, ties in Archidekt's tag order, and the first `MAX_SEARCH_TAGS` stay.
+- **Feeders** (`themewants`). A `Want` is a kind of card read from its type, tags, rules text, power and
+  mana value. A theme also matches the cards that feed its payoff tags, beside the payoff tags themselves:
+  `synergy-artifact` → artifacts; `synergy-enchantment` → enchantments; `synergy-low-power` → creatures with
+  power 2 or less (a `*` power is none); `synergy-treasure` → the `repeatable-treasures` tag or text that
+  creates a Treasure; `synergy-vehicle`, and the type word Vehicle, → Vehicles and Spacecraft. They count for
+  the deck's match count and for a preview's match, not for `merge_themes`, so `suggest`'s themes, its
+  ranking of ideas and cuts, the labels and `cmdr profile` are unchanged: making every artifact a theme card
+  there would put them all last among the cuts of an artifact deck.
+- **The commander is a theme source.** The Tagger tags of the deck's commanders (with the tags above them)
+  say what the deck wants, for any commander: the payoff tags above and `repeatable-treasures` want what feeds
+  them; `animate-artifact` and `animate-enchantment` want artifacts that are no Equipment and enchantments
+  that are no Aura, only those with mana value 4 or more when the commander also has
+  `high-mana-value-matters`; `typal-X` wants the type X, when some card has it as a type (`typal-creature`
+  and `typal-choose` are no tribes). The goldfish's synergy cards include the deck's cards a commander wants.
+- **Ranking.** A preview shows when it matches a theme or the commander. Order: the most distinct features it
+  matches, that is the types, keywords, tags and wants of all the shown themes together, so Tokens and
+  Go-wide sharing a tag count it once, and the commander wanting it counts as one more; then the commander
+  wants it; then filling a role the deck runs short of; then coloured before colourless; then by name. A
+  commander can want something as broad as every artifact, so its want weighs as one feature rather than
+  ranking above a card that fits several of the deck's themes. The cap stays 6. The panel shows the deck's
+  short name among the tags of a card the commander wants ("Fits: #Treasure #Magda").
+- **The cache** gains each card's mana value and power, which feeders need and a card revealed after the
+  weekly card data may not have there: `previews.json` is version 2, and a version 1 file is ignored and
+  replaced by the next probe.
+
+Consequences:
+
+- A deck tag some card of the deck does not match is no longer searched on Archidekt, so a tagged idea of such
+  a tag is tested by the commander's own lists, as for any tag that left the three. A deck with few matching
+  tags searches fewer.
+- The goldfish's synergy cards grow for decks of artifacts, enchantments or small creatures, and with the
+  commander's wants; its tests of the engine are unchanged.
+- On the owner's eleven decks the main tags changed for seven: Magda (Artifacts, Dwarves, Treasure), Bello
+  (Enchantments, Attack Triggers), Arabella (Weenies first), Ellivere (Auras gives way to Enchantments),
+  Chatterfang (Artifacts for Aristocrats), Ashling (Blink matches no card) and Pantlaza (Stompy shares Power
+  Matters' place, so Discover takes the third). The panel now shows Magda's Quark and Spacecraft, Bello's
+  big artifacts, and Arabella's small creatures.
+- The feeder table and the commander table are short, checked on 2026-10-22 against the card data; a new
+  payoff tag with no line there keeps matching only its payoffs.

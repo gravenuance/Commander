@@ -3,6 +3,7 @@ import functools
 import gzip
 import json
 import shutil
+import uuid
 from collections.abc import Callable, Iterator, Sequence
 from datetime import datetime
 from pathlib import Path
@@ -122,6 +123,20 @@ def filler_tag(index: int) -> str:
     )
 
 
+def extra_tag_line(slug: str, *oracle_ids: str) -> str:
+    """A tag line for a test: a real Tagger slug with made-up taggings and a made-up id."""
+    return json.dumps(
+        {
+            "object": "tag",
+            "id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"tests/{slug}")),
+            "slug": slug,
+            "type": "oracle",
+            "child_ids": [],
+            "taggings": [{"oracle_id": oracle_id} for oracle_id in oracle_ids],
+        }
+    )
+
+
 def gzip_lines(lines: list[str]) -> bytes:
     return gzip.compress(("\n".join(lines) + "\n").encode("utf-8"), compresslevel=1)
 
@@ -132,6 +147,9 @@ def card_lines() -> list[str]:
 
 
 MAGDA_ORACLE = "3d268e48-3004-4384-bf52-e63243fb5e02"
+DISRUPTOR_FLUTE = "d6c46906-1339-4440-8cd0-2bb9890d4975"
+HOVERBIKE = "9bf2f0d9-57fb-4e44-90a5-260d735076a0"
+BATTERED_GOLEM = "066dfefd-eef5-4c81-8e8a-310bac01674f"
 ARCANE_SIGNET = "0bc7f093-bef0-4f1a-852c-4b75ebf54838"
 MIND_STONE = "c97361b5-af16-4a7b-af85-a429dbaf4ad2"
 JESKAS_WILL = "0fd114c4-092b-4e28-b0dc-ef529f3bc73e"
