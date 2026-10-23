@@ -775,7 +775,12 @@ It reads the card data and the caches alone and fetches nothing; the same deck a
 and `Not modelled` lists the cards the reading could not place. One-shot mana (rituals, Treasures, Lion's Eye
 Diamond) goes only to the commander, mana sources, combo pieces, finishers and the tutors that fetch them, and
 each creature that is no longer summoning sick attacks every turn for its Treasure triggers, with no damage
-counted.
+counted. Cards that make more Treasures per event (Xorn, Parallel Lives) or a trigger happen again
+(Panharmonicon, Roaming Throne), that become a copy of the creature making the most Treasures (Gogo, Hall of
+Echoes, Cursed Mirror), that enter as a copy and stay one (Sculpting Steel, Phantasmal Image, Mockingbird,
+Vesuva) and Peter Parker's Camera are played as they read. A card the Tagger says does one of those or makes
+more mana, and that the reading does not follow, is listed under `Not modelled` once the deck has what it works
+on.
 
 `--swap "<card in>=<card out>"` (repeated for more) or `--plan plan.toml` (the plan `apply` reads: its adds
 paired with its removes, in order) plays the same games again with the swaps made and lists every figure that

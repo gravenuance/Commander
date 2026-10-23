@@ -11,7 +11,10 @@
   a plan's remove with `keep` cuts the copies beyond it. It counts one-shot mana (self-sacrificing creatures,
   Treasures, rituals, mana spent only on some spells, life paid for mana down to 10), tutors for a colour, a
   power or a subtype, Treasures from attacks, searches paid for with Treasures or loyalty, and Protean Hulk's
-  search when a free sacrifice outlet is in play.
+  search when a free sacrifice outlet is in play. It also counts cards that make more Treasures per event
+  or a trigger happen again, cards that become a copy of the creature making the most Treasures or enter as
+  a copy and stay one, and Peter Parker's Camera, and lists under *Not modelled* a card the Tagger says
+  doubles, copies or makes more mana that it does not follow (ADR 0054).
 - A Goldfish tab in the app shows the same figures. A queued idea with a cut shows the headline figures its
   swap moves in a *Goldfish* fold, and Review shows them for all queued swaps together, each only when
   something moved. The deck's Settings edit its finishers as chips.
