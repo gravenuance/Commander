@@ -650,6 +650,7 @@ class _Setup:
         "combat_copiers",
         "combo_free",
         "combo_ids",
+        "combo_need",
         "combo_pieces",
         "copying",
         "deaths",
@@ -727,6 +728,11 @@ class _Setup:
         self.combo_free = tuple(
             frozenset(by_key[card_key(name)] for name in combo.command_zone if card_key(name) in by_key)
             for combo in combos
+        )
+        # The pieces a combo needs out, in hand or in the command zone: those not free.
+        self.combo_need = tuple(
+            frozenset(piece for piece in pieces or () if piece not in free)
+            for pieces, free in zip(self.combo_pieces, self.combo_free, strict=True)
         )
         self.fin_ids = tuple(cid for cid, card in enumerate(self.cards) if card.finisher)
         self.tap_pieces = frozenset(cid for cid, card in enumerate(self.cards) if card.src.tap_ability)
@@ -2430,7 +2436,10 @@ class _Game:
         """A combo lands once every piece is out, or can be cast with the mana left from the hand or, for a
         commander, the command zone; it is then recorded and the game goes on."""
         s = self.s
+        present = self.bf.union(self.hand, self.cmd_left)
         for k in list(self.open_combos):
+            if not s.combo_need[k] <= present:  # a cheap test for what _pieces_to_cast would reject
+                continue
             cast = self._pieces_to_cast(k)
             if cast is None:
                 continue
