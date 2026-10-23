@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.2.0 - 2026-10-23
+
 ### Added
 - `cmdr goldfish <deck>` plays a deck out 10,000 times against an empty table and reports its opening hands,
   commander, mana by turn, colour screw and how soon its combos and finishers come together, for the bracket
