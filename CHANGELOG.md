@@ -8,7 +8,10 @@
   the deck is played at. `--swap "<in>=<out>"` or `--plan plan.toml` lists every figure a swap moves
   (ADR 0054). A deck's profile can name finishers of its own, and finishers to leave out, under `[goldfish]`.
   A swap may cut some copies of a card: Cultivate for one of ten Forests plays nine Forests and Cultivate, and
-  a plan's remove with `keep` cuts the copies beyond it.
+  a plan's remove with `keep` cuts the copies beyond it. It counts one-shot mana (self-sacrificing creatures,
+  Treasures, rituals, mana spent only on some spells, life paid for mana down to 10), tutors for a colour, a
+  power or a subtype, Treasures from attacks, searches paid for with Treasures or loyalty, and Protean Hulk's
+  search when a free sacrifice outlet is in play.
 - A Goldfish tab in the app shows the same figures. A queued idea with a cut shows the headline figures its
   swap moves in a *Goldfish* fold, and Review shows them for all queued swaps together, each only when
   something moved. The deck's Settings edit its finishers as chips.

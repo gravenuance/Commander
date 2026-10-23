@@ -23,6 +23,8 @@ from commander.goldfish import (
     turns_shown,
 )
 from commander.goldfish_cards import (
+    CHANGELING,
+    ActivatedTutor,
     CardKind,
     Draw,
     EntryCost,
@@ -33,6 +35,7 @@ from commander.goldfish_cards import (
     LandFace,
     LandRamp,
     ManaAbility,
+    ManaNeed,
     Tutor,
     TutorDestination,
 )
@@ -428,6 +431,20 @@ def test_a_land_with_two_mana_counts_twice() -> None:
     assert only_outcome(run([tomb, FOREST, *repeat(VANILLA, 5)])).mana == (2, 3, 3, 3, 3)
 
 
+def test_city_of_traitors_is_sacrificed_when_the_next_land_is_played_after_its_mana_is_made() -> None:
+    city = make(
+        "City of Traitors",
+        kinds=frozenset({CardKind.LAND}),
+        land=LandFace(frozenset("C"), tapped=False, amount=2, lost_to_land_drop=True),
+    )
+    boss = make("Boss", mv=3, kinds=CREATURE)
+    outcome = only_outcome(run([city, FOREST, *repeat(VANILLA, 5)], commanders=(boss,)))
+    # Turn two taps the City for two before the Forest goes down: three mana cast the commander, and from then
+    # on the Forest alone is left.
+    assert outcome.commander_turns == (2,)
+    assert outcome.mana == (2, 1, 1, 1, 1)
+
+
 def test_an_untapped_land_is_played_ahead_of_a_tapped_one_when_the_mana_is_wanted() -> None:
     tapped = land("Tapped", "G", tapped=True)
     one_drop = make("One Drop", mv=1, kinds=CREATURE)
@@ -555,6 +572,122 @@ def test_a_ritual_is_cast_only_to_pay_for_something_this_turn() -> None:
     assert only_outcome(run(slots)).mana == (1, 2, 2, 2, 2)
 
 
+def morph() -> GoldfishCard:
+    """Manamorphose: two mana of any colour for two, and a card."""
+    return make(
+        "Morph", mv=2, draw=Draw(1, engine=False), mana=ManaAbility(2, ANY_COLOUR, delayed=False, ritual=True)
+    )
+
+
+def test_a_spell_that_makes_no_more_mana_than_it_costs_is_cast_for_its_card() -> None:
+    drawn = only_outcome(run(repeat(FOREST, 16))).shuffle_depths[-1]
+    report = run([*repeat(FOREST, 14), *repeat(morph(), 2)])
+    # A morph among the cards dealt is cast on turn two, and draws a card the Forests alone would not.
+    assert max(o.shuffle_depths[-1] for o in report.outcomes) > drawn
+
+
+def test_a_spell_that_makes_no_more_mana_than_it_costs_gives_its_mana_back() -> None:
+    piece = make("Piece", mv=2, kinds=CREATURE, combo=True)
+    slots = [*repeat(FOREST, 3), morph(), piece, VANILLA, VANILLA]
+    # Turn two's two Forests pay for the morph, whose two mana pay for the piece; without them, turn three.
+    assert only_outcome(run(slots, combos=(combo_of(piece),))).combo_turns == (2,)
+
+
+def test_a_ritual_is_kept_from_a_plain_spell_for_the_commander() -> None:
+    ritual = make(
+        "Dark Ritual",
+        mv=1,
+        pips={"B": 1},
+        kinds=frozenset({CardKind.INSTANT}),
+        mana=ManaAbility(3, frozenset("B"), delayed=False, ritual=True),
+    )
+    boss = make("Boss", mv=4, kinds=CREATURE)
+    bear = make("Bear", mv=3, kinds=CREATURE)
+    slots = [*repeat(SWAMP, 4), ritual, bear, VANILLA]
+    # Turn one's Swamp and ritual would cast the three-drop; held, the ritual casts the commander on turn two.
+    assert only_outcome(run(slots, commanders=(boss,))).commander_turns == (2,)
+
+
+def test_a_ritual_that_sacrifices_a_creature_waits_for_one_and_sacrifices_it() -> None:
+    plunge = make(
+        "Infernal Plunge",
+        mv=1,
+        pips={"R": 1},
+        needs_sacrifice=True,
+        mana=ManaAbility(3, frozenset("R"), delayed=False, ritual=True),
+    )
+    boss = make("Boss", mv=3, kinds=CREATURE)
+    slots = [*repeat(MOUNTAIN, 4), plunge, *repeat(VANILLA, 2)]
+    # With no creature to sacrifice, turn one's Mountain and the ritual do not make three.
+    assert only_outcome(run(slots, commanders=(boss,))).commander_turns == (3,)
+    # Turn two sacrifices the mana creature cast on turn one: two Mountains, its mana and the ritual's net two
+    # make five, and its mana is gone from then on.
+    dork = make(
+        "Dork",
+        mv=1,
+        pips={"R": 1},
+        kinds=CREATURE,
+        mana=ManaAbility(1, frozenset("R"), delayed=True, ritual=False),
+    )
+    slots = [*repeat(MOUNTAIN, 4), plunge, dork, VANILLA]
+    outcome = only_outcome(run(slots, commanders=(make("Big", mv=5, kinds=CREATURE),)))
+    assert outcome.commander_turns == (2,)
+    assert outcome.mana == (1, 2, 3, 4, 4)
+
+
+def test_a_ritual_is_not_paid_for_with_the_creature_that_pays_life_for_mana() -> None:
+    ogre = make(
+        "Ogre",
+        mv=4,
+        pips={"R": 1},
+        kinds=CREATURE,
+        mana=ManaAbility(1, frozenset("R"), delayed=False, ritual=False, life=3),
+    )
+    plunge = make(
+        "Infernal Plunge",
+        mv=1,
+        pips={"R": 1},
+        needs_sacrifice=True,
+        mana=ManaAbility(3, frozenset("R"), delayed=False, ritual=True),
+    )
+    slots = [*repeat(MOUNTAIN, 4), ogre, plunge, make("Giant", mv=20, kinds=CREATURE)]
+    # Turn five: sacrificing the ogre to the ritual makes six; keeping it, four Mountains and ten life make
+    # the fourteen.
+    boss = make("Boss", mv=14, kinds=CREATURE)
+    assert only_outcome(run(slots, commanders=(boss,))).commander_turns == (5,)
+
+
+def test_a_ritual_for_a_sacrificed_creature_adds_its_mana_value() -> None:
+    metamorphosis = make(
+        "Metamorphosis",
+        mv=1,
+        pips={"G": 1},
+        needs_sacrifice=True,
+        mana=ManaAbility(1, ANY_COLOUR, delayed=False, ritual=True, spend_on=CREATURE, plus_sacrificed=True),
+    )
+    beast = make("Beast", mv=3, kinds=CREATURE)
+    slots = [*repeat(FOREST, 4), metamorphosis, beast, VANILLA]
+    # Turn three casts the three-drop; turn four sacrifices it for four mana, which with three Forests left
+    # after paying make seven for the six-drop.
+    assert only_outcome(run(slots, commanders=(make("Boss", mv=6, kinds=CREATURE),))).commander_turns == (4,)
+
+
+def test_lions_eye_diamond_casts_the_commander_and_discards_the_hand_but_pays_for_nothing_else() -> None:
+    diamond = make(
+        "Lion's Eye Diamond",
+        kinds=ARTIFACT,
+        mana=ManaAbility(3, ANY_COLOUR, delayed=False, ritual=True, discards_hand=True),
+    )
+    slots = [*repeat(MOUNTAIN, 3), diamond, *repeat(make("Bear", mv=3, kinds=CREATURE), 3)]
+    outcome = only_outcome(run(slots, commanders=(make("Boss", mv=4, kinds=CREATURE),)))
+    # Turn one: a Mountain and the Diamond's three cast the four-drop, and the other Mountains go with the
+    # hand.
+    assert outcome.commander_turns == (1,)
+    assert outcome.mana == (1, 1, 1, 1, 1)
+    # A three-drop is no reason to use it: the Mountains are played as they come.
+    assert only_outcome(run(slots)).mana == (1, 2, 3, 3, 3)
+
+
 def test_a_spirit_guide_pays_for_a_two_drop_on_turn_one() -> None:
     guide = make(
         "Elvish Spirit Guide",
@@ -570,6 +703,150 @@ def test_a_spirit_guide_pays_for_a_two_drop_on_turn_one() -> None:
     assert only_outcome(run(slots)).mana == (1, 2, 2, 2, 2)
     without = [FOREST, FOREST, *repeat(VANILLA, 5)]
     assert only_outcome(run(without, commanders=(boss,))).commander_turns == (2,)
+
+
+def test_a_rock_that_taps_a_creature_makes_mana_once_a_creature_is_out_even_a_new_one() -> None:
+    drum = make(
+        "Drum",
+        mv=1,
+        kinds=ARTIFACT,
+        mana=ManaAbility(1, ANY_COLOUR, delayed=False, ritual=False, needs=ManaNeed.CREATURE),
+    )
+    bear = make("Bear", mv=1, kinds=CREATURE)
+    slots = [FOREST, FOREST, drum, bear, *repeat(VANILLA, 3)]
+    # Turn one casts the drum with nothing to tap; turn two the bear, which the drum taps at once.
+    assert only_outcome(run(slots)).mana == (1, 3, 3, 3, 3)
+
+
+SPRINGLEAF_DRUM = make(
+    "Drum",
+    mv=1,
+    kinds=ARTIFACT,
+    mana=ManaAbility(1, ANY_COLOUR, delayed=False, ritual=False, needs=ManaNeed.CREATURE),
+)
+
+
+def test_a_rock_that_taps_a_creature_cannot_tap_one_that_is_tapped_for_its_own_mana() -> None:
+    elf = make(
+        "Elf",
+        mv=1,
+        pips={"G": 1},
+        kinds=CREATURE,
+        mana=ManaAbility(1, frozenset("G"), delayed=True, ritual=False),
+    )
+    slots = [FOREST, FOREST, SPRINGLEAF_DRUM, elf, *repeat(VANILLA, 3)]
+    # Whichever of the two comes first, turn two has the two Forests and the elf's mana or the drum's, which
+    # taps the elf while it is summoning sick; from turn three the elf taps for itself: 3 and not 4.
+    assert {o.mana for o in run(slots).outcomes} == {(1, 3, 3, 3, 3)}
+
+
+def test_a_creature_tapped_for_a_rock_does_not_attack() -> None:
+    raider = replace(make("Raider", mv=1, kinds=CREATURE), treasures_on_attack=1)
+    piece = make("Piece", mv=4, kinds=CREATURE, combo=True)
+    slots = [FOREST, FOREST, SPRINGLEAF_DRUM, raider, piece, VANILLA, VANILLA]
+    # Two Forests and the drum tapping the raider make 3, and the tapped raider makes no Treasure for a 4.
+    assert only_outcome(run(slots, combos=(combo_of(piece),))).combo_turns == (0,)
+    # Without the drum it attacks from turn two: turn three has three Forests and a Treasure, for the 4.
+    slots = [FOREST, FOREST, FOREST, raider, piece, VANILLA, VANILLA]
+    assert only_outcome(run(slots, combos=(combo_of(piece),))).combo_turns == (3,)
+
+
+def test_a_creature_tapped_for_its_own_mana_does_not_attack() -> None:
+    raider = replace(
+        make(
+            "Raider",
+            mv=1,
+            pips={"G": 1},
+            kinds=CREATURE,
+            mana=ManaAbility(1, frozenset("G"), delayed=True, ritual=False),
+        ),
+        treasures_on_attack=1,
+    )
+    piece = make("Piece", mv=4, kinds=CREATURE, combo=True)
+    slots = [FOREST, FOREST, raider, piece, *repeat(VANILLA, 3)]
+    # Turn two: two Forests and the raider's mana are 3; attacking would add a Treasure, but it is tapped.
+    assert only_outcome(run(slots, combos=(combo_of(piece),))).combo_turns == (0,)
+
+
+def test_mox_opal_makes_mana_from_the_third_artifact_on() -> None:
+    opal = make(
+        "Opal",
+        kinds=ARTIFACT,
+        mana=ManaAbility(1, ANY_COLOUR, delayed=False, ritual=False, needs=ManaNeed.ARTIFACTS),
+    )
+    trinket = make("Trinket", mv=1, kinds=ARTIFACT)
+    slots = [MOUNTAIN, MOUNTAIN, opal, trinket, trinket, *repeat(VANILLA, 2)]
+    # Turn one: the Opal and one trinket; turn two the second trinket makes three artifacts.
+    assert only_outcome(run(slots)).mana == (1, 3, 3, 3, 3)
+
+
+def test_mana_paid_for_with_life_is_used_down_to_ten_life() -> None:
+    ogre = make(
+        "Ogre",
+        mv=4,
+        pips={"R": 1},
+        kinds=CREATURE,
+        mana=ManaAbility(1, frozenset("R"), delayed=False, ritual=False, life=3),
+    )
+    slots = [*repeat(MOUNTAIN, 4), ogre, *repeat(make("Giant", mv=20, kinds=CREATURE), 2)]
+    # Turn four casts the ogre; forty life down to ten pays for ten mana at once, and no more.
+    assert only_outcome(run(slots, commanders=(make("Ten", mv=10, kinds=CREATURE),))).commander_turns == (4,)
+    assert only_outcome(run(slots, commanders=(make("Eleven", mv=11, kinds=CREATURE),))).commander_turns == (
+        5,
+    )
+
+
+def test_a_creature_that_sacrifices_a_land_for_mana_does_it_once_its_turn_has_passed() -> None:
+    jack = make(
+        "Lumberjack",
+        mv=1,
+        pips={"R": 1},
+        kinds=CREATURE,
+        mana=ManaAbility(
+            3, frozenset("RG"), delayed=True, ritual=False, land_sacrificed=frozenset({"forest"})
+        ),
+    )
+    forest = replace(FOREST, land_types=frozenset({"forest"}))
+    giant = make("Giant", mv=20, kinds=CREATURE)
+    slots = [MOUNTAIN, forest, forest, jack, *repeat(giant, 3)]
+    boss = make("Boss", mv=5, kinds=CREATURE)
+    outcome = only_outcome(run(slots, commanders=(boss,)))
+    # Turn two: two lands and the three mana for a Forest cast the five-drop; the Forest is gone after.
+    assert outcome.commander_turns == (2,)
+    assert outcome.mana == (1, 1, 2, 2, 2)
+
+
+def test_two_creatures_that_sacrifice_a_forest_share_the_one_forest_there_is() -> None:
+    def jack(name: str) -> GoldfishCard:
+        mana = ManaAbility(
+            3, frozenset("RG"), delayed=True, ritual=False, land_sacrificed=frozenset({"forest"})
+        )
+        return make(name, mv=1, pips={"R": 1}, kinds=CREATURE, mana=mana)
+
+    forest = replace(FOREST, land_types=frozenset({"forest"}))
+    giant = make("Giant", mv=20, kinds=CREATURE)
+    slots = [MOUNTAIN, forest, jack("Jack"), jack("Jill"), *repeat(giant, 3)]
+    # One Forest feeds one of them, once: turn three has the two lands and 3 mana, and never 6.
+    five = only_outcome(run(slots, commanders=(make("Five", mv=5, kinds=CREATURE),)))
+    assert five.commander_turns == (3,)
+    six = only_outcome(run(slots, commanders=(make("Six", mv=6, kinds=CREATURE),)))
+    assert six.commander_turns == (0,)
+
+
+def test_mana_spent_only_on_creatures_casts_a_creature_and_its_rest_pays_for_nothing_else() -> None:
+    def surge(spend_on: frozenset[CardKind]) -> GoldfishCard:
+        mana = ManaAbility(7, ANY_COLOUR, delayed=False, ritual=True, spend_on=spend_on)
+        return make("Surge", mv=4, pips={"R": 4}, mana=mana)
+
+    beast = make("Beast", mv=5, kinds=CREATURE)
+    relic = make("Relic", mv=2, pips={"G": 2}, kinds=ARTIFACT)
+    slots = [*repeat(MOUNTAIN, 4), surge(CREATURE), *repeat(VANILLA, 2)]
+    # Four Mountains pay for the surge on turn four; its seven mana casts the five-drop creature, and the two
+    # left over cannot pay for the green artifact, which the Mountains never could.
+    assert only_outcome(run(slots, commanders=(beast, relic))).commander_turns == (4, 0)
+    # Restricted to artifacts, it pays for the green artifact and not for the creature.
+    slots = [*repeat(MOUNTAIN, 4), surge(ARTIFACT), *repeat(VANILLA, 2)]
+    assert only_outcome(run(slots, commanders=(beast, relic))).commander_turns == (0, 4)
 
 
 def test_the_commander_is_cast_once_on_the_first_turn_its_colours_are_paid() -> None:
@@ -862,6 +1139,152 @@ def test_a_tutor_limited_by_mana_value_fetches_only_cards_within_it() -> None:
     report = run(slots, combos=(combo_of(a, dear),), bracket=4, games=500)
     # The four-drop is out of its reach, so a search never resolves for it.
     assert not any(o.combo_fetched for o in report.outcomes)
+
+
+def fetched_share(tutor: Tutor, a: GoldfishCard, b: GoldfishCard) -> float:
+    """The share of the games landing the pair that a tutor helped, in a nine-card deck whose ninth card is
+    left in the library after turn one's draw: 1 in 9 when the tutor finds only A, 2 in 9 when it finds
+    both."""
+    slots = [*repeat(FOREST, 5), make("Tutor", mv=1, tutor=tutor), a, b, VANILLA]
+    ways = run(slots, combos=(combo_of(a, b),), bracket=4, games=3000, seed=5).ways_to_win
+    assert ways is not None
+    return ways.combos[0].fetched_share
+
+
+def test_a_tutor_for_a_colour_finds_only_cards_of_that_colour() -> None:
+    green = make("A", mv=1, pips={"G": 1}, kinds=CREATURE, combo=True)
+    colourless = make("B", mv=1, kinds=CREATURE, combo=True)
+    tutor = Tutor(frozenset({CardKind.CREATURE}), TutorDestination.HAND, colours=frozenset("G"))
+    # Four standard errors are 0.03.
+    assert fetched_share(tutor, green, colourless) == pytest.approx(1 / 9, abs=0.035)
+    assert fetched_share(replace(tutor, colours=frozenset()), green, colourless) == pytest.approx(
+        2 / 9, abs=0.035
+    )
+
+
+def test_a_tutor_for_a_power_ceiling_finds_only_creatures_within_it() -> None:
+    small = replace(make("A", mv=1, kinds=CREATURE, combo=True), power=2)
+    big = replace(make("B", mv=1, kinds=CREATURE, combo=True), power=3)
+    tutor = Tutor(frozenset({CardKind.CREATURE}), TutorDestination.HAND, max_power=2)
+    assert fetched_share(tutor, small, big) == pytest.approx(1 / 9, abs=0.035)
+
+
+def test_a_tutor_for_an_artifact_or_a_subtype_finds_either_and_a_changeling_has_every_type() -> None:
+    dragon = replace(make("A", mv=1, kinds=CREATURE, combo=True), subtypes=frozenset({"dragon"}))
+    elf = replace(make("B", mv=1, kinds=CREATURE, combo=True), subtypes=frozenset({"elf"}))
+    tutor = Tutor(
+        frozenset({CardKind.ARTIFACT}), TutorDestination.HAND, subtypes=frozenset({"dragon"}), either=True
+    )
+    assert fetched_share(tutor, dragon, elf) == pytest.approx(1 / 9, abs=0.035)
+    shifter = replace(elf, subtypes=frozenset({CHANGELING}))
+    assert fetched_share(tutor, dragon, shifter) == pytest.approx(2 / 9, abs=0.035)
+    relic = make("B", mv=1, kinds=ARTIFACT, combo=True)
+    assert fetched_share(tutor, dragon, relic) == pytest.approx(2 / 9, abs=0.035)
+
+
+def test_a_changeling_has_every_creature_type_and_no_other_subtype() -> None:
+    sword = replace(make("A", mv=1, kinds=ARTIFACT, combo=True), subtypes=frozenset({"equipment"}))
+    shifter = replace(make("B", mv=1, kinds=CREATURE, combo=True), subtypes=frozenset({CHANGELING}))
+    # Four standard errors are 0.035: only the Equipment is found, as 1 in 9, and not the changeling.
+    tutor = Tutor(frozenset(), TutorDestination.HAND, subtypes=frozenset({"equipment"}))
+    assert fetched_share(tutor, sword, shifter) == pytest.approx(1 / 9, abs=0.035)
+    elf = replace(shifter, subtypes=frozenset({"elf"}))
+    tutor = Tutor(frozenset(), TutorDestination.HAND, subtypes=frozenset({"goblin", "equipment"}))
+    assert fetched_share(tutor, sword, elf) == pytest.approx(1 / 9, abs=0.035)
+    assert fetched_share(tutor, sword, shifter) == pytest.approx(2 / 9, abs=0.035)
+
+
+def test_a_tutor_to_the_hand_fetches_the_piece_it_can_cast_before_a_dearer_one() -> None:
+    first = make("First", mv=1, kinds=CREATURE, combo=True)
+    second = make("Second", mv=1, kinds=CREATURE, combo=True)
+    dear = make("Dear", mv=9, kinds=CREATURE, combo=True)
+    cheap = make("Cheap", mv=1, kinds=CREATURE, combo=True)
+    tutor = make("Tutor", mv=1, tutor=Tutor(frozenset({CardKind.CREATURE}), TutorDestination.HAND))
+    # Two combos of a commander-free piece each: the dear one first in the deck's order, the cheap one after.
+    combos = (
+        GoldfishCombo("1", ("First", "Dear"), (), (), command_zone=("First",)),
+        GoldfishCombo("2", ("Second", "Cheap"), (), (), command_zone=("Second",)),
+    )
+    slots = [*repeat(FOREST, 10), tutor, dear, cheap]
+    report = run(slots, commanders=(first, second), combos=combos, games=2000, seed=3)
+    # The nine-drop is never cast by turn five, so a fetch of it is wasted. Taking it whenever it is in the
+    # library, as the combos' order alone would, leaves the one-drop fetched in about a fifth of the games
+    # (0.21 at this seed, one standard error 0.01); taking the one-drop first, in over a quarter.
+    assert sum(1 for o in report.outcomes if o.combo_fetched & 2) / len(report.outcomes) > 0.24
+
+
+def test_a_combo_piece_that_taps_lands_the_turn_after_it_comes() -> None:
+    ritual = make(
+        "Ritual", mv=1, pips={"G": 1}, mana=ManaAbility(3, frozenset("G"), delayed=False, ritual=True)
+    )
+    druid = replace(make("Druid", mv=2, kinds=CREATURE, combo=True), tap_ability=True)
+    oracle = make("Oracle", mv=1, kinds=frozenset({CardKind.INSTANT}), combo=True)
+    slots = [*repeat(FOREST, 4), ritual, druid, oracle]
+    # Turn one's Forest and ritual pay for both, but the druid's tap ability waits for turn two.
+    assert only_outcome(run(slots, combos=(combo_of(druid, oracle),))).combo_turns == (2,)
+
+
+def test_a_treasure_made_on_entering_waits_in_play_for_a_later_turn() -> None:
+    barbarian = replace(make("Barbarian", mv=1, kinds=CREATURE), treasures_on_entry=1)
+    piece = make("Piece", mv=3, kinds=CREATURE, combo=True)
+    # Turn one's Forest pays for the barbarian; turn two's two Forests and the Treasure pay for the piece.
+    slots = [FOREST, FOREST, barbarian, piece]
+    assert only_outcome(run(slots, combos=(combo_of(piece),))).combo_turns == (2,)
+
+
+def test_a_creature_attacks_for_its_treasure_only_once_it_is_no_longer_summoning_sick() -> None:
+    raider = replace(make("Raider", mv=1, kinds=CREATURE), treasures_on_attack=1)
+    piece = make("Piece", mv=4, kinds=CREATURE, combo=True)
+    # Cast on turn one, it attacks on turns two and three: two Forests and two Treasures pay on turn three.
+    slots = [FOREST, FOREST, raider, piece]
+    assert only_outcome(run(slots, combos=(combo_of(piece),))).combo_turns == (3,)
+
+
+def hulk_landed(piece_value: int, *, outlet: bool) -> list[tuple[int, ...]]:
+    """The combo turns of a deck whose commanders are a one-mana Protean Hulk and a one-mana creature, a
+    free sacrifice outlet or not, and whose library holds seven Forests, four tutors that find nothing and the
+    combo's one piece, a creature too dear to cast by turn five."""
+    hulk = replace(
+        make("Hulk", mv=1, kinds=CREATURE),
+        dies_tutor=Tutor(frozenset({CardKind.CREATURE}), TutorDestination.BATTLEFIELD, total_mana_value=6),
+    )
+    seer = replace(make("Seer", mv=1, kinds=CREATURE), free_outlet=outlet)
+    piece = make("Piece", mv=piece_value, kinds=CREATURE, combo=True)
+    junk = make("Junk", mv=9, tutor=Tutor(frozenset({CardKind.INSTANT}), TutorDestination.HAND))
+    slots = [*repeat(FOREST, 7), piece, *repeat(junk, 4)]
+    report = run(slots, commanders=(hulk, seer), combos=(combo_of(piece),), games=3000)
+    return [o.combo_turns for o in report.outcomes]
+
+
+def test_a_creature_that_searches_as_it_dies_is_sacrificed_to_a_free_outlet_for_its_search() -> None:
+    # The second commander comes on turn two, when the Hulk dies and fetches the piece if it is still among
+    # the three cards of twelve left in the library: a quarter of the games (all but 1 in 792 hands kept).
+    # Four standard errors are 0.032.
+    turns = hulk_landed(6, outlet=True)
+    assert set(turns) == {(0,), (2,)}
+    assert turns.count((2,)) / len(turns) == pytest.approx(0.25, abs=0.032)
+    assert set(hulk_landed(6, outlet=False)) == {(0,)}
+    # A piece dearer than the total is not found.
+    assert set(hulk_landed(7, outlet=True)) == {(0,)}
+
+
+def test_treasures_from_a_dwarf_attacking_pay_for_a_search_that_sacrifices_them() -> None:
+    finds = Tutor(frozenset({CardKind.ARTIFACT}), TutorDestination.BATTLEFIELD)
+    magda = replace(
+        make("Magda", mv=1, kinds=CREATURE, combo=True),
+        subtypes=frozenset({"dwarf"}),
+        treasure_on_tap=frozenset({"dwarf"}),
+        activated_tutor=ActivatedTutor(finds, treasures=1),
+    )
+    relic = make("Relic", mv=1, kinds=ARTIFACT, combo=True)
+    slots = [*repeat(FOREST, 3), relic, *repeat(VANILLA, 6)]
+    report = run(slots, commanders=(magda,), combos=(combo_of(magda, relic),), bracket=None, games=3000)
+    ways = report.ways_to_win
+    assert ways is not None
+    # Magda comes on turn one and attacks on turn two, which takes the Relic from the library when it is the
+    # tenth card, the one turn two leaves there: 1 in 10, among the hands kept for two Forests or more
+    # (11/12 of those with the Relic tenth, 49/60 of all), so 11/98. Four standard errors are 0.023.
+    assert ways.combos[0].fetched_share == pytest.approx(11 / 98, abs=0.025)
 
 
 def test_a_finisher_is_held_and_its_turn_is_the_first_it_could_be_cast() -> None:

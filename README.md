@@ -772,7 +772,10 @@ combo or a finisher, how soon each lands, with a warning for a combo that comes 
 quarter of the games or more. The turns shown follow the deck's bracket, which also picks the mulligan rule.
 It reads the card data and the caches alone and fetches nothing; the same deck always gives the same figures
 (the seed is the deck id). The figures are the earliest a deck gets there, not a promise: nothing interacts,
-and `Not modelled` lists the cards the reading could not place.
+and `Not modelled` lists the cards the reading could not place. One-shot mana (rituals, Treasures, Lion's Eye
+Diamond) goes only to the commander, mana sources, combo pieces, finishers and the tutors that fetch them, and
+each creature that is no longer summoning sick attacks every turn for its Treasure triggers, with no damage
+counted.
 
 `--swap "<card in>=<card out>"` (repeated for more) or `--plan plan.toml` (the plan `apply` reads: its adds
 paired with its removes, in order) plays the same games again with the swaps made and lists every figure that

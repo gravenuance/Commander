@@ -2,7 +2,7 @@
 
 import json
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
@@ -10,6 +10,7 @@ import pytest
 from commander.carddb import CardInfo, CardMana, Role
 from commander.goldfish import simulate
 from commander.goldfish_cards import (
+    ActivatedTutor,
     CardKind,
     Draw,
     EntryCost,
@@ -19,6 +20,7 @@ from commander.goldfish_cards import (
     LandFace,
     LandRamp,
     ManaAbility,
+    ManaNeed,
     Tutor,
     TutorDestination,
     compile_card,
@@ -37,6 +39,7 @@ class Real:
     identity: str
     roles: frozenset[Role]
     tags: frozenset[str]
+    power: str | None = None
 
 
 def real(
@@ -51,9 +54,10 @@ def real(
     identity: str = "",
     roles: Iterable[Role] = (),
     tags: Iterable[str] = (),
+    power: str | None = None,
 ) -> Real:
     mana = CardMana(f"id-{name}", name, cost, mana_value, type_line, text, produced, "common", layout)
-    return Real(mana, identity, frozenset(roles), frozenset(tags))
+    return Real(mana, identity, frozenset(roles), frozenset(tags), power)
 
 
 RAMP, DRAW, TUTOR = Role.RAMP, Role.DRAW, Role.TUTOR
@@ -400,6 +404,7 @@ IMPERIAL_RECRUITER = real(
     "When this creature enters, search your library for a creature card with power 2 or less, reveal it, "
     "put it into your hand, then shuffle.",
     roles=(TUTOR,),
+    power="1",
 )
 TROPHY_MAGE = real(
     "Trophy Mage",
@@ -910,6 +915,7 @@ def compile_for(
         synergy=list(synergy),
         finishers_added=added,
         finishers_removed=removed,
+        powers={c.mana.oracle_id: c.power for c in known},
     )
 
 
@@ -965,6 +971,7 @@ def incoming(
         synergy=list(synergy),
         finishers_added=added,
         finishers_removed=removed,
+        powers={c.mana.oracle_id: c.power for c in known},
     )
 
 
@@ -1284,10 +1291,10 @@ def test_a_land_that_makes_its_double_mana_only_by_sacrificing_itself_makes_one(
     assert vein.modelled
 
 
-def test_a_land_that_is_sacrificed_when_another_land_is_played_is_not_modelled() -> None:
+def test_a_land_that_is_sacrificed_when_another_land_is_played_says_so() -> None:
     city = one(CITY_OF_TRAITORS)
-    assert city.land == LandFace(frozenset("C"), tapped=False, amount=2)
-    assert not city.modelled
+    assert city.land == LandFace(frozenset("C"), tapped=False, amount=2, lost_to_land_drop=True)
+    assert city.modelled
 
 
 def test_a_land_makes_the_colours_of_its_mana_abilities_not_those_it_could_make_later() -> None:
@@ -1447,38 +1454,168 @@ def test_a_talisman_unions_its_abilities_colours() -> None:
     assert one(TALISMAN).mana == ManaAbility(1, frozenset("CUB"), delayed=False, ritual=False)
 
 
-@pytest.mark.parametrize(
-    "rock",
-    [
-        real(
-            "Mox Amber",
-            "{0}",
-            0,
-            "Legendary Artifact",
-            "{T}: Add one mana of any color among legendary creatures and planeswalkers you control.",
-            produced="WUBRG",
-            roles=(RAMP,),
-        ),
-        real(
-            "Flywheel Racer",
-            "{2}",
-            2,
-            "Artifact — Vehicle",
-            "Vigilance\n{T}: Add one mana of any color. Activate only if this permanent is a creature.\n"
-            "Crew 1 (Tap any number of creatures you control with total power 1 or more: This Vehicle "
-            "becomes an artifact creature until end of turn.)",
-            produced="WUBRG",
-            roles=(RAMP,),
-        ),
-    ],
-    ids=lambda c: c.mana.name,
+MOX_AMBER = real(
+    "Mox Amber",
+    "{0}",
+    0,
+    "Legendary Artifact",
+    "{T}: Add one mana of any color among legendary creatures and planeswalkers you control.",
+    produced="WUBRG",
+    roles=(RAMP,),
 )
-def test_a_rock_that_needs_a_legendary_creature_or_a_crewed_vehicle_is_not_modelled(rock: Real) -> None:
-    deck = build(rock)
-    card = card_named(deck, rock.mana.name)
+FLYWHEEL_RACER = real(
+    "Flywheel Racer",
+    "{2}",
+    2,
+    "Artifact — Vehicle",
+    "Vigilance\n{T}: Add one mana of any color. Activate only if this permanent is a creature.\n"
+    "Crew 1 (Tap any number of creatures you control with total power 1 or more: This Vehicle "
+    "becomes an artifact creature until end of turn.)",
+    produced="WUBRG",
+    roles=(RAMP,),
+)
+SPRINGLEAF_DRUM = real(
+    "Springleaf Drum",
+    "{1}",
+    1,
+    "Artifact",
+    "{T}, Tap an untapped creature you control: Add one mana of any color.",
+    produced="WUBRG",
+    roles=(RAMP,),
+)
+MOX_OPAL = real(
+    "Mox Opal",
+    "{0}",
+    0,
+    "Legendary Artifact",
+    "Metalcraft — {T}: Add one mana of any color. Activate only if you control three or more artifacts.",
+    produced="WUBRG",
+    roles=(RAMP,),
+)
+TREASONOUS_OGRE = real(
+    "Treasonous Ogre",
+    "{3}{R}",
+    4,
+    "Creature — Ogre Shaman",
+    "Dethrone (Whenever this creature attacks the player with the most life or tied for most life, put a "
+    "+1/+1 counter on it.)\nPay 3 life: Add {R}.",
+    produced="R",
+    roles=(RAMP,),
+)
+ORCISH_LUMBERJACK = real(
+    "Orcish Lumberjack",
+    "{R}",
+    1,
+    "Creature — Orc",
+    "{T}, Sacrifice a Forest: Add three mana in any combination of {R} and/or {G}.",
+    produced="RG",
+    roles=(RAMP,),
+)
+
+
+def test_a_rock_that_needs_a_legendary_creature_is_not_modelled() -> None:
+    deck = build(MOX_AMBER)
+    card = card_named(deck, MOX_AMBER.mana.name)
     assert card.mana is None
     assert not card.modelled
-    assert deck.not_modelled == (rock.mana.name,)
+    assert deck.not_modelled == (MOX_AMBER.mana.name,)
+
+
+FANATIC_OF_RHONAS = real(
+    "Fanatic of Rhonas",
+    "{1}{G}",
+    2,
+    "Creature — Snake Druid",
+    "{T}: Add {G}.\nFerocious — {T}: Add {G}{G}{G}{G}. Activate only if you control a creature with power 4 "
+    "or greater.\nEternalize {2}{G}{G} ({2}{G}{G}, Exile this card from your graveyard: Create a token "
+    "that's a copy of it, except it's a 4/4 black Zombie Snake Druid with no mana cost. Eternalize only as "
+    "a sorcery.)",
+    produced="G",
+    identity="G",
+    roles=(RAMP,),
+)
+GLISTENING_SPHERE = real(
+    "Glistening Sphere",
+    "{3}",
+    3,
+    "Artifact",
+    "This artifact enters tapped.\nWhen this artifact enters, proliferate.\n{T}: Add one mana of any color.\n"
+    "Corrupted — {T}: Add three mana of any one color. Activate only if an opponent has three or more "
+    "poison counters.",
+    produced="WUBRG",
+    roles=(RAMP,),
+)
+CIRCLE_OF_ELDERS = real(
+    "Circle of Elders",
+    "{2}{G}{G}",
+    4,
+    "Creature — Human Shaman",
+    "Vigilance\nFormidable — {T}: Add {C}{C}{C}. Activate only if creatures you control have total power 8 "
+    "or greater.",
+    produced="C",
+    identity="G",
+    roles=(RAMP,),
+)
+KOZILEKS_TRANSLATOR = real(
+    "Kozilek's Translator",
+    "{4}{B}",
+    5,
+    "Creature — Eldrazi Drone",
+    "Devoid (This card has no color.)\nPay 1 life: Add {C}. Activate only once each turn. ({C} represents "
+    "colorless mana.)",
+    produced="C",
+    identity="B",
+    roles=(RAMP,),
+)
+
+
+@pytest.mark.parametrize(
+    ("conditional", "amount", "colours"),
+    [(FANATIC_OF_RHONAS, 1, "G"), (GLISTENING_SPHERE, 1, ALL)],
+    ids=lambda v: v.mana.name if isinstance(v, Real) else None,
+)
+def test_mana_made_only_on_a_condition_is_left_out_and_the_unconditional_mana_stays(
+    conditional: Real, amount: int, colours: str
+) -> None:
+    card = one(conditional)
+    assert card.mana is not None
+    assert (card.mana.amount, card.mana.colours) == (amount, frozenset(colours))
+
+
+@pytest.mark.parametrize("card", [CIRCLE_OF_ELDERS, KOZILEKS_TRANSLATOR], ids=lambda c: c.mana.name)
+def test_a_card_whose_only_mana_is_conditional_makes_none_and_is_not_modelled(card: Real) -> None:
+    compiled = one(card)
+    assert compiled.mana is None
+    assert not compiled.modelled
+
+
+def test_a_rock_that_taps_a_creature_needs_one_and_a_crewed_vehicle_needs_a_turn_too() -> None:
+    drum = one(SPRINGLEAF_DRUM)
+    assert drum.mana == ManaAbility(1, frozenset(ALL), delayed=False, ritual=False, needs=ManaNeed.CREATURE)
+    assert drum.modelled
+    racer = one(FLYWHEEL_RACER)
+    assert racer.mana == ManaAbility(1, frozenset(ALL), delayed=True, ritual=False, needs=ManaNeed.CREATURE)
+    assert racer.modelled
+
+
+def test_mox_opal_needs_three_artifacts() -> None:
+    opal = one(MOX_OPAL)
+    assert opal.mana == ManaAbility(1, frozenset(ALL), delayed=False, ritual=False, needs=ManaNeed.ARTIFACTS)
+    assert opal.modelled
+
+
+def test_mana_paid_for_with_life_is_mana_for_each_payment() -> None:
+    ogre = one(TREASONOUS_OGRE)
+    assert ogre.mana == ManaAbility(1, frozenset("R"), delayed=False, ritual=False, life=3)
+    assert ogre.modelled
+
+
+def test_mana_paid_for_with_a_land_is_a_burst_from_a_creature_in_play() -> None:
+    jack = one(ORCISH_LUMBERJACK)
+    assert jack.mana == ManaAbility(
+        3, frozenset("RG"), delayed=True, ritual=False, land_sacrificed=frozenset({"forest"})
+    )
+    assert jack.modelled
 
 
 def test_a_sacrifice_to_draw_is_neither_a_draw_nor_a_hindrance_to_the_mana() -> None:
@@ -1486,6 +1623,278 @@ def test_a_sacrifice_to_draw_is_neither_a_draw_nor_a_hindrance_to_the_mana() -> 
     assert stone.mana == ManaAbility(1, frozenset("C"), delayed=False, ritual=False)
     assert stone.draw is None
     assert stone.modelled
+
+
+TINDER_WALL = real(
+    "Tinder Wall",
+    "{G}",
+    1,
+    "Creature — Plant Wall",
+    "Defender (This creature can't attack.)\nSacrifice this creature: Add {R}{R}.\n{R}, Sacrifice this "
+    "creature: It deals 2 damage to target creature it's blocking.",
+    produced="R",
+    roles=(RAMP, Role.REMOVAL),
+)
+WILD_CANTOR = real(
+    "Wild Cantor",
+    "{R/G}",
+    1,
+    "Creature — Human Druid",
+    "({R/G} can be paid with either {R} or {G}.)\nSacrifice this creature: Add one mana of any color.",
+    produced="WUBRG",
+    roles=(RAMP,),
+)
+RITE_OF_FLAME = real(
+    "Rite of Flame",
+    "{R}",
+    1,
+    "Sorcery",
+    "Add {R}{R}, then add {R} for each card named Rite of Flame in each graveyard.",
+    produced="R",
+    roles=(RAMP,),
+)
+JESKAS_WILL = real(
+    "Jeska's Will",
+    "{2}{R}",
+    3,
+    "Sorcery",
+    "Choose one. If you control a commander as you cast this spell, you may choose both instead.\n• Add {R} "
+    "for each card in target opponent's hand.\n• Exile the top three cards of your library. You may play "
+    "them this turn.",
+    produced="R",
+    roles=(RAMP,),
+)
+STRIKE_IT_RICH = real(
+    "Strike It Rich",
+    "{R}",
+    1,
+    "Sorcery",
+    "Create a Treasure token. (It's an artifact with \"{T}, Sacrifice this token: Add one mana of any "
+    'color.")\nFlashback {2}{R} (You may cast this card from your graveyard for its flashback cost. Then '
+    "exile it.)",
+    produced="WUBRG",
+    roles=(RAMP,),
+)
+
+
+def test_a_creature_that_sacrifices_itself_for_mana_is_one_shot_mana_at_once() -> None:
+    wall = one(TINDER_WALL)
+    assert wall.mana == ManaAbility(2, frozenset("R"), delayed=False, ritual=True)
+    assert wall.modelled
+    assert one(WILD_CANTOR).mana == ManaAbility(1, frozenset(ALL), delayed=False, ritual=True)
+
+
+def test_a_ritual_keeps_the_fixed_part_of_mana_that_grows_with_a_count() -> None:
+    rite = one(RITE_OF_FLAME)
+    assert rite.mana == ManaAbility(2, frozenset("R"), delayed=False, ritual=True)
+    assert rite.modelled
+
+
+def test_jeskas_will_counts_an_opponents_hand_of_seven() -> None:
+    will = one(JESKAS_WILL)
+    assert will.mana == ManaAbility(7, frozenset("R"), delayed=False, ritual=True)
+    assert will.modelled
+
+
+MANAMORPHOSE = real(
+    "Manamorphose",
+    "{1}{R/G}",
+    2,
+    "Instant",
+    "Add two mana in any combination of colors.\nDraw a card.",
+    identity="RG",
+    roles=(DRAW,),
+)
+SAGE_OF_THE_MAZE = real(
+    "Sage of the Maze",
+    "{2}{G}",
+    3,
+    "Creature — Elf Wizard",
+    "{T}: Add two mana in any combination of colors.\n{T}: Until end of turn, target land you control "
+    "becomes an X/X Citizen creature with haste in addition to its other types, where X is twice the number "
+    "of Gates you control. Activate only as a sorcery.\nTap an untapped Gate you control: Untap this "
+    "creature.",
+    identity="G",
+    roles=(RAMP,),
+)
+DAWNS_REFLECTION = real(
+    "Dawn's Reflection",
+    "{3}{G}",
+    4,
+    "Enchantment — Aura",
+    "Enchant land\nWhenever enchanted land is tapped for mana, its controller adds an additional two mana in "
+    "any combination of colors.",
+    identity="G",
+    roles=(RAMP,),
+)
+
+
+@pytest.mark.parametrize(
+    "card", [MANAMORPHOSE, SAGE_OF_THE_MAZE, DAWNS_REFLECTION], ids=lambda c: c.mana.name
+)
+def test_mana_in_any_combination_of_colors_is_of_the_commanders_colours(card: Real) -> None:
+    mana = one(card, commander=MAGDA).mana
+    assert mana is not None
+    assert (mana.amount, mana.colours) == (2, frozenset("R"))
+    mana = one(card).mana
+    assert mana is not None
+    assert mana.colours == frozenset(ALL)
+
+
+DEADLY_DISPUTE = real(
+    "Deadly Dispute",
+    "{1}{B}",
+    2,
+    "Instant",
+    "As an additional cost to cast this spell, sacrifice an artifact or creature.\nDraw two cards and create "
+    'a Treasure token. (It\'s an artifact with "{T}, Sacrifice this token: Add one mana of any color.")',
+    identity="B",
+    roles=(DRAW,),
+)
+# Made up, to reach the other side of the line: three Treasures for one mana.
+TREASURE_TROVE = real(
+    "Treasure Trove",
+    "{R}",
+    1,
+    "Sorcery",
+    "Create three Treasure tokens.",
+    produced="WUBRG",
+    identity="R",
+    roles=(RAMP,),
+)
+
+
+def test_a_spell_that_makes_a_treasure_for_no_net_mana_is_cast_for_the_treasure_it_leaves() -> None:
+    strike = one(STRIKE_IT_RICH, commander=MAGDA)
+    assert strike.mana is None
+    assert strike.treasures_on_entry == 1
+    assert strike.modelled
+
+
+def test_a_spell_that_draws_and_makes_a_treasure_is_a_draw_that_leaves_a_treasure() -> None:
+    dispute = one(DEADLY_DISPUTE)
+    assert dispute.mana is None
+    assert dispute.treasures_on_entry == 1
+    assert dispute.draw == Draw(2, engine=False)
+    assert dispute.needs_sacrifice
+    assert dispute.modelled
+
+
+def test_a_spell_that_makes_more_treasures_than_it_costs_is_a_ritual_of_that_many_mana() -> None:
+    trove = one(TREASURE_TROVE)
+    assert trove.mana == ManaAbility(3, frozenset(ALL), delayed=False, ritual=True)
+    assert trove.treasures_on_entry == 0
+    assert trove.modelled
+
+
+GEOSURGE = real(
+    "Geosurge",
+    "{R}{R}{R}{R}",
+    4,
+    "Sorcery",
+    "Add {R}{R}{R}{R}{R}{R}{R}. Spend this mana only to cast artifact or creature spells.",
+    produced="R",
+    roles=(RAMP,),
+)
+OPEN_THE_OMENPATHS = real(
+    "Open the Omenpaths",
+    "{2}{R}",
+    3,
+    "Instant",
+    "Choose one —\n• Add two mana of any one color and two mana of any other color. Spend this mana only to "
+    "cast creature or enchantment spells.\n• Creatures you control get +1/+0 until end of turn.",
+    produced="WUBRG",
+    roles=(RAMP,),
+)
+SHANG_CHI = real(
+    "Shang-Chi, Master of Kung Fu",
+    "{1}{G}",
+    2,
+    "Legendary Creature — Human Warrior Hero",
+    "You may activate abilities of creatures you control as though those creatures had haste.\n{T}: Add two "
+    "mana of any one color. Spend this mana only to activate abilities of creature sources.",
+    produced="WUBRG",
+    roles=(RAMP,),
+)
+
+
+def test_mana_spent_only_on_some_kinds_of_spell_is_counted_for_those_kinds() -> None:
+    assert one(GEOSURGE).mana == ManaAbility(
+        7,
+        frozenset("R"),
+        delayed=False,
+        ritual=True,
+        spend_on=frozenset({CardKind.ARTIFACT, CardKind.CREATURE}),
+    )
+    omenpaths = one(OPEN_THE_OMENPATHS)
+    assert omenpaths.mana == ManaAbility(
+        4,
+        frozenset(ALL),
+        delayed=False,
+        ritual=True,
+        spend_on=frozenset({CardKind.CREATURE, CardKind.ENCHANTMENT}),
+    )
+    assert omenpaths.modelled
+
+
+LIONS_EYE_DIAMOND = real(
+    "Lion's Eye Diamond",
+    "{0}",
+    0,
+    "Artifact",
+    "Discard your hand, Sacrifice this artifact: Add three mana of any one color. Activate only as an "
+    "instant.",
+    produced="WUBRG",
+    roles=(RAMP,),
+)
+METAMORPHOSIS = real(
+    "Metamorphosis",
+    "{G}",
+    1,
+    "Sorcery",
+    "As an additional cost to cast this spell, sacrifice a creature.\nAdd X mana of any one color, where X "
+    "is 1 plus the sacrificed creature's mana value. Spend this mana only to cast creature spells.",
+    produced="WUBRG",
+    roles=(RAMP,),
+)
+INFERNAL_PLUNGE = real(
+    "Infernal Plunge",
+    "{R}",
+    1,
+    "Sorcery",
+    "As an additional cost to cast this spell, sacrifice a creature.\nAdd {R}{R}{R}.",
+    produced="R",
+    roles=(RAMP,),
+)
+
+
+def test_lions_eye_diamond_is_one_shot_mana_that_discards_the_hand() -> None:
+    diamond = one(LIONS_EYE_DIAMOND)
+    assert diamond.mana == ManaAbility(3, frozenset(ALL), delayed=False, ritual=True, discards_hand=True)
+    assert diamond.modelled
+
+
+def test_a_ritual_that_sacrifices_a_creature_needs_one_and_may_add_its_mana_value() -> None:
+    plunge = one(INFERNAL_PLUNGE)
+    assert plunge.mana == ManaAbility(3, frozenset("R"), delayed=False, ritual=True)
+    assert plunge.needs_sacrifice
+    metamorphosis = one(METAMORPHOSIS)
+    assert metamorphosis.mana == ManaAbility(
+        1,
+        frozenset(ALL),
+        delayed=False,
+        ritual=True,
+        spend_on=frozenset({CardKind.CREATURE}),
+        plus_sacrificed=True,
+    )
+    assert metamorphosis.needs_sacrifice
+    assert metamorphosis.modelled
+
+
+def test_mana_spent_only_on_abilities_is_left_out() -> None:
+    card = one(SHANG_CHI)
+    assert card.mana is None
+    assert not card.modelled
 
 
 # --- land ramp ------------------------------------------------------------------------------------
@@ -1554,7 +1963,9 @@ def test_a_tutor_names_the_card_types_it_finds() -> None:
 
 def test_an_x_tutor_to_the_battlefield_is_limited_by_x() -> None:
     zenith = one(GREEN_SUNS_ZENITH)
-    assert zenith.tutor == Tutor(frozenset({CardKind.CREATURE}), TutorDestination.BATTLEFIELD, x_limited=True)
+    assert zenith.tutor == Tutor(
+        frozenset({CardKind.CREATURE}), TutorDestination.BATTLEFIELD, x_limited=True, colours=frozenset("G")
+    )
     assert zenith.x_cost
     assert zenith.mana_value == 1
     finale = one(FINALE)
@@ -1574,13 +1985,147 @@ def test_a_search_is_a_tutor_only_when_the_tagger_says_so() -> None:
 
 @pytest.mark.parametrize(
     "tutor",
-    [RECRUITER_OF_THE_GUARD, IMPERIAL_RECRUITER, TROPHY_MAGE, FIERCE_EMPATH, TIME_OF_NEED],
+    [RECRUITER_OF_THE_GUARD, TROPHY_MAGE, FIERCE_EMPATH, TIME_OF_NEED],
     ids=lambda t: t.mana.name,
 )
-def test_a_search_restricted_beyond_card_type_and_a_mana_value_ceiling_is_not_modelled(tutor: Real) -> None:
+def test_a_search_restricted_beyond_type_colour_power_and_a_mana_value_ceiling_is_not_modelled(
+    tutor: Real,
+) -> None:
     card = one(tutor)
     assert card.tutor is None
     assert not card.modelled
+
+
+def test_a_tutor_for_a_creature_with_power_up_to_a_ceiling_says_so_and_cards_carry_their_power() -> None:
+    recruiter = one(IMPERIAL_RECRUITER)
+    assert recruiter.tutor == Tutor(frozenset({CardKind.CREATURE}), TutorDestination.HAND, max_power=2)
+    assert recruiter.modelled
+    assert recruiter.power == 1
+    assert one(SOL_RING).power is None
+
+
+GOBLIN_MATRON = real(
+    "Goblin Matron",
+    "{2}{R}",
+    3,
+    "Creature — Goblin",
+    "When this creature enters, you may search your library for a Goblin card, reveal that card, put it into "
+    "your hand, then shuffle.",
+    roles=(TUTOR,),
+)
+STONEFORGE = real(
+    "Stoneforge Mystic",
+    "{1}{W}",
+    2,
+    "Creature — Kor Artificer",
+    "When this creature enters, you may search your library for an Equipment card, reveal it, put it into "
+    "your hand, then shuffle.\n{1}{W}, {T}: You may put an Equipment card from your hand onto the "
+    "battlefield.",
+    roles=(TUTOR,),
+)
+ACADEMY_RECTOR = real(
+    "Academy Rector",
+    "{3}{W}",
+    4,
+    "Creature — Human Cleric",
+    "When this creature dies, you may exile it. If you do, search your library for an enchantment card, put "
+    "that card onto the battlefield, then shuffle.",
+    roles=(TUTOR,),
+)
+HERMIT_DRUID = real(
+    "Hermit Druid",
+    "{1}{G}",
+    2,
+    "Creature — Human Druid",
+    "{G}, {T}: Reveal cards from the top of your library until you reveal a basic land card. Put that card "
+    "into your hand and all other cards revealed this way into your graveyard.",
+)
+
+
+def test_a_tutor_for_a_subtype_of_the_decks_cards_finds_it_and_cards_carry_their_subtypes() -> None:
+    deck = build(GOBLIN_MATRON, ELECTROMANCER)
+    matron = card_named(deck, "Goblin Matron")
+    assert matron.tutor == Tutor(frozenset(), TutorDestination.HAND, subtypes=frozenset({"goblin"}))
+    assert matron.modelled
+    assert card_named(deck, "Goblin Electromancer").subtypes == {"goblin", "wizard"}
+    # No card of the deck is an Equipment, so the word is not known for a type.
+    mystic = one(STONEFORGE)
+    assert mystic.tutor is None
+    assert not mystic.modelled
+
+
+SARKHANS_TRIUMPH = real(
+    "Sarkhan's Triumph",
+    "{2}{R}",
+    3,
+    "Instant",
+    "Search your library for a Dragon creature card, reveal it, put it into your hand, then shuffle.",
+    roles=(TUTOR,),
+)
+SHIVAN_DRAGON = real(
+    "Shivan Dragon",
+    "{4}{R}{R}",
+    6,
+    "Creature — Dragon",
+    "Flying\n{R}: This creature gets +1/+0 until end of turn.",
+)
+
+
+def test_a_tutor_for_a_subtype_of_a_card_type_needs_both() -> None:
+    triumph = card_named(build(SARKHANS_TRIUMPH, SHIVAN_DRAGON), "Sarkhan's Triumph")
+    assert triumph.tutor == Tutor(
+        frozenset({CardKind.CREATURE}), TutorDestination.HAND, subtypes=frozenset({"dragon"})
+    )
+
+
+PROTEAN_HULK = real(
+    "Protean Hulk",
+    "{5}{G}{G}",
+    7,
+    "Creature — Beast",
+    "When this creature dies, search your library for any number of creature cards with total mana value 6 "
+    "or less, put them onto the battlefield, then shuffle.",
+    roles=(TUTOR,),
+)
+CARRION_FEEDER = real(
+    "Carrion Feeder",
+    "{B}",
+    1,
+    "Creature — Zombie",
+    "This creature can't block.\nSacrifice a creature: Put a +1/+1 counter on this creature.",
+)
+PHYREXIAN_TOWER = real(
+    "Phyrexian Tower",
+    "",
+    0,
+    "Legendary Land",
+    "{T}: Add {C}.\n{T}, Sacrifice a creature: Add {B}{B}.",
+    produced="BC",
+)
+
+
+def test_a_search_as_the_creature_dies_is_its_death_tutor_and_not_one_on_casting() -> None:
+    rector = one(ACADEMY_RECTOR)
+    assert rector.tutor is None
+    assert rector.dies_tutor == Tutor(frozenset({CardKind.ENCHANTMENT}), TutorDestination.BATTLEFIELD)
+    assert rector.modelled
+    hulk = one(PROTEAN_HULK)
+    creatures = frozenset({CardKind.CREATURE})
+    assert hulk.dies_tutor == Tutor(creatures, TutorDestination.BATTLEFIELD, total_mana_value=6)
+    assert hulk.modelled
+
+
+def test_a_sacrifice_for_no_mana_is_a_free_outlet_and_one_that_costs_mana_is_not() -> None:
+    assert one(CARRION_FEEDER).free_outlet
+    assert one(PHYREXIAN_TOWER).free_outlet
+    assert not one(DIABOLIC_INTENT).free_outlet
+    assert not one(PROTEAN_HULK).free_outlet
+
+
+def test_a_creature_with_a_tap_ability_other_than_mana_says_so() -> None:
+    assert one(HERMIT_DRUID).tap_ability
+    assert not one(LLANOWAR).tap_ability
+    assert not one(THASSAS_ORACLE).tap_ability
 
 
 @pytest.mark.parametrize("tutor", [SURVIVAL, ENTOMB], ids=lambda t: t.mana.name)
@@ -1826,7 +2371,7 @@ def test_extra_land_drops_are_counted_per_turn() -> None:
 def test_a_pact_is_a_free_spell() -> None:
     pact = one(SUMMONERS_PACT)
     assert pact.mana_value == 0
-    assert pact.tutor == Tutor(frozenset({CardKind.CREATURE}), TutorDestination.HAND)
+    assert pact.tutor == Tutor(frozenset({CardKind.CREATURE}), TutorDestination.HAND, colours=frozenset("G"))
     assert pact.modelled
     assert one(SLAUGHTER_PACT).modelled
 
@@ -1836,7 +2381,9 @@ def test_tutors_and_rituals_with_a_sacrifice_cost_say_so() -> None:
     assert intent.tutor == Tutor(frozenset(), TutorDestination.HAND)
     assert intent.needs_sacrifice
     order = one(NATURAL_ORDER)
-    assert order.tutor == Tutor(frozenset({CardKind.CREATURE}), TutorDestination.BATTLEFIELD)
+    assert order.tutor == Tutor(
+        frozenset({CardKind.CREATURE}), TutorDestination.BATTLEFIELD, colours=frozenset("G")
+    )
     assert order.needs_sacrifice
     culling = one(CULLING_THE_WEAK)
     assert culling.mana == ManaAbility(4, frozenset("B"), delayed=False, ritual=True)
@@ -2064,10 +2611,130 @@ def test_ramp_the_reading_cannot_place_is_not_modelled(unplaced: Real) -> None:
     assert not card.modelled
 
 
+HOARDMASTER = real(
+    "Magda, the Hoardmaster",
+    "{1}{R}",
+    2,
+    "Legendary Creature — Dwarf Berserker",
+    "Whenever you commit a crime, create a tapped Treasure token. This ability triggers only once each turn. "
+    "(Targeting opponents, anything they control, and/or cards in their graveyards is a crime.)\n"
+    "Sacrifice three Treasures: Create a 4/4 red Scorpion Dragon creature token with flying and haste. "
+    "Activate only as a sorcery.",
+    identity="R",
+    roles=(RAMP,),
+)
+
+
 def test_a_commander_the_reading_cannot_place_is_named_in_not_modelled() -> None:
-    deck = build(BATTERED_GOLEM, commander=MAGDA)
-    assert [c.name for c in deck.commanders] == ["Magda, Brazen Outlaw"]
-    assert deck.not_modelled == ("Magda, Brazen Outlaw",)
+    deck = build(BATTERED_GOLEM, commander=HOARDMASTER)
+    assert [c.name for c in deck.commanders] == ["Magda, the Hoardmaster"]
+    assert deck.not_modelled == ("Magda, the Hoardmaster",)
+
+
+def test_a_treasure_for_each_dwarf_tapped_and_a_search_for_five_treasures_are_read() -> None:
+    magda = card_named(build(BATTERED_GOLEM, commander=MAGDA), "Magda, Brazen Outlaw")
+    assert magda.treasure_on_tap == {"dwarf"}
+    # No card of the deck is a Dragon, but the word is the other choice beside a card type.
+    dragon = frozenset({"dragon"})
+    tutor = Tutor(frozenset({CardKind.ARTIFACT}), TutorDestination.BATTLEFIELD, subtypes=dragon, either=True)
+    assert magda.activated_tutor == ActivatedTutor(tutor, treasures=5)
+    assert magda.tutor is None
+    assert magda.modelled
+
+
+TEZZERET = real(
+    "Tezzeret, Cruel Captain",
+    "{3}",
+    3,
+    "Legendary Planeswalker — Tezzeret",
+    "Whenever an artifact you control enters, put a loyalty counter on Tezzeret.\n"
+    "0: Untap target artifact or creature. If it's an artifact creature, put a +1/+1 counter on it.\n"
+    "\N{MINUS SIGN}3: Search your library for an artifact card with mana value 1 or less, reveal it, put it "
+    "into your hand, then shuffle.",
+    roles=(TUTOR,),
+)
+
+
+def test_a_loyalty_search_no_dearer_than_the_card_is_read_as_payable_once() -> None:
+    tezzeret = one(TEZZERET)
+    tutor = Tutor(frozenset({CardKind.ARTIFACT}), TutorDestination.HAND, 1)
+    assert tezzeret.activated_tutor == ActivatedTutor(tutor, loyalty=3)
+    assert tezzeret.modelled
+    dearer = replace(TEZZERET, mana=replace(TEZZERET.mana, mana_cost="{2}", cmc=2))
+    assert one(dearer).activated_tutor is None
+    assert not one(dearer).modelled
+
+
+PLUNDERING_BARBARIAN = real(
+    "Plundering Barbarian",
+    "{2}{R}",
+    3,
+    "Creature — Dwarf Barbarian",
+    "When this creature enters, choose one —\n• Smash the Chest — Destroy target artifact.\n"
+    "• Pry It Open — Create a Treasure token. (It's an artifact with \"{T}, Sacrifice this token: Add one "
+    'mana of any color.")',
+    roles=(RAMP,),
+)
+LANNERY_STORM = real(
+    "Captain Lannery Storm",
+    "{2}{R}",
+    3,
+    "Legendary Creature — Human Pirate",
+    "Haste\nWhenever Captain Lannery Storm attacks, create a Treasure token. (It's an artifact with \"{T}, "
+    'Sacrifice this token: Add one mana of any color.")\nWhenever you sacrifice a Treasure, Captain Lannery '
+    "Storm gets +1/+0 until end of turn.",
+    roles=(RAMP,),
+)
+FACE_BREAKER = real(
+    "Professional Face-Breaker",
+    "{2}{R}",
+    3,
+    "Creature — Human Warrior",
+    "Menace\nWhenever one or more creatures you control deal combat damage to a player, create a Treasure "
+    "token.\nSacrifice a Treasure: Exile the top card of your library. You may play that card this turn.",
+    roles=(RAMP,),
+)
+
+
+def test_treasures_made_on_entering_or_attacking_are_read_and_combat_damage_is_not() -> None:
+    barbarian = one(PLUNDERING_BARBARIAN)
+    assert (barbarian.treasures_on_entry, barbarian.treasures_on_attack) == (1, 0)
+    assert barbarian.modelled
+    storm = one(LANNERY_STORM)
+    assert (storm.treasures_on_entry, storm.treasures_on_attack) == (0, 1)
+    assert storm.modelled
+    breaker = one(FACE_BREAKER)
+    assert (breaker.treasures_on_entry, breaker.treasures_on_attack, breaker.treasure_on_tap) == (0, 0, set())
+    assert not breaker.modelled
+
+
+BEZA = real(
+    "Beza, the Bounding Spring",
+    "{2}{W}{W}",
+    4,
+    "Legendary Creature — Elemental Elk",
+    "When Beza enters, create a Treasure token if an opponent controls more lands than you. You gain 4 life "
+    "if an opponent has more life than you. Create two 1/1 blue Fish creature tokens if an opponent controls "
+    "more creatures than you. Draw a card if an opponent has more cards in hand than you.",
+    identity="W",
+)
+
+
+def test_a_treasure_made_only_if_an_opponent_is_ahead_is_not_counted() -> None:
+    assert one(BEZA).treasures_on_entry == 0
+
+
+def test_a_treasure_made_with_other_text_after_it_still_counts() -> None:
+    tomb = real(
+        "Tomb Raider",
+        "{2}{R}",
+        3,
+        "Creature — Human Rogue",
+        "When this creature enters, create a Treasure token. You gain 2 life if an opponent has more life "
+        "than you.",
+        identity="R",
+    )
+    assert one(tomb, commander=MAGDA).treasures_on_entry == 1
 
 
 def test_a_card_missing_from_the_card_data_is_a_plain_spell_of_average_value() -> None:

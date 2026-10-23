@@ -12,7 +12,7 @@ records that the cut slot was never reached (`reached`), and whose searches (`la
 """
 
 import random
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from itertools import combinations
@@ -21,18 +21,21 @@ from typing import NamedTuple
 
 from commander.answers import card_key
 from commander.goldfish_cards import (
+    CHANGELING,
+    NON_CREATURE_SUBTYPES,
     CardKind,
     EntryCost,
     GoldfishCard,
     GoldfishCombo,
     GoldfishDeck,
     LandDestination,
+    ManaNeed,
     Tutor,
     TutorDestination,
 )
 
 # Raised whenever the policy or the recognition changes, so kept results are not mixed with new ones.
-POLICY_VERSION = 2
+POLICY_VERSION = 4
 GAMES = 10_000
 # The turn by which a bracket expects to be able to play before winning or losing (Wizards, 2025-10-21).
 BRACKET_TURN = {1: 9, 2: 8, 3: 6, 4: 4}
@@ -51,12 +54,49 @@ _HAND = 7
 _FREE_MULLIGANS = 1
 _MAX_KEPT_LANDS = 4
 _BIG_CURVE = 3.5
+_START_LIFE = 40
+# Mana paid for with life is used down to this much life (the owner's choice).
+_LIFE_FLOOR = 10
+# Mox Opal's metalcraft.
+_METALCRAFT = 3
+# The colours a card's cost gives it, which a tutor for a colour reads.
+_CARD_COLOURS = frozenset("WUBRG")
+# What one-shot mana is spent on: life alone for anything; rituals and bursts for a mana source, a combo
+# piece, a tutor fetching one, a finisher, the commander or a combo landing; Lion's Eye Diamond only for the
+# last three, which win or are the commander.
+_FOR_NOTHING = 0
+_FOR_PLAY = 1
+_FOR_WIN = 2
+# A one-shot in a plan that is no card in hand: a life payment, a Treasure, or the burst of the creature
+# `_BURST - code`.
+_LIFE = -1
+_TREASURE = -2
+_BURST = -3
 
 # Colours as bits, so a mana unit is one small int: the set of colours it can pay.
 _BITS = {"W": 1, "U": 2, "B": 4, "R": 8, "G": 16, "C": 32}
-_POP = tuple(mask.bit_count() for mask in range(64))
-# The order units are paid in: colourless first, as it pays only generic mana, then by how many colours.
-_PAY_KEY = tuple(0 if mask == _BITS["C"] else _POP[mask] for mask in range(64)).__getitem__
+_COLOUR_BITS = 63
+# A Treasure's unit: any colour.
+_ANY_COLOUR = sum(_BITS[colour] for colour in "WUBRG")
+# A unit a ritual made that may be spent only on some kinds of spell, and is lost once that spell is paid.
+_RESTRICTED = 64
+_MASKS = 128
+_POP = tuple((mask & _COLOUR_BITS).bit_count() for mask in range(_MASKS))
+# The order units are paid in: restricted ones first, as they are lost after the spell they were made for,
+# then colourless, as it pays only generic mana, then by how many colours.
+_PAY_KEY = tuple(
+    -1 if mask & _RESTRICTED else 0 if mask == _BITS["C"] else _POP[mask] for mask in range(_MASKS)
+).__getitem__
+_KIND_BITS = {kind: 1 << index for index, kind in enumerate(CardKind)}
+
+
+def _kind_bits(kinds: Iterable[CardKind]) -> int:
+    bits = 0
+    for kind in kinds:
+        bits |= _KIND_BITS[kind]
+    return bits
+
+
 _BASICS = frozenset({"plains", "island", "swamp", "mountain", "forest", "wastes"})
 
 # Ranks order what the policy does first: lower goes first. A held card is never cast by the policy.
@@ -317,12 +357,16 @@ class _Card:
     """One card as plain ints and flags; `src` is the record for what is read rarely."""
 
     __slots__ = (
+        "artifact",
         "aura",
         "basic",
+        "burst_types",
+        "colours",
         "combo",
         "cost",
         "creature",
         "delayed",
+        "discards",
         "draw_count",
         "engine",
         "entry",
@@ -335,20 +379,30 @@ class _Card:
         "is_land",
         "keep_syn",
         "key",
+        "kind_bits",
         "land_amount",
+        "land_lost",
         "land_mask",
         "land_tapped",
         "land_types",
+        "life_cost",
         "mana_amount",
         "mana_mask",
         "mana_perm",
         "mdfc",
         "mv",
+        "need",
         "needs_sac",
         "permanent",
         "pip_mask",
+        "plus_sacrificed",
+        "purpose",
         "rank",
+        "reach_for",
+        "refund",
         "ritual",
+        "source",
+        "spend_bits",
         "src",
         "win_piece",
     )
@@ -359,14 +413,31 @@ class _Card:
         self.mv = card.mana_value
         mana = card.mana
         spend_from_hand = mana is not None and mana.from_hand
-        self.ritual = mana is not None and (mana.ritual or mana.from_hand)
-        self.mana_perm = mana is not None and not self.ritual
+        one_shot = mana is not None and (mana.ritual or mana.from_hand)
+        # A permanent making mana of some kind, and the kinds that are not a fixed part of each turn's mana:
+        # mana that needs other permanents, mana paid for with life, a burst for a land sacrificed.
+        self.source = mana is not None and not one_shot
+        self.need = mana.needs if mana is not None else None
+        self.life_cost = mana.life if mana is not None else 0
+        self.burst_types = mana.land_sacrificed if mana is not None else frozenset[str]()
+        self.mana_perm = self.source and not (self.need or self.life_cost or self.burst_types)
+        self.artifact = CardKind.ARTIFACT in card.kinds and card.permanent
         self.mana_amount = mana.amount if mana is not None else 0
         self.mana_mask = unit_mask(mana.colours) if mana is not None else 0
+        # The kinds of spell a ritual's mana may pay for, 0 for any; its units are then marked restricted.
+        self.spend_bits = _kind_bits(mana.spend_on) if mana is not None else 0
+        if self.spend_bits:
+            self.mana_mask |= _RESTRICTED
+        self.kind_bits = _kind_bits(card.kinds)
         self.delayed = mana is not None and mana.delayed
         self.aura = mana is not None and mana.on_land
         # Mana a ritual adds, net of the mana its own cost takes.
         self.gain = 0 if mana is None else mana.amount - (0 if spend_from_hand else card.mana_value)
+        # A one-shot that nets no mana (Manamorphose) is cast for its card and gives its mana back as it
+        # resolves, unless its mana is restricted, which is then still held for what it can pay.
+        keeps = mana is not None and (self.gain > 0 or mana.plus_sacrificed or bool(mana.spend_on))
+        self.ritual = one_shot and keeps
+        self.refund = one_shot and not keeps
         activation = card.land_ramp.activation if card.land_ramp is not None else 0
         # A spirit guide is exiled, not cast: its pips are not paid.
         self.cost = cost_of(0, {}) if spend_from_hand else cost_of(card.mana_value + activation, card.pips)
@@ -375,15 +446,8 @@ class _Card:
         paid = [symbol for symbol, count in card.pips.items() if count > 0]
         self.pip_mask = unit_mask(symbol for symbol in paid if "/" not in symbol)
         self.hybrids = tuple(symbol_mask(symbol) for symbol in paid if "/" in symbol)
-        self.is_land = card.land is not None and CardKind.LAND in card.kinds
-        self.mdfc = card.land is not None and not self.is_land
-        land = card.land
-        self.land_mask = unit_mask(land.colours) if land is not None else 0
-        self.land_amount = land.amount if land is not None else 0
-        self.land_tapped = land is not None and land.tapped
-        self.land_types = card.land_types
-        name = card.name.casefold()
-        self.basic = name in _BASICS or name.startswith("snow-covered ")
+        self.colours = frozenset(letter for symbol in paid for letter in symbol if letter in _CARD_COLOURS)
+        self._read_land(card)
         self.creature = CardKind.CREATURE in card.kinds
         self.permanent = card.permanent
         self.extra_drops = card.extra_land_drops
@@ -397,14 +461,32 @@ class _Card:
         # Fast mana for the keep rule: a cheap mana source other than a land.
         self.fast = mana is not None and not spend_from_hand and card.mana_value <= (_HAND - 5)
         self.win_piece = card.combo or card.tutor is not None or card.finisher
+        self.discards = mana is not None and mana.discards_hand
+        self.plus_sacrificed = mana is not None and mana.plus_sacrificed
+        # What one-shot mana may pay for it: a mana source or a combo piece takes rituals; a tutor takes them
+        # only for a combo piece, which `reach_for` allows for before its target is known.
+        self.purpose = _FOR_PLAY if self.source or card.combo else _FOR_NOTHING
+        self.reach_for = _FOR_PLAY if card.tutor is not None else self.purpose
         self.rank = self._rank()
+
+    def _read_land(self, card: GoldfishCard) -> None:
+        self.is_land = card.land is not None and CardKind.LAND in card.kinds
+        self.mdfc = card.land is not None and not self.is_land
+        land = card.land
+        self.land_mask = unit_mask(land.colours) if land is not None else 0
+        self.land_amount = land.amount if land is not None else 0
+        self.land_tapped = land is not None and land.tapped
+        self.land_lost = land is not None and land.lost_to_land_drop
+        self.land_types = card.land_types
+        name = card.name.casefold()
+        self.basic = name in _BASICS or name.startswith("snow-covered ")
 
     def _rank(self) -> int:
         card = self.src
         if self.is_land or card.finisher or self.ritual or (card.combo and not card.permanent):
             return _HELD
         cost = min(self.cost.total, _RANK_SPAN)
-        if self.mana_perm or card.land_ramp is not None or card.extra_land_drops:
+        if self.source or card.land_ramp is not None or card.extra_land_drops:
             return _MANA_RANK + cost
         if card.tutor is not None:
             return _TUTOR_RANK + cost
@@ -419,6 +501,7 @@ class _Setup:
     """Everything about a run that does not change from game to game."""
 
     __slots__ = (
+        "attacks",
         "average",
         "cards",
         "cmd_ids",
@@ -426,7 +509,9 @@ class _Setup:
         "combo_free",
         "combo_ids",
         "combo_pieces",
+        "deaths",
         "fin_ids",
+        "has_needs",
         "has_rituals",
         "horizon",
         "ids",
@@ -439,6 +524,7 @@ class _Setup:
         "need_syn",
         "need_win",
         "shown",
+        "tap_pieces",
     )
 
     def __init__(
@@ -483,7 +569,17 @@ class _Setup:
             for combo in combos
         )
         self.fin_ids = tuple(cid for cid, card in enumerate(self.cards) if card.finisher)
-        self.has_rituals = any(card.ritual for card in self.cards)
+        self.tap_pieces = frozenset(cid for cid, card in enumerate(self.cards) if card.src.tap_ability)
+        # Creatures that search as they die, and a free outlet to sacrifice them to.
+        self.deaths = any(c.src.dies_tutor for c in self.cards) and any(c.src.free_outlet for c in self.cards)
+        # Attacks make Treasures: a creature's own trigger, or a permanent's for a creature becoming tapped.
+        self.attacks = any(c.src.treasures_on_attack or c.src.treasure_on_tap for c in self.cards)
+        # One-shot mana beyond the turn's: rituals in hand, life payments, bursts for a land, Treasures.
+        self.has_rituals = self.attacks or any(
+            card.ritual or card.life_cost or card.burst_types or card.src.treasures_on_entry
+            for card in self.cards
+        )
+        self.has_needs = any(card.need for card in self.cards)
         self.merged: dict[tuple[int, ...], Cost] = {}
         self._set_keep_rule()
 
@@ -576,7 +672,12 @@ class _Game:
     """The state of one game. Mana units are masks of the colours each can pay, sorted by how many that is."""
 
     __slots__ = (
+        "activators",
+        "arrived",
+        "artifacts",
         "bf",
+        "burst_used",
+        "bursts",
         "check_land",
         "cmd_left",
         "cmd_turn",
@@ -594,7 +695,13 @@ class _Game:
         "land_search",
         "lands_in_play",
         "lib",
+        "life",
+        "life_sources",
+        "lost_lands",
+        "loyalty_used",
         "mana",
+        "needing",
+        "needs_met",
         "open_combos",
         "open_fins",
         "pending",
@@ -610,6 +717,7 @@ class _Game:
         "shuffles",
         "sick",
         "top",
+        "treasures",
         "turn",
         "tutor_look",
         "units",
@@ -633,10 +741,27 @@ class _Game:
         # Mana creatures cast this turn, whose mana sits in `pending` until the next turn.
         self.sick: set[int] = set()
         self.creatures: list[tuple[int, int, int]] = []
+        # Permanents that came this turn: a creature among them is summoning sick.
+        self.arrived: set[int] = set()
+        self.artifacts = 0
+        # Mana sources needing other permanents in the order they came, and those whose mana is in the pool.
+        self.needing: list[int] = []
+        self.needs_met: set[int] = set()
+        self.life = _START_LIFE
+        self.life_sources: list[int] = []
+        # Creatures making a burst of mana for a land sacrificed, and those used this turn.
+        self.bursts: list[int] = []
+        self.burst_used: set[int] = set()
+        self.treasures = 0
+        # Permanents in play with a search paid for by Treasures or loyalty, and those whose loyalty is spent.
+        self.activators: list[int] = []
+        self.loyalty_used: set[int] = set()
         self.engines = 0
         self.extra_drops = 0
         self.drops_left = 0
         self.lands_in_play = 0
+        # Lands in play that are sacrificed when another land is played (City of Traitors).
+        self.lost_lands: list[int] = []
         self.check_land = False
         self.cmd_left = list(setup.cmd_ids)
         self.cmd_turn = dict.fromkeys(setup.cmd_ids, 0)
@@ -717,11 +842,22 @@ class _Game:
             self.pending.clear()
             pool.sort(key=_PAY_KEY)
         self.sick.clear()
+        self.arrived.clear()
+        self.burst_used.clear()
+        if self.needing:
+            self._meet_needs()
         self._draw(1 + self.engines)
         self.drops_left = 1 + self.extra_drops
         self.units = list(pool)
         self._play_lands()
+        # Searches paid for by Treasures or loyalty are used as each main phase begins, the second after the
+        # attack.
+        if self.activators:
+            self._activate()
         self._act()
+        attacked = s.attacks and self._attack()
+        if (self.activators and self._activate()) or attacked:
+            self._act()
         if self.turn <= s.mid and not self.screw:
             self._check_screw()
         self.mana.append(len(pool))
@@ -760,15 +896,33 @@ class _Game:
                 return
             self.hand.remove(cid)
             self.drops_left -= 1
+            if self.lost_lands:
+                self._lose_to_land_drop()
             self._put_land(cid, cards[cid], tapped=cards[cid].land_tapped)
+            if cards[cid].land_lost:
+                self.lost_lands.append(cid)
+
+    def _lose_to_land_drop(self) -> None:
+        """Sacrifice the lands lost when another is played; the mana they made this turn stays."""
+        cards = self.s.cards
+        for cid in self.lost_lands:
+            card = cards[cid]
+            self.bf.discard(cid)
+            self.lands_in_play -= 1
+            held = self.pending if cid in self.arrived and card.land_tapped else self.pool
+            self._remove_mana(held, card.land_mask, card.land_amount)
+        self.lost_lands.clear()
 
     def _put_land(self, cid: int, card: _Card, *, tapped: bool) -> None:
         self.lands_in_play += 1
         self.bf.add(cid)
+        self.arrived.add(cid)
         if tapped:
             self.pending.extend([card.land_mask] * card.land_amount)
         else:
             self._add_now(card.land_mask, card.land_amount)
+        if self.s.deaths and card.src.free_outlet:
+            self._offer_deaths()
 
     def _choose_land(self) -> int | None:
         """An untapped land that pays a colour a spell in hand lacks, else a tapped one if the turn's spending
@@ -880,42 +1034,219 @@ class _Game:
         """Take a sacrificed mana creature's mana away from where it sits: next turn's mana while it is
         summoning sick, else the pool. Mana already in the turn's units can still be spent: the creature was
         tapped for it before it was sacrificed."""
-        source = self.pending if cid in self.sick else self.pool
+        self._remove_mana(self.pending if cid in self.sick else self.pool, mask, count)
+
+    @staticmethod
+    def _remove_mana(source: list[int], mask: int, count: int) -> None:
         for _ in range(count):
             if mask in source:
                 source.remove(mask)
 
-    def _plan(self, units: list[int], cost: Cost) -> tuple[int, ...] | None:
-        """The rituals and spirit guides to use first for a cost to be paid: none when the mana is enough,
-        None when even they would not make it."""
+    def _plan(
+        self, units: list[int], cost: Cost, paying: Sequence[_Card], purpose: int
+    ) -> tuple[int, ...] | None:
+        """The one-shots to use first for a cost to be paid: none when the mana is enough, None when even they
+        would not make it. `paying` holds the cards the cost is for, whose kinds a ritual's restricted mana
+        must all allow. Rituals and bursts serve a purpose of `_FOR_PLAY` or more, Lion's Eye Diamond only
+        `_FOR_WIN`; life is paid for anything. A plan whose rituals sacrifice a creature is tried again
+        without them, as the creature may be the one paying life."""
         if can_pay(units, cost):
             return ()
         if not self.s.has_rituals:
             return None
+        for sacrifices in (True, False):
+            trial = list(units)
+            used: list[int] = []
+            gone: set[int] = set()
+            if purpose >= _FOR_PLAY and self._plan_rituals(
+                trial, used, gone, cost=cost, paying=paying, purpose=purpose, sacrifices=sacrifices
+            ):
+                return tuple(used)
+            payments, mask = self._life_payments(gone)
+            for _ in range(payments):
+                trial.append(mask)
+                trial.sort(key=_PAY_KEY)
+                used.append(_LIFE)
+                if can_pay(trial, cost):
+                    return tuple(used)
+            if not gone:
+                return None
+        return None
+
+    def _plan_rituals(
+        self,
+        trial: list[int],
+        used: list[int],
+        gone: set[int],
+        *,
+        cost: Cost,
+        paying: Sequence[_Card],
+        purpose: int,
+        sacrifices: bool,
+    ) -> bool:
+        """Add to `trial` and `used` the rituals in hand, cheapest first, then the creatures' bursts, until
+        the cost can be paid; whether it can. The creatures the rituals sacrifice go into `gone`."""
+        for _ in range(self._treasures_for(purpose)):
+            trial.append(_ANY_COLOUR)
+            trial.sort(key=_PAY_KEY)
+            used.append(_TREASURE)
+            if can_pay(trial, cost):
+                return True
         cards = self.s.cards
-        rituals = sorted(
+        # The creatures the rituals may sacrifice, cheapest first as `_sacrifice` takes them, leaving those
+        # the cards paid for sacrifice themselves.
+        fodder = sorted(self.creatures)
+        spare = len(fodder) - sum(card.needs_sac for card in paying)
+        for cid in sorted(
             (cid for cid in self.hand if cards[cid].ritual), key=lambda cid: cards[cid].cost.total
-        )
-        trial = list(units)
-        used: list[int] = []
-        for cid in rituals:
+        ):
             card = cards[cid]
-            if not can_pay(trial, card.cost):
+            spend = card.spend_bits
+            if (
+                (card.discards and purpose < _FOR_WIN)
+                or (card.needs_sac and (not sacrifices or len(gone) >= spare))
+                or (spend and not all(c.kind_bits & spend for c in paying))
+                or not can_pay(trial, card.cost)
+            ):
                 continue
             pay(trial, card.cost)
-            trial.extend([card.mana_mask] * card.mana_amount)
+            amount = card.mana_amount
+            if card.needs_sac:
+                _, sacrificed, victim = fodder[len(gone)]
+                gone.add(victim)
+                amount += sacrificed if card.plus_sacrificed else 0
+            trial.extend([card.mana_mask] * amount)
             trial.sort(key=_PAY_KEY)
             used.append(cid)
             if can_pay(trial, cost):
-                return tuple(used)
-        return None
+                return True
+        for cid in self._bursts_ready():
+            if cid in gone:
+                continue
+            card = cards[cid]
+            trial.extend([card.mana_mask] * card.mana_amount)
+            trial.sort(key=_PAY_KEY)
+            used.append(_BURST - cid)
+            if can_pay(trial, cost):
+                return True
+        return False
 
-    def _use_ritual(self, cid: int) -> None:
-        card = self.s.cards[cid]
-        self.hand.remove(cid)
-        pay(self.units, card.cost)
-        self.units.extend([card.mana_mask] * card.mana_amount)
+    def _use_ritual(self, code: int) -> None:
+        """Use a one-shot of a plan: a ritual from the hand, a life payment or a creature's burst."""
+        cards = self.s.cards
+        if code == _LIFE:
+            source = cards[min(self.life_sources, key=lambda cid: cards[cid].life_cost)]
+            self.life -= source.life_cost
+            self.units.append(source.mana_mask)
+        elif code == _TREASURE:
+            self._spend_treasures(1)
+            self.units.append(_ANY_COLOUR)
+        elif code <= _BURST:
+            cid = _BURST - code
+            self.burst_used.add(cid)
+            self._sacrifice_land(cards[cid].burst_types)
+            self.units.extend([cards[cid].mana_mask] * cards[cid].mana_amount)
+        else:
+            card = cards[code]
+            self.hand.remove(code)
+            pay(self.units, card.cost)
+            amount = card.mana_amount
+            if card.needs_sac:
+                sacrificed = self._sacrifice()
+                amount += sacrificed if card.plus_sacrificed else 0
+            self.units.extend([card.mana_mask] * amount)
         self.units.sort(key=_PAY_KEY)
+
+    def _treasures_for(self, purpose: int) -> int:
+        """The Treasures a cost may spend: as rituals, none on a plain spell, and while a search paid for by
+        Treasures is in play with something to find, none but on a win or the commander."""
+        if purpose < _FOR_PLAY or not self.treasures:
+            return 0
+        if purpose < _FOR_WIN and (self.open_combos or self.open_fins):
+            cards = self.s.cards
+            for cid in self.activators:
+                ability = cards[cid].src.activated_tutor
+                if ability is not None and ability.treasures:
+                    return 0
+        return self.treasures
+
+    def _bursts_ready(self) -> list[int]:
+        """The creatures that can sacrifice a land for their mana now: in play since the turn began, not used
+        this turn, each with a land of its type in play that no other of them takes."""
+        if not self.bursts:
+            return []
+        cards = self.s.cards
+        lands = [cid for cid in self.bf if cards[cid].is_land]
+        ready: list[int] = []
+        for cid in self.bursts:
+            if cid in self.arrived or cid in self.burst_used:
+                continue
+            types = cards[cid].burst_types
+            land = next((lid for lid in lands if not types.isdisjoint(cards[lid].land_types)), None)
+            if land is not None:
+                lands.remove(land)
+                ready.append(cid)
+        return ready
+
+    def _life_payments(self, gone: Collection[int] = ()) -> tuple[int, int]:
+        """How many life payments for mana the life allows down to the floor, and the mana each makes, from
+        the cheapest source that is not among the creatures `gone`."""
+        sources = [cid for cid in self.life_sources if cid not in gone]
+        if not sources:
+            return 0, 0
+        cards = self.s.cards
+        source = cards[min(sources, key=lambda cid: cards[cid].life_cost)]
+        return max((self.life - _LIFE_FLOOR) // source.life_cost, 0), source.mana_mask
+
+    def _sacrifice_land(self, types: frozenset[str]) -> None:
+        """Sacrifice a land of one of the types, the one of the fewest colours: its mana this turn was made
+        before, and from the next turn it is gone."""
+        cards = self.s.cards
+        land = min(
+            (cid for cid in self.bf if cards[cid].is_land and not types.isdisjoint(cards[cid].land_types)),
+            key=lambda cid: _POP[cards[cid].land_mask],
+        )
+        self.bf.discard(land)
+        self.lands_in_play -= 1
+        held = self.pending if land in self.arrived and cards[land].land_tapped else self.pool
+        self._remove_mana(held, cards[land].land_mask, cards[land].land_amount)
+
+    def _taps_for_mana(self, cid: int) -> bool:
+        """Whether a creature is tapped for its mana in the turn's pool: one in play since the turn began that
+        taps for mana. A summoning-sick one cannot."""
+        card = self.s.cards[cid]
+        return card.mana_perm and card.delayed and cid not in self.arrived
+
+    def _tappable(self, cid: int) -> bool:
+        """Whether a Drum or a crew may tap the creature: it is not tapped for mana, and is no combo piece
+        whose own ability needs it untapped."""
+        return not self._taps_for_mana(cid) and not (self.s.cards[cid].combo and cid in self.s.tap_pieces)
+
+    def _meet_needs(self) -> None:
+        """Put the mana of each source that needs other permanents into the pool while they are there, and
+        take it out when they are gone: each source taps a creature of its own that is not tapped already, and
+        metalcraft counts the artifacts. A crewed Vehicle that came this turn makes its mana from the next."""
+        cards = self.s.cards
+        creatures = sum(1 for _, _, cid in self.creatures if self._tappable(cid))
+        for cid in self.needing:
+            card = cards[cid]
+            if card.need is ManaNeed.CREATURE:
+                met = creatures > 0
+                creatures -= met
+            else:
+                met = self.artifacts >= _METALCRAFT
+            if met == (cid in self.needs_met):
+                continue
+            later = card.delayed and cid in self.arrived
+            if met:
+                self.needs_met.add(cid)
+                if later:
+                    self.pending.extend([card.mana_mask] * card.mana_amount)
+                else:
+                    self._add_now(card.mana_mask, card.mana_amount)
+            else:
+                self.needs_met.discard(cid)
+                self._remove_mana(self.pending if later else self.pool, card.mana_mask, card.mana_amount)
 
     # -- what to do ---------------------------------------------------------------------------------------
 
@@ -937,44 +1268,65 @@ class _Game:
         s = self.s
         cards = s.cards
         units = self.units
-        reach = len(units)
-        if s.has_rituals:
-            reach += sum(max(cards[cid].gain, 0) for cid in self.hand if cards[cid].ritual)
+        reach = self._reach()
         best: _Pick | None = None
         best_rank = _HELD
         for cid in self.hand:
             card = cards[cid]
-            if card.rank < best_rank and card.cost.total <= reach:
-                found = self._eligible(cid, card, units)
+            if card.rank < best_rank and card.cost.total <= reach[card.reach_for]:
+                found = self._eligible(cid, card, units, from_command=False)
                 if found is not None:
                     best, best_rank = (cid, card, *found, False), card.rank
         for cid in self.cmd_left:
             card = cards[cid]
             rank = _COMMANDER_RANK + min(card.mv, _RANK_SPAN)
-            if rank < best_rank and card.cost.total <= reach:
-                found = self._eligible(cid, card, units)
+            if rank < best_rank and card.cost.total <= reach[_FOR_WIN]:
+                found = self._eligible(cid, card, units, from_command=True)
                 if found is not None:
                     best, best_rank = (cid, card, *found, True), rank
         return best
 
+    def _reach(self) -> tuple[int, int, int]:
+        """The most mana the turn could still make for each purpose, the one-shots it allows counted."""
+        units = len(self.units)
+        if not self.s.has_rituals:
+            return units, units, units
+        cards = self.s.cards
+        anything = units + self._life_payments()[0]
+        play = anything + sum(cards[cid].mana_amount for cid in self._bursts_ready())
+        win = play + self.treasures
+        play += self._treasures_for(_FOR_PLAY)
+        biggest = max((mv for _, mv, _ in self.creatures), default=0)
+        for cid in self.hand:
+            card = cards[cid]
+            if not card.ritual or (card.needs_sac and not self.creatures):
+                continue
+            gain = max(card.gain + (biggest if card.plus_sacrificed else 0), 0)
+            win += gain
+            play += 0 if card.discards else gain
+        return anything, play, win
+
     def _eligible(
-        self, cid: int, card: _Card, units: list[int]
+        self, cid: int, card: _Card, units: list[int], *, from_command: bool
     ) -> tuple[tuple[int, ...], tuple[int, int] | None, int] | None:
         """The plan to pay for a card, where its search goes and the card it costs from the hand, if it can be
-        cast now."""
+        cast now. Rituals pay for the commander, a mana source, a combo piece or a tutor fetching one."""
         if (card.aura and not self.lands_in_play) or (card.needs_sac and not self.creatures):
             return None
         target = None
+        purpose = _FOR_WIN if from_command else card.purpose
         if card.src.tutor is not None:
-            target = self._target(card, units)
+            target = self._target(card.src.tutor, units, card.cost.total)
             if target is None:
                 return None
+            if self.s.cards[target[1]].combo:
+                purpose = max(purpose, _FOR_PLAY)
         entry = -1
         if card.entry is not None:
             entry = self._entry_card(cid, card)
             if entry < 0:
                 return None
-        plan = self._plan(units, card.cost)
+        plan = self._plan(units, card.cost, (card,), purpose)
         if plan is None:
             return None
         return plan, target, entry
@@ -999,6 +1351,8 @@ class _Game:
         pay(units, card.cost)
         if target is not None and card.src.tutor is not None and card.src.tutor.x_limited:
             del units[: self.s.cards[target[1]].mv]
+        if units and units[0] & _RESTRICTED:
+            units[:] = [unit for unit in units if not unit & _RESTRICTED]
         if from_command:
             self.cmd_left.remove(cid)
             self.cmd_turn[cid] = self.turn
@@ -1006,27 +1360,34 @@ class _Game:
             self.hand.remove(cid)
         if entry >= 0:
             self.hand.remove(entry)
+        if any(code >= 0 and self.s.cards[code].discards for code in plan):
+            self.hand.clear()
         if card.needs_sac:
             self._sacrifice()
         if card.src.land_ramp is not None:
             self._ramp_lands(card)
-        if target is not None:
-            self._fetch(card, target)
+        if target is not None and card.src.tutor is not None:
+            self._fetch(card.src.tutor, target)
         self._enter(cid, card, from_command=from_command)
 
     def _enter(self, cid: int, card: _Card, *, from_command: bool = False) -> None:
         """What a resolved card leaves behind: the permanent, its mana, land drops and cards drawn."""
         if card.permanent:
             self.bf.add(cid)
+            self.arrived.add(cid)
         if card.creature:
-            rank = 2 if from_command else (1 if card.mana_perm else 0)
+            rank = 2 if from_command else (1 if card.source else 0)
             self.creatures.append((rank, card.mv, cid))
+        self._track_sources(cid, card)
         if card.mana_perm:
             if card.delayed:
                 self.sick.add(cid)
                 self.pending.extend([card.mana_mask] * card.mana_amount)
             else:
                 self._add_now(card.mana_mask, card.mana_amount)
+        if card.refund:
+            self.units.extend([card.mana_mask] * card.mana_amount)
+            self.units.sort(key=_PAY_KEY)
         if card.extra_drops:
             self.extra_drops += card.extra_drops
             self.drops_left += card.extra_drops
@@ -1037,16 +1398,116 @@ class _Game:
             self._draw(card.draw_count)
         if card.finisher and card.permanent:
             self._record_finisher(cid)
+        self._arrival_triggers(card.src)
 
-    def _sacrifice(self) -> int:
-        """Sacrifice the cheapest creature, one that makes no mana before a mana creature before a commander,
-        and take away what it gave: its mana, its extra land drops and its draw engine. Returns its mana
-        value. A commander is not cast again (ADR 0054)."""
-        entry = min(self.creatures)
+    def _arrival_triggers(self, card: GoldfishCard) -> None:
+        """The Treasures a permanent makes as it comes, and the deaths a free outlet or a creature that
+        searches as it dies brings on."""
+        if card.treasures_on_entry:
+            self._make_treasures(card.treasures_on_entry)
+        if self.s.deaths and (card.free_outlet or card.dies_tutor is not None):
+            self._offer_deaths()
+
+    def _make_treasures(self, count: int) -> None:
+        """Treasures wait in play as one-shot mana of any colour, and count as artifacts."""
+        self.treasures += count
+        self.artifacts += count
+        if self.needing:
+            self._meet_needs()
+
+    def _attack(self) -> bool:
+        """Attack with every creature that is left untapped by the first main phase, for the Treasures that
+        attacking and becoming tapped make (no damage is followed); whether any were made."""
+        cards = self.s.cards
+        attackers = [cards[cid].src for cid in self._attackers()]
+        made = sum(attacker.treasures_on_attack for attacker in attackers)
+        for cid in self.bf:
+            types = cards[cid].src.treasure_on_tap
+            if types:
+                made += sum(1 for attacker in attackers if _has_type(attacker, types))
+        if made:
+            self._make_treasures(made)
+        return made > 0
+
+    def _attackers(self) -> list[int]:
+        """The creatures that attack: in play since the turn began and not tapped in the first main phase.
+        Those tapped for mana or a burst do not, and nor do as many others as Drums and crews tap, the
+        summoning-sick ones first and then those with the least to gain from attacking."""
+        cards = self.s.cards
+        types = frozenset(t for cid in self.bf for t in cards[cid].src.treasure_on_tap)
+        ready = [
+            cid
+            for _, _, cid in self.creatures
+            if cid not in self.arrived and cid not in self.burst_used and not self._taps_for_mana(cid)
+        ]
+        taps = sum(1 for cid in self.needs_met if cards[cid].need is ManaNeed.CREATURE)
+        taps -= sum(1 for _, _, cid in self.creatures if cid in self.arrived and self._tappable(cid))
+
+        def gain(cid: int) -> int:
+            src = cards[cid].src
+            return src.treasures_on_attack + (1 if types and _has_type(src, types) else 0)
+
+        spare = sorted((cid for cid in ready if self._tappable(cid)), key=gain)[: max(taps, 0)]
+        return [cid for cid in ready if cid not in spare]
+
+    def _activate(self) -> bool:
+        """Use each permanent's search paid for by Treasures or loyalty while it can pay and finds a card;
+        whether any did."""
+        cards = self.s.cards
+        used = False
+        for cid in list(self.activators):
+            ability = cards[cid].src.activated_tutor
+            if ability is None or cid not in self.bf:
+                continue
+            while self.treasures >= ability.treasures and cid not in self.loyalty_used:
+                target = self._target(ability.tutor, self.units, 0)
+                if target is None:
+                    break
+                if ability.loyalty:
+                    self.loyalty_used.add(cid)
+                self._spend_treasures(ability.treasures)
+                self._fetch(ability.tutor, target)
+                used = True
+        return used
+
+    def _spend_treasures(self, count: int) -> None:
+        if not count:
+            return
+        self.treasures -= count
+        self.artifacts -= count
+        if self.needing:
+            self._meet_needs()
+
+    def _track_sources(self, cid: int, card: _Card, *, gone: bool = False) -> None:
+        """Count a permanent coming or going among the artifacts and the mana sources that are no fixed part
+        of each turn's mana, and settle which sources needing other permanents make mana."""
+        if card.artifact:
+            self.artifacts += -1 if gone else 1
+        for held, kept in (
+            (card.need is not None, self.needing),
+            (bool(card.life_cost), self.life_sources),
+            (bool(card.burst_types), self.bursts),
+            (card.src.activated_tutor is not None, self.activators),
+        ):
+            if held:
+                (kept.remove if gone else kept.append)(cid)
+        if gone and cid in self.needs_met:
+            self.needs_met.discard(cid)
+            self._remove_creature_mana(cid, card.mana_mask, card.mana_amount)
+        if self.needing:
+            self._meet_needs()
+
+    def _sacrifice(self, entry: tuple[int, int, int] | None = None) -> int:
+        """Sacrifice a creature of `creatures`, by default the cheapest, one that makes no mana before a mana
+        creature before a commander, and take away what it gave: its mana, its extra land drops and its draw
+        engine. Its search as it dies happens. Returns its mana value. A commander is not cast again (ADR
+        0054)."""
+        entry = min(self.creatures) if entry is None else entry
         self.creatures.remove(entry)
         _, mv, cid = entry
         card = self.s.cards[cid]
         self.bf.discard(cid)
+        self._track_sources(cid, card, gone=True)
         if card.mana_perm:
             self._remove_creature_mana(cid, card.mana_mask, card.mana_amount)
         if card.extra_drops:
@@ -1054,7 +1515,37 @@ class _Game:
             self.drops_left = max(self.drops_left - card.extra_drops, 0)
         if card.engine:
             self.engines -= 1
+        if card.src.dies_tutor is not None:
+            self._search_all(card.src.dies_tutor)
         return mv
+
+    def _offer_deaths(self) -> None:
+        """Sacrifice each creature whose death searches to a free outlet in play, while a combo or a finisher
+        is still to come."""
+        cards = self.s.cards
+        if not (self.open_combos or self.open_fins) or not any(cards[cid].src.free_outlet for cid in self.bf):
+            return
+        for entry in [entry for entry in self.creatures if cards[entry[2]].src.dies_tutor is not None]:
+            if entry in self.creatures:
+                self._sacrifice(entry)
+
+    def _search_all(self, tutor: Tutor) -> None:
+        """A search for one card, or for any number whose mana values add up to the tutor's total."""
+        if tutor.total_mana_value is None:
+            target = self._target(tutor, self.units, 0)
+            if target is not None:
+                self._fetch(tutor, target)
+            return
+        self.tutor_look = True
+        cards = self.s.cards
+        left = tutor.total_mana_value
+        chosen: list[int] = []
+        for cid, _ in self._wanted():
+            if cid not in chosen and cards[cid].mv <= left and _finds(cards[cid], tutor, None):
+                chosen.append(cid)
+                left -= cards[cid].mv
+        for cid in chosen:
+            self._fetch(tutor, (self.lib.index(cid, self.top), cid))
 
     # -- searching ----------------------------------------------------------------------------------------
 
@@ -1077,21 +1568,30 @@ class _Game:
                 tapped = ramp.destination is not LandDestination.UNTAPPED
                 self._put_land(cid, cards[cid], tapped=tapped)
 
-    def _target(self, card: _Card, units: list[int]) -> tuple[int, int] | None:
+    def _target(self, tutor: Tutor, units: list[int], paid: int) -> tuple[int, int] | None:
         """The card a tutor would fetch and its place in the library: a piece of the combo nearest to landing
-        that the tutor can find, else a finisher."""
-        tutor = card.src.tutor
-        if tutor is None:
-            return None
+        that the tutor can find, else a finisher. `paid` is the mana the tutor itself takes from the units.
+        A tutor to the hand or the top takes one the mana could pay for by the last turn, a land a turn,
+        before one it could not."""
         self.tutor_look = True
         limit = tutor.max_mana_value
         if tutor.x_limited:
-            limit = len(units) - card.cost.total
+            limit = len(units) - paid
         elif tutor.value_over_sacrifice is not None:
             # With no creature to sacrifice nothing fits.
             limit = tutor.value_over_sacrifice + min(self.creatures)[1] if self.creatures else -1
         cards = self.s.cards
-        return next(((index, cid) for cid, index in self._wanted() if _finds(cards[cid], tutor, limit)), None)
+        anywhere = tutor.destination is TutorDestination.BATTLEFIELD
+        reach = len(units) - paid + self.s.horizon - self.turn
+        first = None
+        for cid, index in self._wanted():
+            found = cards[cid]
+            if not _finds(found, tutor, limit):
+                continue
+            if anywhere or found.mv <= reach:
+                return index, cid
+            first = first or (index, cid)
+        return first
 
     def _wanted(self) -> list[tuple[int, int]]:
         """What a tutor is after that is in the library, best first, with its place there: the missing
@@ -1126,11 +1626,8 @@ class _Game:
         ]
         return [(cid, where[cid]) for cid in wanted]
 
-    def _fetch(self, card: _Card, target: tuple[int, int]) -> None:
+    def _fetch(self, tutor: Tutor, target: tuple[int, int]) -> None:
         index, cid = target
-        tutor = card.src.tutor
-        if tutor is None:
-            return
         self.searched = True
         self.lib.pop(index)
         self.pops += 1
@@ -1150,7 +1647,10 @@ class _Game:
         s = self.s
         for k in list(self.open_combos):
             cast = self._pieces_to_cast(k)
-            if cast is None or (cast and self._plan(self.units, s.merged_cost(cast)) is None):
+            if cast is None:
+                continue
+            pieces = tuple(s.cards[piece] for piece in cast)
+            if cast and self._plan(self.units, s.merged_cost(cast), pieces, _FOR_WIN) is None:
                 continue
             self.combo_turn[k] = self.turn
             if any(piece in self.fetched for piece in s.combo_pieces[k] or ()):
@@ -1158,13 +1658,19 @@ class _Game:
             self.open_combos.remove(k)
 
     def _pieces_to_cast(self, k: int) -> tuple[int, ...] | None:
-        """The pieces of combo k still to be cast, or None when one is neither out nor castable."""
+        """The pieces of combo k still to be cast, or None when one is neither out nor castable. A piece whose
+        ability taps it must have been out since the turn began."""
         s = self.s
+        free, taps = s.combo_free[k], s.tap_pieces
         cast: list[int] = []
         for piece in s.combo_pieces[k] or ():
-            if piece in self.bf or piece in s.combo_free[k]:
+            if piece in self.bf:
+                if piece in taps and piece in self.arrived and piece not in free:
+                    return None
                 continue
-            if piece not in self.hand and piece not in self.cmd_left:
+            if piece in free:
+                continue
+            if piece in taps or (piece not in self.hand and piece not in self.cmd_left):
                 return None
             cast.append(piece)
         return tuple(cast)
@@ -1173,8 +1679,9 @@ class _Game:
         s = self.s
         for position in list(self.open_fins):
             cid = s.fin_ids[position]
+            card = s.cards[cid]
             if (cid in self.hand or cid in self.cmd_left) and self._plan(
-                self.units, s.cards[cid].fin_cost
+                self.units, card.fin_cost, (card,), _FOR_WIN
             ) is not None:
                 self._record_finisher(cid)
 
@@ -1186,14 +1693,43 @@ class _Game:
 
 
 def _finds(card: _Card, tutor: Tutor, limit: int | None) -> bool:
-    """Whether a tutor can fetch the card: a permanent for the battlefield, of a type it searches, within the
-    mana value limit, and no land."""
+    """Whether a tutor can fetch the card: a permanent for the battlefield, of a type, subtype and colour it
+    searches, within the mana value and power limits, and no land."""
+    src = card.src
     return (
         (limit is None or card.mv <= limit)
-        and (not tutor.finds or bool(card.src.kinds & tutor.finds))
+        and _finds_type(src, tutor)
+        and _finds_colour(card.colours, tutor.colours)
+        and (tutor.max_power is None or (src.power is not None and src.power <= tutor.max_power))
         and (card.permanent or tutor.destination is not TutorDestination.BATTLEFIELD)
         and not card.is_land
     )
+
+
+def _finds_colour(colours: frozenset[str], wanted: frozenset[str]) -> bool:
+    """Whether a card of these colours has one of the wanted ones, "C" standing for none."""
+    return not wanted or bool(colours & wanted) or ("C" in wanted and not colours)
+
+
+def _has_type(card: GoldfishCard, types: frozenset[str]) -> bool:
+    """Whether a creature has one of the subtypes, "creature" standing for any."""
+    return "creature" in types or _has_creature_type(card, types) or bool(card.subtypes & types)
+
+
+def _has_creature_type(card: GoldfishCard, types: frozenset[str]) -> bool:
+    """Whether a changeling has one of the subtypes: it has every creature type and no other."""
+    return CHANGELING in card.subtypes and not types <= NON_CREATURE_SUBTYPES
+
+
+def _finds_type(card: GoldfishCard, tutor: Tutor) -> bool:
+    """Whether the card is of a type and a subtype the tutor searches, or of either when it takes either."""
+    of_type = not tutor.finds or bool(card.kinds & tutor.finds)
+    if not tutor.subtypes:
+        return of_type
+    of_subtype = _has_creature_type(card, tutor.subtypes) or bool(card.subtypes & tutor.subtypes)
+    if tutor.either and tutor.finds:
+        return bool(card.kinds & tutor.finds) or of_subtype
+    return of_type and of_subtype
 
 
 # --- the run ----------------------------------------------------------------------------------------------

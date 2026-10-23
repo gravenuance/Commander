@@ -31,6 +31,7 @@ class CardContext:
     cards: Mapping[str, CardMana]
     infos: Mapping[str, CardInfo]
     tags: Mapping[str, frozenset[str]]
+    powers: Mapping[str, str | None]
     combos: tuple[ComboDetail, ...]
     finishers_added: tuple[str, ...]
     finishers_removed: tuple[str, ...]
@@ -65,6 +66,7 @@ def load_goldfish(
     ids = [info.oracle_id for info in cards.values()]
     infos = db.cards(ids)
     tags = db.tag_lineage(ids)
+    powers = _powers(db, ids)
     bracket = cached_effective_deck(deck, estimate_cache(cache_root / ESTIMATE_FOLDER), now=now).bracket
     combos = cached_own_combos(deck, cache_root, now=now) or ()
     compiled = compile_deck(
@@ -76,9 +78,16 @@ def load_goldfish(
         synergy=dominant_card_ids(deck, profile, db),
         finishers_added=added,
         finishers_removed=removed,
+        powers=powers,
     )
-    context = CardContext(deck, profile, cards, infos, tags, tuple(combos), added, removed)
+    context = CardContext(deck, profile, cards, infos, tags, powers, tuple(combos), added, removed)
     return GoldfishInput(compiled, bracket, context)
+
+
+def _powers(db: CardDb, ids: Iterable[str]) -> dict[str, str | None]:
+    """Each card's printed power by oracle id, which a tutor for a creature with power up to some is read
+    against."""
+    return {oracle_id: text.power for oracle_id, text in db.card_texts(ids).items()}
 
 
 def tagged_finishers(deck: Deck, db: CardDb) -> list[str]:
@@ -108,4 +117,5 @@ def incoming_card(loaded: GoldfishInput, db: CardDb, name: str, copies: int = 1)
         synergy=dominant_card_ids(context.deck, context.profile, db, also=ids),
         finishers_added=context.finishers_added,
         finishers_removed=context.finishers_removed,
+        powers={**context.powers, **_powers(db, ids)},
     )

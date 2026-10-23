@@ -7,8 +7,9 @@ A card the reading cannot place stays a plain spell, flagged `modelled=False` an
 
 import re
 from collections.abc import Collection, Iterable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import Enum
+from typing import NamedTuple
 
 from commander.answers import card_key
 from commander.carddb import COLORS, FACE_SEPARATOR, CardInfo, CardMana, Role, back_is_land, front_type
@@ -41,6 +42,25 @@ FINISHER_TAGS = frozenset({"overrun", "alternate-win-condition", "theft-mass"})
 _REACHABLE_ZONES = frozenset("BHCL")
 _COLOURLESS = "C"
 _ALL_COLOURS = frozenset(COLORS)
+# The subtypes of a card with changeling: every creature type.
+CHANGELING = "changeling"
+_CHANGELING = re.compile(r"^changeling\b", re.MULTILINE)
+# The subtypes of the other card types, which a changeling does not have: its types are the creature types.
+NON_CREATURE_SUBTYPES = frozenset(
+    word
+    for words in (
+        # Artifact
+        "attraction blood bobblehead clue contraption equipment food fortification gold incubator junk",
+        "lander map powerstone spacecraft treasure vehicle",
+        # Enchantment
+        "aura background cartouche case class curse role room rune saga shrine",
+        # Land, without the words of Power-Plant that are also creature types
+        "cave desert forest gate island lair locus mine mountain plains planet sphere swamp tower town",
+        # Instant, sorcery and battle
+        "adventure arcane lesson omen trap siege",
+    )
+    for word in words.split()
+)
 
 
 class CardKind(Enum):
@@ -83,6 +103,17 @@ class LandFace:
     tapped: bool
     # Mana per tap, net of any mana paid for it (Ancient Tomb: 2).
     amount: int = 1
+    # Sacrificed when another land is played (City of Traitors), after its mana that turn is made.
+    lost_to_land_drop: bool = False
+
+
+class ManaNeed(Enum):
+    """What a permanent's mana ability needs on the battlefield besides itself."""
+
+    # A creature to tap for it, summoning sick or not: Springleaf Drum, a Vehicle's crew.
+    CREATURE = "a creature to tap"
+    # Metalcraft: three or more artifacts, itself among them (Mox Opal).
+    ARTIFACTS = "three artifacts"
 
 
 @dataclass(slots=True, frozen=True)
@@ -102,6 +133,17 @@ class ManaAbility:
     # An Aura that adds this mana whenever its land is tapped (Wild Growth): it needs a land in play and its
     # mana comes the turn it lands.
     on_land: bool = False
+    # The kinds of spell the mana may be spent on (Geosurge: artifact and creature); empty for any.
+    spend_on: frozenset[CardKind] = frozenset()
+    needs: ManaNeed | None = None
+    # Life paid for each use, with no tap, so as often as life allows (Treasonous Ogre: 3 for {R}).
+    life: int = 0
+    # The basic land types of a land sacrificed for each use (Orcish Lumberjack: a Forest).
+    land_sacrificed: frozenset[str] = frozenset()
+    # Discards the rest of the hand (Lion's Eye Diamond).
+    discards_hand: bool = False
+    # Adds the mana value of the creature sacrificed to cast it (Metamorphosis).
+    plus_sacrificed: bool = False
 
 
 @dataclass(slots=True, frozen=True)
@@ -132,6 +174,26 @@ class Tutor:
     x_limited: bool = False
     # The limit is the sacrificed creature's mana value plus this (Eldritch Evolution).
     value_over_sacrifice: int | None = None
+    # The colours a found card must have one of (Natural Order: green); "C" for a colourless card.
+    colours: frozenset[str] = frozenset()
+    max_power: int | None = None
+    # Subtypes a found card must have one of: besides one of `finds` ("a Dragon creature card"), or instead
+    # of one when `either` ("an artifact or Dragon card").
+    subtypes: frozenset[str] = frozenset()
+    either: bool = False
+    # Finds any number of cards whose mana values add up to this or less (Protean Hulk: 6).
+    total_mana_value: int | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class ActivatedTutor:
+    """A permanent's ability that searches, paid for by sacrificing Treasures (Magda, Brazen Outlaw) or by
+    loyalty (Tezzeret, Cruel Captain's -3). Loyalty is not in the card data: a -N ability is taken as payable
+    once, when N is at most the card's mana value."""
+
+    tutor: Tutor
+    treasures: int = 0
+    loyalty: int = 0
 
 
 @dataclass(slots=True, frozen=True)
@@ -177,6 +239,24 @@ class GoldfishCard:
     entry_cost: EntryCost | None = None
     # The basic land types of a land (Breeding Pool: forest and island), which a typed search matches.
     land_types: frozenset[str] = frozenset()
+    # The front face's power, None for a card with none or a power that varies (*).
+    power: int | None = None
+    # The subtypes of the type line, casefolded; a changeling's are CHANGELING, which is every creature type.
+    subtypes: frozenset[str] = frozenset()
+    # A creature with an activated ability that taps it and makes no mana (Hermit Druid): as a combo piece it
+    # must have been in play since the turn began.
+    tap_ability: bool = False
+    # Treasures it makes as it comes (Plundering Barbarian) and each time it attacks.
+    treasures_on_entry: int = 0
+    treasures_on_attack: int = 0
+    # The creature subtypes ("creature" for any) that make a Treasure as one becomes tapped (Magda: Dwarf),
+    # which a creature does as it attacks.
+    treasure_on_tap: frozenset[str] = frozenset()
+    activated_tutor: ActivatedTutor | None = None
+    # A search as the creature dies (Protean Hulk, Academy Rector), which a free sacrifice outlet brings on.
+    dies_tutor: Tutor | None = None
+    # Sacrifices a creature for no mana (Carrion Feeder, Phyrexian Tower, Ashnod's Altar).
+    free_outlet: bool = False
 
     @property
     def permanent(self) -> bool:
@@ -222,6 +302,10 @@ class _Context:
     # The deck's lands with basic land types: the types each has and the colours it makes, for the lands that
     # fetch by type.
     typed_lands: tuple[tuple[frozenset[str], frozenset[str]], ...] = ()
+    # Each card's printed power by oracle id.
+    powers: Mapping[str, str | None] = field(default_factory=dict[str, str | None])
+    # The subtypes the cards have, which a tutor may name.
+    subtypes: frozenset[str] = frozenset()
 
 
 def compile_deck(
@@ -234,14 +318,16 @@ def compile_deck(
     synergy: Collection[str] = (),
     finishers_added: Iterable[str] = (),
     finishers_removed: Iterable[str] = (),
+    powers: Mapping[str, str | None] | None = None,
 ) -> GoldfishDeck:
     """The deck's cards as records, from data already loaded.
 
     cards holds the deck's cards by casefolded name, infos their Tagger roles by oracle id (`CardDb.cards`),
     and tags each card's tag slugs with every tag above them (`CardDb.tag_lineage`). synergy is the oracle ids
     of the cards matching the deck's dominant tags (`ideas.search_tags`). The finisher names are added to and
-    taken from the cards the Tagger tags make finishers. A card the card data lacks is a plain spell of the
-    deck's average mana value, not modelled.
+    taken from the cards the Tagger tags make finishers. powers holds the cards' printed power by oracle id
+    (`CardDb.card_texts`); a card it lacks has none. A card the card data lacks is a plain spell of the deck's
+    average mana value, not modelled.
     """
     context, kept, left_out, average = _deck_context(
         deck,
@@ -252,6 +338,7 @@ def compile_deck(
         synergy=synergy,
         finishers_added=finishers_added,
         finishers_removed=finishers_removed,
+        powers=powers or {},
     )
     commanders = {card_key(name) for name in deck.commanders}
     compiled: dict[str, GoldfishCard] = {}
@@ -286,6 +373,7 @@ def _deck_context(
     synergy: Collection[str],
     finishers_added: Iterable[str],
     finishers_removed: Iterable[str],
+    powers: Mapping[str, str | None],
 ) -> tuple[_Context, list[GoldfishCombo], list[GoldfishCombo], float]:
     """What every card of the deck is read against, the deck's kept and left-out combos and its average mana
     value."""
@@ -302,6 +390,8 @@ def _deck_context(
         finishers_removed=frozenset(card_key(name) for name in finishers_removed),
         combo_pieces=frozenset(card_key(name) for combo in kept for name in combo.pieces),
         unknown_mana_value=max(round(average), 1),
+        powers=powers,
+        subtypes=frozenset(word for info in cards.values() for word in _subtypes(info.type_line)),
     )
     return replace(context, typed_lands=_typed_lands(deck, cards, context)), kept, left_out, average
 
@@ -318,11 +408,12 @@ def compile_card(
     synergy: Collection[str] = (),
     finishers_added: Iterable[str] = (),
     finishers_removed: Iterable[str] = (),
+    powers: Mapping[str, str | None] | None = None,
 ) -> GoldfishCard:
     """One card read as `compile_deck` reads the deck's own: its identity, the typed lands fetches find, the
-    combos, synergy and finishers. For a card that is not in the deck, a swap's incoming card; `cards` and
-    `infos` must hold it as well as the deck. A combo is the deck's own, so the card is no piece of one that
-    names it. A card the card data lacks is a plain spell, not modelled."""
+    combos, synergy and finishers. For a card that is not in the deck, a swap's incoming card; `cards`,
+    `infos` and `powers` must hold it as well as the deck. A combo is the deck's own, so the card is no piece
+    of one that names it. A card the card data lacks is a plain spell, not modelled."""
     context = _deck_context(
         deck,
         cards,
@@ -332,6 +423,7 @@ def compile_card(
         synergy=synergy,
         finishers_added=finishers_added,
         finishers_removed=finishers_removed,
+        powers=powers or {},
     )[0]
     return _compile_card(name, cards.get(name.casefold()), copies, context, commander=False)
 
@@ -351,6 +443,11 @@ def _land_types(info: CardMana) -> frozenset[str]:
     return frozenset(BASIC_TYPES).intersection(
         re.findall(r"[a-z]+", front_type(info.type_line).casefold().partition("—")[2])
     )
+
+
+def _subtypes(type_line: str) -> frozenset[str]:
+    """The subtypes of a card's front face, casefolded."""
+    return frozenset(re.findall(r"[a-z]+", front_type(type_line).casefold().partition("—")[2]))
 
 
 def _typed_lands(
@@ -408,12 +505,16 @@ _UNMODELLED = re.compile(
 )
 # A cost reduction, for other spells (Herald's Horn) or this one (Ghalta): the card is never modelled.
 _COST_REDUCER = re.compile(r"costs? (?:\{[^}]+\})+ less|less to cast")
+# An ability that sacrifices a creature for no mana, tapping its permanent at most (Phyrexian Tower).
+_FREE_OUTLET = re.compile(r"^(?:\{t\}, )?sacrifice (?:a|another) creature(?:, \{t\})?: ", re.MULTILINE)
+# An activated ability that taps its permanent and adds no mana (Hermit Druid's "{G}, {T}: Reveal ...").
+_TAP_ABILITY = re.compile(r"^[^:\n]*\{t\}[^:\n]*: (?!add\b)", re.MULTILINE)
 # A land that returns a land to the hand on entering (Karoo).
 _BOUNCE_LAND = re.compile(r"return (?:an? )?(?:untapped )?\w+ you control to its owner's hand")
-# A land that costs other lands (Lotus Field, Glacial Chasm) or is lost when one is played (City of Traitors).
-_LAND_SACRIFICE = re.compile(
-    r"when this land enters, sacrifice (?:a|one|two|three) lands?\b|when you play another land, sacrifice"
-)
+# A land that costs other lands (Lotus Field, Glacial Chasm).
+_LAND_SACRIFICE = re.compile(r"when this land enters, sacrifice (?:a|one|two|three) lands?\b")
+# A land lost when another is played (City of Traitors).
+_LOST_TO_LAND_DROP = re.compile(r"when you play another land, sacrifice this land")
 # The cost of a filter land (Fetid Heath): one mana, of a colour or either of two.
 _FILTER_COST = re.compile(r"\{[wubrg](?:/[wubrg])?\}")
 # A land that is whatever land it copies (Vesuva): it makes mana, but no text says how much.
@@ -453,8 +554,15 @@ def _compile_card(
     card = _plain(
         name, info.oracle_id, context, copies, commander, mana_value=cost[0], pips=cost[1], kinds=kinds
     )
+    power = context.powers.get(info.oracle_id)
+    text = info.oracle_text.casefold()
+    changeling = _CHANGELING.search(text) is not None
     card = replace(
-        card, x_cost=any(symbol == "X" for symbol in PIP.findall(cost_halves(info.mana_cost)[face]))
+        card,
+        x_cost=any(symbol == "X" for symbol in PIP.findall(cost_halves(info.mana_cost)[face])),
+        power=int(power) if power is not None and power.isdigit() else None,
+        subtypes=frozenset({CHANGELING}) if changeling else _subtypes(info.type_line),
+        free_outlet=card.permanent and _FREE_OUTLET.search(text) is not None,
     )
     if info_is_land(info):
         land, understood = _land_face(info, context)
@@ -541,15 +649,41 @@ _NUMBER_WORDS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "fi
 _ANY_COLOUR = re.compile(
     r"\bany (?:one )?(?:color|type)\b|the chosen colou?r|any of the exiled card's colou?rs"
 )
-_AMOUNT_WORD = re.compile(r"^(" + "|".join(_NUMBER_WORDS) + r") (?:additional )?mana\b")
-# A count, or a colour or use the game cannot tell: Mox Amber's colours need a legendary creature, Flywheel
-# Racer's mana needs it crewed.
+_NUMBER_NAMES = {n: word for word, n in _NUMBER_WORDS.items() if word not in {"a", "an"}}
+_AMOUNT_WORDS = re.compile(r"\b(" + "|".join(_NUMBER_WORDS) + r") (?:additional )?mana\b")
+# A count, or a colour or use the game cannot tell: Mox Amber's colours need a legendary creature, and a
+# permanent that must be a creature with no crew to make it one.
 _NOT_FIXED_MANA = re.compile(
     rf"{VARIABLE_MANA.pattern}|among legendary|activate only if (?:this \w+|it) is a creature"
 )
+# What limits an ability beyond the metalcraft and crew conditions the game follows (Fanatic of Rhonas'
+# ferocious mana, Kozilek's Translator): its mana is left out of a nonland card, the rest of the card stays.
+_CONDITION = re.compile(r"activate only if|only once each turn")
+_CREWED = re.compile(r"activate only if this \w+ is a creature\.")
+_CREW = re.compile(r"^crew \d+", re.MULTILINE)
+_METALCRAFT = re.compile(r"activate only if you control three or more artifacts\.")
 _COST_PART = re.compile(
-    r"\{t\}|\{(?P<generic>\d+)\}|pay \d+ life|sacrifice this \w+|exile this card from your hand"
+    r"\{t\}|\{(?P<generic>\d+)\}|pay (?P<life>\d+) life|sacrifice this \w+|exile this card from your hand"
+    r"|(?P<creature>tap an untapped creature you control)"
+    rf"|sacrifice an? (?P<land>{'|'.join(BASIC_TYPES)})|(?P<discard>discard your hand)"
 )
+# Metamorphosis: "Add X mana of any one color, where X is 1 plus the sacrificed creature's mana value".
+_PLUS_SACRIFICED = re.compile(
+    r"x mana of any one colou?r, where x is (?P<n>\d) plus the sacrificed creature's mana value"
+)
+# "Three mana in any combination of {R} and/or {G}", or of "colors", which are the deck's.
+_COMBINATION = re.compile(r"(?P<n>\w+) mana in any combination of (?P<symbols>.*)")
+_COLOURS_WORD = re.compile(r"colou?rs\b")
+# A mode of a modal spell ("• Add {R} for each ..."), read like a line of its own.
+_MODE_BULLET = re.compile(r"^• ")
+# Mana that grows with a count after a fixed part (Rite of Flame): the fixed part is what is sure.
+_FIXED_THEN_MORE = re.compile(r"((?:\{[wubrgc\d]\})+), then add .*")
+# Mana for each card in an opponent's hand (Jeska's Will), read against a hand of OPPONENT_HAND cards.
+_PER_OPPONENT_CARD = re.compile(r"(\{[wubrgc]\}) for each card in target opponent's hand")
+OPPONENT_HAND = 7
+_SPEND_ON = re.compile(r"spend this mana only to cast ([a-z, ]+?) spells\b")
+# Treasure a spell makes, spent at once as mana of any colour; a tapped one waits a turn and is left out.
+_TREASURES = re.compile(r"\bcreate (?P<n>a|an|one|two|three|four|five) treasure tokens?\b")
 
 
 @dataclass(slots=True, frozen=True)
@@ -558,45 +692,116 @@ class _Cost:
 
     mana: int
     taps: bool
+    # Its own sacrifice.
     sacrifices: bool
     exiles_from_hand: bool = False
+    life: int = 0
+    taps_creature: bool = False
+    # The basic land type of a land it sacrifices.
+    land: str = ""
+    discards_hand: bool = False
 
 
 def _paid(cost: str) -> _Cost | None:
-    """What an ability costs; None when it asks for more than mana, a tap, life or its own sacrifice."""
-    mana = 0
-    taps = sacrifices = from_hand = False
-    for part in (p.strip() for p in cost.split(",") if p.strip()):
-        matched = _COST_PART.fullmatch(part)
-        if matched is None:
-            return None
-        mana += int(matched.group("generic") or 0)
-        taps = taps or part == "{t}"
-        sacrifices = sacrifices or part.startswith("sacrifice")
-        from_hand = from_hand or part.startswith("exile")
-    return _Cost(mana, taps=taps, sacrifices=sacrifices, exiles_from_hand=from_hand)
+    """What an ability costs; None when it asks for more than mana, a tap, life, its own sacrifice, a creature
+    to tap, a land of a basic type to sacrifice or the hand to discard."""
+    parts = [p.strip() for p in cost.split(",") if p.strip()]
+    found = [_COST_PART.fullmatch(part) for part in parts]
+    matched = [m for m in found if m is not None]
+    if len(matched) != len(found):
+        return None
+    return _Cost(
+        sum(int(m.group("generic") or 0) for m in matched),
+        taps="{t}" in parts,
+        sacrifices=any(part.startswith("sacrifice this") for part in parts),
+        exiles_from_hand=any(part.startswith("exile") for part in parts),
+        life=sum(int(m.group("life") or 0) for m in matched),
+        taps_creature=any(m.group("creature") for m in matched),
+        land=next((m.group("land") for m in matched if m.group("land")), ""),
+        discards_hand=any(m.group("discard") for m in matched),
+    )
 
 
-def _abilities(text: str) -> list[tuple[str, str, bool]]:
-    """Each line that adds mana: its cost, what it adds, and whether it is no fixed amount of any colour
-    (a count, or a colour or use the game cannot tell). A line whose mana can be spent only on some spells is
-    left out, which undercounts rather than overcounts."""
-    found: list[tuple[str, str, bool]] = []
-    for line in text.split("\n"):
+class _ManaLine(NamedTuple):
+    """A line that adds mana: its cost, what it adds, whether that is no fixed amount of any colour (a count,
+    or a colour or use the game cannot tell), the kinds of spell alone it may pay for (empty for any), what
+    it needs on the battlefield and whether a condition the game cannot follow limits when it is used (a land
+    with one is still counted, as Hushwood Verge's second colour is)."""
+
+    cost: str
+    what: str
+    varies: bool
+    spend_on: frozenset[CardKind]
+    needs: ManaNeed | None = None
+    conditional: bool = False
+
+
+def _abilities(text: str) -> list[_ManaLine]:
+    """Each line that adds mana, after a mode's bullet or an ability word ("Metalcraft — "). A line whose
+    mana can be spent only on something other than spells of some card types is left out, which undercounts
+    rather than overcounts."""
+    found: list[_ManaLine] = []
+    crewed = _CREW.search(text) is not None
+    for whole in (_MODE_BULLET.sub("", line) for line in text.split("\n")):
+        line = _ABILITY_WORD.sub("", whole, count=1)
         matched = _MANA_ABILITY.match(line)
-        if matched is not None and RESTRICTED not in line:
-            found.append(
-                (matched.group("cost") or "", matched.group("what"), _NOT_FIXED_MANA.search(line) is not None)
-            )
+        # Behind an ability word only an activated ability is read: "Threshold — Add ... instead" is not more.
+        if matched is None or (line != whole and matched.group("cost") is None):
+            continue
+        spend_on = frozenset[CardKind]()
+        if RESTRICTED in line:
+            spend_on = _spend_on(line)
+            if not spend_on:
+                continue
+        cost, what = matched.group("cost") or "", _fixed_mana(matched.group("what"))
+        after = line[matched.end() :]
+        needs = None
+        if _METALCRAFT.search(after):
+            needs, after = ManaNeed.ARTIFACTS, _METALCRAFT.sub("", after)
+        elif crewed and _CREWED.search(after):
+            needs, after = ManaNeed.CREATURE, _CREWED.sub("", after)
+        said = f"{cost}: add {what}.{after}"
+        varies = _NOT_FIXED_MANA.search(said) is not None
+        found.append(_ManaLine(cost, what, varies, spend_on, needs, _CONDITION.search(after) is not None))
     return found
+
+
+def _spend_on(line: str) -> frozenset[CardKind]:
+    """The card types of the spells a line's mana is restricted to; empty for any other restriction."""
+    matched = _SPEND_ON.search(line)
+    if matched is None:
+        return frozenset()
+    words = [w for w in re.findall(r"[a-z]+", matched.group(1)) if w != "or"]
+    if not words or any(w not in _KIND_WORDS for w in words):
+        return frozenset()
+    return frozenset(_KIND_WORDS[w] for w in words)
+
+
+def _fixed_mana(what: str) -> str:
+    """What an ability adds, with a count the game can settle replaced by its value: the fixed part of mana
+    that grows after it, a mana for each card of an opponent's hand of OPPONENT_HAND."""
+    if fixed := _FIXED_THEN_MORE.fullmatch(what):
+        return fixed.group(1)
+    if each := _PER_OPPONENT_CARD.fullmatch(what):
+        return each.group(1) * OPPONENT_HAND
+    if plus := _PLUS_SACRIFICED.fullmatch(what):
+        # The rest is the sacrificed creature's, which the game adds when it sacrifices one.
+        return f"{_NUMBER_NAMES[int(plus.group('n'))]} mana of any one color"
+    return what
 
 
 def _net_mana(cost: _Cost, what: str, identity: frozenset[str]) -> tuple[int, frozenset[str]] | None:
     """The net mana of one ability and the colours it can make; None when it nets nothing or is no fixed
     amount of mana."""
     if _ANY_COLOUR.search(what):
-        said = _AMOUNT_WORD.match(what)
-        made, colours = (_NUMBER_WORDS[said.group(1)] if said else 1), (identity or _ALL_COLOURS)
+        # "Two mana of any one color and two mana of any other color" is four.
+        said = _AMOUNT_WORDS.findall(what)
+        made, colours = (sum(_NUMBER_WORDS[n] for n in said) or 1), (identity or _ALL_COLOURS)
+    elif (mixed := _COMBINATION.fullmatch(what)) and mixed.group("n") in _NUMBER_WORDS:
+        made = _NUMBER_WORDS[mixed.group("n")]
+        colours = frozenset(s.upper() for s in _SYMBOL.findall(mixed.group("symbols")) if not s.isdigit())
+        if _COLOURS_WORD.match(mixed.group("symbols")):
+            colours = identity or _ALL_COLOURS
     else:
         made = 0
         found: set[str] = set()
@@ -611,13 +816,12 @@ def _net_mana(cost: _Cost, what: str, identity: frozenset[str]) -> tuple[int, fr
 
 def _land_understood(text: str) -> bool:
     """Whether a land's mana is a fixed amount and the land costs or does nothing the game cannot follow: it
-    does not bounce or sacrifice lands, is not sacrificed when another land is played, and does not search
-    for several lands."""
+    does not bounce or sacrifice lands and does not search for several lands."""
     return (
         _BOUNCE_LAND.search(text) is None
         and _LAND_SACRIFICE.search(text) is None
         and _SEARCHES_SEVERAL.search(text) is None
-        and not any(varies for _, _, varies in _abilities(text))
+        and not any(line.varies or line.needs for line in _abilities(text) if not line.spend_on)
     )
 
 
@@ -635,8 +839,10 @@ def _land_nets(text: str, identity: frozenset[str]) -> list[tuple[int, frozenset
     """The net mana and colours of a land's abilities that make more than they cost and leave the land."""
     return [
         found
-        for cost, what, varies in _abilities(text)
+        for cost, what, varies, spend_on, needs, _ in _abilities(text)
         if not varies
+        and not spend_on
+        and needs is None
         and (paid := _paid(_FILTER_COST.sub("{1}", cost))) is not None
         and not paid.sacrifices
         and (found := _net_mana(paid, what, identity))
@@ -664,7 +870,8 @@ def _land_face(info: CardMana, context: _Context) -> tuple[LandFace, bool]:
         colours = colours & (context.identity | {_COLOURLESS}) or colours
     makes_mana = bool(colours) or _COPY_LAND.search(text) is not None
     amount = max((net for net, _ in nets), default=int(makes_mana))
-    return LandFace(colours, tapped, amount), _land_understood(text)
+    lost = _LOST_TO_LAND_DROP.search(text) is not None
+    return LandFace(colours, tapped, amount, lost_to_land_drop=lost), _land_understood(text)
 
 
 _BASIC_SEARCH = re.compile(r"search your library for [^.]*\bbasic\b")
@@ -683,27 +890,59 @@ def _fetchable_colours(text: str, context: _Context) -> frozenset[str]:
     return frozenset(c for types, made in context.typed_lands if types & searched for c in made)
 
 
-def _mana(text: str, kinds: frozenset[CardKind], identity: frozenset[str]) -> ManaAbility | None:
-    """The best mana ability of a nonland card: the most mana, the colours of all its abilities."""
+def _spell_treasures(text: str, kinds: frozenset[CardKind]) -> int:
+    """The Treasures an instant or sorcery makes; 0 for any other card."""
+    found = _TREASURES.search(text) if CardKind.INSTANT in kinds or CardKind.SORCERY in kinds else None
+    return _NUMBER_WORDS[found.group("n")] if found is not None else 0
+
+
+def _mana(
+    text: str, kinds: frozenset[CardKind], identity: frozenset[str], mana_value: int
+) -> ManaAbility | None:
+    """The best mana ability of a nonland card: the most mana, the colours of all its abilities. The Treasures
+    of a spell are mana only when they are more than its cost; else it is cast for what else it does."""
     spell = CardKind.INSTANT in kinds or CardKind.SORCERY in kinds
-    best = 0
+    best: ManaAbility | None = None
     colours: set[str] = set()
-    delayed = ritual = from_hand = False
-    for cost, what, varies in _abilities(text):
+    abilities = _abilities(text)
+    treasures = _spell_treasures(text, kinds)
+    if treasures > mana_value:
+        made = f"{_NUMBER_NAMES[treasures]} mana of any color"
+        abilities.append(_ManaLine("", made, varies=False, spend_on=frozenset()))
+    for cost, what, varies, spend_on, needs, conditional in abilities:
         paid = _paid(cost)
-        usable = spell or (paid is not None and (paid.taps or paid.exiles_from_hand))
-        found = None if varies or paid is None or not usable else _net_mana(paid, what, identity)
+        # An ability with none of these costs could be used again and again (Three Tree Mascot's {1}); life
+        # paid without a tap is limited by the life.
+        usable = spell or (
+            paid is not None and (paid.taps or paid.exiles_from_hand or paid.sacrifices or paid.life > 0)
+        )
+        skipped = varies or conditional or paid is None or not usable
+        found = None if skipped or paid is None else _net_mana(paid, what, identity)
         if paid is None or found is None:
             continue
+        # Restricted mana is followed only for one shot, spent on the spell it is made for.
+        if spend_on and not (spell or paid.sacrifices):
+            continue
         colours |= found[1]
-        if found[0] > best:
-            best = found[0]
-            delayed = CardKind.CREATURE in kinds and paid.taps
-            ritual = spell or paid.sacrifices or paid.exiles_from_hand or "doesn't untap" in text
-            from_hand = paid.exiles_from_hand
-    if best == 0:
+        if best is None or found[0] > best.amount:
+            # A Vehicle is crewed to make mana, and it is summoning sick the turn it comes like a creature.
+            crewed = needs is ManaNeed.CREATURE
+            best = ManaAbility(
+                found[0],
+                found[1],
+                delayed=(CardKind.CREATURE in kinds and paid.taps) or crewed,
+                ritual=spell or paid.sacrifices or paid.exiles_from_hand or "doesn't untap" in text,
+                from_hand=paid.exiles_from_hand,
+                spend_on=spend_on,
+                needs=ManaNeed.CREATURE if paid.taps_creature else needs,
+                life=0 if paid.taps else paid.life,
+                land_sacrificed=frozenset({paid.land}) if paid.land else frozenset(),
+                discards_hand=paid.discards_hand,
+                plus_sacrificed=spell and _PLUS_SACRIFICED.search(text) is not None,
+            )
+    if best is None:
         return _mana_aura(text, identity)
-    return ManaAbility(best, frozenset(colours), delayed=delayed, ritual=ritual, from_hand=from_hand)
+    return replace(best, colours=frozenset(colours))
 
 
 def _mana_aura(text: str, identity: frozenset[str]) -> ManaAbility | None:
@@ -735,18 +974,25 @@ class _Search:
     # Does more than find one set of cards: it sacrifices something first (Entish Restoration) or looks for
     # a second kind of card (Yasharn).
     compound: bool
+    # Happens on a trigger other than the card's arrival or casting, such as its death (Academy Rector).
+    deferred: bool = False
+    # The line before the search: the trigger or the cost and what else happens first.
+    before: str = ""
 
 
 _SEARCH = re.compile(r"search your library(?: and/or graveyard)? for (?P<what>[^.]*)\.")
+# A one-time trigger that is the card's arrival or casting, which happens as it is cast.
+_ON_CAST = re.compile(r"^when (?:you cast\b|[^,.]* enters\b)")
 # A leading ability word ("Enrage — ", "Constellation — "), which says nothing about when the text happens.
 _ABILITY_WORD = re.compile(r"^[^—\n]+ — ")
 _REPEATING = ("whenever", "at the beginning")
 _SECOND_CARD = re.compile(r"\bcards? and (?:an?|one) ")
 _LAND_WORDS = frozenset({"land", "plains", "island", "swamp", "mountain", "forest"})
 _COUNT_WORDS = {"two": 2, "three": 3, "four": 4}
+_COLOUR_WORDS = {"white": "W", "blue": "U", "black": "B", "red": "R", "green": "G", "colorless": "C"}
 _FILLER = frozenset(
     {"a", "an", "one", "two", "three", "four", "up", "to", "or", "and", "legendary", "nonland"}
-    | {"white", "blue", "black", "red", "green", "colorless"}
+    | set(_COLOUR_WORDS)
 )
 _TUTOR_KINDS = {
     kind.value: kind
@@ -760,7 +1006,12 @@ _TUTOR_KINDS = {
     )
 }
 _VALUE_LIMIT = re.compile(r"mana value (x|\d+) or less")
-_UNSUPPORTED_CONDITION = re.compile(r"\bwith\b(?! mana value (?:x|\d+) or less\b)")
+_POWER_LIMIT = re.compile(r"with power (\d+) or less")
+_UNSUPPORTED_CONDITION = re.compile(
+    r"\bwith\b(?! (?:mana value (?:x|\d+)|total mana value \d+|power \d+) or less\b)"
+)
+_TOTAL_LIMIT = re.compile(r"with total mana value (\d+) or less")
+_ANY_NUMBER = "any number of "
 _SACRIFICE_VALUE = re.compile(r"where x is (\d+) plus the sacrificed creature's mana value")
 _TAPPED = re.compile(r"\btapped\b")
 _DRAW = re.compile(r"\bdraws? (?:(?P<n>an?|one|two|three|four|five|six|seven|x) cards?|cards)")
@@ -777,7 +1028,11 @@ def _search(text: str) -> _Search | None:
         head = re.split(r"\bcards?\b", matched.group("what"), maxsplit=1)[0]
         repeating = line.startswith(_REPEATING)
         compound = (not cost and "sacrifice" in before) or _SECOND_CARD.search(matched.group(0)) is not None
-        return _Search(head, matched.group(0), line[matched.start() :], cost, repeating, compound)
+        deferred = line.startswith("when ") and _ON_CAST.match(line) is None
+        rest = line[matched.start() :]
+        return _Search(
+            head, matched.group(0), rest, cost, repeating, compound, deferred=deferred, before=before
+        )
     return None
 
 
@@ -819,26 +1074,81 @@ def _land_ramp(search: _Search | None, kinds: frozenset[CardKind]) -> LandRamp |
     return LandRamp(count, "basic" in words, destination, to_hand, cost.mana, types)
 
 
-def _tutor(search: _Search | None) -> Tutor | None:
-    """A search for a card of some type, when the game can follow where it goes."""
-    if search is None or search.cost or search.repeating or search.compound:
+def _tutor(search: _Search | None, known_subtypes: frozenset[str]) -> Tutor | None:
+    """A search for a card of some types, colours or subtypes, when the game can follow where it goes. A
+    subtype must be one of `known_subtypes`, the deck's, so a word that is none is not read for one, unless
+    it is the other choice beside a card type ("an artifact or Dragon card"), which only widens the search."""
+    if search is None or search.cost or search.repeating or search.compound or search.deferred:
         return None
-    named = re.findall(r"[a-z]+", search.head)
+    # "Any number of creature cards with total mana value 6 or less" (Protean Hulk).
+    many = search.head.startswith(_ANY_NUMBER)
+    named = re.findall(r"[a-z]+", search.head.removeprefix(_ANY_NUMBER))
     words = [w for w in named if w not in _FILLER]
     finds = frozenset(_TUTOR_KINDS[w] for w in words if w in _TUTOR_KINDS)
+    subtypes = frozenset(w for w in words if w not in _TUTOR_KINDS)
+    either = bool(finds and subtypes) and "or" in named
+    known = subtypes <= known_subtypes or either
     destination = _tutor_destination(search.rest)
-    if len(finds) != len(words) or destination is None or "legendary" in named:
+    if not known or subtypes & _LAND_WORDS or destination is None or "legendary" in named:
         return None
     # What the card must have, before the comma that goes on to reveal and place it.
     condition = re.split(r"\bcards?\b", search.sentence, maxsplit=1)[-1].partition(",")[0]
-    if _UNSUPPORTED_CONDITION.search(condition):
+    total = _TOTAL_LIMIT.search(condition)
+    if _UNSUPPORTED_CONDITION.search(condition) or many != (total is not None):
         return None
-    limit = _VALUE_LIMIT.search(search.rest)
+    limit = None if total is not None else _VALUE_LIMIT.search(search.rest)
     over = _SACRIFICE_VALUE.search(search.rest)
+    power = _POWER_LIMIT.search(condition)
     x_limited = limit is not None and limit.group(1) == "x" and over is None
     value = int(limit.group(1)) if limit is not None and limit.group(1) != "x" else None
     bonus = int(over.group(1)) if over is not None else None
-    return Tutor(finds, destination, value, x_limited=x_limited, value_over_sacrifice=bonus)
+    return Tutor(
+        finds,
+        destination,
+        value,
+        x_limited=x_limited,
+        value_over_sacrifice=bonus,
+        colours=frozenset(_COLOUR_WORDS[w] for w in named if w in _COLOUR_WORDS),
+        max_power=int(power.group(1)) if power is not None else None,
+        subtypes=subtypes,
+        either=either,
+        total_mana_value=int(total.group(1)) if total is not None else None,
+    )
+
+
+def _dies_tutor(search: _Search | None, card: GoldfishCard, known_subtypes: frozenset[str]) -> Tutor | None:
+    """A creature's search as it dies, read as the tutor it would be on casting."""
+    if search is None or not search.deferred or CardKind.CREATURE not in card.kinds:
+        return None
+    trigger = search.before.partition(",")[0]
+    if trigger not in {f"when {name} dies" for name in _names_of_itself(card)}:
+        return None
+    return _tutor(replace(search, deferred=False), known_subtypes)
+
+
+_TREASURE_SACRIFICE = re.compile(r"^sacrifice (a|one|two|three|four|five|six|seven) treasures?$")
+# A loyalty cost's minus: the card data's minus sign, or a hyphen.
+_LOYALTY_COST = re.compile("^[\N{MINUS SIGN}-](\\d+)$")
+
+
+def _activated_tutor(
+    search: _Search | None, card: GoldfishCard, known_subtypes: frozenset[str]
+) -> ActivatedTutor | None:
+    """A permanent's search paid for with Treasures or loyalty, read as the tutor it would be with no cost."""
+    if search is None or not search.cost or not card.permanent:
+        return None
+    treasures = _TREASURE_SACRIFICE.match(search.cost)
+    loyalty = _LOYALTY_COST.match(search.cost)
+    removed = int(loyalty.group(1)) if loyalty is not None else 0
+    if CardKind.PLANESWALKER not in card.kinds or removed > card.mana_value:
+        removed = 0
+    if treasures is None and not removed:
+        return None
+    tutor = _tutor(replace(search, cost=""), known_subtypes)
+    if tutor is None:
+        return None
+    sacrificed = _NUMBER_WORDS[treasures.group(1)] if treasures is not None else 0
+    return ActivatedTutor(tutor, treasures=sacrificed, loyalty=removed)
 
 
 def _tutor_destination(sentence: str) -> TutorDestination | None:
@@ -895,14 +1205,20 @@ def _read_spell(card: GoldfishCard, info: CardMana, text: str, context: _Context
         return replace(card, modelled=not (matters or key_card))
     ramp = _land_ramp(search, card.kinds)
     land_drops = _EXTRA_LAND_DROPS.search(text)
+    searches = ramp is None and Role.TUTOR in roles
     found = {
-        "mana": _mana(text, card.kinds, context.identity),
+        "mana": _mana(text, card.kinds, context.identity, card.mana_value),
         "land_ramp": ramp,
-        "tutor": None if ramp is not None or Role.TUTOR not in roles else _tutor(search),
+        "tutor": _tutor(search, context.subtypes) if searches else None,
+        "activated_tutor": _activated_tutor(search, card, context.subtypes) if searches else None,
+        "dies_tutor": _dies_tutor(search, card, context.subtypes) if searches else None,
         "draw": _draw(text, card.kinds) if Role.DRAW in roles else None,
     }
+    treasures = _treasures(text, card)
     extra = _NUMBER_WORDS[land_drops.group(1)] if land_drops else 0
-    placed = extra > 0 or any(value is not None for value in found.values())
+    placed = (
+        extra > 0 or treasures != (0, 0, frozenset()) or any(value is not None for value in found.values())
+    )
     # A key card cast for a cost the Tagger calls alternative may be cast sooner than its mana value says.
     alternative = bool(context.tags.get(info.oracle_id, frozenset()) & ALTERNATIVE_COST_TAGS)
     return replace(
@@ -911,8 +1227,54 @@ def _read_spell(card: GoldfishCard, info: CardMana, text: str, context: _Context
         extra_land_drops=extra,
         needs_sacrifice=_SACRIFICE_COST.search(text) is not None,
         entry_cost=next((cost for pattern, cost in _ENTRY_COSTS if pattern.search(text)), None),
+        tap_ability=CardKind.CREATURE in card.kinds and _TAP_ABILITY.search(text) is not None,
+        treasures_on_entry=treasures[0],
+        treasures_on_attack=treasures[1],
+        treasure_on_tap=treasures[2],
         **found,
     )
+
+
+# Treasures a permanent makes as it comes, the mode of a choice included (Plundering Barbarian); a tapped
+# Treasure and one made only if an opponent is ahead (Beza) are left out.
+_ENTRY_TREASURES = re.compile(
+    r"^when (?P<who>[^,\n]+) enters, (?:choose one —(?:\n• [^\n]*)*?\n• (?:[^—\n]+ — )?)?"
+    r"create (?P<n>a|an|one|two|three|four|five) treasure tokens?\b(?![^.\n]* if (?:an?|each|any) opponent)",
+    re.MULTILINE,
+)
+_ATTACK_TREASURES = re.compile(
+    r"^whenever (?P<who>[^,\n]+) attacks, create (?P<n>a|an|one|two|three|four|five) treasure tokens?\b",
+    re.MULTILINE,
+)
+_TAP_TREASURE = re.compile(
+    r"^whenever an? (?P<type>[a-z]+) you control becomes tapped, create (?:a|one) treasure token\b",
+    re.MULTILINE,
+)
+
+
+def _treasures(text: str, card: GoldfishCard) -> tuple[int, int, frozenset[str]]:
+    """The Treasures a permanent makes as it comes and as it attacks, and the subtypes whose tapping makes
+    one; those of a spell that `_mana` does not read as a ritual, made as it resolves."""
+    if not card.permanent:
+        made = _spell_treasures(text, card.kinds)
+        return (made if made <= card.mana_value else 0), 0, frozenset()
+    itself = _names_of_itself(card)
+    entry, attack = (
+        next((found for found in pattern.finditer(text) if found.group("who") in itself), None)
+        for pattern in (_ENTRY_TREASURES, _ATTACK_TREASURES)
+    )
+    tapped = _TAP_TREASURE.search(text)
+    return (
+        _NUMBER_WORDS[entry.group("n")] if entry is not None else 0,
+        _NUMBER_WORDS[attack.group("n")] if attack is not None else 0,
+        frozenset({tapped.group("type")}) if tapped is not None else frozenset(),
+    )
+
+
+def _names_of_itself(card: GoldfishCard) -> set[str]:
+    """What the card's text calls it: "this creature" ("this artifact" and so on), its name or short name."""
+    name = card.name.casefold()
+    return {f"this {kind.value}" for kind in card.kinds} | {name, name.partition(",")[0]}
 
 
 def _matters(text: str, roles: frozenset[Role], search: _Search | None) -> bool:
