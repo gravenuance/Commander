@@ -14,15 +14,21 @@ from commander.goldfish_cards import (
 from test_goldfish_cards import (
     CULTIVATE,
     DOCKSIDE,
+    FOREST,
+    GRIZZLY_BEARS,
     IMPERIAL_RECRUITER,
     JAYEMDAE_TOME,
     LANNERY_STORM,
+    LLANOWAR,
     MULLDRIFTER,
     PLUNDERING_BARBARIAN,
+    PROTEAN_HULK,
     RAMP,
     WAYFARERS_BAUBLE,
     WOOD_ELVES,
     Real,
+    build,
+    incoming,
     one,
     real,
 )
@@ -356,3 +362,121 @@ def test_an_artifact_that_copies_an_ability_for_the_counters_on_it_is_read() -> 
     camera = one(PETER_PARKERS_CAMERA)
     assert camera.ability_copy == AbilityCopy(cost=2, counters=3)
     assert camera.modelled
+
+
+# --- effects the reading does not follow --------------------------------------------------------------------
+
+CHATTERFANG = real(
+    "Chatterfang, Squirrel General",
+    "{2}{G}",
+    3,
+    "Legendary Creature — Squirrel Warrior",
+    "Forestwalk\nIf one or more tokens would be created under your control, those tokens plus that many 1/1 "
+    "green Squirrel creature tokens are created instead.\n{B}, Sacrifice X Squirrels: Target creature gets "
+    "+X/-X until end of turn.",
+    identity="BG",
+    tags=("token-increaser",),
+)
+TEYSA_KARLOV = real(
+    "Teysa Karlov",
+    "{2}{W}{B}",
+    4,
+    "Legendary Creature — Human Advisor",
+    "If a creature dying causes a triggered ability of a permanent you control to trigger, that ability "
+    "triggers an additional time.\nCreature tokens you control have vigilance and lifelink.",
+    identity="WB",
+    tags=("trigger-doubler",),
+)
+MANA_REFLECTION = real(
+    "Mana Reflection",
+    "{4}{G}{G}",
+    6,
+    "Enchantment",
+    "If you tap a permanent for mana, it produces twice as much of that mana instead.",
+    identity="G",
+    roles=(RAMP,),
+    tags=("mana-increaser",),
+)
+NYXBLOOM_ANCIENT = real(
+    "Nyxbloom Ancient",
+    "{4}{G}{G}{G}",
+    7,
+    "Enchantment Creature — Elemental",
+    "Trample\nIf you tap a permanent for mana, it produces three times as much of that mana instead.",
+    identity="G",
+    tags=("mana-increaser",),
+)
+KIKI_JIKI = real(
+    "Kiki-Jiki, Mirror Breaker",
+    "{2}{R}{R}{R}",
+    5,
+    "Legendary Creature — Goblin Shaman",
+    "Haste\n{T}: Create a token that's a copy of target nonlegendary creature you control, except it has "
+    "haste. Sacrifice it at the beginning of the next end step.",
+    identity="R",
+    tags=("copy-creature",),
+)
+THESPIANS_STAGE = real(
+    "Thespian's Stage",
+    "",
+    0,
+    "Land",
+    "{T}: Add {C}.\n{2}, {T}: This land becomes a copy of target land, except it has this ability.",
+    produced="C",
+    tags=("copy-land",),
+)
+
+
+def flagged(deck_cards: tuple[Real, ...], card: Real) -> bool:
+    """Whether the deck of the cards and this one lists it under not modelled."""
+    return card.mana.name in build(*deck_cards, card).not_modelled
+
+
+def test_a_token_effect_that_is_not_read_is_listed_when_the_deck_makes_treasures() -> None:
+    assert flagged((PLUNDERING_BARBARIAN,), CHATTERFANG)
+    assert not flagged((GRIZZLY_BEARS,), CHATTERFANG)
+
+
+def test_a_token_effect_that_is_read_is_never_listed() -> None:
+    for card in (XORN, PARALLEL_LIVES, ACADEMY_MANUFACTOR, OJER_TAQ):
+        assert not flagged((PLUNDERING_BARBARIAN,), card)
+
+
+def test_a_doubler_the_reading_does_not_follow_is_listed_when_the_deck_has_a_trigger_it_counts() -> None:
+    assert flagged((PROTEAN_HULK,), TEYSA_KARLOV)
+    assert flagged((PLUNDERING_BARBARIAN,), TEYSA_KARLOV)
+    assert not flagged((GRIZZLY_BEARS,), TEYSA_KARLOV)
+    # A doubler that is read is never listed.
+    assert not flagged((PLUNDERING_BARBARIAN,), PANHARMONICON)
+
+
+def test_a_card_that_makes_more_mana_is_listed_when_the_deck_makes_mana() -> None:
+    assert flagged((LLANOWAR,), NYXBLOOM_ANCIENT)
+    assert flagged((FOREST,), NYXBLOOM_ANCIENT)
+    assert not flagged((GRIZZLY_BEARS,), NYXBLOOM_ANCIENT)
+    # With the Tagger's ramp role the card is listed whatever the deck holds, as any ramp card the reading
+    # does not follow is.
+    assert flagged((GRIZZLY_BEARS,), MANA_REFLECTION)
+
+
+def test_a_copy_effect_that_is_not_read_is_listed_when_the_deck_has_something_worth_copying() -> None:
+    assert flagged((LLANOWAR,), KIKI_JIKI)
+    assert flagged((PLUNDERING_BARBARIAN,), KIKI_JIKI)
+    assert not flagged((GRIZZLY_BEARS,), KIKI_JIKI)
+    # A land that copies a land needs another land, not a mana permanent.
+    assert flagged((FOREST,), THESPIANS_STAGE)
+    assert not flagged((LLANOWAR,), THESPIANS_STAGE)
+    assert not flagged((), THESPIANS_STAGE)
+
+
+def test_a_copy_effect_that_is_read_is_never_listed() -> None:
+    for card in (GOGO, CURSED_MIRROR, SCULPTING_STEEL, PHANTASMAL_IMAGE, PHYREXIAN_METAMORPH):
+        assert not flagged((LLANOWAR,), card)
+    assert not flagged((LLANOWAR,), PETER_PARKERS_CAMERA)
+    assert not flagged((FOREST,), HALL_OF_ECHOES)
+    assert not flagged((FOREST,), VESUVA)
+
+
+def test_a_swapped_in_card_with_an_effect_that_is_not_read_is_not_modelled() -> None:
+    assert not incoming(CHATTERFANG, GRIZZLY_BEARS).modelled
+    assert incoming(XORN, GRIZZLY_BEARS).modelled

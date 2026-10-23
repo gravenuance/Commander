@@ -6,6 +6,7 @@ A card the reading cannot place stays a plain spell, flagged `modelled=False` an
 """
 
 import re
+from collections import Counter
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import Enum
@@ -272,6 +273,21 @@ class TriggerDoubler:
     another: bool = False
 
 
+class Unread(Enum):
+    """An effect the Tagger says a card has that changes what the goldfish counts, which the reading of the
+    card leaves out."""
+
+    # More tokens, so more Treasures.
+    TOKENS = "makes more tokens"
+    # A trigger that happens an additional time.
+    TRIGGERS = "makes triggers happen again"
+    # More mana from a permanent tapped for it.
+    MANA = "makes more mana"
+    # A copy of a permanent, or of a land.
+    COPY = "copies a permanent"
+    COPY_LAND = "copies a land"
+
+
 @dataclass(slots=True, frozen=True)
 class AbilityCopy:
     """A permanent that copies an activated or triggered ability you control for `cost` generic mana and a
@@ -344,6 +360,9 @@ class GoldfishCard:
     trigger_doubler: TriggerDoubler | None = None
     copy: CopyEffect | None = None
     ability_copy: AbilityCopy | None = None
+    # What the Tagger says it does that the record leaves out. A deck lists the card as not modelled when it
+    # has what the effect works on.
+    unread: frozenset[Unread] = frozenset()
 
     @property
     def permanent(self) -> bool:
@@ -440,7 +459,7 @@ def compile_deck(
         compiled[key] = (
             replace(record, copies=compiled[key].copies + record.copies) if key in compiled else record
         )
-    records = list(compiled.values())
+    records = _unread_flagged(list(compiled.values()))
     return GoldfishDeck(
         cards=tuple(r for r in records if not r.commander),
         commanders=tuple(r for r in records if r.commander),
@@ -501,7 +520,8 @@ def compile_card(
     """One card read as `compile_deck` reads the deck's own: its identity, the typed lands fetches find, the
     combos, synergy and finishers. For a card that is not in the deck, a swap's incoming card; `cards`,
     `infos` and `powers` must hold it as well as the deck. A combo is the deck's own, so the card is no piece
-    of one that names it. A card the card data lacks is a plain spell, not modelled."""
+    of one that names it. A card the card data lacks is a plain spell, not modelled, and so is one with an
+    effect the goldfish does not follow (`_unread_effects`), whatever the deck holds."""
     context = _deck_context(
         deck,
         cards,
@@ -513,7 +533,8 @@ def compile_card(
         finishers_removed=finishers_removed,
         powers=powers or {},
     )[0]
-    return _compile_card(name, cards.get(name.casefold()), copies, context, commander=False)
+    card = _compile_card(name, cards.get(name.casefold()), copies, context, commander=False)
+    return replace(card, modelled=False) if card.unread else card
 
 
 def _identity(deck: Deck, cards: Mapping[str, CardMana], infos: Mapping[str, CardInfo]) -> frozenset[str]:
@@ -623,6 +644,16 @@ _FOR_OPPONENT = re.compile(r"(?:its|that creature's|that permanent's) controller
 
 
 def _compile_card(
+    name: str, info: CardMana | None, copies: int, context: _Context, *, commander: bool
+) -> GoldfishCard:
+    card = _read_card(name, info, copies, context, commander=commander)
+    if info is None:
+        return card
+    tags = context.tags.get(info.oracle_id, frozenset())
+    return replace(card, unread=_unread_effects(card, info.oracle_text.casefold(), tags))
+
+
+def _read_card(
     name: str, info: CardMana | None, copies: int, context: _Context, *, commander: bool
 ) -> GoldfishCard:
     if info is None:
@@ -1384,6 +1415,8 @@ _TOKEN_MULTIPLE = re.compile(
     r"under your control, (?:it creates )?(?P<times>twice|three times) that many"
 )
 _MULTIPLES = {"twice": 2, "three times": 3}
+# A replacement that leaves the Treasures as they are (Academy Manufactor: one of each, the Treasure too).
+_TOKEN_NEUTRAL = re.compile(r"instead create one of each")
 # The kinds of token a Treasure is counted among.
 _TREASURE_KINDS = frozenset({"", "artifact", "treasure"})
 _ENTERING_DOUBLER = re.compile(
@@ -1512,6 +1545,90 @@ def _names_of_itself(card: GoldfishCard) -> set[str]:
     """What the card's text calls it: "this creature" ("this artifact" and so on), its name or short name."""
     name = card.name.casefold()
     return {f"this {kind.value}" for kind in card.kinds} | {name, name.partition(",")[0]}
+
+
+# --- effects the reading does not follow --------------------------------------------------------------------
+
+
+# The Tagger tags that name them. The reading follows only some of the cards that carry each.
+_UNREAD_TAGS = {
+    "token-increaser": Unread.TOKENS,
+    "token-doubler": Unread.TOKENS,
+    "trigger-doubler": Unread.TRIGGERS,
+    "mana-increaser": Unread.MANA,
+    "clone": Unread.COPY,
+    "copy-creature": Unread.COPY,
+    "copy-artifact": Unread.COPY,
+    "copy-permanent": Unread.COPY,
+    "copy-ability": Unread.COPY,
+    "copy-land": Unread.COPY_LAND,
+}
+
+
+def _unread_effects(card: GoldfishCard, text: str, tags: Collection[str]) -> frozenset[Unread]:
+    """The effects the Tagger says a card has that its record leaves out: those it carries the tag of and the
+    reading did not take."""
+    found = {_UNREAD_TAGS[tag] for tag in tags if tag in _UNREAD_TAGS}
+    if (
+        card.treasure_extra
+        or card.treasure_factor > 1
+        or _TOKEN_MULTIPLE.search(text)
+        or _TOKEN_NEUTRAL.search(text)
+    ):
+        found.discard(Unread.TOKENS)
+    if card.trigger_doubler is not None:
+        found.discard(Unread.TRIGGERS)
+    if card.mana is not None or card.land is not None:
+        found.discard(Unread.MANA)
+    if card.copy is not None or card.ability_copy is not None:
+        found -= {Unread.COPY, Unread.COPY_LAND}
+    return frozenset(found)
+
+
+def _worth_copying(card: GoldfishCard) -> bool:
+    """Whether a copy of the permanent would give the goldfish something to count."""
+    return (
+        card.permanent
+        and card.land is None
+        and (
+            card.mana is not None
+            or card.treasures_on_entry > 0
+            or card.treasures_on_attack > 0
+            or bool(card.treasure_on_tap)
+            or card.treasure_extra > 0
+            or card.treasure_factor > 1
+            or card.trigger_doubler is not None
+            or card.entry_trigger
+            or card.extra_land_drops > 0
+            or (card.draw is not None and card.draw.engine)
+        )
+    )
+
+
+def _worked_on(card: GoldfishCard) -> frozenset[Unread]:
+    """The unread effects that this card gives something to work on."""
+    treasures = bool(card.treasures_on_entry or card.treasures_on_attack or card.treasure_on_tap)
+    worked = {
+        Unread.TOKENS: treasures,
+        Unread.TRIGGERS: treasures or card.entry_trigger or card.dies_tutor is not None,
+        Unread.MANA: card.mana is not None or card.land is not None,
+        Unread.COPY: _worth_copying(card),
+        Unread.COPY_LAND: card.land is not None,
+    }
+    return frozenset(effect for effect, found in worked.items() if found)
+
+
+def _unread_flagged(records: list[GoldfishCard]) -> list[GoldfishCard]:
+    """The cards of a deck, those with an effect that is not read marked not modelled when another card of the
+    deck has what the effect works on: Treasures, a trigger the goldfish counts, mana, a permanent worth
+    copying, or a land."""
+    worked = Counter(effect for card in records for effect in _worked_on(card))
+    flagged: list[GoldfishCard] = []
+    for card in records:
+        own = _worked_on(card)
+        relevant = any(worked[effect] - (effect in own) > 0 for effect in card.unread)
+        flagged.append(replace(card, modelled=False) if card.modelled and relevant else card)
+    return flagged
 
 
 def _matters(text: str, roles: frozenset[Role], search: _Search | None) -> bool:
