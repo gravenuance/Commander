@@ -1701,12 +1701,20 @@ def flag_unread(records: Iterable[GoldfishCard]) -> list[GoldfishCard]:
     return flagged
 
 
+def _adds_mana(line: _ManaLine) -> bool:
+    """Whether a mana line may make more mana than it costs: a filter that pays as much as it makes (Three
+    Tree Mascot's {1}) adds none. A line whose cost or amount is not read counts."""
+    paid = _paid(_FILTER_COST.sub("{1}", line.cost))
+    return line.varies or paid is None or _net_mana(paid, line.what, frozenset()) is not None
+
+
 def _matters(text: str, roles: frozenset[Role], search: _Search | None) -> bool:
     """Whether the card is about what the goldfish measures: the Tagger's ramp (for its owner), draw or tutor
     role, mana in its text, or a search for lands."""
     ramp = Role.RAMP in roles and _FOR_OPPONENT.search(text) is None
     draws = Role.DRAW in roles and re.search(r"\bdraws?\b", text) is not None
-    return ramp or draws or Role.TUTOR in roles or bool(_abilities(text)) or _land_words(search) is not None
+    mana = any(_adds_mana(line) for line in _abilities(text))
+    return ramp or draws or Role.TUTOR in roles or mana or _land_words(search) is not None
 
 
 # A sentence that reduces a cost: for other spells (Jet Medallion) or this one (Ghalta).

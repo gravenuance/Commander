@@ -1315,6 +1315,29 @@ def test_a_land_makes_the_colours_of_its_mana_abilities_not_those_it_could_make_
     assert one(TALON_GATES).land == LandFace(frozenset("C"), tapped=False, amount=1)
 
 
+def test_a_filter_that_pays_as_much_mana_as_it_makes_is_no_mana_source_so_not_listed() -> None:
+    mascot = real(
+        "Three Tree Mascot",
+        "{2}",
+        2,
+        "Artifact Creature — Shapeshifter",
+        "Changeling (This card is every creature type.)\n{1}: Add one mana of any color. Activate only once "
+        "each turn.",
+    )
+    card = reads(mascot)
+    assert card.mana is None
+
+
+def test_a_signet_nets_a_mana_by_its_tap_so_a_limit_the_goldfish_cannot_follow_lists_it() -> None:
+    assert reads(AZORIUS_SIGNET).mana is not None
+    # Made up: a Signet that may be used once each turn, which the reading leaves out of a nonland card.
+    text = AZORIUS_SIGNET.mana.oracle_text + " Activate only once each turn."
+    limited = real("Limited Signet", "{2}", 2, "Artifact", text, produced="WU")
+    deck = build(limited)
+    assert not card_named(deck, "Limited Signet").modelled
+    assert deck.not_modelled == ("Limited Signet",)
+
+
 def test_a_land_whose_mana_is_all_restricted_makes_none() -> None:
     ziggurat = one(ANCIENT_ZIGGURAT)
     assert ziggurat.land == LandFace(frozenset(), tapped=False, amount=0)
