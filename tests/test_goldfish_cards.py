@@ -2744,6 +2744,30 @@ def test_a_reducer_that_can_also_be_cast_for_nothing_keeps_its_reduction() -> No
     assert card.reducers == (Reducer(spells(SpellKind(colours=frozenset("B"))), 1),)
 
 
+def test_a_cheaper_ability_is_no_cost_reduction_to_follow_and_leaves_a_plain_card() -> None:
+    mauler = real(
+        "Dwarven Mauler",
+        "{R}",
+        1,
+        "Creature — Dwarf Warrior",
+        "Equip abilities you activate that target this creature cost {2} less to activate.",
+    )
+    card = reads(mauler)
+    assert (card.reducers, card.discount) == ((), None)
+
+
+def test_a_cheaper_ability_beside_a_reduced_spell_keeps_the_spell_reduction() -> None:
+    headmaster = real(
+        "Bureau Headmaster",
+        "{R}{W}",
+        2,
+        "Creature — Human Assassin",
+        "Equipment spells you cast cost {1} less to cast.\nEquip abilities you activate cost {1} less to "
+        "activate.",
+    )
+    assert reads(headmaster).reducers == (Reducer(spells(SpellKind(subtype="equipment")), 1),)
+
+
 def test_a_discount_of_two_kinds_or_for_a_word_the_reading_does_not_know_is_not_read() -> None:
     # Made up: Bolt Bend's text with a second discount of its own, and a medallion for nonland spells.
     twice = (

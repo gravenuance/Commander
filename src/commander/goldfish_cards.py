@@ -1711,6 +1711,8 @@ def _matters(text: str, roles: frozenset[Role], search: _Search | None) -> bool:
 
 # A sentence that reduces a cost: for other spells (Jet Medallion) or this one (Ghalta).
 _COST_REDUCER = re.compile(r"costs? (?:\{[^}]+\})+ less|less to cast")
+# A sentence that only makes an ability cheaper (Dwarven Mauler's equip): the goldfish pays no ability costs.
+_ABILITY_REDUCER = re.compile(r"^(?!.*less to cast).*less to activate")
 _SENTENCE_BREAK = re.compile(r"(?<=\.) |\n")
 # "Creature spells you cast cost {2} less to cast." The kind before "spells" is optional ("Spells cost ...").
 _STATIC_REDUCER = re.compile(
@@ -1749,7 +1751,7 @@ def _reductions(text: str, card: GoldfishCard) -> _Reductions | None:
     reducers: list[Reducer] = []
     discount: Discount | None = None
     for sentence in _SENTENCE_BREAK.split(text):
-        if not _COST_REDUCER.search(sentence):
+        if not _COST_REDUCER.search(sentence) or _ABILITY_REDUCER.search(sentence):
             continue
         static = _static_reducer(sentence)
         own = _self_discount(sentence)
