@@ -25,6 +25,8 @@ from commander.goldfish import (
 )
 from commander.goldfish_cards import (
     CardKind,
+    DamageScope,
+    DamageTreasures,
     Discount,
     Draw,
     GoldfishCard,
@@ -514,6 +516,13 @@ EXACT_CASES = {
         creature("Bear", subtypes=frozenset({"bear"})),
         creature("Dwarf", subtypes=frozenset({"dwarf"})),
     ),
+    "a power that deals damage": (
+        dataclasses.replace(
+            make("Breaker", mv=2, kinds=CREATURE), on_damage=DamageTreasures(DamageScope.ANY, 1)
+        ),
+        creature("Idle", power=0),
+        creature("Hitter", power=3),
+    ),
 }
 
 
@@ -534,6 +543,18 @@ def test_two_plain_creatures_a_card_of_the_deck_tells_apart_by_their_stats_are_n
     assert result.swapped == played_whole(swaps, deck=deck)
     # Where no card cares, the two play alike and nothing is played again.
     assert judged(swaps, deck=deck_with(FILLER)).replayed == ()
+
+
+def test_a_trigger_for_a_creatures_own_damage_does_not_tell_plain_creatures_apart() -> None:
+    own = dataclasses.replace(
+        make("Ragavan", mv=2, kinds=CREATURE), on_damage=DamageTreasures(DamageScope.SELF, 1), power=2
+    )
+    deck = dataclasses.replace(DECK, cards=tuple(own if card is SOLO else card for card in DECK.cards))
+    swaps = [(creature("Idle", power=0), creature("Hitter", power=3))]
+    cut_deck = dataclasses.replace(
+        deck, cards=tuple(swaps[0][0] if card is PLAIN_SPELL else card for card in deck.cards)
+    )
+    assert judged(swaps, deck=cut_deck).replayed == ()
 
 
 def test_a_cost_reducer_or_a_spell_that_costs_less_is_not_a_plain_spell() -> None:

@@ -295,6 +295,8 @@ class TriggerCause(Enum):
     ENTERING = "a permanent entering"
     # A creature attacking (Windcrag Siege's Mardu mode).
     ATTACKING = "a creature attacking"
+    # A creature dealing combat damage: no card names it, so only a doubler of any trigger repeats those.
+    DAMAGING = "a creature dealing combat damage"
 
 
 @dataclass(slots=True, frozen=True)
@@ -313,6 +315,35 @@ class TriggerDoubler:
     max_power: int | None = None
     # Not the doubler's own triggers.
     another: bool = False
+
+
+class Strike(Enum):
+    """When a creature deals its combat damage: in the first-strike step, the regular one or both."""
+
+    REGULAR = "regular damage"
+    FIRST = "first strike"
+    DOUBLE = "double strike"
+
+
+class DamageScope(Enum):
+    """Whose combat damage sets a trigger off."""
+
+    # The creature itself (Ragavan, Goldlust Triad).
+    SELF = "this creature"
+    # One or more creatures you control, once for each step they deal damage in (Professional Face-Breaker).
+    ANY = "one or more creatures you control"
+    # Each creature you control (of the types) once for each step it deals damage in.
+    EACH = "a creature you control"
+
+
+@dataclass(slots=True, frozen=True)
+class DamageTreasures:
+    """Treasures made when creatures deal combat damage to a player. `types` limits ANY and EACH to creatures
+    with one of these subtypes; empty for any creature."""
+
+    scope: DamageScope
+    count: int
+    types: frozenset[str] = frozenset()
 
 
 class Unread(Enum):
@@ -387,6 +418,10 @@ class GoldfishCard:
     # The creature subtypes ("creature" for any) that make a Treasure as one becomes tapped (Magda: Dwarf),
     # which a creature does as it attacks.
     treasure_on_tap: frozenset[str] = frozenset()
+    # Treasures it makes as creatures deal combat damage to a player, which with no blocker is every attacker
+    # whose power is not 0, and the keyword that says in which steps a creature deals it.
+    on_damage: DamageTreasures | None = None
+    strike: Strike = Strike.REGULAR
     activated_tutor: ActivatedTutor | None = None
     # A search as the creature dies (Protean Hulk, Academy Rector), which a free sacrifice outlet brings on.
     dies_tutor: Tutor | None = None
@@ -1404,6 +1439,7 @@ def _read_spell(card: GoldfishCard, info: CardMana, text: str, context: _Context
         "draw": _draw(text, card.kinds) if Role.DRAW in roles else None,
     }
     treasures = _treasures(text, card)
+    on_damage = _damage_treasures(text, card)
     tokens = _token_increase(text)
     drawn = found["draw"]
     arrives = card.permanent and (
@@ -1413,7 +1449,10 @@ def _read_spell(card: GoldfishCard, info: CardMana, text: str, context: _Context
     )
     extra = _NUMBER_WORDS[land_drops.group(1)] if land_drops else 0
     placed = (
-        extra > 0 or treasures != (0, 0, frozenset()) or any(value is not None for value in found.values())
+        extra > 0
+        or treasures != (0, 0, frozenset())
+        or on_damage is not None
+        or any(value is not None for value in found.values())
     )
     # A key card cast for a cost the Tagger calls alternative may be cast sooner than its mana value says.
     alternative = bool(context.tags.get(info.oracle_id, frozenset()) & ALTERNATIVE_COST_TAGS)
@@ -1427,6 +1466,8 @@ def _read_spell(card: GoldfishCard, info: CardMana, text: str, context: _Context
         treasures_on_entry=treasures[0],
         treasures_on_attack=treasures[1],
         treasure_on_tap=treasures[2],
+        on_damage=on_damage,
+        strike=_strike(text) if CardKind.CREATURE in card.kinds else Strike.REGULAR,
         **reductions._asdict(),
         entry_trigger=arrives,
         treasure_extra=tokens[0],
@@ -1472,6 +1513,54 @@ def _treasures(text: str, card: GoldfishCard) -> tuple[int, int, frozenset[str]]
         _NUMBER_WORDS[attack.group("n")] if attack is not None else 0,
         frozenset({tapped.group("type")}) if tapped is not None else frozenset(),
     )
+
+
+_DAMAGE_TREASURES = re.compile(
+    r"^whenever (?P<who>[^,\n]+?) deals? combat damage to (?:a player|an opponent), "
+    r"create (?P<n>a|an|one|two|three|four|five) treasure tokens?\b(?! for each)",
+    re.MULTILINE,
+)
+_DAMAGING_ANY = re.compile(r"one or more (?:(?P<types>[a-z]+(?: or [a-z]+)*) )?creatures you control")
+_DAMAGING_EACH = re.compile(r"an? (?P<types>[a-z]+(?: or [a-z]+)*)(?: creature)? you control")
+# Words before "creature" that restrict it without naming a subtype.
+_NOT_SUBTYPES_OF_CREATURES = frozenset(
+    {"creature", "legendary", "nontoken", "token", "artifact", "enchanted", "equipped", "modified", "other"}
+)
+_KEYWORD_LINE = re.compile(
+    r"(?:[a-z]+(?: [a-z]+)?, )*(?P<strike>first strike|double strike)(?:, [a-z]+(?: [a-z]+)?)*"
+)
+_REMINDER = re.compile(r" \([^)]*\)")
+
+
+def _damage_treasures(text: str, card: GoldfishCard) -> DamageTreasures | None:
+    """The Treasures a creature makes when it, or one or more creatures, or each creature, deals combat damage
+    to a player, in a fixed count; the creature's own damage, or that of the creatures of the types named."""
+    if not card.permanent:
+        return None
+    itself = _names_of_itself(card)
+    for found in _DAMAGE_TREASURES.finditer(text):
+        who, count = found.group("who"), _NUMBER_WORDS[found.group("n")]
+        if who in itself:
+            return DamageTreasures(DamageScope.SELF, count)
+        for pattern, scope in ((_DAMAGING_ANY, DamageScope.ANY), (_DAMAGING_EACH, DamageScope.EACH)):
+            named = pattern.fullmatch(who)
+            if named is None:
+                continue
+            words = [w for w in re.findall(r"[a-z]+", named.group("types") or "") if w != "or"]
+            if _NOT_SUBTYPES_OF_CREATURES.isdisjoint(words) or words == ["creature"]:
+                kinds = frozenset(words) - {"creature"}
+                return DamageTreasures(scope, count, kinds)
+    return None
+
+
+def _strike(text: str) -> Strike:
+    """The combat damage step a creature's keywords put its damage in; a keyword another creature is given
+    is no keyword of its own."""
+    for line in text.split("\n"):
+        keywords = _KEYWORD_LINE.fullmatch(_REMINDER.sub("", line))
+        if keywords is not None:
+            return Strike.DOUBLE if keywords.group("strike") == "double strike" else Strike.FIRST
+    return Strike.REGULAR
 
 
 _TREASURE_PLUS = re.compile(
@@ -1663,6 +1752,7 @@ def _worth_copying(card: GoldfishCard) -> bool:
             or card.treasures_on_entry > 0
             or card.treasures_on_attack > 0
             or bool(card.treasure_on_tap)
+            or card.on_damage is not None
             or card.treasure_extra > 0
             or card.treasure_factor > 1
             or card.trigger_doubler is not None
@@ -1675,7 +1765,9 @@ def _worth_copying(card: GoldfishCard) -> bool:
 
 def _worked_on(card: GoldfishCard) -> frozenset[Unread]:
     """The unread effects that this card gives something to work on."""
-    treasures = bool(card.treasures_on_entry or card.treasures_on_attack or card.treasure_on_tap)
+    treasures = bool(
+        card.treasures_on_entry or card.treasures_on_attack or card.treasure_on_tap or card.on_damage
+    )
     worked = {
         Unread.TOKENS: treasures,
         Unread.TRIGGERS: treasures or card.entry_trigger or card.dies_tutor is not None,

@@ -266,8 +266,27 @@ reading and the policy now follow, and `POLICY_VERSION` is 5.
   that a creature becoming tapped sets off (Magda: a Dwarf). A creature tapped for its own mana or a burst
   does not attack, and neither does one a Drum or a crew tapped, the summoning-sick ones tapped first and
   then those with the least to gain from attacking. A Treasure made only if an opponent is ahead (Beza's, on
-  lands) is not counted. No combat damage is followed, so Ragavan and Professional Face-Breaker stay not
-  modelled.
+  lands) is not counted.
+- **Combat damage** (the owner's decision, replacing "no combat damage is followed"). Nothing blocks, so each
+  attacker whose power, less any shrinking, is not 0 deals its damage to a player (a power that varies is
+  taken to deal it; wins are still not judged, as no life is followed). The Treasures of a trigger "whenever
+  this creature deals combat damage to a player" (Ragavan, Goldlust Triad), "whenever one or more creatures
+  you control deal combat damage to a player" (Professional Face-Breaker, Knuckles the Echidna, Grim
+  Hireling; of the creature types named, as Prosperous Thief's) or "whenever a creature you control deals
+  ..." are made after the attack together with those of the attack's own triggers, so they are there in the
+  second main phase and from then on. A creature's own damage sets off its own trigger; the trigger for one
+  or more creatures happens once for each damage step in which any of them deals damage, and the trigger for
+  each creature once for each step it deals damage in. First strike and double strike are read from the
+  keyword line: a first-striker and a regular creature deal damage in two steps, and a double striker in two
+  (Knuckles makes its Treasure twice a combat). A trigger doubler of any trigger (Roaming Throne, Delney) and
+  the permanents that make more Treasures (Xorn, Parallel Lives) apply as they do to an attack's triggers; a
+  doubler of attacks does not, as attacking does not cause a damage trigger. Only Treasures are read: the rest
+  of a trigger (Ragavan's exile, Rev's look at a library) is left out, a draw is read as it was (an engine
+  that draws each turn), a search stays unread, and "that many Treasures" (Old Gnawbone) has no fixed count.
+  Haste is still not read, so Knuckles, too, attacks from the turn after it comes. Ragavan, Professional
+  Face-Breaker and Knuckles come off "Not modelled". The plays-alike rule of a swap (below) also tells two
+  plain creatures apart by power in a deck with a trigger for the damage of other creatures, as power decides
+  whether a creature sets it off; a trigger for a creature's own damage does not.
 - **Searches paid for by a permanent.** Magda's "sacrifice five Treasures" search is used as each main phase
   begins while there are five, and Treasures are kept for it rather than spent on anything but a win or the
   commander. Loyalty is not in the card data, so a -N search is taken as payable once when N is at most the
@@ -304,8 +323,8 @@ reading and the policy now follow, and `POLICY_VERSION` is 5.
     ability. A Class such as Artist's Talent keeps its reduction behind a level that nothing here pays for.
   - In a swap, two plain spells that play alike must also have the same card types, subtypes, power and
     toughness when the deck holds a reducer, a discount, such a shrinking or a permanent that makes a Treasure
-    for each creature of a type becoming tapped (Magda), as those are what they read; a reducer or a discount
-    is no plain spell.
+    for each creature of a type becoming tapped (Magda) or when creatures deal combat damage (Face-Breaker), as
+    those are what they read; a reducer or a discount is no plain spell.
 
 On the three decks, 10,000 games each: Etali's commander by turn five rose from 25% to 59% and Magda's combos
 by turn five from 9% to 55%; Ribbit's Hermit Druid line fell from 10.5% to 8.9% by turn five. The cards not

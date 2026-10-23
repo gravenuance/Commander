@@ -12,6 +12,8 @@ from commander.goldfish import simulate
 from commander.goldfish_cards import (
     ActivatedTutor,
     CardKind,
+    DamageScope,
+    DamageTreasures,
     Discount,
     Draw,
     EntryCost,
@@ -25,6 +27,7 @@ from commander.goldfish_cards import (
     Measure,
     Reducer,
     SpellKind,
+    Strike,
     Tutor,
     TutorDestination,
     compile_card,
@@ -3097,16 +3100,189 @@ FACE_BREAKER = real(
 )
 
 
-def test_treasures_made_on_entering_or_attacking_are_read_and_combat_damage_is_not() -> None:
+def test_treasures_made_on_entering_or_attacking_are_read() -> None:
     barbarian = one(PLUNDERING_BARBARIAN)
     assert (barbarian.treasures_on_entry, barbarian.treasures_on_attack) == (1, 0)
+    assert barbarian.on_damage is None
     assert barbarian.modelled
     storm = one(LANNERY_STORM)
     assert (storm.treasures_on_entry, storm.treasures_on_attack) == (0, 1)
+    assert storm.on_damage is None
     assert storm.modelled
-    breaker = one(FACE_BREAKER)
-    assert (breaker.treasures_on_entry, breaker.treasures_on_attack, breaker.treasure_on_tap) == (0, 0, set())
-    assert not breaker.modelled
+
+
+RAGAVAN = real(
+    "Ragavan, Nimble Pilferer",
+    "{R}",
+    1,
+    "Legendary Creature — Monkey Pirate",
+    "Whenever Ragavan deals combat damage to a player, create a Treasure token and exile the top "
+    "card of that "
+    "player's library. Until end of turn, you may cast that card.\nDash {1}{R} (You may cast this spell for "
+    "its dash cost. If you do, it gains haste, and it's returned from the battlefield to its owner's hand at "
+    "the beginning of the next end step.)",
+    identity="R",
+    roles=(RAMP,),
+    power="2",
+    toughness="1",
+)
+KNUCKLES = real(
+    "Knuckles the Echidna",
+    "{2}{R}{R}",
+    4,
+    "Legendary Creature — Echidna Warrior",
+    "Double strike, trample, haste\nWhenever one or more creatures you control deal combat damage to "
+    "a player, "
+    "create a Treasure token.\nTreasure Hunter — At the beginning of your upkeep, if you control "
+    "thirty or more "
+    "artifacts, you win the game.",
+    identity="R",
+    roles=(RAMP,),
+    power="2",
+    toughness="4",
+)
+GRIM_HIRELING = real(
+    "Grim Hireling",
+    "{3}{B}",
+    4,
+    "Creature — Tiefling Rogue",
+    "Whenever one or more creatures you control deal combat damage to a player, create two Treasure tokens.\n"
+    "{B}, Sacrifice X Treasures: Target creature gets -X/-X until end of turn. Activate only as a sorcery.",
+    identity="B",
+    roles=(RAMP,),
+    power="3",
+    toughness="2",
+)
+PROSPEROUS_THIEF = real(
+    "Prosperous Thief",
+    "{2}{U}",
+    3,
+    "Creature — Human Ninja",
+    "Ninjutsu {1}{U} ({1}{U}, Return an unblocked attacker you control to hand: Put this card onto the "
+    "battlefield from your hand tapped and attacking.)\nWhenever one or more Ninja or Rogue creatures you "
+    "control deal combat damage to a player, create a Treasure token. (It's an artifact with \"{T}, "
+    "Sacrifice "
+    'this token: Add one mana of any color.")',
+    identity="U",
+    roles=(RAMP,),
+    power="3",
+    toughness="2",
+)
+GOLDLUST_TRIAD = real(
+    "Goldlust Triad",
+    "{4}{R}",
+    5,
+    "Creature — Dragon",
+    "Flying\nMyriad (Whenever this creature attacks, for each opponent other than defending player, you may "
+    "create a token copy that's tapped and attacking that player or a planeswalker they control. Exile the "
+    "tokens at end of combat.)\nWhenever this creature deals combat damage to a player, create a Treasure "
+    "token.",
+    identity="R",
+    roles=(RAMP,),
+    power="4",
+    toughness="3",
+)
+SPARK_MAGE = real(
+    "Spark Mage",
+    "{R}",
+    1,
+    "Creature — Dwarf Wizard",
+    "Whenever this creature deals combat damage to a player, you may have this creature deal 1 damage to "
+    "target creature that player controls.",
+    identity="R",
+    power="1",
+    toughness="1",
+)
+OLD_GNAWBONE = real(
+    "Old Gnawbone",
+    "{5}{G}{G}",
+    7,
+    "Legendary Creature — Dragon",
+    "Flying\nWhenever a creature you control deals combat damage to a player, create that many Treasure "
+    "tokens.",
+    identity="G",
+    roles=(RAMP,),
+    power="7",
+    toughness="7",
+)
+
+
+def test_the_treasures_a_creature_makes_when_it_deals_combat_damage_are_read() -> None:
+    ragavan = one(RAGAVAN)
+    assert ragavan.on_damage == DamageTreasures(DamageScope.SELF, 1)
+    assert ragavan.modelled
+    # The Treasure of a creature that itself deals the damage is no trigger of any attack or tap.
+    assert (ragavan.treasures_on_entry, ragavan.treasures_on_attack, ragavan.treasure_on_tap) == (0, 0, set())
+    assert one(GOLDLUST_TRIAD).on_damage == DamageTreasures(DamageScope.SELF, 1)
+    assert one(GOLDLUST_TRIAD).modelled
+
+
+def test_the_treasures_one_or_more_creatures_make_when_they_deal_combat_damage_are_read() -> None:
+    assert one(FACE_BREAKER).on_damage == DamageTreasures(DamageScope.ANY, 1)
+    assert one(FACE_BREAKER).modelled
+    assert one(GRIM_HIRELING).on_damage == DamageTreasures(DamageScope.ANY, 2)
+    assert one(GRIM_HIRELING).modelled
+    # Only the creatures of the types named count.
+    thief = one(PROSPEROUS_THIEF).on_damage
+    assert thief == DamageTreasures(DamageScope.ANY, 1, frozenset({"ninja", "rogue"}))
+
+
+def test_a_treasure_for_each_creature_that_deals_combat_damage_is_read() -> None:
+    # No printed card makes a Treasure for each creature: the wording is that of Toski's draw.
+    def each(who: str) -> GoldfishCard:
+        text = f"Whenever {who} you control deals combat damage to a player, create a Treasure token."
+        return one(
+            real("Pirate Captain", "{2}{R}", 3, "Creature — Human Pirate", text, identity="R", roles=(RAMP,))
+        )
+
+    assert each("a creature").on_damage == DamageTreasures(DamageScope.EACH, 1)
+    assert each("a Pirate").on_damage == DamageTreasures(DamageScope.EACH, 1, frozenset({"pirate"}))
+    pirate_or_rogue = each("a Pirate or Rogue").on_damage
+    assert pirate_or_rogue == DamageTreasures(DamageScope.EACH, 1, frozenset({"pirate", "rogue"}))
+    # A creature the text restricts by more than a subtype is no subtype's.
+    assert each("a legendary creature").on_damage is None
+    assert not each("a legendary creature").modelled
+
+
+def test_a_commander_that_makes_a_treasure_for_the_damage_of_creatures_is_modelled() -> None:
+    knuckles = card_named(build(BATTERED_GOLEM, commander=KNUCKLES), "Knuckles the Echidna")
+    assert knuckles.on_damage == DamageTreasures(DamageScope.ANY, 1)
+    assert knuckles.modelled
+
+
+def test_a_creature_with_double_strike_or_first_strike_is_read_to_deal_damage_in_those_steps() -> None:
+    assert one(KNUCKLES).strike is Strike.DOUBLE
+    assert one(RAGAVAN).strike is Strike.REGULAR
+    first = real(
+        "Hunting Velociraptor",
+        "{1}{R}",
+        2,
+        "Creature — Dinosaur",
+        "First strike\nDinosaur spells you cast have prowl {2}{R}. (You may cast a spell for its "
+        "prowl cost if "
+        "you dealt combat damage to a player this turn with a creature with any of its creature types.)",
+        identity="R",
+        power="3",
+        toughness="2",
+    )
+    assert one(first).strike is Strike.FIRST
+    # A keyword granted to other creatures is no keyword of the card.
+    gives = real(
+        "Anthem of Blows",
+        "{2}{R}",
+        3,
+        "Enchantment",
+        "Creatures you control have haste, double strike.",
+        identity="R",
+    )
+    assert one(gives).strike is Strike.REGULAR
+
+
+def test_a_damage_trigger_that_makes_no_treasure_or_makes_a_count_of_them_is_left_unread() -> None:
+    assert one(SPARK_MAGE).on_damage is None
+    # As many Treasures as the damage dealt: no fixed count.
+    assert one(OLD_GNAWBONE).on_damage is None
+    assert not one(OLD_GNAWBONE).modelled
 
 
 BEZA = real(

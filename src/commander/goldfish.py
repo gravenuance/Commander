@@ -28,6 +28,7 @@ from commander.goldfish_cards import (
     CardKind,
     CopyKind,
     CopyOf,
+    DamageScope,
     Discount,
     EntryCost,
     GoldfishCard,
@@ -37,6 +38,7 @@ from commander.goldfish_cards import (
     ManaNeed,
     Measure,
     Reducer,
+    Strike,
     TriggerCause,
     TriggerDoubler,
     Tutor,
@@ -156,7 +158,7 @@ def chosen_creature_type(slots: Sequence[GoldfishCard], commanders: Sequence[Gol
     makers = Counter(
         t
         for card in everyone
-        if card.treasures_on_attack or card.treasure_on_tap or card.treasures_on_entry
+        if card.treasures_on_attack or card.treasure_on_tap or card.treasures_on_entry or card.on_damage
         for t in _creature_types(card)
     )
     return max(own, key=lambda t: (makers[t] + (t in tapped), held[t]))
@@ -632,6 +634,7 @@ def _copyable(card: _Card, of: CopyOf) -> bool:
         or card.entry_trigger
         or src.treasures_on_attack
         or bool(src.treasure_on_tap)
+        or src.on_damage is not None
     )
     return kinds[of] and bool(worth) and not card.is_land
 
@@ -654,6 +657,8 @@ class _Setup:
         "combo_need",
         "combo_pieces",
         "copying",
+        "damage",
+        "damage_shared",
         "deaths",
         "doubling",
         "entries",
@@ -740,8 +745,16 @@ class _Setup:
         self.tap_pieces = frozenset(cid for cid, card in enumerate(self.cards) if card.src.tap_ability)
         # Creatures that search as they die, and a free outlet to sacrifice them to.
         self.deaths = any(c.src.dies_tutor for c in self.cards) and any(c.src.free_outlet for c in self.cards)
-        # Attacks make Treasures: a creature's own trigger, or a permanent's for a creature becoming tapped.
-        self.attacks = any(c.src.treasures_on_attack or c.src.treasure_on_tap for c in self.cards)
+        # Combat makes Treasures: a creature's trigger as it attacks, a permanent's for a creature becoming
+        # tapped, and those for creatures dealing combat damage, which a deck without the last never reads.
+        self.damage = any(c.src.on_damage is not None for c in self.cards)
+        # One whose trigger is set off by the damage of other creatures, which then matters for each.
+        self.damage_shared = any(
+            c.src.on_damage is not None and c.src.on_damage.scope is not DamageScope.SELF for c in self.cards
+        )
+        self.attacks = self.damage or any(
+            c.src.treasures_on_attack or c.src.treasure_on_tap for c in self.cards
+        )
         # One-shot mana beyond the turn's: rituals in hand, life payments, bursts for a land, Treasures and
         # permanents that sacrifice themselves.
         self.has_rituals = self.attacks or any(
@@ -1790,7 +1803,7 @@ class _Game:
         value += 1 if src.tutor is not None else 0
         per_turn = clone.extra_drops + (1 if clone.engine else 0)
         if self.s.attacks and clone.creature:
-            per_turn += src.treasures_on_attack + (1 if src.treasure_on_tap else 0)
+            per_turn += src.treasures_on_attack + (1 if src.treasure_on_tap or src.on_damage else 0)
         if (clone.increases or clone.doubler is not None) and (self.s.attacks or self.s.entries):
             per_turn += 1
         return value + per_turn * left
@@ -2081,6 +2094,21 @@ class _Game:
             if card.increases:
                 increasers.append(copy.card)
         increase = self._increase(increasers)
+        made = self._attack_yields(bodies, sources, doublers, increase)
+        if self.s.damage:
+            made.extend(self._damage_yields(bodies, copies, doublers, increase))
+        return made
+
+    def _attack_yields(
+        self,
+        bodies: Sequence[_Body],
+        sources: Sequence[_Body],
+        doublers: Sequence[_Body],
+        increase: tuple[int, int],
+    ) -> list[int]:
+        """The Treasures of the attacking creatures' own triggers, and one for each creature becoming tapped
+        for each of the `sources` that makes them."""
+        cards = self.s.cards
         made: list[int] = []
         for body in bodies:
             base = cards[body.card].src.treasures_on_attack
@@ -2104,6 +2132,50 @@ class _Game:
             types = cards[cid].src.treasure_on_tap
             if types:
                 made.extend([1] * sum(1 for body in attackers if _has_type(cards[body].src, types)))
+        if self.s.damage:
+            made.extend(self._damage_yields([_Body(cid, cid) for cid in attackers], (), [], (0, 1)))
+        return made
+
+    def _hurts(self, src: GoldfishCard) -> bool:
+        """Whether a creature that attacks unblocked deals combat damage: its power, less the shrinking, is
+        not 0; a power that varies is taken to."""
+        return src.power is None or src.power > self.shrink
+
+    def _damage_yields(
+        self,
+        attackers: Sequence[_Body],
+        copies: Sequence[_Copy],
+        doublers: Sequence[_Body],
+        increase: tuple[int, int],
+    ) -> list[int]:
+        """The Treasures each trigger of the combat damage of these attackers makes, for the permanents in
+        play, the copies included, that have one. Nothing blocks, so each attacker with power deals its
+        damage to a player: in the first-strike step, the regular one, or both for double strike. A trigger
+        for the creature itself or for each creature happens once for each step it deals damage in; one for
+        one or more creatures once for each step in which any of the creatures it names does."""
+        cards = self.s.cards
+        dealing = [body for body in attackers if self._hurts(cards[body.card].src)]
+        hitters = [_Body(cid, cid) for cid in self.bf if cards[cid].src.on_damage is not None]
+        hitters += [_Body(c.card, c.who) for c in copies if cards[c.card].src.on_damage is not None]
+        made: list[int] = []
+        for hitter in hitters:
+            spec = cards[hitter.card].src.on_damage
+            if spec is None:
+                raise AssertionError("a permanent without a damage trigger was read for one")
+            if spec.scope is DamageScope.SELF:
+                times = _damage_steps(cards[hitter.card].src) if hitter in dealing else 0
+            else:
+                named = [b for b in dealing if not spec.types or _has_type(cards[b.card].src, spec.types)]
+                strikes = [cards[b.card].src.strike for b in named]
+                if spec.scope is DamageScope.ANY:
+                    times = any(k is not Strike.REGULAR for k in strikes) + any(
+                        k is not Strike.FIRST for k in strikes
+                    )
+                else:
+                    times = sum(2 if k is Strike.DOUBLE else 1 for k in strikes)
+            if times:
+                again = 1 + self._extra_times(hitter, TriggerCause.DAMAGING, doublers)
+                made.extend([self._treasures_of(spec.count, again, increase)] * times)
         return made
 
     def _can_attack(self, cid: int) -> bool:
@@ -2226,7 +2298,11 @@ class _Game:
 
         def gain(cid: int) -> int:
             src = cards[cid].src
-            return src.treasures_on_attack + (1 if types and _has_type(src, types) else 0)
+            return (
+                src.treasures_on_attack
+                + (1 if types and _has_type(src, types) else 0)
+                + (1 if self.s.damage and self._hurts(src) and (src.on_damage or self.s.damage_shared) else 0)
+            )
 
         spare = sorted((cid for cid in ready if self._tappable(cid)), key=gain)[:taps]
         return [cid for cid in ready if cid not in spare]
@@ -2550,6 +2626,11 @@ def _finds_colour(colours: frozenset[str], wanted: frozenset[str]) -> bool:
     return not wanted or bool(colours & wanted) or ("C" in wanted and not colours)
 
 
+def _damage_steps(card: GoldfishCard) -> int:
+    """The combat damage steps a creature deals damage in."""
+    return 2 if card.strike is Strike.DOUBLE else 1
+
+
 def _has_type(card: GoldfishCard, types: frozenset[str]) -> bool:
     """Whether a creature has one of the subtypes, "creature" standing for any."""
     return "creature" in types or _has_creature_type(card, types) or bool(card.subtypes & types)
@@ -2826,6 +2907,7 @@ def _acts_beyond_its_cost(card: GoldfishCard) -> bool:
         card.treasures_on_entry
         or card.treasures_on_attack
         or card.treasure_on_tap
+        or card.on_damage is not None
         or card.treasure_extra
         or card.treasure_factor > 1
         or card.trigger_doubler is not None
@@ -2842,8 +2924,9 @@ def _acts_beyond_its_cost(card: GoldfishCard) -> bool:
 def _plays_alike(cut: GoldfishCard, incoming: GoldfishCard, *, exact: bool = False) -> bool:
     """Whether two plain spells are played the same in every game: the same mana value, colours and
     creature status, which are all a plain spell brings to the game. With `exact`, because a card of the
-    deck takes mana off spells by their types, counts or shrinks creatures, or makes a Treasure for each
-    creature of a type that taps, also the same types, subtypes, power and toughness."""
+    deck takes mana off spells by their types, counts or shrinks creatures, makes a Treasure for each
+    creature of a type that taps, or for creatures that deal combat damage, also the same types, subtypes,
+    power and toughness."""
     return (
         _is_plain(cut)
         and _is_plain(incoming)
@@ -2951,7 +3034,7 @@ def compare(
         late=[cut.incoming for cut in cuts.values() if cut.partial],
     )
     same_rules = _same_rules(before, after, some)
-    exact = any(
+    exact = before.damage_shared or any(
         c.src.reducers or c.src.discount is not None or c.shrink or c.src.treasure_on_tap
         for c in before.cards
     )
