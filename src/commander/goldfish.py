@@ -1707,15 +1707,25 @@ class _Game:
         s = self.s
         cards = s.cards
         units = self.units
-        reach = self._reach()
+        have = len(units)
+        reach: tuple[int, int, int] | None = None
         cutting = self.cutting
+
+        def within(total: int, purpose: int) -> bool:
+            # Every reach is at least the mana there is, so only a dearer card makes it worth working out.
+            nonlocal reach
+            if total <= have:
+                return True
+            if reach is None:
+                reach = self._reach()
+            return total <= reach[purpose]
+
         best: _Pick | None = None
         best_rank = _HELD
         for cid in self.hand:
             card = cards[cid]
-            if (
-                card.rank < best_rank
-                and (self._cost(card).total if cutting else card.cost.total) <= reach[card.reach_for]
+            if card.rank < best_rank and within(
+                self._cost(card).total if cutting else card.cost.total, card.reach_for
             ):
                 found = self._eligible(cid, card, units, from_command=False)
                 if found is not None:
@@ -1723,19 +1733,22 @@ class _Game:
         for cid in self.cmd_left:
             card = cards[cid]
             rank = _COMMANDER_RANK + min(card.mv, _RANK_SPAN)
-            if (
-                rank < best_rank
-                and (self._cost(card).total if cutting else card.cost.total) <= reach[_FOR_WIN]
-            ):
+            if rank < best_rank and within(self._cost(card).total if cutting else card.cost.total, _FOR_WIN):
                 found = self._eligible(cid, card, units, from_command=True)
                 if found is not None:
                     best, best_rank = (cid, card, *found, True), rank
-        if s.cloners:
-            for cid in self.hand:
-                card = cards[cid]
-                choice = self._clone_choice(card, cid) if card.cloner else None
-                if choice is not None and choice.rank < best_rank:
-                    best, best_rank = (cid, card, (), None, -1, False), choice.rank
+        clone = self._clone_pick(best_rank) if s.cloners else None
+        return best if clone is None else clone
+
+    def _clone_pick(self, below: int) -> _Pick | None:
+        """The card in hand that enters as a copy whose copy ranks lowest, if it ranks below `below`."""
+        cards = self.s.cards
+        best: _Pick | None = None
+        for cid in self.hand:
+            card = cards[cid]
+            choice = self._clone_choice(card, cid) if card.cloner else None
+            if choice is not None and choice.rank < below:
+                best, below = (cid, card, (), None, -1, False), choice.rank
         return best
 
     def _clone_choice(self, card: _Card, cid: int) -> _Clone | None:
