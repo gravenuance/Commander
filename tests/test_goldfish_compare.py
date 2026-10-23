@@ -523,6 +523,13 @@ EXACT_CASES = {
         creature("Idle", power=0),
         creature("Hitter", power=3),
     ),
+    "haste that attacks in the turn it comes": (
+        dataclasses.replace(
+            make("Breaker", mv=2, kinds=CREATURE), on_damage=DamageTreasures(DamageScope.ANY, 1)
+        ),
+        creature("Slow", power=3),
+        dataclasses.replace(creature("Fast", power=3), haste=True),
+    ),
 }
 
 

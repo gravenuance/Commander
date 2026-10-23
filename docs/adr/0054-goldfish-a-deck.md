@@ -265,8 +265,10 @@ reading and the policy now follow, and `POLICY_VERSION` is 5.
   play since the turn began that the phase left untapped attacks, for its own Treasure trigger and for one
   that a creature becoming tapped sets off (Magda: a Dwarf). A creature tapped for its own mana or a burst
   does not attack, and neither does one a Drum or a crew tapped, the summoning-sick ones tapped first and
-  then those with the least to gain from attacking. A Treasure made only if an opponent is ahead (Beza's, on
-  lands) is not counted.
+  then those with the least to gain from attacking. A creature with the haste keyword on its own keyword line
+  is not summoning sick: it attacks, or taps for its mana, the turn it enters if that is before combat, while
+  haste another card gives (Lightning Greaves, Magda's own text) is not read. A Treasure made only if an
+  opponent is ahead (Beza's, on lands) is not counted.
 - **Combat damage** (the owner's decision, replacing "no combat damage is followed"). Nothing blocks, so each
   attacker whose power, less any shrinking, is not 0 deals its damage to a player (a power that varies is
   taken to deal it; wins are still not judged, as no life is followed). The Treasures of a trigger "whenever

@@ -431,6 +431,7 @@ class _Card:
         "fin_less",
         "finisher",
         "gain",
+        "hasty",
         "hybrids",
         "increases",
         "is_land",
@@ -443,6 +444,7 @@ class _Card:
         "land_mask",
         "land_tapped",
         "land_types",
+        "late",
         "less",
         "life_cost",
         "mana_amount",
@@ -492,6 +494,8 @@ class _Card:
             self.mana_mask |= _RESTRICTED
         self.kind_bits = _kind_bits(card.kinds)
         self.delayed = mana is not None and mana.delayed
+        # A haste creature taps for its mana, and attacks, the turn it comes; any other waits a turn.
+        self.hasty, self.late = card.haste, self.delayed and not card.haste
         self.aura = mana is not None and mana.on_land
         self._read_one_shot(card, one_shot=one_shot, spend_from_hand=spend_from_hand)
         activation = card.land_ramp.activation if card.land_ramp is not None else 0
@@ -1671,9 +1675,9 @@ class _Game:
 
     def _taps_for_mana(self, cid: int) -> bool:
         """Whether a creature is tapped for its mana in the turn's pool: one in play since the turn began that
-        taps for mana. A summoning-sick one cannot."""
+        taps for mana. A summoning-sick one cannot, unless it has haste."""
         card = self.s.cards[cid]
-        return card.mana_perm and card.delayed and cid not in self.arrived
+        return card.mana_perm and card.delayed and (card.hasty or cid not in self.arrived)
 
     def _tappable(self, cid: int) -> bool:
         """Whether a Drum or a crew may tap the creature: it is not tapped for mana, and is no combo piece
@@ -1695,7 +1699,7 @@ class _Game:
                 met = self.artifacts >= _METALCRAFT
             if met == (cid in self.needs_met):
                 continue
-            later = card.delayed and cid in self.arrived
+            later = card.late and cid in self.arrived
             if met:
                 self.needs_met.add(cid)
                 if later:
@@ -1798,7 +1802,7 @@ class _Game:
         left that it draws, adds a land drop, makes Treasures as it attacks or taps, or changes how many
         Treasures are made or how often a trigger happens."""
         src = clone.src
-        value = clone.mana_amount * (left if clone.delayed else left + 1) if clone.mana_perm else 0
+        value = clone.mana_amount * (left if clone.late else left + 1) if clone.mana_perm else 0
         value += src.treasures_on_entry + clone.draw_count + (src.land_ramp.count if src.land_ramp else 0)
         value += 1 if src.tutor is not None else 0
         per_turn = clone.extra_drops + (1 if clone.engine else 0)
@@ -1964,9 +1968,9 @@ class _Game:
     def _arrival_mana(self, cid: int, card: _Card, *, later: bool) -> None:
         """The mana of a permanent that makes it as it comes: at once, or from the next turn if it is a
         creature or `later` says so (a copy of a creature this turn)."""
-        if card.delayed:
+        if card.late:
             self.sick.add(cid)
-        if card.delayed or later:
+        if card.late or later:
             self.pending.extend([card.mana_mask] * card.mana_amount)
         else:
             self._add_now(card.mana_mask, card.mana_amount)
@@ -2047,7 +2051,7 @@ class _Game:
 
     def _attack(self) -> bool:
         """Attack with every creature that is left untapped by the first main phase, for the Treasures that
-        attacking and becoming tapped make (no damage is followed); whether any were made. A trigger
+        attacking, becoming tapped and dealing damage make; whether any were made. A trigger
         happens once more for each doubler of attacks in play. The permanents that become a copy at the
         beginning of combat do, and the copies made earlier in the turn attack too."""
         attackers = self._attackers()
@@ -2279,19 +2283,25 @@ class _Game:
         return self._extra_times(entering, TriggerCause.ENTERING, doublers)
 
     def _attackers(self) -> list[int]:
-        """The creatures that attack: in play since the turn began and not tapped in the first main phase.
-        Those tapped for mana or a burst do not, and nor do as many others as Drums and crews tap, the
-        summoning-sick ones first and then those with the least to gain from attacking."""
+        """The creatures that attack: in play since the turn began, or with haste, and not tapped in the first
+        main phase. Those tapped for mana or a burst do not, and nor do as many others as Drums and crews
+        tap, the summoning-sick ones first and then those with the least to gain from attacking."""
         cards = self.s.cards
         ready = [
             cid
             for _, _, cid in self.creatures
-            if cid not in self.arrived and cid not in self.burst_used and not self._taps_for_mana(cid)
+            if (cid not in self.arrived or cards[cid].hasty)
+            and cid not in self.burst_used
+            and not self._taps_for_mana(cid)
         ]
         taps = sum(1 for cid in self.needs_met if cards[cid].need is ManaNeed.CREATURE)
         if taps <= 0:
             return ready
-        taps -= sum(1 for _, _, cid in self.creatures if cid in self.arrived and self._tappable(cid))
+        taps -= sum(
+            1
+            for _, _, cid in self.creatures
+            if cid in self.arrived and not cards[cid].hasty and self._tappable(cid)
+        )
         if taps <= 0:
             return ready
         types = frozenset(t for cid in self.bf for t in cards[cid].src.treasure_on_tap)
@@ -2926,7 +2936,7 @@ def _plays_alike(cut: GoldfishCard, incoming: GoldfishCard, *, exact: bool = Fal
     creature status, which are all a plain spell brings to the game. With `exact`, because a card of the
     deck takes mana off spells by their types, counts or shrinks creatures, makes a Treasure for each
     creature of a type that taps, or for creatures that deal combat damage, also the same types, subtypes,
-    power and toughness."""
+    power and toughness, and whether it has haste."""
     return (
         _is_plain(cut)
         and _is_plain(incoming)
@@ -2940,6 +2950,7 @@ def _plays_alike(cut: GoldfishCard, incoming: GoldfishCard, *, exact: bool = Fal
                 and cut.subtypes == incoming.subtypes
                 and cut.power == incoming.power
                 and cut.toughness == incoming.toughness
+                and cut.haste == incoming.haste
             )
         )
     )

@@ -422,6 +422,8 @@ class GoldfishCard:
     # whose power is not 0, and the keyword that says in which steps a creature deals it.
     on_damage: DamageTreasures | None = None
     strike: Strike = Strike.REGULAR
+    # A creature with the haste keyword: it attacks, and taps for mana, the turn it comes.
+    haste: bool = False
     activated_tutor: ActivatedTutor | None = None
     # A search as the creature dies (Protean Hulk, Academy Rector), which a free sacrifice outlet brings on.
     dies_tutor: Tutor | None = None
@@ -1458,6 +1460,7 @@ def _read_spell(card: GoldfishCard, info: CardMana, text: str, context: _Context
     }
     treasures = _treasures(text, card)
     on_damage = _damage_treasures(text, card)
+    keywords = _keywords(text) if CardKind.CREATURE in card.kinds else frozenset[str]()
     tokens = _token_increase(text)
     drawn = found["draw"]
     arrives = card.permanent and (
@@ -1485,7 +1488,8 @@ def _read_spell(card: GoldfishCard, info: CardMana, text: str, context: _Context
         treasures_on_attack=treasures[1],
         treasure_on_tap=treasures[2],
         on_damage=on_damage,
-        strike=_strike(text) if CardKind.CREATURE in card.kinds else Strike.REGULAR,
+        strike=_strike(keywords),
+        haste="haste" in keywords,
         **reductions._asdict(),
         entry_trigger=arrives,
         treasure_extra=tokens[0],
@@ -1544,9 +1548,7 @@ _DAMAGING_EACH = re.compile(r"an? (?P<types>[a-z]+(?: or [a-z]+)*)(?: creature)?
 _NOT_SUBTYPES_OF_CREATURES = frozenset(
     {"creature", "legendary", "nontoken", "token", "artifact", "enchanted", "equipped", "modified", "other"}
 )
-_KEYWORD_LINE = re.compile(
-    r"(?:[a-z]+(?: [a-z]+)?, )*(?P<strike>first strike|double strike)(?:, [a-z]+(?: [a-z]+)?)*"
-)
+_KEYWORD_LINE = re.compile(r"[a-z]+(?: [a-z]+)?(?:, [a-z]+(?: [a-z]+)?)*")
 _REMINDER = re.compile(r" \([^)]*\)")
 
 
@@ -1571,14 +1573,22 @@ def _damage_treasures(text: str, card: GoldfishCard) -> DamageTreasures | None:
     return None
 
 
-def _strike(text: str) -> Strike:
-    """The combat damage step a creature's keywords put its damage in; a keyword another creature is given
-    is no keyword of its own."""
+def _keywords(text: str) -> frozenset[str]:
+    """The keywords on the lines of a card that hold nothing else; a keyword another creature is given is no
+    keyword of its own."""
+    found: set[str] = set()
     for line in text.split("\n"):
-        keywords = _KEYWORD_LINE.fullmatch(_REMINDER.sub("", line))
-        if keywords is not None:
-            return Strike.DOUBLE if keywords.group("strike") == "double strike" else Strike.FIRST
-    return Strike.REGULAR
+        stripped = _REMINDER.sub("", line)
+        if _KEYWORD_LINE.fullmatch(stripped):
+            found.update(stripped.split(", "))
+    return frozenset(found)
+
+
+def _strike(keywords: frozenset[str]) -> Strike:
+    """The combat damage step a creature's keywords put its damage in."""
+    if "double strike" in keywords:
+        return Strike.DOUBLE
+    return Strike.FIRST if "first strike" in keywords else Strike.REGULAR
 
 
 _TREASURE_PLUS = re.compile(

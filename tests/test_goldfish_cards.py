@@ -3367,6 +3367,33 @@ def test_a_creature_with_double_strike_or_first_strike_is_read_to_deal_damage_in
     assert one(gives).strike is Strike.REGULAR
 
 
+def test_a_creature_with_the_haste_keyword_is_read_to_have_haste() -> None:
+    assert one(KNUCKLES).haste
+    guide = real(
+        "Goblin Guide",
+        "{R}",
+        1,
+        "Creature — Goblin Scout",
+        "Haste\nWhenever Goblin Guide attacks, defending player reveals the top card of their library. If "
+        "it's a land card, that player puts it into their hand.",
+        identity="R",
+        power="2",
+        toughness="2",
+    )
+    assert one(guide).haste
+    # Dash gives haste for a turn, which is no keyword of the card; nor is a haste another creature is given.
+    assert not one(RAGAVAN).haste
+    gives = real(
+        "Anthem of Blows",
+        "{2}{R}",
+        3,
+        "Enchantment",
+        "Creatures you control have haste, double strike.",
+        identity="R",
+    )
+    assert not one(gives).haste
+
+
 def test_a_damage_trigger_that_makes_no_treasure_or_makes_a_count_of_them_is_left_unread() -> None:
     assert one(SPARK_MAGE).on_damage is None
     # As many Treasures as the damage dealt: no fixed count.
