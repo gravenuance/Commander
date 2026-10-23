@@ -118,7 +118,6 @@ function closeOpenDeckIfGone() {
   renderDecks();
   renderActivity([]);
   resetMana();
-  resetGoldfish();
   resetPreviews();
   showRailFor(false);
   $("deck").hidden = true;
@@ -147,7 +146,6 @@ async function openDeck(id) {
     closeLabelMenu(false);
     resetBracket();
     resetMana();
-    resetGoldfish();
     resetPreviews();
     renderDecks();
     showRailFor(true);
@@ -204,7 +202,6 @@ function renderDeck() {
   paintBracket();
   renderActivity(view.activity);
   manaPanel.load();
-  loadGoldfish();
   bracketPanel.load();
 }
 

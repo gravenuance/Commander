@@ -156,11 +156,6 @@ function carryOver(old, node, card) {
   if (was.plain && !was.plain.hidden && wantsPlainAdd(card)) {
     keepChoice(was.plain, showPlainAdd(node, card));
   }
-  if (was.goldfish && wantsGoldfish(card)) {
-    const parts = tileParts.get(node);
-    parts.body.append(was.goldfish);
-    Object.assign(parts, { goldfish: was.goldfish, goldfishFigures: was.goldfishFigures });
-  }
   if (openShare !== null && old.contains(openShare.pill)) {
     const pill = node.querySelector(".share-pill");
     closeShare(false);
@@ -178,7 +173,7 @@ function showTargets(node, card) {
     parts.targets = el("div", { class: "targets", role: "group", "aria-label": `Replace with ${card.name}` },
       ...(card.targets.length
         ? card.targets.map((t) => el("button", {
-          class: `target ${t.source}`, type: "button", text: t.name, title: t.reason, "data-target": t.name,
+          class: `target ${t.source}`, type: "button", text: t.name, title: t.reason,
           "aria-label": `Replace ${t.name}: ${t.reason}`, onclick: () => swapIn(card.id, t.name),
         }))
         : [el("p", { class: "muted small", text: "Pick the deck card it replaces" })]));
@@ -267,7 +262,6 @@ function buildTile(card) {
     cardImage(card.image, card.name, "art"), body, reject);
   tileParts.set(tile, {
     pick, body, anchor: replacing ?? meta, targets: null, plain: null, plainKey: null, form: null,
-    goldfish: null, goldfishFigures: null,
   });
   return tile;
 }
@@ -498,162 +492,15 @@ function paint() {
     else if (parts.targets) parts.targets.hidden = true;
     if (on && wantsPlainAdd(tile.card)) showPlainAdd(tile.node, tile.card);
     else if (parts.plain) parts.plain.hidden = true;
-    if (!on) dropGoldfish(tile.node);
   }
   // A category the deck gained since the selected card was last painted.
   const selected = state.tiles.get(state.selected);
   if (selected && wantsPlainAdd(selected.card)) showPlainAdd(selected.node, selected.card);
-  // The figures of a swap, for a selected card queued with a cut; asked again when the deck changed.
-  if (selected && wantsGoldfish(selected.card)) showGoldfish(selected.node, selected.card);
-  else if (selected) dropGoldfish(selected.node);
-  if (selected && wantsCuts(selected.card)) showCuts(selected.node, selected.card);
   const choosing = Boolean(active);
   if (painted.choosing !== choosing) {
     painted.choosing = choosing;
     $("grid").classList.toggle("choosing", choosing);
   }
-}
-
-/* The goldfish figures a queued swap moves (ADR 0054), in a closed fold on the selected tile */
-
-const wantsGoldfish = (card) => card.status === "add" && Boolean(card.choice);
-
-// Bumped when the settings are saved, since the finishers and grace cards change what a swap moves.
-let goldfishEpoch = 0;
-// Per card id: the answer to the last ask, and the key of an ask that is still out.
-const swapFigures = new Map();
-const swapAsked = new Map();
-
-// What the figures depend on: the deck, the swap, the deck's snapshot and the settings.
-const swapKey = (card) => JSON.stringify(
-  [state.current, card.id, card.name, card.choice, card.copies, state.view?.stamp, goldfishEpoch]);
-
-function dropGoldfish(node) {
-  const parts = tileParts.get(node);
-  if (!parts.goldfish) return;
-  parts.goldfish.remove();
-  Object.assign(parts, { goldfish: null, goldfishFigures: null });
-}
-
-// The fold for these figures, closed at first; none when nothing moved. An open fold stays open when its
-// figures are replaced.
-function setGoldfishFold(node, figures) {
-  const parts = tileParts.get(node);
-  if (!figures.length) {
-    dropGoldfish(node);
-    return;
-  }
-  if (parts.goldfish && parts.goldfishFigures === figures) return;
-  const fold = el("details", { class: "fold goldfish-fold" }, el("summary", { text: "Goldfish" }),
-    goldfishFigures(figures));
-  if (parts.goldfish) {
-    fold.open = parts.goldfish.open;
-    parts.goldfish.replaceWith(fold);
-  } else {
-    parts.body.append(fold);
-  }
-  Object.assign(parts, { goldfish: fold, goldfishFigures: figures });
-}
-
-function showGoldfish(node, card) {
-  const key = swapKey(card);
-  const known = swapFigures.get(card.id);
-  if (known && known.key === key) {
-    setGoldfishFold(node, known.figures);
-    return;
-  }
-  if (swapAsked.get(card.id) === key) return;
-  swapAsked.set(card.id, key);
-  askGoldfish(card.id, key);
-}
-
-// Asked of the bridge directly, since a refusal (a deck that cannot be played) is not worth a toast: the
-// card just has no fold. The old fold stays until the answer replaces it.
-async function askGoldfish(id, key) {
-  let figures = [];
-  try {
-    const answer = await window.pywebview.api.goldfish_swap(state.current, id);
-    if (!answer.error) figures = answer.figures;
-  } catch (error) { noteFailure(error); }
-  if (swapAsked.get(id) === key) swapAsked.delete(id);
-  // The card, the deck or its snapshot may have changed while the games played: such an answer is dropped.
-  const now = state.tiles.get(id);
-  if (!now || !wantsGoldfish(now.card) || swapKey(now.card) !== key) return;
-  swapFigures.set(id, { key, figures });
-  if (state.selected === id) setGoldfishFold(now.node, figures);
-}
-
-/* The order of a selected idea's cut targets, which the goldfish breaks when their scores tie (ADR 0056) */
-
-// One target cannot pass another; the app decides which of several tie.
-const wantsCuts = (card) => card.targets.length > 1;
-
-// Per card id: the answer to the last ask, and the key of an ask that is still out.
-const cutOrders = new Map();
-const cutsAsked = new Map();
-
-// What the order depends on: the deck, the card and its targets, the deck's snapshot and the settings.
-const cutsKey = (card) => JSON.stringify([state.current, card.id, card.name, card.copies,
-  card.targets.map((t) => t.name), state.view?.stamp, goldfishEpoch]);
-
-// The meta's order stands until the answer arrives and is then changed once. A tile rebuilt meanwhile, or
-// asked again for a new snapshot, shows the last order known for the same targets rather than the meta's.
-function showCuts(node, card) {
-  const key = cutsKey(card);
-  const known = cutOrders.get(card.id);
-  if (known) applyCutOrder(node, known.cuts);
-  if ((known && known.key === key) || cutsAsked.get(card.id) === key) return;
-  cutsAsked.set(card.id, key);
-  askCuts(card.id, key);
-}
-
-// Asked of the bridge directly, since a refusal is not worth a toast: the targets just stay as they are.
-async function askCuts(id, key) {
-  let cuts = [];
-  try {
-    const answer = await window.pywebview.api.goldfish_cuts(state.current, id);
-    if (!answer.error) cuts = answer.cuts;
-  } catch (error) { noteFailure(error); }
-  if (cutsAsked.get(id) === key) cutsAsked.delete(id);
-  // The card, the deck or its snapshot may have changed while the games played: such an answer is dropped.
-  const now = state.tiles.get(id);
-  if (!now || cutsKey(now.card) !== key) return;
-  cutOrders.set(id, { key, cuts });
-  if (state.selected === id) applyCutOrder(now.node, cuts);
-}
-
-// Puts the target buttons in the order given and marks the ones moved up. Nothing changes unless the answer
-// names exactly the buttons there. A button that moves loses focus in the browser, so it gets it back.
-function applyCutOrder(node, cuts) {
-  const box = tileParts.get(node).targets;
-  if (!box) return;
-  const buttons = new Map([...box.querySelectorAll(".target")].map((b) => [b.dataset.target, b]));
-  const ordered = cuts.map((cut) => buttons.get(cut.name));
-  if (!cuts.length || ordered.includes(undefined) || ordered.length !== buttons.size) return;
-  if (ordered.some((button, i) => button !== box.children[i])) {
-    const held = document.activeElement;
-    box.append(...ordered);
-    if (ordered.includes(held) && document.activeElement !== held) held.focus({ preventScroll: true });
-  }
-  cuts.forEach((cut, i) => markPick(ordered[i], cut));
-}
-
-// The small mark on a target the goldfish moved up, and the button's name to match.
-function markPick(button, cut) {
-  const name = button.dataset.target;
-  const reason = button.title;
-  let mark = button.querySelector(".pick-mark");
-  if (!cut.up) {
-    if (mark) mark.remove();
-    button.setAttribute("aria-label", `Replace ${name}: ${reason}`);
-    return;
-  }
-  if (!mark) {
-    mark = el("span", { class: "pick-mark", text: "Goldfish pick" });
-    button.append(mark);
-  }
-  mark.title = `Goldfish pick: ${cut.why}`;
-  button.setAttribute("aria-label", `Replace ${name}: ${reason}. Goldfish pick: ${cut.why}`);
 }
 
 // Adding with no cut, filed under one of the deck's categories, its card type's first.

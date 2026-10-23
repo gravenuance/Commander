@@ -64,25 +64,6 @@ function bracketWarnings(bracket) {
   return [...bracket.check.notes, ...causes];
 }
 
-// The headline goldfish figures the queued swaps move, once the games are played. Asked beside the preview, not
-// through api(): the first ask takes seconds, and a refusal (no cuts, a deck that cannot be played) shows
-// nothing, rather than a toast over the modal.
-let reviewGoldfishSent = 0;
-
-async function showReviewGoldfish() {
-  const mine = ++reviewGoldfishSent;
-  const deck = state.current;
-  let figures = [];
-  try {
-    const answer = await window.pywebview.api.goldfish_review(deck);
-    if (!answer.error) figures = answer.figures;
-  } catch (error) { noteFailure(error); }
-  // An answer for an earlier opening, another deck or a closed dialog is dropped.
-  if (mine !== reviewGoldfishSent || deck !== state.current || !$("review-dialog").open) return;
-  $("review-goldfish-figures").replaceChildren(...(figures.length ? [goldfishFigures(figures)] : []));
-  $("review-goldfish").hidden = !figures.length;
-}
-
 async function openReview() {
   const dialog = $("review-dialog");
   $("review-deck").textContent = state.view.short;
@@ -91,9 +72,7 @@ async function openReview() {
   const save = $("review-save");
   save.textContent = "Save to Archidekt";
   $("review-error").hidden = true;
-  $("review-goldfish").hidden = true;
   dialog.showModal();
-  showReviewGoldfish();
   busy("Checking the deck on Archidekt…");
   try {
     const result = await api("preview", state.current);
