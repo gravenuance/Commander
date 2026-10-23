@@ -2014,6 +2014,71 @@ def test_a_search_is_a_tutor_only_when_the_tagger_says_so() -> None:
     assert card.modelled
 
 
+def test_a_card_that_only_changes_how_opponents_search_is_no_tutor_to_list() -> None:
+    agent = real(
+        "Opposition Agent",
+        "{2}{B}",
+        3,
+        "Creature — Human Rogue",
+        "Flash\nYou control your opponents while they're searching their libraries.\nWhile an opponent is "
+        "searching their library, they exile each card they find. You may play those cards for as long as "
+        "they remain exiled, and you may spend mana as though it were mana of any color to cast them.",
+        roles=(TUTOR,),
+    )
+    assert reads(agent).tutor is None
+
+
+SCHEMING_SYMMETRY = real(
+    "Scheming Symmetry",
+    "{B}",
+    1,
+    "Sorcery",
+    "Choose two target players. Each of them searches their library for a card, then shuffles and puts that "
+    "card on top.",
+    roles=(TUTOR,),
+)
+LIM_DULS_VAULT = real(
+    "Lim-Dûl's Vault",
+    "{U}{B}",
+    2,
+    "Instant",
+    "Look at the top five cards of your library. As many times as you choose, you may pay 1 life, put those "
+    "cards on the bottom of your library in any order, then look at the top five cards of your library. Then "
+    "shuffle and put the last cards you looked at this way on top in any order.",
+    roles=(TUTOR,),
+)
+NEOFORM = real(
+    "Neoform",
+    "{G}{U}",
+    2,
+    "Sorcery",
+    "As an additional cost to cast this spell, sacrifice a creature.\nSearch your library for a creature "
+    "card with mana value equal to 1 plus the sacrificed creature's mana value, put that card onto the "
+    "battlefield with an additional +1/+1 counter on it, then shuffle.",
+    roles=(TUTOR,),
+)
+GLIMPSE_THE_IMPOSSIBLE = real(
+    "Glimpse the Impossible",
+    "{2}{R}",
+    3,
+    "Sorcery",
+    "Exile the top three cards of your library. You may play those cards this turn. At the beginning of the "
+    "next end step, if any of those cards remain exiled, put them into your graveyard, then create a 0/1 "
+    "colorless Eldrazi Spawn creature token for each card put into your graveyard this way. Those tokens "
+    'have "Sacrifice this token: Add {C}."',
+    roles=(RAMP,),
+)
+
+
+@pytest.mark.parametrize(
+    "card",
+    [ENTOMB, SCHEMING_SYMMETRY, LIM_DULS_VAULT, NEOFORM, CROP_ROTATION, GLIMPSE_THE_IMPOSSIBLE],
+    ids=lambda c: c.mana.name,
+)
+def test_a_card_that_searches_or_looks_through_your_library_is_still_listed_when_not_read(card: Real) -> None:
+    assert not one(card).modelled
+
+
 @pytest.mark.parametrize(
     "tutor",
     [RECRUITER_OF_THE_GUARD, TROPHY_MAGE, FIERCE_EMPATH, TIME_OF_NEED],

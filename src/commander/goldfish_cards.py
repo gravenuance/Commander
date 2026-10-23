@@ -1708,13 +1708,21 @@ def _adds_mana(line: _ManaLine) -> bool:
     return line.varies or paid is None or _net_mana(paid, line.what, frozenset()) is not None
 
 
+# A card that searches a library or looks through the top of yours, as the Tagger's tutors do; one that only
+# changes how opponents search (Opposition Agent) does neither.
+_USES_LIBRARY = re.compile(
+    r"\bsearch(?:es)? (?:your|their) library|look at the top \w+ cards? of your library"
+)
+
+
 def _matters(text: str, roles: frozenset[Role], search: _Search | None) -> bool:
     """Whether the card is about what the goldfish measures: the Tagger's ramp (for its owner), draw or tutor
-    role, mana in its text, or a search for lands."""
+    role (for a card that searches or looks through a library), mana in its text, or a search for lands."""
     ramp = Role.RAMP in roles and _FOR_OPPONENT.search(text) is None
     draws = Role.DRAW in roles and re.search(r"\bdraws?\b", text) is not None
+    tutors = Role.TUTOR in roles and (search is not None or _USES_LIBRARY.search(text) is not None)
     mana = any(_adds_mana(line) for line in _abilities(text))
-    return ramp or draws or Role.TUTOR in roles or mana or _land_words(search) is not None
+    return ramp or draws or tutors or mana or _land_words(search) is not None
 
 
 # A sentence that reduces a cost: for other spells (Jet Medallion) or this one (Ghalta).
