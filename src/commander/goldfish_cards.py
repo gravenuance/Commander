@@ -204,6 +204,44 @@ class Draw:
     engine: bool
 
 
+class CopyKind(Enum):
+    """When and how long a card becomes a copy of another permanent."""
+
+    # At the beginning of combat, until end of turn (Gogo, Mysterious Mime).
+    COMBAT = "becomes a copy at the beginning of combat"
+    # By paying mana, until end of turn (Hall of Echoes).
+    ACTIVATED = "becomes a copy for mana"
+    # As it enters, until end of turn (Cursed Mirror).
+    TURN = "becomes a copy as it enters, until end of turn"
+    # Enters as a copy and stays one (Sculpting Steel, Phantasmal Image, Vesuva).
+    ENTERS = "enters as a copy"
+
+
+class CopyOf(Enum):
+    CREATURE = "creature"
+    ARTIFACT = "artifact"
+    LAND = "land"
+
+
+@dataclass(slots=True, frozen=True)
+class CopyEffect:
+    """A card that becomes a copy of a permanent in play."""
+
+    kind: CopyKind
+    of: CopyOf
+    # Generic mana paid to become the copy (Hall of Echoes: 5).
+    cost: int = 0
+    # The copy has haste (Cursed Mirror), so it attacks the turn it comes.
+    haste: bool = False
+    # The legend rule does not apply to it: it copies a legendary permanent and both stay (Gogo is renamed,
+    # Hall of Echoes lifts the rule). Any other copy of a legendary permanent is sacrificed.
+    legend_exempt: bool = False
+    # The copy enters tapped (Vesuva).
+    tapped: bool = False
+    # Only a permanent of a mana value up to the mana spent on the copy can be copied (Mockingbird).
+    mana_spent: bool = False
+
+
 class TriggerCause(Enum):
     """What a trigger doubler waits for."""
 
@@ -294,6 +332,7 @@ class GoldfishCard:
     treasure_extra: int = 0
     treasure_factor: int = 1
     trigger_doubler: TriggerDoubler | None = None
+    copy: CopyEffect | None = None
 
     @property
     def permanent(self) -> bool:
@@ -605,7 +644,9 @@ def _compile_card(
     )
     if info_is_land(info):
         land, understood = _land_face(info, context)
-        return replace(card, land=land, land_types=_land_types(info), modelled=understood)
+        return replace(
+            card, land=land, land_types=_land_types(info), modelled=understood, copy=_copy_effect(text)
+        )
     card = _read_spell(card, info, _face_text(info, face), context)
     if back_is_land(info.type_line):
         land, understood = _land_face(info, context)
@@ -1281,6 +1322,7 @@ def _read_spell(card: GoldfishCard, info: CardMana, text: str, context: _Context
         treasure_extra=tokens[0],
         treasure_factor=tokens[1],
         trigger_doubler=_trigger_doubler(text),
+        copy=_copy_effect(text),
         **found,
     )
 
@@ -1373,6 +1415,47 @@ def _trigger_doubler(text: str) -> TriggerDoubler | None:
         chosen_type=source.group("chosen") is not None,
         another=True,
     )
+
+
+_COMBAT_COPY = re.compile(
+    r"^at the beginning of combat on your turn, you may have [^.]*? become a copy of another target "
+    r"creature you control until end of turn(?P<renamed>, except its name is)?",
+    re.MULTILINE,
+)
+_ACTIVATED_COPY = re.compile(
+    r"^\{(?P<cost>\d+)\}: this \w+ becomes a copy of target creature you control until end of turn\.",
+    re.MULTILINE,
+)
+_ENTERS_COPY = re.compile(
+    r"^as this \w+ enters, you may have it become a copy of any creature on the battlefield until end of "
+    r"turn(?P<haste>, except it has haste)?",
+    re.MULTILINE,
+)
+_LEGEND_RULE_LIFTED = re.compile(r'the "legend rule" doesn\'t apply')
+
+
+def _copy_effect(text: str) -> CopyEffect | None:
+    """The copy a card becomes of a creature until end of turn, when the reading can follow it."""
+    combat = _COMBAT_COPY.search(text)
+    if combat is not None:
+        return CopyEffect(
+            CopyKind.COMBAT,
+            CopyOf.CREATURE,
+            haste="gain haste" in text,
+            legend_exempt=combat.group("renamed") is not None,
+        )
+    activated = _ACTIVATED_COPY.search(text)
+    if activated is not None:
+        return CopyEffect(
+            CopyKind.ACTIVATED,
+            CopyOf.CREATURE,
+            cost=int(activated.group("cost")),
+            legend_exempt=_LEGEND_RULE_LIFTED.search(text) is not None,
+        )
+    entering = _ENTERS_COPY.search(text)
+    if entering is not None:
+        return CopyEffect(CopyKind.TURN, CopyOf.CREATURE, haste=entering.group("haste") is not None)
+    return None
 
 
 def _search_is_trigger(search: _Search | None) -> bool:

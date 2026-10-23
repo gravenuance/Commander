@@ -14,10 +14,14 @@ from commander.goldfish_cards import (
     CHANGELING,
     ActivatedTutor,
     CardKind,
+    CopyEffect,
+    CopyKind,
+    CopyOf,
     Draw,
     GoldfishCard,
     LandDestination,
     LandRamp,
+    ManaAbility,
     TriggerCause,
     TriggerDoubler,
     Tutor,
@@ -29,6 +33,7 @@ from test_goldfish import (
     FOREST,
     VANILLA,
     combo_of,
+    land,
     make,
     only_outcome,
     repeat,
@@ -336,6 +341,100 @@ def test_a_doubled_search_fetches_a_second_card() -> None:
     # Two of the three pieces are fetched at once, so no game lands later and some land earlier.
     assert all(a <= b for a, b in zip(doubled, plain, strict=True))
     assert any(a < b for a, b in zip(doubled, plain, strict=True))
+
+
+# --- becoming a copy of a creature until end of turn -------------------------------------------------------
+
+LEGENDARY_MAGDA = replace(MAGDA, legendary=True)
+GOGO = replace(
+    make("Gogo", mv=2, kinds=CREATURE),
+    legendary=True,
+    copy=CopyEffect(CopyKind.COMBAT, CopyOf.CREATURE, haste=True, legend_exempt=True),
+)
+VAULT = make("Vault", mv=1, kinds=ARTIFACT, mana=ManaAbility(4, frozenset("C"), delayed=False, ritual=False))
+HALL = replace(
+    land("Hall", "C"), copy=CopyEffect(CopyKind.ACTIVATED, CopyOf.CREATURE, cost=5, legend_exempt=True)
+)
+
+
+def test_a_creature_that_becomes_a_copy_in_combat_doubles_the_dwarves_that_tap() -> None:
+    # Magda comes on turn one and Gogo on turn two, and in combat Gogo becomes a copy of Magda, whatever it
+    # is that is legendary. Two Dwarves attack and two Magdas make a Treasure for each: 4, and turn three
+    # has 3 Forests for the 7.
+    slots = [*repeat(FOREST, 4), GOGO, piece(7)]
+    assert landed(slots, commanders=(LEGENDARY_MAGDA,)) == (3,)
+    # Without Gogo's copy Magda attacks alone for 1 a turn: turn four has 4 Forests and 2 Treasures, and 3
+    # after its attack, for the 7.
+    assert landed(
+        [*repeat(FOREST, 4), replace(GOGO, copy=None), piece(7)], commanders=(LEGENDARY_MAGDA,)
+    ) == (4,)
+
+
+def test_a_copy_that_keeps_the_legend_rule_copies_no_legendary_creature() -> None:
+    kept = replace(GOGO, copy=CopyEffect(CopyKind.COMBAT, CopyOf.CREATURE, haste=True))
+    assert landed([*repeat(FOREST, 4), kept, piece(7)], commanders=(LEGENDARY_MAGDA,)) == (4,)
+    # It copies the creature that is not legendary, which Magda's Dwarves make more of.
+    assert landed([*repeat(FOREST, 4), kept, piece(7)], commanders=(MAGDA,)) == (3,)
+
+
+def test_the_creature_a_combat_copy_copies_gains_haste_and_attacks_the_turn_it_comes() -> None:
+    gogo = replace(GOGO, mana_value=1)
+    magda = replace(LEGENDARY_MAGDA, mana_value=2)
+    # Gogo comes on turn one and Magda on turn two. Both attack on turn two, Gogo as a copy of Magda: 4
+    # Treasures, the 4 that the piece costs.
+    assert landed([*repeat(FOREST, 4), magda, gogo, piece(4)]) == (2,)
+    # Without the copy Magda first attacks on turn three, for 3 Forests and 1 Treasure.
+    assert landed([*repeat(FOREST, 4), magda, replace(gogo, copy=None), piece(4)]) == (3,)
+
+
+def test_a_land_that_becomes_a_copy_for_five_mana_needs_five_mana_besides_its_own() -> None:
+    # The Vault pays for itself with the Hall's mana on turn one, and Magda is cast. Turn two has the Hall, a
+    # Forest and the Vault's 4: 6 mana, the Hall's own one that cannot be spent on its becoming a copy. It
+    # becomes a copy of Magda and attacks with her: 4 Treasures. Turn three has 7 mana and the 11.
+    slots = [HALL, *repeat(FOREST, 3), VAULT, piece(11)]
+    assert landed(slots, commanders=(LEGENDARY_MAGDA,)) == (3,)
+    plain = replace(HALL, copy=None)
+    assert landed([plain, *repeat(FOREST, 3), VAULT, piece(11)], commanders=(LEGENDARY_MAGDA,)) == (4,)
+    # A Vault of 3 leaves 4 mana besides the Hall's own on turn two, so the Hall waits for turn three;
+    # spending its own mana on turn two would make 4 Treasures that land the 10 on turn three.
+    small = replace(VAULT, mana=ManaAbility(3, frozenset("C"), delayed=False, ritual=False))
+    assert landed([HALL, *repeat(FOREST, 3), small, piece(10)], commanders=(LEGENDARY_MAGDA,)) == (4,)
+
+
+CURSED_MIRROR = replace(
+    make("Mirror", mv=2, kinds=ARTIFACT, mana=ManaAbility(1, frozenset("C"), delayed=False, ritual=False)),
+    copy=CopyEffect(CopyKind.TURN, CopyOf.CREATURE, haste=True),
+)
+
+
+def test_an_artifact_that_enters_as_a_copy_of_a_creature_attacks_with_haste_and_makes_no_mana() -> None:
+    # The raider comes on turn one. The Mirror comes on turn two as a copy of it, with haste, and both attack
+    # for 2 Treasures: 4, and the 4 that the piece costs. The Mirror makes no mana, being a creature.
+    two = raider(2)
+    assert landed([*repeat(FOREST, 3), two, CURSED_MIRROR, piece(4)]) == (2,)
+    # As a plain artifact it makes 1 mana, but the raider alone makes 2 Treasures: 3 on turn two. Turn three
+    # has 3 Forests and the Mirror's mana.
+    assert landed([*repeat(FOREST, 3), two, replace(CURSED_MIRROR, copy=None), piece(4)]) == (3,)
+    # A piece of 5 shows that the copy's mana is not made on turn two: its 4 Treasures wait for turn three.
+    assert landed([*repeat(FOREST, 3), two, CURSED_MIRROR, piece(5)]) == (3,)
+
+
+def test_an_artifact_that_enters_as_a_copy_makes_its_mana_again_the_next_turn() -> None:
+    # The copy ends with turn two. Turn three has 3 Forests and the Mirror's 1, the 4 Treasures of turn two
+    # and the raider's 2 on turn three: 10, for the 10. Without the Mirror's mana it is 9.
+    assert landed([*repeat(FOREST, 3), raider(2), CURSED_MIRROR, piece(10)]) == (3,)
+
+
+def test_an_artifact_that_enters_as_a_copy_copies_no_legendary_creature() -> None:
+    legendary = replace(raider(2), legendary=True)
+    assert landed([*repeat(FOREST, 3), legendary, CURSED_MIRROR, piece(4)]) == (3,)
+
+
+def test_an_artifact_that_makes_more_mana_than_the_copy_gains_is_not_a_copy() -> None:
+    # The Mirror makes 2 mana and a copy of the raider gains 1 Treasure: it stays an artifact, and turn two
+    # has its 2 mana and the raider's Treasure for the 3.
+    rock = replace(CURSED_MIRROR, mana=ManaAbility(2, frozenset("C"), delayed=False, ritual=False))
+    assert landed([*repeat(FOREST, 3), raider(1), rock, piece(3)]) == (2,)
 
 
 # --- a swap -------------------------------------------------------------------------------------------------

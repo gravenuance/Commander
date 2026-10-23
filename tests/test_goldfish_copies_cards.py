@@ -2,7 +2,7 @@
 
 import pytest
 
-from commander.goldfish_cards import CardKind, TriggerCause, TriggerDoubler
+from commander.goldfish_cards import CardKind, CopyEffect, CopyKind, CopyOf, TriggerCause, TriggerDoubler
 from test_goldfish_cards import (
     CULTIVATE,
     DOCKSIDE,
@@ -11,6 +11,7 @@ from test_goldfish_cards import (
     LANNERY_STORM,
     MULLDRIFTER,
     PLUNDERING_BARBARIAN,
+    RAMP,
     WAYFARERS_BAUBLE,
     WOOD_ELVES,
     Real,
@@ -194,3 +195,63 @@ def test_the_effects_a_permanent_has_as_it_enters_are_entry_triggers(card: Real)
 )
 def test_a_spell_an_activated_ability_and_an_attack_trigger_are_no_entry_triggers(card: Real) -> None:
     assert not one(card).entry_trigger
+
+
+# --- copies of a creature until end of turn -----------------------------------------------------------------
+
+GOGO = real(
+    "Gogo, Mysterious Mime",
+    "{3}{R}",
+    4,
+    "Legendary Creature — Wizard",
+    "At the beginning of combat on your turn, you may have Gogo become a copy of another target creature "
+    "you control until end of turn, except its name is Gogo, Mysterious Mime. If you do, Gogo and that "
+    "creature each get +2/+0 and gain haste until end of turn and attack this turn if able.",
+    identity="R",
+    tags=("copy-creature", "copy-legendary"),
+)
+HALL_OF_ECHOES = real(
+    "Hall of Echoes",
+    "",
+    0,
+    "Land",
+    "{T}: Add {C}.\n{5}: This land becomes a copy of target creature you control until end of turn. The "
+    '"legend rule" doesn\'t apply to permanents you control this turn.',
+    produced="C",
+    tags=("copy-creature", "copy-legendary"),
+)
+CURSED_MIRROR = real(
+    "Cursed Mirror",
+    "{2}{R}",
+    3,
+    "Artifact",
+    "{T}: Add {R}.\nAs this artifact enters, you may have it become a copy of any creature on the "
+    "battlefield until end of turn, except it has haste.",
+    produced="R",
+    identity="R",
+    roles=(RAMP,),
+    tags=("clone", "copy-creature"),
+)
+
+
+def test_a_creature_that_becomes_a_copy_in_combat_is_read() -> None:
+    gogo = one(GOGO)
+    assert gogo.copy == CopyEffect(CopyKind.COMBAT, CopyOf.CREATURE, haste=True, legend_exempt=True)
+    assert gogo.legendary
+    assert gogo.modelled
+
+
+def test_a_land_that_becomes_a_copy_for_mana_is_read_and_is_still_a_land() -> None:
+    hall = one(HALL_OF_ECHOES)
+    assert hall.copy == CopyEffect(CopyKind.ACTIVATED, CopyOf.CREATURE, cost=5, legend_exempt=True)
+    assert hall.land is not None
+    assert hall.land.colours == {"C"}
+    assert hall.modelled
+
+
+def test_an_artifact_that_becomes_a_copy_as_it_enters_keeps_its_mana() -> None:
+    mirror = one(CURSED_MIRROR)
+    assert mirror.copy == CopyEffect(CopyKind.TURN, CopyOf.CREATURE, haste=True)
+    assert mirror.mana is not None
+    assert mirror.mana.amount == 1
+    assert mirror.modelled
