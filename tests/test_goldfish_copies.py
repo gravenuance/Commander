@@ -1,0 +1,376 @@
+"""Doublers and copy effects in the goldfish game (ADR 0054 "Doublers and copies"): hand-built decks whose
+turns are worked out by hand.
+
+A deck of seven cards or fewer is dealt whole into the opening hand, whatever the shuffle, so its game is the
+same each time. Each test pairs the card under test with a control that differs by that card alone."""
+
+from collections.abc import Sequence
+from dataclasses import replace
+
+import pytest
+
+from commander.goldfish import chosen_creature_type, compare
+from commander.goldfish_cards import (
+    CHANGELING,
+    ActivatedTutor,
+    CardKind,
+    Draw,
+    GoldfishCard,
+    LandDestination,
+    LandRamp,
+    TriggerCause,
+    TriggerDoubler,
+    Tutor,
+    TutorDestination,
+)
+from test_goldfish import (
+    ARTIFACT,
+    CREATURE,
+    FOREST,
+    VANILLA,
+    combo_of,
+    make,
+    only_outcome,
+    repeat,
+    run,
+)
+
+ENCHANTMENT = frozenset({CardKind.ENCHANTMENT})
+ARTIFACT_CREATURE = frozenset({CardKind.ARTIFACT, CardKind.CREATURE})
+
+
+def piece(mv: int) -> GoldfishCard:
+    return make("Piece", mv=mv, kinds=CREATURE, combo=True)
+
+
+def landed(slots: Sequence[GoldfishCard], *, commanders: Sequence[GoldfishCard] = ()) -> tuple[int, ...]:
+    """The turn the one combo, of the card named Piece, lands in the one game a deck of seven plays."""
+    the_piece = next(card for card in slots if card.name == "Piece")
+    return only_outcome(run(slots, commanders=commanders, combos=(combo_of(the_piece),))).combo_turns
+
+
+def raider(
+    treasures: int = 1,
+    *,
+    power: int | None = None,
+    subtypes: frozenset[str] = frozenset(),
+    trigger_doubler: TriggerDoubler | None = None,
+) -> GoldfishCard:
+    """A creature that makes Treasures as it attacks, cast on turn one for a single mana."""
+    return replace(
+        make("Raider", mv=1, kinds=CREATURE),
+        treasures_on_attack=treasures,
+        power=power,
+        subtypes=subtypes,
+        trigger_doubler=trigger_doubler,
+    )
+
+
+def barbarian(kinds: frozenset[CardKind] = CREATURE) -> GoldfishCard:
+    """A permanent that makes a Treasure as it enters."""
+    return replace(make("Barbarian", mv=2, kinds=kinds), treasures_on_entry=1, entry_trigger=True)
+
+
+def doubler(
+    cause: TriggerCause, *, entering: frozenset[CardKind] = frozenset(), mv: int = 1, name: str = "Doubler"
+) -> GoldfishCard:
+    """An artifact of the given cost that doubles triggers."""
+    return replace(make(name, mv=mv, kinds=ARTIFACT), trigger_doubler=TriggerDoubler(cause, entering))
+
+
+def attack_race(support: GoldfishCard, the_raider: GoldfishCard, piece_value: int) -> tuple[int, ...]:
+    """Four Forests, a raider that comes on turn one, a card of two mana that comes on turn two, and a piece
+    the Treasures pay for."""
+    return landed([*repeat(FOREST, 4), the_raider, support, piece(piece_value)])
+
+
+def entry_race(support: GoldfishCard, maker: GoldfishCard) -> tuple[int, ...]:
+    """Three Forests, a one-mana card on turn one, a Treasure maker on turn two and a piece of five mana."""
+    return landed([*repeat(FOREST, 3), support, maker, piece(5)])
+
+
+XORN = replace(make("Xorn", mv=2, kinds=CREATURE), treasure_extra=1)
+PARALLEL_LIVES = replace(make("Parallel Lives", mv=2, kinds=ENCHANTMENT), treasure_factor=2)
+INERT = make("Inert", mv=2, kinds=CREATURE)
+
+
+# --- Treasures made more -----------------------------------------------------------------------------------
+
+
+def test_an_additional_treasure_is_made_each_time_a_trigger_makes_one() -> None:
+    # The raider attacks on turns two and three. With Xorn, which comes on turn two, each attack makes 2
+    # Treasures: turn three has 3 Forests, 2 Treasures and, after the attack, 2 more: 7, for the 6.
+    assert attack_race(XORN, raider(), 6) == (3,)
+    # Without it 2 Treasures by the end of turn three make 5, and turn four's Forest makes 6.
+    assert attack_race(INERT, raider(), 6) == (4,)
+
+
+def test_twice_as_many_treasures_are_made_as_the_trigger_says_and_not_one_more() -> None:
+    # An attack for 2 Treasures is 4 with Parallel Lives: after turn three, 3 Forests and 8 Treasures.
+    assert attack_race(PARALLEL_LIVES, raider(2), 10) == (3,)
+    # Xorn makes it 3: 3 Forests and 6 Treasures are 9, short of 10 until turn four's Forest.
+    assert attack_race(XORN, raider(2), 10) == (4,)
+    assert attack_race(INERT, raider(2), 10) == (4,)
+
+
+def test_an_increaser_and_a_multiplier_of_one_card_add_before_they_multiply() -> None:
+    # An attack for 1 Treasure is (1 + 1) * 2 = 4, and not 1 * 2 + 1: turn two has 2 Forests and 4 Treasures
+    # for the 6.
+    boosted = replace(raider(), treasure_extra=1, treasure_factor=2)
+    assert landed([*repeat(FOREST, 4), boosted, piece(6)]) == (2,)
+
+
+@pytest.mark.parametrize(
+    "boost",
+    [
+        replace(XORN, mana_value=1),
+        replace(doubler(TriggerCause.ATTACKING), mana_value=1, kinds=CREATURE),
+    ],
+    ids=["an increaser", "a doubler"],
+)
+def test_a_permanent_that_has_left_play_makes_no_more_treasures(boost: GoldfishCard) -> None:
+    # Turn three casts the sacrifice spell, which takes the cheapest creature, the boost, before the raider
+    # attacks for 1 Treasure: the 5 is only reached when turn four's attack makes the second.
+    cull = make("Cull", mv=1, needs_sacrifice=True)
+    slots = [*repeat(FOREST, 3), boost, replace(raider(), mana_value=2), cull, piece(5)]
+    assert landed(slots) == (4,)
+    # With nothing to sacrifice for, the boost stays and the turn three attack makes 2 Treasures.
+    dud = make("Dud", mv=20, kinds=CREATURE)
+    assert landed([*repeat(FOREST, 3), boost, replace(raider(), mana_value=2), dud, piece(5)]) == (3,)
+
+
+def test_a_permanent_that_doubles_its_own_arrival_is_doubled_by_itself() -> None:
+    selfish = replace(
+        barbarian(ARTIFACT_CREATURE),
+        mana_value=1,
+        trigger_doubler=TriggerDoubler(TriggerCause.ENTERING, ARTIFACT_CREATURE),
+    )
+    # It comes on turn one with 2 Treasures, and turn two's 2 Forests and 2 Treasures pay for the 4.
+    assert landed([*repeat(FOREST, 4), selfish, piece(4)]) == (2,)
+    # A Treasure alone leaves turn two at 3, and turn three's Forest makes the 4.
+    assert landed([*repeat(FOREST, 4), replace(selfish, trigger_doubler=None), piece(4)]) == (3,)
+
+
+# --- Treasures made at the same time as another permanent comes -----------------------------------------
+
+
+def test_a_doubler_of_permanents_entering_makes_the_entry_treasure_twice() -> None:
+    pano = doubler(TriggerCause.ENTERING, entering=ARTIFACT_CREATURE)
+    # The Treasure maker is a creature: 2 Treasures and 3 Forests pay for the 5 on turn three.
+    assert entry_race(pano, barbarian()) == (3,)
+    # Nothing doubles it without the doubler, and the 4 that 3 Forests and a Treasure make fall short.
+    assert entry_race(INERT_ONE, barbarian()) == (0,)
+
+
+def test_a_doubler_of_artifacts_and_creatures_does_not_double_an_enchantment_entering() -> None:
+    pano = doubler(TriggerCause.ENTERING, entering=ARTIFACT_CREATURE)
+    anything = doubler(TriggerCause.ENTERING)
+    assert entry_race(pano, barbarian(ENCHANTMENT)) == (0,)
+    assert entry_race(anything, barbarian(ENCHANTMENT)) == (3,)
+
+
+def test_a_doubler_of_attacks_does_not_double_the_treasure_of_a_permanent_entering() -> None:
+    assert entry_race(doubler(TriggerCause.ATTACKING), barbarian()) == (0,)
+
+
+def test_a_doubler_of_permanents_entering_does_not_double_an_attack() -> None:
+    assert attack_race(INERT, raider(), 6) == (4,)
+    # The doubler is a two-mana card here, cast on turn two like Xorn.
+    anything = doubler(TriggerCause.ENTERING, mv=2)
+    assert attack_race(anything, raider(), 6) == (4,)
+    assert attack_race(doubler(TriggerCause.ATTACKING, mv=2), raider(), 6) == (3,)
+
+
+def test_each_doubler_in_play_makes_the_trigger_happen_once_more() -> None:
+    first = doubler(TriggerCause.ENTERING)
+    second = doubler(TriggerCause.ENTERING, mv=2, name="Second Doubler")
+    maker = replace(barbarian(), mana_value=3)
+    # Turn one casts one doubler, turn two the other and turn three the maker: 3 Treasures and 3 Forests are
+    # the 6 of turn four. One doubler makes 2 Treasures, which is 5.
+    slots = [*repeat(FOREST, 3), first, second, maker, piece(6)]
+    assert landed(slots) == (4,)
+    assert landed([*repeat(FOREST, 3), first, INERT, maker, piece(6)]) == (0,)
+
+
+INERT_ONE = make("Inert One", mv=1, kinds=ARTIFACT)
+
+
+# --- the triggers of some creatures -------------------------------------------------------------------------
+
+
+def test_a_doubler_of_creatures_with_little_power_doubles_only_the_triggers_of_those() -> None:
+    delney = replace(
+        make("Delney", mv=2, kinds=CREATURE), trigger_doubler=TriggerDoubler(TriggerCause.ANY, max_power=2)
+    )
+    assert attack_race(delney, raider(power=2), 6) == (3,)
+    assert attack_race(delney, raider(power=3), 6) == (4,)
+    assert attack_race(delney, raider(power=None), 6) == (4,)
+
+
+def test_a_doubler_that_names_no_other_creature_than_itself_doubles_its_own_trigger() -> None:
+    both = raider(power=2, trigger_doubler=TriggerDoubler(TriggerCause.ANY, max_power=2))
+    # Alone with four Forests and the piece: 2 Treasures on turn two, 2 more on turn three make 7 with the 3.
+    assert landed([*repeat(FOREST, 4), both, piece(6)]) == (3,)
+
+
+def test_a_doubler_of_another_creature_does_not_double_its_own_trigger() -> None:
+    other = TriggerDoubler(TriggerCause.ANY, subtype="elemental", another=True)
+    both = raider(subtypes=frozenset({"elemental"}), trigger_doubler=other)
+    # One Treasure an attack: 1 and 1 are 2, and turn four's fourth Forest makes the 6.
+    assert landed([*repeat(FOREST, 4), both, piece(6)]) == (4,)
+
+
+def test_a_doubler_of_another_elemental_doubles_the_triggers_of_a_creature_with_that_subtype() -> None:
+    twinflame = replace(
+        make("Twinflame", mv=2, kinds=CREATURE),
+        trigger_doubler=TriggerDoubler(TriggerCause.ANY, subtype="elemental", another=True),
+    )
+    elemental = frozenset({"elemental"})
+    assert attack_race(twinflame, raider(subtypes=elemental), 6) == (3,)
+    assert attack_race(twinflame, raider(subtypes=frozenset({"goblin"})), 6) == (4,)
+    # A changeling has every creature type.
+    assert attack_race(twinflame, raider(subtypes=frozenset({CHANGELING})), 6) == (3,)
+
+
+MAGDA = replace(
+    make("Magda", mv=1, kinds=CREATURE),
+    subtypes=frozenset({"dwarf", "berserker"}),
+    treasure_on_tap=frozenset({"dwarf"}),
+)
+THRONE = replace(
+    make("Throne", mv=2, kinds=ARTIFACT_CREATURE),
+    subtypes=frozenset({"golem"}),
+    trigger_doubler=TriggerDoubler(TriggerCause.ANY, chosen_type=True, another=True),
+)
+
+
+def test_a_doubler_of_the_chosen_type_doubles_a_dwarf_that_makes_a_treasure_as_a_dwarf_taps() -> None:
+    # Magda is the commander, cast on turn one. Throne names Dwarf, the commander's type, and is a Dwarf too.
+    # Turn two: Magda attacks, 2 Treasures. Turn three: Magda and Throne attack, each tapping a Dwarf for 2
+    # Treasures: 6 and 3 Forests, 9, for the 8.
+    slots = [*repeat(FOREST, 4), THRONE, piece(8)]
+    assert landed(slots, commanders=(MAGDA,)) == (3,)
+    # Without the doubler Magda makes 1 Treasure an attack: 4 Forests and 4 Treasures on turn five.
+    plain = replace(THRONE, trigger_doubler=None)
+    assert landed([*repeat(FOREST, 4), plain, piece(8)], commanders=(MAGDA,)) == (5,)
+
+
+def test_the_type_a_chosen_type_doubler_names_is_the_commanders_even_when_the_deck_has_more_dwarves() -> None:
+    # Throne names Elf, the commander's type, so it is no Dwarf and Magda's trigger is not doubled: the
+    # Treasures of turns four and five do not reach the 8.
+    elf = replace(make("Elf Commander", mv=1, kinds=CREATURE), subtypes=frozenset({"elf"}))
+    slots = [*repeat(FOREST, 4), THRONE, MAGDA, piece(8)]
+    assert landed(slots, commanders=(elf,)) == (0,)
+
+
+def test_the_type_a_chosen_type_doubler_names() -> None:
+    def creature(*types: str) -> GoldfishCard:
+        return replace(make("Card", kinds=CREATURE), subtypes=frozenset(types))
+
+    artifact = make("Rock", kinds=ARTIFACT)
+    # The commander's type that Treasures are made for as it taps.
+    assert chosen_creature_type([], [MAGDA]) == "dwarf"
+    # The type of the most creatures in the deck when the commander has none; the first by name on a tie.
+    elf, dwarf = creature("elf"), creature("dwarf")
+    assert chosen_creature_type([elf, dwarf, dwarf], [artifact]) == "dwarf"
+    assert chosen_creature_type([elf, elf, dwarf], [artifact]) == "elf"
+    assert chosen_creature_type([elf, dwarf], [artifact]) == "dwarf"
+    # A changeling commander has every type, so none is its own.
+    assert chosen_creature_type([elf, elf, dwarf], [creature(CHANGELING)]) == "elf"
+    # A card that is no creature has subtypes that are no creature types.
+    assert chosen_creature_type([replace(artifact, subtypes=frozenset({"equipment"}))], [artifact]) is None
+    assert chosen_creature_type([], []) is None
+
+
+# --- other effects of a permanent that enters ---------------------------------------------------------------
+
+
+def test_a_doubled_arrival_fetches_lands_twice() -> None:
+    pano = doubler(TriggerCause.ENTERING, entering=ARTIFACT_CREATURE)
+    elves = replace(
+        make("Elves", mv=2, kinds=CREATURE),
+        land_ramp=LandRamp(1, basic_only=False, destination=LandDestination.UNTAPPED),
+        entry_trigger=True,
+    )
+    library = repeat(FOREST, 40)
+    # Turn two casts the Elves and puts two Forests onto the battlefield: 2 lands and 2 fetched.
+    doubled = only_outcome(run(library, commanders=(pano, elves)))
+    assert doubled.mana == (1, 4, 5, 6, 7)
+    plain = only_outcome(run(library, commanders=(replace(pano, trigger_doubler=None), elves)))
+    assert plain.mana == (1, 3, 4, 5, 6)
+
+
+def test_a_doubled_arrival_draws_twice() -> None:
+    pano = doubler(TriggerCause.ENTERING, entering=ARTIFACT_CREATURE)
+    drifter = replace(make("Drifter", mv=2, kinds=CREATURE), draw=Draw(2, engine=False), entry_trigger=True)
+    library = repeat(FOREST, 40)
+    # The seven of the hand, a card a turn for five turns and the Drifter's cards.
+    assert only_outcome(run(library, commanders=(pano, drifter))).shuffle_depths == (16,)
+    plain = replace(pano, trigger_doubler=None)
+    assert only_outcome(run(library, commanders=(plain, drifter))).shuffle_depths == (14,)
+
+
+def test_a_spell_that_draws_is_not_a_trigger_so_a_doubler_leaves_it_alone() -> None:
+    pano = doubler(TriggerCause.ENTERING)
+    harmonize = make("Harmonize", mv=2, draw=Draw(2, engine=False))
+    assert only_outcome(run(repeat(FOREST, 40), commanders=(pano, harmonize))).shuffle_depths == (14,)
+
+
+def test_a_doubled_search_fetches_a_second_card() -> None:
+    pano = doubler(TriggerCause.ENTERING, entering=ARTIFACT_CREATURE)
+    recruiter = replace(
+        make("Recruiter", mv=2, kinds=CREATURE),
+        tutor=Tutor(frozenset({CardKind.CREATURE}), TutorDestination.HAND),
+        entry_trigger=True,
+    )
+    pieces = [make(name, mv=1, kinds=CREATURE, combo=True) for name in ("One", "Two", "Three")]
+    combo = combo_of(*pieces)
+    library = [*repeat(FOREST, 9), *pieces]
+
+    def turns(commander: GoldfishCard) -> list[int]:
+        report = run(library, commanders=(commander, recruiter), combos=(combo,), games=300, seed=5)
+        return [o.combo_turns[0] or 99 for o in report.outcomes]
+
+    doubled = turns(pano)
+    plain = turns(replace(pano, trigger_doubler=None))
+    # Two of the three pieces are fetched at once, so no game lands later and some land earlier.
+    assert all(a <= b for a, b in zip(doubled, plain, strict=True))
+    assert any(a < b for a, b in zip(doubled, plain, strict=True))
+
+
+# --- a swap -------------------------------------------------------------------------------------------------
+
+
+PLAYS: dict[str, object] = {
+    "treasures_on_entry": 1,
+    "treasures_on_attack": 1,
+    "treasure_on_tap": frozenset({"dwarf"}),
+    "treasure_extra": 1,
+    "treasure_factor": 2,
+    "trigger_doubler": TriggerDoubler(TriggerCause.ENTERING),
+    "entry_trigger": True,
+    "activated_tutor": ActivatedTutor(Tutor(frozenset(), TutorDestination.HAND), treasures=1),
+    "dies_tutor": Tutor(frozenset(), TutorDestination.HAND),
+    "free_outlet": True,
+    "tap_ability": True,
+}
+
+
+@pytest.mark.parametrize("field", PLAYS)
+def test_a_swap_for_a_card_that_does_more_than_its_cost_is_played_and_not_taken_for_a_plain_spell(
+    field: str,
+) -> None:
+    slots = [*repeat(FOREST, 6), VANILLA]
+    base = run(slots, games=20)
+    incoming = replace(VANILLA, name="Incoming", **{field: PLAYS[field]})
+    result = compare(base, slots, [(VANILLA, incoming)], (), (), average_mana_value=2.0, seed=7)
+    # Dealt whole, every game of the deck draws the card cut.
+    assert len(result.replayed) == 20
+
+
+def test_a_swap_for_a_plain_spell_of_the_same_cost_is_not_played() -> None:
+    slots = [*repeat(FOREST, 6), VANILLA]
+    base = run(slots, games=20)
+    incoming = replace(VANILLA, name="Incoming")
+    result = compare(base, slots, [(VANILLA, incoming)], (), (), average_mana_value=2.0, seed=7)
+    assert result.replayed == ()

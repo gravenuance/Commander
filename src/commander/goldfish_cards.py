@@ -204,6 +204,35 @@ class Draw:
     engine: bool
 
 
+class TriggerCause(Enum):
+    """What a trigger doubler waits for."""
+
+    # Any triggered ability of the creatures it names (Roaming Throne, Delney, Twinflame Travelers).
+    ANY = "any trigger"
+    # A permanent entering (Panharmonicon, Elesh Norn, Yarok).
+    ENTERING = "a permanent entering"
+    # A creature attacking (Windcrag Siege's Mardu mode).
+    ATTACKING = "a creature attacking"
+
+
+@dataclass(slots=True, frozen=True)
+class TriggerDoubler:
+    """A permanent under which a triggered ability of the permanents you control triggers an additional time,
+    for each doubler in play. `cause` says which triggers, and the rest limit them to the triggers of some
+    creatures."""
+
+    cause: TriggerCause
+    # What the entering permanent must be one of, for ENTERING; empty for any permanent.
+    entering: frozenset[CardKind] = frozenset()
+    # Only the triggers of creatures with this subtype, with the type this creature names as it enters
+    # (Roaming Throne), or with power at most this.
+    subtype: str | None = None
+    chosen_type: bool = False
+    max_power: int | None = None
+    # Not the doubler's own triggers.
+    another: bool = False
+
+
 @dataclass(slots=True, frozen=True)
 class GoldfishCard:
     """One card of the deck as the game loop reads it. The cost is the one it is cast for: a two-part card by
@@ -257,6 +286,14 @@ class GoldfishCard:
     dies_tutor: Tutor | None = None
     # Sacrifices a creature for no mana (Carrion Feeder, Phyrexian Tower, Ashnod's Altar).
     free_outlet: bool = False
+    legendary: bool = False
+    # A permanent whose arrival effects the goldfish counts are triggers of it entering: Treasures, a search,
+    # lands fetched or cards drawn, which a trigger doubler repeats.
+    entry_trigger: bool = False
+    # Treasures made are this many more per event (Xorn), and this many times as many (Parallel Lives).
+    treasure_extra: int = 0
+    treasure_factor: int = 1
+    trigger_doubler: TriggerDoubler | None = None
 
     @property
     def permanent(self) -> bool:
@@ -564,6 +601,7 @@ def _compile_card(
         power=int(power) if power is not None and power.isdigit() else None,
         subtypes=frozenset({CHANGELING}) if changeling else _subtypes(info.type_line),
         free_outlet=card.permanent and _FREE_OUTLET.search(text) is not None,
+        legendary=_legendary(info.type_line),
     )
     if info_is_land(info):
         land, understood = _land_face(info, context)
@@ -1216,6 +1254,13 @@ def _read_spell(card: GoldfishCard, info: CardMana, text: str, context: _Context
         "draw": _draw(text, card.kinds) if Role.DRAW in roles else None,
     }
     treasures = _treasures(text, card)
+    tokens = _token_increase(text)
+    drawn = found["draw"]
+    arrives = card.permanent and (
+        treasures[0] > 0
+        or (isinstance(drawn, Draw) and not drawn.engine)
+        or ((found["land_ramp"] is not None or found["tutor"] is not None) and _search_is_trigger(search))
+    )
     extra = _NUMBER_WORDS[land_drops.group(1)] if land_drops else 0
     placed = (
         extra > 0 or treasures != (0, 0, frozenset()) or any(value is not None for value in found.values())
@@ -1232,6 +1277,10 @@ def _read_spell(card: GoldfishCard, info: CardMana, text: str, context: _Context
         treasures_on_entry=treasures[0],
         treasures_on_attack=treasures[1],
         treasure_on_tap=treasures[2],
+        entry_trigger=arrives,
+        treasure_extra=tokens[0],
+        treasure_factor=tokens[1],
+        trigger_doubler=_trigger_doubler(text),
         **found,
     )
 
@@ -1270,6 +1319,69 @@ def _treasures(text: str, card: GoldfishCard) -> tuple[int, int, frozenset[str]]
         _NUMBER_WORDS[attack.group("n")] if attack is not None else 0,
         frozenset({tapped.group("type")}) if tapped is not None else frozenset(),
     )
+
+
+_TREASURE_PLUS = re.compile(
+    r"if you would create (?:one or more )?treasure tokens?, instead create those tokens plus an additional "
+    r"treasure token"
+)
+_TOKEN_MULTIPLE = re.compile(
+    r"if (?:an effect would create one or more|one or more) (?P<kind>[a-z]+ )?tokens (?:would be created )?"
+    r"under your control, (?:it creates )?(?P<times>twice|three times) that many"
+)
+_MULTIPLES = {"twice": 2, "three times": 3}
+# The kinds of token a Treasure is counted among.
+_TREASURE_KINDS = frozenset({"", "artifact", "treasure"})
+_ENTERING_DOUBLER = re.compile(
+    r"if (?P<cause>an? [a-z]+(?: or [a-z]+)?) (?P<event>entering|attacking) causes a triggered ability of a "
+    r"permanent you control to trigger, that ability triggers an additional time"
+)
+_SOURCE_DOUBLER = re.compile(
+    r"if a triggered ability of (?:another creature you control of (?P<chosen>the chosen type)"
+    r"|a creature you control with power (?P<power>\d+) or less"
+    r"|another (?P<subtype>[a-z]+) you control) triggers, (?:it|that ability) triggers an additional time"
+)
+
+
+def _token_increase(text: str) -> tuple[int, int]:
+    """The Treasures a permanent adds to each creation, and the number of times it multiplies them by."""
+    multiple = _TOKEN_MULTIPLE.search(text)
+    counted = multiple is not None and (multiple.group("kind") or "").strip() in _TREASURE_KINDS
+    factor = _MULTIPLES[multiple.group("times")] if multiple is not None and counted else 1
+    return (1 if _TREASURE_PLUS.search(text) else 0), factor
+
+
+def _trigger_doubler(text: str) -> TriggerDoubler | None:
+    """The triggers a permanent makes happen an additional time, when the reading can follow which."""
+    entering = _ENTERING_DOUBLER.search(text)
+    if entering is not None:
+        if entering.group("event") == "attacking":
+            return TriggerDoubler(TriggerCause.ATTACKING) if entering.group("cause") == "a creature" else None
+        words = [w for w in re.findall(r"[a-z]+", entering.group("cause")) if w not in {"a", "an", "or"}]
+        kinds = frozenset(_KIND_WORDS[w] for w in words if w in _KIND_WORDS)
+        known = len(kinds) == len([w for w in words if w != "permanent"])
+        return TriggerDoubler(TriggerCause.ENTERING, kinds) if known else None
+    source = _SOURCE_DOUBLER.search(text)
+    if source is None:
+        return None
+    if source.group("power") is not None:
+        return TriggerDoubler(TriggerCause.ANY, max_power=int(source.group("power")))
+    subtype = source.group("subtype")
+    return TriggerDoubler(
+        TriggerCause.ANY,
+        subtype=subtype if subtype not in {None, "creature"} else None,
+        chosen_type=source.group("chosen") is not None,
+        another=True,
+    )
+
+
+def _search_is_trigger(search: _Search | None) -> bool:
+    """Whether a search happens by itself as a permanent arrives, with no cost to pay."""
+    return search is not None and not (search.cost or search.repeating or search.deferred)
+
+
+def _legendary(type_line: str) -> bool:
+    return "legendary" in front_type(type_line).casefold().partition("—")[0].split()
 
 
 def _names_of_itself(card: GoldfishCard) -> set[str]:

@@ -12,8 +12,9 @@ records that the cut slot was never reached (`reached`), and whose searches (`la
 """
 
 import random
+from collections import Counter
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from itertools import combinations
 from math import sqrt
@@ -30,6 +31,8 @@ from commander.goldfish_cards import (
     GoldfishDeck,
     LandDestination,
     ManaNeed,
+    TriggerCause,
+    TriggerDoubler,
     Tutor,
     TutorDestination,
 )
@@ -123,6 +126,33 @@ def turns_shown(bracket: int | None) -> tuple[int, ...]:
         raise ValueError(f"bracket must be 1-5 or None, got {bracket}")
     centre = BRACKET_TURN[key]
     return tuple(range(centre - _TURN_SPREAD, centre + _TURN_SPREAD + 1))
+
+
+def _creature_types(card: GoldfishCard) -> frozenset[str]:
+    """The creature types a card names; none for a card that is no creature, and for a changeling, which has
+    them all."""
+    if CardKind.CREATURE not in card.kinds:
+        return frozenset()
+    return card.subtypes - NON_CREATURE_SUBTYPES - {CHANGELING}
+
+
+def chosen_creature_type(slots: Sequence[GoldfishCard], commanders: Sequence[GoldfishCard]) -> str | None:
+    """The creature type a Roaming Throne names. The owner decided: the commander's type; of several, the one
+    the deck's Treasure triggers gain most from (a creature of the type that makes them or whose tapping
+    does); with no type of its own, the type most of the deck's creatures have. The first by name on a tie."""
+    everyone = (*slots, *commanders)
+    held = Counter(t for card in everyone for t in _creature_types(card))
+    own = sorted({t for card in commanders for t in _creature_types(card)})
+    if not own:
+        return max(sorted(held), key=held.__getitem__, default=None)
+    tapped = {t for card in everyone for t in card.treasure_on_tap}
+    makers = Counter(
+        t
+        for card in everyone
+        if card.treasures_on_attack or card.treasure_on_tap or card.entry_trigger
+        for t in _creature_types(card)
+    )
+    return max(own, key=lambda t: (makers[t] + (t in tapped), held[t]))
 
 
 def deck_slots(deck: GoldfishDeck) -> tuple[GoldfishCard, ...]:
@@ -369,15 +399,20 @@ class _Card:
         "creature",
         "delayed",
         "discards",
+        "doubler",
         "draw_count",
         "engine",
         "entry",
+        "entry_trigger",
+        "extra",
         "extra_drops",
+        "factor",
         "fast",
         "fin_cost",
         "finisher",
         "gain",
         "hybrids",
+        "increases",
         "is_land",
         "keep_syn",
         "key",
@@ -445,11 +480,13 @@ class _Card:
         self.hybrids = tuple(symbol_mask(symbol) for symbol in paid if "/" in symbol)
         self.colours = frozenset(letter for symbol in paid for letter in symbol if letter in _CARD_COLOURS)
         self._read_land(card)
+        self._read_doubling(card)
         self.creature = CardKind.CREATURE in card.kinds
         self.permanent = card.permanent
         self.extra_drops = card.extra_land_drops
         self.needs_sac = card.needs_sacrifice
         self.entry = card.entry_cost
+        self.entry_trigger = card.entry_trigger
         self.draw_count = card.draw.count if card.draw is not None else 0
         self.engine = card.draw is not None and card.draw.engine
         self.combo = card.combo
@@ -492,6 +529,13 @@ class _Card:
         name = card.name.casefold()
         self.basic = name in _BASICS or name.startswith("snow-covered ")
 
+    def _read_doubling(self, card: GoldfishCard) -> None:
+        """What it does to the Treasures made and to the triggers that happen."""
+        self.extra = card.treasure_extra
+        self.factor = card.treasure_factor
+        self.increases = card.treasure_extra > 0 or card.treasure_factor > 1
+        self.doubler = card.trigger_doubler
+
     def _rank(self) -> int:
         card = self.src
         if self.is_land or card.finisher or self.ritual or (card.combo and not card.permanent):
@@ -517,18 +561,21 @@ class _Setup:
         "attacks",
         "average",
         "cards",
+        "chosen",
         "cmd_ids",
         "cmd_set",
         "combo_free",
         "combo_ids",
         "combo_pieces",
         "deaths",
+        "doubling",
         "fin_ids",
         "has_needs",
         "has_rituals",
         "has_spare",
         "horizon",
         "ids",
+        "increasing",
         "keep_bracket",
         "max_lands",
         "merged",
@@ -562,11 +609,14 @@ class _Setup:
         by_object: dict[int, int] = {}
         by_key: dict[str, int] = {}
 
+        # The creature type a Roaming Throne names, which it has besides its own.
+        self.chosen = chosen_creature_type(slots, commanders)
+
         def add(card: GoldfishCard) -> int:
             cid = by_object.get(id(card))
             if cid is None:
                 cid = by_object[id(card)] = len(self.cards)
-                self.cards.append(_Card(card))
+                self.cards.append(_Card(self._named_type(card)))
                 by_key.setdefault(self.cards[cid].key, cid)
             return cid
 
@@ -596,8 +646,19 @@ class _Setup:
         )
         self.has_spare = any(card.spare for card in self.cards)
         self.has_needs = any(card.need for card in self.cards)
+        # Permanents that make a trigger happen more often, and those that make more Treasures.
+        self.doubling = any(card.doubler is not None for card in self.cards)
+        self.increasing = any(card.increases for card in self.cards)
         self.merged: dict[tuple[int, ...], Cost] = {}
         self._set_keep_rule()
+
+    def _named_type(self, card: GoldfishCard) -> GoldfishCard:
+        """The card, with the creature type named for it if it is a creature that is of the type chosen."""
+        doubler = card.trigger_doubler
+        names = doubler is not None and doubler.chosen_type and CardKind.CREATURE in card.kinds
+        if not names or self.chosen is None:
+            return card
+        return replace(card, subtypes=card.subtypes | {self.chosen})
 
     def _set_keep_rule(self) -> None:
         rule = self.keep_bracket
@@ -702,6 +763,7 @@ class _Game:
         "combo_turn",
         "creatures",
         "dealt",
+        "doublers",
         "drops_left",
         "engines",
         "extra_drops",
@@ -709,6 +771,7 @@ class _Game:
         "fin_turn",
         "hand",
         "hand_size",
+        "increasers",
         "land_search",
         "lands_in_play",
         "lib",
@@ -775,10 +838,10 @@ class _Game:
         # Permanents in play with a search paid for by Treasures or loyalty, and those whose loyalty is spent.
         self.activators: list[int] = []
         self.loyalty_used: set[int] = set()
-        self.engines = 0
-        self.extra_drops = 0
-        self.drops_left = 0
-        self.lands_in_play = 0
+        # Permanents in play that make triggers happen again, and that make more Treasures.
+        self.doublers: list[int] = []
+        self.increasers: list[int] = []
+        self.engines = self.extra_drops = self.drops_left = self.lands_in_play = 0
         # Lands in play that are sacrificed when another land is played (City of Traitors).
         self.lost_lands: list[int] = []
         self.check_land = False
@@ -1421,11 +1484,24 @@ class _Game:
             self.hand.clear()
         if card.needs_sac:
             self._sacrifice()
-        if card.src.land_ramp is not None:
-            self._ramp_lands(card)
-        if target is not None and card.src.tutor is not None:
-            self._fetch(card.src.tutor, target)
+        self._search_on_entry(cid, card, target)
         self._enter(cid, card, from_command=from_command)
+
+    def _search_on_entry(self, cid: int, card: _Card, target: tuple[int, int] | None) -> None:
+        """The lands and the card a cast card searches for, as many times as a permanent's arrival happens."""
+        times = self._entry_times(cid, card)
+        if card.src.land_ramp is not None:
+            for _ in range(times):
+                self._ramp_lands(card)
+        tutor = card.src.tutor
+        if target is None or tutor is None:
+            return
+        self._fetch(tutor, target)
+        for _ in range(times - 1):
+            again = self._target(tutor, self.units, 0)
+            if again is None:
+                return
+            self._fetch(tutor, again)
 
     def _enter(self, cid: int, card: _Card, *, from_command: bool = False) -> None:
         """What a resolved card leaves behind: the permanent, its mana, land drops and cards drawn."""
@@ -1452,17 +1528,19 @@ class _Game:
         if card.engine:
             self.engines += 1
         elif card.draw_count:
-            self._draw(card.draw_count)
+            self._draw(card.draw_count * self._entry_times(cid, card))
         if card.finisher and card.permanent:
             self._record_finisher(cid)
-        self._arrival_triggers(card.src)
+        self._arrival_triggers(cid, card)
 
-    def _arrival_triggers(self, card: GoldfishCard) -> None:
+    def _arrival_triggers(self, cid: int, card: _Card) -> None:
         """The Treasures a permanent makes as it comes, and the deaths a free outlet or a creature that
         searches as it dies brings on."""
-        if card.treasures_on_entry:
-            self._make_treasures(card.treasures_on_entry)
-        if self.s.deaths and (card.free_outlet or card.dies_tutor is not None):
+        if card.src.treasures_on_entry:
+            self._make_treasures(
+                self._treasures_of(card.src.treasures_on_entry, self._entry_times(cid, card))
+            )
+        if self.s.deaths and (card.src.free_outlet or card.src.dies_tutor is not None):
             self._offer_deaths()
 
     def _make_treasures(self, count: int) -> None:
@@ -1472,16 +1550,80 @@ class _Game:
         if self.needing:
             self._meet_needs()
 
+    def _treasures_of(self, base: int, events: int) -> int:
+        """The Treasures `events` creations of `base` make: each gets the additional Treasures of the
+        permanents in play, then their multiples (the owner chooses the order that makes most)."""
+        if self.increasers:
+            cards = self.s.cards
+            extra = sum(cards[cid].extra for cid in self.increasers)
+            factor = 1
+            for cid in self.increasers:
+                factor *= cards[cid].factor
+            base = (base + extra) * factor
+        return base * events
+
+    def _entry_times(self, cid: int, card: _Card) -> int:
+        """How many times the arrival effects of a permanent that is entering happen: once, and once more for
+        each doubler of permanents entering, the permanent itself one if it is."""
+        if not (card.entry_trigger and self.s.doubling):
+            return 1
+        doublers = self.doublers
+        if card.doubler is not None and cid not in doublers:
+            doublers = [*doublers, cid]
+        return 1 + self._extra_times(cid, TriggerCause.ENTERING, doublers)
+
+    def _extra_times(self, source: int, cause: TriggerCause, doublers: Iterable[int]) -> int:
+        """The doublers among `doublers` that make a trigger of the permanent `source`, caused by `cause`,
+        happen once more."""
+        cards = self.s.cards
+        card = cards[source]
+        extra = 0
+        for cid in doublers:
+            spec = cards[cid].doubler
+            if (
+                spec is not None
+                and spec.cause in {TriggerCause.ANY, cause}
+                and not (spec.another and cid == source)
+                and (not spec.entering or spec.entering & card.src.kinds)
+                and self._of_creatures_doubled(spec, card)
+            ):
+                extra += 1
+        return extra
+
+    def _of_creatures_doubled(self, spec: TriggerDoubler, card: _Card) -> bool:
+        """Whether a doubler that names only some creatures names the one whose trigger it is."""
+        if spec.subtype is None and not spec.chosen_type and spec.max_power is None:
+            return True
+        src = card.src
+        chosen = self.s.chosen
+        return (
+            card.creature
+            and (spec.subtype is None or _has_type(src, frozenset({spec.subtype})))
+            and (not spec.chosen_type or (chosen is not None and _has_type(src, frozenset({chosen}))))
+            and (spec.max_power is None or (src.power is not None and src.power <= spec.max_power))
+        )
+
     def _attack(self) -> bool:
         """Attack with every creature that is left untapped by the first main phase, for the Treasures that
-        attacking and becoming tapped make (no damage is followed); whether any were made."""
+        attacking and becoming tapped make (no damage is followed); whether any were made. A trigger
+        happens once more for each doubler of attacks in play."""
         cards = self.s.cards
-        attackers = [cards[cid].src for cid in self._attackers()]
-        made = sum(attacker.treasures_on_attack for attacker in attackers)
+        attackers = self._attackers()
+        made = 0
+        for cid in attackers:
+            base = cards[cid].src.treasures_on_attack
+            if base:
+                made += self._treasures_of(
+                    base, 1 + self._extra_times(cid, TriggerCause.ATTACKING, self.doublers)
+                )
         for cid in self.bf:
             types = cards[cid].src.treasure_on_tap
             if types:
-                made += sum(1 for attacker in attackers if _has_type(attacker, types))
+                taps = sum(1 for attacker in attackers if _has_type(cards[attacker].src, types))
+                if taps:
+                    made += self._treasures_of(
+                        1, taps * (1 + self._extra_times(cid, TriggerCause.ATTACKING, self.doublers))
+                    )
         if made:
             self._make_treasures(made)
         return made > 0
@@ -1546,6 +1688,8 @@ class _Game:
             (bool(card.burst_types), self.bursts),
             (card.banked, self.banked),
             (card.src.activated_tutor is not None, self.activators),
+            (card.doubler is not None, self.doublers),
+            (card.increases, self.increasers),
         ):
             if held:
                 (kept.remove if gone else kept.append)(cid)
@@ -2031,6 +2175,25 @@ def _is_plain(card: GoldfishCard) -> bool:
         and not card.extra_land_drops
         and not card.needs_sacrifice
         and card.entry_cost is None
+        and not _acts_beyond_its_cost(card)
+    )
+
+
+def _acts_beyond_its_cost(card: GoldfishCard) -> bool:
+    """Whether a card makes Treasures, changes how many are made or how often triggers happen, or has an
+    ability the game uses."""
+    return bool(
+        card.treasures_on_entry
+        or card.treasures_on_attack
+        or card.treasure_on_tap
+        or card.treasure_extra
+        or card.treasure_factor > 1
+        or card.trigger_doubler is not None
+        or card.entry_trigger
+        or card.activated_tutor is not None
+        or card.dies_tutor is not None
+        or card.free_outlet
+        or card.tap_ability
     )
 
 
@@ -2188,8 +2351,15 @@ def _same_rules(before: _Setup, after: _Setup, some: frozenset[int]) -> bool:
     slot but those of `some` (a card put in some slots of another), which hold the new numbers after all the
     old ones; the same keep rule and the same free combo pieces."""
 
-    def rules(setup: _Setup) -> tuple[int, int, int, bool, bool]:
-        return (setup.min_lands, setup.max_lands, setup.min_sources, setup.need_win, setup.need_syn)
+    def rules(setup: _Setup) -> tuple[int, int, int, bool, bool, str | None]:
+        return (
+            setup.min_lands,
+            setup.max_lands,
+            setup.min_sources,
+            setup.need_win,
+            setup.need_syn,
+            setup.chosen,
+        )
 
     old = len(before.cards)
     new = {after.ids[i] for i in some}
