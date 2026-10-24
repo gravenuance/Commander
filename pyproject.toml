@@ -9,7 +9,7 @@ dependencies = [
     "httpx==0.28.1",
     "keyring==25.7.0",
     "pywebview==6.2.1",
-    "tomlkit==0.15.1",
+    "tomlkit==0.15.2",
 ]
 
 [project.scripts]
@@ -24,7 +24,7 @@ build = [
 ]
 dev = [
     "pytest==9.1.1",
-    "ruff==0.17.0",
+    "ruff==0.17.1",
 ]
 
 [build-system]
