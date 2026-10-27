@@ -25,7 +25,17 @@ from commander.models import Deck
 from commander.net import MAX_ATTEMPTS, Fetcher
 from commander.plan import AddCard, Plan, RemoveCard
 from commander.suggest import BracketRaise
-from conftest import ACCESS_TOKEN, DECK_ID, FakeArchidekt, Json, archidekt_card_id, put_on_sideboard
+from conftest import (
+    ACCESS_TOKEN,
+    DECK_ID,
+    PRICED_BASE,
+    FakeArchidekt,
+    Json,
+    archidekt_card_id,
+    build_card_db,
+    priced_printing,
+    put_on_sideboard,
+)
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 FLUTE_ENTRY = 2531358028
@@ -79,6 +89,21 @@ def test_add_picks_the_cheapest_of_several_priced_printings(deck: Deck, db: Card
 
     (change,) = resolution.changes
     assert (change.set_code, change.collector_number, change.price_cents) == ("khm", "142", 679)
+
+
+def test_add_never_saves_a_glitch_priced_printing(deck: Deck, tmp_path: Path) -> None:
+    # Badlands-style: a Summer Magic copy at EUR 0.02 among copies at hundreds of euros.
+    lines = [
+        priced_printing(1, 1, "308.95", set_code="3ed"),
+        priced_printing(1, 2, "263.94", set_code="4ed"),
+        priced_printing(1, 3, "0.02", set_code="sum"),
+        priced_printing(1, 4, "280.00", set_code="5ed"),
+    ]
+    with CardDb(build_card_db(tmp_path, extra_cards=lines)) as glitchy:
+        resolution = resolve_plan(deck, plan([AddCard(f"Filler Card {PRICED_BASE + 1}")]), glitchy)
+
+    (change,) = resolution.changes
+    assert (change.set_code, change.price_cents) == ("4ed", 26394)
 
 
 def test_a_land_creature_is_filed_as_a_land(db: CardDb) -> None:

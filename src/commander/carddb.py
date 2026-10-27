@@ -13,11 +13,12 @@ from typing import Any, Literal, Self
 
 from commander.fsutil import new_temp_path, replace_with_retry
 from commander.models import DeckCard
+from commander.pricefilter import Prices, drop_glitches
 
 log = logging.getLogger(__name__)
 
 # Bump whenever the tables or the meaning of a column change; an old file is rebuilt, never migrated.
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 CARD_DB_FILE = "cards.sqlite"
 # The suffix of a database being built beside the real one; a crash can leave such a file behind.
 BUILD_SUFFIX = ".building"
@@ -864,9 +865,8 @@ def _fill(
         count = 0
         oracle: dict[str, tuple[object, ...]] = {}
         mana: dict[str, tuple[str, str, str]] = {}
-        # Cheapest regular printing first; a card with no priced regular printing falls back to any.
-        cheapest: dict[str, int] = {}
-        cheapest_any: dict[str, int] = {}
+        # Every printing's prices per card, to drop the glitches once all of a card's printings are known.
+        listed: dict[str, list[_Listed]] = {}
         gated = {oracle_id for gate in gates for oracle_id in gate.oracle_ids}
         gated_text: dict[str, str] = {}
         with db:
@@ -881,16 +881,17 @@ def _fill(
                     if oracle_id in gated:
                         gated_text.setdefault(oracle_id, card.oracle_text.casefold())
                     mana.setdefault(oracle_id, (oracle_id, card.produced, card.rarity))
-                    prices = (card.printing.eur_cents, card.printing.eur_foil_cents)
-                    _keep_lowest(cheapest_any, oracle_id, *prices)
-                    if card.printing.regular:
-                        _keep_lowest(cheapest, oracle_id, *prices)
+                    listed.setdefault(oracle_id, []).append(
+                        _Listed(
+                            card.printing.scryfall_id,
+                            card.printing.regular,
+                            (card.printing.eur_cents, card.printing.eur_foil_cents),
+                        )
+                    )
+            cheapest = _clean_prices(db, listed)
             db.executemany(
                 "INSERT INTO oracle VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    (*row, cheapest.get(oracle_id, cheapest_any.get(oracle_id)))
-                    for oracle_id, row in oracle.items()
-                ),
+                ((*row, cheapest.get(oracle_id)) for oracle_id, row in oracle.items()),
             )
             db.executemany("INSERT INTO card_mana VALUES (?, ?, ?)", mana.values())
             db.executemany(
@@ -917,6 +918,31 @@ def _fill(
     finally:
         db.close()
     return count
+
+
+@dataclass(slots=True, frozen=True)
+class _Listed:
+    scryfall_id: str
+    regular: bool
+    prices: Prices
+
+
+def _clean_prices(db: sqlite3.Connection, listed: Mapping[str, Sequence[_Listed]]) -> dict[str, int]:
+    """Blanks the glitch prices (pricefilter) in the printing table; returns each card's cheapest price, from
+    its regular printings first and a card with no priced regular printing from any."""
+    cheapest: dict[str, int] = {}
+    cheapest_any: dict[str, int] = {}
+    blanked: list[tuple[int | None, int | None, str]] = []
+    for oracle_id, printings in listed.items():
+        cleaned = drop_glitches([printing.prices for printing in printings])
+        for printing, prices in zip(printings, cleaned, strict=True):
+            if prices != printing.prices:
+                blanked.append((*prices, printing.scryfall_id))
+            _keep_lowest(cheapest_any, oracle_id, *prices)
+            if printing.regular:
+                _keep_lowest(cheapest, oracle_id, *prices)
+    db.executemany("UPDATE printing SET eur_cents = ?, eur_foil_cents = ? WHERE scryfall_id = ?", blanked)
+    return {**cheapest_any, **cheapest}
 
 
 def _printing_rows(batch: list[ParsedCard]) -> Iterator[tuple[object, ...]]:
