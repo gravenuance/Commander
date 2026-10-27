@@ -279,7 +279,8 @@ def test_a_sweeper_removing_only_noncreatures_is_a_board_wipe_only_by_its_text(
     _, tags_gz = write_bulk(tmp_path, tags=[*tag_lines(), artifact_only])
     tags = read_tags(tags_gz)
     assert role_members(tags)[Role.BOARD_WIPE] == frozenset()
-    assert role_gates(tags) == (TextGate(Role.BOARD_WIPE, frozenset({FLUTE_ORACLE}), "each creature"),)
+    wipe_gates = [gate for gate in role_gates(tags) if gate.role is Role.BOARD_WIPE]
+    assert wipe_gates == [TextGate(Role.BOARD_WIPE, frozenset({FLUTE_ORACLE}), "each creature")]
 
 
 def test_a_sweeper_also_tagged_with_a_tag_reaching_creatures_stays_a_board_wipe(tmp_path: Path) -> None:
@@ -290,7 +291,8 @@ def test_a_sweeper_also_tagged_with_a_tag_reaching_creatures_stays_a_board_wipe(
     _, tags_gz = write_bulk(tmp_path, tags=[*tag_lines(), artifact, creature, nonland])
     tags = read_tags(tags_gz)
     assert role_members(tags)[Role.BOARD_WIPE] == {FLUTE_ORACLE}
-    assert role_gates(tags) == (TextGate(Role.BOARD_WIPE, frozenset(), "each creature"),)
+    wipe_gates = [gate for gate in role_gates(tags) if gate.role is Role.BOARD_WIPE]
+    assert wipe_gates == [TextGate(Role.BOARD_WIPE, frozenset(), "each creature")]
 
 
 # Real Tagger ids of the tags the role definitions name.

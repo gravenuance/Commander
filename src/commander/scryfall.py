@@ -95,7 +95,18 @@ class RoleTag:
     exclude_alongside: tuple[str, ...] = ()
     # Subtrees whose cards are out of the role, whatever else they are tagged.
     drop_cards: tuple[str, ...] = ()
+    # A regular expression the role's cards must match in their rules text (see TextGate); "" asks for none.
+    text: str = ""
 
+
+# An extra turn card gives the turn to you or to a player you choose (Time Walk, Time Warp), not to an
+# opponent (Eon Frolicker, Emrakul the Promised End, Perch Protection's gift, Timesifter), and does not stop
+# extra turns (Ugin's Nexus).
+EXTRA_TURN_PHRASE = (
+    r"^(?!.*skips that turn)"
+    r".*(?:(?<!they )\btake (?:an|two|three|x|that many) extra turns?"
+    r"|target player takes (?:an|two|three|x|that many) extra turns?)"
+)
 
 ROLE_TAGS: Mapping[Role, RoleTag] = {
     # Path to Exile and Erode give the opponent the land (swap-removal); that is removal, not the deck's ramp.
@@ -116,7 +127,7 @@ ROLE_TAGS: Mapping[Role, RoleTag] = {
     Role.PROTECTION: RoleTag("protection", "6e2cdc7c-b02c-4b59-a171-f93723721b79"),
     Role.RECURSION: RoleTag("recursion", "82b824ad-648f-467f-a190-2e0fa9a795d2"),
     Role.COUNTERSPELL: RoleTag("counterspell", "690fc968-48ba-4854-a948-3db6bf19d3a9"),
-    Role.EXTRA_TURN: RoleTag("extra-turn", "03b17ebf-f5d3-4063-bfd4-1ae156a16a8f"),
+    Role.EXTRA_TURN: RoleTag("extra-turn", "03b17ebf-f5d3-4063-bfd4-1ae156a16a8f", text=EXTRA_TURN_PHRASE),
     Role.MASS_LAND_DENIAL: RoleTag("mass-land-denial", "cd12a44c-1aee-4ece-b8ea-3eb118ef0230"),
 }
 
@@ -592,7 +603,8 @@ def role_members(tags: Mapping[str, Tag]) -> dict[Role, frozenset[str]]:
         if spec.tag_id not in tags:
             log.warning("Scryfall no longer has the %r tag; %s cannot be counted", spec.slug, role.value)
             continue
-        members[role] = _role_cards(tags, spec)
+        # A role with a text rule gets its cards from role_gates, once their text is known.
+        members[role] = frozenset() if spec.text else _role_cards(tags, spec)
     if Role.BOARD_WIPE in members:
         members[Role.BOARD_WIPE] -= _noncreature_sweepers(tags, members[Role.BOARD_WIPE])
     return members
@@ -608,11 +620,16 @@ def _role_cards(tags: Mapping[str, Tag], spec: RoleTag) -> frozenset[str]:
 
 def role_gates(tags: Mapping[str, Tag]) -> tuple[TextGate, ...]:
     """The cards role_members leaves out of a role only for their tags, to be judged by their rules text."""
+    gates = [
+        TextGate(role, _role_cards(tags, spec), spec.text)
+        for role, spec in ROLE_TAGS.items()
+        if spec.text and spec.tag_id in tags
+    ]
     board_wipe = ROLE_TAGS[Role.BOARD_WIPE]
-    if board_wipe.tag_id not in tags:
-        return ()
-    sweepers = _members(tags, _subtree(tags, (board_wipe.tag_id,)))
-    return (TextGate(Role.BOARD_WIPE, _noncreature_sweepers(tags, sweepers), BOARD_WIPE_PHRASE),)
+    if board_wipe.tag_id in tags:
+        sweepers = _members(tags, _subtree(tags, (board_wipe.tag_id,)))
+        gates.append(TextGate(Role.BOARD_WIPE, _noncreature_sweepers(tags, sweepers), BOARD_WIPE_PHRASE))
+    return tuple(gates)
 
 
 def _noncreature_sweepers(tags: Mapping[str, Tag], sweepers: frozenset[str]) -> frozenset[str]:

@@ -128,6 +128,46 @@ def test_a_gated_card_joins_its_role_only_when_its_text_holds_the_phrase(tmp_pat
     assert cards["chaos warp"].roles == frozenset()
 
 
+EXTRA_TURN_TAG = "03b17ebf-f5d3-4063-bfd4-1ae156a16a8f"
+EXTRA_TURN_TEXTS = {
+    "Test Time Walk": ("Take an extra turn after this one.", True),
+    "Test Time Warp": ("Target player takes an extra turn after this one.", True),
+    "Test Time Stretch": ("Target player takes two extra turns after this one.", True),
+    "Test Medomai": (
+        ("Whenever this deals combat damage to a player, take an extra turn after this one.\nCan't attack."),
+        True,
+    ),
+    "Test Eon Frolicker": ("When this enters, target opponent takes an extra turn after this one.", False),
+    "Test Emrakul": ("After that turn, that player takes an extra turn.", False),
+    "Test Perch Protection": (
+        "Gift an extra turn (If you promise a gift, they take an extra turn after this one.)",
+        False,
+    ),
+    "Test Timesifter": ("The player with the greatest mana value takes an extra turn after this one.", False),
+    "Test Ugin's Nexus": (
+        ("If a player would begin an extra turn, that player skips that turn instead.\nTake an extra turn."),
+        False,
+    ),
+}
+
+
+def test_a_card_tagged_extra_turn_keeps_the_role_only_when_you_or_a_chosen_player_takes_the_turn(
+    tmp_path: Path,
+) -> None:
+    cards: list[str] = []
+    for index, (name, (text, _)) in enumerate(EXTRA_TURN_TEXTS.items()):
+        card = json.loads(filler_card(60_000 + index, name))
+        card["oracle_text"] = text
+        cards.append(json.dumps(card))
+    oracle_ids = [json.loads(card)["oracle_id"] for card in cards]
+    tag = json.loads(tagged_tag_line("extra-turn", *oracle_ids))
+    tag["id"] = EXTRA_TURN_TAG
+    with CardDb(build_card_db(tmp_path, extra_tags=[json.dumps(tag)], extra_cards=cards)) as db:
+        found = db.cards_named(list(EXTRA_TURN_TEXTS))
+    kept = {name for name in EXTRA_TURN_TEXTS if Role.EXTRA_TURN in found[name.casefold()].roles}
+    assert kept == {name for name, (_, wanted) in EXTRA_TURN_TEXTS.items() if wanted}
+
+
 def test_modal_land_back_does_not_make_a_land(card_db_file: Path) -> None:
     with CardDb(card_db_file) as db:
         eruption = db.cards_named(["Sundering Eruption // Volcanic Fissure"])

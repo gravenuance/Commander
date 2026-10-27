@@ -1,6 +1,7 @@
 """Local card database built from Scryfall bulk data: gameplay facts, EUR prices and card roles."""
 
 import logging
+import re
 import sqlite3
 import threading
 import time
@@ -345,7 +346,8 @@ class Tag:
 
 @dataclass(slots=True, frozen=True)
 class TextGate:
-    """Cards that hold a role only when their rules text contains phrase (casefolded)."""
+    """Cards that hold a role only when their rules text has a match for phrase, a regular expression read
+    without regard to case and across lines."""
 
     role: Role
     oracle_ids: frozenset[str]
@@ -962,11 +964,12 @@ def _printing_rows(batch: list[ParsedCard]) -> Iterator[tuple[object, ...]]:
 def _ungate(
     role_members: Mapping[Role, frozenset[str]], gates: Sequence[TextGate], texts: Mapping[str, str]
 ) -> dict[Role, frozenset[str]]:
-    """Each role's members plus its gated cards whose text holds the gate's phrase."""
+    """Each role's members plus its gated cards whose text matches the gate's phrase."""
     members = dict(role_members)
     for gate in gates:
         if gate.role in members:
-            passed = {o for o in gate.oracle_ids if gate.phrase.casefold() in texts.get(o, "")}
+            phrase = re.compile(gate.phrase, re.IGNORECASE | re.DOTALL)
+            passed = {o for o in gate.oracle_ids if phrase.search(texts.get(o, ""))}
             members[gate.role] = members[gate.role] | passed
     return members
 

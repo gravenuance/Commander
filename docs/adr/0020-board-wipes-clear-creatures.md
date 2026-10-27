@@ -62,5 +62,11 @@ Two more roles were wider than their names, found in a review of what the roles 
   first suggested, would also have dropped 15 cards that ramp the caster too (Tempt with Discovery,
   Collective Voyage, Fertilid, Hithlain Rope, Veteran Explorer): ramp stays ramp where it helps the caster.
 
+- **Five extra-turn cards were wrong.** Eon Frolicker, Emrakul the Promised End, Perch Protection and
+  Timesifter give the turn to an opponent, and Ugin's Nexus stops extra turns. The extra-turn role is now a text
+  gate like the board wipe's (`RoleTag.text`, `scryfall.EXTRA_TURN_PHRASE`): the text must say that you take
+  an extra turn, or that a target player does, and not "skips that turn". `TextGate.phrase` became a regular
+  expression for it. On the 59 tagged cards it keeps 54 and drops exactly those five.
+
 On 2026-10-22 data, 244 of the 814 legal tutors leave the role and 10 of the 2,153 legal ramp cards. The card
 database schema went to 9 (ADR 0001) so that existing databases are rebuilt.
