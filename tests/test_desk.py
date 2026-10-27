@@ -765,6 +765,48 @@ def test_below_bracket_5_the_mana_tab_suggests_the_land_count_and_basics(
     assert desk.mana_to_board(DECK) == {"added": [], "skipped": 0}
 
 
+def test_the_mana_tab_is_kept_until_the_deck_its_profile_its_turned_down_cards_or_the_card_data_change(
+    desk: Desk,
+    settings: DeskSettings,
+    fake: FakeArchidekt,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake.decks[DECK]["edhBracket"] = 3
+    fake.decks[DECK]["updatedAt"] = "2026-10-16T10:00:00.000000Z"
+    assert (
+        run(["sync", "--no-cards", "--no-ideas", "--workspace", str(settings.workspace)], tmp_path, fake).code
+        == 0
+    )
+    first = desk.mana(DECK)
+    assert first["plan"] is not None
+    calls = count_calls(monkeypatch, desk_module, "analyse_mana", "suggest_mana")
+
+    # A card proposed or queued changes the board, not the mana base; the answer is the same and not a
+    # shared dict, since the caller adds the plan's board marks to its own.
+    desk.propose(DECK, "Lightning Bolt")
+    again = desk.mana(DECK)
+    assert again == first
+    assert again is not first
+    assert sum(calls.values()) == 0
+
+    desk.decide(DECK, first_card_id(desk), "reject", "", "")
+    assert desk.mana(DECK) == first
+    assert calls["suggest_mana"] == 1
+    desk.mana(DECK)
+    assert calls["suggest_mana"] == 1
+
+    profile = settings.workspace / "10000001-sample-deck" / "profile.toml"
+    profile.write_text('[grace]\n"Mind Stone" = 9\n', encoding="utf-8")
+    desk.mana(DECK)
+    assert calls["suggest_mana"] == 2
+
+    rebuilt = settings.card_db.stat().st_mtime_ns + 1_000_000_000
+    os.utime(settings.card_db, ns=(rebuilt, rebuilt))
+    desk.mana(DECK)
+    assert calls["suggest_mana"] == 3
+
+
 def test_below_bracket_5_considering_marks_cards_over_the_decks_budget(
     desk: Desk, settings: DeskSettings, fake: FakeArchidekt, tmp_path: Path
 ) -> None:

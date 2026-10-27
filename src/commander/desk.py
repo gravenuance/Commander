@@ -314,6 +314,8 @@ class Desk:
         self._reports: dict[int, tuple[str, Json]] = {}
         # Per deck: the previews that fit it, and the stamp of what they were worked out from.
         self._previews: dict[int, tuple[str, list[PreviewFit]]] = {}
+        # Per deck: the mana tab's view and plan, and the stamp of what they were worked out from.
+        self._manas: dict[int, tuple[str, Json, ManaPlan | None]] = {}
         self._sync_lock = threading.Lock()
         self._sync = _SyncState()
         # The page errors already logged, as (message, source, line), under their own lock.
@@ -469,6 +471,7 @@ class Desk:
         self._rows.clear()
         self._reports.clear()
         self._previews.clear()
+        self._manas.clear()
         with self._sync_lock:
             self._open_deck = None
 
@@ -609,6 +612,7 @@ class Desk:
         self._tables.pop(deck_id, None)
         self._rules.pop(deck_id, None)
         self._reports.pop(deck_id, None)
+        self._manas.pop(deck_id, None)
         with self._sync_lock:
             if self._open_deck == deck_id:
                 self._open_deck = None
@@ -982,7 +986,25 @@ class Desk:
         return {"added": added, "skipped": len(plan.swaps) - len(added)}
 
     def _mana(self, deck_id: int) -> tuple[Json, ManaPlan | None]:
+        """The mana view and its plan, kept until the deck, its profile, the lands its board turned down, the
+        cached meta answers, the card data or the day change; the caller adds to its own copy of the view."""
         stored = self._stored(deck_id)
+        # Only a deck below bracket 5 gets land suggestions, which skip the lands its board turned down.
+        cedh = stored.deck.bracket == CEDH_BRACKET
+        turned_down = [] if cedh else sorted(read_board(stored.folder).rejected_names)
+        stamp = (
+            f"{files_stamp(stored.folder, ('deck.json', 'profile.toml'))}"
+            f"|{cache_stamp(self._settings.cache)}|{self._card_data_stamp()}|{self._now().date()}"
+            f"|{self._effective(stored.deck).bracket}|{turned_down}"
+        )
+        known = self._manas.get(deck_id)
+        if known is None or known[0] != stamp:
+            view, plan = self._worked_out_mana(stored)
+            known = (stamp, view, plan)
+            self._manas[deck_id] = known
+        return dict(known[1]), known[2]
+
+    def _worked_out_mana(self, stored: StoredDeck) -> tuple[Json, ManaPlan | None]:
         deck = stored.deck
         label, lists = comparison_lists(deck, self._pool(deck))
         cedh = deck.bracket == CEDH_BRACKET
