@@ -228,7 +228,8 @@ class MetaSources:
     # The Archidekt user whose own decks never count as other players' lists.
     user: str
     settings: MetaSettings
-    # Decks read side by side can want the same Archidekt search; the second waits for the first's answer.
+    # Decks read side by side can want the same Archidekt search or Spellbook core; the second waits for
+    # the first's answer.
     searches: ItemLocks = field(default_factory=ItemLocks)
 
 
@@ -980,16 +981,19 @@ def _meta_combos(
         request = core_request(commander)
         if request is None:
             continue
-        answer = cached_answer(
-            cache_item("spellbook", commander.stats.name),
-            request,
-            _live(offline, partial(_paced_details, sources, request)),
-            cache,
-            now=now,
-            refresh=refresh,
-            fresh_for=SPELLBOOK_FRESH_FOR,
-            errors=_ERRORS,
-        )
+        item = cache_item("spellbook", commander.stats.name)
+        # Decks read side by side share a commander's core; the later ones find the first one's answer.
+        with sources.searches.hold(item):
+            answer = cached_answer(
+                item,
+                request,
+                _live(offline, partial(_paced_details, sources, request)),
+                cache,
+                now=now,
+                refresh=refresh,
+                fresh_for=SPELLBOOK_FRESH_FOR,
+                errors=_ERRORS,
+            )
         answers.append((commander.stats.name, answer))
     return _combined(answers)
 
