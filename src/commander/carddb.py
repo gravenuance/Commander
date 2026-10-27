@@ -493,12 +493,21 @@ class CardDb:
 
     def printings_of(self, oracle_id: str) -> list[Printing]:
         """Every printing of a card, ordered by set and collector number."""
-        rows = self._query(
+        return self.printings_for([oracle_id]).get(oracle_id, [])
+
+    def printings_for(self, oracle_ids: Iterable[str]) -> dict[str, list[Printing]]:
+        """Every printing of each card, by oracle id and ordered by set and collector number; unknown ids
+        are left out."""
+        rows = self._select_in(
             "SELECT scryfall_id, oracle_id, set_code, collector_number, eur_cents, eur_foil_cents, regular"
-            " FROM printing WHERE oracle_id = ? ORDER BY set_code, collector_number",
-            [oracle_id],
+            " FROM printing WHERE oracle_id IN ({}) ORDER BY set_code, collector_number",
+            oracle_ids,
         )
-        return [_printing(row) for row in rows]
+        found: dict[str, list[Printing]] = {}
+        for row in rows:
+            printing = _printing(row)
+            found.setdefault(printing.oracle_id, []).append(printing)
+        return found
 
     def resolve(self, cards: Sequence[DeckCard]) -> list[ResolvedCard]:
         """Match deck cards by printing, falling back to the card name when the printing is unknown."""

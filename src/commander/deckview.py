@@ -2,7 +2,7 @@
 the cards outside the deck, the deck's categories for an add, and the stats above it (ADR 0043, 0044)."""
 
 from collections import Counter
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,13 +17,14 @@ from commander.models import COMMANDER_CATEGORY, Deck
 type Json = dict[str, Any]
 
 
-def card_image(db: CardDb, info: CardInfo) -> str | None:
-    """The image of the card's latest regular printing; None when the card data has no printing."""
-    printings = db.printings_of(info.oracle_id)
-    regular = [p for p in printings if p.regular] or printings
-    if not regular:
-        return None
-    return image_url(regular[-1].scryfall_id)
+def card_images(db: CardDb, infos: Iterable[CardInfo]) -> dict[str, str]:
+    """The image of each card's latest regular printing, by oracle id; a card the card data has no printing
+    of is left out."""
+    printed = db.printings_for(info.oracle_id for info in infos)
+    return {
+        oracle_id: image_url(([p for p in printings if p.regular] or printings)[-1].scryfall_id)
+        for oracle_id, printings in printed.items()
+    }
 
 
 def decklist_json(
@@ -112,8 +113,9 @@ def _pending_adds(board: Board, db: CardDb, held: set[str]) -> list[PendingAdd]:
     # A basic land swap adds copies of a card the deck holds: its grid card already stands for it.
     queued = [card for card in board.queued if card_key(card.name) not in held]
     infos = db.cards(card.oracle_id for card in queued)
+    images = card_images(db, infos.values())
     return [
-        PendingAdd(card.id, info, card.copies, card.category, card_image(db, info) or "")
+        PendingAdd(card.id, info, card.copies, card.category, images.get(info.oracle_id, ""))
         for card in queued
         if (info := infos.get(card.oracle_id)) is not None
     ]

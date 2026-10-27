@@ -222,6 +222,18 @@ def test_printings_of_lists_every_printing_in_set_order(card_db_file: Path) -> N
     ]
 
 
+def test_printings_for_lists_each_cards_printings_in_set_order_in_one_query(card_db_file: Path) -> None:
+    with CardDb(card_db_file) as db:
+        tomb = db.card_named("Ancient Tomb")
+        assert tomb is not None
+        found = db.printings_for([MAGDA_ORACLE, tomb.oracle_id, "no-such-card", MAGDA_ORACLE])
+        expected = {oracle_id: db.printings_of(oracle_id) for oracle_id in (MAGDA_ORACLE, tomb.oracle_id)}
+
+    assert found == expected
+    assert [p.set_code for p in found[MAGDA_ORACLE]] == ["khm", "khm", "pkhm", "pkhm", "plst", "sld"]
+    assert len(found[tomb.oracle_id]) > 1
+
+
 def test_cheapest_price_comes_from_regular_printings(card_db_file: Path) -> None:
     with CardDb(card_db_file) as db:
         tomb = db.card_named("Ancient Tomb")

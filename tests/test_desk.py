@@ -265,7 +265,9 @@ def test_a_deck_view_asks_the_card_data_the_same_times_for_few_or_many_board_car
     for name in ("Lightning Bolt", "Arcane Signet"):
         desk.propose(DECK, name)
     desk.deck(DECK)  # fills what the desk keeps between views, such as the cut rules
-    calls = count_calls(monkeypatch, CardDb, "cards", "card_text", "card_texts")
+    calls = count_calls(
+        monkeypatch, CardDb, "cards", "card_text", "card_texts", "printings_of", "printings_for"
+    )
     desk.deck(DECK)
     few = sum(calls.values())
     for name in ("Chaos Warp", "Mind Stone", "Jeska's Will", "Splinter Twin"):

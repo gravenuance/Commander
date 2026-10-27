@@ -76,7 +76,7 @@ from commander.deckprofile import (
     read_profile,
 )
 from commander.deckthemes import merge_themes
-from commander.deckview import card_image, decklist_json
+from commander.deckview import card_images, decklist_json
 from commander.fetchpriority import FetchPriority
 from commander.ideas import idea_labels
 from commander.labels import LabelError, label_options, set_label
@@ -731,12 +731,15 @@ class Desk:
             texts = db.card_texts(card.oracle_id for card in board.cards)
             rules = with_ideas(self._deck_rules(stored, main, profile, db), infos.values(), db)
             counts = deck_counts(main, rules)
+            images = card_images(db, infos.values())
             budget = resolved_budget(playing.bracket, main, profile.max_card_cents)
             shares = self._shares(stored)
             held = held_keys(stored.deck, db)
             cards = [
                 {
-                    **self._card_view(db, card, infos.get(card.oracle_id), texts.get(card.oracle_id)),
+                    **self._card_view(
+                        card, infos.get(card.oracle_id), texts.get(card.oracle_id), images.get(card.oracle_id)
+                    ),
                     "held": card_key(card.name) in held,
                     "withinBudget": None
                     if budget.working is None
@@ -1407,7 +1410,9 @@ class Desk:
         with self._db() as db:
             yield BoardService(stored.folder, stored.deck, db, now=self._now), db
 
-    def _card_view(self, db: CardDb, card: BoardCard, info: CardInfo | None, text: CardText | None) -> Json:
+    def _card_view(
+        self, card: BoardCard, info: CardInfo | None, text: CardText | None, image: str | None
+    ) -> Json:
         view = card_json(card)
         view.update(
             manaCost=info.mana_cost if info else "",
@@ -1415,7 +1420,7 @@ class Desk:
             priceCents=info.cheapest_cents if info else None,
             gameChanger=info.game_changer if info else False,
             text=text.text if text else "",
-            image=card_image(db, info) if info else None,
+            image=image,
             pool=_pool_json(card),
         )
         return view
