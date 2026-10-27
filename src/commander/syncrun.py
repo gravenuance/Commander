@@ -32,7 +32,7 @@ from commander.deckcache import Clock
 from commander.decklocks import DeckLock
 from commander.deckprofile import ProfileError, profile_path, write_profile_template
 from commander.fetchpriority import FetchPriority, fetching_deck
-from commander.ideas import compile_ideas, gather_idea_pools, rejudge_ideas, relabel_legacy_ideas
+from commander.ideas import compile_ideas, deck_shares, gather_idea_pools, rejudge_ideas, relabel_legacy_ideas
 from commander.metadata import (
     TOURNAMENT_BRACKETS,
     TOURNAMENTS_STEP,
@@ -666,6 +666,7 @@ def _merge_deck(
             met = board_service.clear_met_counts()
             if met:
                 phase.counts_cleared[deck.short_name] = [count_text(c) for c in met]
+            shares = deck_shares(current, data, now=services.now)
             dropped = rejudge_ideas(
                 current,
                 data,
@@ -673,12 +674,19 @@ def _merge_deck(
                 now=services.now,
                 adjacent=None if pools.groups_failed else pools.decks,
                 tagged=pools.tagged,
+                share_table=shares,
             )
             if dropped:
                 phase.turned_down[deck.short_name] = [card.name for card in dropped]
-            relabel_legacy_ideas(current, data, db, now=services.now)
+            relabel_legacy_ideas(current, data, db, now=services.now, share_table=shares)
             phase.ideas[deck.short_name] = compile_ideas(
-                current, data, db, now=services.now, adjacent=pools.decks, tagged=pools.tagged
+                current,
+                data,
+                db,
+                now=services.now,
+                adjacent=pools.decks,
+                tagged=pools.tagged,
+                share_table=shares,
             )
     except (BoardError, ProfileError) as error:
         _not_compiled(read, str(error), warnings, on_deck)

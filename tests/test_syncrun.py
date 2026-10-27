@@ -14,7 +14,7 @@ from typing import Any, cast
 import httpx
 import pytest
 
-from commander import syncrun
+from commander import ideas, syncrun
 from commander.archidekt import ArchidektSearch, parse_deck
 from commander.board import (
     Actor,
@@ -948,6 +948,32 @@ def test_an_idea_from_the_old_pick_up_that_fails_the_idea_test_is_turned_down_an
         ("Tempestra, Dame of Games", "no longer makes the cut")
     ]
     assert fake.writes == []
+
+
+def test_a_decks_merge_works_out_the_weighted_shares_once_for_the_rejudge_the_relabel_and_the_compile(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake, stored = populated(tmp_path, raw_deck, card_db_file)
+    seed_board(stored, card_db_file)
+    worked_out: list[object] = []
+    original = ideas.weighted_shares
+
+    def counting(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        worked_out.append(args)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(ideas, "weighted_shares", counting)
+    monkeypatch.setattr(syncrun, "weighted_shares", counting, raising=False)
+    stub_meta(monkeypatch)
+    data = lists_with("High-Speed Hoverbike", 9)
+    stub_gather(monkeypatch, lambda *_, **__: data)
+    monkeypatch.setattr(syncrun, "rejudge_ideas", rejudge_ideas)
+    monkeypatch.setattr(syncrun, "relabel_legacy_ideas", relabel_legacy_ideas)
+    monkeypatch.setattr(syncrun, "compile_ideas", ideas.compile_ideas)
+
+    sync_ideas(tmp_path, fake)
+
+    assert len(worked_out) == 1
 
 
 def test_a_passing_idea_of_the_old_pick_up_is_relabelled_as_a_compiled_one(

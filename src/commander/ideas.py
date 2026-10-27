@@ -20,6 +20,7 @@ longer passes its source's test is turned down (`rejudge_ideas`).
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
+from functools import cache
 from pathlib import Path
 
 from commander.analysis import game_changers
@@ -180,6 +181,12 @@ def tagged_ideas(deck: Deck, pools: Sequence[TaggedDecks], db: CardDb) -> list[I
     return _best_first(list(best.values()))
 
 
+def deck_shares(stored: StoredDeck, data: MetaData, *, now: Clock) -> Callable[[], ShareTable]:
+    """The deck's weighted shares, worked out when first asked and kept: a merge hands it to `rejudge_ideas`,
+    `relabel_legacy_ideas` and `compile_ideas` (their `share_table`), which then share one."""
+    return cache(lambda: weighted_shares(data, now=now, grace=read_profile(stored.folder).grace_by_key()))
+
+
 def compile_ideas(
     stored: StoredDeck,
     data: MetaData,
@@ -188,11 +195,13 @@ def compile_ideas(
     now: Clock,
     adjacent: Sequence[PeerList] = (),
     tagged: Sequence[TaggedDecks] = (),
+    share_table: Callable[[], ShareTable] | None = None,
 ) -> dict[Origin, list[BoardCard]]:
     """Put each source's highest-scoring ideas on the deck's board; what each added.
 
     adjacent holds the pooled decks of the commanders the deck's profile names as alike (ADR 0028); tagged
-    the decks of other commanders found by each of the deck's theme tags.
+    the decks of other commanders found by each of the deck's theme tags. share_table is `deck_shares` when
+    the caller shares it with other steps.
     Ideas cmdr already put on the board for a source count towards its MAX_PER_SOURCE, so repeated syncs
     settle on the current top ideas rather than piling up; cards by you or Claude, or from another source,
     take no place. A turned-down idea takes no place unless its weighted share has risen by RETURN_RISE
@@ -201,7 +210,7 @@ def compile_ideas(
     """
     deck = stored.deck
     profile = read_profile(stored.folder)
-    table = weighted_shares(data, now=now, grace=profile.grace_by_key())
+    table = share_table() if share_table else weighted_shares(data, now=now, grace=profile.grace_by_key())
     ideas = staple_ideas(deck, all_staples(deck, data, db, is_staple=table.is_idea), data.since, table)
     ideas += adjacent_ideas(deck, adjacent, profile.adjacent, db)
     ideas += tagged_ideas(deck, tagged, db)
@@ -316,6 +325,7 @@ def rejudge_ideas(
     now: Clock,
     adjacent: Sequence[PeerList] | None = None,
     tagged: Sequence[TaggedDecks] = (),
+    share_table: Callable[[], ShareTable] | None = None,
 ) -> list[BoardCard]:
     """Turn down the open ideas by cmdr or from the old Maybeboard pick-up that no longer pass the test new
     ideas pass; what it turned down, with the reason on the activity line (ADR 0028).
@@ -330,9 +340,10 @@ def rejudge_ideas(
     down and a passing one relabelled to the source that plays it more (`relabel_pooled_open`), nothing
     without a list read. Cards by you or Claude, and queued, applied or turned-down ones, are never touched
     (`turn_down_open` checks the card is still open), nor is one the user reopened until they decide it.
+    share_table is `deck_shares` when the caller shares it with other steps.
     """
     profile = read_profile(stored.folder)
-    table = weighted_shares(data, now=now, grace=profile.grace_by_key())
+    table = share_table() if share_table else weighted_shares(data, now=now, grace=profile.grace_by_key())
     judge = _IdeaJudge(
         data,
         table,
@@ -394,11 +405,19 @@ def _labels(
     return labels
 
 
-def relabel_legacy_ideas(stored: StoredDeck, data: MetaData, db: CardDb, *, now: Clock) -> list[BoardCard]:
+def relabel_legacy_ideas(
+    stored: StoredDeck,
+    data: MetaData,
+    db: CardDb,
+    *,
+    now: Clock,
+    share_table: Callable[[], ShareTable] | None = None,
+) -> list[BoardCard]:
     """Label the open ideas of the old Maybeboard pick-up that pass the idea test as ideas cmdr compiled,
     from the source that plays them more, so none stays neutral in Considering; what it relabelled. Nothing
-    without a list read (`rejudge_ideas` judges none then either)."""
-    table = weighted_shares(data, now=now, grace=read_profile(stored.folder).grace_by_key())
+    without a list read (`rejudge_ideas` judges none then either). share_table is `deck_shares` when the
+    caller shares it with other steps."""
+    table = (share_table or deck_shares(stored, data, now=now))()
     if not table:
         return []
     legacy = [
