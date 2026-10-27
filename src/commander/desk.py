@@ -1258,10 +1258,11 @@ class Desk:
     def _deck_rules(
         self, stored: StoredDeck, main: Sequence[ResolvedCard], profile: Profile, db: CardDb
     ) -> CutRules:
-        """The deck's cut rules, kept until its snapshot, its profile or the cached meta answers change."""
+        """The deck's cut rules, kept until its snapshot, its profile, the cached meta answers or the card
+        data change; the mana guard in them remembers its answers for as long."""
         stamp = (
             f"{files_stamp(stored.folder, ('deck.json', 'profile.toml'))}"
-            f"|{cache_stamp(self._settings.cache)}|{self._now().date()}"
+            f"|{cache_stamp(self._settings.cache)}|{self._card_data_stamp()}|{self._now().date()}"
             f"|{self._effective(stored.deck).bracket}"
         )
         known = self._rules.get(stored.deck.id)

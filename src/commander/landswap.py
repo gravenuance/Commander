@@ -74,9 +74,9 @@ class ManaGuard:
     # no spell needs it.
     slack: Mapping[str, float]
     # What `allows` answered, by the names as asked. Every other field is fixed for the guard's life, so an
-    # answer never goes stale; `with_cards` makes a guard of its own, with an empty memo.
+    # answer never goes stale; `with_cards` hands the memo on unless a new card could change an answer.
     _answers: dict[tuple[str, str], bool] = field(
-        init=False, repr=False, compare=False, default_factory=dict[tuple[str, str], bool]
+        repr=False, compare=False, default_factory=dict[tuple[str, str], bool]
     )
 
     @staticmethod
@@ -102,8 +102,16 @@ class ManaGuard:
         )
 
     def with_cards(self, cards: Mapping[str, CardMana]) -> "ManaGuard":
-        """The guard knowing these cards too, such as the ideas a swap may bring in."""
-        return replace(self, cards={**cards, **self.cards})
+        """The guard knowing these cards too, such as the ideas a swap may bring in.
+
+        It shares this guard's answers: an analysis reads only the deck's cards and the two swapped, and the
+        cards already known win. Cards of the deck that were unknown until now do change the analysis, so
+        then the new guard starts its memo afresh.
+        """
+        merged = {**cards, **self.cards}
+        held = {card.name.casefold() for card in self.deck.main_cards}
+        learned = merged.keys() - self.cards.keys()
+        return replace(self, cards=merged, _answers={} if held & learned else self._answers)
 
     def allows(self, add: str, cut: str) -> bool:
         """Whether swapping the deck's card `cut` for `add` is sound; one of them is a land."""

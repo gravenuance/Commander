@@ -456,7 +456,7 @@ def test_a_swap_asked_again_gets_the_same_answer_without_analysing_the_mana_base
     assert len(runs) == 3
 
 
-def test_a_guard_given_more_cards_judges_for_itself_and_knows_the_new_cards(
+def test_a_guard_given_more_cards_knows_the_new_cards_and_keeps_the_answers_already_given(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     base = ManaGuard.of(
@@ -469,10 +469,39 @@ def test_a_guard_given_more_cards_judges_for_itself_and_knows_the_new_cards(
     wider = base.with_cards(by_name(GADGET))
     assert wider.allows("Gadget", "Filler")
     assert len(runs) == 2
-    # The wider guard has its own answers: it analyses the swap the first guard had already judged.
+    # Cards the deck does not hold change no answer, so the wider guard has the first guard's answers.
     assert wider.allows("Island", "Plains")
-    assert len(runs) == 3
+    assert len(runs) == 2
+    # And the first guard has the wider guard's: they are one memo.
     assert not base.allows("Gadget", "Filler")
+    assert base.allows("Island", "Plains")
+    assert len(runs) == 2
+
+
+def test_the_answers_a_wider_guard_shares_are_those_a_guard_of_its_own_gives() -> None:
+    cards = by_name(LEADER, PLAINS, ISLAND, FILLER, COUNTERSPELL, WASTES, GUILDGATE)
+    base = ManaGuard.of(deck_of(("Plains", 20), ("Island", 18), ("Filler", 61)), cards)
+    swaps = [("Island", "Plains"), ("Plains", "Island"), ("Wastes", "Island"), ("Counterspell", "Plains")]
+    swaps += [("Filler", "Plains"), ("Azorius Guildgate", "Plains"), ("Plains", "Filler")]
+    wider = base.with_cards(by_name(GADGET)).with_cards(by_name(GADGET, WASTES))
+    shared = [wider.allows(add, cut) for add, cut in swaps]
+    assert shared == [True, False, False, False, True, True, False]
+    own = deck_of(("Plains", 20), ("Island", 18), ("Filler", 61))
+    alone = ManaGuard.of(own, {**cards, **by_name(GADGET)})
+    assert shared == [alone.allows(add, cut) for add, cut in swaps]
+
+
+def test_a_guard_given_a_card_the_deck_holds_but_the_guard_did_not_know_judges_afresh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Gadget is in the deck but has no mana data: the deck is judged without it until the data arrives.
+    held = deck_of(("Plains", 20), ("Island", 18), ("Filler", 60), ("Gadget", 1))
+    base = ManaGuard.of(held, by_name(LEADER, PLAINS, ISLAND, FILLER))
+    runs = count_analyses(monkeypatch)
+    assert base.allows("Island", "Plains")
+    wider = base.with_cards(by_name(GADGET))
+    assert wider.allows("Island", "Plains")
+    assert len(runs) == 2
 
 
 def test_a_basic_land_filed_as_two_entries_gets_the_same_answers_asked_twice() -> None:

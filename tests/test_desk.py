@@ -278,6 +278,26 @@ def test_a_deck_view_asks_the_card_data_the_same_times_for_few_or_many_board_car
     assert sum(calls.values()) == few
 
 
+def test_the_cut_rules_are_kept_between_views_until_the_card_data_is_replaced(
+    desk: Desk, settings: DeskSettings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    desk.propose(DECK, "Lightning Bolt")
+    desk.deck(DECK)
+    calls = count_calls(monkeypatch, desk_module, "deck_cut_rules")
+
+    desk.deck(DECK)
+    assert calls["deck_cut_rules"] == 0
+
+    # A sync that rebuilds the card database leaves a new file behind.
+    rebuilt = settings.card_db.stat().st_mtime_ns + 1_000_000_000
+    os.utime(settings.card_db, ns=(rebuilt, rebuilt))
+    desk.deck(DECK)
+    assert calls["deck_cut_rules"] == 1
+
+    desk.deck(DECK)
+    assert calls["deck_cut_rules"] == 1
+
+
 def test_a_deck_with_a_damaged_board_lists_with_an_error_and_the_others_still_load(
     desk: Desk, settings: DeskSettings
 ) -> None:
