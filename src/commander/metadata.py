@@ -1087,6 +1087,8 @@ def _peer_lists(
         since=_start_of(since),
         label=item,
         max_pages=max_pages,
+        limit=limit,
+        readable=_other_players(sources, own_id),
     )
     wanted = {name.casefold() for name in group}
     # The search finds one commander. A deck led by a lone alike commander counts whoever it is paired with;
@@ -1129,12 +1131,20 @@ def _tag_peer_lists(
         label=item,
         tag=tag,
         max_pages=TAG_SEARCH_PAGES_PER_BRACKET,
+        limit=limit,
+        readable=_other_players(sources, None),
     )
     return _read_peers(sources, reads, found, limit, own_id=None, now=now, keep=lambda _: True)
 
 
 def _start_of(day: date) -> datetime:
     return datetime(day.year, day.month, day.day, tzinfo=UTC)
+
+
+def _other_players(sources: MetaSources, own_id: int | None) -> Callable[[PeerDeck], bool]:
+    """Whether a deck is another player's: not the user's own, nor the deck being read for."""
+    user = sources.user.casefold()
+    return lambda deck: deck.owner.casefold() != user and deck.id != own_id
 
 
 def _read_peers(
@@ -1148,8 +1158,7 @@ def _read_peers(
     keep: Callable[[DeckRead], bool],
 ) -> PeerLists:
     """The most-viewed other players' decks of a search, read or cached, and filtered by keep."""
-    user = sources.user.casefold()
-    others = [d for d in found if d.owner.casefold() != user and d.id != own_id]
+    others = list(filter(_other_players(sources, own_id), found))
     lists: list[PeerList] = []
     skipped = 0
     for peer in most_viewed(others, limit=limit):

@@ -1,6 +1,6 @@
 import copy
 import logging
-from collections.abc import Collection, Iterable
+from collections.abc import Callable, Collection, Iterable
 from datetime import UTC, datetime
 
 import httpx
@@ -99,6 +99,8 @@ def found_by(
     commander: str | None = ELLIVERE,
     tag: str | None = None,
     max_pages: int = MAX_SEARCH_PAGES,
+    limit: int = MAX_DECK_READS,
+    readable: Callable[[PeerDeck], bool] = lambda _: True,
 ) -> list[PeerDeck]:
     return search_for(fake).popular_decks(
         commander,
@@ -107,6 +109,8 @@ def found_by(
         label="ellivere",
         tag=tag,
         max_pages=max_pages,
+        limit=limit,
+        readable=readable,
     )
 
 
@@ -248,6 +252,76 @@ def test_seventy_matching_decks_are_all_found() -> None:
         ]
     )
     assert len(found_by(fake)) == 70
+
+
+def test_a_bracket_stops_once_the_decks_to_read_are_settled_and_the_decks_read_are_the_same() -> None:
+    def full_page() -> Json:
+        # 60 decks from 5900 views down to 1180, all over 1000: the page ends at the bar, not under it.
+        return listing(range(5900, 1100, -80))
+
+    second = listing([1100, 900, 800], first_id=FIRST_ID + 100, more=False)
+    settled = FakeSearch([full_page()])
+    settled_found = found_by(settled, limit=10)
+    # The tenth most viewed has 5180 views and the page ends at 1180, so no later deck can be among the ten.
+    assert len(settled.requests) == 1
+
+    # Asked for more reads than 60 decks can settle, the search pages on, as it did before the stop.
+    unsettled = FakeSearch([full_page(), second])
+    unsettled_found = found_by(unsettled, limit=1000)
+    assert len(unsettled.requests) == 2
+    expected = ids(FIRST_ID, 10)
+    assert [d.id for d in most_viewed(settled_found, limit=10)] == expected
+    assert [d.id for d in most_viewed(unsettled_found, limit=10)] == expected
+
+
+def test_a_bracket_goes_on_while_a_later_deck_could_tie_the_last_one_to_read() -> None:
+    # The tenth of ten has as many views as the page's last, so a deck on the next page with as many could
+    # take its place by id.
+    fake = FakeSearch([listing([1500] * 10), listing([900], first_id=FIRST_ID + 100, more=False)])
+    found_by(fake, limit=10)
+    assert len(fake.requests) == 2
+
+
+ELEVEN = [4000, 3500, 3000, 2500, 2000, 1800, 1600, 1400, 1300, 1200, 1000]
+
+
+def anyone(_: PeerDeck) -> bool:
+    return True
+
+
+def not_the_most_viewed(deck: PeerDeck) -> bool:
+    return deck.id != FIRST_ID
+
+
+@pytest.mark.parametrize(
+    ("old", "readable", "requests"),
+    [((), anyone, 1), ((0,), anyone, 2), ((), not_the_most_viewed, 2)],
+    ids=["all count", "one not updated in the window", "one not readable"],
+)
+def test_the_decks_counted_for_the_stop_are_the_readable_ones_in_the_window(
+    old: Collection[int], readable: Callable[[PeerDeck], bool], requests: int
+) -> None:
+    fake = FakeSearch([listing(ELEVEN, old=old), listing([900], first_id=FIRST_ID + 100, more=False)])
+    found_by(fake, limit=10, readable=readable)
+    # Eleven count and the tenth, at 1200, is over the page's last at 1000: settled. With one fewer the
+    # tenth is the page's last, and the next page is read.
+    assert len(fake.requests) == requests
+
+
+def test_each_bracket_is_read_at_least_once_and_settles_on_the_decks_of_both() -> None:
+    fake = FakeSearch(
+        [
+            listing([9000, 8990, 8980, 8970, 8960, 8950, 8940, 8930, 8920, 8910, 1100]),
+            listing([2000, 1900, 1800], first_id=FIRST_ID + 100),
+        ]
+    )
+    found_by(fake, 4, 5, limit=10)
+    # Bracket 4's ten most viewed are over its page's last (1100), and the tenth over both brackets, at 8910,
+    # is over bracket 5's page too (1800), though that page ends over 1000.
+    assert [(r.url.params.get("edhBracket"), r.url.params.get("page")) for r in fake.requests] == [
+        ("4", None),
+        ("5", None),
+    ]
 
 
 def test_searches_and_deck_reads_are_paced() -> None:

@@ -555,12 +555,20 @@ def test_a_search_that_finds_no_decks_gives_an_empty_answer_not_an_error(rig: Ri
     assert peers.data == PeerLists((), 0)
 
 
-def popular_page(count: int, *, first_id: int = 30_000_000, more: bool = False) -> Json:
-    """A view-ordered search page of `count` decks, each owned by someone else, from 9000 views down by one
-    and updated inside the window; with `more` it links to a next page."""
+def popular_page(
+    count: int, *, first_id: int = 30_000_000, more: bool = False, step: int = 1, mine: int = 0
+) -> Json:
+    """A view-ordered search page of `count` decks from 9000 views down by `step` and updated inside the
+    window, the first `mine` owned by the user and the rest by someone else; with `more` it links to a next
+    page. With step 0 no deck read settles which are the most viewed, so a search pages on to its cap."""
     row = load_fixture("archidekt_search_ellivere.json")["results"][0]
     results = [
-        {**row, "id": first_id + n, "owner": {"id": 1, "username": "someone"}, "viewCount": 9000 - n}
+        {
+            **row,
+            "id": first_id + n,
+            "owner": {"id": 1, "username": "tester" if n < mine else "someone"},
+            "viewCount": 9000 - n * step,
+        }
         for n in range(count)
     ]
     link = "http://archidekt.com/api/decks/v3/?commanderName=x&formats=3&orderBy=-viewCount&page=2"
@@ -585,15 +593,32 @@ def test_seventy_matching_decks_give_the_sixty_most_viewed_to_read(rig: Rig) -> 
 
 
 def test_each_bracket_of_a_commander_is_searched_to_the_fifth_page_at_most(rig: Rig) -> None:
-    rig.archidekt.page = popular_page(10, more=True)
+    rig.archidekt.page = popular_page(10, more=True, step=0)
     bracketed(rig, 3)
     # Every page links to another over the floor: five requests a bracket, 3 and then 4.
     assert [q.get("page") for q in rig.archidekt.searches] == [None, "2", "2", "2", "2"] * 2
 
 
+def test_a_search_stops_at_the_first_page_once_the_decks_to_read_are_settled(rig: Rig) -> None:
+    rig.archidekt.page = popular_page(60, more=True)
+    data = bracketed(rig, 3)
+    # Three decks are read; the third most viewed has 8998 views and the page ends at 8941, so a next page
+    # could not change them, though every page links to another over the floor.
+    assert [q.get("page") for q in rig.archidekt.searches] == [None, None]
+    assert data.peers.data is not None
+    assert [p.deck.id for p in data.peers.data.decks] == [30_000_000, 30_000_001, 30_000_002]
+
+
+def test_the_users_own_decks_do_not_settle_a_search(rig: Rig) -> None:
+    # Fifty-five of the 60 decks are the user's: five count, fewer than the ten the bar needs.
+    rig.archidekt.page = popular_page(60, more=True, mine=55)
+    bracketed(rig, 3)
+    assert [q.get("page") for q in rig.archidekt.searches] == [None, "2", "2", "2", "2"] * 2
+
+
 def test_a_tag_search_pages_each_bracket_to_the_second_page_by_views(rig: Rig) -> None:
     rig.settings = replace(SETTINGS, peer_decks=12)
-    rig.archidekt.page = popular_page(10, more=True)
+    rig.archidekt.page = popular_page(10, more=True, step=0)
     gather_adjacent(
         replace(ellivere_deck(), bracket=3),
         [],
@@ -614,7 +639,7 @@ def test_an_alike_commanders_search_pages_to_the_third_page_and_reads_a_quarter_
     rig: Rig,
 ) -> None:
     rig.settings = replace(SETTINGS, peer_decks=60)
-    rig.archidekt.page = popular_page(70, more=True)
+    rig.archidekt.page = popular_page(70, more=True, step=0)
     found = gather_adjacent(
         replace(ellivere_deck(), bracket=3),
         [(ELLIVERE,)],
@@ -639,7 +664,7 @@ def test_a_pair_of_alike_commanders_reads_no_more_than_a_single_one(rig: Rig) ->
 
 def test_a_commanders_own_search_keeps_its_five_pages_and_sixty_reads(rig: Rig) -> None:
     rig.settings = replace(SETTINGS, peer_decks=60)
-    rig.archidekt.page = popular_page(70, more=True)
+    rig.archidekt.page = popular_page(70, more=True, step=0)
     rig.gather()
     assert [q.get("page") for q in rig.archidekt.searches] == [None, "2", "2", "2", "2"]
     assert len(rig.archidekt.deck_reads) == 60
