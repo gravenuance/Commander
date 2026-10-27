@@ -30,10 +30,10 @@ COMMANDER_FORMAT = 3
 # Archidekt's deck listings come 60 to a page whatever `pageSize` asks for (ADR 0048), so none is sent.
 MAX_PAGES = 20
 # Reading other players' decks: most viewed first, at most this many search pages per bracket searched (ADR
-# 0050), and a request every 6.5 seconds, just under the ten a minute Archidekt answers before it starts
-# sending 429s (ADR 0048).
+# 0050), and a request every 6 seconds, the ten a minute Archidekt answers before it starts sending 429s
+# (ADR 0048, which says to go back to 6.5 on any 429 in the log).
 MAX_SEARCH_PAGES = 5
-SEARCH_INTERVAL_SECONDS = 6.5
+SEARCH_INTERVAL_SECONDS = 6.0
 # After a 429 Archidekt gets this long without a request, or the Retry-After if that is longer; its limit
 # lifts within the minute.
 RATE_LIMIT_PAUSE_SECONDS = 60.0
@@ -111,11 +111,17 @@ class _LimitGuard:
                 return send()
             except RateLimitedError as error:
                 if attempt == RATE_LIMIT_RETRIES:
-                    log.warning("Archidekt is still limiting requests; no more are sent this run")
+                    log.warning(
+                        "Archidekt answered 429 again for %s; no more requests are sent this run", target
+                    )
                     self._gave_up = error
                     raise
                 pause = max(RATE_LIMIT_PAUSE_SECONDS, error.retry_after or 0.0)
-                log.warning("Archidekt asked for quiet; waiting %.0fs before the next request", pause)
+                log.warning(
+                    "Archidekt answered 429 (too many requests) for %s; waiting %.0fs before the next one",
+                    target,
+                    pause,
+                )
                 self.pacer.cool_down(pause)
             finally:
                 log.debug("Archidekt request %s took %.2fs", target, time.perf_counter() - started)

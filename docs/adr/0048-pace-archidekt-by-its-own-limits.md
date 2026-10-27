@@ -56,3 +56,13 @@ It now reads through the same guard as the search (`_LimitGuard`): requests go o
 429 comes; then nothing goes out for 60 s or the `Retry-After` if longer, for every thread of the client, and
 the limited request is tried once more. A second 429 ends Archidekt for that client, as for the search. A
 `Retry-After` date without a time zone is read as UTC, not as the machine's local time.
+
+## Amendment (2026-10-27): 6 s apart
+
+The log showed no 429 from Archidekt between the 6.5 s pace of 2026-10-21 and 2026-10-27, so the owner took
+option 2, with a condition: the pace stays at 6 s only while the log is clean. `SEARCH_INTERVAL_SECONDS` is
+now 6.0, about 8% less time for a sync that waits on Archidekt; the 60 s pause and the retry are unchanged.
+Ten requests a minute is on the edge of what the 2026-10-21 probes found, so the owner watches the log after
+a sync and goes back to 6.5 s on any 429. Both 429 lines are warnings that name the status and the request
+("Archidekt answered 429 (too many requests) for ...; waiting 60s", and "... answered 429 again ...; no more
+requests are sent this run"), so `grep 429` over `commander.log` finds them.

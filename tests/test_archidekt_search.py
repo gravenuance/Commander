@@ -435,13 +435,26 @@ def deck_answer() -> httpx.Response:
     return httpx.Response(200, json=load_fixture(f"deck_{DECK_ID}.json"))
 
 
-def test_requests_are_six_and_a_half_seconds_apart_so_a_minute_holds_fewer_than_ten() -> None:
-    assert SEARCH_INTERVAL_SECONDS == 6.5
+def test_requests_are_six_seconds_apart_so_a_minute_holds_ten() -> None:
+    assert SEARCH_INTERVAL_SECONDS == 6.0
     limited = Limited(deck_answer(), deck_answer(), deck_answer())
     search = limited.search()
     for _ in range(3):
         search.deck(DECK_ID)
-    assert limited.at == [0.0, 6.5, 13.0]
+    assert limited.at == [0.0, 6.0, 12.0]
+
+
+def test_a_429_is_logged_as_a_warning_naming_the_status_and_a_second_one_says_it_gives_up(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    limited = Limited(httpx.Response(429), httpx.Response(429))
+    with caplog.at_level(logging.WARNING, logger="commander.archidekt"), pytest.raises(RateLimitedError):
+        limited.search().deck(DECK_ID)
+    first, second = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert "429" in first.getMessage()
+    assert "waiting 60s" in first.getMessage()
+    assert "429" in second.getMessage()
+    assert "no more requests" in second.getMessage()
 
 
 def test_after_a_429_without_retry_after_nothing_goes_out_for_a_minute() -> None:
