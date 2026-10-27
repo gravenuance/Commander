@@ -293,6 +293,77 @@ def test_a_sweeper_also_tagged_with_a_tag_reaching_creatures_stays_a_board_wipe(
     assert role_gates(tags) == (TextGate(Role.BOARD_WIPE, frozenset(), "each creature"),)
 
 
+# Real Tagger ids of the tags the role definitions name.
+TUTOR_TAG = "c768d2ec-3264-4a90-a98f-bea8467857d3"
+TUTOR_LAND_TAG = "cc2644e4-57c6-46f7-a69c-0cd82dbf2e9d"
+TUTOR_TO_TAG = "882a62e0-06f9-4487-9e4d-e107605b6caa"
+RAMP_TAG = "2f3e4ad7-5e60-41b4-bdbc-653f16869cf6"
+SWAP_REMOVAL_TAG = "6ba18e8c-ca24-4c2e-86e3-304e9096074d"
+CULTIVATE = "00000000-0000-4000-8000-00000000c001"
+DEMONIC_TUTOR = "00000000-0000-4000-8000-00000000c002"
+NATURAL_ORDER = "00000000-0000-4000-8000-00000000c003"
+UNMARKED_GRAVE = "00000000-0000-4000-8000-00000000c004"
+PATH_TO_EXILE = "00000000-0000-4000-8000-00000000c005"
+RAMPANT_GROWTH = "00000000-0000-4000-8000-00000000c006"
+TEMPT_WITH_DISCOVERY = "00000000-0000-4000-8000-00000000c007"
+
+
+# Made-up ids for the tags below the real ones.
+slug_ids = {
+    slug: f"00000000-0000-4000-8000-0000000d{index:04d}"
+    for index, slug in enumerate(
+        (
+            "tutor-to-hand",
+            "tutor-to-battlefield",
+            "tutor-to-graveyard",
+            "tutor-card",
+            "tutor-creature",
+            "land-ramp",
+        )
+    )
+}
+
+
+def test_a_land_tutor_is_no_tutor_even_under_tagger_s_where_it_puts_the_card(tmp_path: Path) -> None:
+    # Tagger files Cultivate under tutor-land and, for where the card goes, under tutor-to-hand.
+    tags = [
+        removal_tag(
+            TUTOR_TAG,
+            "tutor",
+            [],
+            (TUTOR_LAND_TAG, TUTOR_TO_TAG, slug_ids["tutor-card"], slug_ids["tutor-creature"]),
+        ),
+        removal_tag(TUTOR_LAND_TAG, "tutor-land", [CULTIVATE, NATURAL_ORDER]),
+        removal_tag(
+            TUTOR_TO_TAG,
+            "tutor-to",
+            [],
+            (slug_ids["tutor-to-hand"], slug_ids["tutor-to-battlefield"], slug_ids["tutor-to-graveyard"]),
+        ),
+        removal_tag(slug_ids["tutor-to-hand"], "tutor-to-hand", [CULTIVATE, DEMONIC_TUTOR]),
+        removal_tag(slug_ids["tutor-to-battlefield"], "tutor-to-battlefield", [NATURAL_ORDER]),
+        removal_tag(slug_ids["tutor-to-graveyard"], "tutor-to-graveyard", [UNMARKED_GRAVE]),
+        removal_tag(slug_ids["tutor-card"], "tutor-card", [DEMONIC_TUTOR]),
+        removal_tag(slug_ids["tutor-creature"], "tutor-creature", [NATURAL_ORDER]),
+    ]
+    _, tags_gz = write_bulk(tmp_path, tags=[*tags, *(filler_tag(i) for i in range(FILLER_TAGS))])
+    members = role_members(read_tags(tags_gz))[Role.TUTOR]
+    # Natural Order also fetches a creature, so it stays; Unmarked Grave has no land tag at all.
+    assert members == {DEMONIC_TUTOR, NATURAL_ORDER, UNMARKED_GRAVE}
+
+
+def test_removal_that_gives_the_opponent_a_land_is_no_ramp(tmp_path: Path) -> None:
+    tags = [
+        removal_tag(RAMP_TAG, "ramp", [TEMPT_WITH_DISCOVERY], (slug_ids["land-ramp"],)),
+        removal_tag(
+            slug_ids["land-ramp"], "land-ramp", [PATH_TO_EXILE, RAMPANT_GROWTH, TEMPT_WITH_DISCOVERY]
+        ),
+        removal_tag(SWAP_REMOVAL_TAG, "swap-removal", [PATH_TO_EXILE]),
+    ]
+    _, tags_gz = write_bulk(tmp_path, tags=[*tags, *(filler_tag(i) for i in range(FILLER_TAGS))])
+    assert role_members(read_tags(tags_gz))[Role.RAMP] == {RAMPANT_GROWTH, TEMPT_WITH_DISCOVERY}
+
+
 def test_role_whose_tag_is_gone_is_left_out(tmp_path: Path) -> None:
     _, tags_gz = write_bulk(tmp_path)
     assert Role.MASS_LAND_DENIAL not in role_members(read_tags(tags_gz))

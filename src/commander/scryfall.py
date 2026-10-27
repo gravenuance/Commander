@@ -88,17 +88,30 @@ class RoleTag:
 
     slug: str
     tag_id: str
+    # Subtrees whose tags do not count towards the role.
     exclude: tuple[str, ...] = ()
+    # Subtrees saying only where a card puts what it fetches. They do not count on a card that is also tagged
+    # under exclude, which a card with another tag in the role (Natural Order's tutor-creature) keeps.
+    exclude_alongside: tuple[str, ...] = ()
+    # Subtrees whose cards are out of the role, whatever else they are tagged.
+    drop_cards: tuple[str, ...] = ()
 
 
 ROLE_TAGS: Mapping[Role, RoleTag] = {
-    Role.RAMP: RoleTag("ramp", "2f3e4ad7-5e60-41b4-bdbc-653f16869cf6"),
+    # Path to Exile and Erode give the opponent the land (swap-removal); that is removal, not the deck's ramp.
+    Role.RAMP: RoleTag(
+        "ramp", "2f3e4ad7-5e60-41b4-bdbc-653f16869cf6", drop_cards=("6ba18e8c-ca24-4c2e-86e3-304e9096074d",)
+    ),
     Role.DRAW: RoleTag("draw", "b6448c45-ce65-4848-aa98-2151e4e07437"),
     Role.REMOVAL: RoleTag("removal", "444f824c-f910-4530-9dbe-ede7a84cd7f9"),
     Role.BOARD_WIPE: RoleTag("sweeper", "3fb7e4fd-5304-4120-b7c4-8a89f70ad3f0"),
-    # Land tutors (Farseek, Rampant Growth) are ramp, not the tutoring that brackets care about.
+    # Land tutors (Farseek, Cultivate, Land Tax) are ramp, not the tutoring that brackets care about. Tagger
+    # files them under tutor-land and also under tutor-to-hand or tutor-to-battlefield, in tutor-to.
     Role.TUTOR: RoleTag(
-        "tutor", "c768d2ec-3264-4a90-a98f-bea8467857d3", exclude=("cc2644e4-57c6-46f7-a69c-0cd82dbf2e9d",)
+        "tutor",
+        "c768d2ec-3264-4a90-a98f-bea8467857d3",
+        exclude=("cc2644e4-57c6-46f7-a69c-0cd82dbf2e9d",),
+        exclude_alongside=("882a62e0-06f9-4487-9e4d-e107605b6caa",),
     ),
     Role.PROTECTION: RoleTag("protection", "6e2cdc7c-b02c-4b59-a171-f93723721b79"),
     Role.RECURSION: RoleTag("recursion", "82b824ad-648f-467f-a190-2e0fa9a795d2"),
@@ -579,12 +592,18 @@ def role_members(tags: Mapping[str, Tag]) -> dict[Role, frozenset[str]]:
         if spec.tag_id not in tags:
             log.warning("Scryfall no longer has the %r tag; %s cannot be counted", spec.slug, role.value)
             continue
-        excluded = _subtree(tags, spec.exclude)
-        included = _subtree(tags, (spec.tag_id,)) - excluded
-        members[role] = _members(tags, included)
+        members[role] = _role_cards(tags, spec)
     if Role.BOARD_WIPE in members:
         members[Role.BOARD_WIPE] -= _noncreature_sweepers(tags, members[Role.BOARD_WIPE])
     return members
+
+
+def _role_cards(tags: Mapping[str, Tag], spec: RoleTag) -> frozenset[str]:
+    excluded = _subtree(tags, spec.exclude)
+    included = _subtree(tags, (spec.tag_id,)) - excluded
+    alongside = included & _subtree(tags, spec.exclude_alongside)
+    cards = _members(tags, included - alongside) | (_members(tags, alongside) - _members(tags, excluded))
+    return cards - _members(tags, _subtree(tags, spec.drop_cards))
 
 
 def role_gates(tags: Mapping[str, Tag]) -> tuple[TextGate, ...]:
