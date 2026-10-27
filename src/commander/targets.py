@@ -162,12 +162,16 @@ def with_ideas(rules: CutRules, cards: Iterable[CardInfo], db: CardDb) -> CutRul
 
 
 def targets_for(
-    card: BoardCard, info: CardInfo | None, main: Sequence[ResolvedCard], rules: CutRules
+    card: BoardCard,
+    info: CardInfo | None,
+    main: Sequence[ResolvedCard],
+    rules: CutRules,
+    counts: "DeckCounts | None" = None,
 ) -> tuple[Target, ...]:
     """The replace options you or Claude gave the card, still in the deck; else the best scoring cuts.
 
     Every cut but the ones you picked must be less played than the card (`_less_played`). See `role_targets`
-    for the second.
+    for the second, and for `counts`.
     """
     in_deck = {r.card.name.casefold(): r for r in main}
     # Tools attach one generic cut list to all their ideas; only a person's or Claude's options are picks.
@@ -181,11 +185,16 @@ def targets_for(
     )
     if picked or info is None:
         return picked
-    return role_targets(info, main, rules)
+    return role_targets(info, main, rules, counts)
 
 
-def role_targets(info: CardInfo, main: Sequence[ResolvedCard], rules: CutRules) -> tuple[Target, ...]:
+def role_targets(
+    info: CardInfo, main: Sequence[ResolvedCard], rules: CutRules, counts: "DeckCounts | None" = None
+) -> tuple[Target, ...]:
     """The best scoring deck cards for the card to replace, at most MAX_TARGETS.
+
+    `counts` are the deck's (`deck_counts`), which a caller scoring many ideas against one deck works out
+    once; without them each call does.
 
     Every candidate scores the idea's weighted share (ADR 0026) less its own, plus a bonus for what makes it
     allowed. Equal scores go to the bigger surplus, then the less popular card on EDHREC (the higher rank
@@ -218,7 +227,7 @@ def role_targets(info: CardInfo, main: Sequence[ResolvedCard], rules: CutRules) 
     ]
     candidates = [
         *like,
-        *_wider_candidates(info, eligible, main, rules),
+        *_wider_candidates(info, eligible, main, rules, counts),
         *_land_candidates(info, main, rules),
     ]
     taken: list[Target] = []
@@ -248,6 +257,18 @@ class _Candidate:
     order: tuple[float, float, bool, int, str]
     # At most one candidate of a group is offered (one basic land).
     group: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class DeckCounts:
+    """How many of the deck's cards fill each role and serve each theme."""
+
+    roles: Counter[Role]
+    themes: Counter[str]
+
+
+def deck_counts(main: Sequence[ResolvedCard], rules: CutRules) -> DeckCounts:
+    return DeckCounts(_role_counts(main), _theme_counts(main, rules))
 
 
 @dataclass(slots=True, frozen=True)
@@ -283,7 +304,11 @@ class _Surplus:
 
 
 def _wider_candidates(
-    info: CardInfo, eligible: Sequence[ResolvedCard], main: Sequence[ResolvedCard], rules: CutRules
+    info: CardInfo,
+    eligible: Sequence[ResolvedCard],
+    main: Sequence[ResolvedCard],
+    rules: CutRules,
+    counts: DeckCounts | None,
 ) -> list[_Candidate]:
     """Deck cards of another role or theme than the idea's that may go for it.
 
@@ -294,12 +319,9 @@ def _wider_candidates(
         return []
     roles = [role for role in ANALYZED_ROLES if role in info.roles]
     own = rules.themes.get(info.oracle_id, frozenset())
-    held = _Held(
-        peers,
-        _role_counts(main),
-        _theme_counts(main, rules),
-        frozenset(leaning.tag for leaning in rules.leanings),
-    )
+    if counts is None:
+        counts = deck_counts(main, rules)
+    held = _Held(peers, counts.roles, counts.themes, frozenset(leaning.tag for leaning in rules.leanings))
     found: list[_Candidate] = []
     for r in eligible:
         if _same_role(r, roles) and _swappable(r, own, rules):

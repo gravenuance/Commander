@@ -1,14 +1,17 @@
 """Cuts of another role or theme than the idea's: allowed only on a surplus over what the peer decks hold
 (ADR 0036), and ranked with the like-for-like ones on one score."""
 
+from collections import Counter
 from collections.abc import Mapping, Sequence
+from typing import Any
 
 import pytest
 
+from commander import targets
 from commander.carddb import ResolvedCard, Role
 from commander.leanings import Leaning
 from commander.peercounts import PeerCounts, RoleBand
-from commander.targets import CutRules, Target, role_targets
+from commander.targets import CutRules, Target, deck_counts, role_targets
 from commander.weightedshare import NO_SHARES, ShareTable
 from test_targets import card, info, names, table
 
@@ -450,3 +453,28 @@ def test_scores_equal_up_to_float_noise_go_to_the_bigger_surplus() -> None:
     )
     found = for_draw_idea(deck, rules(roles={Role.RAMP: band(1.0, 1.0)}, shares=shares))
     assert names(found) == ["Ramp 1", "Ramp 2", "Ramp 3", "Ramp 4"]
+
+
+def test_the_decks_counts_worked_out_once_give_every_idea_the_cuts_it_gets_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    deck = [LEADER, *ramp(9), card("Old Draw", (Role.DRAW,))]
+    shares = shares_of(deck, {"thalia": IDEA_SHARE, "rhystic study": IDEA_SHARE})
+    cut_rules = rules(roles={Role.RAMP: band(1.0, 7.0)}, shares=shares)
+    ideas = [info("Mystic Remora", (Role.DRAW,)), info("Thalia"), info("Rhystic Study", (Role.DRAW,))]
+    alone = [role_targets(idea, deck, cut_rules) for idea in ideas]
+    assert [len(found) for found in alone] == [4, 4, 4]
+
+    counted = Counter[str]()
+    for name in ("_role_counts", "_theme_counts"):
+        original = getattr(targets, name)
+
+        def counting(*args: Any, _name: str = name, _original: Any = original) -> Any:  # noqa: ANN401
+            counted[_name] += 1
+            return _original(*args)
+
+        monkeypatch.setattr(targets, name, counting)
+
+    counts = deck_counts(deck, cut_rules)
+    assert [role_targets(idea, deck, cut_rules, counts) for idea in ideas] == alone
+    assert counted == {"_role_counts": 1, "_theme_counts": 1}

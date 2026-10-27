@@ -106,7 +106,7 @@ from commander.store import SNAPSHOT_FILE, StoredDeck, Workspace, WorkspaceError
 from commander.suggest import DEFAULT_TARGETS, deck_identity
 from commander.sync import PullWatch, SyncStatus
 from commander.syncrun import CardState, FetchState, SyncOutcome, SyncServices, run_sync
-from commander.targets import CutRules, Target, deck_cut_rules, targets_for, with_ideas
+from commander.targets import CutRules, Target, deck_counts, deck_cut_rules, targets_for, with_ideas
 from commander.topdeck import DEVELOPERS_URL, NO_KEY_MESSAGE, TopdeckError, TopdeckKeyError
 from commander.viewscore import VIEWS_FILE, ViewScores
 from commander.weightedshare import (
@@ -730,6 +730,7 @@ class Desk:
             infos = db.cards(card.oracle_id for card in board.cards)
             texts = db.card_texts(card.oracle_id for card in board.cards)
             rules = with_ideas(self._deck_rules(stored, main, profile, db), infos.values(), db)
+            counts = deck_counts(main, rules)
             budget = resolved_budget(playing.bracket, main, profile.max_card_cents)
             shares = self._shares(stored)
             held = held_keys(stored.deck, db)
@@ -742,7 +743,8 @@ class Desk:
                     else budget.within(info.cheapest_cents if (info := infos.get(card.oracle_id)) else None),
                     "share": _share_json(shares.of(card.name)),
                     "targets": [
-                        _target_json(t) for t in targets_for(card, infos.get(card.oracle_id), main, rules)
+                        _target_json(t)
+                        for t in targets_for(card, infos.get(card.oracle_id), main, rules, counts)
                     ],
                     "typeCategory": default_category(info) if (info := infos.get(card.oracle_id)) else None,
                 }
