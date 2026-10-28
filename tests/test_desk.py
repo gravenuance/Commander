@@ -2069,6 +2069,19 @@ def test_group_rows_are_full_width_tinted_rows_whose_knob_turns_over_when_the_gr
     assert "var(--ease)" in css_rule(".knob svg")
 
 
+def test_the_rail_tabs_are_pills_with_the_open_one_filled_in_the_accent() -> None:
+    tab = css_rule(".rail-toggle")
+    assert "border-radius: var(--radius-pill)" in tab
+    assert "text-transform" not in tab
+    assert "letter-spacing" not in tab
+    open_tab = css_rule('.rail-toggle[aria-expanded="true"]')
+    assert "background: var(--accent-soft)" in open_tab
+    assert "color: var(--accent-ink)" in open_tab
+    assert "box-shadow" not in open_tab
+    assert "background: var(--surface-2)" in css_rule(".activity.open .rail-tabs")
+    assert "writing-mode: vertical-rl" in css_rule(".activity:not(.open) .rail-toggle")
+
+
 def test_a_considering_tiles_long_name_and_type_line_stay_inside_the_room_left_of_its_reject_button() -> None:
     # An auto column grows to the type line's unwrapped width (measured in Edge: 279px in a 217px body).
     assert "grid-template-columns: minmax(0, 1fr)" in css_rule(".card-body")
