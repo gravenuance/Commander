@@ -2030,9 +2030,7 @@ def test_panel_titles_are_full_width_boxes_without_a_marker_and_the_meta_sub_tog
     assert "border: 1px solid var(--border)" in toggle
     assert "justify-content: center" in toggle
     assert "text-transform: uppercase" in toggle
-    # The grid's group toggles light up the same way under the pointer.
     assert "background: var(--surface-2)" in css_rule(".panel-toggle:hover")
-    assert "background: var(--surface-2)" in css_rule(".group-toggle:hover")
     assert "color: var(--accent-hover)" in css_rule(".meta-section > summary:hover")
     assert 'content: "▸"' in css_rule(".meta-section > summary::before")
     html = page_html()
@@ -2047,6 +2045,22 @@ def test_panel_titles_are_full_width_boxes_without_a_marker_and_the_meta_sub_tog
             f'aria-controls="{body_id}"'
         ) in html
         assert f'<div id="{body_id}" class="panel-body" hidden>' in html
+
+
+def test_group_rows_are_full_width_tinted_rows_whose_knob_turns_over_when_the_group_is_open() -> None:
+    row = css_rule(".disclosure")
+    assert "width: 100%" in row
+    assert "background: var(--surface-2)" in row
+    assert "border-radius: var(--radius)" in row
+    assert "background: var(--surface-3)" in css_rule(".disclosure:hover")
+    assert "background: transparent" in css_rule('.group-toggle[aria-expanded="true"]')
+    assert "background: var(--surface-2)" in css_rule('.group-toggle[aria-expanded="true"]:hover')
+    knob = css_rule(".knob")
+    assert "width: 28px" in knob
+    assert "height: 28px" in knob
+    assert "background: var(--surface)" in knob
+    assert "rotate(180deg)" in css_rule('[aria-expanded="true"] > .knob svg')
+    assert "var(--ease)" in css_rule(".knob svg")
 
 
 def test_a_considering_tiles_long_name_and_type_line_stay_inside_the_room_left_of_its_reject_button() -> None:

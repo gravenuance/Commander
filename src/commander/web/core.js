@@ -52,6 +52,19 @@ function el(tag, props = {}, ...children) {
   return node;
 }
 
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+// The square holding a chevron that turns over while the [aria-expanded="true"] element around it is open;
+// the one disclosure marker of the group rows, side panels and meta sections (app.css, .knob).
+function knob() {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", "0 0 14 14");
+  const path = document.createElementNS(SVG_NS, "path");
+  path.setAttribute("d", "M3 5.5l4 4 4-4");
+  svg.append(path);
+  return el("span", { class: "knob", "aria-hidden": "true" }, svg);
+}
+
 async function api(name, ...args) {
   return checkAnswer(await window.pywebview.api[name](...args));
 }

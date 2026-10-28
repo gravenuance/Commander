@@ -103,13 +103,14 @@ function syncHeader(known, group) {
   const inDeck = group.inDeck !== false;
   const { stack } = known;
   const toggle = el("button", {
-    class: "group-toggle", type: "button", "aria-expanded": String(!stack.hidden), "aria-controls": stack.id,
+    class: "group-toggle disclosure", type: "button", "aria-expanded": String(!stack.hidden),
+    "aria-controls": stack.id,
   },
-    el("span", { class: "chevron", "aria-hidden": "true" }),
     el("span", { class: "group-name", text: group.name }),
-    el("span", { class: "count", text: `(${group.count})` }),
-    group.cents ? el("span", { class: "group-price", text: euro(group.cents) }) : null,
-    inDeck ? null : el("span", { class: "badge status outside-badge", text: "Not in deck" }));
+    el("span", { class: "count", text: String(group.count) }),
+    inDeck ? null : el("span", { class: "badge status outside-badge", text: "Not in deck" }),
+    el("span", { class: "end" },
+      group.cents ? el("span", { class: "group-price", text: euro(group.cents) }) : null, knob()));
   toggle.addEventListener("click", () => {
     const opening = stack.hidden;
     stack.hidden = !opening;
