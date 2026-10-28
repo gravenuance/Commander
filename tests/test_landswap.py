@@ -61,6 +61,44 @@ def guard(
     )
 
 
+SMASHING = card(
+    "Shatterskull Smashing",
+    "{X}{R}{R}",
+    2,
+    "Sorcery // Land",
+    text="Destroy up to X target artifacts.",
+    produced="R",
+)
+
+
+def with_smashing(*counts: tuple[str, int]) -> ManaGuard:
+    return ManaGuard.of(deck_of(*counts), {**CARDS, "shatterskull smashing": SMASHING})
+
+
+def test_a_spell_with_a_land_back_counts_towards_the_land_count_in_a_swap() -> None:
+    # 36 lands and the Smashing make 36.38, 1.3 under Karsten's 37.7. Cutting it for a spell goes to 36.0, 1.7
+    # under and farther off: refused. Bringing it in for a spell goes the other way.
+    short = with_smashing(("Plains", 18), ("Island", 18), ("Shatterskull Smashing", 1), ("Filler", 61))
+    assert not short.allows("Gadget", "Shatterskull Smashing")
+    assert short.allows("Shatterskull Smashing", "Filler")
+    # 39 lands are 1.3 over; the Smashing for a spell makes it 39.38, farther off: refused.
+    over = with_smashing(("Plains", 21), ("Island", 18), ("Filler", 62))
+    assert not over.allows("Shatterskull Smashing", "Filler")
+    # Inside the tolerance neither way matters.
+    near = with_smashing(("Plains", 19), ("Island", 18), ("Shatterskull Smashing", 1), ("Filler", 61))
+    assert near.allows("Gadget", "Shatterskull Smashing")
+
+
+def test_a_spell_with_a_land_back_is_judged_by_the_mana_base_as_a_cut_target() -> None:
+    smashing = resolved("Shatterskull Smashing", rank=5000, type_line="Sorcery // Land")
+    deck = [*deck_cards(), smashing]
+    mana = with_smashing(("Plains", 18), ("Island", 18), ("Shatterskull Smashing", 1), ("Filler", 61))
+    found = role_targets(GADGET_IDEA, deck, CutRules((), None, mana=mana))
+    assert "Shatterskull Smashing" not in names(found)
+    # Without the guard it is the weakest card, as any spell is.
+    assert "Shatterskull Smashing" in names(role_targets(GADGET_IDEA, deck, CutRules((), None)))
+
+
 def test_a_swap_within_one_land_of_karstens_count_is_allowed() -> None:
     # 37 lands now, Karsten's 37.7; 38 after.
     assert guard(19, 18, 62).allows("Plains", "Filler")

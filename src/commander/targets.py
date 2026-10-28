@@ -9,7 +9,7 @@ from enum import Enum
 from commander.analysis import ANALYZED_ROLES
 from commander.answers import card_key
 from commander.board import Actor, BoardCard
-from commander.carddb import CardDb, CardInfo, ResolvedCard, Role, Theme
+from commander.carddb import CardDb, CardInfo, ResolvedCard, Role, Theme, back_is_land
 from commander.deckcache import Clock
 from commander.deckprofile import PROFILE_THEME, Profile, ThemeSpec
 from commander.deckthemes import merge_themes
@@ -580,10 +580,17 @@ def _roles_of(r: ResolvedCard) -> list[Role]:
 
 
 def _sound(info: CardInfo | None, cut: ResolvedCard, rules: CutRules) -> bool:
-    """Whether the deck card may be cut for the idea: a swap of a land is judged by the mana base."""
-    if rules.mana is None or info is None or cut.info is None or not (info.is_land or cut.info.is_land):
+    """Whether the deck card may be cut for the idea: a swap of a land, or of a spell with a land back that
+    counts as part of one, is judged by the mana base."""
+    if rules.mana is None or info is None or cut.info is None:
+        return True
+    if not any(_counts_as_land(card) for card in (info, cut.info)):
         return True
     return rules.mana.allows(info.name, cut.card.name)
+
+
+def _counts_as_land(info: CardInfo) -> bool:
+    return info.is_land or back_is_land(info.type_line)
 
 
 def _by_word(spec: ThemeSpec, tag_ids: Mapping[str, str]) -> list[tuple[str, Theme]]:

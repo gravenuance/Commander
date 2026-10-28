@@ -17,7 +17,6 @@ from commander.manabase import (
     LandCount,
     ManaBase,
     analyse_mana,
-    info_is_land,
     mana_only_land,
 )
 from commander.manaplan import LAND_TOLERANCE, deck_with_counts
@@ -114,7 +113,8 @@ class ManaGuard:
         return replace(self, cards=merged, _answers={} if held & learned else self._answers)
 
     def allows(self, add: str, cut: str) -> bool:
-        """Whether swapping the deck's card `cut` for `add` is sound; one of them is a land."""
+        """Whether swapping the deck's card `cut` for `add` is sound; one of them is a land, or a spell with a
+        land back."""
         added, cut_card = self.cards.get(add.casefold()), self.cards.get(cut.casefold())
         if added is None or cut_card is None:
             log.warning("No mana data for %s or %s: the swap is refused", add, cut)
@@ -127,7 +127,8 @@ class ManaGuard:
         after = analyse_mana(
             deck_with_counts(self.deck, counts), self.cards, alternative_cost=self.alternative_cost
         )
-        moves_count = info_is_land(added) != info_is_land(cut_card)
+        # A spell with a land back counts as part of a land, so its swap moves the count too.
+        moves_count = not math.isclose(after.lands.lands, self.lands.lands)
         allowed = (not moves_count or self._count_holds(after.lands)) and self._sources_hold(after)
         self._answers[add, cut] = allowed
         return allowed

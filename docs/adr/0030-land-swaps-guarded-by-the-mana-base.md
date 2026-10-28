@@ -50,3 +50,11 @@ ideas added as they come (`with_ideas`). The app's Mana tab reads its comparison
   With fewer than three lists to compare, only Karsten's count is left to pass, or a move towards it.
 - The analysis runs only for the swaps that involve a land and would otherwise be offered, which are the
   few cards that rank first for each idea.
+
+## Amendment (2026-10-28): a spell with a land back is guarded too
+
+The guard asked whether a card is a land by its front face, so a spell with a land back (Shatterskull
+Smashing, Bala Ged Recovery) was cut or brought in with no check, though the mana base counts it as part of
+a land (`manabase.MDFC_LAND`) and as a source. Thirteen such cards sit in six of the owner's decks. A swap
+that involves one is now judged like a land swap (`targets._sound`), and the land count is checked whenever the
+analysed count changes (`ManaGuard.allows`), not only when a front-face land moves.
