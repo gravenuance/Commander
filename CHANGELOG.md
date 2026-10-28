@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.0 - 2026-10-28
 
 ### Changed
 - The deck page has a new look: warmer colours, card groups and side panels as rounded rows with a turning
