@@ -35,6 +35,7 @@ from commander.board import (
     read_board,
 )
 from commander.boardsave import BoardSave
+from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
 from commander.carddb import CARD_DB_FILE, CardDb
 from commander.config import MetaSettings
 from commander.desk import Desk, DeskSettings
@@ -47,6 +48,7 @@ from commander.syncrun import CardState, CardStatus, FetchState, SyncOutcome
 from commander.topdeck import NO_KEY_MESSAGE
 from commander.viewscore import ViewScores
 from conftest import (
+    PASSWORD,
     REFRESH_TOKEN,
     TOPDECK_SERVICE,
     FakeArchidekt,
@@ -799,6 +801,130 @@ def test_the_bracket_check_names_what_lifts_the_estimate_above_the_ceiling(
     assert causes[2]["cards"] == ["Ancient Tomb"]
     desk.bracket(DECK)
     assert len(fake.spellbook.bodies) == 1
+
+
+def counting_estimates(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """One entry per time the desk works out an estimate, from the cache or from Spellbook."""
+    calls: list[int] = []
+    real = desk_module.estimate_deck
+
+    def counting(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401 — passes the call through untouched
+        calls.append(len(calls))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(desk_module, "estimate_deck", counting)
+    return calls
+
+
+def estimate_file(settings: DeskSettings) -> Path:
+    return settings.cache / SPELLBOOK_CACHE_FOLDER / f"{DECK}.json"
+
+
+def touch(path: Path) -> None:
+    """Move the file's time on without changing what it holds."""
+    stat = path.stat()
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 10_000_000_000))
+
+
+def warm_bracket(desk: Desk, calls: list[int]) -> Json:
+    """The first call asks Spellbook and caches; the second reads that cache, which is what is kept."""
+    desk.bracket(DECK)
+    answer = desk.bracket(DECK)
+    assert len(calls) == 2
+    return answer
+
+
+def test_the_bracket_panel_of_an_unchanged_deck_is_not_estimated_again(
+    desk: Desk, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = counting_estimates(monkeypatch)
+    answer = warm_bracket(desk, calls)
+    assert desk.bracket(DECK) == answer
+    assert desk.bracket(DECK) == answer
+    assert len(calls) == 2
+    assert len(fake.spellbook.bodies) == 1
+
+
+@pytest.mark.parametrize("changed", ["deck", "profile", "estimate"])
+def test_the_bracket_panel_is_worked_out_again_when_a_file_it_reads_changes(
+    desk: Desk, settings: DeskSettings, monkeypatch: pytest.MonkeyPatch, changed: str
+) -> None:
+    calls = counting_estimates(monkeypatch)
+    warm_bracket(desk, calls)
+    folder = settings.workspace / "10000001-sample-deck"
+    match changed:
+        case "deck":
+            touch(folder / "deck.json")
+        case "profile":
+            (folder / "profile.toml").write_text("version = 1\nbracket_ceiling = 2\n", encoding="utf-8")
+        case _:
+            touch(estimate_file(settings))
+    answer = desk.bracket(DECK)
+    assert len(calls) == 3
+    assert answer["estimate"] == {"tag": "Ruthless", "brackets": "4+"}
+    if changed == "profile":
+        note = "the profile's bracket ceiling (2) is below the Archidekt bracket (5)"
+        assert note in names(answer, "notes")
+
+
+def test_the_bracket_panel_is_worked_out_again_on_the_next_day(
+    settings: DeskSettings, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    desk, _, clock = clocked_desk(settings, fake)
+    calls = counting_estimates(monkeypatch)
+    warm_bracket(desk, calls)
+    clock[0] += timedelta(days=1)
+    desk.bracket(DECK)
+    assert len(calls) == 3
+    assert len(fake.spellbook.bodies) == 1
+
+
+def test_the_bracket_panel_asks_spellbook_when_the_kept_estimate_turns_a_week_old_within_the_day(
+    settings: DeskSettings, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    desk, _, clock = clocked_desk(settings, fake)
+    calls = counting_estimates(monkeypatch)
+    # Cached at noon on the 15th, so it is a week old at noon on the 22nd.
+    warm_bracket(desk, calls)
+    clock[0] = NOW + timedelta(days=6, hours=23)
+    desk.bracket(DECK)
+    desk.bracket(DECK)
+    assert (len(calls), len(fake.spellbook.bodies)) == (3, 1)
+    clock[0] = NOW + timedelta(days=7, hours=1)
+    desk.bracket(DECK)
+    assert (len(calls), len(fake.spellbook.bodies)) == (4, 2)
+
+
+def test_the_bracket_panel_asks_spellbook_again_after_a_failed_answer_instead_of_keeping_it(
+    desk: Desk, fake: FakeArchidekt
+) -> None:
+    fake.spellbook.status = 403
+    assert desk.bracket(DECK)["estimate"] is None
+    fake.spellbook.status = 200
+    assert desk.bracket(DECK)["estimate"] == {"tag": "Ruthless", "brackets": "4+"}
+    assert len(fake.spellbook.bodies) == 2
+
+
+def test_signing_in_as_another_account_clears_the_kept_bracket_panel(
+    settings: DeskSettings, fake: FakeArchidekt, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "config.toml"
+    own = f"version = 1\nuser = 'tester'\nworkspace = '{settings.workspace}'\n"
+    config.write_text(own, encoding="utf-8")
+    desk = Desk(
+        replace(settings, config=config, documents=tmp_path / "docs"),
+        client_factory=fake.client,
+        token_store=MemoryTokenStore({"tester": REFRESH_TOKEN}),
+        now=lambda: NOW,
+        pacer_factory=lambda _: Pacer(0),
+        background=lambda _: None,
+    )
+    calls = counting_estimates(monkeypatch)
+    warm_bracket(desk, calls)
+    # The fake Archidekt knows one account, so this signs in to the same folder; the switch still runs.
+    assert desk.sign_in("tester", PASSWORD).get("error") is None
+    desk.bracket(DECK)
+    assert len(calls) == 3
 
 
 def test_the_bracket_check_without_spellbook_still_compares_the_ceiling(
