@@ -20,7 +20,7 @@ from commander.metadata import MetaData
 from commander.models import COMMANDER_CATEGORY, Deck
 from commander.peercounts import PeerCounts, peer_counts
 from commander.spellbook import BracketEstimate, ComboDetail
-from commander.suggest import fills_role, protected_cards
+from commander.suggest import fills_role, protected_cards, role_count
 from commander.weightedshare import ShareTable, share_reason, weighted_shares
 
 log = logging.getLogger(__name__)
@@ -99,6 +99,8 @@ class CutRules:
     peers: PeerCounts | None = None
     # The names of the themes that hold a word of the profile's own themes: the owner's chosen identity.
     profile_themes: frozenset[str] = frozenset()
+    # The role counts the profile's [targets] set: no computed cut takes the deck below one of them.
+    profile_targets: Mapping[Role, int] = field(default_factory=dict[Role, int])
 
 
 def deck_cut_rules(
@@ -143,7 +145,9 @@ def deck_cut_rules(
     mana = mana_guard(deck, db, data)
     protected = _protected(deck, main, profile, db, data=data, estimate=estimate)
     profile_themes = frozenset(m.name for m in named if _holds_word(m.theme, profile.themes, tag_ids))
-    rules = CutRules(protected, shares or None, {}, leanings, matchers, mana, counts, profile_themes)
+    rules = CutRules(
+        protected, shares or None, {}, leanings, matchers, mana, counts, profile_themes, dict(profile.targets)
+    )
     return with_ideas(rules, [r.info for r in main if r.info is not None], db)
 
 
@@ -273,11 +277,14 @@ def role_targets(
     """
     roles = [role for role in ANALYZED_ROLES if role in info.roles]
     own = rules.themes.get(info.oracle_id, frozenset())
+    if counts is None and rules.profile_targets:
+        counts = deck_counts(main, rules)
     eligible = [
         r
         for r in main
         if _eligible(r, info, rules.protected)
         and _fits_land(info, r, rules)
+        and (counts is None or _keeps_targets(r, info, counts, rules))
         and _clearly_less_played(info.name, r, rules.shares)
     ]
     like = [
@@ -330,10 +337,24 @@ class DeckCounts:
 
     roles: Counter[Role]
     themes: Counter[str]
+    # The cards filling each role the profile sets a target for, counted as the suggestions count them (tag
+    # or category).
+    targeted: Mapping[Role, int] = field(default_factory=dict[Role, int])
 
 
 def deck_counts(main: Sequence[ResolvedCard], rules: CutRules) -> DeckCounts:
-    return DeckCounts(_role_counts(main), _theme_counts(main, rules))
+    targeted = {role: role_count(main, role) for role in rules.profile_targets}
+    return DeckCounts(_role_counts(main), _theme_counts(main, rules), targeted)
+
+
+def _keeps_targets(r: ResolvedCard, idea: CardInfo, counts: DeckCounts, rules: CutRules) -> bool:
+    """Whether cutting the card keeps every role the profile sets a target for at it: a card filling such a
+    role the idea does not is cut only while the deck holds more cards of it than the target."""
+    return all(
+        counts.targeted[role] > target
+        for role, target in rules.profile_targets.items()
+        if role not in idea.roles and fills_role(r, role)
+    )
 
 
 @dataclass(slots=True, frozen=True)

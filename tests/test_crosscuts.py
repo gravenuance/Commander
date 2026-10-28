@@ -3,6 +3,7 @@
 
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -197,6 +198,27 @@ def test_a_surplus_cut_scoring_higher_than_a_like_for_like_one_comes_first_and_v
         deck, rules(roles=peers, shares=shares_of(deck, {"old draw": 0.05, "low ramp": 0.05}))
     )
     assert names(like) == ["Old Draw", "Low Ramp", "High Ramp", "Third Ramp"]
+
+
+def test_a_role_the_profile_sets_a_target_for_loses_no_card_at_or_under_it_by_the_decks_categories() -> None:
+    # One shield by Tagger's tag and one the owner files under "Protection": Tagger alone counts one.
+    deck = [
+        card("Shield 1", (Role.PROTECTION,)),
+        card("Shield 2", categories=("Protection",)),
+        card("Plain"),
+    ]
+    peers = {Role.PROTECTION: band(0.0)}
+
+    def offered(target: int | None) -> list[str]:
+        targets = {} if target is None else {Role.PROTECTION: target}
+        cut_rules = replace(rules(roles=peers, shares=shares_of(deck)), profile_targets=targets)
+        return names(for_draw_idea(deck, cut_rules))
+
+    # The peers' floor of none lets Shield 1 go, and Shield 2 fills no role by tag.
+    assert offered(None) == ["Plain", "Shield 1", "Shield 2"]
+    # The profile wants two and the deck holds two by tag and category: neither may go.
+    assert offered(2) == ["Plain"]
+    assert offered(1) == ["Plain", "Shield 1", "Shield 2"]
 
 
 def test_the_surplus_bonus_stops_at_three_cards_over_so_it_never_outranks_like_for_like() -> None:

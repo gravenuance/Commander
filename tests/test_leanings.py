@@ -209,6 +209,8 @@ def test_the_rules_hold_the_peer_decks_role_and_theme_counts_only_with_enough_de
     # Every peer deck plays Ancient Tomb, the only ramp card, and none of the leaning's nonland cards.
     assert counts.roles[Role.RAMP] == RoleBand(1.0, 1.0)
     assert counts.themes == {"extra-combat": 0.0}
+    owned = deck_cut_rules(deck, main, Profile(targets={Role.PROTECTION: 6}), db, None, now=lambda: NOW)
+    assert owned.profile_targets == {Role.PROTECTION: 6}
     few = deck_cut_rules(deck, main, Profile(), db, pool_of(peers(2, 50)), now=lambda: NOW)
     assert few.peers is None
     assert deck_cut_rules(deck, main, Profile(), db, None, now=lambda: NOW).peers is None

@@ -77,3 +77,14 @@ every deck card but the commander. A turned-down card returns by the rule of ADR
 - The thresholds (`MIN_THEME_GAP`, `OVERRUN_BONUS`, the percentile) are named constants and the over-run
   bonus is provisional, to retune once more
   data shows how often a wider cut is taken.
+
+## Amendment (2026-10-28): the profile's own role targets
+
+The decision above leaves the deck's own categories out of the floors and medians, because the peers' counts are
+Tagger's alone. A role target the owner wrote under `[targets]` in the profile is another matter: it is the
+owner's number for this deck, counted the way the suggestions count it (Tagger's tag or the deck's category,
+`suggest.role_count`). Pantlaza sets `protection = 6`, holds five by category and four by tag, and was still
+offered Bolt Bend for Vaultborn Tyrant and Ghalta. No computed cut now takes a card that fills a role with a
+profile target the idea does not fill while the deck holds that role at or under the target (`CutRules.
+profile_targets`). The peers' floors and medians still count tags alone, and a cut picked by hand is not
+checked.
