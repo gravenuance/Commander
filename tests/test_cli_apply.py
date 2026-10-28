@@ -304,6 +304,7 @@ def test_apply_json(home: Path, archidekt: FakeArchidekt, decks: Path) -> None:
         "collectorNumber": "20",
         "scryfallId": document["changes"][2]["scryfallId"],
         "priceCents": 30,
+        "finish": "Normal",
         "raises": None,
     }
     assert document["warnings"] == ["the deck will have 8 cards, not 100"]

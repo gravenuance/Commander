@@ -66,8 +66,8 @@ Option 1, chosen by the user on 2026-10-15, kept small and careful:
   commanders' colours. Any problem stops the run with exit code 2. An added card gets its cheapest EUR
   printing among those sanctioned play accepts (no gold or silver borders, oversized cards or memorabilia)
   unless the plan names a set, and the category Archidekt's editor would give it (its first card type,
-  lands first) unless the plan names one. Game changers and mass land denial that lift the deck
-  above its Archidekt bracket are marked, as in `suggest`.
+  lands first) unless the plan names one. Game changers, mass land denial and a second extra-turn card
+  that lift the deck above its Archidekt bracket are marked, as in `suggest`.
 - **Preview by default.** Without `--save`, nothing is written and no login is needed (a saved login is
   used only to read a private deck). `--save` looks up every new card's Archidekt id first and stops
   before any write if one is missing; then saves a snapshot named `before cmdr apply <UTC time>`; then
@@ -109,3 +109,13 @@ Option 1, chosen by the user on 2026-10-15, kept small and careful:
   Each deck sets which categories count in the deck (`categories[].includedInDeck`), and `apply` counts an
   added card by that setting. A category the deck lacks is created by the save: Archidekt created
   Maybeboard outside the deck but Sideboard inside it, so a new Sideboard draws a warning.
+
+## Amendment (2026-10-27): an add saves the cheapest printing and finish
+
+The owner decided that a card's cheapest price is the cheaper of its nonfoil and foil prices (the budget
+badges and the projected total of a queued add use it), so `apply` saves what that price describes. An added
+card now gets the cheapest EUR price over every sanctioned printing in both finishes. When a foil undercuts
+every nonfoil, the card is saved with Archidekt's "Foil" modifier (the entry's `modifier`, which was always
+"Normal"); at equal prices the nonfoil wins. The preview marks it ("AAA 1 foil, EUR 0.50") and `--json`
+carries `finish`. A printing with only a foil price is taken too, where before it counted as unpriced. Glitch
+prices never reach this choice (ADR 0001's 2026-10-27 amendment).

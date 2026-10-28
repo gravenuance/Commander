@@ -21,6 +21,7 @@ from commander.apply import (
 from commander.archidekt import AuthError, parse_deck
 from commander.archidekt_edit import ArchidektEditor, EditKind, LiveDeck, parse_entry_states
 from commander.carddb import CardDb, CardInfo, Role
+from commander.changetext import change_text
 from commander.models import Deck
 from commander.net import MAX_ATTEMPTS, Fetcher
 from commander.plan import AddCard, Plan, RemoveCard
@@ -104,6 +105,50 @@ def test_add_never_saves_a_glitch_priced_printing(deck: Deck, tmp_path: Path) ->
 
     (change,) = resolution.changes
     assert (change.set_code, change.price_cents) == ("4ed", 26394)
+
+
+def add_from(deck: Deck, tmp_path: Path, lines: list[str]) -> Change:
+    with CardDb(build_card_db(tmp_path, extra_cards=lines)) as db:
+        resolution = resolve_plan(deck, plan([AddCard(f"Filler Card {PRICED_BASE + 1}")]), db)
+    (change,) = resolution.changes
+    return change
+
+
+def test_add_saves_a_foil_when_the_foil_is_the_cheapest_way_to_own_the_card(
+    deck: Deck, tmp_path: Path
+) -> None:
+    # The first printing's foil (0.50) undercuts every nonfoil copy (0.80, 1.00).
+    change = add_from(
+        deck,
+        tmp_path,
+        [
+            priced_printing(1, 1, "1.00", "0.50", set_code="aaa"),
+            priced_printing(1, 2, "0.80", set_code="bbb"),
+        ],
+    )
+    assert (change.set_code, change.finish, change.price_cents) == ("aaa", "Foil", 50)
+    edit = card_edits([change], {}, {change.scryfall_id: 77})[0]
+    assert (edit.kind, edit.state.modifier) == (EditKind.ADD, "Foil")
+    assert change_text(change).startswith(f"+ Filler Card {PRICED_BASE + 1} (AAA 1 foil, €0.50)")
+
+
+def test_add_saves_a_nonfoil_unless_a_foil_is_cheaper(deck: Deck, tmp_path: Path) -> None:
+    change = add_from(
+        deck,
+        tmp_path,
+        [
+            priced_printing(1, 1, "0.50", "0.50", set_code="aaa"),
+            priced_printing(1, 2, "0.80", "0.90", set_code="bbb"),
+        ],
+    )
+    assert (change.set_code, change.finish, change.price_cents) == ("aaa", "Normal", 50)
+    edit = card_edits([change], {}, {change.scryfall_id: 77})[0]
+    assert edit.state.modifier == "Normal"
+
+
+def test_add_takes_a_printing_with_only_a_foil_price(deck: Deck, tmp_path: Path) -> None:
+    change = add_from(deck, tmp_path, [priced_printing(1, 1, None, "0.70", set_code="aaa")])
+    assert (change.set_code, change.finish, change.price_cents) == ("aaa", "Foil", 70)
 
 
 def test_a_land_creature_is_filed_as_a_land(db: CardDb) -> None:

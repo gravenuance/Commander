@@ -8,6 +8,7 @@ from commander.carddb import ResolvedCard
 from commander.models import Deck
 
 NONFOIL_FINISH = "Normal"
+FOIL_FINISH = "Foil"
 
 
 class PriceSource(Enum):

@@ -24,6 +24,7 @@ from commander.copylimit import copy_limit
 from commander.models import COMMANDER_CATEGORY, DONT_HAVE_LABEL, Deck, DeckCard
 from commander.net import NetworkError
 from commander.plan import AddCard, Plan, RemoveCard
+from commander.pricing import FOIL_FINISH, NONFOIL_FINISH
 from commander.suggest import BracketRaise, card_raise, deck_identity
 
 log = logging.getLogger(__name__)
@@ -66,6 +67,8 @@ class Change:
     collector_number: str
     scryfall_id: str
     price_cents: int | None = None
+    # Archidekt's finish modifier for an add: the printing's price is the one for this finish.
+    finish: str = NONFOIL_FINISH
     raises: BracketRaise | None = None
     # Known for cards already in the deck; looked up on Archidekt for adds when saving.
     card_id: int | None = None
@@ -97,6 +100,24 @@ class Resolution:
     def main_after(self) -> int:
         delta = sum(c.counted_after - c.counted_before for c in self.changes)
         return self.deck.main_count + delta
+
+
+@dataclass(slots=True, frozen=True)
+class _Pick:
+    """The printing an add saves, in the finish that makes it cheapest, and what that costs."""
+
+    printing: Printing
+    finish: str
+    cents: int | None
+
+    def order(self) -> tuple[int, bool, str, str]:
+        # Cheapest first; at the same price a nonfoil; then the same order every run.
+        return (
+            self.cents or 0,
+            self.finish != NONFOIL_FINISH,
+            self.printing.set_code,
+            self.printing.collector_number,
+        )
 
 
 @dataclass(slots=True)
@@ -187,9 +208,10 @@ class _Resolver:
                 self.changes.append(_change(ChangeKind.MORE, entry, entry.quantity + wanted.quantity - have))
             return changers
         raises = card_raise(info, self.bracket, changers, extra_turns=self.extra_turns)
-        printing = self._printing(info, wanted)
-        if printing is None:
+        pick = self._printing(info, wanted)
+        if pick is None:
             return changers
+        printing = pick.printing
         category = wanted.category or default_category(info)
         self.changes.append(
             Change(
@@ -202,7 +224,8 @@ class _Resolver:
                 set_code=printing.set_code,
                 collector_number=printing.collector_number,
                 scryfall_id=printing.scryfall_id,
-                price_cents=printing.eur_cents,
+                price_cents=pick.cents,
+                finish=pick.finish,
                 raises=raises,
             )
         )
@@ -226,7 +249,7 @@ class _Resolver:
             return "the plan also removes this card"
         return None
 
-    def _printing(self, info: CardInfo, wanted: AddCard) -> Printing | None:
+    def _printing(self, info: CardInfo, wanted: AddCard) -> _Pick | None:
         printings = self.db.printings_of(info.oracle_id)
         if wanted.set_code is not None:
             printings = [p for p in printings if p.set_code == wanted.set_code]
@@ -236,11 +259,17 @@ class _Resolver:
         elif any(p.regular for p in printings):
             # A gold-bordered or oversized copy is often the cheapest; it takes naming its set.
             printings = [p for p in printings if p.regular]
-        priced = [p for p in printings if p.eur_cents is not None]
-        if priced:
-            return min(priced, key=lambda p: (p.eur_cents or 0, p.set_code, p.collector_number))
+        offers = [
+            _Pick(p, finish, cents)
+            for p in printings
+            for finish, cents in ((NONFOIL_FINISH, p.eur_cents), (FOIL_FINISH, p.eur_foil_cents))
+            if cents is not None
+        ]
+        if offers:
+            # The cheapest printing and finish; a foil only when it undercuts every nonfoil (ADR 0004).
+            return min(offers, key=_Pick.order)
         if wanted.set_code is not None:
-            return printings[0]
+            return _Pick(printings[0], NONFOIL_FINISH, None)
         self.problems.append(f'add {info.name}: no printing has a EUR price; pick one with set = "..."')
         return None
 
@@ -401,7 +430,12 @@ def card_edits(
         if change.kind is ChangeKind.ADD:
             card_id = card_ids[change.scryfall_id]
             edits.append(
-                CardEdit(EditKind.ADD, card_id, change.after, new_entry_state(change.category, dont_have))
+                CardEdit(
+                    EditKind.ADD,
+                    card_id,
+                    change.after,
+                    new_entry_state(change.category, dont_have, change.finish),
+                )
             )
             continue
         if change.entry_id is None or change.card_id is None:
