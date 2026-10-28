@@ -10,10 +10,11 @@ from enum import Enum
 
 from commander.answers import AnswerKind, card_key, piece_facts
 from commander.archidekt import PeerDeck
-from commander.carddb import CardDb, CardInfo
+from commander.carddb import CardDb, CardInfo, CardText
 from commander.deckcache import Answer, AnswerSource, Clock
 from commander.deckprofile import Profile
 from commander.keycards import KeyCard, key_cards
+from commander.manabase import searched_colours
 from commander.metacombos import AnswerRole, DeckAnswers, MetaCombo, combo_answers, infos_answers, meta_combos
 from commander.metadata import MetaCommander, MetaData, PeerList, entries_since, listed_entries
 from commander.models import COMMANDER_CATEGORY, Deck
@@ -269,19 +270,37 @@ def _weighed(row: CardShare, weight: Weight | None) -> CardShare:
 
 
 def _playable(rows: Sequence[CardShare], deck: Deck, db: CardDb) -> list[CardShare]:
-    """The rows the deck could play: lists older than a ban, or in other colours, name cards it can't."""
+    """The rows the deck could play: lists older than a ban, in other colours, or of a fetch land that finds
+    nothing in them, name cards it can't."""
     identity = deck_identity(db.resolve(deck.main_cards))
     found = db.cards_named(r.name for r in rows)
-    kept: list[CardShare] = []
-    for row in rows:
-        # A name the card data doesn't spell the same may still be a two-faced card's front face.
-        info = found.get(row.name.casefold()) or db.card_named(row.name)
-        if info is not None and not (
-            info.commander_legal and (identity is None or set(info.color_identity) <= set(identity))
-        ):
-            continue
-        kept.append(row)
-    return kept
+    # A name the card data doesn't spell the same may still be a two-faced card's front face.
+    named = [(row, found.get(row.name.casefold()) or db.card_named(row.name)) for row in rows]
+    legal = [
+        (row, info)
+        for row, info in named
+        if info is None
+        or (info.commander_legal and (identity is None or set(info.color_identity) <= set(identity)))
+    ]
+    lands = [info.oracle_id for _, info in legal if info is not None and info.is_land]
+    texts = db.card_texts(lands) if identity is not None and lands else {}
+    return [
+        row
+        for row, info in legal
+        if info is None or not _finds_nothing_in(texts.get(info.oracle_id), identity)
+    ]
+
+
+def _finds_nothing_in(card: CardText | None, identity: str | None) -> bool:
+    """Whether a land searches only for basic land types of colours outside the identity. A fetch land's own
+    colour identity is empty, so the identity test lets it into every deck."""
+    if card is None or identity is None:
+        return False
+    text = card.text.casefold()
+    if "search your library for" not in text:
+        return False
+    found = searched_colours(text)
+    return bool(found) and found.isdisjoint(identity)
 
 
 @dataclass(slots=True, frozen=True)
