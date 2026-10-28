@@ -10,9 +10,9 @@ each failure comes back as a warning to show the way the caller shows things.
 """
 
 import logging
-from collections.abc import Callable, Generator
+import threading
+from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, wait
-from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import date
 from enum import Enum
@@ -159,32 +159,18 @@ def run_sync(
     deck_lock = pull.deck_lock
     with services.client_factory() as http:
         fetcher = Fetcher(http)
-        # The card download is independent of the decks, so it runs while they sync.
-        cards_job: Future[CardRefresh] | None = None
-        previews_job: Future[PreviewProbe] | None = None
-        if not options.dry_run and options.cards:
-            scryfall = ScryfallClient(fetcher)
-            cards_job = in_background(
-                lambda: refresh_card_db(
-                    scryfall, services.cache, now=services.now, force=options.force, on_progress=on_progress
-                ),
-                name="card-data",
-            )
-            previews_job = in_background(
-                lambda: probe_previews(
-                    scryfall,
-                    services.cache,
-                    now=services.now,
-                    pacer=services.pacer_factory(PROBE_INTERVAL_SECONDS),
-                    force=options.force,
-                ),
-                name="card-previews",
-            )
+        cards_job, previews_job = _start_card_jobs(fetcher, services, options, on_progress)
         if on_cards is not None:
             if cards_job is None:
                 on_cards()
             else:
                 cards_job.add_done_callback(lambda _: on_cards())
+        # TopDeck's window loads from here on when a deck on disk reads tournament lists, while the pull runs.
+        meta = (
+            _start_meta(workspace, user, settings, services, http, progress=on_progress, priority=priority)
+            if options.ideas and not options.dry_run
+            else None
+        )
         try:
             login = _sign_in(fetcher, user, services)
             if login.problem is not None:
@@ -203,34 +189,40 @@ def run_sync(
             if not login.attempted and any(stored.deck.needs_login for stored in workspace.load_all()):
                 warnings.append(f"Not signed in to Archidekt: {PRIVATE_NOT_UPDATED}")
             labels = None if options.dry_run else _sync_labels(fetcher, workspace, login, warnings)
+            cards = _card_status(cards_job, options)
+            if options.dry_run:
+                return SyncOutcome(results, cards, labels, warnings=warnings)
+            # The probe goes on while the ideas are compiled; its warning keeps the place it would have had.
+            probe_warnings: list[str] = []
+            probe_at = len(warnings)
+            _add_grace_tables(workspace, warnings, deck_lock)
+            phase = (
+                _compile_ideas(
+                    workspace,
+                    settings,
+                    services,
+                    http,
+                    meta,
+                    warnings=warnings,
+                    on_deck=on_deck or _ignore_deck,
+                    deck_lock=deck_lock,
+                )
+                if meta is not None
+                else _IdeasPhase()
+            )
+            # Still under way only when the card data was missing and no deck was read.
+            _settle_tournaments(meta)
+            previews = _previews_probe(previews_job, probe_warnings)
+            warnings[probe_at:probe_at] = probe_warnings
         except Exception:
-            # The download and the probe share this client, which closes on leaving the block: wait for
-            # them, and log the card data's status because there is no outcome to carry it.
+            # The download, the probe and TopDeck's load share this client, which closes on leaving the block:
+            # wait for them, and log the card data's status because there is no outcome to carry it.
             card_status = _card_status(cards_job, options)
             log.info("card data: %s, %s", card_status.state.value, card_status.detail)
             if previews_job is not None:
                 wait([previews_job])
+            _settle_tournaments(meta)
             raise
-        cards = _card_status(cards_job, options)
-        previews = _previews_probe(previews_job, warnings)
-    if options.dry_run:
-        return SyncOutcome(results, cards, labels, warnings=warnings, previews=previews)
-    _add_grace_tables(workspace, warnings, deck_lock)
-    phase = (
-        _compile_ideas(
-            workspace,
-            user,
-            settings,
-            services,
-            warnings=warnings,
-            progress=on_progress,
-            priority=priority,
-            on_deck=on_deck or _ignore_deck,
-            deck_lock=deck_lock,
-        )
-        if options.ideas
-        else _IdeasPhase()
-    )
     return SyncOutcome(
         results,
         cards,
@@ -242,6 +234,32 @@ def run_sync(
         warnings,
         previews,
     )
+
+
+def _start_card_jobs(
+    fetcher: Fetcher, services: SyncServices, options: SyncOptions, on_progress: Progress
+) -> tuple[Future[CardRefresh] | None, Future[PreviewProbe] | None]:
+    """The card download and the previews probe: independent of the decks, so they run while those sync."""
+    if options.dry_run or not options.cards:
+        return None, None
+    scryfall = ScryfallClient(fetcher)
+    cards_job = in_background(
+        lambda: refresh_card_db(
+            scryfall, services.cache, now=services.now, force=options.force, on_progress=on_progress
+        ),
+        name="card-data",
+    )
+    previews_job = in_background(
+        lambda: probe_previews(
+            scryfall,
+            services.cache,
+            now=services.now,
+            pacer=services.pacer_factory(PROBE_INTERVAL_SECONDS),
+            force=options.force,
+        ),
+        name="card-previews",
+    )
+    return cards_job, previews_job
 
 
 def _add_grace_tables(workspace: Workspace, warnings: list[str], deck_lock: DeckLock) -> None:
@@ -362,15 +380,67 @@ class _IdeasPhase:
     counts_cleared: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
 
 
-def _compile_ideas(
+@dataclass(slots=True)
+class _MetaStart:
+    """The ideas phase's sources, built before the pull so that TopDeck's window can load while the decks are
+    pulled; the pull keeps the progress line until the ideas phase `open`s it."""
+
+    sources: MetaSources
+    phases: ActivePhases
+    next_up: FetchPriority
+    # The decks in the order of how often the user opens them; `rank` reads it afresh, so it can be refilled.
+    order: list[int]
+    # TopDeck's load, once started: with the decks on disk if one of them reads tournament lists, else when
+    # the ideas phase finds one.
+    tournaments: Future[None] | None
+    shown: threading.Event
+
+    def open(self) -> None:
+        """Hand the progress line over from the pull to the ideas phase, showing the steps already running."""
+        self.shown.set()
+        self.phases.replace(TOURNAMENTS_STEP, TOURNAMENTS_STEP)
+
+
+def _start_meta(
     workspace: Workspace,
     user: str,
     settings: MetaSettings,
     services: SyncServices,
+    http: "httpx.Client",
     *,
-    warnings: list[str],
     progress: Progress,
     priority: FetchPriority | None,
+) -> _MetaStart:
+    shown = threading.Event()
+    # Reads run side by side, so the line names each one that is under way.
+    phases = ActivePhases(lambda line: progress(line) if shown.is_set() else None, idle=_COMPILING)
+    waiting = _most_viewed_first(workspace.load_all(), services)
+    order = [s.deck.id for s in waiting]
+    next_up = priority or FetchPriority()
+    sources = meta_sources(
+        http,
+        services.pacer_factory,
+        user,
+        settings,
+        services.cache,
+        waits=_TopdeckWaits(phases),
+        rank=lambda deck_id: next_up.rank(deck_id, order),
+        rank_changes=next_up.watch,
+    )
+    tournaments = start_tournament_refresh(
+        (s.deck for s in waiting), sources, now=services.now, on_progress=phases.start, on_done=phases.done
+    )
+    return _MetaStart(sources, phases, next_up, order, tournaments, shown)
+
+
+def _compile_ideas(
+    workspace: Workspace,
+    settings: MetaSettings,
+    services: SyncServices,
+    http: "httpx.Client",
+    meta: _MetaStart,
+    *,
+    warnings: list[str],
     on_deck: DeckProgress,
     deck_lock: DeckLock,
 ) -> _IdeasPhase:
@@ -392,59 +462,48 @@ def _compile_ideas(
         warnings.append(f"ideas not compiled: {error}")
         return _IdeasPhase()
     phase = _IdeasPhase()
-    # Reads run side by side, so the line names each one that is under way.
-    phases = ActivePhases(progress, idle=_COMPILING)
+    phases, next_up = meta.phases, meta.next_up
     waiting = _most_viewed_first(workspace.load_all(), services)
-    order = [s.deck.id for s in waiting]
-    next_up = priority or FetchPriority()
-    with db, services.client_factory() as http:
-        sources = meta_sources(
-            http,
-            services.pacer_factory,
-            user,
-            settings,
-            services.cache,
-            waits=_TopdeckWaits(phases),
-            rank=lambda deck_id: next_up.rank(deck_id, order),
-            rank_changes=next_up.watch,
-        )
+    meta.order[:] = [s.deck.id for s in waiting]
+    meta.open()
+    with db:
         waiting = _with_estimated_brackets(waiting, http, services, phases)
-        # TopDeck's window is fetched once, on its own thread, while every deck's Archidekt and Spellbook
-        # reads go ahead; only a deck at a bracket that reads tournament lists waits for it to finish.
-        tournaments = start_tournament_refresh(
-            (s.deck for s in waiting),
-            sources,
-            now=services.now,
-            on_progress=phases.start,
-            on_done=phases.done,
-        )
+        if meta.tournaments is None:
+            # The decks as they are now, with their estimated brackets, may read tournament lists after all.
+            meta.tournaments = start_tournament_refresh(
+                (s.deck for s in waiting),
+                meta.sources,
+                now=services.now,
+                on_progress=phases.start,
+                on_done=phases.done,
+            )
+        tournaments = meta.tournaments
         for queued in waiting:
             on_deck(queued.deck.id, FetchState.QUEUED)
-        with _settled(tournaments):
-            reading = _start_reading(
-                waiting, sources, services, tournaments=tournaments, phases=phases, on_deck=on_deck
+        reading = _start_reading(
+            waiting, meta.sources, services, tournaments=tournaments, phases=phases, on_deck=on_deck
+        )
+        prune = _prune_after_reads([r.read for r in reading], services, settings)
+        while reading:
+            read = next_up.pick(_finished(reading), lambda r: r.stored.deck.id)
+            reading.remove(read)
+            _merge_deck(
+                read,
+                workspace,
+                db,
+                services,
+                phase,
+                warnings=warnings,
+                on_deck=on_deck,
+                deck_lock=deck_lock,
             )
-            while reading:
-                read = next_up.pick(_finished(reading), lambda r: r.stored.deck.id)
-                reading.remove(read)
-                _merge_deck(
-                    read,
-                    workspace,
-                    db,
-                    services,
-                    phase,
-                    warnings=warnings,
-                    on_deck=on_deck,
-                    deck_lock=deck_lock,
-                )
-            if tournaments is not None:
-                # The client closes with this block, so TopDeck's thread must be over first.
-                _wait_for(tournaments)
-                # `start_tournament_refresh` has logged any error; the reads have its failure to report.
-                if tournaments.exception() is not None:
-                    warnings.append("TopDeck's tournament lists were not fetched: unexpected error")
-        # Every deck's reads are over, so none is using a cached deck read the prune could remove.
-        prune_deck_reads(services.cache, settings, now=services.now)
+        if tournaments is not None:
+            # The client closes with the sync, so TopDeck's thread must be over first.
+            _wait_for(tournaments)
+            # `start_tournament_refresh` has logged any error; the reads have its failure to report.
+            if tournaments.exception() is not None:
+                warnings.append("TopDeck's tournament lists were not fetched: unexpected error")
+        prune.result()
     return phase
 
 
@@ -478,16 +537,11 @@ _TOPDECK_GRACE_SECONDS = 10.0
 _POLL_SECONDS = 0.5
 
 
-@contextmanager
-def _settled(tournaments: Future[None] | None) -> Generator[None]:
-    """After an error, gives TopDeck's thread a moment to end before the client closes under it; it logs its
-    own failure. Ctrl-C is not an Exception, so it ends the run at once."""
-    try:
-        yield
-    except Exception:
-        if tournaments is not None:
-            _wait_for(tournaments, up_to=_TOPDECK_GRACE_SECONDS)
-        raise
+def _settle_tournaments(meta: _MetaStart | None) -> None:
+    """Gives TopDeck's thread a moment to end before the client closes under it; it logs its own failure.
+    Ctrl-C is not an Exception, so it ends the run at once."""
+    if meta is not None and meta.tournaments is not None:
+        _wait_for(meta.tournaments, up_to=_TOPDECK_GRACE_SECONDS)
 
 
 def _wait_for(future: Future[None], *, up_to: float | None = None) -> None:
@@ -541,6 +595,19 @@ class _ReadingDeck:
     read: Future[_DeckRead]
     # What went wrong reading it, one sentence each; complete once `read` is.
     warnings: list[str]
+
+
+def _prune_after_reads(
+    reads: list[Future[_DeckRead]], services: SyncServices, settings: MetaSettings
+) -> Future[None]:
+    """Prune the cached deck reads in the background once every deck's reads are over, as they can share a
+    cached read the prune would remove; the merges never touch the cache."""
+
+    def prune() -> None:
+        wait(reads)
+        prune_deck_reads(services.cache, settings, now=services.now)
+
+    return in_background(prune, name="deck-reads-prune")
 
 
 def _start_reading(

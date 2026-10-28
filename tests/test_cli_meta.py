@@ -459,6 +459,8 @@ def test_sync_below_bracket_5_learns_from_recent_archidekt_decks_alone(
     for peer_id in peers:
         fake.decks[peer_id]["cards"].append(card_entry(9_100, "Arcane Signet", ["Ramp"]))
     fake.peer_page = deck_page([{**peer_row(p, "someone", 600), "edhBracket": 3} for p in peers])
+    # The deck on disk is at bracket 3 too: a sync asks TopDeck ahead of the pull when a deck there reads it.
+    assert sync(home, fake, "--no-ideas").code == 0
     result = sync(home, fake)
     assert result.code == 0, result.err
     assert "Magda ideas: +1 from archidekt decks\n" in result.out, result.err

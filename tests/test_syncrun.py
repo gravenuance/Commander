@@ -43,6 +43,7 @@ from commander.metadata import (
 )
 from commander.models import Deck
 from commander.net import Fetcher, NetworkError, Pacer
+from commander.previews import PreviewProbe, ProbeState
 from commander.scryfall import CardRefresh, RefreshStatus
 from commander.store import LABELS_FILE, StoredDeck, Workspace
 from commander.sync import SyncResult
@@ -618,11 +619,12 @@ def test_an_error_mid_sync_waits_for_topdeck_before_the_client_closes_and_logs_w
     def sources(*_: object, **__: object) -> object:
         return SimpleNamespace(settings=MetaSettings(), tournaments=SimpleNamespace(load=load))
 
-    def start_topdeck(*args: Any, **kwargs: Any) -> Future[None]:  # noqa: ANN401 - passed on as it came
+    def start_topdeck(*args: Any, **kwargs: Any) -> Future[None] | None:  # noqa: ANN401 - passed on
         future = start_tournament_refresh(*args, **kwargs)
-        assert future is not None
-        # Callbacks run in the order added, so this one says the failure was logged.
-        future.add_done_callback(lambda _: logged.set())
+        # With no deck on disk yet, the call before the pull finds none that reads tournament lists.
+        if future is not None:
+            # Callbacks run in the order added, so this one says the failure was logged.
+            future.add_done_callback(lambda _: logged.set())
         return future
 
     def start_gather(deck: Deck, *_: object, **__: object) -> Callable[[], object]:
@@ -664,22 +666,39 @@ def test_an_error_mid_sync_waits_for_topdeck_before_the_client_closes_and_logs_w
     assert str(record.exc_info[1]) == "TopDeck's thread broke"
 
 
-def test_a_sync_prunes_the_cached_deck_reads_once_after_all_the_decks_are_read(
+def test_a_sync_prunes_the_cached_deck_reads_once_the_reads_are_over_while_the_merges_go_on(
     tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake = three_decks(tmp_path, raw_deck, card_db_file)
     stub_meta(monkeypatch)
     rig = Rig(tmp_path)
     rig.archidekt.commander = MAGDA
+    read: list[int] = []
     merged: list[int] = []
     pruned: list[list[int]] = []
+    prune_ran = threading.Event()
+    prune_ran_before_the_first_merge_ended: list[bool] = []
     prune = DeckReads.prune
 
     def counting_prune(self: DeckReads, *, now: datetime, window_start: datetime) -> int:
-        pruned.append(list(merged))
+        pruned.append(list(read))
+        prune_ran.set()
         return prune(self, now=now, window_start=window_start)
 
+    def start_gather(deck: Deck, *args: Any, **kwargs: Any) -> Callable[[], MetaData]:  # noqa: ANN401
+        finish = start_gather_for(deck, *args, **kwargs)
+
+        def finished() -> MetaData:
+            data = finish()
+            read.append(deck.id)
+            return data
+
+        return finished
+
     def compile_ideas(stored: StoredDeck, *_: object, **__: object) -> dict[Origin, list[BoardCard]]:
+        if not merged:
+            # No merge touches the cached reads, so the prune must not wait for this one to end.
+            prune_ran_before_the_first_merge_ended.append(prune_ran.wait(timeout=5))
         merged.append(stored.deck.id)
         return {}
 
@@ -688,14 +707,80 @@ def test_a_sync_prunes_the_cached_deck_reads_once_after_all_the_decks_are_read(
 
     # The reads of the decks are the real ones, over the fake services of the metadata tests.
     monkeypatch.setattr(syncrun, "meta_sources", real_sources)
-    monkeypatch.setattr(syncrun, "start_gather_for", start_gather_for)
+    monkeypatch.setattr(syncrun, "start_gather_for", start_gather)
     monkeypatch.setattr(syncrun, "gather_idea_pools", gather_idea_pools)
     monkeypatch.setattr(syncrun, "compile_ideas", compile_ideas)
     monkeypatch.setattr(DeckReads, "prune", counting_prune)
     sync_ideas(tmp_path, fake)
     assert sorted(merged) == DECK_IDS
-    # Once, with every merge over: another deck's peers are still being read until then.
+    assert prune_ran_before_the_first_merge_ended == [True]
+    # Once, with every deck's reads over: another deck's peers are still being read until then.
     assert [sorted(ids) for ids in pruned] == [DECK_IDS]
+
+
+def test_the_ideas_phase_does_not_wait_for_the_previews_probe_and_the_sync_still_reports_it(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = three_decks(tmp_path, raw_deck, card_db_file)
+    reads_started = threading.Event()
+    stub_meta(monkeypatch, after_gather=lambda _: reads_started.set())
+    probe_saw_the_reads_started: list[bool] = []
+
+    def downloaded(*_: object, **__: object) -> CardRefresh:
+        return DOWNLOADED
+
+    def probed(*_: object, **__: object) -> PreviewProbe:
+        # The probe ends only after a deck's meta read began, which it cannot if the sync waits for it.
+        probe_saw_the_reads_started.append(reads_started.wait(timeout=5))
+        return PreviewProbe(ProbeState.NO_SEASON)
+
+    monkeypatch.setattr(syncrun, "refresh_card_db", downloaded)
+    monkeypatch.setattr(syncrun, "probe_previews", probed)
+    outcome = run_sync(
+        services(tmp_path, fake),
+        Workspace(tmp_path / "decks"),
+        "TESTER",
+        MetaSettings(),
+        SyncOptions(),
+        on_progress=lambda _: None,
+    )
+    assert probe_saw_the_reads_started == [True]
+    assert outcome.previews == PreviewProbe(ProbeState.NO_SEASON)
+    assert not outcome.failed
+
+
+def test_a_failed_previews_probe_keeps_its_warning_ahead_of_the_ideas_phases(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = three_decks(tmp_path, raw_deck, card_db_file)
+    stub_meta(monkeypatch)
+
+    def downloaded(*_: object, **__: object) -> CardRefresh:
+        return DOWNLOADED
+
+    def probed(*_: object, **__: object) -> PreviewProbe:
+        return PreviewProbe(ProbeState.FAILED, problem="Scryfall is down")
+
+    def compile_ideas(stored: StoredDeck, *_: object, **__: object) -> object:
+        if stored.deck.id == 101:
+            raise BoardError("board.json is damaged")
+        return {}
+
+    monkeypatch.setattr(syncrun, "refresh_card_db", downloaded)
+    monkeypatch.setattr(syncrun, "probe_previews", probed)
+    monkeypatch.setattr(syncrun, "compile_ideas", compile_ideas)
+    outcome = run_sync(
+        services(tmp_path, fake),
+        Workspace(tmp_path / "decks"),
+        "TESTER",
+        MetaSettings(),
+        SyncOptions(),
+        on_progress=lambda _: None,
+    )
+    assert outcome.warnings == [
+        "card previews not refreshed (Scryfall is down); the last ones are kept",
+        "Magda ideas not compiled: board.json is damaged",
+    ]
 
 
 def test_the_archidekt_requests_of_every_deck_name_the_deck_even_from_the_threads_the_read_starts(
