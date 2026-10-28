@@ -38,9 +38,10 @@ from commander.board import (
     read_board,
 )
 from commander.budget import resolved_budget
-from commander.carddb import CardDb, ResolvedCard, Role
+from commander.carddb import CardDb, ResolvedCard, Role, Theme
 from commander.deckcache import Clock
 from commander.deckprofile import Profile, read_profile, resolve_themes
+from commander.deckthemes import merge_themes
 from commander.meta import (
     MIN_PEER_LISTS,
     Basis,
@@ -61,14 +62,18 @@ from commander.metadata import (
 )
 from commander.models import Deck, short_commander_name
 from commander.playstyle import Fit
+from commander.spellbook import ComboMatches
 from commander.store import StoredDeck
-from commander.suggest import IdeaFilter, name_keys_of, role_count
+from commander.suggest import IdeaFilter, combo_pieces, name_keys_of, role_count
 from commander.themereading import read_deck_themes
 from commander.weightedshare import NO_SHARES, ShareTable, SourceShare, weighted_shares
 
 MAX_PER_SOURCE = 50
 # The reason `suggest --to-board` gives an idea for a role the deck holds too few of.
 _SHORT_ROLE = re.compile(r"(?:^|; )(?P<role>[a-z ]+) is short: \d+ of (?P<target>\d+)")
+# The reasons it gives an idea matching the deck's themes, and a card completing combos.
+_FITS_THEMES = re.compile(r"(?:^|; )fits the deck's themes")
+_COMPLETES_COMBOS = re.compile(r"(?:^|; )completes \d+ combos?\b")
 # Why an idea that no longer passes the idea test is turned down on a sync (ADR 0028).
 NO_LONGER_MAKES_THE_CUT = "no longer makes the cut"
 # The reason of a reconsidered card that none of the lists read plays.
@@ -291,6 +296,11 @@ class _IdeaJudge:
     deck_tags: frozenset[str]
     # How many deck cards fill a role now, as the suggestions count them; worked out when first asked.
     held_roles: Callable[[Role], int]
+    # The casefolded names of the cards that complete a near-miss combo of the deck's saved, fresh combo list;
+    # None without one. Worked out when first asked.
+    combo_piece_keys: Callable[[], frozenset[str] | None]
+    # Whether the card matches a theme the deck has now; None when it has none or the card is unknown.
+    fits_theme: Callable[[str], bool | None]
 
     def shortfall_met(self, card: BoardCard) -> bool:
         """Whether a `suggest --to-board` idea filed for a short role ("ramp is short: 8 of 10") finds the
@@ -336,12 +346,25 @@ class _IdeaJudge:
 
     def old_pick_up_stands(self, card: BoardCard) -> bool:
         """A card with no origin: an old Maybeboard pick-up faces the idea test of the lists read, a
-        `suggest --to-board` idea the shortfall it was filed for."""
+        `suggest --to-board` idea what it was filed for."""
         if card.source is Actor.CMDR:
-            return not self.shortfall_met(card)
+            return self.suggestion_stands(card)
         if card.source is Actor.ARCHIDEKT and self.table:
             return self.table.is_idea(card.name)
         return True
+
+    def suggestion_stands(self, card: BoardCard) -> bool:
+        """Whether what a `suggest --to-board` idea was filed for still holds: a role still short, the deck's
+        themes still fitting, the combo still one card away. A claim that cannot be tested now (no saved
+        combo list, no themes) is left out; with none left, or one holding, the idea stands."""
+        holding: list[bool] = []
+        if _SHORT_ROLE.search(card.reason):
+            holding.append(not self.shortfall_met(card))
+        if _FITS_THEMES.search(card.reason) and (fits := self.fits_theme(card.name)) is not None:
+            holding.append(fits)
+        if _COMPLETES_COMBOS.search(card.reason) and (keys := self.combo_piece_keys()) is not None:
+            holding.append(card_key(card.name) in keys)
+        return not holding or any(holding)
 
 
 def rejudge_ideas(
@@ -353,6 +376,7 @@ def rejudge_ideas(
     adjacent: Sequence[PeerList] | None = None,
     tagged: Sequence[TaggedDecks] = (),
     share_table: Callable[[], ShareTable] | None = None,
+    saved_combos: Callable[[], ComboMatches | None] | None = None,
 ) -> list[BoardCard]:
     """Turn down the open ideas by cmdr or from the old Maybeboard pick-up that no longer pass the test new
     ideas pass; what it turned down, with the reason on the activity line (ADR 0028).
@@ -365,9 +389,12 @@ def rejudge_ideas(
     profile no longer lists, and a tagged one while the profile's tag search is off, have lost their source:
     they face the commander's own test (`ShareTable.is_idea`) like a meta idea, a failing one is turned
     down and a passing one relabelled to the source that plays it more (`relabel_pooled_open`), nothing
-    without a list read. An old `suggest --to-board` idea (by cmdr, no origin) filed for a short role is
-    turned down once the deck holds the role's target. Cards by you or Claude, and queued, applied or
-    turned-down ones, are never touched
+    without a list read. An old `suggest --to-board` idea (by cmdr, no origin) is turned down once what it
+    was filed for no longer holds: the deck holds its short role's target, it matches none of the deck's
+    themes as `suggest` reads them now, or it completes no near-miss combo of the saved combo list. That
+    list is `saved_combos`, which gives the deck's fresh one or None (`suggest.fresh_saved_combos`); with
+    none, and with no themes, those two reasons are left untested. Cards by you or Claude, and queued,
+    applied or turned-down ones, are never touched
     (`turn_down_open` checks the card is still open), nor is one the user reopened until they decide it.
     share_table is `deck_shares` when the caller shares it with other steps.
     """
@@ -378,6 +405,24 @@ def rejudge_ideas(
     def main() -> list[ResolvedCard]:
         return db.resolve(stored.deck.main_cards)
 
+    @cache
+    def piece_keys() -> frozenset[str] | None:
+        matches = saved_combos() if saved_combos else None
+        if matches is None:
+            return None
+        # No bracket or game changers: combo_pieces uses them only to mark a piece, never to drop one.
+        pieces = combo_pieces(main(), matches, db, bracket=None, changers=0)
+        return frozenset(card_key(piece.name) for piece in pieces)
+
+    @cache
+    def themes() -> Theme:
+        return merge_themes(stored.deck, profile, db).resolved.themes
+
+    def fits_theme(name: str) -> bool | None:
+        theme = themes()
+        info = None if theme.empty else db.cards_named([name]).get(name.casefold())
+        return None if info is None else bool(db.matching(theme, [info.oracle_id]))
+
     judge = _IdeaJudge(
         data,
         table,
@@ -386,6 +431,8 @@ def rejudge_ideas(
         {pool.tag.casefold(): pool_staple_keys(pool.decks) for pool in tagged},
         frozenset(tag.casefold() for tag in search_tags(stored.deck, profile, db)),
         lambda role: role_count(main(), role),
+        piece_keys,
+        fits_theme,
     )
 
     open_cards = [

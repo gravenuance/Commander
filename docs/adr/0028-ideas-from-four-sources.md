@@ -151,6 +151,19 @@ An idea put on a board by `suggest --to-board` is by cmdr with no origin, and th
 whatever the deck had become: Pantlaza kept eleven ideas from 2026-10-15, filed for roles it has since filled.
 Its reason says what it claims ("ramp is short: 8 of 10"), so the sync now turns it down once the deck holds
 at least that many cards of the role, counted as the suggestions count them (tag or category;
-`_IdeaJudge.shortfall_met`). The "completes a combo" and "fits the deck's themes" reasons are not re-tested: the
-first needs the Spellbook combo list that only `suggest` reads and the sync never asks for, the second the
-theme reading the suggestion made.
+`_IdeaJudge.shortfall_met`). The "completes a combo" and "fits the deck's themes" reasons were not re-tested at
+first: the first needs the Spellbook combo list that only `suggest` reads and the sync never asks for, the
+second the theme reading the suggestion made. Both are now (same day), by the same rule and wording
+("no longer makes the cut"):
+
+- "fits the deck's themes" stands while the card matches one of the themes `suggest` reads now (the profile's
+  and the deck's tags and categories, `merge_themes`), whatever list the old reason named after the colon.
+  A deck with no theme, or a card the database does not know, leaves the idea alone.
+- "completes N combos" stands while the card is still the one missing piece of a non-banned near-miss combo in
+  the combo list `suggest` saved for the deck (`suggest.combo_pieces`). The sync reads that list from the cache
+  alone (`suggest.fresh_saved_combos`) and never asks Spellbook, and uses it only while it is fresh (a week,
+  like the other Spellbook answers) and was made for the deck's cards as they are: with none, an older one or
+  another card list, the idea is left alone. So an idea is judged only after a `suggest` run on the deck as it
+  stands, and a stale answer never turns one down.
+
+An idea with several claims in its reason stands while any testable one holds.

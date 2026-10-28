@@ -1,8 +1,9 @@
 """Compiling Considering from the meta and recent Archidekt decks (ADR 0028)."""
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import replace
-from datetime import date
+from datetime import date, timedelta
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -20,7 +21,7 @@ from commander.board import (
     read_board,
 )
 from commander.carddb import CardDb
-from commander.deckcache import Answer, AnswerSource
+from commander.deckcache import Answer, AnswerSource, request_key
 from commander.deckprofile import Profile
 from commander.ideas import (
     Idea,
@@ -37,10 +38,12 @@ from commander.ideas import (
 from commander.meta import Basis, CardShare, Staples
 from commander.metadata import MetaData, PeerList, TaggedDecks
 from commander.models import Deck
+from commander.spellbook import BracketTag, ComboMatches, deck_request, parse_matches
 from commander.store import StoredDeck
+from commander.suggest import combos_cache, fresh_saved_combos
 from commander.tournaments import Entry
 from commander.weightedshare import ShareTable, SourceShare, WeightedShare, weighted_shares
-from conftest import BATTERED_GOLEM, build_card_db, extra_tag_line
+from conftest import BATTERED_GOLEM, build_card_db, extra_tag_line, load_fixture
 from test_meta import NOW, SINCE, db, deck, entry, meta_data, peer
 
 __all__ = ["db", "deck"]  # fixtures shared with test_meta
@@ -588,9 +591,16 @@ def judge(
     *,
     adjacent: list[PeerList] | None = None,
     tagged: list[TaggedDecks] | None = None,
+    combos: Callable[[], ComboMatches | None] | None = None,
 ) -> list[str]:
     turned_down = rejudge_ideas(
-        StoredDeck(folder, deck), data, db, now=lambda: NOW, adjacent=adjacent, tagged=tagged or ()
+        StoredDeck(folder, deck),
+        data,
+        db,
+        now=lambda: NOW,
+        adjacent=adjacent,
+        tagged=tagged or (),
+        saved_combos=combos,
     )
     return [card.name for card in turned_down]
 
@@ -666,7 +676,7 @@ def test_a_suggest_idea_for_a_short_role_is_turned_down_once_the_deck_holds_the_
     # The deck holds Mind Stone, its one ramp card: a target of one is met, a target of 99 is not.
     met = seed(tmp_path, deck, db, "Jeska's Will", Actor.CMDR, reason="ramp is short: 0 of 1")
     short = seed(tmp_path, deck, db, "Arcane Signet", Actor.CMDR, reason="ramp is short: 0 of 99")
-    other = seed(tmp_path, deck, db, "Chaos Warp", Actor.CMDR, reason="fits the deck's themes: #Tokens")
+    other = seed(tmp_path, deck, db, "Chaos Warp", Actor.CMDR, reason="a reason that claims nothing")
     data = meta_data(same_weight_lists("Mind Stone", 10))
 
     assert judge(tmp_path, deck, db, data) == ["Jeska's Will"]
@@ -674,6 +684,134 @@ def test_a_suggest_idea_for_a_short_role_is_turned_down_once_the_deck_holds_the_
     assert card_state(tmp_path, met) == (Status.REJECTED, "no longer makes the cut")
     assert card_state(tmp_path, short)[0] is Status.OPEN
     assert card_state(tmp_path, other)[0] is Status.OPEN
+
+
+def saved_combos(*, without: str = "") -> ComboMatches:
+    """The fixture's combo answer, less the near-miss combos that use the card `without`."""
+    matches = parse_matches(load_fixture("spellbook_combos.json"))
+    near = tuple(v for v in matches.almost_included if without not in {c.name for c in v.cards})
+    return replace(matches, almost_included=near)
+
+
+def seed_combo_idea(folder: Path, deck: Deck, db: CardDb, name: str = "Splinter Twin") -> str:
+    return seed(folder, deck, db, name, Actor.CMDR, reason="completes 1 combo (Spicy)")
+
+
+def test_a_combo_idea_stands_while_the_saved_answer_has_it_as_the_one_missing_piece(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    twin = seed_combo_idea(tmp_path, deck, db)
+    data = meta_data(same_weight_lists("Mind Stone", 10))
+
+    assert judge(tmp_path, deck, db, data, combos=saved_combos) == []
+
+    assert card_state(tmp_path, twin)[0] is Status.OPEN
+
+
+def test_a_combo_idea_is_turned_down_once_no_combo_is_left_for_it_to_complete(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    gone = seed_combo_idea(tmp_path, deck, db)
+    kept = seed_combo_idea(tmp_path, deck, db, "Aggravated Assault")
+    data = meta_data(same_weight_lists("Mind Stone", 10))
+
+    assert judge(tmp_path, deck, db, data, combos=lambda: saved_combos(without="Splinter Twin")) == [
+        "Splinter Twin"
+    ]
+
+    assert card_state(tmp_path, gone) == (Status.REJECTED, "no longer makes the cut")
+    assert card_state(tmp_path, kept)[0] is Status.OPEN
+
+
+def test_a_combo_idea_is_turned_down_when_the_card_is_no_longer_the_only_missing_piece(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    # Reiterate and Jeska's Will both lack from the deck, so neither is the single missing piece.
+    twin = seed_combo_idea(tmp_path, deck, db, "Jeska's Will")
+    data = meta_data(same_weight_lists("Mind Stone", 10))
+
+    assert judge(tmp_path, deck, db, data, combos=saved_combos) == ["Jeska's Will"]
+
+    assert card_state(tmp_path, twin) == (Status.REJECTED, "no longer makes the cut")
+
+
+def test_a_combo_idea_is_turned_down_when_only_a_banned_combo_is_left(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    twin = seed_combo_idea(tmp_path, deck, db)
+    matches = saved_combos()
+    near = tuple(
+        replace(v, tag=BracketTag.BANNED) if "Splinter Twin" in {c.name for c in v.cards} else v
+        for v in matches.almost_included
+    )
+    data = meta_data(same_weight_lists("Mind Stone", 10))
+
+    assert judge(tmp_path, deck, db, data, combos=lambda: replace(matches, almost_included=near)) == [
+        "Splinter Twin"
+    ]
+
+    assert card_state(tmp_path, twin)[0] is Status.REJECTED
+
+
+def test_a_combo_idea_is_left_alone_without_a_saved_answer(deck: Deck, db: CardDb, tmp_path: Path) -> None:
+    twin = seed_combo_idea(tmp_path, deck, db)
+    data = meta_data(same_weight_lists("Mind Stone", 10))
+
+    assert judge(tmp_path, deck, db, data, combos=lambda: None) == []
+    assert judge(tmp_path, deck, db, data) == []
+
+    assert card_state(tmp_path, twin)[0] is Status.OPEN
+
+
+@pytest.mark.parametrize(("age", "judged"), [(timedelta(days=6), True), (timedelta(days=8), False)])
+def test_a_combo_idea_is_judged_by_a_saved_answer_only_while_it_is_a_week_old_at_most(
+    deck: Deck,
+    db: CardDb,
+    tmp_path: Path,
+    age: timedelta,
+    judged: bool,  # noqa: FBT001 — a parametrized expectation
+) -> None:
+    twin = seed_combo_idea(tmp_path, deck, db)
+    cache = combos_cache(tmp_path / "combos")
+    cache.save(deck.id, request_key(deck_request(deck)), saved_combos(without="Splinter Twin"), NOW - age)
+    data = meta_data(same_weight_lists("Mind Stone", 10))
+
+    turned_down = judge(
+        tmp_path, deck, db, data, combos=partial(fresh_saved_combos, deck, cache, now=lambda: NOW)
+    )
+
+    assert turned_down == (["Splinter Twin"] if judged else [])
+    assert card_state(tmp_path, twin)[0] is (Status.REJECTED if judged else Status.OPEN)
+
+
+INSTANTS = 'version = 1\n[themes]\ntypes = ["Instant"]\n'
+
+
+@pytest.mark.parametrize("reason", ["fits the deck's themes: profile", "fits the deck's themes"])
+def test_a_themed_idea_stands_while_it_matches_a_current_theme_and_is_turned_down_when_it_does_not(
+    deck: Deck, db: CardDb, tmp_path: Path, reason: str
+) -> None:
+    (tmp_path / "profile.toml").write_text(INSTANTS, encoding="utf-8")
+    fits = seed(tmp_path, deck, db, "Lightning Bolt", Actor.CMDR, reason=reason)
+    strays = seed(tmp_path, deck, db, "Arcane Signet", Actor.CMDR, reason=reason)
+    data = meta_data(same_weight_lists("Mind Stone", 10))
+
+    assert judge(tmp_path, deck, db, data) == ["Arcane Signet"]
+
+    assert card_state(tmp_path, fits)[0] is Status.OPEN
+    assert card_state(tmp_path, strays) == (Status.REJECTED, "no longer makes the cut")
+
+
+def test_a_themed_idea_is_left_alone_when_the_deck_has_no_themes(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    bare = replace(deck, tags=())
+    card = seed(tmp_path, bare, db, "Arcane Signet", Actor.CMDR, reason="fits the deck's themes: profile")
+    data = meta_data(same_weight_lists("Mind Stone", 10))
+
+    assert judge(tmp_path, bare, db, data) == []
+
+    assert card_state(tmp_path, card)[0] is Status.OPEN
 
 
 def test_a_card_the_user_reconsidered_is_not_turned_down_again_until_decided(

@@ -26,7 +26,15 @@ from commander.carddb import (
     back_is_land,
     name_keys,
 )
-from commander.deckcache import Answer, AnswerSource, Clock, DeckCache, cached_answer
+from commander.deckcache import (
+    NOT_FETCHED,
+    Answer,
+    AnswerSource,
+    Clock,
+    DeckCache,
+    NotFetchedError,
+    cached_answer,
+)
 from commander.deckprofile import Profile, ResolvedThemes
 from commander.jsonshape import as_object, opt_int, opt_str, req_list, req_str, str_list
 from commander.models import COMMANDER_CATEGORY, Deck
@@ -542,6 +550,30 @@ def find_combos(
     """The combos of each deck and those one card short, in deck order; failures come back as results."""
     jobs = [partial(find_deck_combos, deck, client, cache, now=now, refresh=refresh) for deck in decks]
     return [future.result() for future in run_all(jobs, limit=PARALLEL_REQUESTS, name="spellbook")]
+
+
+def fresh_saved_combos(deck: Deck, cache: DeckCache[ComboMatches], *, now: Clock) -> ComboMatches | None:
+    """The combo list `suggest` saved for the deck as it is, read from the cache alone and only while it is
+    fresh; None when there is none, it is older than FRESH_FOR or the deck's cards have changed since."""
+    try:
+        request = deck_request(deck)
+    except SpellbookError:
+        return None
+    answer = cached_answer(
+        deck.id,
+        request,
+        _not_fetched,
+        cache,
+        now=now,
+        refresh=False,
+        fresh_for=FRESH_FOR,
+        errors=(NotFetchedError,),
+    )
+    return answer.data if answer.source is AnswerSource.CACHED else None
+
+
+def _not_fetched(_request: Mapping[str, object]) -> ComboMatches:
+    raise NotFetchedError(NOT_FETCHED)
 
 
 def find_deck_combos(

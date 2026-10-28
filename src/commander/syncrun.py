@@ -16,6 +16,7 @@ from concurrent.futures import FIRST_COMPLETED, Future, wait
 from dataclasses import dataclass, field, replace
 from datetime import date
 from enum import Enum
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -52,6 +53,8 @@ from commander.profileedit import ensure_grace_table
 from commander.scryfall import CardRefresh, RefreshStatus, ScryfallClient, ScryfallError, refresh_card_db
 from commander.spellbook import SpellbookClient
 from commander.store import StoredDeck, Workspace
+from commander.suggest import CACHE_FOLDER as COMBOS_CACHE_FOLDER
+from commander.suggest import combos_cache, fresh_saved_combos
 from commander.sync import PRIVATE_NOT_UPDATED, PullWatch, SyncResult, SyncStatus, sync_decks
 from commander.topdeck import KEY_REMEDY
 from commander.viewscore import VIEWS_FILE, ViewScores
@@ -743,6 +746,12 @@ def _merge_deck(
                 adjacent=None if pools.groups_failed else pools.decks,
                 tagged=pools.tagged,
                 share_table=shares,
+                saved_combos=partial(
+                    fresh_saved_combos,
+                    current.deck,
+                    combos_cache(services.cache / COMBOS_CACHE_FOLDER),
+                    now=services.now,
+                ),
             )
             if dropped:
                 phase.turned_down[deck.short_name] = [card.name for card in dropped]

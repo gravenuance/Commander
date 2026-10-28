@@ -10,11 +10,11 @@ import pytest
 from commander.archidekt import parse_deck
 from commander.budget import NO_BUDGET, Budget
 from commander.carddb import NO_THEME, CardDb, CardInfo, ResolvedCard, Role, Theme
-from commander.deckcache import Answer, AnswerSource
+from commander.deckcache import Answer, AnswerSource, request_key
 from commander.deckprofile import Profile, ResolvedThemes
 from commander.models import Deck, DeckCard
 from commander.net import Fetcher
-from commander.spellbook import ComboMatches, SpellbookClient, parse_matches
+from commander.spellbook import ComboMatches, SpellbookClient, deck_request, parse_matches
 from commander.suggest import (
     DEFAULT_TARGETS,
     Admitted,
@@ -28,6 +28,7 @@ from commander.suggest import (
     cut_candidates,
     find_combos,
     find_deck_combos,
+    fresh_saved_combos,
     name_keys_of,
     options_for,
     suggest,
@@ -373,6 +374,36 @@ def test_combo_list_unavailable_without_a_cached_one(deck: Deck, tmp_path: Path)
     env = CombosEnv(deck, tmp_path)
     env.fake.combos_status = 500
     assert env.find().source is AnswerSource.UNAVAILABLE
+
+
+@pytest.mark.parametrize(
+    ("age", "read"), [(timedelta(0), True), (timedelta(days=6), True), (timedelta(days=7), False)]
+)
+def test_the_saved_combo_list_is_read_back_only_while_it_is_fresh_and_never_fetched(
+    deck: Deck,
+    tmp_path: Path,
+    age: timedelta,
+    read: bool,  # noqa: FBT001 — a parametrized expectation
+) -> None:
+    env = CombosEnv(deck, tmp_path)
+    saved = parse_matches(combos_json())
+    env.cache.save(deck.id, request_key(deck_request(deck)), saved, NOW)
+
+    found = fresh_saved_combos(deck, env.cache, now=lambda: NOW + age)
+
+    assert found == (saved if read else None)
+    assert env.fake.combo_bodies == []
+
+
+def test_no_saved_combo_list_is_read_for_a_deck_without_one_or_with_other_cards(
+    deck: Deck, tmp_path: Path
+) -> None:
+    env = CombosEnv(deck, tmp_path)
+    assert fresh_saved_combos(deck, env.cache, now=lambda: NOW) is None
+
+    env.cache.save(deck.id, request_key(deck_request(deck)), parse_matches(combos_json()), NOW)
+    changed = replace(deck, cards=tuple(c for c in deck.cards if c.name != "Disruptor Flute"))
+    assert fresh_saved_combos(changed, env.cache, now=lambda: NOW) is None
 
 
 def test_several_decks_get_their_combos_in_deck_order(deck: Deck, tmp_path: Path) -> None:
