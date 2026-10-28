@@ -22,7 +22,7 @@ from commander.config import cache_dir
 from commander.deckcache import AnswerSource
 from commander.deckprofile import read_profile
 from commander.net import Fetcher
-from commander.pricing import DeckPrice, PriceSource, format_eur, price_deck
+from commander.pricing import ESTIMATED, DeckPrice, PriceSource, format_eur, price_deck
 from commander.spellbook import Combo, SpellbookClient, TwoCard
 
 DEFAULT_TOP = 15
@@ -215,12 +215,15 @@ def _print_deck_price(price: DeckPrice, out: TextIO, *, top: int) -> None:
     for card in shown:
         if card.source is PriceSource.NONE:
             continue
-        mark = " ~" if card.source is PriceSource.CHEAPEST else ""
+        mark = " ~" if card.source in ESTIMATED else ""
         print(f"  {format_eur(card.total_cents):>10}  {card.quantity:>2}x {card.name}{mark}", file=out)
     if len(shown) < len(price.cards):
         print(f"  ... {len(price.cards) - len(shown)} more; --top 0 lists them all", file=out)
     if price.estimated:
-        print("~ this printing has no price, so the card's cheapest printing is used", file=out)
+        print(
+            "~ no price for this printing's finish, so its other finish or the card's cheapest one is used",
+            file=out,
+        )
     if price.unpriced:
         print(f"no price at all: {', '.join(price.unpriced)}", file=out)
 
