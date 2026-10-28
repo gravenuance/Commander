@@ -71,6 +71,75 @@ def test_karstens_cheap_draw_and_ramp_follow_his_text_rules() -> None:
     )
 
 
+def test_karstens_cheap_draw_and_ramp_ignore_reminder_text() -> None:
+    loam = card(
+        "Life from the Loam",
+        "{1}{G}",
+        2,
+        "Sorcery",
+        text="Return up to three target land cards from your graveyard to your hand.\n"
+        "Dredge 2 (If you would draw a card, you may mill two cards instead. If you do, return this card "
+        "from your graveyard to your hand.)",
+    )
+    offer = card(
+        "An Offer You Can't Refuse",
+        "{U}",
+        1,
+        "Instant",
+        text="Counter target noncreature spell. Its controller creates two Treasure tokens. "
+        '(They\'re artifacts with "{T}, Sacrifice this artifact: Add one mana of any color.")',
+    )
+    assert not cheap_draw(loam)
+    assert not cheap_ramp(offer)
+
+
+def test_a_spell_with_a_land_back_is_no_cheap_ramp_or_draw_on_top_of_counting_as_part_of_a_land() -> None:
+    smashing = card(
+        "Shatterskull Smashing // Shatterskull, the Hammer Pass",
+        "{X}{R}{R}",
+        2,
+        "Sorcery // Land",
+        text="Shatterskull Smashing deals X damage divided as you choose among up to two target creatures.\n"
+        "//\nAs Shatterskull enters, you may pay 3 life. If you don't, it enters tapped.\n{T}: Add {R}.",
+        produced="R",
+    )
+    assert not cheap_ramp(smashing)
+    drawing = card(
+        "Draw // Land", "{1}{U}", 2, "Sorcery // Land", text="Draw a card.\n//\n{T}: Add {U}.", produced="U"
+    )
+    assert not cheap_draw(drawing)
+
+
+def test_a_land_search_names_a_basic_land_type_and_may_sacrifice_elsewhere() -> None:
+    lore = card(
+        "Nature's Lore",
+        "{1}{G}",
+        2,
+        "Sorcery",
+        text="Search your library for a Forest card, put that card onto the battlefield, then shuffle.",
+    )
+    rotation = card(
+        "Crop Rotation",
+        "{G}",
+        1,
+        "Instant",
+        text="As an additional cost to cast this spell, sacrifice a land.\n"
+        "Search your library for a land card, put that card onto the battlefield, then shuffle.",
+    )
+    bauble = card(
+        "Wayfarer's Bauble",
+        "{1}",
+        1,
+        "Artifact",
+        text="{2}, {T}, Sacrifice this artifact: Search your library for a basic land card, put it onto "
+        "the battlefield tapped, then shuffle.",
+    )
+    assert cheap_ramp(lore)
+    assert cheap_ramp(rotation)
+    # The fetch itself costing the card is the intended exclusion.
+    assert not cheap_ramp(bauble)
+
+
 def test_the_land_count_formula_counts_land_spells_as_part_of_a_land() -> None:
     mdfc = CardMana("id", "Smash // Pass", "{X}{R}{R}", 2, "Sorcery // Land", "", "R", "mythic")
     count = land_count([(30, PLAINS), (2, mdfc), (1, BRAINSTORM), (1, SIGNET), (1, WRATH)])

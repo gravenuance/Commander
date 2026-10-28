@@ -118,3 +118,21 @@ suggested changes (ADR 0024) judge a card's colour by it (`manabase.castings`). 
 Before, a split card was judged at the combined mana value by its front half's pips alone, so Fire // Ice
 asked for the sources of a four-mana spell. The curve and the average mana value keep the printed mana value.
 - The tab reads only the snapshot, the card data and cached meta answers, and opens in about 0.1 s.
+
+## Amendment (2026-10-27): reading a card's rules text for sources and cheap spells
+
+A review against the card data found the text rules misreading real cards. They now read:
+
+- **A rock or dork** is a colour source when a line of its own text is a tap ability that adds mana and
+  sacrifices nothing. Before, "sacrifice" anywhere in the text dropped it, so Mind Stone, Commander's Sphere
+  and Hedron Archive (which sacrifice themselves on another line to draw) counted for nothing, while a
+  Powerstone maker, whose reminder text holds a tap ability, counted as a rock. Lotus Petal and the
+  Treasure makers stay out. A card whose mana costs a sacrifice (Gilded Goose, Orcish Lumberjack) is still
+  no source.
+- **Cheap draw and ramp** leave reminder text out (Dawn's Truce's gift, dredge's draw, a Treasure's "Add"),
+  skip a spell with a land back, which already counts as part of a land, accept a basic land type as the
+  land a search finds (Nature's Lore, Three Visits), and rule out a search only when its own line sacrifices
+  the card (Wayfarer's Bauble, Sakura-Tribe Elder), not a sacrifice elsewhere (Crop Rotation's cost).
+
+On the card data, 70 cards stop counting as cheap draw and 3 start, and 95 stop counting as cheap ramp and 26
+start.
