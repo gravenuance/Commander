@@ -7,7 +7,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import Enum
 
-from commander.analysis import game_changers
+from commander.analysis import game_changers, tagged_count
 from commander.archidekt import ArchidektError, AuthError
 from commander.archidekt_edit import (
     ArchidektEditor,
@@ -19,7 +19,7 @@ from commander.archidekt_edit import (
     label_value,
     new_entry_state,
 )
-from commander.carddb import CardDb, CardInfo, Printing
+from commander.carddb import CardDb, CardInfo, Printing, Role
 from commander.copylimit import copy_limit
 from commander.models import COMMANDER_CATEGORY, DONT_HAVE_LABEL, Deck, DeckCard
 from commander.net import NetworkError
@@ -106,6 +106,8 @@ class _Resolver:
     categories: Mapping[str, bool]
     # The bracket an add's raise is measured from: the deck's, else its estimate's lowest (ADR 0051).
     bracket: int | None
+    # The extra-turn cards the deck holds, counting those added so far; two lift a deck to bracket 4.
+    extra_turns: int = 0
     problems: list[str] = field(default_factory=list[str])
     warnings: list[str] = field(default_factory=list[str])
     skipped: list[str] = field(default_factory=list[str])
@@ -184,7 +186,7 @@ class _Resolver:
             else:
                 self.changes.append(_change(ChangeKind.MORE, entry, entry.quantity + wanted.quantity - have))
             return changers
-        raises = card_raise(info, self.bracket, changers)
+        raises = card_raise(info, self.bracket, changers, extra_turns=self.extra_turns)
         printing = self._printing(info, wanted)
         if printing is None:
             return changers
@@ -204,6 +206,8 @@ class _Resolver:
                 raises=raises,
             )
         )
+        if Role.EXTRA_TURN in info.roles:
+            self.extra_turns += 1
         return changers + 1 if info.game_changer else changers
 
     def _copy_limit(self, info: CardInfo) -> int | None:
@@ -255,8 +259,8 @@ def resolve_plan(
     bracket of the deck's estimate: with no bracket set on the deck, an add's bracket raise goes by it.
     """
     bracket = live.bracket if live.bracket is not None else estimated
-    resolver = _Resolver(live, db, categories or {}, bracket)
     main = db.resolve(live.main_cards)
+    resolver = _Resolver(live, db, categories or {}, bracket, extra_turns=tagged_count(main, Role.EXTRA_TURN))
     identity = deck_identity(main)
     if identity is None:
         resolver.warnings.append("the deck has no known commander, so colours are not checked")

@@ -11,8 +11,9 @@ from functools import partial
 from itertools import islice
 from pathlib import Path
 
-from commander.analysis import ANALYZED_ROLES, CATEGORY_ALIASES, game_changers
+from commander.analysis import ANALYZED_ROLES, CATEGORY_ALIASES, game_changers, tagged_count
 from commander.background import run_all
+from commander.bracketcheck import MIN_EXTRA_TURN_CARDS
 from commander.budget import NO_BUDGET, Budget, resolved_budget
 from commander.carddb import (
     COLORS,
@@ -51,6 +52,8 @@ DEFAULT_TARGETS: Mapping[Role, int] = {Role.RAMP: 10, Role.DRAW: 10, Role.REMOVA
 # None meaning any number, and no mass land denial below bracket 4.
 GAME_CHANGER_LIMITS: Mapping[int, int | None] = {1: 0, 2: 0, 3: 3, 4: None, 5: None}
 LOWEST_BRACKET_FOR_MASS_LAND_DENIAL = 4
+# Two extra-turn cards in a deck are Spellbook's Ruthless, bracket 4 and up (`bracketcheck`).
+LOWEST_BRACKET_FOR_EXTRA_TURN_CARDS = 4
 # Candidates read per role before filtering, so ideas matching a theme can be ranked ahead of the rest.
 IDEA_WINDOW = 200
 
@@ -172,11 +175,18 @@ def suggest(
         len(game_changers(main)),
         options.ceiling,
         budget,
+        extra_turns=tagged_count(main, Role.EXTRA_TURN),
     )
     picker = _Picker(db, options, screen)
     identity = deck_identity(main)
     data = combos.data
-    pieces = combo_pieces(main, data, db, bracket=deck.bracket, changers=screen.changers) if data else []
+    pieces = (
+        combo_pieces(
+            main, data, db, bracket=deck.bracket, changers=screen.changers, extra_turns=screen.extra_turns
+        )
+        if data
+        else []
+    )
     kept = picker.pieces(pieces)
     roles = role_targets(main, db, identity, options, picker)
     themed: list[RoleIdea] = []
@@ -260,6 +270,8 @@ class IdeaFilter:
     ceiling: int | None
     budget: Budget = NO_BUDGET
     hidden_ids: set[str] = field(default_factory=set[str])
+    # The extra-turn cards the deck runs, which decide whether another would raise it.
+    extra_turns: int = 0
 
     def banned(self, oracle_ids: Iterable[str]) -> frozenset[str]:
         """The cards among these that the excluded theme matches."""
@@ -279,7 +291,7 @@ class IdeaFilter:
         """The card with what it would raise, or None when the profile, ceiling or budget keeps it out."""
         if self.excludes(info.name, info.oracle_id, banned) or not self.budget.allows(info.cheapest_cents):
             return None
-        raises = card_raise(info, self.bracket, self.changers)
+        raises = card_raise(info, self.bracket, self.changers, extra_turns=self.extra_turns)
         return None if self.too_high(raises, info.oracle_id) else Admitted(raises)
 
 
@@ -356,8 +368,11 @@ def deck_identity(main: Sequence[ResolvedCard]) -> str | None:
     return "".join(color for color in COLORS if color in colors)
 
 
-def card_raise(info: CardInfo, bracket: int | None, changers: int) -> BracketRaise | None:
-    """The bracket the card alone would lift a deck to, given the game changers it already has."""
+def card_raise(
+    info: CardInfo, bracket: int | None, changers: int, *, extra_turns: int = 0
+) -> BracketRaise | None:
+    """The bracket the card alone would lift a deck to, given the game changers and extra-turn cards it
+    already has."""
     if bracket is None:
         return None
     raises: list[BracketRaise] = []
@@ -367,11 +382,23 @@ def card_raise(info: CardInfo, bracket: int | None, changers: int) -> BracketRai
             raises.append(BracketRaise(fits, "game changer"))
     if Role.MASS_LAND_DENIAL in info.roles and bracket < LOWEST_BRACKET_FOR_MASS_LAND_DENIAL:
         raises.append(BracketRaise(LOWEST_BRACKET_FOR_MASS_LAND_DENIAL, "mass land denial"))
+    if (
+        Role.EXTRA_TURN in info.roles
+        and bracket < LOWEST_BRACKET_FOR_EXTRA_TURN_CARDS
+        and extra_turns + 1 >= MIN_EXTRA_TURN_CARDS
+    ):
+        raises.append(BracketRaise(LOWEST_BRACKET_FOR_EXTRA_TURN_CARDS, "extra turn cards"))
     return _highest(raises)
 
 
 def combo_pieces(
-    main: Sequence[ResolvedCard], matches: ComboMatches, db: CardDb, *, bracket: int | None, changers: int
+    main: Sequence[ResolvedCard],
+    matches: ComboMatches,
+    db: CardDb,
+    *,
+    bracket: int | None,
+    changers: int,
+    extra_turns: int = 0,
 ) -> list[ComboPiece]:
     """Every card that would complete a near-miss combo, the ones completing most combos first."""
     held_ids = {r.info.oracle_id for r in main if r.info}
@@ -391,7 +418,7 @@ def combo_pieces(
         info = by_id.get(card.oracle_id) if card.oracle_id else by_name.get(card.name.casefold())
         if info is not None and not info.commander_legal:
             continue
-        own = card_raise(info, bracket, changers) if info else None
+        own = card_raise(info, bracket, changers, extra_turns=extra_turns) if info else None
         raises = _highest([own, *(_combo_raise(v.tag, bracket) for v in variants)])
         ordered = tuple(sorted(variants, key=lambda v: -(v.popularity or 0)))
         pieces.append(ComboPiece(info.name if info else card.name, info, ordered, raises))

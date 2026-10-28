@@ -77,3 +77,11 @@ version 2 and older files are fetched over.
 - If EDHREC ever publishes an API or terms that allow tools, option 1 or 2 can be added behind its own
   provider module without changing the other lists.
 - The write-back decision planned as ADR 0003 becomes ADR 0004.
+
+## Amendment (2026-10-27): extra turns are part of the marker
+
+The rule for extra-turn cards is the one `bracket --details` already applies (ADR 0021): two or more in a
+deck are Spellbook's Ruthless, bracket 4 and up. A card tagged as an extra turn that would be the deck's
+second is now marked "bracket 4+ extra turn cards", and `--within-bracket` or a profile's ceiling hides it
+as it does a game changer (`suggest.card_raise`; `apply` counts the extra-turn cards it adds as it goes).
+One extra-turn card still leaves the deck where it was.

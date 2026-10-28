@@ -20,7 +20,7 @@ from commander.apply import (
 )
 from commander.archidekt import AuthError, parse_deck
 from commander.archidekt_edit import ArchidektEditor, EditKind, LiveDeck, parse_entry_states
-from commander.carddb import CardDb, CardInfo
+from commander.carddb import CardDb, CardInfo, Role
 from commander.models import Deck
 from commander.net import MAX_ATTEMPTS, Fetcher
 from commander.plan import AddCard, Plan, RemoveCard
@@ -215,7 +215,8 @@ def test_each_add_counts_the_game_changers_added_before_it(
 ) -> None:
     seen: list[tuple[str, int]] = []
 
-    def record(info: CardInfo, _bracket: int | None, changers: int) -> None:
+    def record(info: CardInfo, _bracket: int | None, changers: int, *, extra_turns: int) -> None:
+        assert extra_turns == 0
         seen.append((info.name, changers))
 
     monkeypatch.setattr("commander.apply.card_raise", record)
@@ -229,6 +230,24 @@ def test_each_add_counts_the_game_changers_added_before_it(
     resolve_plan(replace(deck, bracket=3), plan(adds), db)
 
     assert seen == [("Jeska's Will", 0), ("Arcane Signet", 1), ("Ancient Tomb", 1), ("Mind Stone", 2)]
+
+
+def test_the_second_added_extra_turn_card_is_marked_as_lifting_the_bracket(
+    deck: Deck, db: CardDb, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = CardDb.card_named
+
+    def as_extra_turn(self: CardDb, name: str) -> CardInfo | None:
+        info = original(self, name)
+        return replace(info, roles=info.roles | {Role.EXTRA_TURN}) if info else None
+
+    monkeypatch.setattr(CardDb, "card_named", as_extra_turn)
+
+    resolution = resolve_plan(
+        replace(deck, bracket=3), plan([AddCard("Arcane Signet"), AddCard("Ancient Tomb")]), db
+    )
+
+    assert [change.raises for change in resolution.changes] == [None, BracketRaise(4, "extra turn cards")]
 
 
 def test_remove_takes_every_copy_and_keep_leaves_some(deck: Deck, db: CardDb) -> None:
