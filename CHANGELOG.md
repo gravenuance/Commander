@@ -19,6 +19,8 @@
   the preview and `--json` show the finish (ADR 0004).
 - Archidekt searches and deck reads are 6 seconds apart instead of 6.5, and each 429 is logged at warning
   (ADR 0048).
+- The sync's progress line leads with the deck and step whose request was just sent, not one only waiting
+  behind another deck's request (ADR 0047).
 
 ### Faster
 - An Archidekt bracket search stops paging once the decks to read are settled, so a sync makes fewer
@@ -29,7 +31,9 @@
 - The command line starts about a third faster (`cmdr --help` and `cmdr list`, 0.53 s to 0.38 s), and
   `bracket`, `suggest` and the app's bracket and meta panels open no network connection when every answer is
   cached.
-- Deck views and the Mana tab open faster, especially for decks with many ideas on the board.
+- Deck views and the Mana tab open faster, especially for decks with many ideas on the board. The bracket
+  panel keeps its answer until the deck, its profile, its Spellbook estimate or the day changes, instead of
+  estimating again after every board change and save (ADR 0021).
 
 ### Fixed
 - Glitch EUR prices (a Summer Magic Badlands at €0.02, a Secret Lair foil far under its nonfoil) are
