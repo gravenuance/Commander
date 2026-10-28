@@ -1,7 +1,7 @@
 """How a plan change and a bracket raise read as text: shared by the `cmdr` output and the desktop app."""
 
 from commander.apply import Change, ChangeKind
-from commander.pricing import format_eur
+from commander.pricing import FOIL_FINISH, format_eur
 from commander.suggest import BracketRaise
 
 _CHANGE_MARKS = {
@@ -22,7 +22,8 @@ def change_text(change: Change) -> str:
     board = "" if change.in_deck else f" [{change.category}]"
     if change.kind is ChangeKind.ADD:
         price = "no price" if change.price_cents is None else format_eur(change.price_cents)
-        printing = f"{change.set_code.upper()} {change.collector_number}, {price}"
+        foil = " foil" if change.finish == FOIL_FINISH else ""
+        printing = f"{change.set_code.upper()} {change.collector_number}{foil}, {price}"
         copies = f"{change.after} " if change.after > 1 else ""
         return f"{mark} {copies}{change.name} ({printing}) in {change.category}{raise_text(change.raises)}"
     if change.kind is ChangeKind.REMOVE:

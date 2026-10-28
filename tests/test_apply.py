@@ -20,12 +20,23 @@ from commander.apply import (
 )
 from commander.archidekt import AuthError, parse_deck
 from commander.archidekt_edit import ArchidektEditor, EditKind, LiveDeck, parse_entry_states
-from commander.carddb import CardDb, CardInfo
+from commander.carddb import CardDb, CardInfo, Role
+from commander.changetext import change_text
 from commander.models import Deck
 from commander.net import MAX_ATTEMPTS, Fetcher
 from commander.plan import AddCard, Plan, RemoveCard
 from commander.suggest import BracketRaise
-from conftest import ACCESS_TOKEN, DECK_ID, FakeArchidekt, Json, archidekt_card_id, put_on_sideboard
+from conftest import (
+    ACCESS_TOKEN,
+    DECK_ID,
+    PRICED_BASE,
+    FakeArchidekt,
+    Json,
+    archidekt_card_id,
+    build_card_db,
+    priced_printing,
+    put_on_sideboard,
+)
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 FLUTE_ENTRY = 2531358028
@@ -79,6 +90,65 @@ def test_add_picks_the_cheapest_of_several_priced_printings(deck: Deck, db: Card
 
     (change,) = resolution.changes
     assert (change.set_code, change.collector_number, change.price_cents) == ("khm", "142", 679)
+
+
+def test_add_never_saves_a_glitch_priced_printing(deck: Deck, tmp_path: Path) -> None:
+    # Badlands-style: a Summer Magic copy at EUR 0.02 among copies at hundreds of euros.
+    lines = [
+        priced_printing(1, 1, "308.95", set_code="3ed"),
+        priced_printing(1, 2, "263.94", set_code="4ed"),
+        priced_printing(1, 3, "0.02", set_code="sum"),
+        priced_printing(1, 4, "280.00", set_code="5ed"),
+    ]
+    with CardDb(build_card_db(tmp_path, extra_cards=lines)) as glitchy:
+        resolution = resolve_plan(deck, plan([AddCard(f"Filler Card {PRICED_BASE + 1}")]), glitchy)
+
+    (change,) = resolution.changes
+    assert (change.set_code, change.price_cents) == ("4ed", 26394)
+
+
+def add_from(deck: Deck, tmp_path: Path, lines: list[str]) -> Change:
+    with CardDb(build_card_db(tmp_path, extra_cards=lines)) as db:
+        resolution = resolve_plan(deck, plan([AddCard(f"Filler Card {PRICED_BASE + 1}")]), db)
+    (change,) = resolution.changes
+    return change
+
+
+def test_add_saves_a_foil_when_the_foil_is_the_cheapest_way_to_own_the_card(
+    deck: Deck, tmp_path: Path
+) -> None:
+    # The first printing's foil (0.50) undercuts every nonfoil copy (0.80, 1.00).
+    change = add_from(
+        deck,
+        tmp_path,
+        [
+            priced_printing(1, 1, "1.00", "0.50", set_code="aaa"),
+            priced_printing(1, 2, "0.80", set_code="bbb"),
+        ],
+    )
+    assert (change.set_code, change.finish, change.price_cents) == ("aaa", "Foil", 50)
+    edit = card_edits([change], {}, {change.scryfall_id: 77})[0]
+    assert (edit.kind, edit.state.modifier) == (EditKind.ADD, "Foil")
+    assert change_text(change).startswith(f"+ Filler Card {PRICED_BASE + 1} (AAA 1 foil, €0.50)")
+
+
+def test_add_saves_a_nonfoil_unless_a_foil_is_cheaper(deck: Deck, tmp_path: Path) -> None:
+    change = add_from(
+        deck,
+        tmp_path,
+        [
+            priced_printing(1, 1, "0.50", "0.50", set_code="aaa"),
+            priced_printing(1, 2, "0.80", "0.90", set_code="bbb"),
+        ],
+    )
+    assert (change.set_code, change.finish, change.price_cents) == ("aaa", "Normal", 50)
+    edit = card_edits([change], {}, {change.scryfall_id: 77})[0]
+    assert edit.state.modifier == "Normal"
+
+
+def test_add_takes_a_printing_with_only_a_foil_price(deck: Deck, tmp_path: Path) -> None:
+    change = add_from(deck, tmp_path, [priced_printing(1, 1, None, "0.70", set_code="aaa")])
+    assert (change.set_code, change.finish, change.price_cents) == ("aaa", "Foil", 70)
 
 
 def test_a_land_creature_is_filed_as_a_land(db: CardDb) -> None:
@@ -190,7 +260,8 @@ def test_each_add_counts_the_game_changers_added_before_it(
 ) -> None:
     seen: list[tuple[str, int]] = []
 
-    def record(info: CardInfo, _bracket: int | None, changers: int) -> None:
+    def record(info: CardInfo, _bracket: int | None, changers: int, *, extra_turns: int) -> None:
+        assert extra_turns == 0
         seen.append((info.name, changers))
 
     monkeypatch.setattr("commander.apply.card_raise", record)
@@ -204,6 +275,24 @@ def test_each_add_counts_the_game_changers_added_before_it(
     resolve_plan(replace(deck, bracket=3), plan(adds), db)
 
     assert seen == [("Jeska's Will", 0), ("Arcane Signet", 1), ("Ancient Tomb", 1), ("Mind Stone", 2)]
+
+
+def test_the_second_added_extra_turn_card_is_marked_as_lifting_the_bracket(
+    deck: Deck, db: CardDb, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = CardDb.card_named
+
+    def as_extra_turn(self: CardDb, name: str) -> CardInfo | None:
+        info = original(self, name)
+        return replace(info, roles=info.roles | {Role.EXTRA_TURN}) if info else None
+
+    monkeypatch.setattr(CardDb, "card_named", as_extra_turn)
+
+    resolution = resolve_plan(
+        replace(deck, bracket=3), plan([AddCard("Arcane Signet"), AddCard("Ancient Tomb")]), db
+    )
+
+    assert [change.raises for change in resolution.changes] == [None, BracketRaise(4, "extra turn cards")]
 
 
 def test_remove_takes_every_copy_and_keep_leaves_some(deck: Deck, db: CardDb) -> None:

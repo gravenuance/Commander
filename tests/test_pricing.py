@@ -4,9 +4,9 @@ from pathlib import Path
 import pytest
 
 from commander.archidekt import parse_deck
-from commander.carddb import CardDb
-from commander.models import Deck
-from commander.pricing import DeckPrice, PriceSource, format_eur, price_deck
+from commander.carddb import CardDb, Printing, ResolvedCard
+from commander.models import Deck, DeckCard
+from commander.pricing import DeckPrice, PriceSource, card_price, format_eur, price_deck
 from conftest import Json
 
 
@@ -43,13 +43,34 @@ def test_foil_finish_uses_the_foil_price(raw_deck: Json, card_db_file: Path) -> 
     assert (flute.unit_cents, flute.source) == (381, PriceSource.PRINTING)
 
 
-def test_missing_finish_price_falls_back_to_the_cheapest_printing(raw_deck: Json, card_db_file: Path) -> None:
-    # Magda's plst printing has no foil price.
+def test_missing_finish_price_falls_back_to_the_printings_other_finish(
+    raw_deck: Json, card_db_file: Path
+) -> None:
+    # Magda's plst printing has no foil price, but a nonfoil one of 7.63.
     deck = with_card(parse_deck(raw_deck), "Magda, Brazen Outlaw", finish="Foil")
     price = priced(deck, card_db_file)
     magda = next(c for c in price.cards if c.name == "Magda, Brazen Outlaw")
-    assert (magda.unit_cents, magda.source) == (679, PriceSource.CHEAPEST)
+    assert (magda.unit_cents, magda.source) == (763, PriceSource.OTHER_FINISH)
     assert price.estimated == ("Magda, Brazen Outlaw",)
+
+
+def test_a_printing_with_only_a_foil_price_prices_a_normal_card_at_it() -> None:
+    printing = Printing("sid", "oid", "plst", "1", None, 1234)
+    magda = DeckCard("Magda", 1, ("Main",), True, "sid", 1, 1, "plst", "1", "Normal")  # noqa: FBT003 — positional like the model
+    price = card_price(ResolvedCard(magda, None, printing))
+    assert (price.unit_cents, price.source) == (1234, PriceSource.OTHER_FINISH)
+
+
+def test_a_printing_without_any_price_falls_back_to_the_cards_cheapest(
+    raw_deck: Json, card_db_file: Path
+) -> None:
+    with CardDb(card_db_file) as db:
+        deck = with_card(parse_deck(raw_deck), "Magda, Brazen Outlaw", finish="Foil")
+        magda = next(r for r in db.resolve(deck.main_cards) if r.card.name == "Magda, Brazen Outlaw")
+    assert magda.printing is not None
+    unpriced = replace(magda, printing=replace(magda.printing, eur_cents=None, eur_foil_cents=None))
+    price = card_price(unpriced)
+    assert (price.unit_cents, price.source) == (679, PriceSource.CHEAPEST)
 
 
 def test_unknown_printing_is_estimated_from_the_card_name(raw_deck: Json, card_db_file: Path) -> None:

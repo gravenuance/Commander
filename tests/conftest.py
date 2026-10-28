@@ -110,6 +110,20 @@ def filler_card(index: int, name: str | None = None, cmc: float = 1.0) -> str:
     )
 
 
+PRICED_BASE = 50_000  # past the filler cards the fixtures already hold
+
+
+def priced_printing(
+    card: int, printing: int, eur: str | None, foil: str | None = None, set_code: str = "tst"
+) -> str:
+    """One printing of priced test card number card, with these EUR prices."""
+    line = json.loads(filler_card(PRICED_BASE + card))
+    line["id"] = f"ffffffff-1111-4000-8000-{card:06d}{printing:06d}"
+    line["set"], line["collector_number"] = set_code, str(printing)
+    line["prices"] = {"eur": eur, "eur_foil": foil}
+    return json.dumps(line)
+
+
 def filler_tag(index: int) -> str:
     return json.dumps(
         {

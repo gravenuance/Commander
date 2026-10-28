@@ -8,13 +8,19 @@ from commander.carddb import ResolvedCard
 from commander.models import Deck
 
 NONFOIL_FINISH = "Normal"
+FOIL_FINISH = "Foil"
 
 
 class PriceSource(Enum):
     PRINTING = "printing"
-    # The deck's printing has no price for its finish, so the card's cheapest printing stands in.
+    # The deck's printing has no price for its finish, so its price in the other finish stands in.
+    OTHER_FINISH = "other finish"
+    # The deck's printing has no price at all, so the card's cheapest printing stands in.
     CHEAPEST = "cheapest"
     NONE = "none"
+
+
+ESTIMATED = (PriceSource.OTHER_FINISH, PriceSource.CHEAPEST)
 
 
 @dataclass(slots=True, frozen=True)
@@ -55,7 +61,7 @@ class DeckPrice:
 
     @property
     def estimated(self) -> tuple[str, ...]:
-        return tuple(card.name for card in self.cards if card.source is PriceSource.CHEAPEST)
+        return tuple(card.name for card in self.cards if card.source in ESTIMATED)
 
 
 def price_deck(deck: Deck, resolved: Sequence[ResolvedCard]) -> DeckPrice:
@@ -66,15 +72,18 @@ def price_deck(deck: Deck, resolved: Sequence[ResolvedCard]) -> DeckPrice:
 
 
 def card_price(resolved: ResolvedCard) -> CardPrice:
-    """One deck card's price: its printing's for its finish, else the card's cheapest printing's."""
+    """One deck card's price: its printing's for its finish, else its other finish's, else the card's
+    cheapest printing's."""
     card, printing = resolved.card, resolved.printing
     cheapest = resolved.info.cheapest_cents if resolved.info is not None else None
-    unit: int | None = None
     if printing is not None:
         # Only regular and foil EUR prices are kept, so the foil one is the estimate for Etched too.
-        unit = printing.eur_cents if card.finish == NONFOIL_FINISH else printing.eur_foil_cents
-    if unit is not None:
-        return CardPrice(card.name, card.quantity, unit, PriceSource.PRINTING, cheapest)
+        prices = (printing.eur_cents, printing.eur_foil_cents)
+        own, other = prices if card.finish == NONFOIL_FINISH else reversed(prices)
+        if own is not None:
+            return CardPrice(card.name, card.quantity, own, PriceSource.PRINTING, cheapest)
+        if other is not None:
+            return CardPrice(card.name, card.quantity, other, PriceSource.OTHER_FINISH, cheapest)
     if cheapest is not None:
         return CardPrice(card.name, card.quantity, cheapest, PriceSource.CHEAPEST, cheapest)
     return CardPrice(card.name, card.quantity, None, PriceSource.NONE, None)

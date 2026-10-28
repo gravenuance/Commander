@@ -311,6 +311,23 @@ def test_card_raise_follows_the_official_bracket_limits(
     assert card_raise(card, bracket, changers) == expected
 
 
+@pytest.mark.parametrize(
+    ("bracket", "extra_turns", "expected"),
+    [
+        (3, 0, None),
+        (3, 1, BracketRaise(4, "extra turn cards")),
+        (3, 4, BracketRaise(4, "extra turn cards")),
+        (4, 1, None),
+        (None, 1, None),
+    ],
+)
+def test_a_second_extra_turn_card_lifts_a_deck_to_bracket_four(
+    bracket: int | None, extra_turns: int, expected: BracketRaise | None
+) -> None:
+    card = changer(game_changer=False, roles=frozenset({Role.EXTRA_TURN}))
+    assert card_raise(card, bracket, 0, extra_turns=extra_turns) == expected
+
+
 @pytest.mark.parametrize(("count", "max_cents"), [(0, None), (1, -1)])
 def test_options_are_checked(count: int, max_cents: int | None) -> None:
     with pytest.raises(ValueError, match="must"):
@@ -553,6 +570,14 @@ def screen_for(
 ) -> IdeaFilter:
     """A filter for a bracket 2 deck with no game changers."""
     return IdeaFilter(db, exclude, exclude_names, bracket=2, changers=0, ceiling=ceiling, budget=budget)
+
+
+def test_the_filter_counts_the_extra_turn_cards_the_deck_holds(db: CardDb) -> None:
+    turn = changer(game_changer=False, roles=frozenset({Role.EXTRA_TURN}))
+    screen = replace(screen_for(db), bracket=3, extra_turns=1)
+    admitted = screen.admit(turn, frozenset())
+    assert admitted is not None
+    assert admitted.raises == BracketRaise(4, "extra turn cards")
 
 
 def card_info(db: CardDb, name: str) -> CardInfo:

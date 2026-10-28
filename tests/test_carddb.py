@@ -17,6 +17,7 @@ from commander.carddb import (
     CardDataError,
     CardDataMeta,
     CardDb,
+    CardInfo,
     ParsedCard,
     Role,
     TagCount,
@@ -35,10 +36,12 @@ from conftest import (
     CHAOS_WARP,
     LIGHTNING_BOLT,
     MAGDA_ORACLE,
+    PRICED_BASE,
     Json,
     build_card_db,
     card_lines,
     filler_card,
+    priced_printing,
     write_bulk,
 )
 
@@ -123,6 +126,46 @@ def test_a_gated_card_joins_its_role_only_when_its_text_holds_the_phrase(tmp_pat
         cards = db.cards_named(["Lightning Bolt", "Chaos Warp"])
     assert cards["lightning bolt"].roles == {Role.BOARD_WIPE}
     assert cards["chaos warp"].roles == frozenset()
+
+
+EXTRA_TURN_TAG = "03b17ebf-f5d3-4063-bfd4-1ae156a16a8f"
+EXTRA_TURN_TEXTS = {
+    "Test Time Walk": ("Take an extra turn after this one.", True),
+    "Test Time Warp": ("Target player takes an extra turn after this one.", True),
+    "Test Time Stretch": ("Target player takes two extra turns after this one.", True),
+    "Test Medomai": (
+        ("Whenever this deals combat damage to a player, take an extra turn after this one.\nCan't attack."),
+        True,
+    ),
+    "Test Eon Frolicker": ("When this enters, target opponent takes an extra turn after this one.", False),
+    "Test Emrakul": ("After that turn, that player takes an extra turn.", False),
+    "Test Perch Protection": (
+        "Gift an extra turn (If you promise a gift, they take an extra turn after this one.)",
+        False,
+    ),
+    "Test Timesifter": ("The player with the greatest mana value takes an extra turn after this one.", False),
+    "Test Ugin's Nexus": (
+        ("If a player would begin an extra turn, that player skips that turn instead.\nTake an extra turn."),
+        False,
+    ),
+}
+
+
+def test_a_card_tagged_extra_turn_keeps_the_role_only_when_you_or_a_chosen_player_takes_the_turn(
+    tmp_path: Path,
+) -> None:
+    cards: list[str] = []
+    for index, (name, (text, _)) in enumerate(EXTRA_TURN_TEXTS.items()):
+        card = json.loads(filler_card(60_000 + index, name))
+        card["oracle_text"] = text
+        cards.append(json.dumps(card))
+    oracle_ids = [json.loads(card)["oracle_id"] for card in cards]
+    tag = json.loads(tagged_tag_line("extra-turn", *oracle_ids))
+    tag["id"] = EXTRA_TURN_TAG
+    with CardDb(build_card_db(tmp_path, extra_tags=[json.dumps(tag)], extra_cards=cards)) as db:
+        found = db.cards_named(list(EXTRA_TURN_TEXTS))
+    kept = {name for name in EXTRA_TURN_TEXTS if Role.EXTRA_TURN in found[name.casefold()].roles}
+    assert kept == {name for name, (_, wanted) in EXTRA_TURN_TEXTS.items() if wanted}
 
 
 def test_modal_land_back_does_not_make_a_land(card_db_file: Path) -> None:
@@ -244,6 +287,87 @@ def test_cheapest_price_comes_from_regular_printings(card_db_file: Path) -> None
     assert tomb.cheapest_cents == 10264
     assert (printings["wc99"].eur_cents, printings["wc99"].regular) == (4163, False)
     assert printings["uma"].regular
+
+
+def build_priced(tmp_path: Path, lines: list[str]) -> CardDb:
+    """A card database holding these printings (on top of the filler cards)."""
+    return CardDb(build_card_db(tmp_path, extra_cards=lines))
+
+
+def priced_card(db: CardDb, card: int) -> CardInfo:
+    info = db.card_named(f"Filler Card {PRICED_BASE + card}")
+    assert info is not None
+    return info
+
+
+def prices_of(db: CardDb, card: int) -> dict[str, tuple[int | None, int | None]]:
+    return {
+        p.set_code: (p.eur_cents, p.eur_foil_cents) for p in db.printings_of(priced_card(db, card).oracle_id)
+    }
+
+
+def test_a_penny_price_far_below_the_cards_other_printings_is_dropped(tmp_path: Path) -> None:
+    # Badlands: a Summer Magic copy at EUR 0.02 among printings at hundreds.
+    lines = [
+        priced_printing(7, 1, "308.95", set_code="3ed"),
+        priced_printing(7, 2, "263.94", set_code="4ed"),
+        priced_printing(7, 3, "0.02", set_code="sum"),
+        priced_printing(7, 4, "280.00", set_code="5ed"),
+    ]
+    with build_priced(tmp_path, lines) as db:
+        card = priced_card(db, 7)
+        assert prices_of(db, 7)["sum"] == (None, None)
+        assert prices_of(db, 7)["3ed"] == (30895, None)
+        assert card.cheapest_cents == 26394
+
+
+def test_a_price_a_twentieth_of_the_median_is_the_limit(tmp_path: Path) -> None:
+    # Median EUR 100.00: EUR 5.00 is exactly a twentieth and stays, EUR 4.99 goes.
+    lines = [
+        priced_printing(8, 1, "100.00"),
+        priced_printing(8, 2, "100.00"),
+        priced_printing(8, 3, "100.00"),
+        priced_printing(8, 4, "5.00", set_code="a"),
+        priced_printing(8, 5, "4.99", set_code="b"),
+    ]
+    with build_priced(tmp_path, lines) as db:
+        prices = prices_of(db, 8)
+        assert prices["a"] == (500, None)
+        assert prices["b"] == (None, None)
+
+
+def test_the_median_rule_needs_three_priced_printings(tmp_path: Path) -> None:
+    lines = [priced_printing(9, 1, "40.00"), priced_printing(9, 2, "0.10", set_code="b")]
+    with build_priced(tmp_path, lines) as db:
+        assert prices_of(db, 9)["b"] == (10, None)
+
+
+def test_a_foil_under_a_fifth_of_its_own_nonfoil_is_dropped(tmp_path: Path) -> None:
+    # Liquimetal Torque: the Secret Lair foil at EUR 0.02 against EUR 2.25 nonfoil.
+    lines = [
+        priced_printing(10, 1, "2.25", "0.02", set_code="sld"),
+        priced_printing(10, 2, "2.50", "5.00", set_code="a"),
+        priced_printing(10, 3, "1.00", "0.20", set_code="b"),
+    ]
+    with build_priced(tmp_path, lines) as db:
+        card = priced_card(db, 10)
+        prices = prices_of(db, 10)
+        assert prices["sld"] == (225, None)
+        # A foil at exactly a fifth of its nonfoil stays.
+        assert prices["b"] == (100, 20)
+        assert card.cheapest_cents == 20
+
+
+def test_a_cards_foil_prices_are_judged_against_its_other_foil_prices(tmp_path: Path) -> None:
+    lines = [
+        priced_printing(11, 1, "30.00", "90.00"),
+        priced_printing(11, 2, "30.00", "80.00", set_code="a"),
+        priced_printing(11, 3, "30.00", "100.00", set_code="b"),
+        priced_printing(11, 4, "1.50", "1.00", set_code="c"),
+    ]
+    with build_priced(tmp_path, lines) as db:
+        # EUR 1.00 is under a twentieth of the EUR 85.00 median foil; its nonfoil is judged against nonfoils.
+        assert prices_of(db, 11)["c"] == (150, None)
 
 
 RAMP_TAG = "2f3e4ad7-5e60-41b4-bdbc-653f16869cf6"

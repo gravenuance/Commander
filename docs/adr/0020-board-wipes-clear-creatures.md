@@ -44,3 +44,29 @@ card database schema went to 7 so that existing databases are rebuilt.
   sweeper. `suggest` stops offering them to fill the role.
 - A rename on Tagger keeps working, since the tags are found by id. A removed tag shrinks a set, and the
   `sweeper` tag itself still logs a warning when it is gone.
+
+## Amendment (2026-10-27): land tutors and removal that ramps the opponent
+
+Two more roles were wider than their names, found in a review of what the roles hold:
+
+- **Tutor held 244 land tutors.** The role left out the `tutor-land` subtree, but Tagger files Cultivate, Land
+  Tax, Kodama's Reach, Expedition Map and Ash Barrens also under `tutor-to-hand` or `tutor-to-battlefield`
+  (the `tutor-to` subtree, which says only where the fetched card goes), and that kept them in. Ellivere's
+  tutor count listed Land Tax and Yasharn, Implacable Earth. `RoleTag.exclude_alongside` names `tutor-to`: its
+  tags do not count on a card that also has a land tutor tag, so a card with another tutor tag (Natural Order's
+  `tutor-creature`) stays, and so do Unmarked Grave and the other `tutor-to` cards with no land tag.
+- **Ramp held removal that gives the opponent a land.** Path to Exile, Erode, Settle the Wreckage, Emergency
+  Eject, Cityscape Leveler and five more carry Tagger's `swap-removal` and also `ramp`; Pantlaza's `analyze`
+  listed Path to Exile as ramp, and the surplus cuts and the Turbo play style counted it. The role now drops
+  every card tagged `swap-removal` (`RoleTag.drop_cards`). The `donate-rampant-growth` tag, which the review
+  first suggested, would also have dropped 15 cards that ramp the caster too (Tempt with Discovery,
+  Collective Voyage, Fertilid, Hithlain Rope, Veteran Explorer): ramp stays ramp where it helps the caster.
+
+- **Five extra-turn cards were wrong.** Eon Frolicker, Emrakul the Promised End, Perch Protection and
+  Timesifter give the turn to an opponent, and Ugin's Nexus stops extra turns. The extra-turn role is now a text
+  gate like the board wipe's (`RoleTag.text`, `scryfall.EXTRA_TURN_PHRASE`): the text must say that you take
+  an extra turn, or that a target player does, and not "skips that turn". `TextGate.phrase` became a regular
+  expression for it. On the 59 tagged cards it keeps 54 and drops exactly those five.
+
+On 2026-10-22 data, 244 of the 814 legal tutors leave the role and 10 of the 2,153 legal ramp cards. The card
+database schema went to 9 (ADR 0001) so that existing databases are rebuilt.

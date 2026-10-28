@@ -529,6 +529,7 @@ def _apply_json(resolution: Resolution, result: SaveResult | None) -> dict[str, 
                 "collectorNumber": c.collector_number,
                 "scryfallId": c.scryfall_id,
                 "priceCents": c.price_cents,
+                "finish": c.finish,
                 "raises": raise_json(c.raises),
             }
             for c in resolution.changes

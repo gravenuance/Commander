@@ -69,6 +69,7 @@ _TAPPED = ("enters tapped", "enters the battlefield tapped", "onto the battlefie
 _SOMETIMES_TAPPED = ("unless", "if you control", "if you don't", "untap that land")
 # Check lands and reveal lands: untapped given a land of the basic types they name.
 _TYPED_CONDITION = ("unless you control a", "you may reveal a")
+_BOND = "unless you have two or more opponents"
 _TYPE_WORD = re.compile(r"\b(plains|island|swamp|mountain|forest)\b")
 # What a land that does nothing but make mana may say, a line at a time (see `mana_only_land`). A mana
 # ability: a tap cost and perhaps others (a life payment, a filter land's mana), then "Add", and a painland's
@@ -85,6 +86,8 @@ _ENTERS_BY_CHOICE = re.compile(
     r" if you don't, (?:it|this land) enters (?:the battlefield )?tapped\."
 )
 REMINDER_TEXT = re.compile(r"\([^)]*\)")
+# A line that is an ability with a tap in its cost and an "add" in its effect.
+_TAP_ADDS = re.compile(r"[^:]*\{t\}[^:]*:.*\badds?\b")
 # A mana ability whose amount varies or is chosen ("for each", "equal to", X): more than one mana.
 VARIABLE_MANA = re.compile(r"for each|equal to|amount of mana|that much|twice|additional mana|\bx mana|\{x\}")
 # Mana symbols side by side after "add" ({C}{C}, {R}{G}): two or more mana from one ability.
@@ -259,8 +262,9 @@ def land_count(cards: Sequence[tuple[int, CardMana]]) -> LandCount:
 
 def cheap_draw(info: CardMana) -> bool:
     """Karsten's "cheap card draw spell", from the card's rules text as he defined it."""
-    text = info.oracle_text.casefold()
-    if info_is_land(info):
+    text = _rules_text(info)
+    # A spell with a land back already counts as part of a land.
+    if info_is_land(info) or back_is_land(info.type_line):
         return False
     # Any spell that cycles for one mana counts, whatever it costs to cast.
     if _ONE_MANA_CYCLING.search(text):
@@ -282,17 +286,30 @@ def cheap_draw(info: CardMana) -> bool:
 
 def cheap_ramp(info: CardMana) -> bool:
     """Karsten's "cheap mana ramp spell": a cheap card that adds mana or puts a land into play."""
-    text = info.oracle_text.casefold()
-    if info.cmc > CHEAP or info_is_land(info) or cheap_draw(info):
+    text = _rules_text(info)
+    if info.cmc > CHEAP or info_is_land(info) or back_is_land(info.type_line) or cheap_draw(info):
         return False
     adds = "add " in text and not any(word in text for word in ("add its ability", "add a lore counter"))
     if adds and "Creature" in front_type(info.type_line) and "dies" in text:
         adds = False
-    fetches = "search" in text and "your library" in text and ("land" in text or "basic" in text)
-    fetches = fetches and "sacrifice" not in text
+    fetches = any(_fetches_land(line) for line in text.split("\n"))
     aura = "enchanted land is tapped" in text and "adds an additional" in text
     cheats = "put a creature card with" in text and "from your hand onto the battlefield" in text
     return adds or fetches or aura or cheats
+
+
+def _rules_text(info: CardMana) -> str:
+    """The card's rules text in lower case, reminder text left out: a Treasure's or dredge's own wording
+    says nothing about what the card does."""
+    return REMINDER_TEXT.sub("", info.oracle_text.casefold())
+
+
+def _fetches_land(line: str) -> bool:
+    """Whether a line of rules text searches the library for a land, by the word or a basic land type,
+    and doesn't cost the card itself to do it (Wayfarer's Bauble, Sakura-Tribe Elder)."""
+    if "search" not in line or "your library" not in line or "sacrifice" in line:
+        return False
+    return "land" in line or "basic" in line or _TYPE_WORD.search(line) is not None
 
 
 def needed_sources(mana_value: int, pips: int) -> int:
@@ -363,7 +380,7 @@ class Source:
         mana_value = int(info.cmc)
         front = front_type(info.type_line)
         permanent = any(word in front for word in ("Artifact", "Creature", "Enchantment"))
-        if made and permanent and "{t}" in text and "sacrifice" not in text:
+        if made and permanent and _taps_for_mana(text):
             worth = DORK if "Creature" in front else ROCK
             if "opponent" in text:
                 worth = min(worth, OPPONENT_ROCK)
@@ -378,6 +395,14 @@ class Source:
             colours = dict.fromkeys(searched, worth)
             return Source(info.name, quantity, land=False, colours=colours, from_mana_value=start)
         return Source(info.name, quantity, land=False, colours={}, from_mana_value=NEVER)
+
+
+def _taps_for_mana(text: str) -> bool:
+    """Whether a line of the text is a tap ability that adds mana without sacrificing anything: Mind Stone's
+    other line, which sacrifices it to draw, doesn't matter, but Lotus Petal and Treasure makers go."""
+    return any(
+        _TAP_ADDS.match(line) and "sacrifice" not in line for line in REMINDER_TEXT.sub("", text).split("\n")
+    )
 
 
 def deck_entries(deck: Deck, cards: Mapping[str, CardMana]) -> list[tuple[int, CardMana, bool]]:
@@ -423,8 +448,8 @@ def tapped_share(text: str, lands: DeckLands) -> float:
     text = "\n".join(line for line in text.split("\n") if any(phrase in line for phrase in _TAPPED))
     if not text:
         return 0.0
-    # A shock land enters untapped whenever its owner pays the life.
-    if "you may pay" in text:
+    # A shock land enters untapped whenever its owner pays the life, a bond land in any Commander game.
+    if "you may pay" in text or _BOND in text:
         return 0.0
     if not any(phrase in text for phrase in _SOMETIMES_TAPPED):
         return 1.0

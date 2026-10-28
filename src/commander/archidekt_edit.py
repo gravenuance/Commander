@@ -101,12 +101,12 @@ class CardEdit:
             raise ValueError("modify and remove need the entry id; add must not have one")
 
 
-def new_entry_state(category: str, label: str | None = None) -> EntryState:
+def new_entry_state(category: str, label: str | None = None, finish: str = "Normal") -> EntryState:
     # A card saved into a deck is one still to buy (ADR 0010): Don't Have unless the label is given.
     return EntryState(
         (category,),
         label or label_value(DONT_HAVE_LABEL),
-        "Normal",
+        finish,
         companion=False,
         flipped_default=False,
         custom_cmc=None,

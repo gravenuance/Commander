@@ -24,7 +24,7 @@ from datetime import date
 from functools import cache
 from pathlib import Path
 
-from commander.analysis import game_changers
+from commander.analysis import game_changers, tagged_count
 from commander.answers import card_key
 from commander.board import (
     Actor,
@@ -230,6 +230,7 @@ def compile_ideas(
         len(game_changers(main)),
         profile.bracket_ceiling,
         budget,
+        extra_turns=tagged_count(main, Role.EXTRA_TURN),
     )
     banned = screen.banned(info.oracle_id for info in infos.values())
 

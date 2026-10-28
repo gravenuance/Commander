@@ -5,7 +5,9 @@ import pytest
 from commander.carddb import CardMana
 from commander.manabase import (
     Casting,
+    DeckLands,
     Need,
+    Source,
     analyse_mana,
     castings,
     cheap_draw,
@@ -67,6 +69,75 @@ def test_karstens_cheap_draw_and_ramp_follow_his_text_rules() -> None:
     assert not cheap_ramp(
         card("Cultivate", "{2}{G}", 3, "Sorcery", text="Search your library for basic land cards")
     )
+
+
+def test_karstens_cheap_draw_and_ramp_ignore_reminder_text() -> None:
+    loam = card(
+        "Life from the Loam",
+        "{1}{G}",
+        2,
+        "Sorcery",
+        text="Return up to three target land cards from your graveyard to your hand.\n"
+        "Dredge 2 (If you would draw a card, you may mill two cards instead. If you do, return this card "
+        "from your graveyard to your hand.)",
+    )
+    offer = card(
+        "An Offer You Can't Refuse",
+        "{U}",
+        1,
+        "Instant",
+        text="Counter target noncreature spell. Its controller creates two Treasure tokens. "
+        '(They\'re artifacts with "{T}, Sacrifice this artifact: Add one mana of any color.")',
+    )
+    assert not cheap_draw(loam)
+    assert not cheap_ramp(offer)
+
+
+def test_a_spell_with_a_land_back_is_no_cheap_ramp_or_draw_on_top_of_counting_as_part_of_a_land() -> None:
+    smashing = card(
+        "Shatterskull Smashing // Shatterskull, the Hammer Pass",
+        "{X}{R}{R}",
+        2,
+        "Sorcery // Land",
+        text="Shatterskull Smashing deals X damage divided as you choose among up to two target creatures.\n"
+        "//\nAs Shatterskull enters, you may pay 3 life. If you don't, it enters tapped.\n{T}: Add {R}.",
+        produced="R",
+    )
+    assert not cheap_ramp(smashing)
+    drawing = card(
+        "Draw // Land", "{1}{U}", 2, "Sorcery // Land", text="Draw a card.\n//\n{T}: Add {U}.", produced="U"
+    )
+    assert not cheap_draw(drawing)
+
+
+def test_a_land_search_names_a_basic_land_type_and_may_sacrifice_elsewhere() -> None:
+    lore = card(
+        "Nature's Lore",
+        "{1}{G}",
+        2,
+        "Sorcery",
+        text="Search your library for a Forest card, put that card onto the battlefield, then shuffle.",
+    )
+    rotation = card(
+        "Crop Rotation",
+        "{G}",
+        1,
+        "Instant",
+        text="As an additional cost to cast this spell, sacrifice a land.\n"
+        "Search your library for a land card, put that card onto the battlefield, then shuffle.",
+    )
+    bauble = card(
+        "Wayfarer's Bauble",
+        "{1}",
+        1,
+        "Artifact",
+        text="{2}, {T}, Sacrifice this artifact: Search your library for a basic land card, put it onto "
+        "the battlefield tapped, then shuffle.",
+    )
+    assert cheap_ramp(lore)
+    assert cheap_ramp(rotation)
+    # The fetch itself costing the card is the intended exclusion.
+    assert not cheap_ramp(bauble)
 
 
 def test_the_land_count_formula_counts_land_spells_as_part_of_a_land() -> None:
@@ -264,6 +335,27 @@ def test_a_rock_that_depends_on_opponents_counts_half_a_source() -> None:
     assert wrath.have == 20.5
 
 
+MIND_STONE = "{T}: Add {C}.\n{1}, {T}, Sacrifice this artifact: Draw a card."
+COMMANDERS_SPHERE = (
+    "{T}: Add one mana of any color in your commander's color identity.\n"
+    "Sacrifice this artifact: Draw a card."
+)
+LOTUS_PETAL = "{T}, Sacrifice this artifact: Add one mana of any color."
+TREASURE_MAKER = (
+    "{T}: Create a Treasure token. "
+    '(It\'s an artifact with "{T}, Sacrifice this artifact: Add one mana of any color.")'
+)
+
+
+@pytest.mark.parametrize(
+    ("text", "colours"),
+    [(MIND_STONE, "C"), (COMMANDERS_SPHERE, "C"), (LOTUS_PETAL, ""), (TREASURE_MAKER, "")],
+)
+def test_a_mana_rock_is_a_source_unless_its_own_mana_ability_sacrifices_it(text: str, colours: str) -> None:
+    info = card("Rock", "{2}", 2, "Artifact", text=text, produced="C")
+    assert "".join(Source.of(info, 1, 2, DeckLands(99, {})).colours) == colours
+
+
 def test_pitch_spells_are_left_out_and_lists_compared_by_median() -> None:
     force = card(
         "Force of Will", "{3}{U}{U}", 5, text="You may pay 1 life and exile a blue card rather than pay."
@@ -314,6 +406,17 @@ def test_lands_that_fetch_tapped_or_enter_tapped_on_a_count_are_tapped_or_someti
         deck_of(("Evolving Wilds", 1), ("Blackcleave Cliffs", 4)), by_name(LEADER, wilds, cliffs)
     )
     assert report.tapped_lands == 1 + 4 * 0.25
+
+
+def test_a_bond_land_is_untapped_because_a_commander_game_has_several_opponents() -> None:
+    suite = card(
+        "Luxury Suite",
+        type_line="Land",
+        text="This land enters tapped unless you have two or more opponents.\n{T}: Add {B} or {R}.",
+        produced="BR",
+    )
+    report = analyse_mana(deck_of(("Luxury Suite", 4)), by_name(LEADER, suite))
+    assert report.tapped_lands == 0
 
 
 # Lands whose "enters tapped" line has no condition, with an "unless" or "if you control" on another line.

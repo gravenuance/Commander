@@ -78,3 +78,18 @@ weekly or when a new paper set appears (`scryfall.refresh_card_db`):
 - **Schema 8.** The `oracle` table keeps Scryfall's `layout` (ADR 0019), and printings and role members are
   indexed by card. The database is built with no rollback journal and its indexes made after the rows are in,
   which is quicker. The next `sync` rebuilds a database of schema 7.
+
+## Amendment (2026-10-27): glitch prices are dropped when the database is built
+
+Cardmarket now and then lists one printing at a few cents, and a card's cheapest price took it: Badlands
+showed EUR 0.02 from its Summer Magic copy against EUR 308.95 for the cheapest real one, Wheel of Fortune
+EUR 0.02 against EUR 263.94, and a Secret Lair foil of Liquimetal Torque EUR 0.02 against EUR 2.25
+nonfoil. Budgets, ideas and `apply` (ADR 0004) all trusted it. `pricefilter.drop_glitches` now blanks such a
+price when the database is built (`carddb._clean_prices`), so every reader sees the printing as unpriced:
+
+- A foil under a fifth of its own printing's nonfoil.
+- A price under a twentieth of the median of the card's prices in the same finish, judged only when three or
+  more printings are priced in that finish.
+
+**Schema 9.** The same rebuild brings the role changes of 2026-10-27 (ADR 0020). The next `sync` rebuilds a
+database of schema 8.
