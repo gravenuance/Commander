@@ -114,29 +114,33 @@ class TournamentStore:
     def save(self, record: TournamentRecord) -> None:
         write_text_atomic(self._event_path(record.tournament.tid), _dump(_encode(record)))
 
-    def load_window(self, since: date, until: date) -> list[TournamentRecord]:
-        """The stored events held from `since` to `until`, both inclusive; unreadable files are skipped."""
-        records: list[TournamentRecord] = []
-        for path in self._event_files():
-            record = self._read(path)
-            if record is not None and since <= record.tournament.held_on <= until:
-                records.append(record)
-        return records
+    def load_window(self, since: date, until: date, *, prune: bool = False) -> list[TournamentRecord]:
+        """The stored events held from `since` to `until`, both inclusive; unreadable files are skipped.
 
-    def prune(self, before: date) -> int:
-        """Delete the events held before the date; how many went."""
+        With prune, the events held before `since` and the files that cannot be read are deleted in the same
+        pass, so each file is decoded once.
+        """
+        records: list[TournamentRecord] = []
         removed = 0
         for path in self._event_files():
             record = self._read(path)
-            if record is not None and record.tournament.held_on >= before:
-                continue
-            try:
-                path.unlink()
-            except OSError as error:
-                log.warning("could not remove the cached TopDeck event %s: %s", path.name, error)
-                continue
-            removed += 1
-        return removed
+            if record is not None and record.tournament.held_on >= since:
+                if record.tournament.held_on <= until:
+                    records.append(record)
+            elif prune:
+                removed += self._remove(path)
+        if removed:
+            log.info("dropped %d cached TopDeck events older than %s", removed, since)
+        return records
+
+    @staticmethod
+    def _remove(path: Path) -> int:
+        try:
+            path.unlink()
+        except OSError as error:
+            log.warning("could not remove the cached TopDeck event %s: %s", path.name, error)
+            return 0
+        return 1
 
     def _event_path(self, tid: str) -> Path:
         return self._folder / _EVENTS / f"{cache_item(tid)}.json"

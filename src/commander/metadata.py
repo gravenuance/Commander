@@ -72,8 +72,8 @@ from commander.jsonshape import (
     req_str,
     str_list,
 )
-from commander.models import Deck, short_commander_name
-from commander.net import Fetcher, HttpStatusError, NetworkError, Pacer, WaitListener
+from commander.models import CEDH_BRACKET, Deck, short_commander_name
+from commander.net import Fetcher, HttpStatusError, LazyClient, NetworkError, Pacer, WaitListener
 from commander.peerschedule import fresh_for as peer_fresh_for
 from commander.spellbook import FRESH_FOR as SPELLBOOK_FRESH_FOR
 from commander.spellbook import (
@@ -116,8 +116,6 @@ _COMMANDER_REQUEST_PAGES = 20
 _TAG_REQUEST_PAGES = 3
 # Meta answers of the retired EDHTop16 provider (ADR 0047), which no run reads again.
 _RETIRED_PREFIX = "edhtop16"
-# The cEDH bracket: the only one the tournaments cover.
-CEDH_BRACKET = 5
 # Decks at these brackets learn from the commander's tournament lists too: bracket 4 plays near cEDH.
 TOURNAMENT_BRACKETS = frozenset({4, CEDH_BRACKET})
 # What a source answers when the deck's bracket does not read it; a choice, not a failure to report.
@@ -228,12 +226,13 @@ class MetaSources:
     # The Archidekt user whose own decks never count as other players' lists.
     user: str
     settings: MetaSettings
-    # Decks read side by side can want the same Archidekt search; the second waits for the first's answer.
+    # Decks read side by side can want the same Archidekt search or Spellbook core; the second waits for
+    # the first's answer.
     searches: ItemLocks = field(default_factory=ItemLocks)
 
 
 def topdeck_client(
-    http: "httpx.Client",
+    http: "httpx.Client | LazyClient",
     pacer_factory: Callable[[float], Pacer],
     cache_root: Path,
     keys: KeyStore | None = None,
@@ -252,7 +251,7 @@ def topdeck_client(
 
 
 def meta_sources(
-    http: "httpx.Client",
+    http: "httpx.Client | LazyClient",
     pacer_factory: Callable[[float], Pacer],
     user: str,
     settings: MetaSettings,
@@ -980,16 +979,19 @@ def _meta_combos(
         request = core_request(commander)
         if request is None:
             continue
-        answer = cached_answer(
-            cache_item("spellbook", commander.stats.name),
-            request,
-            _live(offline, partial(_paced_details, sources, request)),
-            cache,
-            now=now,
-            refresh=refresh,
-            fresh_for=SPELLBOOK_FRESH_FOR,
-            errors=_ERRORS,
-        )
+        item = cache_item("spellbook", commander.stats.name)
+        # Decks read side by side share a commander's core; the later ones find the first one's answer.
+        with sources.searches.hold(item):
+            answer = cached_answer(
+                item,
+                request,
+                _live(offline, partial(_paced_details, sources, request)),
+                cache,
+                now=now,
+                refresh=refresh,
+                fresh_for=SPELLBOOK_FRESH_FOR,
+                errors=_ERRORS,
+            )
         answers.append((commander.stats.name, answer))
     return _combined(answers)
 
@@ -1083,6 +1085,8 @@ def _peer_lists(
         since=_start_of(since),
         label=item,
         max_pages=max_pages,
+        limit=limit,
+        readable=_other_players(sources, own_id),
     )
     wanted = {name.casefold() for name in group}
     # The search finds one commander. A deck led by a lone alike commander counts whoever it is paired with;
@@ -1125,12 +1129,20 @@ def _tag_peer_lists(
         label=item,
         tag=tag,
         max_pages=TAG_SEARCH_PAGES_PER_BRACKET,
+        limit=limit,
+        readable=_other_players(sources, None),
     )
     return _read_peers(sources, reads, found, limit, own_id=None, now=now, keep=lambda _: True)
 
 
 def _start_of(day: date) -> datetime:
     return datetime(day.year, day.month, day.day, tzinfo=UTC)
+
+
+def _other_players(sources: MetaSources, own_id: int | None) -> Callable[[PeerDeck], bool]:
+    """Whether a deck is another player's: not the user's own, nor the deck being read for."""
+    user = sources.user.casefold()
+    return lambda deck: deck.owner.casefold() != user and deck.id != own_id
 
 
 def _read_peers(
@@ -1144,8 +1156,7 @@ def _read_peers(
     keep: Callable[[DeckRead], bool],
 ) -> PeerLists:
     """The most-viewed other players' decks of a search, read or cached, and filtered by keep."""
-    user = sources.user.casefold()
-    others = [d for d in found if d.owner.casefold() != user and d.id != own_id]
+    others = list(filter(_other_players(sources, own_id), found))
     lists: list[PeerList] = []
     skipped = 0
     for peer in most_viewed(others, limit=limit):

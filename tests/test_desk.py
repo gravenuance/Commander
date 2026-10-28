@@ -15,6 +15,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Any, cast
 
+import httpx
 import pytest
 
 from commander import apply as apply_module
@@ -102,6 +103,24 @@ def make_desk(settings: DeskSettings, fake: FakeArchidekt, *, signed_in: bool = 
 @pytest.fixture
 def desk(settings: DeskSettings, fake: FakeArchidekt) -> Desk:
     return make_desk(settings, fake)
+
+
+def counting_desk(settings: DeskSettings, fake: FakeArchidekt) -> tuple[Desk, list[object]]:
+    """A desk and the list that gets an item for each HTTP client it builds."""
+    builds: list[object] = []
+
+    def counting() -> httpx.Client:
+        builds.append(object())
+        return fake.client()
+
+    desk = Desk(
+        settings,
+        client_factory=counting,
+        token_store=MemoryTokenStore({"tester": REFRESH_TOKEN}),
+        now=lambda: NOW,
+        pacer_factory=lambda _: Pacer(0),
+    )
+    return desk, builds
 
 
 def fetch_meta(settings: DeskSettings, fake: FakeArchidekt) -> None:
@@ -897,6 +916,16 @@ def test_the_bracket_check_names_what_lifts_the_estimate_above_the_ceiling(
     assert len(fake.spellbook.bodies) == 1
 
 
+def test_the_bracket_panel_builds_an_http_client_only_when_it_asks_spellbook(
+    settings: DeskSettings, fake: FakeArchidekt
+) -> None:
+    desk, builds = counting_desk(settings, fake)
+    desk.bracket(DECK)
+    assert len(builds) == 1
+    desk.bracket(DECK)
+    assert len(builds) == 1
+
+
 def test_the_bracket_check_without_spellbook_still_compares_the_ceiling(
     desk: Desk, settings: DeskSettings, fake: FakeArchidekt
 ) -> None:
@@ -1472,6 +1501,17 @@ def test_settings_without_a_username_still_open(tmp_path: Path) -> None:
     settings = desk_settings(env, config=None, workspace=None, user=None)
     assert (settings.workspace, settings.user) == (tmp_path / "decks", None)
     assert settings.card_db == tmp_path / "Commander" / CARD_DB_FILE
+
+
+def test_the_meta_panel_reads_the_cache_without_building_an_http_client(
+    settings: DeskSettings, fake: FakeArchidekt
+) -> None:
+    fake.topdeck.events = [*magda_events(), *kinnan_events()]
+    fetch_meta(settings, fake)
+    desk, builds = counting_desk(settings, fake)
+    report = cast("Json", desk.meta(DECK)["report"])
+    assert report["missing"]
+    assert builds == []
 
 
 def test_meta_reads_only_the_cache_and_a_sync_fills_it(

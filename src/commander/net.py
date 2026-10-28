@@ -8,11 +8,12 @@ import random
 import threading
 import time
 from collections.abc import Callable, Mapping
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import UTC
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, Self
 
 from commander import __version__
 from commander.fetchpriority import fetching_deck
@@ -104,13 +105,58 @@ def make_client() -> "httpx.Client":
     )
 
 
+class LazyClient:
+    """What a `Fetcher` needs of an HTTP client, built from `factory` by the first request.
+
+    A call that finds every answer cached never builds one, and building one costs about 100 ms of TLS set-up.
+    Used as a context manager, it closes the client it built, and a request after that is a closed client's.
+    """
+
+    def __init__(self, factory: Callable[[], "httpx.Client"]) -> None:
+        self._factory = factory
+        self._client: httpx.Client | None = None
+        self._closed = False
+        self._lock = threading.Lock()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        with self._lock:
+            self._closed = True
+            client, self._client = self._client, None
+        if client is not None:
+            client.close()
+
+    @property
+    def is_closed(self) -> bool:
+        return self._closed
+
+    def stream(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: Mapping[str, str | int] | None = None,
+        json: object = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> AbstractContextManager["httpx.Response"]:
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("Cannot send a request, as the client has been closed.")
+            if self._client is None:
+                self._client = self._factory()
+            client = self._client
+        return client.stream(method, url, params=params, json=json, headers=headers)
+
+
 retry_sleep: Callable[[float], None] = time.sleep
 
 
 class Fetcher:
     def __init__(
         self,
-        client: "httpx.Client",
+        client: "httpx.Client | LazyClient",
         *,
         max_attempts: int = MAX_ATTEMPTS,
         sleep: Callable[[float], None] | None = None,

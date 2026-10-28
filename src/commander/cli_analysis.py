@@ -21,7 +21,7 @@ from commander.clibase import (
 from commander.config import cache_dir
 from commander.deckcache import AnswerSource
 from commander.deckprofile import read_profile
-from commander.net import Fetcher
+from commander.net import Fetcher, LazyClient
 from commander.pricing import ESTIMATED, DeckPrice, PriceSource, format_eur, price_deck
 from commander.spellbook import Combo, SpellbookClient, TwoCard
 
@@ -102,7 +102,7 @@ def _cmd_bracket(args: argparse.Namespace, ctx: Context) -> int:
     ceilings = [read_profile(s.folder).bracket_ceiling for s in stored]
     with open_card_db(ctx) as db:
         cards = [bracket_cards(db.resolve(deck.main_cards), db.available_roles) for deck in decks]
-    with ctx.client_factory() as http:
+    with LazyClient(ctx.client_factory) as http:
         results = estimate_decks(
             decks,
             SpellbookClient(Fetcher(http)),

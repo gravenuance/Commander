@@ -190,19 +190,21 @@ class TopdeckClient:
         window = _Window(since, until)
         with self._lock:
             if self._loaded is None or self._loaded[0] != window:
-                note = self._refresh(window)
-                self._loaded = (window, self._store.load_window(since, until), note)
+                note, fetched = self._refresh(window)
+                # After a fetch the load also drops the events that left the window, in the same pass.
+                self._loaded = (window, self._store.load_window(since, until, prune=fetched), note)
             events = self._loaded[1]
         return [e for e in events if e.tournament.size >= min_event_size]
 
-    def _refresh(self, window: _Window) -> StaleNote | None:
-        """Fetch what the store lacks; if that fails and an earlier run stored part of the window, say why the
-        stored events stand in. Without stored events the error goes to the caller."""
+    def _refresh(self, window: _Window) -> tuple[StaleNote | None, bool]:
+        """Fetch what the store lacks, and say whether anything was fetched; if that fails and an earlier run
+        stored part of the window, say why the stored events stand in. Without stored events the error goes
+        to the caller."""
         before = self._store.coverage()
         try:
             if self._failure is not None:
                 raise self._failure
-            self._ensure(window)
+            return None, self._ensure(window)
         except (TopdeckError, NetworkError) as error:
             if isinstance(error, TopdeckKeyError | TopdeckStoreError | NetworkError):
                 self._failure = error
@@ -210,13 +212,14 @@ class TopdeckClient:
                 raise
             log.warning("TopDeck refresh failed, answering from the stored events: %s", error)
             reached = self._store.coverage() or before
-            return StaleNote(
+            note = StaleNote(
                 str(error), datetime.fromtimestamp(reached.last, UTC), isinstance(error, ServiceKeyError)
             )
-        return None
+            return note, False
 
-    def _ensure(self, window: _Window) -> None:
-        """Fetch the days of the window the store has not seen, oldest first, saving as each week arrives."""
+    def _ensure(self, window: _Window) -> bool:
+        """Fetch the days of the window the store has not seen, oldest first, saving as each week arrives;
+        whether it fetched any."""
         need_first = _start_of(window.since)
         need_last = _start_of(window.until) + _DAY - 1
         settled = need_last - GRACE_DAYS * _DAY
@@ -227,7 +230,7 @@ class TopdeckClient:
             first, covered = need_first, need_first - 1
         cursor = covered + 1
         if cursor > settled:
-            return
+            return False
         while cursor <= need_last:
             end = min(cursor + CHUNK_DAYS * _DAY - 1, need_last)
             records = self._fetch_fitting(cursor, end)
@@ -240,9 +243,7 @@ class TopdeckClient:
             except OSError as error:
                 raise TopdeckStoreError(f"TopDeck events could not be stored: {error}") from error
             cursor = end + 1
-        removed = self._store.prune(window.since)
-        if removed:
-            log.info("dropped %d cached TopDeck events older than %s", removed, window.since)
+        return True
 
     def _fetch_fitting(self, start: int, end: int) -> list[TournamentRecord]:
         """The events started from `start` to `end`. An answer over the size cap is asked for again in two

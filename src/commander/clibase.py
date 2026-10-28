@@ -3,9 +3,7 @@
 import argparse
 from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
-from typing import BinaryIO, TextIO
-
-import httpx
+from typing import TYPE_CHECKING, BinaryIO, TextIO
 
 from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
 from commander.bracket import cached_floor, estimate_cache
@@ -16,6 +14,9 @@ from commander.models import Deck
 from commander.net import Pacer
 from commander.store import StoredDeck, Workspace
 
+if TYPE_CHECKING:
+    import httpx
+
 EXIT_OK = 0
 EXIT_FAILURE = 1
 EXIT_USAGE = 2
@@ -24,7 +25,7 @@ EXIT_INTERRUPTED = 130
 # The card data is rebuilt weekly (ADR 0001): more than a week and a day old, a sync is overdue.
 STALE_CARD_DATA = timedelta(days=8)
 
-ClientFactory = Callable[[], httpx.Client]
+ClientFactory = Callable[[], "httpx.Client"]
 PasswordPrompt = Callable[[str], str]
 # Makes the request pacer for a service, given its interval; tests swap in one that never sleeps.
 PacerFactory = Callable[[float], Pacer]

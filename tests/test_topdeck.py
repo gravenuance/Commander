@@ -6,6 +6,7 @@ import threading
 from collections.abc import Callable
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -227,6 +228,26 @@ def test_events_older_than_the_window_are_dropped_from_the_folder(tmp_path: Path
     ask(client_for(fake, tmp_path), since=date(2026, 7, 1))
     assert len(list((tmp_path / FOLDER / "events").glob("*.json"))) == 6
     ask(client_for(fake, tmp_path), since=date(2026, 8, 17), until=date(2026, 10, 16))
+    assert len(list((tmp_path / FOLDER / "events").glob("*.json"))) == 4
+
+
+def test_a_refresh_reads_each_stored_event_once_though_it_also_drops_the_old_ones(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeTopdeck()
+    ask(client_for(fake, tmp_path), since=date(2026, 7, 1))
+    reads: list[str] = []
+    read_text = Path.read_text
+
+    def counting_read(path: Path, *args: Any, **kwargs: Any) -> str:  # noqa: ANN401 — passed through
+        if path.parent.name == "events":
+            reads.append(path.name)
+        return read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", counting_read)
+    ask(client_for(fake, tmp_path), since=date(2026, 8, 17), until=date(2026, 10, 16))
+    # Six files held: four stay, the two older are dropped, and each is decoded once.
+    assert len(reads) == 6
     assert len(list((tmp_path / FOLDER / "events").glob("*.json"))) == 4
 
 

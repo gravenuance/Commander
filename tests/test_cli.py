@@ -660,6 +660,24 @@ def test_bracket_answer_is_reused_until_refresh(
     assert len(archidekt.spellbook.bodies) == 2
 
 
+@pytest.mark.usefixtures("decks")
+def test_a_bracket_answered_from_the_cache_builds_no_http_client(
+    tmp_path: Path, archidekt: FakeArchidekt, own_cache: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    builds: list[object] = []
+    make = archidekt.client
+
+    def counting() -> httpx.Client:
+        builds.append(object())
+        return make()
+
+    monkeypatch.setattr(archidekt, "client", counting)
+    bracket(["magda"], tmp_path, archidekt, own_cache)
+    assert len(builds) == 1
+    assert bracket(["magda"], tmp_path, archidekt, own_cache).out == BRACKET
+    assert len(builds) == 1
+
+
 def test_bracket_table_flags_a_deck_set_below_the_estimate(
     tmp_path: Path, raw_deck: Json, own_cache: Path
 ) -> None:
@@ -852,6 +870,24 @@ def test_suggest_one_deck(tmp_path: Path, archidekt: FakeArchidekt, own_cache: P
     assert archidekt.spellbook.combo_bodies[0]["commanders"] == [
         {"card": "Magda, Brazen Outlaw", "quantity": 1}
     ]
+
+
+@pytest.mark.usefixtures("decks")
+def test_suggest_with_the_combos_cached_builds_no_http_client(
+    tmp_path: Path, archidekt: FakeArchidekt, own_cache: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    builds: list[object] = []
+    make = archidekt.client
+
+    def counting() -> httpx.Client:
+        builds.append(object())
+        return make()
+
+    monkeypatch.setattr(archidekt, "client", counting)
+    suggest(["magda"], tmp_path, archidekt, own_cache)
+    assert len(builds) == 1
+    assert suggest(["magda"], tmp_path, archidekt, own_cache).out == SUGGEST
+    assert len(builds) == 1
 
 
 @pytest.mark.usefixtures("decks")

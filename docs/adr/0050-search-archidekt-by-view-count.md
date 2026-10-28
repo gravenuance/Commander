@@ -77,3 +77,21 @@ Option 3, in `ArchidektSearch.popular_decks`.
 The five pages and the 60 reads are the deck's own commander's. An alike commander is searched three pages a
 bracket and read for 15 decks, and a deck-tag search two pages and 10 reads, not "3 pages per bracket and its
 quarter of `peer_decks` reads" as under *Pages* (ADR 0053). The view bars are the same for all of them.
+
+## Amendment (2026-10-27): a bracket stops when the decks to read are settled
+
+A search paged until a page ended under the bar, though the decks to read, the `limit` most viewed (60 for the
+commander, 15 for an alike one, 10 for a tag), were often fixed pages earlier: a tag search read four pages to
+find ten decks that sit on the first. A bracket now also stops after a page when both hold, counting the decks
+found so far that were updated in the window and are another player's (not the user's, not the deck being
+read for), over both brackets together (`_Cursor.settled`, `popular_decks(limit=..., readable=...)`):
+
+- at least max(`limit`, `MIN_DECKS`) of them reach the bar the search is at, so the bar is that one; and
+- the `limit`-th most viewed has strictly more views than the last deck of the page just read. Every later deck
+  of that listing has no more views than the last, so none can enter the `limit` most viewed, change which
+  bar is reached, or beat the `limit`-th on the tie-break by id; hence the strict comparison.
+
+The decks read are the same as from the full descent. The rest of the Decision stands: the page caps, the bars,
+and a bracket that is not settled still pages until a page ends under the bar. The bars are still tested on all
+decks found, the user's included, as before; a search where the user's own decks reach a bar that the others
+do not still stops there, as it did.

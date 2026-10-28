@@ -62,11 +62,22 @@ BANNED_CARD = "Banned Test Card"
 BLUE_CARD = "Blue Test Card"
 
 
-def extra_card(index: int, name: str, *, identity: list[str], legal: str = "legal") -> str:
+def extra_card(
+    index: int, name: str, *, identity: list[str], legal: str = "legal", land_text: str | None = None
+) -> str:
     raw = json.loads(filler_card(FILLER_CARDS + index, name))
     raw["color_identity"] = identity
     raw["legalities"] = {"commander": legal}
+    if land_text is not None:
+        raw["type_line"] = "Land"
+        raw["oracle_text"] = land_text
     return json.dumps(raw)
+
+
+# A fetch land's own colour identity is empty, whatever it finds.
+FETCH_BLUE_BLACK = "Fetch Blue Black Test"
+FETCH_RED_GREEN = "Fetch Red Green Test"
+FETCH_BASIC = "Fetch Basic Test"
 
 
 @pytest.fixture(scope="module")
@@ -75,6 +86,28 @@ def db(tmp_path_factory: pytest.TempPathFactory) -> Iterator[CardDb]:
     extra = [
         extra_card(1, BANNED_CARD, identity=[], legal="banned"),
         extra_card(2, BLUE_CARD, identity=["U"]),
+        extra_card(
+            3,
+            FETCH_BLUE_BLACK,
+            identity=[],
+            land_text="{T}, Pay 1 life, Sacrifice this land: Search your library for an Island or Swamp card,"
+            " put it onto the battlefield, then shuffle.",
+        ),
+        extra_card(
+            4,
+            FETCH_RED_GREEN,
+            identity=[],
+            land_text="{T}, Pay 1 life, Sacrifice this land: Search your library for a Mountain or Forest"
+            " card,"
+            " put it onto the battlefield, then shuffle.",
+        ),
+        extra_card(
+            5,
+            FETCH_BASIC,
+            identity=[],
+            land_text="{T}, Sacrifice this land: Search your library for a basic land card, put it onto the"
+            " battlefield tapped, then shuffle.",
+        ),
     ]
     with CardDb(build_card_db(tmp_path_factory.mktemp("metadb"), REMOVAL_TAGS, extra)) as opened:
         yield opened
@@ -186,6 +219,16 @@ def test_missing_staples_leave_out_banned_and_off_colour_cards(deck: Deck, db: C
     report = analyse(deck, meta_data(lists, peers), Profile(), db, now=lambda: NOW)
     # A card the card data lacks can't be judged, so it stays.
     assert [c.name for c in report.missing] == ["Mind Stone", "Too New To Know"]
+
+
+def test_missing_staples_leave_out_a_fetch_land_that_finds_nothing_in_the_decks_colours(
+    deck: Deck, db: CardDb
+) -> None:
+    played = ["Mind Stone", FETCH_BLUE_BLACK, FETCH_RED_GREEN, FETCH_BASIC]
+    lists = [entry(i, 40, 8, played) for i in range(1, 6)]
+    report = analyse(deck, meta_data(lists), Profile(), db, now=lambda: NOW)
+    # Magda is red: a fetch of Island or Swamp does nothing there; one of Mountain or Forest or a basic does.
+    assert sorted(c.name for c in report.missing) == sorted(["Mind Stone", FETCH_RED_GREEN, FETCH_BASIC])
 
 
 def test_outliers_are_deck_cards_few_performing_lists_play(deck: Deck, db: CardDb) -> None:

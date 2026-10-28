@@ -13,6 +13,7 @@ from commander.net import (
     MAX_RESPONSE_BYTES,
     Fetcher,
     HttpStatusError,
+    LazyClient,
     NetworkError,
     Pacer,
     RateLimitedError,
@@ -258,6 +259,46 @@ def test_a_closed_client_is_a_network_error() -> None:
 
     with pytest.raises(NetworkError, match="closed"):
         Fetcher(client).get_json(URL)
+
+
+class CountingFactory:
+    """Builds clients over one script, and keeps them to see whether they were closed."""
+
+    def __init__(self, script: Script) -> None:
+        self.script = script
+        self.built: list[httpx.Client] = []
+
+    def __call__(self) -> httpx.Client:
+        self.built.append(httpx.Client(transport=httpx.MockTransport(self.script)))
+        return self.built[-1]
+
+
+def test_a_lazy_client_is_built_by_the_first_request_only_and_closed_on_leaving() -> None:
+    factory = CountingFactory(Script(httpx.Response(200, json=[1]), httpx.Response(200, json=[2])))
+    with LazyClient(factory) as http:
+        assert factory.built == []
+        fetch = Fetcher(http)
+        assert fetch.get_json(URL) == [1]
+        assert fetch.get_json(URL) == [2]
+        assert len(factory.built) == 1
+        assert not factory.built[0].is_closed
+    assert factory.built[0].is_closed
+
+
+def test_a_lazy_client_that_made_no_request_builds_nothing() -> None:
+    factory = CountingFactory(Script())
+    with LazyClient(factory) as http:
+        Fetcher(http)
+    assert factory.built == []
+
+
+def test_a_request_through_a_closed_lazy_client_is_a_network_error_and_builds_nothing() -> None:
+    factory = CountingFactory(Script())
+    with LazyClient(factory) as http:
+        pass
+    with pytest.raises(NetworkError, match="closed"):
+        Fetcher(http).get_json(URL)
+    assert factory.built == []
 
 
 def test_a_write_with_an_undecodable_answer_is_a_network_error() -> None:

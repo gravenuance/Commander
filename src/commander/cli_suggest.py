@@ -33,7 +33,7 @@ from commander.config import cache_dir, config_path, read_config
 from commander.deckcache import AnswerSource
 from commander.deckprofile import read_profile
 from commander.deckthemes import merge_themes
-from commander.net import Fetcher
+from commander.net import Fetcher, LazyClient
 from commander.spellbook import SpellbookClient, Variant
 from commander.suggest import CACHE_FOLDER as COMBOS_CACHE_FOLDER
 from commander.suggest import (
@@ -103,7 +103,7 @@ def _cmd_suggest(args: argparse.Namespace, ctx: Context) -> int:
     decks = [s.deck for s in stored]
     profiles = [read_profile(s.folder) for s in stored]
     with open_card_db(ctx) as db:
-        with ctx.client_factory() as http:
+        with LazyClient(ctx.client_factory) as http:
             combos = find_combos(
                 decks,
                 SpellbookClient(Fetcher(http)),

@@ -4,6 +4,7 @@ import logging
 import threading
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -11,7 +12,7 @@ import pytest
 from commander import syncrun
 from commander.board import BoardCard, Origin
 from commander.config import MetaSettings
-from commander.metadata import AdjacentDecks, MetaSources
+from commander.metadata import AdjacentDecks, MetaSources, start_tournament_refresh
 from commander.net import Fetcher, Pacer, WaitListener
 from commander.store import StoredDeck, Workspace
 from commander.syncrun import FetchState, SyncOptions, SyncOutcome, run_sync
@@ -315,3 +316,70 @@ def test_an_unexpected_error_in_topdecks_thread_is_reported_and_the_sync_still_e
 
     assert "TopDeck's tournament lists were not fetched: unexpected error" in outcome.warnings
     assert sum("a bug in the store" in warning for warning in outcome.warnings) == len(DECK_IDS)
+
+
+def test_topdeck_is_asked_before_the_pull_when_a_deck_on_disk_reads_tournament_lists_and_only_once(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = three_decks(tmp_path, raw_deck, card_db_file)
+    fake.decks[DECK_IDS[0]]["edhBracket"] = 5
+    workspace = Workspace(tmp_path / "decks")
+    # The first sync puts the decks on disk; the second sees them before it pulls.
+    run_sync(
+        services(tmp_path, fake),
+        workspace,
+        "TESTER",
+        MetaSettings(),
+        SyncOptions(cards=False, ideas=False),
+        on_progress=lambda _: None,
+    )
+    rig = Rig(tmp_path)
+    events: list[str] = []
+    shown: list[str] = []
+    shown_in_pull: list[str] = []
+    pull = syncrun.sync_decks
+
+    def pulling(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401 - passed on as it came
+        events.append("pull")
+        try:
+            return pull(*args, **kwargs)
+        finally:
+            events.append("pulled")
+            shown_in_pull.extend(shown)
+
+    def asking(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401 - passed on as it came
+        events.append("topdeck")
+        return start_tournament_refresh(*args, **kwargs)
+
+    def sources(*_: object, **__: object) -> MetaSources:
+        return rig.sources()
+
+    def no_pools(*_: object, **__: object) -> AdjacentDecks:
+        return AdjacentDecks((), ())
+
+    def merged(*_: object, **__: object) -> dict[Origin, list[BoardCard]]:
+        return {}
+
+    monkeypatch.setattr(syncrun, "sync_decks", pulling)
+    monkeypatch.setattr(syncrun, "start_tournament_refresh", asking)
+    monkeypatch.setattr(syncrun, "meta_sources", sources)
+    monkeypatch.setattr(syncrun, "gather_idea_pools", no_pools)
+    monkeypatch.setattr(syncrun, "compile_ideas", merged)
+    monkeypatch.setattr(syncrun, "rejudge_ideas", judge_nothing)
+    monkeypatch.setattr(syncrun, "relabel_legacy_ideas", judge_nothing)
+    outcome = run_sync(
+        services(tmp_path, fake),
+        workspace,
+        "TESTER",
+        MetaSettings(),
+        SyncOptions(cards=False),
+        on_progress=shown.append,
+    )
+
+    assert not outcome.warnings
+    # Asked once, and ahead of the pull, so its paced requests overlap the pull instead of following it.
+    assert events == ["topdeck", "pull", "pulled"]
+    spans = [(r["start"], r["end"]) for r in rig.topdeck.requests]
+    assert len(spans) == len(set(spans)) == 9
+    # The pull's own progress line is not taken over by TopDeck's.
+    assert not any(line.startswith("TopDeck") for line in shown_in_pull)

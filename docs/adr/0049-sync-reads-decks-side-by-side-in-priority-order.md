@@ -62,3 +62,18 @@ Option 3.
 - Two decks that need the same search still make it once (ADR 0027): the second reads the first's answer.
 - The order in which decks merge is no longer fixed by the order they started, only by which reads are done
   and the priority among those.
+
+## Amendment (2026-10-27): earlier starts, and nothing waits for what it does not need
+
+Three waits sat on the sync's critical path without needing to:
+
+- **TopDeck starts before the pull.** When a deck already on disk is at bracket 4 or 5, its single window
+  load starts as the sync does, on the one HTTP client that now lasts the whole sync, and the ideas phase
+  finds it under way or done. With no such deck on disk, or when estimated brackets turn up one, it starts
+  where it did, after the pull. The pull keeps the progress line until the ideas phase begins. A deck whose
+  bracket the pull lowers, or a pull that removes the last bracket 4 or 5 deck, still pays for the one load,
+  and the sync waits for it.
+- **The ideas do not wait for the previews probe** (ADR 0055), only for the card data they read. The probe
+  ends before the sync does, and its warning keeps its place before the ideas phase's.
+- **The cached deck reads are pruned as soon as every deck's reads are over**, on a thread of its own while
+  the last merges go on, and not after them; the merges never touch those files.

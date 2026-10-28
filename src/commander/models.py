@@ -10,6 +10,8 @@ ARCHIDEKT_DECK_URL = "https://archidekt.com/decks/{id}"
 DONT_HAVE_LABEL = "Don't Have"
 GETTING_LABEL = "Getting"
 TO_GET_LABELS = (DONT_HAVE_LABEL, GETTING_LABEL)
+# The cEDH bracket: the only one the tournaments cover.
+CEDH_BRACKET = 5
 
 
 @dataclass(slots=True, frozen=True)
