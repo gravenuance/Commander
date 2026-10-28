@@ -4,7 +4,6 @@
   --surface: #fbfaf7;
   --surface-2: #f1efea;
   --surface-3: #e5e2db;
-  --sunk: #e8e6df;
   --border: #dcd8cf;
   --border-strong: #8a8378;
   --text: #1b1a17;
@@ -84,6 +83,7 @@
   /* Sitka ships with Windows; the deck name is the only serif text. */
   --serif: "Sitka Display", "Sitka", Georgia, serif;
   --shadow: 0 1px 2px rgb(0 0 0 / 8%), 0 2px 8px rgb(0 0 0 / 6%);
+  --shadow-thumb: 0 1px 2px rgb(0 0 0 / 12%);
   --shadow-raised: -8px 0 32px rgb(0 0 0 / 12%);
   --fast: 120ms;
   --ease: 200ms cubic-bezier(.2, .7, .3, 1);
@@ -105,7 +105,6 @@
     --surface: #1c1b19;
     --surface-2: #252321;
     --surface-3: #312e2b;
-    --sunk: #181716;
     --border: #36332f;
     --border-strong: #8c857a;
     --text: #ece9e3;
@@ -140,6 +139,7 @@
     --signin-dim: rgb(0 0 0 / 55%);
     --signin-dim-solid: rgb(0 0 0 / 82%);
     --shadow: 0 1px 2px rgb(0 0 0 / 40%);
+    --shadow-thumb: 0 1px 2px rgb(0 0 0 / 45%);
     --shadow-raised: -8px 0 32px rgb(0 0 0 / 55%);
     --on-danger: #1a0d0a;
   }
@@ -327,7 +327,7 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 
 .deck { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .deck-head { display: grid; gap: var(--space-2); margin-bottom: var(--space-4); }
-.deck-short { margin: 0; font-size: var(--text-xl); line-height: 1.2; }
+.deck-short { margin: 0; font: 600 var(--text-display) / 1.1 var(--serif); letter-spacing: -0.01em; }
 .deck-sub { margin: 0; display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
 .deck-title { color: var(--muted); text-decoration: none; }
 .deck-title:hover { text-decoration: underline; }
@@ -486,8 +486,8 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   min-height: 0;
   overflow-y: auto;
   padding: var(--space-3);
-  background: var(--sunk);
-  border-radius: var(--radius) var(--radius) 0 0;
+  background: var(--surface);
+  border-radius: var(--radius-l) var(--radius-l) 0 0;
 }
 /* No top padding, so the first panel's box lines up with the grid pane's. */
 .side {
@@ -521,7 +521,25 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .stat dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
 .stat dd.changed { color: var(--queued); }
 .outside-badge { font-weight: 500; }
-.grid-tools .size[aria-pressed="true"] { background: var(--surface-2); font-weight: 700; }
+/* A pill track of options with the chosen one raised on a thumb. */
+.segmented { display: inline-flex; gap: 2px; padding: 3px; border-radius: var(--radius-pill); background: var(--surface-2); }
+.segmented button {
+  min-width: 28px;
+  min-height: 24px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--text-s);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--fast);
+}
+.segmented button:hover { color: var(--text); }
+.segmented button:focus-visible { outline-offset: -2px; }
+.segmented button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-thumb); }
 /* Cards overlap row on row like Archidekt's stacks, so each shows its title; hover lifts a card whole. */
 .stack {
   list-style: none;
@@ -925,7 +943,6 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border-left: 1px solid var(--border);
   background: var(--surface);
 }
 .activity.open {

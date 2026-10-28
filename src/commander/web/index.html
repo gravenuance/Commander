@@ -78,11 +78,13 @@
         <section class="grid-pane" aria-label="Deck cards">
           <div class="grid-head">
             <dl id="deck-stats" class="deck-stats" aria-label="Deck stats"></dl>
-            <div class="grid-tools" role="group" aria-label="Card size">
+            <div class="grid-tools">
               <span class="muted small">Card size</span>
-              <button class="button quiet small size" type="button" data-size="s" aria-pressed="false">S</button>
-              <button class="button quiet small size" type="button" data-size="m" aria-pressed="false">M</button>
-              <button class="button quiet small size" type="button" data-size="l" aria-pressed="false">L</button>
+              <div class="segmented" role="group" aria-label="Card size">
+                <button class="size" type="button" data-size="s" aria-pressed="false">S</button>
+                <button class="size" type="button" data-size="m" aria-pressed="false">M</button>
+                <button class="size" type="button" data-size="l" aria-pressed="false">L</button>
+              </div>
             </div>
           </div>
           <div id="grid" class="grid"></div>

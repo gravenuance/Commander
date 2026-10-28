@@ -2082,6 +2082,26 @@ def test_the_rail_tabs_are_pills_with_the_open_one_filled_in_the_accent() -> Non
     assert "writing-mode: vertical-rl" in css_rule(".activity:not(.open) .rail-toggle")
 
 
+def test_the_deck_name_alone_is_serif_and_the_card_sizes_are_one_pill_control_on_a_rounded_pane() -> None:
+    css = (resources.files("commander") / "web" / "app.css").read_text(encoding="utf-8")
+    name = css_rule(".deck-short")
+    assert "var(--text-display)" in name
+    assert "600" in name
+    assert css.count("var(--serif)") == 1
+    assert "var(--serif)" in name
+    pane = css_rule(".grid-pane")
+    assert "background: var(--surface)" in pane
+    assert "border-radius: var(--radius-l) var(--radius-l) 0 0" in pane
+    assert "border-left" not in css_rule(".activity")
+    assert "border" not in css_rule(".panel-toggle")
+    assert "background: var(--surface-2)" in css_rule(".segmented")
+    assert "border-radius: var(--radius-pill)" in css_rule(".segmented")
+    assert "box-shadow: var(--shadow-thumb)" in css_rule('.segmented button[aria-pressed="true"]')
+    opening = '<div class="segmented" role="group" aria-label="Card size">'
+    group = page_html().split(opening, 1)[1].split("</div>", 1)[0]
+    assert re.findall(r'data-size="(.)"', group) == ["s", "m", "l"]
+
+
 def test_a_considering_tiles_long_name_and_type_line_stay_inside_the_room_left_of_its_reject_button() -> None:
     # An auto column grows to the type line's unwrapped width (measured in Edge: 279px in a 217px body).
     assert "grid-template-columns: minmax(0, 1fr)" in css_rule(".card-body")
