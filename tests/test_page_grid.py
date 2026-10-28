@@ -64,7 +64,7 @@ def test_cards_added_removed_and_reordered_in_a_group_land_in_the_new_order() ->
         "birdsKept": True,
         "mapped": ["Ayula", "Birds", "Dryad", "Elk"],
         "cultivateGone": True,
-        "count": "(4)",
+        "count": "4",
     }
 
 
@@ -98,15 +98,41 @@ def test_a_changed_group_header_shows_the_new_count_and_price_and_keeps_its_card
     const ayula = state.gridCards.get("Ayula");
     const title = () => state.groups.get("Creature").node.querySelector(".group-title");
     renderGrid([group([gcard("Ayula"), gcard("Birds")], { count: 3, cents: 250 })]);
-    const text = title().textContent;
+    const count = title().querySelector(".count").textContent;
+    const price = title().querySelector(".group-price").textContent;
     await fire(title().querySelector(".group-toggle"), "click");
     const collapsed = state.groups.get("Creature").node.querySelector(".stack").hidden;
-    return { text, kept: state.gridCards.get("Ayula") === ayula, collapsed };
+    return { count, price, kept: state.gridCards.get("Ayula") === ayula, collapsed };
     """)
     assert seen["kept"] is True
     assert seen["collapsed"] is True
-    assert "(3)" in seen["text"]
-    assert "€2.50" in seen["text"]
+    assert seen["count"] == "3"
+    assert seen["price"] == "€2.50"
+
+
+def test_a_group_header_ends_in_the_price_and_a_chevron_knob_that_follows_its_expanded_state() -> None:
+    seen = run("""
+    renderGrid([group([gcard("Ayula")], { count: 1, cents: 250 })]);
+    const toggle = state.groups.get("Creature").node.querySelector(".group-toggle");
+    const end = toggle.querySelector(".end");
+    const knob = end.querySelector(".knob");
+    const before = toggle.getAttribute("aria-expanded");
+    await fire(toggle, "click");
+    return {
+      classes: toggle.className, endText: end.textContent, knobIsLast: end.childNodes.at(-1) === knob,
+      hasChevron: knob.querySelector("svg") !== null && knob.querySelector("path") !== null,
+      hidden: knob.getAttribute("aria-hidden"), before, after: toggle.getAttribute("aria-expanded"),
+    };
+    """)
+    assert seen == {
+        "classes": "group-toggle disclosure",
+        "endText": "€2.50",
+        "knobIsLast": True,
+        "hasChevron": True,
+        "hidden": "true",
+        "before": "true",
+        "after": "false",
+    }
 
 
 def test_a_grace_change_rebuilds_only_the_cards_that_show_it() -> None:

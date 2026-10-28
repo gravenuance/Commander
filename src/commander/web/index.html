@@ -78,11 +78,13 @@
         <section class="grid-pane" aria-label="Deck cards">
           <div class="grid-head">
             <dl id="deck-stats" class="deck-stats" aria-label="Deck stats"></dl>
-            <div class="grid-tools" role="group" aria-label="Card size">
+            <div class="grid-tools">
               <span class="muted small">Card size</span>
-              <button class="button quiet small size" type="button" data-size="s" aria-pressed="false">S</button>
-              <button class="button quiet small size" type="button" data-size="m" aria-pressed="false">M</button>
-              <button class="button quiet small size" type="button" data-size="l" aria-pressed="false">L</button>
+              <div class="segmented" role="group" aria-label="Card size">
+                <button class="size" type="button" data-size="s" aria-pressed="false">S</button>
+                <button class="size" type="button" data-size="m" aria-pressed="false">M</button>
+                <button class="size" type="button" data-size="l" aria-pressed="false">L</button>
+              </div>
             </div>
           </div>
           <div id="grid" class="grid"></div>
@@ -91,7 +93,7 @@
         <div class="side">
           <section class="panel" aria-labelledby="h-considering">
             <h2 class="panel-title">
-              <button id="h-considering" class="panel-toggle" type="button" aria-expanded="false" aria-controls="considering-body">
+              <button id="h-considering" class="panel-toggle disclosure" type="button" aria-expanded="false" aria-controls="considering-body">
                 Considering <span class="count" id="count-considering"></span>
               </button>
             </h2>
@@ -108,7 +110,7 @@
 
           <section id="uncut" class="panel" aria-labelledby="h-uncut" hidden>
             <h2 class="panel-title">
-              <button id="h-uncut" class="panel-toggle" type="button" aria-expanded="false" aria-controls="uncut-body">
+              <button id="h-uncut" class="panel-toggle disclosure" type="button" aria-expanded="false" aria-controls="uncut-body">
                 No cut yet <span class="count" id="count-uncut"></span>
               </button>
             </h2>
@@ -119,7 +121,7 @@
 
           <section id="previews" class="panel" aria-labelledby="h-previews" hidden>
             <h2 class="panel-title">
-              <button id="h-previews" class="panel-toggle" type="button" aria-expanded="false" aria-controls="previews-body">
+              <button id="h-previews" class="panel-toggle disclosure" type="button" aria-expanded="false" aria-controls="previews-body">
                 Previews <span class="count" id="count-previews"></span>
               </button>
             </h2>
@@ -130,7 +132,7 @@
 
           <section id="meta" class="panel" aria-labelledby="h-meta" hidden>
             <h2 class="panel-title">
-              <button id="h-meta" class="panel-toggle" type="button" aria-expanded="false" aria-controls="meta-panel">
+              <button id="h-meta" class="panel-toggle disclosure" type="button" aria-expanded="false" aria-controls="meta-panel">
                 Meta
               </button>
             </h2>

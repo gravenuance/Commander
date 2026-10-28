@@ -1,28 +1,30 @@
 :root {
   color-scheme: light dark;
-  --bg: #f6f5f2;
-  --surface: #ffffff;
-  --surface-2: #efede8;
-  --sunk: #ebe8e2;
-  --border: #d8d4cc;
+  --bg: #ecebe6;
+  --surface: #fbfaf7;
+  --surface-2: #f1efea;
+  --surface-3: #e5e2db;
+  --border: #dcd8cf;
   --border-strong: #8a8378;
-  --text: #1d1b18;
-  --muted: #5c574f;
-  --accent: #1f6f5c;
-  /* The accent a step brighter, for text under the pointer; 4.5:1 on --bg. */
-  --accent-hover: #237a64;
+  --text: #1b1a17;
+  --muted: #5f5a52;
+  --accent: #1c7560;
+  /* The accent a step stronger, for text under the pointer; 4.5:1 on every surface. */
+  --accent-hover: #17604e;
   --accent-text: #ffffff;
-  --accent-soft: #dcefe9;
-  --primary: #1f6f5c;
+  --accent-soft: #d5ece5;
+  /* Text on --accent-soft: 4.5:1 there and on the surfaces. */
+  --accent-ink: #11473a;
+  --primary: #1c7560;
   --on-primary: #ffffff;
-  --selected: #cfe7df;
+  --selected: #d9eee7;
   --target: #b3261e;
   --target-tint: rgb(179 38 30 / 30%);
   --danger: #a1301f;
   --danger-soft: #f7e1dc;
   --warn: #7a5300;
   --warn-soft: #fbefd2;
-  --queued: #1f6f5c;
+  --queued: #1c7560;
   --focus: #1a5fb4;
   --you: #6a3fa0;
   --claude: #b4531a;
@@ -58,8 +60,9 @@
   --pip-r-ink: #4a1a0e;
   --pip-g: #c3e2c8;
   --pip-g-ink: #12361a;
-  --radius: 8px;
-  --radius-s: 5px;
+  --radius: 12px;
+  --radius-l: 16px;
+  --radius-s: 8px;
   --radius-card: 6px;
   --radius-xs: 3px;
   --radius-pill: 999px;
@@ -68,6 +71,7 @@
   --space-3: 12px;
   --space-4: 16px;
   --space-5: 24px;
+  --space-6: 32px;
   --text-2xs: 0.6875rem;
   --text-xs: 0.75rem;
   --text-s: 0.8125rem;
@@ -75,9 +79,14 @@
   --text-m: 0.9375rem;
   --text-l: 1.25rem;
   --text-xl: 1.75rem;
+  --text-display: 2.25rem;
+  /* Sitka ships with Windows; the deck name is the only serif text. */
+  --serif: "Sitka Display", "Sitka", Georgia, serif;
   --shadow: 0 1px 2px rgb(0 0 0 / 8%), 0 2px 8px rgb(0 0 0 / 6%);
-  --shadow-raised: -4px 0 24px rgb(0 0 0 / 14%);
+  --shadow-thumb: 0 1px 2px rgb(0 0 0 / 12%);
+  --shadow-raised: -8px 0 32px rgb(0 0 0 / 12%);
   --fast: 120ms;
+  --ease: 200ms cubic-bezier(.2, .7, .3, 1);
   --nav-w: 220px;
   --icon-button: 28px;
   --art-width: 72px;
@@ -92,22 +101,23 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #161514;
-    --surface: #211f1d;
-    --surface-2: #2b2926;
-    --sunk: #1c1b19;
-    --border: #3d3a36;
+    --bg: #121110;
+    --surface: #1c1b19;
+    --surface-2: #252321;
+    --surface-3: #312e2b;
+    --border: #36332f;
     --border-strong: #8c857a;
     --text: #ece9e3;
     --muted: #b0aaa0;
     --accent: #5fc4a8;
     --accent-hover: #79d4ba;
     --accent-text: #0e1a17;
-    --accent-soft: #1d3a33;
+    --accent-soft: #1b3a32;
+    --accent-ink: #a6e6d3;
     /* The accent's hue, dark enough to carry the light text at 4.5:1. */
     --primary: #29705c;
     --on-primary: #faf9f6;
-    --selected: #2b4a42;
+    --selected: #274139;
     --target: #e5736a;
     --target-tint: rgb(58 29 29 / 73%);
     --danger: #f0907e;
@@ -129,7 +139,8 @@
     --signin-dim: rgb(0 0 0 / 55%);
     --signin-dim-solid: rgb(0 0 0 / 82%);
     --shadow: 0 1px 2px rgb(0 0 0 / 40%);
-    --shadow-raised: -4px 0 24px rgb(0 0 0 / 55%);
+    --shadow-thumb: 0 1px 2px rgb(0 0 0 / 45%);
+    --shadow-raised: -8px 0 32px rgb(0 0 0 / 55%);
     --on-danger: #1a0d0a;
   }
 }
@@ -316,7 +327,7 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 
 .deck { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .deck-head { display: grid; gap: var(--space-2); margin-bottom: var(--space-4); }
-.deck-short { margin: 0; font-size: var(--text-xl); line-height: 1.2; }
+.deck-short { margin: 0; font: 600 var(--text-display) / 1.1 var(--serif); letter-spacing: -0.01em; }
 .deck-sub { margin: 0; display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
 .deck-title { color: var(--muted); text-decoration: none; }
 .deck-title:hover { text-decoration: underline; }
@@ -419,15 +430,49 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .button.small { min-height: 28px; padding: var(--space-1) var(--space-3); font-size: var(--text-s); }
 .button.icon { padding: 0; width: var(--icon-button); min-height: var(--icon-button); font-size: 1.1rem; line-height: 1; }
 
-.chevron {
-  display: inline-block;
-  width: 0;
-  height: 0;
-  border-left: 5px solid currentcolor;
-  border-block: 4px solid transparent;
-  transition: transform var(--fast);
+/* One disclosure row for the card groups and the side panels: the title, a muted count, then the knob. */
+.disclosure {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 44px;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--fast);
 }
-[aria-expanded="true"] > .chevron { transform: rotate(90deg); }
+.disclosure:hover { background: var(--surface-3); }
+/* Rows sit in scrolling panes, where an outer ring would be clipped at their edges. */
+.disclosure:focus-visible { outline-offset: -2px; }
+.disclosure .count { color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
+.disclosure .end, .disclosure > .knob { margin-left: auto; }
+.disclosure .end {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--muted);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.knob {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  color: var(--text);
+}
+.knob svg { width: 14px; height: 14px; fill: none; stroke: currentcolor; stroke-width: 1.8; stroke-linecap: round; transition: transform var(--ease); }
+[aria-expanded="true"] > .knob svg, [aria-expanded="true"] > .end > .knob svg, details[open] > summary > .knob svg { transform: rotate(180deg); }
 
 /* Workspace: the grid beside the stacked side panels */
 .workspace {
@@ -441,8 +486,8 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   min-height: 0;
   overflow-y: auto;
   padding: var(--space-3);
-  background: var(--sunk);
-  border-radius: var(--radius) var(--radius) 0 0;
+  background: var(--surface);
+  border-radius: var(--radius-l) var(--radius-l) 0 0;
 }
 /* No top padding, so the first panel's box lines up with the grid pane's. */
 .side {
@@ -461,26 +506,11 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 }
 
 /* Deck grid */
-.grid { display: grid; gap: var(--space-4); }
-.group-title { margin: 0 0 var(--space-2); font-size: var(--text-s); }
-.group-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: 24px;
-  padding: 0 var(--space-1);
-  margin-left: calc(-1 * var(--space-1));
-  border: 0;
-  border-radius: var(--radius-s);
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-}
-.group-toggle:hover { background: var(--surface-2); }
-.group-toggle .count, .group-price { color: var(--muted); font-weight: 500; }
-.group-price::before { content: "· "; }
+.grid { display: grid; gap: var(--space-2); }
+.group-title { margin: 0 0 var(--space-2); font-size: var(--text-m); }
+/* An open group's row drops its tint, so the cards below read as part of it; the pointer still tints it. */
+.group-toggle[aria-expanded="true"] { background: transparent; }
+.group-toggle[aria-expanded="true"]:hover { background: var(--surface-2); }
 
 .grid-head { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2) var(--space-4); margin-bottom: var(--space-2); }
 .grid-tools { display: flex; align-items: center; gap: var(--space-1); justify-content: flex-end; margin-left: auto; }
@@ -491,7 +521,25 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .stat dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
 .stat dd.changed { color: var(--queued); }
 .outside-badge { font-weight: 500; }
-.grid-tools .size[aria-pressed="true"] { background: var(--surface-2); font-weight: 700; }
+/* A pill track of options with the chosen one raised on a thumb. */
+.segmented { display: inline-flex; gap: 2px; padding: 3px; border-radius: var(--radius-pill); background: var(--surface-2); }
+.segmented button {
+  min-width: 28px;
+  min-height: 24px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--text-s);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--fast);
+}
+.segmented button:hover { color: var(--text); }
+.segmented button:focus-visible { outline-offset: -2px; }
+.segmented button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-thumb); }
 /* Cards overlap row on row like Archidekt's stacks, so each shows its title; hover lifts a card whole. */
 .stack {
   list-style: none;
@@ -671,9 +719,15 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 }
 
 /* Side panels */
+.panel { border-radius: var(--radius); }
+/* Open, the title row and the body are one card. */
+.panel:has(.panel-toggle[aria-expanded="true"]) { background: var(--surface); }
 /* Flex, so the h2's larger font adds no line box around the toggle. */
 .panel-title { display: flex; margin: 0; }
-.panel-body { margin-top: var(--space-3); padding: 0 var(--space-5) var(--space-3); }
+/* The top padding matches the gap between the cards, so the first one sits as far below the title row. */
+.panel-body { padding: var(--space-3) var(--space-4) var(--space-4); }
+/* Open, ideas sit a step darker than the card they are in. */
+.panel-body .card { background: var(--surface-2); }
 .add-plain { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin-top: var(--space-2); }
 .add-plain select {
   min-height: 28px;
@@ -685,33 +739,15 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   font: inherit;
   font-size: var(--text-s);
 }
-/* A full-width box with a centred title; it lights up under the pointer as the grid's group toggles do. */
-.panel-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  width: 100%;
-  padding: var(--space-5) var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-s);
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-size: var(--text-l);
-  font-weight: 400;
-  line-height: 1.2;
-  text-transform: uppercase;
-  cursor: pointer;
-}
-.panel-toggle:hover { background: var(--surface-2); }
-.panel-toggle:focus-visible { outline-offset: -2px; }
-.panel-toggle .count { font-weight: 400; }
+/* The group row's look at the panel's scale; open, it takes the card's fill and the pointer tints it. */
+.panel-toggle { min-height: 52px; font-size: var(--text-m); line-height: 1.2; }
+.panel-toggle[aria-expanded="true"] { background: transparent; }
+.panel-toggle[aria-expanded="true"]:hover { background: var(--surface-2); }
 .meta-section > summary { list-style: none; }
 .meta-section > summary::-webkit-details-marker { display: none; }
-.meta-section > summary::before { content: "▸"; display: inline-block; width: 1em; margin-right: var(--space-1); }
-.meta-section[open] > summary::before { content: "▾"; }
 .meta-section > summary:hover { color: var(--accent-hover); }
+.meta-section > summary .knob { width: 24px; height: 24px; background: var(--surface-2); color: var(--text); }
+.meta-section > summary .knob svg { width: 12px; height: 12px; }
 .count { font-weight: 500; }
 .cards { display: grid; gap: var(--space-3); }
 .empty { margin: 0; color: var(--muted); font-size: var(--text-s); }
@@ -908,7 +944,6 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border-left: 1px solid var(--border);
   background: var(--surface);
 }
 .activity.open {
@@ -921,27 +956,41 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .rail-toggle {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  min-height: 40px;
-  padding: var(--space-3) var(--space-2);
-  border: 0;
+  justify-content: center;
+  min-height: 32px;
+  padding: 0 var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--muted);
   font: inherit;
   font-size: var(--text-s);
   font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   cursor: pointer;
+  transition: background var(--fast);
 }
-.rail-toggle:hover { background: var(--surface-2); }
+.rail-toggle:hover { background: var(--surface-2); color: var(--text); }
+.rail-toggle:focus-visible { outline-offset: -2px; }
 .activity[hidden] { display: none; }
-/* Folded, the tabs stand as vertical labels; open, they sit in a row with the open one marked. */
-.rail-tabs { display: flex; flex-direction: column; }
-.activity.open .rail-tabs { flex-direction: row; border-bottom: 1px solid var(--border); }
+/* Folded, the tabs are pills with vertical labels; open, they share a pill track and the open one is filled. */
+.rail-tabs { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3) 6px; }
+.activity.open .rail-tabs {
+  flex-direction: row;
+  gap: 2px;
+  align-self: flex-start;
+  margin: var(--space-4) var(--space-4) 0;
+  padding: 3px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+}
+.activity.open .rail-toggle:hover { background: var(--surface-3); }
 .activity:not(.open) .rail-toggle { writing-mode: vertical-rl; padding: var(--space-4) 0; }
-.activity.open .rail-toggle { padding-inline: var(--space-3); }
-.rail-toggle[aria-expanded="true"] { color: inherit; box-shadow: inset 0 -2px 0 var(--accent); }
+.rail-toggle[aria-expanded="true"],
+.activity.open .rail-toggle[aria-expanded="true"]:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
 .activity-list { flex: 1; overflow-y: auto; list-style: none; margin: 0; padding: var(--space-3) var(--space-4) var(--space-4); display: grid; gap: var(--space-3); align-content: start; }
 .activity-list li { font-size: var(--text-s); display: grid; gap: 2px; }
 .activity-list time { color: var(--muted); }
@@ -1024,7 +1073,7 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .meta-head .spacer { flex: 1; }
 .meta-body { display: grid; gap: var(--space-4); margin-top: var(--space-3); }
 .meta-section h3, .meta-section h4 { display: inline; margin: 0; font-size: var(--text-m); }
-.meta-section > summary { cursor: pointer; margin-bottom: var(--space-2); width: fit-content; }
+.meta-section > summary { display: flex; align-items: center; gap: var(--space-2); min-height: 28px; cursor: pointer; margin-bottom: var(--space-2); width: fit-content; }
 .meta-section:not([open]) > summary { margin-bottom: 0; }
 .meta-section > p { margin: var(--space-2) 0 0; }
 .meta-rows { display: grid; }

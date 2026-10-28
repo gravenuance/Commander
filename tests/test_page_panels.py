@@ -44,6 +44,22 @@ def test_two_loads_of_one_panel_for_the_same_deck_draw_the_newer_answer_last() -
     assert drawn == ["new"]
 
 
+def test_each_side_panel_title_ends_in_one_chevron_knob_that_follows_its_expanded_state() -> None:
+    seen = run("""
+    setupPanels();
+    const toggles = [...document.querySelectorAll(".panel-toggle")];
+    const before = $("h-considering").getAttribute("aria-expanded");
+    $("h-considering").click();
+    return { ids: toggles.map((t) => t.id), before, open: $("h-considering").getAttribute("aria-expanded"),
+      knobs: toggles.map((t) => t.querySelectorAll(".knob").length),
+      last: toggles.map((t) => t.childNodes.at(-1).className) };
+    """)
+    assert seen["ids"] == ["h-considering", "h-uncut", "h-previews", "h-meta"]
+    assert seen["knobs"] == [1, 1, 1, 1]
+    assert seen["last"] == ["knob"] * 4
+    assert (seen["before"], seen["open"]) == ("false", "true")
+
+
 def test_a_slow_older_bracket_estimate_does_not_replace_the_newer_one() -> None:
     seen = run("""
     let release;

@@ -1905,7 +1905,7 @@ def test_no_cut_yet_is_a_side_panel_between_considering_and_meta_not_a_fold() ->
     assert '<details id="uncut"' not in html
     panel = html.split('<section id="uncut" class="panel" aria-labelledby="h-uncut" hidden>', 1)[1]
     panel = panel.split("</section>", 1)[0]
-    toggle = 'id="h-uncut" class="panel-toggle" type="button" aria-expanded="false"'
+    toggle = 'id="h-uncut" class="panel-toggle disclosure" type="button" aria-expanded="false"'
     assert toggle + ' aria-controls="uncut-body"' in panel
     assert 'No cut yet <span class="count" id="count-uncut"></span>' in panel
     assert '<div id="uncut-body" class="panel-body" hidden>' in panel
@@ -2024,17 +2024,21 @@ def css_rule(selector: str) -> str:
     return next(body for name, body in rules.items() if selector in [s.strip() for s in name.split(",")])
 
 
-def test_panel_titles_are_full_width_boxes_without_a_marker_and_the_meta_sub_toggles_keep_theirs() -> None:
+def test_panel_titles_are_sentence_case_disclosure_rows_and_the_meta_sub_toggles_share_their_knob() -> None:
     toggle = css_rule(".panel-toggle")
-    assert "width: 100%" in toggle
-    assert "border: 1px solid var(--border)" in toggle
-    assert "justify-content: center" in toggle
-    assert "text-transform: uppercase" in toggle
-    # The grid's group toggles light up the same way under the pointer.
-    assert "background: var(--surface-2)" in css_rule(".panel-toggle:hover")
-    assert "background: var(--surface-2)" in css_rule(".group-toggle:hover")
+    assert "min-height: 52px" in toggle
+    assert "font-size: var(--text-m)" in toggle
+    assert "text-transform" not in toggle
+    assert "text-transform" not in css_rule(".disclosure")
+    # Open, the title row and the body are one card on the surface fill, and the pointer still tints the row.
+    assert "background: var(--surface)" in css_rule('.panel:has(.panel-toggle[aria-expanded="true"])')
+    assert "background: transparent" in css_rule('.panel-toggle[aria-expanded="true"]')
+    assert "background: var(--surface-2)" in css_rule('.panel-toggle[aria-expanded="true"]:hover')
     assert "color: var(--accent-hover)" in css_rule(".meta-section > summary:hover")
-    assert 'content: "▸"' in css_rule(".meta-section > summary::before")
+    assert "width: 24px" in css_rule(".meta-section > summary .knob")
+    assert "rotate(180deg)" in css_rule('[aria-expanded="true"] > .knob svg')
+    assert "rotate(180deg)" in css_rule("details[open] > summary > .knob svg")
+    assert "▸" not in (resources.files("commander") / "web" / "app.css").read_text(encoding="utf-8")
     html = page_html()
     assert 'class="disclosure"' not in html
     for toggle_id, body_id in [
@@ -2043,10 +2047,59 @@ def test_panel_titles_are_full_width_boxes_without_a_marker_and_the_meta_sub_tog
         ("h-meta", "meta-panel"),
     ]:
         assert (
-            f'id="{toggle_id}" class="panel-toggle" type="button" aria-expanded="false" '
+            f'id="{toggle_id}" class="panel-toggle disclosure" type="button" aria-expanded="false" '
             f'aria-controls="{body_id}"'
         ) in html
         assert f'<div id="{body_id}" class="panel-body" hidden>' in html
+
+
+def test_group_rows_are_full_width_tinted_rows_whose_knob_turns_over_when_the_group_is_open() -> None:
+    row = css_rule(".disclosure")
+    assert "width: 100%" in row
+    assert "background: var(--surface-2)" in row
+    assert "border-radius: var(--radius)" in row
+    assert "background: var(--surface-3)" in css_rule(".disclosure:hover")
+    assert "background: transparent" in css_rule('.group-toggle[aria-expanded="true"]')
+    assert "background: var(--surface-2)" in css_rule('.group-toggle[aria-expanded="true"]:hover')
+    knob = css_rule(".knob")
+    assert "width: 28px" in knob
+    assert "height: 28px" in knob
+    assert "background: var(--surface)" in knob
+    assert "rotate(180deg)" in css_rule('[aria-expanded="true"] > .knob svg')
+    assert "var(--ease)" in css_rule(".knob svg")
+
+
+def test_the_rail_tabs_are_pills_with_the_open_one_filled_in_the_accent() -> None:
+    tab = css_rule(".rail-toggle")
+    assert "border-radius: var(--radius-pill)" in tab
+    assert "text-transform" not in tab
+    assert "letter-spacing" not in tab
+    open_tab = css_rule('.rail-toggle[aria-expanded="true"]')
+    assert "background: var(--accent-soft)" in open_tab
+    assert "color: var(--accent-ink)" in open_tab
+    assert "box-shadow" not in open_tab
+    assert "background: var(--surface-2)" in css_rule(".activity.open .rail-tabs")
+    assert "writing-mode: vertical-rl" in css_rule(".activity:not(.open) .rail-toggle")
+
+
+def test_the_deck_name_alone_is_serif_and_the_card_sizes_are_one_pill_control_on_a_rounded_pane() -> None:
+    css = (resources.files("commander") / "web" / "app.css").read_text(encoding="utf-8")
+    name = css_rule(".deck-short")
+    assert "var(--text-display)" in name
+    assert "600" in name
+    assert css.count("var(--serif)") == 1
+    assert "var(--serif)" in name
+    pane = css_rule(".grid-pane")
+    assert "background: var(--surface)" in pane
+    assert "border-radius: var(--radius-l) var(--radius-l) 0 0" in pane
+    assert "border-left" not in css_rule(".activity")
+    assert "border" not in css_rule(".panel-toggle")
+    assert "background: var(--surface-2)" in css_rule(".segmented")
+    assert "border-radius: var(--radius-pill)" in css_rule(".segmented")
+    assert "box-shadow: var(--shadow-thumb)" in css_rule('.segmented button[aria-pressed="true"]')
+    opening = '<div class="segmented" role="group" aria-label="Card size">'
+    group = page_html().split(opening, 1)[1].split("</div>", 1)[0]
+    assert re.findall(r'data-size="(.)"', group) == ["s", "m", "l"]
 
 
 def test_a_considering_tiles_long_name_and_type_line_stay_inside_the_room_left_of_its_reject_button() -> None:

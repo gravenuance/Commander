@@ -223,6 +223,25 @@ def test_every_meta_section_and_category_starts_closed_even_with_an_old_stored_c
     assert seen["open"] == 0
 
 
+def test_every_meta_section_and_category_heading_is_followed_by_one_chevron_knob() -> None:
+    seen = run(
+        STOPPERS
+        + """
+    stub.meta = async () => STOPPING;
+    await metaPanel.load();
+    const summaries = [...$("meta-body").querySelectorAll("summary")];
+    return { count: summaries.length,
+      knobs: summaries.map((s) => s.querySelectorAll(".knob").length),
+      last: summaries.map((s) => s.childNodes.at(-1).className),
+      heading: summaries.map((s) => s.textContent).slice(0, 2) };
+    """
+    )
+    assert seen["count"] > 3
+    assert seen["knobs"] == [1] * seen["count"]
+    assert seen["last"] == ["knob"] * seen["count"]
+    assert seen["heading"] == ["Key cards", "What stops you"]
+
+
 def test_a_category_the_viewer_opens_stays_open_on_a_reload_and_for_other_decks_unstored() -> None:
     seen = run(
         STOPPERS

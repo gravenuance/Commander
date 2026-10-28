@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Changed
+- The deck page has a new look: warmer colours, card groups and side panels as rounded rows with a turning
+  chevron, pill tabs for Activity and Mana, a pill control for the card size, and the deck name in a serif face.
 - An idea's cut targets no longer offer the deck's combo pieces (below bracket 5 from the cached Spellbook
   estimate), its key cards or its grace cards (ADR 0017, ADR 0036).
 - A themed card of a surplus role is offered for an idea of another theme only when its theme is in surplus

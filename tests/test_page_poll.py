@@ -189,7 +189,7 @@ def test_a_changed_previews_stamp_reloads_the_open_deck_so_its_count_and_open_pa
         "same": {"deck": 0, "hidden": True},
         "deck": 1,
         "hidden": False,
-        "count": "(2)",
+        "count": "2",
         "tiles": 1,
         "stamp": "day2",
     }

@@ -288,6 +288,7 @@ class FakeDocument extends FakeElement {
   }
   get isConnected() { return true; }
   createElement(tag) { return new FakeElement(this, tag); }
+  createElementNS(_namespace, tag) { return new FakeElement(this, tag); }
   createTextNode(text) { return new FakeText(text); }
   getElementById(id) { return this.body.querySelector(`#${id}`); }
   querySelector(selector) { return this.body.querySelector(selector); }
