@@ -22,8 +22,8 @@ from commander.manabase import (
 )
 from commander.manaplan import LAND_TOLERANCE, deck_with_counts
 from commander.meta import MIN_PEER_LISTS, performing_entries
-from commander.metadata import CEDH_BRACKET, MetaData
-from commander.models import Deck
+from commander.metadata import MetaData
+from commander.models import CEDH_BRACKET, Deck
 
 log = logging.getLogger(__name__)
 

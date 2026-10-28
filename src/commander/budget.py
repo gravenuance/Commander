@@ -9,7 +9,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 from commander.carddb import ResolvedCard
-from commander.metadata import CEDH_BRACKET
+from commander.models import CEDH_BRACKET
 
 # Ideas may cost this much above the deck's dearest card, so a few options beyond the working budget remain.
 OVER_BUDGET_MARGIN = 1.25

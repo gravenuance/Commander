@@ -3,7 +3,6 @@
 import argparse
 from collections.abc import Callable
 
-from commander.app import launch
 from commander.clibase import EXIT_OK, Context
 
 
@@ -16,6 +15,9 @@ def add_app_command(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
 
 
 def _cmd_app(args: argparse.Namespace, ctx: Context) -> int:
+    # Loaded here: the window's modules are most of what a command line would otherwise import to start.
+    from commander.app import launch  # noqa: PLC0415
+
     launch(
         ctx.env,
         client_factory=ctx.client_factory,

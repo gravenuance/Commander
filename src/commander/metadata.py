@@ -72,7 +72,7 @@ from commander.jsonshape import (
     req_str,
     str_list,
 )
-from commander.models import Deck, short_commander_name
+from commander.models import CEDH_BRACKET, Deck, short_commander_name
 from commander.net import Fetcher, HttpStatusError, LazyClient, NetworkError, Pacer, WaitListener
 from commander.peerschedule import fresh_for as peer_fresh_for
 from commander.spellbook import FRESH_FOR as SPELLBOOK_FRESH_FOR
@@ -116,8 +116,6 @@ _COMMANDER_REQUEST_PAGES = 20
 _TAG_REQUEST_PAGES = 3
 # Meta answers of the retired EDHTop16 provider (ADR 0047), which no run reads again.
 _RETIRED_PREFIX = "edhtop16"
-# The cEDH bracket: the only one the tournaments cover.
-CEDH_BRACKET = 5
 # Decks at these brackets learn from the commander's tournament lists too: bracket 4 plays near cEDH.
 TOURNAMENT_BRACKETS = frozenset({4, CEDH_BRACKET})
 # What a source answers when the deck's bracket does not read it; a choice, not a failure to report.

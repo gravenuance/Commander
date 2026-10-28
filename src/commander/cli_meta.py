@@ -3,9 +3,7 @@ and which of the meta's cards answer its key cards."""
 
 import argparse
 from collections.abc import Callable, Sequence
-from typing import TextIO
-
-import httpx
+from typing import TYPE_CHECKING, TextIO
 
 from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
 from commander.bracket import cached_effective_deck, estimate_cache, estimated_decks
@@ -41,6 +39,9 @@ from commander.playstyle import Fit
 from commander.spellbook import SpellbookClient
 from commander.store import StoredDeck, Workspace
 from commander.topdeck import CREDIT, SITE_URL
+
+if TYPE_CHECKING:
+    import httpx
 
 META_CREDIT = (
     f"{CREDIT}, {SITE_URL}; also Archidekt (archidekt.com) and Commander Spellbook "
@@ -137,7 +138,7 @@ def _cmd_meta(args: argparse.Namespace, ctx: Context) -> int:
     return EXIT_FAILURE if unavailable else EXIT_OK
 
 
-def meta_sources(http: httpx.Client, ctx: Context, user: str, settings: MetaSettings) -> MetaSources:
+def meta_sources(http: "httpx.Client", ctx: Context, user: str, settings: MetaSettings) -> MetaSources:
     """TopDeck, Archidekt search and Spellbook clients over one HTTP client, each at its own pace."""
     return shared_meta_sources(http, ctx.pacer_factory, user, settings, cache_dir(ctx.env))
 

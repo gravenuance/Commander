@@ -86,7 +86,6 @@ from commander.manabase import ALTERNATIVE_COST_TAGS, analyse_mana, mana_json
 from commander.manaplan import BASIC_NAMES, LandOption, ManaPlan, plan_json, suggest_mana
 from commander.meta import analyse
 from commander.metadata import (
-    CEDH_BRACKET,
     NOT_READ,
     MetaData,
     MetaSources,
@@ -97,7 +96,7 @@ from commander.metadata import (
 )
 from commander.metajson import report_json
 from commander.metapanel import combo_groups, key_card_rows, stopper_rows, untouched
-from commander.models import Deck
+from commander.models import CEDH_BRACKET, Deck
 from commander.net import Fetcher, LazyClient, NetworkError, Pacer
 from commander.previews import PREVIEWS_FILE, PreviewFit, fitting_previews, local_day, read_previews
 from commander.profileedit import save_settings
