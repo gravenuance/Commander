@@ -2,6 +2,52 @@
 
 ## Unreleased
 
+### Changed
+- An idea's cut targets no longer offer the deck's combo pieces (below bracket 5 from the cached Spellbook
+  estimate), its key cards or its grace cards (ADR 0017, ADR 0036).
+- A themed card of a surplus role is offered for an idea of another theme only when its theme is in surplus
+  too. The deck's three biggest themes and the themes its profile names are never a surplus, and the
+  surplus bonus stops growing after three spare cards (ADR 0036).
+- A land idea that only makes mana now offers basics of its colours as the cut, not utility lands such as
+  Vesuva; basics are no longer exempt from land ideas (ADR 0041). No cut takes a role below the target the
+  deck's profile sets (ADR 0029), and the mana-base check covers spells with a land back (ADR 0030).
+- Old `suggest --to-board` ideas filed for a short role are turned down once the deck holds its target
+  (ADR 0028).
+- Upcoming-set previews that fit a deck equally are ordered by the tags they share with the deck and how
+  close their mana value is to its average, then by name (ADR 0055).
+- `apply` saves an added card as its cheapest printing and finish, as a foil when the foil is cheaper, and
+  the preview and `--json` show the finish (ADR 0004).
+- Archidekt searches and deck reads are 6 seconds apart instead of 6.5, and each 429 is logged at warning
+  (ADR 0048).
+
+### Faster
+- An Archidekt bracket search stops paging once the decks to read are settled, so a sync makes fewer
+  requests (ADR 0050). Decks that share a commander ask Commander Spellbook for its combos once.
+- `sync` starts loading TopDeck before it pulls the decks when a deck on disk is at bracket 4 or 5, compiles
+  the ideas without waiting for the previews check, and prunes old deck reads alongside the last merges; the
+  stored TopDeck events are read once per refresh instead of twice (ADR 0049).
+- The command line starts about a third faster (`cmdr --help` and `cmdr list`, 0.53 s to 0.38 s), and
+  `bracket`, `suggest` and the app's bracket and meta panels open no network connection when every answer is
+  cached.
+- Deck views and the Mana tab open faster, especially for decks with many ideas on the board.
+
+### Fixed
+- Glitch EUR prices (a Summer Magic Badlands at €0.02, a Secret Lair foil far under its nonfoil) are
+  dropped when the card database is built, so budgets, ideas and `apply` no longer treat such cards as nearly
+  free (ADR 0001). The next sync rebuilds the database. `price` prices a finish without a price at the same
+  printing's other finish before the card's cheapest printing.
+- Land tutors (Cultivate, Land Tax) no longer count as tutors, and removal that ramps the opponent (Path to
+  Exile, Settle the Wreckage) no longer counts as ramp (ADR 0020).
+- An extra-turn card counts only when you or a player you choose take the turn, so Ugin's Nexus, Eon
+  Frolicker, Emrakul, the Promised End, Perch Protection and Timesifter are no longer extra turns (ADR 0020).
+  Ideas and `apply` mark a second extra-turn card as lifting a deck to bracket 4 (ADR 0003).
+- Mana tab: Mind Stone, Commander's Sphere and similar rocks count as colour sources and Powerstone makers no
+  longer do; reminder text and spells with a land back no longer inflate cheap draw and ramp, and Nature's
+  Lore and Three Visits count as cheap ramp; bond lands count as untapped (ADR 0019).
+- Reprieve and Failure // Comply answer a spell rather than every permanent, and Horobi and Cowardice no
+  longer read as answers (ADR 0008).
+- Meta staples leave out fetch lands that find nothing in the deck's colours.
+
 ## 1.2.1 - 2026-10-24
 
 ### Removed
