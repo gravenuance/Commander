@@ -234,6 +234,10 @@ def test_a_profile_word_a_deck_tag_names_too_is_one_theme_under_the_deck_tag(db:
     rules = deck_cut_rules(deck, resolved(db, cards), profile, db, None, now=lambda: NOW)
     idea = db.cards_named(["Filler Card 21"])["filler card 21"]
     assert with_ideas(rules, [idea], db).themes[idea.oracle_id] == frozenset({"Reanimate"})
+    # The deck tag holds the profile's word, so it is the owner's identity and never a surplus.
+    assert rules.profile_themes == frozenset({"Reanimate"})
+    plain = deck_cut_rules(deck, resolved(db, cards), Profile(), db, None, now=lambda: NOW)
+    assert plain.profile_themes == frozenset()
 
 
 def test_the_pieces_of_a_combo_inside_the_deck_are_never_cut(db: CardDb) -> None:

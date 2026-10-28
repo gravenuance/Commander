@@ -114,3 +114,21 @@ of eleven. The protected set (`targets.deck_cut_rules`) is now:
 
 None of these is a computed cut for any idea. A cut picked by hand still can be one, and the desk rebuilds its
 cut rules when the deck's estimate file changes.
+
+The same review changed three rules of the surplus score (`targets._wider_cut`):
+
+- **A card of a surplus role keeps its theme protection.** "Judged by role surplus alone" meant to count the
+  bonus once, but it also dropped ADR 0016's rule that a theme card is cut only for an idea of the same
+  theme: Chatterfang's Fecundity (Aristocrats) was offered for 23 ideas, Edgar's Dusk Legion Duelist for 16. A
+  card that would empty a role of `SURPLUS_ROLES` and serves a theme the idea does not share now needs the
+  role surplus and the theme surplus; the larger of the two sets the bonus and the reason, so nothing counts
+  twice. A card whose themes the idea shares, or with none, still goes by role surplus alone.
+- **The deck's identity is no theme surplus.** A theme that holds a word of the profile's own themes
+  (`CutRules.profile_themes`; the deck tag Dinosaurs for the word "Dinosaur"), or is one of the deck's
+  `CORE_THEMES = 3` largest by cards held (leanings left out), is never a theme surplus: a Dinosaur deck
+  offered its Dinosaurs for ramp spells because it ran more than its peers. Whether a deck is unlike its peers
+  in what it is built on is no sign that it can spare it.
+- **The bonus stops at three cards.** `MAX_SURPLUS_CARDS = 3` caps the cards over the median that count
+  (`SURPLUS_BONUS * min(over, 3)`, also for spare lands), so a surplus never scores 0.10 or more and never
+  outranks a like-for-like cut on size alone; Bello's Life's Legacy led 16 of 30 ideas and Chatterfang's
+  Corrupted Conviction 34 of 52 at up to +0.27. The tie-break by the bigger surplus is not capped.

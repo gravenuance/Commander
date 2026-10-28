@@ -32,11 +32,27 @@ def rules(
     held: Mapping[str, frozenset[str]] | None = None,
     protected: Sequence[str] = (),
     leanings: Sequence[str] = (),
+    profile_themes: Sequence[str] = (),
     peers: bool = True,
 ) -> CutRules:
     counts = PeerCounts(roles or {}, themes or {}) if peers else None
     found = tuple(Leaning(tag, (), 0.0, 5) for tag in leanings)
-    return CutRules(frozenset(protected), shares, held or {}, found, peers=counts)
+    return CutRules(
+        frozenset(protected),
+        shares,
+        held or {},
+        found,
+        peers=counts,
+        profile_themes=frozenset(profile_themes),
+    )
+
+
+def with_core_themes(deck: list[ResolvedCard], held: dict[str, frozenset[str]]) -> list[ResolvedCard]:
+    """The deck and three bigger themes, which are the deck's core and never a surplus (their cards are
+    held under "Core A" to "Core C" in `held`)."""
+    core = [card(f"Core {theme} {n}") for theme in "ABC" for n in range(1, 8)]
+    held.update((r.card.name.casefold(), frozenset({r.card.name[:6]})) for r in core)
+    return [*deck, *core]
 
 
 def for_draw_idea(deck: list[ResolvedCard], cut_rules: CutRules) -> tuple[Target, ...]:
@@ -183,6 +199,17 @@ def test_a_surplus_cut_scoring_higher_than_a_like_for_like_one_comes_first_and_v
     assert names(like) == ["Old Draw", "Low Ramp", "High Ramp", "Third Ramp"]
 
 
+def test_the_surplus_bonus_stops_at_three_cards_over_so_it_never_outranks_like_for_like() -> None:
+    deck = [card("Old Draw", (Role.DRAW,)), *ramp(12)]
+    peers = {Role.RAMP: band(1.0, 6.0)}
+    # Ramp is 6 over its median: uncapped, 0.6 + 6 * 0.03 = 0.78 would beat Old Draw's 0.10 + 0.6 = 0.70;
+    # capped at three cards it is 0.6 + 3 * 0.03 = 0.69 and trails it.
+    shares = shares_of(deck, {"old draw": 0.30})
+    found = for_draw_idea(deck, rules(roles=peers, shares=shares))
+    assert names(found)[0] == "Old Draw"
+    assert found[1].reason.startswith("surplus ramp: 12 against a median of 6 in recent decks;")
+
+
 def test_equal_scores_go_to_the_bigger_surplus_then_the_less_popular_card_then_the_name(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -246,6 +273,7 @@ def test_the_decks_ramp_category_does_not_make_it_over_run() -> None:
 def test_a_card_of_another_theme_is_cut_only_for_an_idea_20_points_more_played() -> None:
     deck = [card("Human A"), card("Human B"), card("Human C")]
     held = {r.card.name.casefold(): frozenset({"Humans"}) for r in deck} | {"thalia": frozenset({"Stax"})}
+    deck = with_core_themes(deck, held)
 
     def offered(out_share: float) -> list[str]:
         shares = table({"thalia": 0.35, "human a": out_share, "human b": 0.9, "human c": 0.9})
@@ -261,11 +289,11 @@ def test_a_theme_surplus_cut_needs_two_cards_over_the_peers_median() -> None:
     def offered(humans: int, peer_count: float) -> bool:
         deck = [card(f"Human {n}") for n in "ABCDEF"[:humans]]
         held = {r.card.name.casefold(): frozenset({"Humans"}) for r in deck} | {"thalia": frozenset({"Stax"})}
-        return bool(
-            for_stax_idea(
-                deck, rules(themes={"Humans": peer_count}, shares=table({"thalia": 0.9}), held=held)
-            )
+        deck = with_core_themes(deck, held)
+        found = for_stax_idea(
+            deck, rules(themes={"Humans": peer_count}, shares=table({"thalia": 0.9}), held=held)
         )
+        return any(t.name.startswith("Human") for t in found)
 
     assert offered(5, 3.0)
     assert not offered(4, 3.0)
@@ -286,6 +314,7 @@ def test_every_theme_of_the_cut_card_must_run_two_over_its_median() -> None:
         "thalia": frozenset({"Stax"}),
     }
     deck = [card("Both"), card("Human A"), card("Human B"), card("Soldier A"), card("Soldier B")]
+    deck = with_core_themes(deck, held)
     shares = table(
         {"thalia": 0.9, "both": 0.0, "human a": 0.9, "human b": 0.9, "soldier a": 0.9, "soldier b": 0.9}
     )
@@ -310,6 +339,7 @@ def test_a_theme_surplus_cut_says_so_and_scores_by_how_far_over_the_median_the_d
     }
     held["thalia"] = frozenset({"Stax"})
     shares = table({"thalia": 0.5, **{r.card.name.casefold(): 0.2 for r in deck}})
+    deck = with_core_themes(deck, held)
     # Three Humans against a median of none, two Soldiers: 0.3 + 3 * 0.03 beats 0.3 + 2 * 0.03, though the
     # soldiers would lead alphabetically.
     found = for_stax_idea(deck, rules(themes={"Humans": 0.0, "Soldiers": 0.0}, shares=shares, held=held))
@@ -326,6 +356,7 @@ def test_a_leanings_cards_are_not_cut_as_a_theme_surplus() -> None:
         "thalia": frozenset({"Stax"})
     }
     shares = table({"thalia": 0.9})
+    deck = with_core_themes(deck, held)
     plain = rules(themes={"extra-combat": 0.0}, shares=shares, held=held)
     assert len(for_stax_idea(deck, plain)) == 3
     leaning = rules(themes={"extra-combat": 0.0}, shares=shares, held=held, leanings=["extra-combat"])
@@ -335,12 +366,17 @@ def test_a_leanings_cards_are_not_cut_as_a_theme_surplus() -> None:
 def test_a_leanings_cards_are_not_cut_as_a_role_surplus_either_unless_the_idea_serves_it() -> None:
     deck = ramp(3)
     held = {r.card.name.casefold(): frozenset({"extra-combat"}) for r in deck}
+    crowd = with_core_themes(deck, held)
 
     def offered(*leanings: str) -> int:
         cut_rules = rules(
-            roles={Role.RAMP: band(1.0, 1.0)}, shares=shares_of(deck), held=held, leanings=leanings
+            roles={Role.RAMP: band(1.0, 1.0)},
+            themes={"extra-combat": 0.0},
+            shares=shares_of(crowd),
+            held=held,
+            leanings=leanings,
         )
-        return len(for_draw_idea(deck, cut_rules))
+        return len([t for t in for_draw_idea(crowd, cut_rules) if t.name.startswith("Ramp")])
 
     assert offered() == 3
     assert offered("extra-combat") == 0
@@ -352,6 +388,7 @@ def test_a_leanings_cards_are_not_cut_as_a_role_surplus_either_unless_the_idea_s
 def test_a_card_carrying_a_surplus_role_is_never_judged_as_a_theme_cut() -> None:
     deck = [card("Human Ramp", (Role.RAMP,)), card("Human B"), card("Human C")]
     held = {r.card.name.casefold(): frozenset({"Humans"}) for r in deck} | {"thalia": frozenset({"Stax"})}
+    deck = with_core_themes(deck, held)
     # Humans run 3 against a median of 1, which would let the ramp card go, but ramp runs 1 against 5.
     found = for_stax_idea(
         deck,
@@ -365,21 +402,79 @@ def test_a_card_carrying_a_surplus_role_is_never_judged_as_a_theme_cut() -> None
     assert names(found) == ["Human B", "Human C"]
 
 
-def test_a_card_carrying_a_surplus_role_goes_by_the_role_whatever_its_theme_holds() -> None:
-    deck = [card(f"Human Ramp {n}", (Role.RAMP,)) for n in range(1, 4)]
-    held = {r.card.name.casefold(): frozenset({"Humans"}) for r in deck} | {"thalia": frozenset({"Stax"})}
-    # The deck runs 3 Humans against a median of 5, which would refuse a theme cut.
-    found = for_stax_idea(
-        deck,
-        rules(
-            roles={Role.RAMP: band(1.0, 1.0)},
-            themes={"Humans": 5.0},
-            shares=table({"thalia": 0.9}),
-            held=held,
-        ),
+def human_ramp_cut(
+    humans: float, *, ramp_median: float = 1.0, idea_themes: frozenset[str] = frozenset({"Stax"})
+) -> tuple[Target, ...]:
+    """Three Human ramp cards, a core of three bigger themes, and the cuts for a Stax idea."""
+    ramps = [card(f"Human Ramp {n}", (Role.RAMP,)) for n in range(1, 4)]
+    held = {r.card.name.casefold(): frozenset({"Humans"}) for r in ramps} | {"thalia": idea_themes}
+    deck = with_core_themes(ramps, held)
+    cut_rules = rules(
+        roles={Role.RAMP: band(1.0, ramp_median)},
+        themes={"Humans": humans},
+        shares=table({"thalia": 0.9}),
+        held=held,
     )
+    return tuple(t for t in for_stax_idea(deck, cut_rules) if t.name.startswith("Human Ramp"))
+
+
+def test_a_card_carrying_a_surplus_role_and_another_theme_needs_the_theme_surplus_too() -> None:
+    # Ramp runs 3 against a median of 1 and Humans 3 against 1: both gates pass.
+    assert len(human_ramp_cut(1.0)) == 3
+    # The deck runs 3 Humans against a median of 5, which refuses a theme cut whatever ramp holds.
+    assert human_ramp_cut(5.0) == ()
+    # Ramp short of two over its median refuses it though Humans run over.
+    assert human_ramp_cut(1.0, ramp_median=2.0) == ()
+
+
+def test_a_card_of_a_surplus_role_and_theme_scores_by_the_bigger_surplus_and_says_which() -> None:
+    by_role = human_ramp_cut(1.0)
+    assert by_role[0].reason.startswith("surplus ramp: 3 against a median of 1 in recent decks;")
+    # Humans are 3 over a median of none, ramp 2 over its median of 1.
+    by_theme = human_ramp_cut(0.0)
+    assert by_theme[0].reason.startswith(
+        "surplus theme (Humans): 3 against a median of 0 in recent decks; idea 90 points more played;"
+    )
+
+
+def test_a_card_carrying_a_surplus_role_goes_by_the_role_alone_for_an_idea_sharing_its_theme() -> None:
+    # The idea is a Human too, so the card is like it in theme and only the role gate is asked.
+    found = human_ramp_cut(5.0, idea_themes=frozenset({"Humans"}))
     assert len(found) == 3
     assert found[0].reason.startswith("surplus ramp: 3 against a median of 1 in recent decks;")
+
+
+def test_the_decks_three_biggest_themes_are_never_a_surplus() -> None:
+    sizes = {"Alpha": 6, "Beta": 5, "Gamma": 4, "Delta": 3}
+    deck = [card(f"{theme} {n}") for theme, size in sizes.items() for n in range(1, size + 1)]
+    held = {r.card.name.casefold(): frozenset({r.card.name.split()[0]}) for r in deck}
+    held["thalia"] = frozenset({"Stax"})
+    shares = table({"thalia": 0.9})
+    found = for_stax_idea(deck, rules(themes=dict.fromkeys(sizes, 0.0), shares=shares, held=held))
+    # Delta is the fourth, so its three cards may go; the others are the deck's core.
+    assert names(found) == ["Delta 1", "Delta 2", "Delta 3"]
+    # A tie for third place goes by name: Gamma (4) ties with Delta (4) and loses the place.
+    sizes_tied = {"Alpha": 6, "Beta": 5, "Delta": 4, "Gamma": 4}
+    deck = [card(f"{theme} {n}") for theme, size in sizes_tied.items() for n in range(1, size + 1)]
+    held = {r.card.name.casefold(): frozenset({r.card.name.split()[0]}) for r in deck}
+    held["thalia"] = frozenset({"Stax"})
+    found = for_stax_idea(deck, rules(themes=dict.fromkeys(sizes, 0.0), shares=shares, held=held))
+    assert names(found) == ["Gamma 1", "Gamma 2", "Gamma 3", "Gamma 4"]
+
+
+def test_a_theme_holding_a_profile_word_is_never_a_surplus() -> None:
+    humans = [card(f"Human {n}") for n in "ABCDE"]
+    held = {r.card.name.casefold(): frozenset({"Humans"}) for r in humans} | {"thalia": frozenset({"Stax"})}
+    deck = with_core_themes(humans, held)
+
+    def offered(*profile_themes: str) -> list[str]:
+        cut_rules = rules(
+            themes={"Humans": 3.0}, shares=table({"thalia": 0.9}), held=held, profile_themes=profile_themes
+        )
+        return [name for name in names(for_stax_idea(deck, cut_rules)) if name.startswith("Human")]
+
+    assert len(offered()) == 4
+    assert offered("Humans") == []
 
 
 def test_cards_unranked_on_edhrec_are_cut_last_among_equals() -> None:
@@ -417,6 +512,7 @@ def test_the_decks_kept_cards_are_never_cut_for_another_role_or_theme() -> None:
     humans = [card("Human A"), card("Human B")]
     held = {"human a": frozenset({"Humans"}), "human b": frozenset({"Humans"}), "thalia": frozenset({"Stax"})}
     shares = table({"thalia": 0.9})
+    humans = with_core_themes(humans, held)
     kept = rules(themes={"Humans": 0.0}, shares=shares, held=held, protected=["human a"])
     assert names(for_stax_idea(humans, kept)) == ["Human B"]
 
@@ -438,19 +534,18 @@ def test_a_card_of_a_role_the_idea_shares_but_of_another_theme_goes_by_theme_sur
     held = {r.card.name.casefold(): frozenset({"Humans"}) for r in deck} | {
         "mystic remora": frozenset({"Stax"})
     }
+    deck = with_core_themes(deck, held)
     found = for_draw_idea(deck, rules(themes={"Humans": 1.0}, shares=shares_of(deck), held=held))
     assert names(found) == ["Human B", "Human C", "Human Draw"]
     assert found[2].reason.startswith("surplus theme (Humans): 3 against a median of 1 in recent decks;")
 
 
 def test_scores_equal_up_to_float_noise_go_to_the_bigger_surplus() -> None:
-    # Old Draw: 0.10 + (0.95 - 0.0) and each ramp card: (0.95 - 0.05) + 5 * 0.03 are both 1.05, though the
-    # first computes as 1.05 and the second as 1.0499999999999998.
-    ramp_cards = ramp(6)
+    # Old Draw: 0.10 + (0.9 - 0.06) and each ramp card: (0.9 - 0.05) + 3 * 0.03 are both 0.94, though the
+    # first computes as 0.9400000000000001 and the second as 0.94.
+    ramp_cards = ramp(4)
     deck = [card("Old Draw", (Role.DRAW,)), *ramp_cards]
-    shares = shares_of(
-        deck, {"mystic remora": 0.95, "old draw": 0.0, **{r.card.name.casefold(): 0.05 for r in ramp_cards}}
-    )
+    shares = shares_of(deck, {"old draw": 0.06, **{r.card.name.casefold(): 0.05 for r in ramp_cards}})
     found = for_draw_idea(deck, rules(roles={Role.RAMP: band(1.0, 1.0)}, shares=shares))
     assert names(found) == ["Ramp 1", "Ramp 2", "Ramp 3", "Ramp 4"]
 

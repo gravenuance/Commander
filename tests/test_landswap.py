@@ -261,12 +261,13 @@ def test_a_spare_land_may_go_for_a_spell_and_only_the_basic_with_most_sources_to
 
 def test_a_land_target_scores_per_spare_land_against_the_other_candidates() -> None:
     # A barely played idea needs a cut at most half as played, which keeps Filler's score low enough for a
-    # basic to pass it: Filler 0.10 + 0.1 - 0.04 = 0.16. Plains with two spare lands: 0.06, with six: 0.18.
+    # basic to pass it: Filler 0.10 + 0.1 - 0.04 = 0.16. Plains with two spare lands: 0.06; with six it would
+    # be 0.18, but the bonus counts three cards at most: 0.09, still behind Filler.
     played = {"gadget": 0.1, "filler": 0.04}
     two = land_rules(guard(20, 19, 60), played)
     assert names(role_targets(GADGET_IDEA, deck_cards(), two)) == ["Filler", "Plains"]
     six = land_rules(guard(22, 21, 56), played)
-    assert names(role_targets(GADGET_IDEA, deck_cards(), six)) == ["Plains", "Filler"]
+    assert names(role_targets(GADGET_IDEA, deck_cards(), six)) == ["Filler", "Plains"]
 
 
 def test_a_single_spare_land_reads_in_the_singular_and_a_card_as_played_as_the_idea_is_no_target() -> None:
