@@ -258,11 +258,13 @@ def role_targets(
     Every candidate scores the idea's weighted share (ADR 0026) less its own, plus a bonus for what makes it
     allowed. Equal scores go to the bigger surplus, then the less popular card on EDHREC (the higher rank
     number first, unranked last), then the name. Commanders and protected oracle ids are never offered, nor
-    is a card within MIN_GAP of the idea's share (`_clearly_less_played`; a card no list plays counts as 0;
-    basic lands excepted), unless no list was read.
+    is a card within MIN_GAP of the idea's share (`_clearly_less_played`; a card no list plays counts as 0,
+    and a basic land always does), unless no list was read.
 
     - Like for like (+LIKE_FOR_LIKE_BONUS): a card of the idea's role (an idea with none matches cards with
-      none, a land only lands), and a card serving a theme or leaning only for an idea serving the same.
+      none, a land only lands), and a card serving a theme or leaning only for an idea serving the same. A
+      land idea takes the place of a basic land of a colour it makes, or of a land that only makes mana
+      unless the idea does more (`_fits_land`).
     - With the recent decks' counts read (`_wider_candidates`): a card of another role the deck holds more
       of than the peers' median, or of another theme it over-runs, scores SURPLUS_BONUS per extra card, up
       to MAX_SURPLUS_CARDS. A card of a surplus role and another theme needs both surpluses; the deck's
@@ -274,7 +276,9 @@ def role_targets(
     eligible = [
         r
         for r in main
-        if _eligible(r, info, rules.protected) and _clearly_less_played(info.name, r, rules.shares)
+        if _eligible(r, info, rules.protected)
+        and _fits_land(info, r, rules)
+        and _clearly_less_played(info.name, r, rules.shares)
     ]
     like = [
         _Candidate(
@@ -501,7 +505,7 @@ def _land_candidates(info: CardInfo, main: Sequence[ResolvedCard], rules: CutRul
         if not _cuttable(r, info, rules.protected) or cut is None or not cut.is_land:
             continue
         reason = _reason(r, (), frozenset(), rules, note)
-        if "Basic" in cut.front_type_line.split():
+        if _is_basic(r):
             sources = mana.spare_sources(r.card.name)
             if sources is not None:
                 order = (-float(spare), -sources, True, 0, r.card.name.casefold())
@@ -584,6 +588,18 @@ def _eligible(r: ResolvedCard, info: CardInfo, protected: Collection[str]) -> bo
     return _cuttable(r, info, protected) and r.info is not None and r.info.is_land == info.is_land
 
 
+def _fits_land(idea: CardInfo, r: ResolvedCard, rules: CutRules) -> bool:
+    """Whether a land idea may take the deck land's place (ADR 0036): a basic only when the idea makes one of
+    its colours, any other land only when it does nothing but make mana, unless the idea does more too. The
+    mana base's data is needed to tell; without it every land fits."""
+    mana = rules.mana
+    if not idea.is_land or mana is None:
+        return True
+    if _is_basic(r):
+        return mana.makes_colour_of(idea.name, r.card.name)
+    return not mana.mana_only(idea.name) or mana.mana_only(r.card.name)
+
+
 def _same_role(r: ResolvedCard, roles: Sequence[Role]) -> bool:
     if roles:
         return any(fills_role(r, role) for role in roles)
@@ -605,7 +621,7 @@ def _shared(r: ResolvedCard, own: frozenset[str], rules: CutRules) -> frozenset[
 
 def _less_played(idea: str, cut: ResolvedCard, shares: ShareTable | None) -> bool:
     """Whether the deck card is less played than the idea; without any shares, every card is."""
-    return not shares or _share(idea, shares) - _share(cut.card.name, shares) > _SHARE_NOISE
+    return not shares or _share(idea, shares) - _played(cut, shares) > _SHARE_NOISE
 
 
 def _clearly_less_played(idea: str, cut: ResolvedCard, shares: ShareTable | None) -> bool:
@@ -619,7 +635,17 @@ def _clearly_less_played(idea: str, cut: ResolvedCard, shares: ShareTable | None
 
 def _gap(idea: str, cut: ResolvedCard, shares: ShareTable | None) -> float:
     """How far the idea is more played than the deck card; 0 without any shares."""
-    return _share(idea, shares) - _share(cut.card.name, shares) if shares else 0.0
+    return _share(idea, shares) - _played(cut, shares) if shares else 0.0
+
+
+def _played(cut: ResolvedCard, shares: ShareTable) -> float:
+    """The deck card's share. A basic land counts as played by no list: nearly every list runs basics, so its
+    share says nothing about whether a land that does more should take its place."""
+    return 0.0 if _is_basic(cut) else _share(cut.card.name, shares)
+
+
+def _is_basic(r: ResolvedCard) -> bool:
+    return r.info is not None and "Basic" in r.info.front_type_line.split()
 
 
 def _share(name: str, shares: ShareTable) -> float:

@@ -11,7 +11,7 @@ import math
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 
-from commander.carddb import CardDb, CardMana
+from commander.carddb import COLORS, CardDb, CardMana
 from commander.manabase import (
     ALTERNATIVE_COST_TAGS,
     LandCount,
@@ -150,6 +150,16 @@ class ManaGuard:
         info = self.cards.get(land.casefold())
         made = [self.slack[colour] for colour in info.produced if colour in self.slack] if info else []
         return min(made) if made else None
+
+    def makes_colour_of(self, land: str, basic: str) -> bool:
+        """Whether the land makes a colour the basic land makes, or makes no coloured mana at all (Wastes,
+        Maze of Ith) and so takes any basic's place as well as another's; False when either's mana is
+        unknown."""
+        added, other = self.cards.get(land.casefold()), self.cards.get(basic.casefold())
+        if added is None or other is None:
+            return False
+        colours = {colour for colour in added.produced if colour in COLORS}
+        return not colours or bool(colours & set(other.produced))
 
     def mana_only(self, land: str) -> bool:
         """Whether the land does nothing but make mana (`mana_only_land`); False when its text is unknown."""

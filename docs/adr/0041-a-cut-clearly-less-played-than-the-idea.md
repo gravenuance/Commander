@@ -41,3 +41,15 @@ or less). A 30% idea needs cuts at 15% or less, a 10% idea cuts at 5% or less.
 - More ideas land in *No cut yet*, above all well-played ideas in decks whose weak cards are kept by the role
   and theme gates. That is the intent: no target is better than a weak one.
 - `MIN_GAP` joins the provisional numbers of ADR 0036, to retune from the owner's accept and reject choices.
+
+## Amendment (2026-10-28): basic lands are exempt for land ideas too
+
+The decision exempted basic lands, but the code did it only for the spare-land cuts of nonland ideas
+(`_land_candidates`). A land idea (a dual land for a deck of basics) met the gate like any other card: basics
+are played by 65 to 100% of lists, so none was ever clearly less played, and the idea was offered utility
+lands instead (Vesuva for 11 of Chatterfang's land ideas). A basic land now counts as played by no list
+(`targets._played`) wherever a gap is read, so a land idea may replace a basic land of a colour it makes, with
+the mana base's guard (ADR 0030) deciding as before. An idea that makes no coloured mana (Maze of Ith) may
+replace any basic. The score of such a cut is the like-for-like bonus plus the idea's whole share, so the
+basic leads the nonbasic lands, which is the usual upgrade. See ADR 0036's amendment for which nonbasic lands
+a land idea may replace.

@@ -132,3 +132,12 @@ The same review changed three rules of the surplus score (`targets._wider_cut`):
   (`SURPLUS_BONUS * min(over, 3)`, also for spare lands), so a surplus never scores 0.10 or more and never
   outranks a like-for-like cut on size alone; Bello's Life's Legacy led 16 of 30 ideas and Chatterfang's
   Corrupted Conviction 34 of 52 at up to +0.27. The tie-break by the bigger surplus is not capped.
+
+A land idea is held to "a utility land is never spare" as well (`targets._fits_land`). It had applied to
+nonland ideas only, so a dual land was offered Vesuva, Command Beacon, Urborg or Maze of Ith to replace: a land
+that does nothing but make mana (`ManaGuard.mana_only`) may be replaced only by a land idea of the same kind,
+and a utility land idea may replace any land. A basic land may be replaced by a land idea that makes one of its
+colours (`ManaGuard.makes_colour_of`), by one that makes no coloured mana for any basic; ADR 0041's amendment
+says how basics score. Without the mana base's data (no guard) every land fits, as before. Verges, Tainted
+lands and fetches count as utility lands here (see the consequence above), so the rule errs towards keeping
+lands.

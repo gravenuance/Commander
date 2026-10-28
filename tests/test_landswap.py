@@ -30,7 +30,16 @@ GUILDGATE = card(
     produced="WU",
 )
 GADGET = card("Gadget", "{2}", 2, "Artifact")
-CARDS = by_name(LEADER, PLAINS, ISLAND, FILLER, COUNTERSPELL, WASTES, GUILDGATE, GADGET)
+TEMPLE = card("Sunlit Temple", type_line="Land", text="{T}: Add {W}.", produced="W")
+VESUVA_CARD = card(
+    "Vesuva",
+    type_line="Land",
+    text="You may have Vesuva enter tapped as a copy of any land on the battlefield.",
+)
+MAZE = card("Maze of Ith", type_line="Land", text="{T}: Untap target attacking creature.")
+CARDS = by_name(
+    LEADER, PLAINS, ISLAND, FILLER, COUNTERSPELL, WASTES, GUILDGATE, GADGET, TEMPLE, VESUVA_CARD, MAZE
+)
 
 
 def guard(
@@ -274,6 +283,46 @@ def test_a_single_spare_land_reads_in_the_singular_and_a_card_as_played_as_the_i
     found = role_targets(GADGET_IDEA, deck_cards(), land_rules(guard(20, 18, 61), {"filler": 0.9}))
     assert names(found) == ["Plains"]
     assert found[0].reason.startswith("spare land: the mana base holds with 1 fewer land;")
+
+
+def land_deck() -> tuple[list[ResolvedCard], ManaGuard]:
+    """Plains, Islands, a guildgate and Vesuva: 39 lands."""
+    deck = [
+        *deck_cards(),
+        NONBASIC,
+        resolved("Vesuva", rank=4000, categories=("Land",), type_line="Land"),
+    ]
+    counts = (("Plains", 18), ("Island", 19), ("Azorius Guildgate", 1), ("Vesuva", 1), ("Filler", 60))
+    mana = ManaGuard.of(deck_of(*counts), CARDS)
+    return deck, mana
+
+
+PLAYED = {"plains": 0.97, "island": 0.95, "azorius guildgate": 0.2, "vesuva": 0.0}
+
+
+def test_a_land_idea_replaces_a_basic_of_its_colour_however_played_basics_are() -> None:
+    deck, mana = land_deck()
+    temple = info("Sunlit Temple", type_line="Land")
+    found = role_targets(temple, deck, land_rules(mana, PLAYED, "sunlit temple"))
+    # The Plains make the temple's white; the Island would lose blue. Basics count as played by no list, so
+    # the temple is 0.9 more played: 0.1 + 0.9 beats the guildgate's 0.1 + 0.7. Vesuva is a utility land.
+    assert names(found) == ["Plains", "Azorius Guildgate"]
+
+
+def test_a_land_idea_that_makes_no_colour_may_replace_any_basic() -> None:
+    deck, mana = land_deck()
+    maze = info("Maze of Ith", type_line="Land")
+    found = role_targets(maze, deck, land_rules(mana, PLAYED, "maze of ith"))
+    # The Island has blue to spare; the Plains would take white below what the commander needs.
+    assert set(names(found)) == {"Island", "Vesuva"}
+
+
+def test_a_mana_only_land_idea_never_replaces_a_utility_land_but_a_utility_land_may() -> None:
+    deck, mana = land_deck()
+    temple = info("Sunlit Temple", type_line="Land")
+    assert "Vesuva" not in names(role_targets(temple, deck, land_rules(mana, PLAYED, "sunlit temple")))
+    maze = info("Maze of Ith", type_line="Land")
+    assert "Vesuva" in names(role_targets(maze, deck, land_rules(mana, PLAYED, "maze of ith")))
 
 
 def test_a_nonbasic_land_less_played_than_the_idea_adds_its_gap_to_the_score() -> None:
