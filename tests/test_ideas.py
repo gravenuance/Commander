@@ -563,9 +563,10 @@ def seed(
     tag: str | None = None,
     pool: OriginPool | None = None,
     status: Status = Status.OPEN,
+    reason: str = "seeded",
 ) -> str:
     service = BoardService(folder, deck, db, now=lambda: NOW)
-    card = service.propose(name, source, reason="seeded", origin=origin, origin_tag=tag, origin_pool=pool)
+    card = service.propose(name, source, reason=reason, origin=origin, origin_tag=tag, origin_pool=pool)
     if status is Status.ADD:
         service.decide(card.id, Status.ADD, Actor.YOU, choice="Disruptor Flute")
     if status is Status.REJECTED:
@@ -657,6 +658,22 @@ def test_an_origin_less_card_of_the_old_pick_up_is_judged_and_one_of_cmdr_is_not
 
     assert card_state(tmp_path, old) == (Status.REJECTED, "no longer makes the cut")
     assert card_state(tmp_path, unknown)[0] is Status.OPEN
+
+
+def test_a_suggest_idea_for_a_short_role_is_turned_down_once_the_deck_holds_the_target(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    # The deck holds Mind Stone, its one ramp card: a target of one is met, a target of 99 is not.
+    met = seed(tmp_path, deck, db, "Jeska's Will", Actor.CMDR, reason="ramp is short: 0 of 1")
+    short = seed(tmp_path, deck, db, "Arcane Signet", Actor.CMDR, reason="ramp is short: 0 of 99")
+    other = seed(tmp_path, deck, db, "Chaos Warp", Actor.CMDR, reason="fits the deck's themes: #Tokens")
+    data = meta_data(same_weight_lists("Mind Stone", 10))
+
+    assert judge(tmp_path, deck, db, data) == ["Jeska's Will"]
+
+    assert card_state(tmp_path, met) == (Status.REJECTED, "no longer makes the cut")
+    assert card_state(tmp_path, short)[0] is Status.OPEN
+    assert card_state(tmp_path, other)[0] is Status.OPEN
 
 
 def test_a_card_the_user_reconsidered_is_not_turned_down_again_until_decided(

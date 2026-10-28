@@ -144,3 +144,13 @@ rest of this record stands.
   most 10 reads each, so "three pages per bracket, and reads a quarter of `peer_decks`" under *Tag search*
   and "up to two searches of three pages and 15 deck reads" under *Consequences* no longer hold. No setting
   raises the number of tags.
+
+## Amendment (2026-10-28): old `suggest --to-board` ideas are judged too
+
+An idea put on a board by `suggest --to-board` is by cmdr with no origin, and the re-judge left it alone
+whatever the deck had become: Pantlaza kept eleven ideas from 2026-10-15, filed for roles it has since filled.
+Its reason says what it claims ("ramp is short: 8 of 10"), so the sync now turns it down once the deck holds
+at least that many cards of the role, counted as the suggestions count them (tag or category;
+`_IdeaJudge.shortfall_met`). The "completes a combo" and "fits the deck's themes" reasons are not re-tested: the
+first needs the Spellbook combo list that only `suggest` reads and the sync never asks for, the second the
+theme reading the suggestion made.

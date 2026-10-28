@@ -17,6 +17,7 @@ replace. Every sync also re-judges the open ideas by cmdr or from the old Maybeb
 longer passes its source's test is turned down (`rejudge_ideas`).
 """
 
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
@@ -37,7 +38,7 @@ from commander.board import (
     read_board,
 )
 from commander.budget import resolved_budget
-from commander.carddb import CardDb
+from commander.carddb import CardDb, ResolvedCard, Role
 from commander.deckcache import Clock
 from commander.deckprofile import Profile, read_profile, resolve_themes
 from commander.meta import (
@@ -61,11 +62,13 @@ from commander.metadata import (
 from commander.models import Deck, short_commander_name
 from commander.playstyle import Fit
 from commander.store import StoredDeck
-from commander.suggest import IdeaFilter, name_keys_of
+from commander.suggest import IdeaFilter, name_keys_of, role_count
 from commander.themereading import read_deck_themes
 from commander.weightedshare import NO_SHARES, ShareTable, SourceShare, weighted_shares
 
 MAX_PER_SOURCE = 50
+# The reason `suggest --to-board` gives an idea for a role the deck holds too few of.
+_SHORT_ROLE = re.compile(r"(?:^|; )(?P<role>[a-z ]+) is short: \d+ of (?P<target>\d+)")
 # Why an idea that no longer passes the idea test is turned down on a sync (ADR 0028).
 NO_LONGER_MAKES_THE_CUT = "no longer makes the cut"
 # The reason of a reconsidered card that none of the lists read plays.
@@ -285,6 +288,20 @@ class _IdeaJudge:
     tag_keys: Mapping[str, frozenset[str] | None]
     # The casefolded theme tags the deck carries now; a tagged idea's tag that is not among them is gone.
     deck_tags: frozenset[str]
+    # How many deck cards fill a role now, as the suggestions count them; worked out when first asked.
+    held_roles: Callable[[Role], int]
+
+    def shortfall_met(self, card: BoardCard) -> bool:
+        """Whether a `suggest --to-board` idea filed for a short role ("ramp is short: 8 of 10") finds the
+        deck holding the role's target now. Any other reason is not a claim to test."""
+        found = _SHORT_ROLE.search(card.reason)
+        if found is None:
+            return False
+        try:
+            role = Role(found["role"])
+        except ValueError:
+            return False
+        return self.held_roles(role) >= int(found["target"])
 
     def source_gone(self, card: BoardCard) -> bool:
         """An alike idea with no profile commander group left, or a tagged one with the tag search off or
@@ -310,11 +327,20 @@ class _IdeaJudge:
                 return self.table.is_idea(card.name)
             case Origin.DECKS if self.data.peers.data is not None and self.table:
                 return self.table.is_idea(card.name)
-            case None if card.source is Actor.ARCHIDEKT and self.table:
-                return self.table.is_idea(card.name)
+            case None:
+                return self.old_pick_up_stands(card)
             case _:
                 return True
         return keys is None or card_key(card.name) in keys
+
+    def old_pick_up_stands(self, card: BoardCard) -> bool:
+        """A card with no origin: an old Maybeboard pick-up faces the idea test of the lists read, a
+        `suggest --to-board` idea the shortfall it was filed for."""
+        if card.source is Actor.CMDR:
+            return not self.shortfall_met(card)
+        if card.source is Actor.ARCHIDEKT and self.table:
+            return self.table.is_idea(card.name)
+        return True
 
 
 def rejudge_ideas(
@@ -338,12 +364,19 @@ def rejudge_ideas(
     profile no longer lists, and a tagged one while the profile's tag search is off, have lost their source:
     they face the commander's own test (`ShareTable.is_idea`) like a meta idea, a failing one is turned
     down and a passing one relabelled to the source that plays it more (`relabel_pooled_open`), nothing
-    without a list read. Cards by you or Claude, and queued, applied or turned-down ones, are never touched
+    without a list read. An old `suggest --to-board` idea (by cmdr, no origin) filed for a short role is
+    turned down once the deck holds the role's target. Cards by you or Claude, and queued, applied or
+    turned-down ones, are never touched
     (`turn_down_open` checks the card is still open), nor is one the user reopened until they decide it.
     share_table is `deck_shares` when the caller shares it with other steps.
     """
     profile = read_profile(stored.folder)
     table = share_table() if share_table else weighted_shares(data, now=now, grace=profile.grace_by_key())
+
+    @cache
+    def main() -> list[ResolvedCard]:
+        return db.resolve(stored.deck.main_cards)
+
     judge = _IdeaJudge(
         data,
         table,
@@ -351,6 +384,7 @@ def rejudge_ideas(
         None if adjacent is None else pool_staple_keys(adjacent),
         {pool.tag.casefold(): pool_staple_keys(pool.decks) for pool in tagged},
         frozenset(tag.casefold() for tag in search_tags(stored.deck, profile, db)),
+        lambda role: role_count(main(), role),
     )
 
     open_cards = [
