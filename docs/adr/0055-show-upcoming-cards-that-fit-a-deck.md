@@ -134,3 +134,14 @@ Consequences:
   big artifacts, and Arabella's small creatures.
 - The feeder table and the commander table are short, checked on 2026-10-22 against the card data; a new
   payoff tag with no line there keeps matching only its payoffs.
+
+## Amendment (2026-10-28): ties go by what a preview shares with the deck, not by its name
+
+Run on the owner's eleven decks, six previews of an alike fit stood tied with the sixth shown for Arabella (27),
+Chatterfang (20), Edgar (15), Pantlaza (11) and Vren (9), so the name decided which showed, and Magda got a
+Starfleet Communicator and Tea, Earl Grey, Hot for want of better. After the order above (features, the
+commander's want, a short role, colour) previews now rank by how many of the deck's nonland cards share each
+of their Tagger tags, each tag's count divided by the cards carrying it so a rare tag the deck plays outweighs
+a common one, then by the mana value nearest the deck's average (the whole order for a preview with no tag
+the deck's cards carry), and only then by name (`previews._like_the_deck`). It costs one tag lookup over the
+deck's cards and one over the live previews, inside the cached ranking, and only while a set is previewed.

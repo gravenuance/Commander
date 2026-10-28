@@ -4,11 +4,11 @@ import copy
 import json
 import logging
 import shutil
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -477,6 +477,51 @@ def test_tags_that_share_a_feature_count_it_once(deck: Deck, tokens_db: CardDb) 
     ]
 
 
+@pytest.fixture(scope="module")
+def shared_tag_db(tmp_path_factory: pytest.TempPathFactory) -> Iterator[CardDb]:
+    """The same with a made-up tag the deck's Golem and Dahar Master carry."""
+    tags = [TREASURE_TAG, ramp_with_munitions(), extra_tag_line("made-up-synergy", BATTERED_GOLEM, DAHAR)]
+    with CardDb(build_card_db(tmp_path_factory.mktemp("sharedtagdb"), tags)) as opened:
+        yield opened
+
+
+def test_previews_that_fit_alike_go_first_that_share_more_tags_with_the_decks_cards(
+    deck: Deck, db: CardDb, shared_tag_db: CardDb
+) -> None:
+    themed = themed_deck(deck, ("Treasure",))
+    profile = Profile(exclude_cards=("Quark, Humble Proprietor", "Munitions Enthusiast"))
+    # Captain's Tutelage and Dahar Master match the Treasure tag alone; Tutelage goes first by name.
+    assert [f.card.name for f in found_fits(themed, db, profile=profile)] == [
+        "Captain's Tutelage",
+        "Dahar Master",
+    ]
+    # Dahar Master shares a tag with the deck's Golem that Tutelage lacks.
+    assert [f.card.name for f in found_fits(themed, shared_tag_db, profile=profile)] == [
+        "Dahar Master",
+        "Captain's Tutelage",
+    ]
+
+
+def test_previews_with_nothing_shared_go_by_the_mana_value_nearest_the_decks_average(
+    deck: Deck, db: CardDb
+) -> None:
+    themed = themed_deck(deck, ("Treasure",))
+    profile = Profile(exclude_cards=("Quark, Humble Proprietor", "Munitions Enthusiast"))
+
+    def order(tutelage: float, dahar: float) -> list[str]:
+        cards = [
+            replace(card, mana_value=tutelage if card.name == "Captain's Tutelage" else dahar)
+            if card.name in {"Captain's Tutelage", "Dahar Master"}
+            else card
+            for card in parse_search_page(search_page()).cards
+        ]
+        return [f.card.name for f in found_fits(themed, db, profile=profile, cards=cards)]
+
+    # The deck's spells average well under 9 mana, so the nearer card leads whichever the name.
+    assert order(tutelage=2.0, dahar=9.0) == ["Captain's Tutelage", "Dahar Master"]
+    assert order(tutelage=9.0, dahar=2.0) == ["Dahar Master", "Captain's Tutelage"]
+
+
 def test_a_colourless_preview_comes_after_the_coloured_ones_that_fit_as_well(deck: Deck, db: CardDb) -> None:
     colourless = [
         replace(card, color_identity="") if card.name == "Captain's Tutelage" else card
@@ -853,14 +898,23 @@ def test_a_card_without_a_valid_scryfall_id_is_skipped_in_the_answer_and_the_cac
 
 
 def test_the_config_files_targets_decide_which_roles_run_short(
-    desk_settings: DeskSettings, raw_deck: Json
+    desk_settings: DeskSettings, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     write_previews(desk_settings.cache, PreviewCache(TODAY, parse_search_page(search_page()).cards))
+    wanted: list[Mapping[Role, int]] = []
+    ranked = desk_module.fitting_previews
+
+    def spy(*args: Any, **kwargs: Any) -> list[PreviewFit]:  # noqa: ANN401
+        wanted.append(kwargs["targets"])
+        return ranked(*args, **kwargs)
+
+    monkeypatch.setattr(desk_module, "fitting_previews", spy)
     desk = make_desk(replace(desk_settings, targets={Role.RAMP: 0}))
-    # With no ramp wanted, Munitions Enthusiast fills no short role and ranks by its name.
+    # With no ramp wanted, Munitions Enthusiast fills no short role; it ranks by what it shares with the deck.
     assert [c["name"] for c in cast("list[Json]", desk.previews(int(raw_deck["id"]))["cards"])] == [
         "Quark, Humble Proprietor",
         "Captain's Tutelage",
-        "Dahar Master",
         "Munitions Enthusiast",
+        "Dahar Master",
     ]
+    assert wanted[0][Role.RAMP] == 0

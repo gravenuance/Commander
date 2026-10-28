@@ -7,11 +7,13 @@ The probe keeps its cards in a small file of its own, beside the card database, 
 import json
 import logging
 import time
+from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from enum import Enum
 from pathlib import Path
+from statistics import fmean
 
 from commander.carddb import CardDb, ResolvedCard, Role, name_keys
 from commander.deckprofile import Profile
@@ -27,7 +29,7 @@ from commander.jsonshape import (
     req_str,
     str_list,
 )
-from commander.models import Deck
+from commander.models import COMMANDER_CATEGORY, Deck
 from commander.net import NetworkError, Pacer
 from commander.scryfall import ScryfallClient, ScryfallError, SetCard, SetInfo, is_scryfall_id
 from commander.suggest import deck_identity, name_keys_of, short_roles
@@ -191,8 +193,9 @@ def fitting_previews(
     """The previews in the deck's colour identity that match its dominant tags or that its commander wants:
     the most distinct features of the tags first (types, keywords, tags and feeding cards; tags that ask for
     one feature count it once, and the commander's want counts as one more), then those the commander wants,
-    then those filling a role the deck runs short of, then the coloured before the colourless, then by name;
-    at most SHOWN. today is the local day.
+    then those filling a role the deck runs short of, then the coloured before the colourless, then those
+    sharing more Tagger tags with the deck's cards and nearer its average mana value (`_like_the_deck`), then
+    by name; at most SHOWN. today is the local day.
     Like every suggestion, a card the profile excludes, by name or by its [exclude] types, keywords or tags,
     is never one, nor is a card the deck already has."""
     identity = deck_identity(main)
@@ -218,7 +221,8 @@ def fitting_previews(
     lineage = db.tag_lineage(ids)
     roles = db.roles(ids)
     short = short_roles(main, db, targets)
-    ranked: list[tuple[tuple[int, bool, bool, bool, str], PreviewFit]] = []
+    like = _like_the_deck(main, db, lineage)
+    ranked: list[tuple[tuple[int, bool, bool, bool, float, float, str], PreviewFit]] = []
     for card in live:
         facts = preview_facts(card, lineage.get(card.oracle_id, frozenset()))
         if named_traits(profile.exclude, facts):
@@ -234,10 +238,38 @@ def fitting_previews(
         # The commander's want counts one feature more, as a commander can want something as broad as every
         # artifact, and breaks a tie first.
         score = len(features) + commander
-        key = (-score, not commander, not fills, not card.color_identity, card.name.casefold())
+        affinity, distance = like(card)
+        colourless = not card.color_identity
+        key = (-score, not commander, not fills, colourless, -affinity, distance, card.name.casefold())
         ranked.append((key, PreviewFit(card, matched, fills, commander)))
     ranked.sort(key=lambda item: item[0])
     return [fit for _, fit in ranked[:SHOWN]]
+
+
+def _like_the_deck(
+    main: Sequence[ResolvedCard], db: CardDb, lineage: Mapping[str, frozenset[str]]
+) -> Callable[[SetCard], tuple[float, float]]:
+    """Breaks a tie between previews that fit the deck alike: how many of the deck's cards share each of the
+    preview's Tagger tags, each tag's count over all the cards carrying it so a rare tag the deck plays
+    outweighs a common one; then how near its mana value is to the deck's average. A preview with no tag
+    the deck's cards carry has none of the first and goes by the second."""
+    spells = [
+        r.info
+        for r in main
+        if r.info is not None and not r.info.is_land and COMMANDER_CATEGORY not in r.card.categories
+    ]
+    held = Counter(
+        slug for tags in db.tag_lineage(info.oracle_id for info in spells).values() for slug in tags
+    )
+    average = fmean(info.cmc for info in spells) if spells else 0.0
+    sizes = db.tag_sizes({slug for tags in lineage.values() for slug in tags} & held.keys())
+
+    def like(card: SetCard) -> tuple[float, float]:
+        tags = lineage.get(card.oracle_id, frozenset())
+        affinity = sum(held[slug] / sizes[slug] for slug in tags if slug in held and sizes.get(slug))
+        return round(affinity, 6), abs(card.mana_value - average)
+
+    return like
 
 
 def _cache_json(cache: PreviewCache) -> dict[str, object]:
