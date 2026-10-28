@@ -408,6 +408,17 @@ def test_lands_that_fetch_tapped_or_enter_tapped_on_a_count_are_tapped_or_someti
     assert report.tapped_lands == 1 + 4 * 0.25
 
 
+def test_a_bond_land_is_untapped_because_a_commander_game_has_several_opponents() -> None:
+    suite = card(
+        "Luxury Suite",
+        type_line="Land",
+        text="This land enters tapped unless you have two or more opponents.\n{T}: Add {B} or {R}.",
+        produced="BR",
+    )
+    report = analyse_mana(deck_of(("Luxury Suite", 4)), by_name(LEADER, suite))
+    assert report.tapped_lands == 0
+
+
 # Lands whose "enters tapped" line has no condition, with an "unless" or "if you control" on another line.
 ALWAYS_TAPPED = {
     "Gateway Plaza": [

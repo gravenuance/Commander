@@ -134,5 +134,9 @@ A review against the card data found the text rules misreading real cards. They 
   land a search finds (Nature's Lore, Three Visits), and rule out a search only when its own line sacrifices
   the card (Wayfarer's Bauble, Sakura-Tribe Elder), not a sacrifice elsewhere (Crop Rotation's cost).
 
+- **A bond land** (Morphic Pool, Spectator Seating and eight more: "enters tapped unless you have two or more
+  opponents") is untapped. Every Commander game has two or more opponents, so it is no longer counted as a
+  quarter of a tap-land.
+
 On the card data, 70 cards stop counting as cheap draw and 3 start, and 95 stop counting as cheap ramp and 26
 start.

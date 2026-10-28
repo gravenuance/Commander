@@ -69,6 +69,7 @@ _TAPPED = ("enters tapped", "enters the battlefield tapped", "onto the battlefie
 _SOMETIMES_TAPPED = ("unless", "if you control", "if you don't", "untap that land")
 # Check lands and reveal lands: untapped given a land of the basic types they name.
 _TYPED_CONDITION = ("unless you control a", "you may reveal a")
+_BOND = "unless you have two or more opponents"
 _TYPE_WORD = re.compile(r"\b(plains|island|swamp|mountain|forest)\b")
 # What a land that does nothing but make mana may say, a line at a time (see `mana_only_land`). A mana
 # ability: a tap cost and perhaps others (a life payment, a filter land's mana), then "Add", and a painland's
@@ -447,8 +448,8 @@ def tapped_share(text: str, lands: DeckLands) -> float:
     text = "\n".join(line for line in text.split("\n") if any(phrase in line for phrase in _TAPPED))
     if not text:
         return 0.0
-    # A shock land enters untapped whenever its owner pays the life.
-    if "you may pay" in text:
+    # A shock land enters untapped whenever its owner pays the life, a bond land in any Commander game.
+    if "you may pay" in text or _BOND in text:
         return 0.0
     if not any(phrase in text for phrase in _SOMETIMES_TAPPED):
         return 1.0
