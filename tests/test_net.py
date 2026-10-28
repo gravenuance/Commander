@@ -17,6 +17,8 @@ from commander.net import (
     Pacer,
     RateLimitedError,
     ResponseTooLargeError,
+    request_step,
+    requests_for,
     send_paced,
 )
 
@@ -443,11 +445,12 @@ class PacerRig:
         assert self._proceed.acquire(timeout=30)
         self.now += seconds
 
-    def request(self, deck: int | None, *, label: str | None = None) -> None:
+    def request(self, deck: int | None, *, label: str | None = None, step: str | None = None) -> None:
         name = deck if label is None else label
 
         def ask() -> None:
             fetching_deck.set(deck)
+            request_step.set(step)
             self.pacer.wait()
             self.granted.append((name, self.now))
 
@@ -579,6 +582,41 @@ def test_a_caller_interrupted_while_sleeping_for_its_slot_does_not_hold_up_the_n
     # Without the sleeper cleared, the third call would wait forever for a wake-up that never comes.
     assert not third.is_alive()
     assert outcomes == ["slept for its slot"]
+
+
+def test_pacer_tells_its_listener_the_step_of_each_request_as_the_slot_is_granted() -> None:
+    rig = PacerRig({1: 3, 2: 1, 3: 2})
+    sent: list[tuple[str, float]] = []
+    rig.pacer.on_grant(lambda step: sent.append((step, rig.now)))
+    rig.pacer.wait()
+    for deck in (1, 2, 3):
+        rig.request(deck, step=f"Deck {deck}: Ygra decks")
+    rig.until_a_requester_sleeps()
+    rig.until_waiting(3)
+    rig.wake_the_sleeper_and_wait_for(2)
+    rig.until_a_requester_sleeps()
+    rig.wake_the_sleeper_and_wait_for(3)
+    rig.until_a_requester_sleeps()
+    rig.wake_the_sleeper_and_wait_for(1)
+    # In the order the slots were granted, not the order they asked, each at the moment of its slot; the
+    # first caller named no step and is not announced.
+    assert sent == [("Deck 2: Ygra decks", 2.0), ("Deck 3: Ygra decks", 4.0), ("Deck 1: Ygra decks", 6.0)]
+
+
+def test_requests_for_names_the_step_inside_the_block_and_puts_back_the_one_outside() -> None:
+    assert request_step.get() is None
+    with requests_for("Magda: Ygra decks (alike)"):
+        assert request_step.get() == "Magda: Ygra decks (alike)"
+        with requests_for("Magda: Landfall decks (theme)"):
+            assert request_step.get() == "Magda: Landfall decks (theme)"
+        assert request_step.get() == "Magda: Ygra decks (alike)"
+    assert request_step.get() is None
+
+
+def test_requests_for_puts_the_step_back_after_an_error() -> None:
+    with pytest.raises(ValueError, match="boom"), requests_for("Magda: Ygra decks (alike)"):
+        raise ValueError("boom")
+    assert request_step.get() is None
 
 
 def test_pacer_refuses_a_negative_interval() -> None:

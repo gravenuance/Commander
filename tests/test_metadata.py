@@ -28,7 +28,7 @@ from commander.metadata import (
     window_start,
 )
 from commander.models import Deck, DeckCard
-from commander.net import HTTP_OK, Fetcher, Pacer
+from commander.net import HTTP_OK, Fetcher, Pacer, request_step
 from commander.spellbook import SpellbookClient
 from commander.topdeck import NO_KEY_MESSAGE, TopdeckClient
 from commander.topdeckstore import TournamentStore
@@ -134,6 +134,9 @@ class Rig:
         self.keys = MemoryKeyStore()
         self.settings = SETTINGS
 
+    def archidekt_fetcher(self) -> Fetcher:
+        return Fetcher(httpx.Client(transport=httpx.MockTransport(self.archidekt.handler)), max_attempts=1)
+
     def sources(self) -> MetaSources:
         return MetaSources(
             TopdeckClient(
@@ -142,10 +145,7 @@ class Rig:
                 TournamentStore(self.cache),
                 self.keys,
             ),
-            ArchidektSearch(
-                Fetcher(httpx.Client(transport=httpx.MockTransport(self.archidekt.handler)), max_attempts=1),
-                Pacer(0, sleep=self.sleeps.append),
-            ),
+            ArchidektSearch(self.archidekt_fetcher(), Pacer(0, sleep=self.sleeps.append)),
             SpellbookClient(Fetcher(self.spellbook.client(), max_attempts=1)),
             Pacer(0),
             "tester",
@@ -276,6 +276,28 @@ def test_the_adjacent_reads_report_each_step_started_and_done(rig: Rig) -> None:
     )
     assert started == ["Ellivere: Magda decks (alike)", "Ellivere: Stax decks (theme)"]
     assert finished == started
+
+
+def test_an_archidekt_request_is_sent_in_the_name_of_the_step_that_asked_for_it(rig: Rig) -> None:
+    sent: list[str] = []
+    pacer = Pacer(0)
+    pacer.on_grant(sent.append)
+    sources = replace(rig.sources(), archidekt=ArchidektSearch(rig.archidekt_fetcher(), pacer))
+    started: list[str] = []
+    gather_adjacent(
+        ellivere_deck(),
+        [(MAGDA,)],
+        sources,
+        rig.cache,
+        now=lambda: rig.now,
+        refresh=False,
+        tags=["Stax"],
+        on_progress=started.append,
+    )
+    assert started == ["Ellivere: Magda decks (alike)", "Ellivere: Stax decks (theme)"]
+    assert sent
+    assert set(sent) == set(started)
+    assert request_step.get() is None
 
 
 def test_a_step_names_the_deck_it_reads_for_not_only_the_commander_it_searches(rig: Rig) -> None:

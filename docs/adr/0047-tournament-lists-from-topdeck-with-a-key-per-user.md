@@ -134,3 +134,20 @@ commander left it unclear which deck was waiting. Its steps now start with the d
 decks (alike)", "Chatterfang: Landfall decks (theme)" and, for the deck's own commander, "Edgar: *commander*
 decks", in place of "Archidekt: recent Edgar decks" in the example above (ADR 0053). The TopDeck steps and the
 12-word budget are unchanged.
+
+## Amendment (2026-10-28): the step whose request went out leads the line
+
+Every deck's reads start a step at once, but their requests queue behind one `Pacer` for each service (ADR
+0049), so the first step in start order was often one that only waited its turn. A `Pacer` now tells an
+optional listener (`Pacer.on_grant`) the step of each call as it grants the call its slot. The step is the
+context variable `net.request_step`, which `metadata`'s steps set for the requests they make (`requests_for`,
+inherited by the threads a step starts) and TopDeck's fetch sets for its own. A sync passes
+`ActivePhases.sending` as `meta_sources(on_send=...)`, so the Archidekt, Spellbook and TopDeck pacers all
+report to it.
+
+`ActivePhases` puts the step that last had a request sent first on the line, the others after it in the order
+they started; so the twelve-word cut keeps it, and "+N more" counts the rest. The step stays first until
+another step's request goes out or it ends, at which point the others go back to the order they started in.
+Until a first request is sent, and for a step that never sends one (a read served from the cache), the line is
+as it was. A wait for a 429 that replaces the sending TopDeck step stays first. The pacer reports the grant,
+not the answer, so the line names the last request sent, not necessarily one still waiting for its reply.

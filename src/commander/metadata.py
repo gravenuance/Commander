@@ -73,7 +73,7 @@ from commander.jsonshape import (
     str_list,
 )
 from commander.models import Deck, short_commander_name
-from commander.net import Fetcher, HttpStatusError, NetworkError, Pacer, WaitListener
+from commander.net import Fetcher, HttpStatusError, NetworkError, Pacer, WaitListener, requests_for
 from commander.peerschedule import fresh_for as peer_fresh_for
 from commander.spellbook import FRESH_FOR as SPELLBOOK_FRESH_FOR
 from commander.spellbook import (
@@ -239,12 +239,16 @@ def topdeck_client(
     keys: KeyStore | None = None,
     *,
     waits: WaitListener | None = None,
+    on_send: Callable[[str], None] | None = None,
 ) -> TopdeckClient:
     """The TopDeck client over the cache folder's stored events, with the key from the secret store; `waits`
-    hears each wait for a 429."""
+    hears each wait for a 429 and `on_send` the step of each request as its slot is granted."""
+    pacer = pacer_factory(REQUEST_INTERVAL_SECONDS)
+    if on_send is not None:
+        pacer.on_grant(on_send)
     return TopdeckClient(
         Fetcher(http, slow_after=SLOW_QUERY_SECONDS),
-        pacer_factory(REQUEST_INTERVAL_SECONDS),
+        pacer,
         TournamentStore(cache_root),
         keys or KeyringKeyStore(),
         waits=waits,
@@ -261,21 +265,27 @@ def meta_sources(
     waits: WaitListener | None = None,
     rank: Callable[[int], int] | None = None,
     rank_changes: Callable[[Callable[[], None]], None] | None = None,
+    on_send: Callable[[str], None] | None = None,
 ) -> MetaSources:
     """TopDeck, Archidekt search and Spellbook clients over one HTTP client, each at its own pace.
 
     With `rank`, Archidekt's requests for several decks at once go out by the deck's rank, lowest first
-    (`Pacer.rank_by`); `rank_changes` is given the function to call whenever the ranking changes."""
+    (`Pacer.rank_by`); `rank_changes` is given the function to call whenever the ranking changes. `on_send`
+    hears the step (`net.requests_for`) of each request as any of the three pacers grants its slot."""
     archidekt_pacer = pacer_factory(SEARCH_INTERVAL_SECONDS)
+    spellbook_pacer = pacer_factory(META_REQUEST_INTERVAL_SECONDS)
+    if on_send is not None:
+        archidekt_pacer.on_grant(on_send)
+        spellbook_pacer.on_grant(on_send)
     if rank is not None:
         archidekt_pacer.rank_by(rank)
         if rank_changes is not None:
             rank_changes(archidekt_pacer.rank_changed)
     return MetaSources(
-        topdeck_client(http, pacer_factory, cache_root, waits=waits),
+        topdeck_client(http, pacer_factory, cache_root, waits=waits, on_send=on_send),
         ArchidektSearch(Fetcher(http), archidekt_pacer),
         SpellbookClient(Fetcher(http)),
-        pacer_factory(META_REQUEST_INTERVAL_SECONDS),
+        spellbook_pacer,
         user,
         settings,
     )
@@ -330,7 +340,8 @@ class _Steps:
         if self._on_progress is not None:
             self._on_progress(step)
         try:
-            yield
+            with requests_for(step):
+                yield
         finally:
             if self._on_done is not None:
                 self._on_done(step)
@@ -643,7 +654,8 @@ def start_tournament_refresh(
 
     def load() -> None:
         try:
-            sources.tournaments.load(since=since, until=until)
+            with requests_for(TOURNAMENTS_STEP):
+                sources.tournaments.load(since=since, until=until)
         finally:
             if on_done is not None:
                 on_done(TOURNAMENTS_STEP)
