@@ -724,7 +724,8 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .panel:has(.panel-toggle[aria-expanded="true"]) { background: var(--surface); }
 /* Flex, so the h2's larger font adds no line box around the toggle. */
 .panel-title { display: flex; margin: 0; }
-.panel-body { padding: 0 var(--space-4) var(--space-4); }
+/* The top padding matches the gap between the cards, so the first one sits as far below the title row. */
+.panel-body { padding: var(--space-3) var(--space-4) var(--space-4); }
 /* Open, ideas sit a step darker than the card they are in. */
 .panel-body .card { background: var(--surface-2); }
 .add-plain { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin-top: var(--space-2); }
