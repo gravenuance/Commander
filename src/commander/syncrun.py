@@ -213,8 +213,10 @@ def run_sync(
                 if meta is not None
                 else _IdeasPhase()
             )
-            # Still under way only when the card data was missing and no deck was read.
-            _settle_tournaments(meta)
+            # Still under way only when the card data was missing and no deck was read; the client closes with
+            # the sync, so the load ends first rather than being cut off.
+            if meta is not None and meta.tournaments is not None:
+                _wait_for(meta.tournaments)
             previews = _previews_probe(previews_job, probe_warnings)
             warnings[probe_at:probe_at] = probe_warnings
         except Exception:

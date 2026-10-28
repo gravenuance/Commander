@@ -5,6 +5,7 @@ import threading
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
+from types import TracebackType
 from typing import Any
 
 import httpx
@@ -12,6 +13,7 @@ import pytest
 
 from commander import syncrun
 from commander.board import BoardCard, Origin
+from commander.carddb import CARD_DB_FILE
 from commander.config import MetaSettings
 from commander.metadata import AdjacentDecks, MetaSources, start_tournament_refresh
 from commander.net import Fetcher, Pacer, WaitListener
@@ -430,3 +432,70 @@ def test_topdeck_is_asked_before_the_pull_when_a_deck_on_disk_reads_tournament_l
     assert len(spans) == len(set(spans)) == 9
     # The pull's own progress line is not taken over by TopDeck's.
     assert not any(line.startswith("TopDeck") for line in shown_in_pull)
+
+
+def test_with_no_card_data_the_sync_keeps_its_client_open_until_topdecks_early_load_ends(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = three_decks(tmp_path, raw_deck, card_db_file)
+    fake.decks[DECK_IDS[0]]["edhBracket"] = 5
+    workspace = Workspace(tmp_path / "decks")
+    run_sync(
+        services(tmp_path, fake),
+        workspace,
+        "TESTER",
+        MetaSettings(),
+        SyncOptions(cards=False, ideas=False),
+        on_progress=lambda _: None,
+    )
+    # The ideas cannot be compiled, while TopDeck's load, started before the pull, is still held.
+    (tmp_path / "cache" / CARD_DB_FILE).unlink()
+    gate = Gate(Rig(tmp_path))
+    closed = threading.Event()
+
+    class WatchedClient(httpx.Client):
+        def __exit__(
+            self,
+            kind: type[BaseException] | None = None,
+            error: BaseException | None = None,
+            trace: TracebackType | None = None,
+        ) -> None:
+            closed.set()
+            super().__exit__(kind, error, trace)
+
+    def held_sources(http: httpx.Client, *_: object, **__: object) -> MetaSources:
+        on_the_sync_client = TopdeckClient(
+            Fetcher(http, max_attempts=1), Pacer(0), TournamentStore(gate.rig.cache), gate.rig.keys
+        )
+        return replace(gate.rig.sources(), tournaments=on_the_sync_client)
+
+    def routed(request: httpx.Request) -> httpx.Response:
+        return gate.handler(request) if "topdeck" in request.url.host else fake.handler(request)
+
+    monkeypatch.setattr(syncrun, "meta_sources", held_sources)
+    # TopDeck's paced load takes minutes, well past the grace an error in the sync gives it.
+    monkeypatch.setattr(syncrun, "_TOPDECK_GRACE_SECONDS", 0.0)
+    synced = replace(
+        services(tmp_path, fake), client_factory=lambda: WatchedClient(transport=httpx.MockTransport(routed))
+    )
+    outcomes: list[SyncOutcome] = []
+
+    def sync() -> None:
+        options, settings = SyncOptions(cards=False), MetaSettings()
+        outcomes.append(run_sync(synced, workspace, "TESTER", settings, options, on_progress=lambda _: None))
+
+    worker = threading.Thread(target=sync, daemon=True)
+    worker.start()
+    try:
+        assert gate.asked.wait(WAIT_SECONDS)
+        # Had the sync gone on to close its client, it would have done so at once.
+        closed_while_held = closed.wait(1.0)
+    finally:
+        gate.open()
+        worker.join(WAIT_SECONDS)
+
+    assert not closed_while_held
+    [outcome] = outcomes
+    assert [w for w in outcome.warnings if not w.startswith("ideas not compiled")] == []
+    spans = [(r["start"], r["end"]) for r in gate.rig.topdeck.requests]
+    assert len(spans) == len(set(spans)) == 9
