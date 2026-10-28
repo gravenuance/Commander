@@ -73,7 +73,7 @@ from commander.jsonshape import (
     str_list,
 )
 from commander.models import Deck, short_commander_name
-from commander.net import Fetcher, HttpStatusError, NetworkError, Pacer, WaitListener
+from commander.net import Fetcher, HttpStatusError, LazyClient, NetworkError, Pacer, WaitListener
 from commander.peerschedule import fresh_for as peer_fresh_for
 from commander.spellbook import FRESH_FOR as SPELLBOOK_FRESH_FOR
 from commander.spellbook import (
@@ -234,7 +234,7 @@ class MetaSources:
 
 
 def topdeck_client(
-    http: "httpx.Client",
+    http: "httpx.Client | LazyClient",
     pacer_factory: Callable[[float], Pacer],
     cache_root: Path,
     keys: KeyStore | None = None,
@@ -253,7 +253,7 @@ def topdeck_client(
 
 
 def meta_sources(
-    http: "httpx.Client",
+    http: "httpx.Client | LazyClient",
     pacer_factory: Callable[[float], Pacer],
     user: str,
     settings: MetaSettings,

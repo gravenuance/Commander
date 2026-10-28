@@ -98,7 +98,7 @@ from commander.metadata import (
 from commander.metajson import report_json
 from commander.metapanel import combo_groups, key_card_rows, stopper_rows, untouched
 from commander.models import Deck
-from commander.net import Fetcher, NetworkError, Pacer
+from commander.net import Fetcher, LazyClient, NetworkError, Pacer
 from commander.previews import PREVIEWS_FILE, PreviewFit, fitting_previews, local_day, read_previews
 from commander.profileedit import save_settings
 from commander.spellbook import SpellbookClient
@@ -1018,7 +1018,7 @@ class Desk:
         stored = self._stored(deck_id)
         ceiling = read_profile(stored.folder).bracket_ceiling
         cache = estimate_cache(self._settings.cache / SPELLBOOK_CACHE_FOLDER)
-        with self._client_factory() as http:
+        with LazyClient(self._client_factory) as http:
             result = estimate_deck(
                 stored.deck, SpellbookClient(Fetcher(http)), cache, now=self._now, refresh=False
             )
@@ -1306,7 +1306,7 @@ class Desk:
 
     def _gather(self, deck: Deck) -> MetaData:
         """Cached meta answers only: fetching belongs to the sync. The deck is the effective one."""
-        with self._client_factory() as http:
+        with LazyClient(self._client_factory) as http:
             return gather_for(
                 deck,
                 self._meta_sources(http),
@@ -1316,7 +1316,7 @@ class Desk:
                 offline=True,
             )
 
-    def _meta_sources(self, http: "httpx.Client") -> MetaSources:
+    def _meta_sources(self, http: "httpx.Client | LazyClient") -> MetaSources:
         return meta_sources(
             http, self._pacer_factory, self._settings.user or "", self._settings.meta, self._settings.cache
         )
