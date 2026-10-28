@@ -11,7 +11,7 @@ import threading
 from collections.abc import Callable, Collection, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from functools import wraps
 from pathlib import Path
@@ -49,6 +49,7 @@ from commander.board import (
 from commander.boardsave import BoardSave, preview_board, save_board
 from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
 from commander.bracket import (
+    EstimateResult,
     cached_effective_deck,
     cached_estimate,
     cached_floor,
@@ -63,7 +64,7 @@ from commander.carddb import CardDataError, CardDb, CardInfo, CardText, Resolved
 from commander.changetext import change_mark, change_text
 from commander.config import ConfigError, MetaSettings, forget_account, switch_account, validate_user
 from commander.credentials import CredentialError, KeyringKeyStore, KeyStore, TokenStore, check_api_key
-from commander.deckcache import NOT_FETCHED
+from commander.deckcache import NOT_FETCHED, AnswerSource, DeckCache
 from commander.deckexport import cardmarket_wants_text, topdeck_text
 from commander.deckgrid import image_url
 from commander.decklocks import DeckLocks
@@ -101,7 +102,7 @@ from commander.models import CEDH_BRACKET, Deck
 from commander.net import Fetcher, LazyClient, NetworkError, Pacer
 from commander.previews import PREVIEWS_FILE, PreviewFit, fitting_previews, local_day, read_previews
 from commander.profileedit import save_settings
-from commander.spellbook import SpellbookClient
+from commander.spellbook import FRESH_FOR, BracketEstimate, SpellbookClient
 from commander.store import SNAPSHOT_FILE, StoredDeck, Workspace, WorkspaceError
 from commander.suggest import DEFAULT_TARGETS, deck_identity
 from commander.sync import PullWatch, SyncStatus
@@ -316,6 +317,9 @@ class Desk:
         self._previews: dict[int, tuple[str, list[PreviewFit]]] = {}
         # Per deck: the mana tab's view and plan, and the stamp of what they were worked out from.
         self._manas: dict[int, tuple[str, Json, ManaPlan | None]] = {}
+        # Per deck: the bracket panel's answer from the cache, the stamp of what it was made from and when
+        # the estimate it read was fetched, since a week after that Spellbook is asked again.
+        self._brackets: dict[int, tuple[str, datetime, Json]] = {}
         self._sync_lock = threading.Lock()
         self._sync = _SyncState()
         # The page errors already logged, as (message, source, line), under their own lock.
@@ -472,6 +476,7 @@ class Desk:
         self._reports.clear()
         self._previews.clear()
         self._manas.clear()
+        self._brackets.clear()
         with self._sync_lock:
             self._open_deck = None
 
@@ -613,6 +618,7 @@ class Desk:
         self._rules.pop(deck_id, None)
         self._reports.pop(deck_id, None)
         self._manas.pop(deck_id, None)
+        self._brackets.pop(deck_id, None)
         with self._sync_lock:
             if self._open_deck == deck_id:
                 self._open_deck = None
@@ -1041,14 +1047,37 @@ class Desk:
         """Spellbook's estimate beside the set bracket and the ceiling, and what lifts it (ADR 0021).
 
         An answer under a week old comes from the cache; otherwise Spellbook is asked, which takes seconds.
+        The page asks again after every board change and save, so an answer made from the cache is kept
+        until its stamp changes or its estimate turns a week old; one that went to Spellbook is not.
         """
         stored = self._stored(deck_id)
-        ceiling = read_profile(stored.folder).bracket_ceiling
         cache = estimate_cache(self._settings.cache / SPELLBOOK_CACHE_FOLDER)
+        stamp = self._bracket_stamp(stored, cache)
+        known = self._brackets.get(stored.deck.id)
+        if known is not None and known[0] == stamp and timedelta(0) <= self._now() - known[1] < FRESH_FOR:
+            return known[2]
+        ceiling = read_profile(stored.folder).bracket_ceiling
         with LazyClient(self._client_factory) as http:
             result = estimate_deck(
                 stored.deck, SpellbookClient(Fetcher(http)), cache, now=self._now, refresh=False
             )
+        answer = self._bracket_answer(stored.deck, ceiling, result)
+        if result.source is AnswerSource.CACHED and result.fetched_at is not None:
+            self._brackets[stored.deck.id] = (stamp, result.fetched_at, answer)
+        return answer
+
+    def _bracket_stamp(self, stored: StoredDeck, cache: DeckCache[BracketEstimate]) -> str:
+        """Changes whenever what the bracket panel is made of does: the deck's snapshot (its bracket and the
+        cards the estimate is asked for), its profile (the ceiling), the deck's cached estimate or the day.
+        Not the card data or the board, which the panel does not read."""
+        estimates = cache.file(stored.deck.id)
+        return (
+            f"{files_stamp(stored.folder, (SNAPSHOT_FILE, PROFILE_FILE))}"
+            f"|{files_stamp(estimates.parent, (estimates.name,))}|{self._now().date()}"
+        )
+
+    @staticmethod
+    def _bracket_answer(deck: Deck, ceiling: int | None, result: EstimateResult) -> Json:
         estimate = result.data
         return {
             "estimate": {"tag": estimate.tag.label, "brackets": estimate.tag.brackets} if estimate else None,
@@ -1056,8 +1085,8 @@ class Desk:
             # Not "error": the page takes that key for a failed call, and the ceiling is still checked.
             "unavailable": result.error,
             # What the panels act on, so the page can tell its deck view is out of date.
-            "effectiveBracket": effective_bracket(stored.deck, estimate),
-            **check_json(check_bracket(stored.deck.bracket, ceiling, estimate)),
+            "effectiveBracket": effective_bracket(deck, estimate),
+            **check_json(check_bracket(deck.bracket, ceiling, estimate)),
         }
 
     @_guarded

@@ -67,3 +67,13 @@ the notes and causes behind it when something disagrees, and an amber badge on e
   need reading again and the mirror updating.
 - The app makes a Spellbook request the first time it opens a deck with no cached answer under a week old.
   That is one request per deck and week, within Spellbook's terms (ADR 0002).
+
+## Amended 2026-10-28
+
+The app's `bracket` call keeps its answer in memory per deck when it was made from the cache, so the page's
+repeat asks after every board change and save no longer read the estimate file and work it out again. The
+answer is kept until the stamp of what it is made of changes: the deck's `deck.json` (its bracket and cards),
+its `profile.toml` (the ceiling), the deck's `spellbook/<id>.json` and the day. It does not read the card data
+or the board, so those are not in the stamp. An answer that went to Spellbook is not kept, and a kept one is
+dropped once its estimate is a week old, even within the day, so a call that would have asked Spellbook still
+does. Signing in to another account clears it, and the sync's removal of a deck forgets it.

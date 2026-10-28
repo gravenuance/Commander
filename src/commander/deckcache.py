@@ -128,7 +128,7 @@ class DeckCache[T]:
         return self._folder, item
 
     def load(self, item: int | str, key: str) -> CachedAnswer[T] | None:
-        path = self._path(item)
+        path = self.file(item)
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except FileNotFoundError:
@@ -157,17 +157,18 @@ class DeckCache[T]:
             "fetchedAt": fetched_at.isoformat(),
             "answer": self._encode(data),
         }
-        write_text_atomic(self._path(item), json.dumps(document, ensure_ascii=False, indent=1) + "\n")
+        write_text_atomic(self.file(item), json.dumps(document, ensure_ascii=False, indent=1) + "\n")
 
     def touch(self, item: int | str, at: datetime) -> None:
         """Set the entry's file time to `at`, which is when it was last used."""
         stamp = at.timestamp()
         try:
-            os.utime(self._path(item), (stamp, stamp))
+            os.utime(self.file(item), (stamp, stamp))
         except OSError as error:
             log.warning("could not mark the cached %s %s as used: %s", self.what, _label(item), error)
 
-    def _path(self, item: int | str) -> Path:
+    def file(self, item: int | str) -> Path:
+        """Where the item's answer is kept, for a stamp of the file."""
         if isinstance(item, str) and not _SAFE_ITEM.fullmatch(item):
             raise ValueError(f"cache item {item!r} is not a safe file name")
         return self._folder / f"{item}.json"
