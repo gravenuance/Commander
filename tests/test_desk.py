@@ -42,6 +42,7 @@ from commander.ideas import compile_ideas
 from commander.metadata import CACHE_FOLDER, gather_for, meta_sources
 from commander.net import Pacer
 from commander.scryfall import CardRefresh
+from commander.spellbook import BracketEstimate, BracketTag
 from commander.store import StoredDeck, Workspace
 from commander.syncrun import CardState, CardStatus, FetchState, SyncOutcome
 from commander.topdeck import NO_KEY_MESSAGE
@@ -298,6 +299,37 @@ def test_the_cut_rules_are_kept_between_views_until_the_card_data_is_replaced(
 
     desk.deck(DECK)
     assert calls["deck_cut_rules"] == 1
+
+
+def test_the_cut_rules_get_the_decks_cached_estimate_and_are_rebuilt_when_it_changes(
+    desk: Desk, settings: DeskSettings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    estimate = BracketEstimate(BracketTag.RUTHLESS, ())
+    given: list[BracketEstimate | None] = []
+    rules_for = desk_module.deck_cut_rules
+
+    def spy(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        given.append(kwargs.get("estimate"))
+        return rules_for(*args, **kwargs)
+
+    def cached(*_args: Any, **_kwargs: Any) -> BracketEstimate:  # noqa: ANN401
+        return estimate
+
+    monkeypatch.setattr(desk_module, "deck_cut_rules", spy)
+    monkeypatch.setattr(desk_module, "cached_estimate", cached)
+    desk.propose(DECK, "Lightning Bolt")
+    desk.deck(DECK)
+    assert given == [estimate]
+
+    desk.deck(DECK)
+    assert len(given) == 1
+
+    # A sync that estimates the deck again leaves its file behind.
+    folder = settings.cache / "spellbook"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"{DECK}.json").write_text("{}", encoding="utf-8")
+    desk.deck(DECK)
+    assert len(given) == 2
 
 
 def test_a_deck_with_a_damaged_board_lists_with_an_error_and_the_others_still_load(

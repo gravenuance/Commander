@@ -17,7 +17,7 @@ from commander.leanings import Leaning, find_leanings
 from commander.metadata import MetaData, PeerList, PeerLists
 from commander.models import Deck, DeckCard
 from commander.peercounts import RoleBand
-from commander.spellbook import ComboDetail, ComboPiece
+from commander.spellbook import BracketEstimate, BracketTag, Combo, ComboDetail, ComboPiece, TwoCard
 from commander.targets import CutRules, deck_cut_rules, role_targets, with_ideas
 from conftest import ANCIENT_TOMB, build_card_db
 
@@ -191,9 +191,9 @@ def test_the_decks_grace_cards_weight_the_shares_that_order_its_cut_targets(db: 
     # Least played first: 50 at 1/4 goes before 51 at 1/2.
     assert cuts(Profile()) == ["Filler Card 50", "Filler Card 51"]
     # Grace x6 on Filler Card 50 weighs the deck playing it 6, 1, 1, 1 (scaled 8/3, 4/9, 4/9, 4/9 of
-    # four): 50 is 2/3, 51 is 2/9 and the idea all of them, so now 51 is the less played.
+    # four): 50 is 2/3, 51 is 2/9 and the idea all of them. A grace card is never a computed cut.
     graced = Profile(grace={"Filler Card 50": 6.0})
-    assert cuts(graced) == ["Filler Card 51", "Filler Card 50"]
+    assert cuts(graced) == ["Filler Card 51"]
     shares = rules_for(graced).shares
     assert shares is not None
     fractions = shares.fractions()
@@ -267,6 +267,36 @@ def test_a_deck_without_spellbooks_combo_answer_logs_that_its_combo_pieces_are_n
     with caplog.at_level(logging.INFO, logger="commander.targets"):
         deck_cut_rules(deck, main, Profile(), db, data, now=lambda: NOW)
     assert not [r for r in caplog.records if "combo" in r.getMessage()]
+
+
+def test_the_pieces_of_a_combo_in_the_cached_estimate_are_never_cut_when_spellbooks_own_answer_is_missing(
+    db: CardDb,
+) -> None:
+    cards = deck_cards(50, 51)
+    deck = Deck(1, "test", "me", 3, "2026-10-16", tuple(cards))
+    main = resolved(db, cards)
+    names = ("filler card 50", "Elsewhere")
+    combo = Combo("1-2", BracketTag.RUTHLESS, names, (), TwoCard.YES, 4, frozenset())
+    estimate = BracketEstimate(BracketTag.RUTHLESS, (combo,))
+    rules = deck_cut_rules(deck, main, Profile(), db, pool(), now=lambda: NOW, estimate=estimate)
+    protected = rules.protected
+    by_name = {r.card.name: r.info.oracle_id for r in main if r.info}
+    assert set(protected) == {by_name["Filler Card 50"]}
+
+
+def test_a_grace_card_and_a_card_the_owner_files_under_the_plan_are_never_cut(db: CardDb) -> None:
+    cards = [*deck_cards(50, 51, 52), deck_card("Filler Card 53", "Combo Pieces")]
+    deck = Deck(1, "test", "me", 3, "2026-10-16", tuple(cards))
+    main = resolved(db, cards)
+    profile = Profile(grace={"filler card 51": 6.0})
+    protected = deck_cut_rules(deck, main, profile, db, pool(), now=lambda: NOW).protected
+    by_name = {r.card.name: r.info.oracle_id for r in main if r.info}
+    assert set(protected) == {by_name["Filler Card 51"], by_name["Filler Card 53"]}
+    # The profile can drop a key card by name.
+    ignored = Profile(grace=profile.grace, ignore_keys=("Filler Card 53",))
+    assert set(deck_cut_rules(deck, main, ignored, db, pool(), now=lambda: NOW).protected) == {
+        by_name["Filler Card 51"]
+    }
 
 
 def test_below_bracket_5_the_cuts_rank_by_the_share_of_recent_decks_weighted_by_age(db: CardDb) -> None:

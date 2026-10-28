@@ -166,11 +166,17 @@ def cached_effective_deck(deck: Deck, cache: DeckCache[BracketEstimate], *, now:
     Spellbook, and the next sync brings the answer up to date."""
     if deck.bracket is not None:
         return deck
+    return with_effective_bracket(deck, cached_estimate(deck, cache, now=now))
+
+
+def cached_estimate(deck: Deck, cache: DeckCache[BracketEstimate], *, now: Clock) -> BracketEstimate | None:
+    """The deck's estimate from the cache alone, whatever bracket is set and however old its answer; None
+    when nothing is cached for the deck as it is."""
     try:
         request = deck_request(deck)
     except SpellbookError:
-        return deck
-    answer = cached_answer(
+        return None
+    return cached_answer(
         deck.id,
         request,
         _not_fetched,
@@ -179,8 +185,7 @@ def cached_effective_deck(deck: Deck, cache: DeckCache[BracketEstimate], *, now:
         refresh=False,
         fresh_for=FRESH_FOR,
         errors=(NotFetchedError,),
-    )
-    return with_effective_bracket(deck, answer.data)
+    ).data
 
 
 def cached_floor(deck: Deck, cache: DeckCache[BracketEstimate], *, now: Clock) -> int | None:

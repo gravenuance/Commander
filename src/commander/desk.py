@@ -50,6 +50,7 @@ from commander.boardsave import BoardSave, preview_board, save_board
 from commander.bracket import CACHE_FOLDER as SPELLBOOK_CACHE_FOLDER
 from commander.bracket import (
     cached_effective_deck,
+    cached_estimate,
     cached_floor,
     effective_bracket,
     estimate_cache,
@@ -1287,15 +1288,19 @@ class Desk:
     ) -> CutRules:
         """The deck's cut rules, kept until its snapshot, its profile, the cached meta answers or the card
         data change; the mana guard in them remembers its answers for as long."""
+        estimates = self._settings.cache / SPELLBOOK_CACHE_FOLDER
         stamp = (
             f"{files_stamp(stored.folder, ('deck.json', 'profile.toml'))}"
             f"|{cache_stamp(self._settings.cache)}|{self._card_data_stamp()}|{self._now().date()}"
-            f"|{self._effective(stored.deck).bracket}"
+            f"|{self._effective(stored.deck).bracket}|{files_stamp(estimates, (f'{stored.deck.id}.json',))}"
         )
         known = self._rules.get(stored.deck.id)
         if known is not None and known[0] == stamp:
             return known[1]
-        rules = deck_cut_rules(stored.deck, main, profile, db, self._pool(stored.deck), now=self._now)
+        estimate = cached_estimate(stored.deck, estimate_cache(estimates), now=self._now)
+        rules = deck_cut_rules(
+            stored.deck, main, profile, db, self._pool(stored.deck), now=self._now, estimate=estimate
+        )
         self._rules[stored.deck.id] = (stamp, rules)
         return rules
 

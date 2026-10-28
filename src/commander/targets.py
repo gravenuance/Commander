@@ -13,11 +13,13 @@ from commander.carddb import CardDb, CardInfo, ResolvedCard, Role, Theme
 from commander.deckcache import Clock
 from commander.deckprofile import PROFILE_THEME, Profile, ThemeSpec
 from commander.deckthemes import merge_themes
+from commander.keycards import key_cards
 from commander.landswap import ManaGuard, mana_guard
 from commander.leanings import Leaning, find_leanings
 from commander.metadata import MetaData
 from commander.models import COMMANDER_CATEGORY, Deck
 from commander.peercounts import PeerCounts, peer_counts
+from commander.spellbook import BracketEstimate, ComboDetail
 from commander.suggest import fills_role, protected_cards
 from commander.weightedshare import ShareTable, share_reason, weighted_shares
 
@@ -100,12 +102,14 @@ def deck_cut_rules(
     data: MetaData | None,
     *,
     now: Clock,
+    estimate: BracketEstimate | None = None,
 ) -> CutRules:
-    """The deck's kept cards, the meta's and recent decks' shares, its leanings, the themes of its cards, and
-    its mana base for judging swaps of lands.
+    """The deck's protected cards, the meta's and recent decks' shares, its leanings, the themes of its cards,
+    and its mana base for judging swaps of lands.
 
     The profile's own themes go by their words ("Dinosaur", "Discover"). data is what other players do
-    with the commander (`gather_for`), None when nothing was read.
+    with the commander (`gather_for`), None when nothing was read. estimate is the deck's cached Spellbook
+    bracket estimate, whose combos stand in for `data.own_combos` when that was not read.
     """
     peers = data.peers.data.decks if data is not None and data.peers.data else ()
     shares = weighted_shares(data, now=now, grace=profile.grace_by_key())
@@ -130,17 +134,50 @@ def deck_cut_rules(
         nonland_only={m.name for m in leaning_matchers},
     )
     mana = mana_guard(deck, db, data)
-    protected = protected_cards(main, profile) | _combo_pieces(deck, main, data)
+    protected = _protected(deck, main, profile, db, data=data, estimate=estimate)
     rules = CutRules(protected, shares or None, {}, leanings, matchers, mana, counts)
     return with_ideas(rules, [r.info for r in main if r.info is not None], db)
 
 
-def _combo_pieces(deck: Deck, main: Sequence[ResolvedCard], data: MetaData | None) -> frozenset[str]:
-    """Oracle ids of the deck cards in a combo Spellbook finds inside the deck; none without its answer."""
-    combos = data.own_combos.data if data is not None else None
-    if combos is None:
+def _protected(
+    deck: Deck,
+    main: Sequence[ResolvedCard],
+    profile: Profile,
+    db: CardDb,
+    *,
+    data: MetaData | None,
+    estimate: BracketEstimate | None,
+) -> frozenset[str]:
+    """Oracle ids of the deck cards no computed cut takes (ADR 0017, 0036): the cards the profile keeps or
+    gives grace, the pieces of the deck's combos and its key cards."""
+    graced = profile.grace_by_key()
+    named = {r.card.name for r in main if card_key(r.card.name) in graced}
+    peers = data.peers.data.decks if data is not None and data.peers.data else ()
+    own_combos = data.own_combos.data if data is not None else None
+    named |= {key.name for key in key_cards(deck, profile, own_combos or (), peers, db)}
+    protected = frozenset(
+        r.info.oracle_id
+        for r in main
+        if r.info is not None and r.card.name in named and COMMANDER_CATEGORY not in r.card.categories
+    )
+    return protected | protected_cards(main, profile) | _combo_pieces(deck, main, own_combos, estimate)
+
+
+def _combo_pieces(
+    deck: Deck,
+    main: Sequence[ResolvedCard],
+    own_combos: Sequence[ComboDetail] | None,
+    estimate: BracketEstimate | None,
+) -> frozenset[str]:
+    """Oracle ids of the deck cards in a combo Spellbook finds inside the deck: its own answer for the deck,
+    else the combos of the deck's cached bracket estimate; none without either."""
+    names: set[str] = set()
+    if own_combos is not None:
+        names = {card_key(piece.name) for combo in own_combos for piece in combo.pieces}
+    elif estimate is not None:
+        names = {card_key(name) for combo in estimate.combos for name in combo.cards}
+    else:
         log.info("No Spellbook combos for deck %s: its combo pieces are not protected from cuts", deck.name)
-    names = {card_key(piece.name) for combo in combos or () for piece in combo.pieces}
     return frozenset(r.info.oracle_id for r in main if r.info is not None and card_key(r.card.name) in names)
 
 

@@ -50,4 +50,14 @@ with the most reasons.
   - **Etali:** 15, its Dualcaster and Breach lines and its costly cheat targets.
   - **Ellivere:** 20, mostly its profile's stax pieces, plus both Elesh Norns.
 - Peer caches written before this have no categories, and count none until their next refresh.
-- Key cards protect nothing from cuts. Only `[keep]` does that, as before.
+- Key cards protect nothing from cuts. Only `[keep]` does that, as before. (Reversed on 2026-10-28, below.)
+
+## Amendment (2026-10-28): key cards are never computed cuts
+
+The rule above dates from before [ADR 0036](0036-surplus-cuts-on-one-score.md) let a surplus cut reach any card.
+Run on the owner's eleven decks it offered the plan's own cards as cuts: Protean Hulk, Glarb's key card, for 13
+of 18 ideas although the profile gives it grace, and Ashaya and Quirion Ranger, Chatterfang's landfall combo,
+for 13 and 14 of 55. The owner decided that key cards are protected like the profile's kept cards: no computed
+cut (`targets.deck_cut_rules`) takes one. A cut the owner or Claude picks by hand still can. `[key_cards]
+ignore` lifts the protection with the key status. See ADR 0036's amendment of the same date for the rest of
+the protected set.

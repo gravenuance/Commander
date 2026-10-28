@@ -98,3 +98,19 @@ Option 2, in `commander.targets` and `commander.landswap`.
   utility lands, since their text goes beyond a mana line. That fails safe: a utility land is never cut. Artifact
   lands and Dryad Arbor count as mana-only, so in an artifact or creature deck they are spared only by their
   role and theme tags.
+
+## Amendment (2026-10-28): what is protected
+
+A review of the cuts offered on the owner's eleven decks found the deck's engine cards offered as cuts: below
+bracket 5 Spellbook's own answer for the deck is not read, so the combo pieces were protected for three decks
+of eleven. The protected set (`targets.deck_cut_rules`) is now:
+
+- the cards the profile keeps, as before;
+- the pieces of the deck's combos: Spellbook's own answer, else the combos of the deck's cached bracket
+  estimate (`bracket.cached_estimate`, cache only, however old), so a bracket 4 deck is covered too;
+- the deck's key cards ([ADR 0017](0017-key-cards-found-from-the-deck.md), amended the same day);
+- the profile's grace cards ([ADR 0039](0039-grace-cards-weight-the-lists-like-yours.md)): the owner weighs the
+  lists holding them more because the deck is built around them.
+
+None of these is a computed cut for any idea. A cut picked by hand still can be one, and the desk rebuilds its
+cut rules when the deck's estimate file changes.
