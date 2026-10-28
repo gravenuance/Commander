@@ -128,9 +128,10 @@ def probe_previews(
         requests += 1
 
     try:
-        # The set list is shared with the card data's check, so this request may be answered from its copy.
-        requests += 1
-        upcoming = upcoming_sets(client.sets(), local)
+        # The set list is shared with the card data's check, so it may come from that check's copy.
+        sets, requested = client.read_sets()
+        requests += requested
+        upcoming = upcoming_sets(sets, local)
         cards: dict[str, SetCard] = {}
         for found in upcoming:
             for card in client.set_cards(found.code, before_each=before_each, max_pages=MAX_PAGES_PER_SET):

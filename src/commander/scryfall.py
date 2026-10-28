@@ -245,14 +245,19 @@ class ScryfallClient:
             raise ScryfallError(f"unexpected bulk data list from Scryfall: {error}") from error
 
     def sets(self) -> list[SetInfo]:
+        return self.read_sets()[0]
+
+    def read_sets(self) -> tuple[list[SetInfo], bool]:
+        """The set list, and whether this call requested it rather than reusing the client's copy."""
         with self._sets_lock:
+            requested = self._sets is None
             if self._sets is None:
                 raw = self._fetcher.get_json(f"{self._api_base}/sets")
                 try:
                     self._sets = parse_sets_listing(raw)
                 except ShapeError as error:
                     raise ScryfallError(f"unexpected set list from Scryfall: {error}") from error
-            return list(self._sets)
+            return list(self._sets), requested
 
     def set_cards(self, code: str, *, before_each: Callable[[], None], max_pages: int) -> list[SetCard]:
         """Every card of one set by Scryfall's card search, a page at a time with before_each called ahead of

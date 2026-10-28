@@ -282,6 +282,16 @@ def test_the_set_list_is_read_once_for_the_card_data_and_the_probe() -> None:
     assert fake.requests == ["https://api.scryfall.com/sets"]
 
 
+def test_the_probe_counts_no_request_for_a_set_list_the_card_data_already_read(tmp_path: Path) -> None:
+    fake = FakeScryfall()
+    fake.searches = {SEARCH_URL: search_page()}
+    client = ScryfallClient(Fetcher(fake.client()))
+    client.sets()
+    outcome = probe_previews(client, tmp_path, now=lambda: NOW, pacer=Pacer(0))
+    assert fake.requests == ["https://api.scryfall.com/sets", SEARCH_URL]
+    assert outcome.requests == 1
+
+
 def test_the_probe_runs_once_a_day(tmp_path: Path) -> None:
     fake = FakeScryfall()
     fake.searches = {SEARCH_URL: search_page()}

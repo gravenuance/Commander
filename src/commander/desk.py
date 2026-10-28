@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 from functools import wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from commander.answers import card_key
 from commander.apply import NotYourDeckError, Resolution, SaveError, default_category
@@ -469,14 +469,9 @@ class Desk:
     def _use_account(self, user: str, folder: Path) -> None:
         self._settings = replace(self._settings, user=user, workspace=folder)
         self._workspace = Workspace(folder)
-        self._pools.clear()
-        self._tables.clear()
-        self._rules.clear()
         self._rows.clear()
-        self._reports.clear()
-        self._previews.clear()
-        self._manas.clear()
-        self._brackets.clear()
+        for memo in self._deck_memos():
+            memo.clear()
         with self._sync_lock:
             self._open_deck = None
 
@@ -611,14 +606,22 @@ class Desk:
             self._sync.pulling.discard(deck_id)
         log.info("sync: deck %d pulled; its changes go through", deck_id)
 
+    def _deck_memos(self) -> tuple[dict[int, Any], ...]:
+        """Every memo kept per deck id, so a removed deck or a switched account forgets them all."""
+        return (
+            self._pools,
+            self._tables,
+            self._rules,
+            self._reports,
+            self._previews,
+            self._manas,
+            self._brackets,
+        )
+
     def _sync_removed(self, deck_id: int) -> None:
         """The sync deleted the deck's folder: forget what the app kept for it, the open deck included."""
-        self._pools.pop(deck_id, None)
-        self._tables.pop(deck_id, None)
-        self._rules.pop(deck_id, None)
-        self._reports.pop(deck_id, None)
-        self._manas.pop(deck_id, None)
-        self._brackets.pop(deck_id, None)
+        for memo in self._deck_memos():
+            memo.pop(deck_id, None)
         with self._sync_lock:
             if self._open_deck == deck_id:
                 self._open_deck = None
