@@ -1,28 +1,31 @@
 :root {
   color-scheme: light dark;
-  --bg: #f6f5f2;
-  --surface: #ffffff;
-  --surface-2: #efede8;
-  --sunk: #ebe8e2;
-  --border: #d8d4cc;
+  --bg: #ecebe6;
+  --surface: #fbfaf7;
+  --surface-2: #f1efea;
+  --surface-3: #e5e2db;
+  --sunk: #e8e6df;
+  --border: #dcd8cf;
   --border-strong: #8a8378;
-  --text: #1d1b18;
-  --muted: #5c574f;
-  --accent: #1f6f5c;
-  /* The accent a step brighter, for text under the pointer; 4.5:1 on --bg. */
-  --accent-hover: #237a64;
+  --text: #1b1a17;
+  --muted: #5f5a52;
+  --accent: #1c7560;
+  /* The accent a step stronger, for text under the pointer; 4.5:1 on every surface. */
+  --accent-hover: #17604e;
   --accent-text: #ffffff;
-  --accent-soft: #dcefe9;
-  --primary: #1f6f5c;
+  --accent-soft: #d5ece5;
+  /* Text on --accent-soft: 4.5:1 there and on the surfaces. */
+  --accent-ink: #11473a;
+  --primary: #1c7560;
   --on-primary: #ffffff;
-  --selected: #cfe7df;
+  --selected: #d9eee7;
   --target: #b3261e;
   --target-tint: rgb(179 38 30 / 30%);
   --danger: #a1301f;
   --danger-soft: #f7e1dc;
   --warn: #7a5300;
   --warn-soft: #fbefd2;
-  --queued: #1f6f5c;
+  --queued: #1c7560;
   --focus: #1a5fb4;
   --you: #6a3fa0;
   --claude: #b4531a;
@@ -58,8 +61,9 @@
   --pip-r-ink: #4a1a0e;
   --pip-g: #c3e2c8;
   --pip-g-ink: #12361a;
-  --radius: 8px;
-  --radius-s: 5px;
+  --radius: 12px;
+  --radius-l: 16px;
+  --radius-s: 8px;
   --radius-card: 6px;
   --radius-xs: 3px;
   --radius-pill: 999px;
@@ -68,6 +72,7 @@
   --space-3: 12px;
   --space-4: 16px;
   --space-5: 24px;
+  --space-6: 32px;
   --text-2xs: 0.6875rem;
   --text-xs: 0.75rem;
   --text-s: 0.8125rem;
@@ -75,9 +80,13 @@
   --text-m: 0.9375rem;
   --text-l: 1.25rem;
   --text-xl: 1.75rem;
+  --text-display: 2.25rem;
+  /* Sitka ships with Windows; the deck name is the only serif text. */
+  --serif: "Sitka Display", "Sitka", Georgia, serif;
   --shadow: 0 1px 2px rgb(0 0 0 / 8%), 0 2px 8px rgb(0 0 0 / 6%);
-  --shadow-raised: -4px 0 24px rgb(0 0 0 / 14%);
+  --shadow-raised: -8px 0 32px rgb(0 0 0 / 12%);
   --fast: 120ms;
+  --ease: 200ms cubic-bezier(.2, .7, .3, 1);
   --nav-w: 220px;
   --icon-button: 28px;
   --art-width: 72px;
@@ -92,22 +101,24 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #161514;
-    --surface: #211f1d;
-    --surface-2: #2b2926;
-    --sunk: #1c1b19;
-    --border: #3d3a36;
+    --bg: #121110;
+    --surface: #1c1b19;
+    --surface-2: #252321;
+    --surface-3: #312e2b;
+    --sunk: #181716;
+    --border: #36332f;
     --border-strong: #8c857a;
     --text: #ece9e3;
     --muted: #b0aaa0;
     --accent: #5fc4a8;
     --accent-hover: #79d4ba;
     --accent-text: #0e1a17;
-    --accent-soft: #1d3a33;
+    --accent-soft: #1b3a32;
+    --accent-ink: #a6e6d3;
     /* The accent's hue, dark enough to carry the light text at 4.5:1. */
     --primary: #29705c;
     --on-primary: #faf9f6;
-    --selected: #2b4a42;
+    --selected: #274139;
     --target: #e5736a;
     --target-tint: rgb(58 29 29 / 73%);
     --danger: #f0907e;
@@ -129,7 +140,7 @@
     --signin-dim: rgb(0 0 0 / 55%);
     --signin-dim-solid: rgb(0 0 0 / 82%);
     --shadow: 0 1px 2px rgb(0 0 0 / 40%);
-    --shadow-raised: -4px 0 24px rgb(0 0 0 / 55%);
+    --shadow-raised: -8px 0 32px rgb(0 0 0 / 55%);
     --on-danger: #1a0d0a;
   }
 }
