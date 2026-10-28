@@ -7,8 +7,9 @@ import math
 import random
 import threading
 import time
-from collections.abc import Callable, Mapping
-from contextlib import AbstractContextManager
+from collections.abc import Callable, Generator, Mapping
+from contextlib import AbstractContextManager, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC
 from email.utils import parsedate_to_datetime
@@ -354,6 +355,21 @@ class Fetcher:
         self._sleep(delay)
 
 
+# The progress step a request is made for, set by the code that runs the step; the threads it starts inherit
+# it (`background`). A request made with none names no step.
+request_step: ContextVar[str | None] = ContextVar("request_step", default=None)
+
+
+@contextmanager
+def requests_for(step: str) -> Generator[None]:
+    """Name `step` as the one the requests made in the block (and in the threads it starts) are for."""
+    token = request_step.set(step)
+    try:
+        yield
+    finally:
+        request_step.reset(token)
+
+
 @dataclass(slots=True, frozen=True)
 class _Waiter:
     arrival: int
@@ -396,6 +412,13 @@ class Pacer:
         # When the last sleeper's slot opened, which counts as now if the clock reads less.
         self._floor = -math.inf
         self._rank: Callable[[int], int] | None = None
+        self._on_grant: Callable[[str], None] | None = None
+
+    def on_grant(self, listener: Callable[[str], None]) -> None:
+        """Tell `listener` the step (`requests_for`) of each call as `wait` grants it its slot, so a caller
+        can show which request is going out and not only which ones queue; calls naming no step are not
+        announced. Set before the first call."""
+        self._on_grant = listener
 
     def rank_by(self, rank: Callable[[int], int]) -> None:
         """Serve the waiting decks by `rank`, lowest first, read afresh as each slot opens."""
@@ -431,6 +454,10 @@ class Pacer:
                 if me in self._queue:
                     self._leave(me)
             raise
+        # Outside the lock: the listener may take its own.
+        listener = self._on_grant
+        if listener is not None and (step := request_step.get()) is not None:
+            listener(step)
 
     def _turn(self, me: _Waiter) -> float | None:
         """None once `me` has the slot, else how long it sleeps for it (0: it only waited for its turn)."""

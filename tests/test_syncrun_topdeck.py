@@ -2,6 +2,7 @@
 
 import logging
 import threading
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -123,6 +124,52 @@ def test_archidekt_is_read_for_every_deck_while_topdeck_is_still_answering_and_t
     merges = sorted(e for e in gate.events if e.startswith("merge"))
     assert merges == ["merge 101", "merge 102", "merge 103"]
     assert gate.events.index("released") < min(gate.events.index(m) for m in merges)
+
+
+def test_the_progress_line_leads_with_the_step_whose_request_a_pacer_just_sent(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = three_decks(tmp_path, raw_deck, card_db_file)
+    rig = Rig(tmp_path)
+    shown: list[str] = []
+    announce: list[Callable[[str], None]] = []
+
+    def sources(*_: object, on_send: Callable[[str], None] | None = None, **__: object) -> MetaSources:
+        assert on_send is not None
+        announce.append(on_send)
+        return rig.sources()
+
+    def pools(
+        stored: StoredDeck, *_: object, on_progress: Callable[[str], None], **__: object
+    ) -> AdjacentDecks:
+        # Two of the deck's steps are under way; only the second one's request is in the pacer's hands.
+        if stored.deck.id == DECK_IDS[0]:
+            on_progress("Ellivere: Magda decks (alike)")
+            on_progress("Ellivere: Stax decks (theme)")
+            announce[0]("Ellivere: Stax decks (theme)")
+        return AdjacentDecks((), ())
+
+    def merged(*_: object, **__: object) -> dict[Origin, list[BoardCard]]:
+        return {}
+
+    monkeypatch.setattr(syncrun, "meta_sources", sources)
+    monkeypatch.setattr(syncrun, "gather_idea_pools", pools)
+    monkeypatch.setattr(syncrun, "compile_ideas", merged)
+    monkeypatch.setattr(syncrun, "rejudge_ideas", judge_nothing)
+    monkeypatch.setattr(syncrun, "relabel_legacy_ideas", judge_nothing)
+    run_sync(
+        services(tmp_path, fake),
+        Workspace(tmp_path / "decks"),
+        "TESTER",
+        MetaSettings(),
+        SyncOptions(cards=False),
+        on_progress=shown.append,
+    )
+
+    # The other decks' steps are under way too, so the line is cut after the one that leads it.
+    led = [n for n, line in enumerate(shown) if line.startswith("Ellivere: Stax decks (theme)")]
+    assert led
+    assert not any(line.startswith("Ellivere: Magda") for line in shown[led[0] :])
 
 
 def test_the_progress_line_names_the_429_wait_while_it_lasts_and_drops_it_after(

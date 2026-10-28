@@ -9,7 +9,7 @@ import pytest
 from commander.config import MetaSettings
 from commander.fetchpriority import FetchPriority, fetching_deck
 from commander.metadata import meta_sources
-from commander.net import Pacer
+from commander.net import Pacer, requests_for
 
 HUNG_AFTER_SECONDS = 5.0
 HUNG_AFTER_SECONDS_IN_MS = 5000
@@ -116,3 +116,23 @@ def test_the_meta_sources_hand_their_archidekt_pacer_to_the_rank_watcher(tmp_pat
         )
     assert len(heard) == 1
     assert heard[0] == pacers[0].rank_changed
+
+
+def test_the_meta_sources_tell_on_send_the_step_of_each_request_any_of_their_pacers_grants(
+    tmp_path: Path,
+) -> None:
+    pacers: list[Pacer] = []
+    heard: list[str] = []
+
+    def pacer_factory(interval: float) -> Pacer:
+        pacers.append(Pacer(interval))
+        return pacers[-1]
+
+    with httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(500))) as http:
+        meta_sources(http, pacer_factory, "TESTER", MetaSettings(), tmp_path, on_send=heard.append)
+    # TopDeck's, Archidekt's and Spellbook's; the first slot of each is free.
+    assert len(pacers) == 3
+    for number, pacer in enumerate(pacers):
+        with requests_for(f"Step {number}"):
+            pacer.wait()
+    assert heard == ["Step 0", "Step 1", "Step 2"]

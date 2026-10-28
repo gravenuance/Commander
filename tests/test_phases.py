@@ -80,6 +80,70 @@ def test_replacing_a_phase_keeps_its_place_and_says_whether_it_was_there() -> No
     assert lines[-1] == "TopDeck: waiting 30 s (rate limit) · Archidekt: recent Edgar Markov decks"
 
 
+def test_the_phase_whose_request_is_sending_comes_first_and_the_others_keep_their_order() -> None:
+    lines: list[str] = []
+    phases = shown_by(lines)
+    phases.start("Ellivere: Ellivere decks")
+    phases.start("Magda: Magda decks")
+    phases.start("TopDeck: recent tournaments")
+    assert lines[-1] == "Ellivere: Ellivere decks · Magda: Magda decks · TopDeck: recent tournaments"
+    phases.sending("Magda: Magda decks")
+    assert lines[-1] == "Magda: Magda decks · Ellivere: Ellivere decks · TopDeck: recent tournaments"
+    phases.sending("TopDeck: recent tournaments")
+    assert lines[-1] == "TopDeck: recent tournaments · Ellivere: Ellivere decks · Magda: Magda decks"
+
+
+def test_the_sending_phase_is_the_one_kept_when_the_line_is_cut() -> None:
+    lines: list[str] = []
+    phases = shown_by(lines)
+    phases.start("Archidekt: recent Edgar Markov decks")
+    phases.start("TopDeck: recent tournaments")
+    phases.start("Commander Spellbook: Edgar combos")
+    phases.start("Magda: Magda decks")
+    assert lines[-1] == "Archidekt: recent Edgar Markov decks +3 more"
+    phases.sending("Magda: Magda decks")
+    assert lines[-1] == "Magda: Magda decks +3 more"
+
+
+def test_a_sending_phase_that_is_not_running_or_already_first_changes_nothing() -> None:
+    lines: list[str] = []
+    phases = shown_by(lines)
+    phases.sending("Spellbook")
+    phases.start("Magda: Magda decks")
+    phases.start("Ellivere: Ellivere decks")
+    phases.sending("Spellbook")
+    phases.sending("Magda: Magda decks")
+    assert lines == ["Magda: Magda decks", "Magda: Magda decks · Ellivere: Ellivere decks"]
+    phases.sending("Ellivere: Ellivere decks")
+    phases.sending("Ellivere: Ellivere decks")
+    assert lines[-1] == "Ellivere: Ellivere decks · Magda: Magda decks"
+    assert len(lines) == 3
+
+
+def test_when_the_sending_phase_ends_the_others_go_back_to_the_order_they_started() -> None:
+    lines: list[str] = []
+    phases = shown_by(lines)
+    phases.start("Ellivere: Ellivere decks")
+    phases.start("Magda: Magda decks")
+    phases.start("Pantlaza: Pantlaza decks")
+    phases.sending("Magda: Magda decks")
+    phases.done("Magda: Magda decks")
+    assert lines[-1] == "Ellivere: Ellivere decks · Pantlaza: Pantlaza decks"
+    # The same text started again is not still sending.
+    phases.start("Magda: Magda decks")
+    assert lines[-1] == "Ellivere: Ellivere decks · Pantlaza: Pantlaza decks · Magda: Magda decks"
+
+
+def test_a_replaced_phase_that_was_sending_still_comes_first() -> None:
+    lines: list[str] = []
+    phases = shown_by(lines)
+    phases.start("Ellivere: Ellivere decks")
+    phases.start("TopDeck: recent tournaments")
+    phases.sending("TopDeck: recent tournaments")
+    assert phases.replace("TopDeck: recent tournaments", "TopDeck: waiting 30 s (rate limit)")
+    assert lines[-1] == "TopDeck: waiting 30 s (rate limit) · Ellivere: Ellivere decks"
+
+
 def test_phases_started_from_several_threads_are_all_kept() -> None:
     lines: list[str] = []
     phases = shown_by(lines)

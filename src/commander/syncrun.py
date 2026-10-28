@@ -426,6 +426,7 @@ def _start_meta(
         waits=_TopdeckWaits(phases),
         rank=lambda deck_id: next_up.rank(deck_id, order),
         rank_changes=next_up.watch,
+        on_send=phases.sending,
     )
     tournaments = start_tournament_refresh(
         (s.deck for s in waiting), sources, now=services.now, on_progress=phases.start, on_done=phases.done
