@@ -86,6 +86,15 @@ COUNTERBALANCE = (
     "If you do, counter that spell if it has the same mana value as the revealed card."
 )
 CONTROL_MAGIC = "Enchant creature\nYou control enchanted creature."
+REPRIEVE = "Return target spell to its owner's hand.\nDraw a card."
+FAILURE_COMPLY = (
+    "Return target spell to its owner's hand.\n//\n"
+    "Choose a card name. Until your next turn, spells with the chosen name can't be cast."
+)
+HOROBI = "Whenever a creature becomes the target of a spell or ability, destroy that creature."
+COWARDICE = (
+    "Whenever a creature becomes the target of a spell or ability, return that creature to its owner's hand."
+)
 
 REMOVAL = (AnswerKind.PERMANENT_REMOVAL,)
 COUNTER = (AnswerKind.COUNTERSPELL,)
@@ -184,6 +193,20 @@ def test_edicts_reach_their_type_but_the_opponent_chooses() -> None:
         assert edict.removal(HULLBREAKER) == "they choose what to sacrifice"
         assert edict.removal(BREACH) is None
     assert answer(LIGHTNING_BOLT).removal(KINNAN) == ""
+
+
+def test_bouncing_a_spell_answers_the_spell_and_no_permanent() -> None:
+    assert removed(REPRIEVE, BREACH, LED, HULLBREAKER, CRADLE) == [False, False, False, False]
+    assert countered(REPRIEVE, INTUITION, ORACLE, CRADLE) == [True, True, False]
+    assert answer(REPRIEVE, COUNTER).counter(INTUITION) == "they can cast it again"
+    # Failure's half returns the spell; Comply's half is not a sentence the reader follows.
+    assert countered(FAILURE_COMPLY, INTUITION) == [True]
+
+
+def test_a_trigger_on_becoming_a_target_answers_nothing() -> None:
+    for text in (HOROBI, COWARDICE):
+        assert read_modes(text) == ()
+        assert removed(text, KINNAN, BREACH) == [False, False]
 
 
 def test_an_upkeep_tax_answers_nothing() -> None:

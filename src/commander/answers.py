@@ -269,7 +269,9 @@ def _stat(value: str | None) -> int | None:
 
 _REMINDER = re.compile(r"\([^)]*\)")
 _SENTENCE_BREAK = re.compile(r"\n|â€¢|(?<=\.)\s+")
-_TARGET = re.compile(r"\b(any target|any number of target|up to \w+ target|target|each|all)\b\s*([^.]*)")
+_TARGET = re.compile(
+    r"\b(any target|any number of target|up to \w+ target|target(?! of\b)|each|all)\b\s*([^.]*)"
+)
 _PHRASE_END = re.compile(
     r"\b(?:you|an opponent|with|without|if|to|from|unless|it's|its|that|on|into|until|gets?|shuffles?|"
     r"among|as|under|then|deals?|and its|of their)\b"
@@ -294,6 +296,9 @@ _EDICT = re.compile(
     r"\b(?:player|opponent)s? sacrifices? (?:a|an|one|two|three|four|x|\d+|that many)\b\s*([^.]*)"
 )
 EDICT_CATCH = "they choose what to sacrifice"
+BOUNCE_CATCH = "they can cast it again"
+# Horobi's and Cowardice's triggers act on what gets targeted; the spell in "target of a spell" isn't one.
+_BECOMES_TARGET = re.compile(r"\bbecomes? the target of\b")
 
 
 def read_modes(text: str) -> tuple[Mode, ...] | None:
@@ -304,7 +309,7 @@ def read_modes(text: str) -> tuple[Mode, ...] | None:
         sentences = _SENTENCE_BREAK.split(_REMINDER.sub("", face).casefold())
         storm = any(sentence.strip() == "storm" for sentence in sentences)
         for sentence in sentences:
-            found = _read_sentence(sentence)
+            found = () if _BECOMES_TARGET.search(sentence) else _read_sentence(sentence)
             if found is not None:
                 understood = True
                 modes.extend(replace(m, every_copy=True) if storm else m for m in found)
@@ -339,7 +344,7 @@ def _read_sentence(sentence: str) -> tuple[Mode, ...] | None:  # noqa: PLR0911 â
         return (_mode(Effect.SHRINK, sentence, target, _amount(shrink.group(1))),)
     if _FLICKER.search(sentence):
         return ()
-    return (_mode(Effect.REMOVE, sentence, target),)
+    return (_removal_mode(sentence, target),)
 
 
 @dataclass(slots=True, frozen=True)
@@ -350,6 +355,13 @@ class _Target:
     colors: str
     excluded_colors: str
     every: bool = False
+
+
+def _removal_mode(sentence: str, target: _Target) -> Mode:
+    # Returning a spell to its owner's hand answers that spell for now; it reaches no permanent.
+    if target.nouns == frozenset({"spell"}):
+        return _mode(Effect.COUNTER, sentence, target, catch=BOUNCE_CATCH)
+    return _mode(Effect.REMOVE, sentence, target)
 
 
 _COUNTER_TARGET = re.compile(r"\b(any number of target|target|that|all|each)\b\s*([^.]*)")

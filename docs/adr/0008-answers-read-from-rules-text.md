@@ -56,3 +56,11 @@ face's, else the coloured symbols of the mana cost.
 - The reader is phrase-based. New wording can slip through it, and such a card falls back to its tags'
   reach, which can be too wide. Add a test with the card's real text when one turns up.
 - The next `sync` rebuilds the card database.
+
+## Amendment (2026-10-27): bouncing a spell, and triggers on being targeted
+
+- "Return target spell to its owner's hand" (Reprieve, Failure // Comply) was read as removal that reached
+  every permanent. It is now a counter with the catch "they can cast it again", and reaches no permanent.
+- "Whenever a creature becomes the target of a spell or ability, destroy that creature" (Horobi, Cowardice)
+  took the spell in the trigger for its target. A trigger on becoming a target is read and answers nothing,
+  like an upkeep tax, and "target of" never starts a target phrase.
