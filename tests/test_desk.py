@@ -1905,7 +1905,7 @@ def test_no_cut_yet_is_a_side_panel_between_considering_and_meta_not_a_fold() ->
     assert '<details id="uncut"' not in html
     panel = html.split('<section id="uncut" class="panel" aria-labelledby="h-uncut" hidden>', 1)[1]
     panel = panel.split("</section>", 1)[0]
-    toggle = 'id="h-uncut" class="panel-toggle" type="button" aria-expanded="false"'
+    toggle = 'id="h-uncut" class="panel-toggle disclosure" type="button" aria-expanded="false"'
     assert toggle + ' aria-controls="uncut-body"' in panel
     assert 'No cut yet <span class="count" id="count-uncut"></span>' in panel
     assert '<div id="uncut-body" class="panel-body" hidden>' in panel
@@ -2024,15 +2024,21 @@ def css_rule(selector: str) -> str:
     return next(body for name, body in rules.items() if selector in [s.strip() for s in name.split(",")])
 
 
-def test_panel_titles_are_full_width_boxes_without_a_marker_and_the_meta_sub_toggles_keep_theirs() -> None:
+def test_panel_titles_are_sentence_case_disclosure_rows_and_the_meta_sub_toggles_share_their_knob() -> None:
     toggle = css_rule(".panel-toggle")
-    assert "width: 100%" in toggle
-    assert "border: 1px solid var(--border)" in toggle
-    assert "justify-content: center" in toggle
-    assert "text-transform: uppercase" in toggle
-    assert "background: var(--surface-2)" in css_rule(".panel-toggle:hover")
+    assert "min-height: 52px" in toggle
+    assert "font-size: var(--text-m)" in toggle
+    assert "text-transform" not in toggle
+    assert "text-transform" not in css_rule(".disclosure")
+    # Open, the title row and the body are one card on the surface fill, and the pointer still tints the row.
+    assert "background: var(--surface)" in css_rule('.panel:has(.panel-toggle[aria-expanded="true"])')
+    assert "background: transparent" in css_rule('.panel-toggle[aria-expanded="true"]')
+    assert "background: var(--surface-2)" in css_rule('.panel-toggle[aria-expanded="true"]:hover')
     assert "color: var(--accent-hover)" in css_rule(".meta-section > summary:hover")
-    assert 'content: "▸"' in css_rule(".meta-section > summary::before")
+    assert "width: 24px" in css_rule(".meta-section > summary .knob")
+    assert "rotate(180deg)" in css_rule('[aria-expanded="true"] > .knob svg')
+    assert "rotate(180deg)" in css_rule("details[open] > summary > .knob svg")
+    assert "▸" not in (resources.files("commander") / "web" / "app.css").read_text(encoding="utf-8")
     html = page_html()
     assert 'class="disclosure"' not in html
     for toggle_id, body_id in [
@@ -2041,7 +2047,7 @@ def test_panel_titles_are_full_width_boxes_without_a_marker_and_the_meta_sub_tog
         ("h-meta", "meta-panel"),
     ]:
         assert (
-            f'id="{toggle_id}" class="panel-toggle" type="button" aria-expanded="false" '
+            f'id="{toggle_id}" class="panel-toggle disclosure" type="button" aria-expanded="false" '
             f'aria-controls="{body_id}"'
         ) in html
         assert f'<div id="{body_id}" class="panel-body" hidden>' in html

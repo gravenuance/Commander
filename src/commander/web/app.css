@@ -472,7 +472,7 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   color: var(--text);
 }
 .knob svg { width: 14px; height: 14px; fill: none; stroke: currentcolor; stroke-width: 1.8; stroke-linecap: round; transition: transform var(--ease); }
-[aria-expanded="true"] > .knob svg, [aria-expanded="true"] > .end > .knob svg { transform: rotate(180deg); }
+[aria-expanded="true"] > .knob svg, [aria-expanded="true"] > .end > .knob svg, details[open] > summary > .knob svg { transform: rotate(180deg); }
 
 /* Workspace: the grid beside the stacked side panels */
 .workspace {
@@ -701,9 +701,14 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 }
 
 /* Side panels */
+.panel { border-radius: var(--radius); }
+/* Open, the title row and the body are one card. */
+.panel:has(.panel-toggle[aria-expanded="true"]) { background: var(--surface); }
 /* Flex, so the h2's larger font adds no line box around the toggle. */
 .panel-title { display: flex; margin: 0; }
-.panel-body { margin-top: var(--space-3); padding: 0 var(--space-5) var(--space-3); }
+.panel-body { padding: 0 var(--space-4) var(--space-4); }
+/* Open, ideas sit a step darker than the card they are in. */
+.panel-body .card { background: var(--surface-2); }
 .add-plain { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin-top: var(--space-2); }
 .add-plain select {
   min-height: 28px;
@@ -715,33 +720,15 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   font: inherit;
   font-size: var(--text-s);
 }
-/* A full-width box with a centred title; it lights up under the pointer as the grid's group toggles do. */
-.panel-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  width: 100%;
-  padding: var(--space-5) var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-s);
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-size: var(--text-l);
-  font-weight: 400;
-  line-height: 1.2;
-  text-transform: uppercase;
-  cursor: pointer;
-}
-.panel-toggle:hover { background: var(--surface-2); }
-.panel-toggle:focus-visible { outline-offset: -2px; }
-.panel-toggle .count { font-weight: 400; }
+/* The group row's look at the panel's scale; open, it takes the card's fill and the pointer tints it. */
+.panel-toggle { min-height: 52px; font-size: var(--text-m); line-height: 1.2; }
+.panel-toggle[aria-expanded="true"] { background: transparent; }
+.panel-toggle[aria-expanded="true"]:hover { background: var(--surface-2); }
 .meta-section > summary { list-style: none; }
 .meta-section > summary::-webkit-details-marker { display: none; }
-.meta-section > summary::before { content: "▸"; display: inline-block; width: 1em; margin-right: var(--space-1); }
-.meta-section[open] > summary::before { content: "▾"; }
 .meta-section > summary:hover { color: var(--accent-hover); }
+.meta-section > summary .knob { width: 24px; height: 24px; background: var(--surface-2); color: var(--text); }
+.meta-section > summary .knob svg { width: 12px; height: 12px; }
 .count { font-weight: 500; }
 .cards { display: grid; gap: var(--space-3); }
 .empty { margin: 0; color: var(--muted); font-size: var(--text-s); }
@@ -1054,7 +1041,7 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .meta-head .spacer { flex: 1; }
 .meta-body { display: grid; gap: var(--space-4); margin-top: var(--space-3); }
 .meta-section h3, .meta-section h4 { display: inline; margin: 0; font-size: var(--text-m); }
-.meta-section > summary { cursor: pointer; margin-bottom: var(--space-2); width: fit-content; }
+.meta-section > summary { display: flex; align-items: center; gap: var(--space-2); min-height: 28px; cursor: pointer; margin-bottom: var(--space-2); width: fit-content; }
 .meta-section:not([open]) > summary { margin-bottom: 0; }
 .meta-section > p { margin: var(--space-2) 0 0; }
 .meta-rows { display: grid; }

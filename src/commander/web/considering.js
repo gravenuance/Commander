@@ -97,9 +97,9 @@ function renderConsidering(cards) {
   shown.forEach((card, index) => place(list, tileFor(card), index));
   const waitingList = $("list-uncut");
   waiting.forEach((card, index) => place(waitingList, tileFor(card), index));
-  $("count-considering").textContent = shown.length ? `(${shown.length})` : "";
+  $("count-considering").textContent = shown.length ? String(shown.length) : "";
   $("uncut").hidden = !waiting.length;
-  $("count-uncut").textContent = waiting.length ? `(${waiting.length})` : "";
+  $("count-uncut").textContent = waiting.length ? String(waiting.length) : "";
   $("empty-considering").hidden = shown.length + waiting.length > 0;
   renderRejected(cards);
 }

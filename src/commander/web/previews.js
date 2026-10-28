@@ -13,7 +13,7 @@ const previewsPanel = panel((deck) => api("previews", deck), renderPreviews, {
 function showPreviews(view) {
   const count = view.previews;
   $("previews").hidden = !count;
-  $("count-previews").textContent = count ? `(${count})` : "";
+  $("count-previews").textContent = count ? String(count) : "";
   if (count) previewsPanel.load();
 }
 

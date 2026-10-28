@@ -242,7 +242,7 @@ def test_no_cut_yet_ideas_fill_their_own_panel_and_hide_it_when_there_are_none()
     renderConsidering([queued]);
     return { withIdeas, none: { panel: $("uncut").hidden, count: $("count-uncut").textContent } };
     """)
-    assert shown["withIdeas"] == {"panel": False, "count": "(1)", "uncut": 1, "considering": 1}
+    assert shown["withIdeas"] == {"panel": False, "count": "1", "uncut": 1, "considering": 1}
     assert shown["none"] == {"panel": True, "count": ""}
 
 
@@ -261,8 +261,8 @@ def test_considering_and_no_cut_yet_never_list_a_card_the_deck_holds() -> None:
     assert shown == {
         "considering": ["Sideboard Card"],
         "uncut": ["Waiting"],
-        "count": "(1)",
-        "uncutCount": "(1)",
+        "count": "1",
+        "uncutCount": "1",
     }
 
 
@@ -300,7 +300,7 @@ def test_opening_another_deck_shows_only_its_own_no_cut_yet_ideas() -> None:
     renderConsidering([]);
     return { one, none: { names: texts($("list-uncut"), ".card-name"), hidden: $("uncut").hidden } };
     """)
-    assert shown["one"] == {"names": ["Bayou"], "count": "(1)"}
+    assert shown["one"] == {"names": ["Bayou"], "count": "1"}
     assert shown["none"] == {"names": [], "hidden": True}
 
 

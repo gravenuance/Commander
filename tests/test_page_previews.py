@@ -54,7 +54,7 @@ def test_the_panel_shows_folded_with_its_count_and_loads_only_once_opened() -> N
     """)
     assert seen["folded"] == {
         "hidden": False,
-        "count": "(3)",
+        "count": "3",
         "expanded": "false",
         "bodyHidden": True,
         "asked": 0,

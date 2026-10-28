@@ -310,6 +310,7 @@ function showPanel(toggle, open) {
 // The panels start folded on every launch (index.html), so nothing about them is stored.
 function setupPanels() {
   for (const toggle of document.querySelectorAll(".panel-toggle")) {
+    toggle.append(knob());
     toggle.addEventListener("click", () => {
       const open = toggle.getAttribute("aria-expanded") !== "true";
       showPanel(toggle, open);

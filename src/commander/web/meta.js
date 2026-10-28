@@ -73,7 +73,7 @@ const openSections = new Set();
 
 // A section folds on its own, and stays as the viewer left it across decks and refreshes, by id.
 function foldable(id, className, heading, ...children) {
-  const section = el("details", { class: className, open: openSections.has(id) }, el("summary", {}, heading),
+  const section = el("details", { class: className, open: openSections.has(id) }, el("summary", {}, heading, knob()),
     ...children);
   section.addEventListener("toggle", () => {
     if (section.open) openSections.add(id);
