@@ -5,7 +5,9 @@ import pytest
 from commander.carddb import CardMana
 from commander.manabase import (
     Casting,
+    DeckLands,
     Need,
+    Source,
     analyse_mana,
     castings,
     cheap_draw,
@@ -262,6 +264,27 @@ def test_a_rock_that_depends_on_opponents_counts_half_a_source() -> None:
     wrath = next(need for need in report.colours[0].needs if need.card == "Wrath of God")
     # Fellwar Stone is half a source, where a plain rock is three-quarters.
     assert wrath.have == 20.5
+
+
+MIND_STONE = "{T}: Add {C}.\n{1}, {T}, Sacrifice this artifact: Draw a card."
+COMMANDERS_SPHERE = (
+    "{T}: Add one mana of any color in your commander's color identity.\n"
+    "Sacrifice this artifact: Draw a card."
+)
+LOTUS_PETAL = "{T}, Sacrifice this artifact: Add one mana of any color."
+TREASURE_MAKER = (
+    "{T}: Create a Treasure token. "
+    '(It\'s an artifact with "{T}, Sacrifice this artifact: Add one mana of any color.")'
+)
+
+
+@pytest.mark.parametrize(
+    ("text", "colours"),
+    [(MIND_STONE, "C"), (COMMANDERS_SPHERE, "C"), (LOTUS_PETAL, ""), (TREASURE_MAKER, "")],
+)
+def test_a_mana_rock_is_a_source_unless_its_own_mana_ability_sacrifices_it(text: str, colours: str) -> None:
+    info = card("Rock", "{2}", 2, "Artifact", text=text, produced="C")
+    assert "".join(Source.of(info, 1, 2, DeckLands(99, {})).colours) == colours
 
 
 def test_pitch_spells_are_left_out_and_lists_compared_by_median() -> None:

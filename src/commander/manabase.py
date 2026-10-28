@@ -85,6 +85,8 @@ _ENTERS_BY_CHOICE = re.compile(
     r" if you don't, (?:it|this land) enters (?:the battlefield )?tapped\."
 )
 REMINDER_TEXT = re.compile(r"\([^)]*\)")
+# A line that is an ability with a tap in its cost and an "add" in its effect.
+_TAP_ADDS = re.compile(r"[^:]*\{t\}[^:]*:.*\badds?\b")
 # A mana ability whose amount varies or is chosen ("for each", "equal to", X): more than one mana.
 VARIABLE_MANA = re.compile(r"for each|equal to|amount of mana|that much|twice|additional mana|\bx mana|\{x\}")
 # Mana symbols side by side after "add" ({C}{C}, {R}{G}): two or more mana from one ability.
@@ -363,7 +365,7 @@ class Source:
         mana_value = int(info.cmc)
         front = front_type(info.type_line)
         permanent = any(word in front for word in ("Artifact", "Creature", "Enchantment"))
-        if made and permanent and "{t}" in text and "sacrifice" not in text:
+        if made and permanent and _taps_for_mana(text):
             worth = DORK if "Creature" in front else ROCK
             if "opponent" in text:
                 worth = min(worth, OPPONENT_ROCK)
@@ -378,6 +380,14 @@ class Source:
             colours = dict.fromkeys(searched, worth)
             return Source(info.name, quantity, land=False, colours=colours, from_mana_value=start)
         return Source(info.name, quantity, land=False, colours={}, from_mana_value=NEVER)
+
+
+def _taps_for_mana(text: str) -> bool:
+    """Whether a line of the text is a tap ability that adds mana without sacrificing anything: Mind Stone's
+    other line, which sacrifices it to draw, doesn't matter, but Lotus Petal and Treasure makers go."""
+    return any(
+        _TAP_ADDS.match(line) and "sacrifice" not in line for line in REMINDER_TEXT.sub("", text).split("\n")
+    )
 
 
 def deck_entries(deck: Deck, cards: Mapping[str, CardMana]) -> list[tuple[int, CardMana, bool]]:
