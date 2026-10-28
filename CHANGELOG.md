@@ -11,8 +11,10 @@
 - A land idea that only makes mana now offers basics of its colours as the cut, not utility lands such as
   Vesuva; basics are no longer exempt from land ideas (ADR 0041). No cut takes a role below the target the
   deck's profile sets (ADR 0029), and the mana-base check covers spells with a land back (ADR 0030).
-- Old `suggest --to-board` ideas filed for a short role are turned down once the deck holds its target
-  (ADR 0028).
+- Old `suggest --to-board` ideas are re-judged on every sync (ADR 0028): one filed for a short role is turned
+  down once the deck holds its target, one that fits the deck's themes once the card matches none of them,
+  and one that completes combos once the deck's saved combo list (from `suggest`, under a week old and for
+  the deck's cards as they are) no longer has it as the one missing piece. Spellbook is never asked for this.
 - Upcoming-set previews that fit a deck equally are ordered by the tags they share with the deck and how
   close their mana value is to its average, then by name (ADR 0055).
 - `apply` saves an added card as its cheapest printing and finish, as a foil when the foil is cheaper, and
