@@ -178,9 +178,13 @@ class BoardCard:
     sent_cut_held: int | None = None
 
     def with_status(self, status: Status, **changes: object) -> Self:
-        """The card in another status with `changes`; leaving ADD drops the count held when sent."""
+        """The card in another status with `changes`; leaving ADD drops the count held when sent, and a
+        status other than ADD or APPLIED drops the chosen cut and category."""
         for field in ("sent_held", "sent_cut_held"):
             changes.setdefault(field, getattr(self, field) if status is Status.ADD else None)
+        queued = status in {Status.ADD, Status.APPLIED}
+        for field in ("choice", "category"):
+            changes.setdefault(field, getattr(self, field) if queued else None)
         return replace(self, status=status, **changes)
 
     @property

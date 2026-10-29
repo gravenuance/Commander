@@ -227,6 +227,17 @@ def test_a_card_added_without_a_cut_keeps_its_category_until_undone(
     assert reopened.category is None
 
 
+def test_an_applied_card_proposed_again_drops_its_category(tmp_path: Path, service: BoardService) -> None:
+    # A card saved under a category that later leaves the deck comes back as an idea at the next sync.
+    signet = service.propose("Arcane Signet", Actor.YOU)
+    service.decide(signet.id, Status.ADD, Actor.YOU, category="Ramp")
+    service.mark_applied([signet.id], Actor.YOU, "saved")
+
+    again = service.propose("Arcane Signet", Actor.CMDR, reason="back: no longer in the deck")
+    assert (again.id, again.status, again.category) == (signet.id, Status.OPEN, None)
+    assert read_board(tmp_path).cards[0].category is None
+
+
 @pytest.mark.parametrize("category", ["Maybeboard", "sideboard"])
 def test_an_add_refuses_a_category_outside_the_deck(service: BoardService, category: str) -> None:
     signet = service.propose("Arcane Signet", Actor.YOU)
