@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.1 - 2026-10-29
+
+### Fixed
+- Sync no longer fails on every run once a card saved under a category leaves the deck again: the card comes
+  back under Considering without its category and chosen cut, instead of stopping the sync for every deck.
+
 ## 1.3.0 - 2026-10-28
 
 ### Changed
