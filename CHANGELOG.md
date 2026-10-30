@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- The *Update and restart* button shows its spinning ring while it works, instead of a thin vertical line.
+
 ## 1.4.0 - 2026-10-30
 
 ### Added

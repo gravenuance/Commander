@@ -322,7 +322,10 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   animation: spin 800ms linear infinite;
 }
 /* In a button the spinner takes the button's text colour, which the accent ring would vanish into. */
-.button.sync { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); }
+/* A button with a spinner lays it out beside the label; inline, the spinner's size would not apply. */
+.button.sync, .button.with-spinner {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
+}
 .button .spinner { width: 14px; height: 14px; border-color: currentColor; border-top-color: transparent; }
 #meta-busy:not([hidden]) ~ #meta-empty { display: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
