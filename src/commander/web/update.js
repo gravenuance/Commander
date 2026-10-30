@@ -38,8 +38,7 @@ function setUpdateBusy(busy) {
   const button = $("update-install");
   button.disabled = busy;
   button.setAttribute("aria-busy", String(busy));
-  button.querySelector(".spinner").hidden = !busy;
-  button.querySelector(".label").textContent = busy ? "Updating…" : "Update and restart";
+  button.textContent = busy ? "Updating…" : "Update and restart";
 }
 
 function showUpdateError(message) {

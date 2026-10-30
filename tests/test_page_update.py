@@ -82,12 +82,11 @@ def test_the_button_is_busy_while_the_update_runs_and_stays_so_once_it_is_in_pla
     const clicked = fire(button, "click");
     await settle();
     const during = { disabled: button.disabled, busy: button.getAttribute("aria-busy"),
-      label: button.querySelector(".label").textContent };
+      label: button.textContent };
     finish({ ok: true, restarted: true });
     await clicked;
     await settle();
-    const label = button.querySelector(".label").textContent;
-    return { during, after: { disabled: button.disabled, label } };
+    return { during, after: { disabled: button.disabled, label: button.textContent } };
     """)
     assert seen["during"] == {"disabled": True, "busy": "true", "label": "Updating…"}
     # The app closes now; until it does the button cannot start a second update.

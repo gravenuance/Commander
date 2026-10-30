@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- The *Update and restart* button no longer shows a spinner; it reads "Updating…" while it works.
+
 ## 1.4.1 - 2026-10-30
 
 ### Fixed
