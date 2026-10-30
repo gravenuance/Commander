@@ -47,6 +47,7 @@ HTTP_NOT_FOUND = 404
 HTTP_TOO_MANY_REQUESTS = 429
 _SUCCESS = range(200, 300)
 _RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+_REDIRECTS = frozenset({301, 302, 303, 307, 308})
 
 
 class NetworkError(Exception):
@@ -280,6 +281,27 @@ class Fetcher:
     def download(self, url: str, dest: Path, *, max_bytes: int) -> int:
         """Stream a file into dest (replacing it), retrying only transient failures; returns its size."""
         return self._send("GET", url, None, None, lambda r: _write_capped(r, url, dest, max_bytes))
+
+    def redirect_location(self, url: str) -> str | None:
+        """Where a GET of url is redirected (a 3xx answer's Location, made absolute against url), or None
+        when url answers 200 itself, its body unread; other answers fail as in get_json. The client follows
+        no redirect itself, so the caller can check the target before it asks for it."""
+        import httpx  # noqa: PLC0415
+
+        # Once: the download that follows is the step worth retrying, and a click asks again.
+        try:
+            with self._client.stream("GET", url) as response:
+                status = response.status_code
+                if status in _REDIRECTS:
+                    return _location(response, url)
+                if status == HTTP_OK:
+                    return None
+                raise HttpStatusError(f"{url} returned HTTP {status}", status)
+        except httpx.RequestError as error:
+            log.warning("request failed: %s (%s)", url, error.__class__.__name__)
+            raise NetworkError(f"{url} failed ({error.__class__.__name__})") from error
+        except (httpx.InvalidURL, RuntimeError) as error:
+            raise self._not_sent(url, error) from error
 
     def _send[T](
         self,
@@ -587,6 +609,14 @@ def _retry_after_seconds(value: str | None, now: float) -> float | None:
     if when.tzinfo is None:  # a "-0000" zone parses naive, and timestamp() would read it as local time
         when = when.replace(tzinfo=UTC)
     return max(0.0, when.timestamp() - now)
+
+
+def _location(response: "httpx.Response", url: str) -> str:
+    """A redirect's target, absolute; a redirect without one is a failed request."""
+    target = response.headers.get("Location", "").strip()
+    if not target:
+        raise HttpStatusError(f"{url} redirected nowhere (HTTP {response.status_code})", response.status_code)
+    return str(response.url.join(target))
 
 
 def _read_capped(response: "httpx.Response", url: str, max_bytes: int) -> bytes:

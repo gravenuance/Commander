@@ -19,6 +19,7 @@ from commander.carddb import CARD_DB_FILE
 from commander.config import ConfigError, cache_dir, config_path, read_config, resolve_user, resolve_workspace
 from commander.credentials import TokenStore
 from commander.desk import Desk, DeskSettings
+from commander.updates import remove_old_exe, running_exe
 
 if TYPE_CHECKING:
     import httpx
@@ -125,5 +126,16 @@ def launch(
 ) -> None:
     settings = desk_settings(env, config=config, workspace=workspace, user=user)
     setup_logging(cache_dir(env), env, settings)
-    desk = Desk(settings, client_factory=client_factory, token_store=token_store, now=now)
+    remove_old_exe(running_exe())
+    desk = Desk(
+        settings, client_factory=client_factory, token_store=token_store, now=now, quit_app=close_windows
+    )
     run_app(desk, storage=cache_dir(env) / WEBVIEW_FOLDER, debug=debug)
+
+
+def close_windows() -> None:
+    """Close the app's window, which ends `run_app`; an update calls it once the new exe has started."""
+    import webview  # noqa: PLC0415
+
+    for window in list(webview.windows):
+        window.destroy()

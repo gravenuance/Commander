@@ -17,6 +17,7 @@ from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from commander import __version__
 from commander.answers import card_key
 from commander.apply import NotYourDeckError, Resolution, SaveError, default_category
 from commander.archidekt import ArchidektError, AuthError, SignInRequiredError
@@ -109,6 +110,7 @@ from commander.sync import PullWatch, SyncStatus
 from commander.syncrun import CardState, FetchState, SyncOutcome, SyncServices, run_sync
 from commander.targets import CutRules, Target, deck_counts, deck_cut_rules, targets_for, with_ideas
 from commander.topdeck import DEVELOPERS_URL, NO_KEY_MESSAGE, TopdeckError, TopdeckKeyError
+from commander.updates import UpdateError, Updater, running_exe
 from commander.viewscore import VIEWS_FILE, ViewScores
 from commander.weightedshare import (
     MAX_GRACE,
@@ -132,6 +134,7 @@ _EXPECTED = (
     CardDataError,
     ConfigError,
     NetworkError,
+    UpdateError,
     ArchidektError,
     TopdeckError,
     AuthError,
@@ -295,8 +298,13 @@ class Desk:
         now: Callable[[], datetime],
         pacer_factory: Callable[[float], Pacer] = Pacer,
         background: Callable[[Callable[[], None]], object] | None = None,
+        updater: Updater | None = None,
+        quit_app: Callable[[], None] = lambda: None,
     ) -> None:
         self._settings = settings
+        # New versions from GitHub (ADR 0059), and how the app closes after it starts one.
+        self._updater = updater or Updater(client_factory, __version__, running_exe())
+        self._quit_app = quit_app
         self._pacer_factory = pacer_factory
         # Runs the sync off the window's thread; tests run it inline.
         self._background: Callable[[Callable[[], None]], object] = background or _sync_thread
@@ -393,6 +401,32 @@ class Desk:
     @_guarded
     def sync_status(self) -> Json:
         return self._sync_json()
+
+    @_guarded
+    def update(self) -> Json:
+        """A newer version of the app, if one is out (asked of GitHub once per run), and whether this app can
+        install it itself, which only the exe can."""
+        release = self._updater.newer_release()
+        if release is None:
+            return {"current": __version__, "latest": None}
+        return {
+            "current": __version__,
+            "latest": release.tag,
+            "page": release.page,
+            "canInstall": self._updater.exe is not None,
+        }
+
+    @_guarded
+    def install_update(self) -> Json:
+        """Download the newer version, put it in place, start it and close this app (ADR 0059). Not while a
+        sync runs: closing the app would cut it off mid-write."""
+        with self._sync_lock:
+            if self._sync.running:
+                raise UpdateError("Wait for the sync to finish, then update.")
+        started = self._updater.install_and_restart()
+        # Closed whether or not the new exe started: this run cannot go on from the replaced exe.
+        self._quit_app()
+        return {"ok": True, "restarted": started}
 
     @_guarded
     def topdeck(self) -> Json:

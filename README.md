@@ -16,6 +16,12 @@ anyway"). Check the download against `SHA256SUMS.txt` from the same release
 (`Get-FileHash Commander.exe`), or verify its build provenance with
 `gh attestation verify Commander.exe --repo gravenuance/Commander`.
 
+Once installed, the app checks GitHub for a newer release each time it starts. When one is out, a notice at
+the foot of the deck list links to its notes and offers *Update and restart*: the app downloads the new exe,
+checks it against the release's `SHA256SUMS.txt`, puts it in place of the running one (which stays beside it
+as `Commander.exe.old` until the next start removes it) and restarts. Run from source, the notice only links
+to the release ([ADR 0059](docs/adr/0059-update-the-app-from-github-releases.md)).
+
 ## Requirements
 
 - Python 3.13 and [uv](https://docs.astral.sh/uv/)
@@ -828,6 +834,7 @@ Tests use recorded fixture data and never touch the network.
 
 | Service | Used for | Notes |
 |---|---|---|
+| GitHub (`api.github.com/repos/gravenuance/Commander/releases/latest`; release files from `github.com`, served by `release-assets.githubusercontent.com`) | The app's check for a newer version, and its download | One unauthenticated request each time the app starts (GitHub allows 60 an hour without a sign-in); the exe and `SHA256SUMS.txt` are downloaded only when you click *Update and restart*. See [ADR 0059](docs/adr/0059-update-the-app-from-github-releases.md). |
 | Archidekt (`archidekt.com/api`) | Reading decks; changing them with `apply --save` | Public decks need no login; changes, and `sync` of your private and unlisted decks, need `cmdr login`, whose token lives in Windows Credential Manager and is refreshed on each save and each sync. The API is undocumented, so every response's shape is checked and a clear message names what changed. A save makes a handful of requests, never retried. Its written terms forbid automated requests; its co-founder has said on its forum that the API is open to use. See [ADR 0004](docs/adr/0004-deck-changes-through-archidekts-site-api.md). |
 | Scryfall (`api.scryfall.com/bulk-data`, `/sets` and `/cards/search`, files on `data.scryfall.io`; card images from `cards.scryfall.io` in the app) | Card facts, rules text, EUR prices, Tagger tags for roles and profiles, card art, previews of upcoming sets | One API call per `sync` for the set list, and one for the file list when the card data is rebuilt (weekly, or when a new set has come out); the files themselves have no rate limit. While a set is upcoming, one card search per set and page of 175 cards, at most once a day, 200 ms apart (Scryfall asks for no more than 10 requests a second; [ADR 0055](docs/adr/0055-show-upcoming-cards-that-fit-a-deck.md)), then the file list and the day's Oracle Tags file (about 6 MB) for the previews' tags ([ADR 0058](docs/adr/0058-previews-ranked-by-weight-conflict-and-need.md)). Scryfall updates prices once a day and asks for bulk files rather than per-card calls for lookups like these. The app keeps the card images it has loaded in its window profile on disk, so each is fetched once. Tag data is community-maintained and can change. See [ADR 0001](docs/adr/0001-scryfall-bulk-card-data.md). |
 | Commander Spellbook (`backend.commanderspellbook.com`: `estimate-bracket`, `find-my-combos`) | Bracket estimates, combos, and combos one card short | One request per deck and command, at most four at a time, and none while a cached answer is under 7 days old. Spellbook asks tools to name themselves in the User-Agent, keep to a few calls per user action, stay under about 80 requests a minute, handle 429, and credit and link back to commanderspellbook.com, which `bracket` and `suggest` do in their output. Only card names and quantities are sent. See [ADR 0002](docs/adr/0002-bracket-estimates-from-commander-spellbook.md) and [ADR 0003](docs/adr/0003-suggestions-from-spellbook-and-scryfall.md). |

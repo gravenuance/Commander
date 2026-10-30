@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+- The app checks GitHub for a newer release when it starts. A notice at the foot of the deck list links to
+  its notes and offers *Update and restart*, which downloads the new exe, checks it against the release's
+  checksum, puts it in place and restarts (ADR 0059).
+
 ### Changed
 - Upcoming-set previews suit their decks better (ADR 0058): up to 12 show; a rare match weighs more than a
   common one and what the commander wants twice; token makers count for Chatterfang, Auras for Ellivere, big

@@ -1,0 +1,31 @@
+{
+  "url": "https://api.github.com/repos/gravenuance/Commander/releases/427838824",
+  "html_url": "https://github.com/gravenuance/Commander/releases/tag/v1.3.1",
+  "id": 427838824,
+  "tag_name": "v1.3.1",
+  "name": "v1.3.1",
+  "draft": false,
+  "immutable": false,
+  "prerelease": false,
+  "created_at": "2026-10-29T12:23:36Z",
+  "published_at": "2026-10-29T12:29:00Z",
+  "body": "### Fixed\r",
+  "assets": [
+    {
+      "name": "Commander.exe",
+      "content_type": "application/x-msdownload",
+      "state": "uploaded",
+      "size": 17975920,
+      "digest": "sha256:0e9e27b74e4279c077d62a9eb18644c8422724c9f8c239a5fa779fb0299a59ea",
+      "browser_download_url": "https://github.com/gravenuance/Commander/releases/download/v1.3.1/Commander.exe"
+    },
+    {
+      "name": "SHA256SUMS.txt",
+      "content_type": "text/plain; charset=utf-8",
+      "state": "uploaded",
+      "size": 80,
+      "digest": "sha256:5b14a1dffbef15e141f5e3dbc1ad0b51fcb1d75d99564482bf3cc23f980b6dad",
+      "browser_download_url": "https://github.com/gravenuance/Commander/releases/download/v1.3.1/SHA256SUMS.txt"
+    }
+  ]
+}

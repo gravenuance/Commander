@@ -77,6 +77,8 @@ window.addEventListener("pywebviewready", async () => {
   setupAccount();
   setupTopdeck();
   loadTopdeck();
+  setupUpdate();
+  loadUpdate();
   $("status-close").addEventListener("click", hideStatus);
   try {
     const account = await loadAccount();

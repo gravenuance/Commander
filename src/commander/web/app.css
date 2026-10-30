@@ -201,6 +201,9 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 /* The step the sync is on wraps instead of cutting off: it is the only sign of progress. */
 .sync-status { white-space: normal; overflow-wrap: anywhere; }
 .account-name:empty, .sync-status:empty { display: none; }
+/* A newer version: one line and the button, above who is signed in. */
+.update { display: grid; gap: var(--space-2); padding-bottom: var(--space-2); border-bottom: 1px solid var(--border); }
+.update-line { margin: 0; font-size: var(--text-s); }
 /* Full width, so both buttons share the name's left edge and the column's right edge. */
 .account-actions { display: grid; gap: var(--space-2); }
 .signin-form { display: grid; gap: var(--space-3); min-width: 320px; }
