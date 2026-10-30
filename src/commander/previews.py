@@ -6,16 +6,17 @@ The probe keeps its cards in a small file of its own, beside the card database, 
 
 import json
 import logging
+import math
 import time
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from enum import Enum
 from pathlib import Path
 from statistics import fmean
 
-from commander.carddb import CardDb, ResolvedCard, Role, name_keys
+from commander.carddb import CardDb, ResolvedCard, Role, Theme, name_keys
 from commander.deckprofile import Profile
 from commander.fsutil import write_text_atomic
 from commander.jsonshape import (
@@ -31,22 +32,43 @@ from commander.jsonshape import (
 )
 from commander.models import COMMANDER_CATEGORY, Deck
 from commander.net import NetworkError, Pacer
-from commander.scryfall import ScryfallClient, ScryfallError, SetCard, SetInfo, is_scryfall_id
+from commander.scryfall import (
+    ScryfallClient,
+    ScryfallError,
+    SetCard,
+    SetInfo,
+    card_roles,
+    is_scryfall_id,
+    tag_lineages,
+)
 from commander.suggest import deck_identity, name_keys_of, short_roles
-from commander.themereading import read_deck_themes
-from commander.themewants import named_traits, preview_facts, traits
+from commander.themereading import DeckReading, read_deck_themes
+from commander.themewants import (
+    Trait,
+    named_traits,
+    preview_facts,
+    theme_wants,
+    traits,
+    want_sizes,
+    want_trait,
+)
 
 log = logging.getLogger(__name__)
 
 PREVIEWS_FILE = "previews.json"
 # Bump when the file's fields change; a file of another version is ignored until the next probe replaces it.
-FORMAT_VERSION = 2
+FORMAT_VERSION = 3
 # Half Scryfall's asked-for 10 requests a second.
 PROBE_INTERVAL_SECONDS = 0.2
 # 1,750 cards a set, more than any set has had.
 MAX_PAGES_PER_SET = 10
 # The previews shown for a deck, best first.
-SHOWN = 6
+SHOWN = 12
+# What the commander wants weighs this many times what the deck's themes alone ask for: the commander is
+# always there to use it.
+COMMANDER_WEIGHT = 2.0
+# The least a match weighs, so a feature nearly every card has still counts for something.
+MIN_WEIGHT = 0.1
 
 
 @dataclass(slots=True, frozen=True)
@@ -54,9 +76,14 @@ class PreviewCache:
     # The UTC day of the last successful probe; None before the first.
     probed_on: date | None
     cards: tuple[SetCard, ...]
+    # The cards' Tagger tags (with every tag above them) and roles, by oracle id, from the tags of the probe's
+    # day: the card data's are up to a week older, too old for a card revealed since.
+    tags: Mapping[str, frozenset[str]] = field(default_factory=dict[str, frozenset[str]])
+    roles: Mapping[str, frozenset[Role]] = field(default_factory=dict[str, frozenset[Role]])
 
 
 NO_PREVIEWS = PreviewCache(None, ())
+_ROLE_VALUES = frozenset(role.value for role in Role)
 
 
 class ProbeState(Enum):
@@ -78,6 +105,8 @@ class PreviewProbe:
     seconds: float = 0.0
     # Why the probe failed; empty unless FAILED.
     problem: str = ""
+    # Why the previews' tags were not refreshed, when the cards were; the last tags are kept.
+    tag_problem: str = ""
 
 
 @dataclass(slots=True, frozen=True)
@@ -85,9 +114,12 @@ class PreviewFit:
     card: SetCard
     # The deck's dominant tags the card matches, in the deck's order.
     tags: tuple[str, ...]
-    fills_short_role: bool
+    # The roles the deck runs short of that the card fills, in the order of Role.
+    roles: tuple[Role, ...]
     # Whether the card is one the deck's commander wants (themewants.commander_wants).
     fits_commander: bool = False
+    # Whether the card works against the deck's commander (themewants.commander_conflicts).
+    against_commander: bool = False
 
 
 def local_day(moment: datetime) -> date:
@@ -112,12 +144,14 @@ def probe_previews(
     monotonic: Callable[[], float] = time.monotonic,
 ) -> PreviewProbe:
     """Search the cards of each upcoming set, once a UTC day (or again, with force), and replace the cache
-    with the previews among them; with no upcoming set the cache is emptied. A failure keeps the last cache
-    and comes back as FAILED, already logged."""
+    with the previews among them, and their tags and roles from that day's Tagger tags; with no upcoming set
+    the cache is emptied. A failure keeps the last cache and comes back as FAILED, already logged; a failure
+    of the tags alone keeps the cards found and the last tags of those still previews."""
     moment = now()
     # Once a UTC day, like the card data's check; what is out yet goes by the local day.
     today, local = moment.astimezone(UTC).date(), local_day(moment)
-    if not force and read_previews(folder).probed_on == today:
+    last = read_previews(folder)
+    if not force and last.probed_on == today:
         return PreviewProbe(ProbeState.DONE_TODAY)
     started = monotonic()
     requests = 0
@@ -138,21 +172,44 @@ def probe_previews(
                 if is_preview(card, local):
                     # A card in a set and its Commander decks alike keeps its first printing.
                     cards.setdefault(card.oracle_id, card)
-        write_previews(folder, PreviewCache(today, tuple(cards.values())))
+        tags, roles, tag_problem = _preview_tags(client, folder, cards, last, before_each)
+        write_previews(folder, PreviewCache(today, tuple(cards.values()), tags, roles))
     except (NetworkError, ScryfallError, OSError) as error:
         log.warning("card previews not refreshed, the last ones are kept: %s", error)
         return PreviewProbe(ProbeState.FAILED, requests=requests, problem=str(error))
     seconds = monotonic() - started
     codes = tuple(s.code for s in upcoming)
     log.info(
-        "card previews: %d from sets %s in %d requests, %.1f s",
+        "card previews: %d from sets %s, %d with tags, in %d requests, %.1f s",
         len(cards),
         ", ".join(codes) or "none",
+        len(tags),
         requests,
         seconds,
     )
     state = ProbeState.UPDATED if upcoming else ProbeState.NO_SEASON
-    return PreviewProbe(state, codes, len(cards), requests, seconds)
+    return PreviewProbe(state, codes, len(cards), requests, seconds, tag_problem=tag_problem)
+
+
+def _preview_tags(
+    client: ScryfallClient,
+    folder: Path,
+    cards: Mapping[str, SetCard],
+    last: PreviewCache,
+    before_each: Callable[[], None],
+) -> tuple[dict[str, frozenset[str]], dict[str, frozenset[Role]], str]:
+    """The previews' tags and roles from today's Tagger tags, and why they are the last ones instead (logged),
+    or "". With no previews no tags are fetched."""
+    if not cards:
+        return {}, {}, ""
+    try:
+        # A rebuild of the card data in the same sync may have downloaded them already.
+        _, tags = client.oracle_tags(folder, before_request=before_each)
+    except (NetworkError, ScryfallError, OSError) as error:
+        log.warning("tags of the card previews not refreshed, the last ones are kept: %s", error)
+        kept_tags = {o: slugs for o, slugs in last.tags.items() if o in cards}
+        return kept_tags, {o: r for o, r in last.roles.items() if o in cards}, str(error)
+    return tag_lineages(tags, cards), card_roles(tags, {o: c.oracle_text for o, c in cards.items()}), ""
 
 
 def is_preview(card: SetCard, today: date) -> bool:
@@ -190,13 +247,17 @@ def fitting_previews(
     *,
     today: date,
     targets: Mapping[Role, int],
+    tags: Mapping[str, frozenset[str]] | None = None,
+    roles: Mapping[str, frozenset[Role]] | None = None,
 ) -> list[PreviewFit]:
-    """The previews in the deck's colour identity that match its dominant tags or that its commander wants:
-    the most distinct features of the tags first (types, keywords, tags and feeding cards; tags that ask for
-    one feature count it once, and the commander's want counts as one more), then those the commander wants,
-    then those filling a role the deck runs short of, then the coloured before the colourless, then those
-    sharing more Tagger tags with the deck's cards and nearer its average mana value (`_like_the_deck`), then
-    by name; at most SHOWN. today is the local day.
+    """The previews in the deck's colour identity that match its dominant tags, that its commander wants or
+    that fill a role it runs short of. Those working against the commander go last, still shown. The rest
+    go by the weight of the distinct features they match (`_feature_weights`: the types, keywords, tags and
+    wants of the themes, the commander's wants and the short roles, each once, a rare one weighing more, and
+    what the commander wants twice), then those the commander wants, then those filling a short role, then
+    the coloured before the colourless, then those sharing more Tagger tags with the deck's cards and nearer
+    its average mana value (`_like_the_deck`), then by name; at most SHOWN. today is the local day; tags and
+    roles are the probe's (`PreviewCache`), beside the card data's.
     Like every suggestion, a card the profile excludes, by name or by its [exclude] types, keywords or tags,
     is never one, nor is a card the deck already has."""
     identity = deck_identity(main)
@@ -216,35 +277,86 @@ def fitting_previews(
     if not live:
         return []
     reading = read_deck_themes(deck, profile, db)
-    if not reading.themes and not reading.commander:
+    short = short_roles(main, db, targets)
+    if not reading.themes and not reading.commander and not short:
         return []
     ids = [c.oracle_id for c in live]
-    lineage = db.tag_lineage(ids)
-    roles = db.roles(ids)
-    short = short_roles(main, db, targets)
+    lineage = _merged(db.tag_lineage(ids), tags or {})
+    held_roles = _merged(db.roles(ids), roles or {})
     like = _like_the_deck(main, db, lineage)
-    ranked: list[tuple[tuple[int, bool, bool, bool, float, float, str], PreviewFit]] = []
+    weight = _feature_weights(db, reading)
+    ranked: list[tuple[tuple[bool, float, bool, bool, bool, float, float, str], PreviewFit]] = []
     for card in live:
         facts = preview_facts(card, lineage.get(card.oracle_id, frozenset()))
         if named_traits(profile.exclude, facts):
             continue
         by_theme = [(theme, traits(theme.spec, facts)) for theme in reading.themes]
         matched = tuple(theme.name for theme, found in by_theme if found)
-        commander = any(want.matches(facts) for want in reading.commander)
-        if not matched and not commander:
+        wanted = {want_trait(want) for want in reading.commander if want.matches(facts)}
+        fills = [role for role in Role if role in held_roles.get(card.oracle_id, frozenset()) & short]
+        filled = {("role", role.value) for role in fills}
+        if not matched and not wanted and not filled:
             continue
-        fills = bool(roles.get(card.oracle_id, frozenset()) & short)
-        # Tags asking for the same feature, like Tokens and Go-wide for repeatable tokens, count it once.
-        features = {trait for _, found in by_theme for trait in found}
-        # The commander's want counts one feature more, as a commander can want something as broad as every
-        # artifact, and breaks a tie first.
-        score = len(features) + commander
+        # Tags asking for the same feature, like Tokens and Go-wide for repeatable tokens, count it once, and
+        # so does a theme's feeder the commander wants too.
+        features = {trait for _, found in by_theme for trait in found} | wanted | filled
+        score = sum(weight(trait) * (COMMANDER_WEIGHT if trait in wanted else 1.0) for trait in features)
+        against = any(want.matches(facts) for want in reading.against)
         affinity, distance = like(card)
         colourless = not card.color_identity
-        key = (-score, not commander, not fills, colourless, -affinity, distance, card.name.casefold())
-        ranked.append((key, PreviewFit(card, matched, fills, commander)))
+        key = (
+            against,
+            -round(score, 6),
+            not wanted,
+            not filled,
+            colourless,
+            -affinity,
+            distance,
+            card.name.casefold(),
+        )
+        ranked.append((key, PreviewFit(card, matched, tuple(fills), bool(wanted), against)))
     ranked.sort(key=lambda item: item[0])
     return [fit for _, fit in ranked[:SHOWN]]
+
+
+def _merged[T](
+    first: Mapping[str, frozenset[T]], second: Mapping[str, frozenset[T]]
+) -> dict[str, frozenset[T]]:
+    return {key: first.get(key, frozenset()) | second.get(key, frozenset()) for key in first.keys() | second}
+
+
+def _feature_weights(db: CardDb, reading: DeckReading) -> Callable[[Trait], float]:
+    """How much matching a feature says a card fits: the rarer the feature among all Commander-legal cards,
+    the more (the log of all of them over those with it), and never under MIN_WEIGHT. Dwarf or Landfall
+    weighs far more than a creature with power 2 or less."""
+    total = max(db.legal_cards(), 1)
+    wants = {want_trait(w): w for theme in reading.themes for w in theme_wants(theme.spec)}
+    wants.update((want_trait(w), w) for w in reading.commander)
+    want_size = want_sizes(db, wants.values())
+    # Legal cards only, as the other counts: a tag's own size counts every card in it.
+    tag_ids = db.tag_ids({slug for theme in reading.themes for slug in theme.spec.tags})
+    tag_size = {slug: db.theme_size(Theme(tag_ids=(tag_id,))) for slug, tag_id in tag_ids.items()}
+    role_size = db.role_sizes()
+    known: dict[Trait, float] = {}
+
+    def size(trait: Trait) -> int:
+        kind, value = trait
+        if kind == "type":
+            return db.theme_size(Theme(types=(value,)))
+        if kind == "keyword":
+            return db.theme_size(Theme(keywords=(value,)))
+        if kind == "tag":
+            return tag_size.get(value, 0)
+        if kind == "want":
+            return want_size.get(wants[trait], 0) if trait in wants else 0
+        return role_size.get(Role(value), 0)
+
+    def weight(trait: Trait) -> float:
+        if trait not in known:
+            known[trait] = max(MIN_WEIGHT, math.log(total / max(size(trait), 1)))
+        return known[trait]
+
+    return weight
 
 
 def _like_the_deck(
@@ -293,6 +405,8 @@ def _cache_json(cache: PreviewCache) -> dict[str, object]:
                 "setName": c.set_name,
                 "releasedAt": c.released_at.isoformat(),
                 "alreadyOut": c.already_out,
+                "tags": sorted(cache.tags.get(c.oracle_id, ())),
+                "roles": sorted(role.value for role in cache.roles.get(c.oracle_id, ())),
             }
             for c in cache.cards
         ],
@@ -303,6 +417,8 @@ def _cache_from_json(raw: object) -> PreviewCache:
     obj = as_object(_migrate(raw), "previews")
     probed = obj.get("probedOn")
     cards: list[SetCard] = []
+    tags: dict[str, frozenset[str]] = {}
+    roles: dict[str, frozenset[Role]] = {}
     for index, item in enumerate(req_list(obj, "cards", "previews")):
         where = f"previews.cards[{index}]"
         card = as_object(item, where)
@@ -327,7 +443,14 @@ def _cache_from_json(raw: object) -> PreviewCache:
                 already_out=req_bool(card, "alreadyOut", where),
             )
         )
-    return PreviewCache(_date(probed, "previews.probedOn") if isinstance(probed, str) else None, tuple(cards))
+        oracle_id = cards[-1].oracle_id
+        if slugs := str_list(card, "tags", where):
+            tags[oracle_id] = frozenset(slugs)
+        # A role this version does not know is left out, as the card data's are.
+        if held := {Role(r) for r in str_list(card, "roles", where) if r in _ROLE_VALUES}:
+            roles[oracle_id] = frozenset(held)
+    day = _date(probed, "previews.probedOn") if isinstance(probed, str) else None
+    return PreviewCache(day, tuple(cards), tags, roles)
 
 
 def _migrate(raw: object) -> object:

@@ -353,6 +353,10 @@ def _previews_probe(job: Future[PreviewProbe] | None, warnings: list[str]) -> Pr
         probe = PreviewProbe(ProbeState.FAILED, problem=f"unexpected {type(error).__name__}: {error}")
     if probe.state is ProbeState.FAILED:
         warnings.append(f"card previews not refreshed ({probe.problem}); the last ones are kept")
+    if probe.tag_problem:
+        warnings.append(
+            f"tags of the card previews not refreshed ({probe.tag_problem}); the last ones are kept"
+        )
     return probe
 
 

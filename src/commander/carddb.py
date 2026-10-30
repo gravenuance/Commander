@@ -5,7 +5,7 @@ import re
 import sqlite3
 import threading
 import time
-from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Hashable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -70,6 +70,17 @@ _TAG_COUNT_QUERY = (
     # CROSS JOIN keeps the subtree first; left alone SQLite scans every tag_member row and probes the subtree.
     + " SELECT count(DISTINCT oracle_id)"
     " FROM subtree CROSS JOIN tag_member ON tag_member.tag_id = subtree.tag_id"
+)
+_TAG_MEMBERS_QUERY = (
+    _SUBTREE_CTE.format("SELECT tag_id FROM tag WHERE slug = ?")  # noqa: S608 — built from constant fragments and placeholders; every value is bound
+    + " SELECT DISTINCT oracle_id FROM subtree CROSS JOIN tag_member ON tag_member.tag_id = subtree.tag_id"
+)
+_LEGAL_FACES_QUERY = (
+    "SELECT oracle_id, type_line, cmc, power, oracle_text FROM oracle WHERE commander_legal = 1"
+)
+_ROLE_SIZES_QUERY = (
+    "SELECT role, count(*) FROM role_member JOIN oracle USING (oracle_id) WHERE commander_legal = 1"
+    " GROUP BY role"
 )
 _SUBTREE_SLUGS_QUERY = (
     _SUBTREE_CTE.format("SELECT tag_id FROM tag WHERE slug = ?")  # noqa: S608 — built from constant fragments and placeholders; every value is bound
@@ -404,6 +415,20 @@ class _BuildAnswers:
     legal_cards: int | None = None
     tag_sizes: dict[str, int] = field(default_factory=dict[str, int])
     theme_sizes: dict[Theme, int] = field(default_factory=dict[Theme, int])
+    role_sizes: dict[Role, int] | None = None
+    # Counts a caller works out itself (`build_count`), by its own keys.
+    counts: dict[Hashable, int] = field(default_factory=dict[Hashable, int])
+
+
+@dataclass(slots=True, frozen=True)
+class LegalFace:
+    """What of a Commander-legal card a scan over all of them reads."""
+
+    oracle_id: str
+    type_line: str
+    mana_value: float
+    power: str | None
+    text: str
 
 
 # The newest build's answers per database file, so a rebuilt file replaces its old entry.
@@ -625,6 +650,32 @@ class CardDb:
             rows = self._query("SELECT count(*) FROM oracle WHERE commander_legal = 1")
             answers.legal_cards = int(rows[0][0])
         return answers.legal_cards
+
+    def legal_faces(self) -> list[LegalFace]:
+        """Every Commander-legal card, for a count no query can make (a scan of some 30,000 rows)."""
+        return [
+            LegalFace(oracle_id, type_line, float(cmc), power, text or "")
+            for oracle_id, type_line, cmc, power, text in self._query(_LEGAL_FACES_QUERY)
+        ]
+
+    def tag_members(self, slug: str) -> frozenset[str]:
+        """The oracle ids in a tag, sub-tags included; none for a slug Scryfall does not have."""
+        return frozenset(row[0] for row in self._query(_TAG_MEMBERS_QUERY, [slug]))
+
+    def role_sizes(self) -> dict[Role, int]:
+        """How many Commander-legal cards hold each role."""
+        answers = self._build_answers()
+        if answers.role_sizes is None:
+            rows = self._query(_ROLE_SIZES_QUERY)
+            answers.role_sizes = {Role(role): int(count) for role, count in rows if _is_role(role)}
+        return dict(answers.role_sizes)
+
+    def build_count(self, key: Hashable) -> int | None:
+        """A count a caller stored for this build of the card data (`set_build_count`); None before."""
+        return self._build_answers().counts.get(key)
+
+    def set_build_count(self, key: Hashable, count: int) -> None:
+        self._build_answers().counts[key] = count
 
     def _build_answers(self) -> _BuildAnswers:
         """The cached counts of the build this connection reads; a rebuilt file starts with none."""
@@ -909,7 +960,7 @@ def _fill(
                 "INSERT INTO role_member VALUES (?, ?)",
                 (
                     (role.value, oracle_id)
-                    for role, members in _ungate(role_members, gates, gated_text).items()
+                    for role, members in ungate(role_members, gates, gated_text).items()
                     for oracle_id in members
                 ),
             )
@@ -970,7 +1021,7 @@ def _printing_rows(batch: list[ParsedCard]) -> Iterator[tuple[object, ...]]:
         )
 
 
-def _ungate(
+def ungate(
     role_members: Mapping[Role, frozenset[str]], gates: Sequence[TextGate], texts: Mapping[str, str]
 ) -> dict[Role, frozenset[str]]:
     """Each role's members plus its gated cards whose text matches the gate's phrase."""

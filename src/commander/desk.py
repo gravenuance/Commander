@@ -942,7 +942,14 @@ class Desk:
                     "set": fit.card.set_name,
                     "out": fit.card.released_at.isoformat(),
                     # A card the commander wants shows the deck's name among the tags it fits.
-                    "fits": [*fit.tags, *([stored.deck.short_name] if fit.fits_commander else [])],
+                    # The tags it fits, the commander that wants it and the short roles it fills.
+                    "fits": [
+                        *fit.tags,
+                        *([stored.deck.short_name] if fit.fits_commander else []),
+                        *(role.value.capitalize() for role in fit.roles),
+                    ],
+                    # The commander a card works against, for its warning; none for most.
+                    "against": [stored.deck.short_name] if fit.against_commander else [],
                 }
                 for fit in fits
             ]
@@ -963,11 +970,21 @@ class Desk:
         known = self._previews.get(stored.deck.id)
         if known is not None and known[0] == stamp:
             return known[1]
-        cards = read_previews(self._settings.cache).cards
+        cache = read_previews(self._settings.cache)
         # Between preview seasons the cache is empty, and a deck view costs nothing more.
         fits = (
-            fitting_previews(stored.deck, main, profile, db, cards, today=today, targets=targets)
-            if cards
+            fitting_previews(
+                stored.deck,
+                main,
+                profile,
+                db,
+                cache.cards,
+                today=today,
+                targets=targets,
+                tags=cache.tags,
+                roles=cache.roles,
+            )
+            if cache.cards
             else []
         )
         self._previews[stored.deck.id] = (stamp, fits)

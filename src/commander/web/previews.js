@@ -37,7 +37,8 @@ function previewTile(card) {
     el("div", { class: "card-meta" },
       el("span", { class: "type", text: card.typeLine, title: card.typeLine }),
       el("span", { text: card.set }),
-      el("span", { class: "badge status", text: `Out ${out}` })),
+      el("span", { class: "badge status", text: `Out ${out}` }),
+      ...card.against.map((name) => el("span", { class: "badge status against", text: `Works against ${name}` }))),
     el("p", { class: "fits small", text: `Fits: ${card.fits.map((tag) => `#${tag}`).join(" ")}` }),
     card.text ? el("details", { class: "fold" }, el("summary", { text: "Rules text" }), el("p", { text: card.text })) : null);
   return el("article", { class: "card preview", role: "listitem", "aria-label": card.name }, art, body);

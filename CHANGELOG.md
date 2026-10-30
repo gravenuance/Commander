@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- Upcoming-set previews suit their decks better (ADR 0058): up to 12 show; a rare match weighs more than a
+  common one and what the commander wants twice; token makers count for Chatterfang, Auras for Ellivere, big
+  spells for Glarb and removal for Vren; Tokens and Go-wide decks are shown protection for their creatures,
+  and sacrifice decks fodder; a card filling a role the deck runs short of shows even when it matches no
+  theme; and a card that works against the commander, like a +1/+1 counter for Arabella, goes last with a
+  "Works against" warning.
+- The sync keeps each preview's Tagger tags from that day's tags, so a card revealed after the weekly card
+  data is matched by its tags and roles too.
+
 ## 1.3.1 - 2026-10-29
 
 ### Fixed

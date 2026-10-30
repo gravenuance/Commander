@@ -14,7 +14,7 @@ const view = (id, previews) => ({
 const tutelage = {
   name: "Captain's Tutelage", manaCost: "{1}{R}", typeLine: "Enchantment — Aura",
   text: "Flash\\nEnchant creature", image: "https://cards.scryfall.io/normal/front/0/c/0c34.jpg",
-  set: "Star Trek", out: "2026-11-13", fits: ["Flash", "Treasure"],
+  set: "Star Trek", out: "2026-11-13", fits: ["Flash", "Treasure"], against: [],
 };
 accountState.active = true;
 state.decks = [
@@ -87,6 +87,16 @@ def test_a_tile_shows_the_card_and_its_fit_with_no_action_but_zooming_its_art() 
     ]:
         assert shown in seen["text"]
     assert not [t for t in seen["text"] if "€" in t]
+    assert not [t for t in seen["text"] if t.startswith("Works against")]
+
+
+def test_a_card_working_against_the_commander_carries_a_warning() -> None:
+    seen = run("""
+    previewsPanel.render(1, { cards: [{ ...tutelage, against: ["Arabella"] }] });
+    const tile = $("list-previews").children[0];
+    return walk(tile).filter((n) => n.className === "badge status against").map((n) => n.textContent);
+    """)
+    assert seen == ["Works against Arabella"]
 
 
 def test_opening_another_deck_drops_the_last_decks_previews() -> None:

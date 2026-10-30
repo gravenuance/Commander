@@ -11,7 +11,7 @@ import logging
 import re
 import threading
 import uuid
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -30,6 +30,7 @@ from commander.carddb import (
     Tag,
     TextGate,
     read_meta,
+    ungate,
     write_card_db,
 )
 from commander.fsutil import new_temp_path
@@ -236,13 +237,41 @@ class ScryfallClient:
         # in the same sync, from two threads.
         self._sets: list[SetInfo] | None = None
         self._sets_lock = threading.Lock()
+        # Likewise the bulk file list and the oracle tags, which a rebuild of the card data and the preview
+        # probe both want on a rebuild day.
+        self._files: dict[str, BulkFile] | None = None
+        self._files_lock = threading.Lock()
+        self._tags: tuple[BulkFile, dict[str, Tag]] | None = None
+        self._tags_lock = threading.Lock()
 
-    def bulk_files(self) -> dict[str, BulkFile]:
-        raw = self._fetcher.get_json(f"{self._api_base}/bulk-data")
-        try:
-            return parse_bulk_listing(raw)
-        except ShapeError as error:
-            raise ScryfallError(f"unexpected bulk data list from Scryfall: {error}") from error
+    def bulk_files(self, *, before_request: Callable[[], None] = lambda: None) -> dict[str, BulkFile]:
+        """The bulk file list, asked once per client; before_request (the caller's pacing) runs only when it
+        is asked."""
+        with self._files_lock:
+            if self._files is None:
+                before_request()
+                raw = self._fetcher.get_json(f"{self._api_base}/bulk-data")
+                try:
+                    self._files = parse_bulk_listing(raw)
+                except ShapeError as error:
+                    raise ScryfallError(f"unexpected bulk data list from Scryfall: {error}") from error
+            return dict(self._files)
+
+    def oracle_tags(
+        self, folder: Path, *, before_request: Callable[[], None] = lambda: None
+    ) -> tuple[BulkFile, dict[str, Tag]]:
+        """Today's oracle tags file and its tags, downloaded once per client through a temp file in folder
+        that is gone afterwards; before_request runs only when the file list is asked."""
+        with self._tags_lock:
+            if self._tags is None:
+                tags_file = _require(self.bulk_files(before_request=before_request), TAGS_FILE)
+                path = new_temp_path(folder, TAGS_FILE, DOWNLOAD_SUFFIX)
+                try:
+                    self.download(tags_file, path)
+                    self._tags = (tags_file, read_tags(path))
+                finally:
+                    path.unlink(missing_ok=True)
+            return self._tags
 
     def sets(self) -> list[SetInfo]:
         return self.read_sets()[0]
@@ -320,28 +349,25 @@ def refresh_card_db(
         if due is None:
             return CardRefresh(RefreshStatus.CURRENT, current, next_due=built.date() + MAX_DATA_AGE)
         reason = due
-    files = client.bulk_files()
-    cards_file, tags_file = _require(files, CARDS_FILE), _require(files, TAGS_FILE)
+    cards_file = _require(client.bulk_files(), CARDS_FILE)
 
     folder.mkdir(parents=True, exist_ok=True)
     _clear_stale_temp_files(folder, now())
-    # Their own names, as a CLI sync and the app may both be refreshing into this folder.
+    # Its own name, as a CLI sync and the app may both be refreshing into this folder.
     cards_gz = new_temp_path(folder, CARDS_FILE, DOWNLOAD_SUFFIX)
-    tags_gz = new_temp_path(folder, TAGS_FILE, DOWNLOAD_SUFFIX)
     try:
         size = f" ({cards_file.size // 1024 // 1024} MB)" if cards_file.size else ""
         on_progress(f"downloading Scryfall card data{size}")
         client.download(cards_file, cards_gz)
-        client.download(tags_file, tags_gz)
+        # The preview probe of the same sync reads these tags too.
+        tags_file, tags = client.oracle_tags(folder)
         on_progress("building the card database")
-        tags = read_tags(tags_gz)
         meta = CardDataMeta(cards_file.updated_at, tags_file.updated_at, now().isoformat())
         count = write_card_db(
             db_path, read_cards(cards_gz), role_members(tags), meta, tags=tags, gates=role_gates(tags)
         )
     finally:
         cards_gz.unlink(missing_ok=True)
-        tags_gz.unlink(missing_ok=True)
     log.info("card data rebuilt: %d printings", count)
     return CardRefresh(RefreshStatus.UPDATED, meta, count, reason)
 
@@ -635,6 +661,41 @@ def role_gates(tags: Mapping[str, Tag]) -> tuple[TextGate, ...]:
         sweepers = _members(tags, _subtree(tags, (board_wipe.tag_id,)))
         gates.append(TextGate(Role.BOARD_WIPE, _noncreature_sweepers(tags, sweepers), BOARD_WIPE_PHRASE))
     return tuple(gates)
+
+
+def tag_lineages(tags: Mapping[str, Tag], oracle_ids: Iterable[str]) -> dict[str, frozenset[str]]:
+    """The slugs of each card's tags with every tag above them, as `CardDb.tag_lineage` gives them; cards
+    with no tag are left out."""
+    wanted = frozenset(oracle_ids)
+    parents: dict[str, list[str]] = {}
+    for tag in tags.values():
+        for child in tag.child_ids:
+            parents.setdefault(child, []).append(tag.id)
+    direct: dict[str, set[str]] = {}
+    for tag in tags.values():
+        for oracle_id in tag.oracle_ids & wanted:
+            direct.setdefault(oracle_id, set()).add(tag.id)
+    found: dict[str, frozenset[str]] = {}
+    for oracle_id, tag_ids in direct.items():
+        seen: set[str] = set()
+        stack = list(tag_ids)
+        while stack:
+            tag_id = stack.pop()
+            if tag_id not in seen and tag_id in tags:
+                seen.add(tag_id)
+                stack.extend(parents.get(tag_id, ()))
+        found[oracle_id] = frozenset(tags[tag_id].slug for tag_id in seen)
+    return found
+
+
+def card_roles(tags: Mapping[str, Tag], texts: Mapping[str, str]) -> dict[str, frozenset[Role]]:
+    """The roles of the cards whose rules texts are given, as the card data would hold them; cards with no
+    role are left out."""
+    found: dict[str, set[Role]] = {}
+    for role, members in ungate(role_members(tags), role_gates(tags), texts).items():
+        for oracle_id in members & texts.keys():
+            found.setdefault(oracle_id, set()).add(role)
+    return {oracle_id: frozenset(roles) for oracle_id, roles in found.items()}
 
 
 def _noncreature_sweepers(tags: Mapping[str, Tag], sweepers: frozenset[str]) -> frozenset[str]:

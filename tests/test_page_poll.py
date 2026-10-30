@@ -173,7 +173,7 @@ def test_a_changed_previews_stamp_reloads_the_open_deck_so_its_count_and_open_pa
     state.previewsStamp = "day1";
     $("h-previews").setAttribute("aria-expanded", "true");
     const card = { name: "Tutelage", manaCost: "", typeLine: "Aura", text: "", image: "", set: "S",
-      out: "2026-11-13", fits: ["Flash"] };
+      out: "2026-11-13", fits: ["Flash"], against: [] };
     stub.previews = async () => ({ cards: [card] });
     stub.deck = async () => ({ ...view("new"), previews: 2 });
     stub.stamps = async () => ({ stamps: { "7": "new" }, meta: null, previews: "day1" });

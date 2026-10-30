@@ -15,7 +15,14 @@ from commander.carddb import CardDb
 from commander.deckprofile import Profile, ThemeSpec, resolve_spec
 from commander.deckthemes import DerivedTheme, SpecKey, ThemeSource, merge_themes, spec_key
 from commander.models import COMMANDER_CATEGORY, Deck
-from commander.themewants import CardFacts, Want, card_facts, commander_wants, spec_wants
+from commander.themewants import (
+    CardFacts,
+    Want,
+    card_facts,
+    commander_conflicts,
+    commander_wants,
+    spec_wants,
+)
 
 # A theme needs at least this many of the deck's main cards.
 MIN_DECK_MATCHES = 1
@@ -38,8 +45,10 @@ class ReadTheme:
 class DeckReading:
     # At most MAX_SEARCH_TAGS themes, the one matching the most of the deck's cards first.
     themes: tuple[ReadTheme, ...]
-    # What the commander's Tagger tags say the deck wants.
+    # What the commander's Tagger tags and rules text say the deck wants.
     commander: tuple[Want, ...] = ()
+    # What works against the commander.
+    against: tuple[Want, ...] = ()
 
     @property
     def names(self) -> list[str]:
@@ -59,7 +68,8 @@ def read_deck_themes(deck: Deck, profile: Profile, db: CardDb) -> DeckReading:
         r.info.oracle_id for r in resolved if r.info is not None and COMMANDER_CATEGORY in r.card.categories
     ]
     commander_tags = {slug for slugs in db.tag_lineage(commander_ids).values() for slug in slugs}
-    commander = commander_wants(db, commander_tags)
+    commander_texts = [text.text for text in db.card_texts(commander_ids).values()]
+    commander = commander_wants(db, commander_tags, commander_texts)
     groups = _same_spec(themes)
     facts = card_facts(db, oracle_ids) if any(spec_wants(group[0].spec) for group in groups) else {}
     found: list[ReadTheme] = []
@@ -70,7 +80,7 @@ def read_deck_themes(deck: Deck, profile: Profile, db: CardDb) -> DeckReading:
             found.append(ReadTheme(tuple(t.name for t in group), spec, cards))
     # sorted is stable, so equal counts stay in the order of the deck's tags.
     found.sort(key=lambda theme: -len(theme.cards))
-    return DeckReading(tuple(found[:MAX_SEARCH_TAGS]), commander)
+    return DeckReading(tuple(found[:MAX_SEARCH_TAGS]), commander, commander_conflicts(commander_tags))
 
 
 def _cards_matching(

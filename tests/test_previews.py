@@ -32,19 +32,28 @@ from commander.previews import (
     read_previews,
     write_previews,
 )
-from commander.scryfall import CardRefresh, ScryfallClient, SetCard, ShapeError, parse_search_page
+from commander.scryfall import (
+    CardRefresh,
+    ScryfallClient,
+    SetCard,
+    ShapeError,
+    parse_search_page,
+    refresh_card_db,
+)
 from commander.store import Workspace
 from commander.suggest import DEFAULT_TARGETS
 from commander.syncrun import SyncOptions, run_sync
 from conftest import (
     BATTERED_GOLEM,
     MAGDA_ORACLE,
+    TAGS_URL,
     FakeArchidekt,
     FakeScryfall,
     Json,
     MemoryTokenStore,
     build_card_db,
     extra_tag_line,
+    gzip_lines,
     load_fixture,
     tag_lines,
 )
@@ -56,6 +65,7 @@ from test_syncrun import DOWNLOADED
 __all__ = ["deck"]  # the fixture shared with test_meta
 
 SEARCH_URL = "https://api.scryfall.com/cards/search?q=e%3Atrk&unique=cards"
+BULK_URL = "https://api.scryfall.com/bulk-data"
 # Scryfall's own form of a next page link, as its answers give it.
 PAGE_2 = (
     "https://api.scryfall.com/cards/search?format=json&include_extras=false&include_multilingual=false"
@@ -244,10 +254,11 @@ def test_an_upcoming_set_over_two_pages_is_read_whole_paced_and_cached_without_i
         ProbeState.UPDATED,
         ("trk",),
         8,
-        3,
+        4,
     )
-    assert fake.requests == ["https://api.scryfall.com/sets", SEARCH_URL, PAGE_2]
-    assert pacer.waits == 2
+    # Then the bulk file list for today's tags, paced like the search, and the tags file from the file host.
+    assert fake.requests == ["https://api.scryfall.com/sets", SEARCH_URL, PAGE_2, BULK_URL, TAGS_URL]
+    assert pacer.waits == 3
     assert read_previews(tmp_path).probed_on == TODAY
     assert cached_names(tmp_path) == [
         "Captain's Tutelage",
@@ -270,7 +281,7 @@ def test_a_set_past_the_page_limit_keeps_the_pages_read(
     fake.searches = {SEARCH_URL: first, PAGE_2: second}
     with caplog.at_level(logging.WARNING, logger="commander.scryfall"):
         outcome = probe(fake, tmp_path)
-    assert (outcome.state, outcome.cards, outcome.requests) == (ProbeState.UPDATED, 5, 2)
+    assert (outcome.state, outcome.cards, outcome.requests) == (ProbeState.UPDATED, 5, 3)
     assert PAGE_2 not in fake.requests
     assert "the search for set trk has over 1 pages; the rest is left out" in caplog.messages
 
@@ -288,8 +299,9 @@ def test_the_probe_counts_no_request_for_a_set_list_the_card_data_already_read(t
     client = ScryfallClient(Fetcher(fake.client()))
     client.sets()
     outcome = probe_previews(client, tmp_path, now=lambda: NOW, pacer=Pacer(0))
-    assert fake.requests == ["https://api.scryfall.com/sets", SEARCH_URL]
-    assert outcome.requests == 1
+    assert fake.requests == ["https://api.scryfall.com/sets", SEARCH_URL, BULK_URL, TAGS_URL]
+    # The search and the file list.
+    assert outcome.requests == 2
 
 
 def test_the_probe_runs_once_a_day(tmp_path: Path) -> None:
@@ -300,13 +312,58 @@ def test_the_probe_runs_once_a_day(tmp_path: Path) -> None:
     assert probe(fake, tmp_path, now=NOW.replace(hour=23)).state is ProbeState.DONE_TODAY
     assert fake.requests == []
     probe(fake, tmp_path, now=datetime(2026, 10, 23, 1, 0, tzinfo=UTC))
-    assert fake.requests == ["https://api.scryfall.com/sets", SEARCH_URL]
+    assert fake.requests == ["https://api.scryfall.com/sets", SEARCH_URL, BULK_URL, TAGS_URL]
 
 
 def test_a_set_scryfall_has_no_cards_for_yet_is_an_empty_set_not_a_failure(tmp_path: Path) -> None:
-    outcome = probe(FakeScryfall(), tmp_path)
+    fake = FakeScryfall()
+    outcome = probe(fake, tmp_path)
     assert (outcome.state, outcome.cards) == (ProbeState.UPDATED, 0)
     assert read_previews(tmp_path) == PreviewCache(TODAY, ())
+    # With no previews there are no tags to fetch.
+    assert BULK_URL not in fake.requests
+
+
+def test_the_probe_keeps_each_previews_tags_and_roles_from_todays_tagger_tags(tmp_path: Path) -> None:
+    # Munitions Enthusiast is tagged combat-ramp in today's tags, which the card data does not know yet;
+    # combat-ramp sits below ramp in the fixture tags, so it is ramp too. The other previews have no tag.
+    fake = FakeScryfall()
+    fake.searches = {SEARCH_URL: search_page()}
+    lines = [json.loads(line) for line in tag_lines()]
+    combat = next(tag for tag in lines if tag["slug"] == "combat-ramp")
+    combat["taggings"] = [*combat["taggings"], {"oracle_id": MUNITIONS}]
+    fake.tags_gz = gzip_lines([*map(json.dumps, lines), extra_tag_line("anthem", QUARK)])
+    probe(fake, tmp_path)
+    cache = read_previews(tmp_path)
+    assert cache.tags == {MUNITIONS: frozenset({"combat-ramp", "ramp"}), QUARK: frozenset({"anthem"})}
+    assert cache.roles == {MUNITIONS: frozenset({Role.RAMP})}
+    # And a second read of the file gives them back.
+    write_previews(tmp_path, cache)
+    assert read_previews(tmp_path) == cache
+
+
+def test_a_failed_tag_download_keeps_the_cards_and_the_last_tags_of_those_still_previews(
+    tmp_path: Path,
+) -> None:
+    fake = FakeScryfall()
+    fake.searches = {SEARCH_URL: search_page()}
+    # Yesterday's previews: Quark, and a card no longer among them.
+    gone = "00000000-0000-4000-8000-000000000001"
+    quark = next(c for c in parse_search_page(search_page()).cards if c.oracle_id == QUARK)
+    last = PreviewCache(
+        date(2026, 10, 21),
+        (quark, replace(quark, oracle_id=gone, name="Gone")),
+        {QUARK: frozenset({"anthem"}), gone: frozenset({"ramp"})},
+        {gone: frozenset({Role.RAMP})},
+    )
+    write_previews(tmp_path, last)
+    fake.failing = {TAGS_URL: 500}
+    outcome = probe(fake, tmp_path)
+    assert (outcome.state, outcome.cards) == (ProbeState.UPDATED, 8)
+    assert "500" in outcome.tag_problem
+    cache = read_previews(tmp_path)
+    assert len(cache.cards) == 8
+    assert (cache.tags, cache.roles) == ({QUARK: frozenset({"anthem"})}, {})
 
 
 @pytest.mark.parametrize("failure", ["server error", "malformed"])
@@ -398,9 +455,15 @@ def test_a_cache_of_another_version_or_unreadable_counts_as_none(tmp_path: Path)
 
 
 def fits(
-    deck: Deck, db: CardDb, *, today: date = TODAY, profile: Profile | None = None
+    deck: Deck,
+    db: CardDb,
+    *,
+    today: date = TODAY,
+    profile: Profile | None = None,
+    targets: Mapping[Role, int] = DEFAULT_TARGETS,
 ) -> list[tuple[str, ...]]:
-    return [(fit.card.name, *fit.tags) for fit in found_fits(deck, db, today=today, profile=profile)]
+    found = found_fits(deck, db, today=today, profile=profile, targets=targets)
+    return [(fit.card.name, *fit.tags) for fit in found]
 
 
 def found_fits(
@@ -410,6 +473,7 @@ def found_fits(
     today: date = TODAY,
     profile: Profile | None = None,
     cards: Sequence[SetCard] | None = None,
+    targets: Mapping[Role, int] = DEFAULT_TARGETS,
 ) -> list[PreviewFit]:
     return fitting_previews(
         deck,
@@ -418,20 +482,28 @@ def found_fits(
         db,
         parse_search_page(search_page()).cards if cards is None else cards,
         today=today,
-        targets=DEFAULT_TARGETS,
+        targets=targets,
     )
 
 
-def test_previews_rank_by_the_features_they_match_then_a_short_role_then_name(deck: Deck, db: CardDb) -> None:
+# The weights below are ln(legal cards / cards with the feature) over the fixture data's 10,018 legal cards,
+# nearly all of them artifact filler: Flash is on 2 (8.52), the synergy-treasure tag on 1, the Golem (9.21), a
+# Treasure maker's text on 1 (9.21), the ramp role on 6 (7.42), a creature with power 2 or less on 2 (8.52).
+# A feature on no legal card weighs as one on 1.
+
+
+def test_previews_rank_by_the_weight_of_the_features_they_match_a_rare_one_weighing_more(
+    deck: Deck, db: CardDb
+) -> None:
     # Flash matches two of the deck's cards, Treasure two (Magda makes one, the Golem has the tag), so the
-    # deck's dominant tags are Flash, Treasure. Captain's Tutelage has Flash and the treasure tag, and Quark
-    # the treasure tag and a Treasure maker's text: two features each, so by name. Munitions Enthusiast and
-    # Dahar Master have the tag alone, and Munitions is ramp, which the deck lacks. Cloistered Telepath has
-    # Flash and Kirk the treasure tag, but neither is in Magda's red; Reckless Impulse is tagged too, but it
-    # is a reprint already out; The Wrath of Khan and D-7 Battle Cruiser match nothing.
+    # deck's dominant tags are Flash, Treasure. Quark has the treasure tag and a Treasure maker's text
+    # (18.42), Captain's Tutelage Flash and the tag (17.73). Munitions Enthusiast has the tag and is ramp,
+    # which the deck lacks (16.63), and Dahar Master has the tag alone (9.21). Cloistered Telepath has Flash
+    # and Kirk the treasure tag, but neither is in Magda's red; Reckless Impulse is tagged too, but it is a
+    # reprint already out; The Wrath of Khan and D-7 Battle Cruiser match nothing.
     assert fits(themed_deck(deck, ("Flash", "Treasure")), db) == [
-        ("Captain's Tutelage", "Flash", "Treasure"),
         ("Quark, Humble Proprietor", "Treasure"),
+        ("Captain's Tutelage", "Flash", "Treasure"),
         ("Munitions Enthusiast", "Treasure"),
         ("Dahar Master", "Treasure"),
     ]
@@ -440,9 +512,8 @@ def test_previews_rank_by_the_features_they_match_then_a_short_role_then_name(de
 def test_a_commanders_wants_rank_first_and_show_a_card_no_deck_tag_matches(
     deck: Deck, commander_db: CardDb
 ) -> None:
-    # Magda is a made-up synergy-low-power commander: Quark, with 1 power, is wanted, and ahead of Captain's
-    # Tutelage, which matches as many tag features but sorts before him. With Flash alone no tag of the deck
-    # names him, and his one feature, the want, ties with Tutelage's Flash and breaks the tie.
+    # Magda is a made-up synergy-low-power commander: Quark, with 1 power, is wanted. With Flash alone no tag
+    # of the deck names him, and he still shows, ahead of Tutelage's Flash and Munitions Enthusiast's ramp.
     shown = found_fits(themed_deck(deck, ("Flash", "Treasure")), commander_db)
     assert [(f.card.name, f.fits_commander) for f in shown] == [
         ("Quark, Humble Proprietor", True),
@@ -454,15 +525,29 @@ def test_a_commanders_wants_rank_first_and_show_a_card_no_deck_tag_matches(
     assert [(f.card.name, f.tags, f.fits_commander) for f in only] == [
         ("Quark, Humble Proprietor", (), True),
         ("Captain's Tutelage", ("Flash",), False),
+        ("Munitions Enthusiast", (), False),
     ]
 
 
-def test_a_commanders_want_counts_as_one_more_feature_and_breaks_a_tie_first(
-    deck: Deck, commander_db: CardDb
-) -> None:
-    # Quark without his Treasure text and tag matches no deck tag; the low-power commander wants him, which
-    # counts one feature: behind Captain's Tutelage's two, ahead of Munitions Enthusiast's one, though
-    # Munitions fills the deck's short ramp role.
+def test_a_tag_weighs_by_the_commander_legal_cards_it_holds(deck: Deck, db: CardDb) -> None:
+    # Of the 7 cards with the synergy-treasure tag, only the deck's Battered Golem is a legal card of the
+    # card data (9.21, where all 7 would make it 7.27). Dahar Master has the tag alone; Captain's Tutelage,
+    # under an id the tags do not know, has Flash alone (8.52). Quark and Munitions Enthusiast left out.
+    cards = [
+        replace(card, oracle_id="00000000-0000-0000-0000-00000000000b")
+        if card.name == "Captain's Tutelage"
+        else card
+        for card in parse_search_page(search_page()).cards
+    ]
+    profile = Profile(exclude_cards=("Quark, Humble Proprietor", "Munitions Enthusiast"))
+    shown = found_fits(themed_deck(deck, ("Flash", "Treasure")), db, profile=profile, cards=cards)
+    assert [f.card.name for f in shown] == ["Dahar Master", "Captain's Tutelage"]
+
+
+def test_a_commanders_want_weighs_twice_what_a_theme_alone_asks_for(deck: Deck, commander_db: CardDb) -> None:
+    # Quark without his Treasure text and tag matches no deck tag; the low-power commander wants him, a
+    # feature of 8.52 that counts twice (17.04): behind Captain's Tutelage's Flash and tag (17.73), ahead of
+    # Munitions Enthusiast's tag and ramp (16.63), which counted once (8.52) he would not be.
     cards = [
         replace(card, oracle_id="00000000-0000-0000-0000-00000000000a", oracle_text="")
         if card.name == "Quark, Humble Proprietor"
@@ -478,12 +563,49 @@ def test_a_commanders_want_counts_as_one_more_feature_and_breaks_a_tie_first(
     ]
 
 
+def test_a_card_working_against_the_commander_goes_last_and_says_so(deck: Deck, commander_db: CardDb) -> None:
+    # Magda is a made-up synergy-low-power commander, and a +1/+1 counter on each creature lifts her small
+    # creatures out of her count: Captain's Tutelage, second without it, still shows, after the rest.
+    grows = "Flash\nEnchant creature\nPut a +1/+1 counter on each creature you control."
+    cards = [
+        replace(card, oracle_text=grows) if card.name == "Captain's Tutelage" else card
+        for card in parse_search_page(search_page()).cards
+    ]
+    shown = found_fits(themed_deck(deck, ("Flash", "Treasure")), commander_db, cards=cards)
+    assert [(f.card.name, f.against_commander) for f in shown] == [
+        ("Quark, Humble Proprietor", False),
+        ("Munitions Enthusiast", False),
+        ("Dahar Master", False),
+        ("Captain's Tutelage", True),
+    ]
+
+
+def test_a_wide_deck_is_shown_protection_for_its_creatures(deck: Deck, tokens_db: CardDb) -> None:
+    # D-7 Battle Cruiser given The Needs of the Many's text: no card of the fixture data protects creatures
+    # (9.21), behind Quark's repeatable tokens and anthem (9.21 each: the Golem is the legal card with the
+    # tag, none has anthem). Dahar Master's tokens alone weigh as much, and D-7, colourless, goes after.
+    needs = "Creatures you control gain hexproof and indestructible until end of turn."
+    cards = [
+        replace(card, oracle_text=needs) if card.name == "D-7 Battle Cruiser" else card
+        for card in parse_search_page(search_page()).cards
+    ]
+    shown = found_fits(themed_deck(deck, ("Tokens", "Go-wide")), tokens_db, cards=cards)
+    assert [(f.card.name, *f.tags) for f in shown] == [
+        ("Quark, Humble Proprietor", "Tokens", "Go-wide"),
+        ("Dahar Master", "Tokens", "Go-wide"),
+        ("D-7 Battle Cruiser", "Tokens", "Go-wide"),
+        ("Munitions Enthusiast",),
+    ]
+
+
 def test_tags_that_share_a_feature_count_it_once(deck: Deck, tokens_db: CardDb) -> None:
     # Tokens and Go-wide both ask for repeatable-creature-tokens, which Dahar Master has alone. Quark has it
-    # and anthem: two features, so he comes first though Dahar sorts before him by name.
+    # and anthem: two features, so he comes first though Dahar sorts before him by name. Munitions
+    # Enthusiast matches neither, and shows for the deck's short ramp.
     assert fits(themed_deck(deck, ("Tokens", "Go-wide")), tokens_db) == [
         ("Quark, Humble Proprietor", "Tokens", "Go-wide"),
         ("Dahar Master", "Tokens", "Go-wide"),
+        ("Munitions Enthusiast",),
     ]
 
 
@@ -549,8 +671,8 @@ def test_at_most_the_shown_number_of_previews_fit(
 ) -> None:
     monkeypatch.setattr(previews_module, "SHOWN", 2)
     assert [name for name, *_ in fits(themed_deck(deck, ("Flash", "Treasure")), db)] == [
-        "Captain's Tutelage",
         "Quark, Humble Proprietor",
+        "Captain's Tutelage",
     ]
 
 
@@ -561,20 +683,21 @@ def test_dominant_tags_count_with_the_tag_search_off(deck: Deck, db: CardDb) -> 
 def test_a_spacecraft_is_a_vehicle_and_an_artifact_feeds_the_artifacts_tag_of_a_preview(
     deck: Deck, db: CardDb
 ) -> None:
-    # The deck's Hoverbike is a Vehicle and its artifacts are Flute, Hoverbike and Golem.
-    assert fits(themed_deck(deck, ("Vehicles",)), db) == [("D-7 Battle Cruiser", "Vehicles")]
-    assert fits(themed_deck(deck, ("Artifacts",)), db) == [("D-7 Battle Cruiser", "Artifacts")]
+    # The deck's Hoverbike is a Vehicle and its artifacts are Flute, Hoverbike and Golem. The theme work
+    # alone, with no role the deck runs short of.
+    assert fits(themed_deck(deck, ("Vehicles",)), db, targets={}) == [("D-7 Battle Cruiser", "Vehicles")]
+    assert fits(themed_deck(deck, ("Artifacts",)), db, targets={}) == [("D-7 Battle Cruiser", "Artifacts")]
 
 
 def test_a_red_preview_with_power_two_or_less_feeds_the_weenies_tag(deck: Deck, db: CardDb) -> None:
     # Magda has 2 power. Quark has 1; Munitions Enthusiast has 3, Dahar Master 4, and the blue Telepath is
     # out of Magda's colours.
-    assert fits(themed_deck(deck, ("Weenies",)), db) == [("Quark, Humble Proprietor", "Weenies")]
+    assert fits(themed_deck(deck, ("Weenies",)), db, targets={}) == [("Quark, Humble Proprietor", "Weenies")]
 
 
 def test_an_ignored_tag_finds_no_previews(deck: Deck, db: CardDb) -> None:
     profile = Profile(ignore_themes=("Treasure",))
-    assert fits(themed_deck(deck, ("Flash", "Treasure")), db, profile=profile) == [
+    assert fits(themed_deck(deck, ("Flash", "Treasure")), db, profile=profile, targets={}) == [
         ("Captain's Tutelage", "Flash")
     ]
 
@@ -584,8 +707,8 @@ def test_the_profiles_excluded_cards_keywords_and_tags_never_show_as_previews(de
     themed = themed_deck(deck, ("Flash", "Treasure"))
     by_card = Profile(exclude_cards=("Dahar Master",))
     assert [name for name, *_ in fits(themed, db, profile=by_card)] == [
-        "Captain's Tutelage",
         "Quark, Humble Proprietor",
+        "Captain's Tutelage",
         "Munitions Enthusiast",
     ]
     # Munitions Enthusiast has trample; ramp is its role, through the ramp tag.
@@ -595,9 +718,14 @@ def test_the_profiles_excluded_cards_keywords_and_tags_never_show_as_previews(de
     assert "Munitions Enthusiast" not in [name for name, *_ in fits(themed, db, profile=by_tag)]
 
 
-def test_a_deck_with_no_theme_tags_or_none_a_preview_matches_has_no_previews(deck: Deck, db: CardDb) -> None:
-    assert fits(themed_deck(deck, ()), db) == []
-    assert fits(themed_deck(deck, ("Golems",)), db) == []
+def test_a_deck_with_no_theme_tags_or_none_a_preview_matches_has_only_the_previews_of_a_short_role(
+    deck: Deck, db: CardDb
+) -> None:
+    # Munitions Enthusiast is ramp, which the deck runs short of by the default targets.
+    assert fits(themed_deck(deck, ()), db) == [("Munitions Enthusiast",)]
+    assert fits(themed_deck(deck, ("Golems",)), db) == [("Munitions Enthusiast",)]
+    assert fits(themed_deck(deck, ()), db, targets={}) == []
+    assert fits(themed_deck(deck, ("Golems",)), db, targets={}) == []
 
 
 def test_a_preview_the_deck_already_has_is_not_offered_even_when_the_card_data_does_not_know_it(
@@ -678,6 +806,34 @@ def test_a_failed_probe_is_a_sync_warning_and_the_sync_carries_on(
     assert read_previews(cache) == kept
 
 
+def test_a_failed_tag_download_is_a_sync_warning_and_the_cards_are_kept(
+    tmp_path: Path, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeArchidekt()
+    fake.put(raw_deck)
+    cache = tmp_path / "cache"
+    fake.scryfall.searches = {SEARCH_URL: search_page()}
+    fake.scryfall.failing[TAGS_URL] = 503
+
+    def downloaded(*_: object, **__: object) -> CardRefresh:
+        return DOWNLOADED
+
+    monkeypatch.setattr(syncrun, "refresh_card_db", downloaded)
+    services = syncrun.SyncServices(fake.client, MemoryTokenStore(), cache, lambda: NOW, lambda _: Pacer(0))
+    outcome = run_sync(
+        services,
+        Workspace(tmp_path / "decks"),
+        "TESTER",
+        MetaSettings(),
+        SyncOptions(ideas=False),
+        on_progress=lambda _: None,
+    )
+    assert outcome.previews is not None
+    assert outcome.previews.state is ProbeState.UPDATED
+    assert [w for w in outcome.warnings if w.startswith("tags of the card previews not refreshed (")]
+    assert len(read_previews(cache).cards) == 8
+
+
 def test_the_card_data_and_the_probe_of_a_sync_share_one_scryfall_client(
     tmp_path: Path, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -709,6 +865,23 @@ def test_the_card_data_and_the_probe_of_a_sync_share_one_scryfall_client(
     )
     assert len(clients) == 2
     assert clients[0] is clients[1]
+
+
+def test_a_rebuild_and_the_probe_on_one_client_read_the_file_list_and_the_tags_once(tmp_path: Path) -> None:
+    # On a day the card data is rebuilt, the probe takes the tags the rebuild downloaded, which tag
+    # Munitions Enthusiast ramp.
+    fake = FakeScryfall()
+    fake.searches = {SEARCH_URL: search_page()}
+    tags = [line for line in tag_lines() if json.loads(line)["id"] != RAMP_TAG]
+    fake.tags_gz = gzip_lines([*tags, ramp_with_munitions()])
+    client = ScryfallClient(Fetcher(fake.client()))
+    refresh_card_db(client, tmp_path, now=lambda: NOW, force=True)
+    outcome = probe_previews(client, tmp_path, now=lambda: NOW, pacer=Pacer(0))
+    assert fake.requests.count(BULK_URL) == 1
+    assert fake.requests.count(TAGS_URL) == 1
+    # The set list (a forced rebuild reads none) and the search; the file list was the rebuild's.
+    assert outcome.requests == 2
+    assert read_previews(tmp_path).roles == {MUNITIONS: frozenset({Role.RAMP})}
 
 
 def test_an_unexpected_error_in_the_probe_is_logged_and_a_warning_not_a_failed_sync(
@@ -797,6 +970,39 @@ def make_desk(settings: DeskSettings) -> Desk:
     )
 
 
+def test_the_panel_reads_the_roles_the_probe_kept_and_names_the_short_role_a_card_fills(
+    desk_settings: DeskSettings, raw_deck: Json
+) -> None:
+    # D-7 Battle Cruiser fits none of the deck's tags and the card data knows no role of it; the probe's
+    # roles say it is ramp, which the deck runs short of, and that is what its tile says it fits.
+    desk = make_desk(desk_settings)
+    deck_id = int(raw_deck["id"])
+    cards = parse_search_page(search_page()).cards
+    d7 = next(c for c in cards if c.name == "D-7 Battle Cruiser")
+    roles = {d7.oracle_id: frozenset({Role.RAMP})}
+    write_previews(desk_settings.cache, PreviewCache(TODAY, cards, roles=roles))
+    shown = {str(c["name"]): c for c in cast("list[Json]", desk.previews(deck_id)["cards"])}
+    assert shown["D-7 Battle Cruiser"]["fits"] == ["Ramp"]
+    # Munitions Enthusiast matches the Treasure tag and is ramp too.
+    assert shown["Munitions Enthusiast"]["fits"] == ["Treasure", "Ramp"]
+    assert desk.deck(deck_id)["previews"] == 5
+
+
+def test_the_panel_reads_the_tags_the_probe_kept_beside_the_card_datas(
+    desk_settings: DeskSettings, raw_deck: Json
+) -> None:
+    # The card data gives D-7 Battle Cruiser no tag; the probe's tags give it synergy-treasure, which the
+    # deck's Treasure tag asks for.
+    desk = make_desk(desk_settings)
+    deck_id = int(raw_deck["id"])
+    cards = parse_search_page(search_page()).cards
+    d7 = next(c for c in cards if c.name == "D-7 Battle Cruiser")
+    tags = {d7.oracle_id: frozenset({"synergy-treasure"})}
+    write_previews(desk_settings.cache, PreviewCache(TODAY, cards, tags=tags))
+    shown = {str(c["name"]): c for c in cast("list[Json]", desk.previews(deck_id)["cards"])}
+    assert shown["D-7 Battle Cruiser"]["fits"] == ["Treasure"]
+
+
 def test_the_deck_view_counts_its_previews_and_the_panel_gets_them_to_look_at(
     desk_settings: DeskSettings, raw_deck: Json
 ) -> None:
@@ -823,6 +1029,7 @@ def test_the_deck_view_counts_its_previews_and_the_panel_gets_them_to_look_at(
         "set": "Star Trek",
         "out": "2026-11-13",
         "fits": ["Treasure"],
+        "against": [],
     }
     assert str(cards[2]["text"]).startswith("Flash\nEnchant creature")
 
@@ -833,11 +1040,12 @@ def test_the_panel_names_the_commander_among_the_tags_a_preview_fits(
     settings = settings_with(tmp_path, raw_deck, commander_db_file)
     write_previews(settings.cache, PreviewCache(TODAY, parse_search_page(search_page()).cards))
     cards = cast("list[Json]", make_desk(settings).previews(int(raw_deck["id"]))["cards"])
-    # Quark is a Treasure maker and has 1 power, which Magda, a made-up synergy-low-power commander, wants.
+    # Quark is a Treasure maker and has 1 power, which Magda, a made-up synergy-low-power commander, wants;
+    # Munitions Enthusiast is ramp, which the deck runs short of.
     assert {c["name"]: c["fits"] for c in cards} == {
         "Quark, Humble Proprietor": ["Treasure", "Magda"],
         "Captain's Tutelage": ["Treasure"],
-        "Munitions Enthusiast": ["Treasure"],
+        "Munitions Enthusiast": ["Treasure", "Ramp"],
         "Dahar Master": ["Treasure"],
     }
 
