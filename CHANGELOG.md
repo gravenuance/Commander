@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.4.0 - 2026-10-30
 
 ### Added
 - The app checks GitHub for a newer release when it starts. A notice at the foot of the deck list links to
