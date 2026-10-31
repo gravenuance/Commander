@@ -56,6 +56,7 @@ from commander.store import StoredDeck, Workspace
 from commander.suggest import CACHE_FOLDER as COMBOS_CACHE_FOLDER
 from commander.suggest import combos_cache, fresh_saved_combos
 from commander.sync import PRIVATE_NOT_UPDATED, PullWatch, SyncResult, SyncStatus, sync_decks
+from commander.tokens import tokens_of_deck
 from commander.topdeck import KEY_REMEDY
 from commander.viewscore import VIEWS_FILE, ViewScores
 
@@ -213,6 +214,7 @@ def run_sync(
             probe_warnings: list[str] = []
             probe_at = len(warnings)
             _add_grace_tables(workspace, warnings, deck_lock, options.only)
+            _list_tokens(workspace, services, warnings, deck_lock, options.only)
             phase = (
                 _compile_ideas(
                     workspace,
@@ -280,6 +282,36 @@ def _start_card_jobs(
         name="card-previews",
     )
     return cards_job, previews_job
+
+
+def _list_tokens(
+    workspace: Workspace,
+    services: SyncServices,
+    warnings: list[str],
+    deck_lock: DeckLock,
+    only: frozenset[int] | None,
+) -> None:
+    """Give each deck's list.md (`only` those decks') its Tokens section (ADR 0061), once the card data, which
+    downloads while the decks are pulled, is in. Without it the sections stay as they were; the card status
+    says why."""
+    try:
+        db = CardDb(services.cache / CARD_DB_FILE)
+    except CardDataError as error:
+        log.info("tokens not listed: %s", error)
+        return
+    with db:
+        for deck_id, folder in workspace.deck_folders():
+            if only is not None and deck_id not in only:
+                continue
+            try:
+                with deck_lock(deck_id):
+                    # A save under the lock may have renamed the folder; the next sync has it.
+                    deck = workspace.load_folder(folder) if folder.is_dir() else None
+                    if deck is not None:
+                        workspace.write_list(folder, deck, tokens_of_deck(db, deck))
+            except (OSError, CardDataError) as error:
+                log.warning("deck %d: could not list its tokens: %s", deck_id, error)
+                warnings.append(f"deck {deck_id}: tokens not listed: {error}")
 
 
 def _add_grace_tables(

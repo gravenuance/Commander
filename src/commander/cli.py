@@ -47,6 +47,7 @@ from commander.cli_output import (
 from commander.cli_profile import add_profile_commands
 from commander.cli_suggest import add_suggest_command
 from commander.cli_toget import add_toget_commands
+from commander.cli_tokens import add_token_commands
 from commander.cli_topdeck import add_topdeck_command
 from commander.clibase import (
     EXIT_FAILURE,
@@ -118,6 +119,8 @@ examples:
   cmdr bracket magda --details                game changers, tutors and combos of one deck
   cmdr suggest                                combo pieces and roles short of target, every deck
   cmdr suggest magda --max-price 5            ideas and cut candidates for one deck, cards up to EUR 5
+  cmdr tokens                                 every token the decks make, with the cards that make it
+  cmdr tokens magda                           one deck's tokens
   cmdr login                                  sign in to Archidekt once, so `apply --save` can edit decks
   cmdr topdeck                                save your TopDeck.gg API key, so `meta` can read events
   cmdr apply plan.toml                        preview a plan's changes against the deck on Archidekt
@@ -287,6 +290,7 @@ def _build_parser() -> argparse.ArgumentParser:
     add_analysis_commands(commands.add_parser)
     add_suggest_command(commands.add_parser)
     add_card_commands(commands.add_parser)
+    add_token_commands(commands.add_parser)
     add_profile_commands(commands.add_parser)
     add_toget_commands(commands.add_parser)
     add_board_commands(commands.add_parser)

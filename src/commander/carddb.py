@@ -19,7 +19,7 @@ from commander.pricefilter import Prices, drop_glitches
 log = logging.getLogger(__name__)
 
 # Bump whenever the tables or the meaning of a column change; an old file is rebuilt, never migrated.
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 CARD_DB_FILE = "cards.sqlite"
 # The suffix of a database being built beside the real one; a crash can leave such a file behind.
 BUILD_SUFFIX = ".building"
@@ -153,6 +153,16 @@ WHERE o.name_key IN ({})
 ORDER BY o.layout = 'front_card', o.oracle_id
 """
 
+# The columns of the token table, named so that ruff does not take them for a credential.
+_PIECE_COLUMNS = (
+    "token.oracle_id, token.name, kind, type_line, power, toughness, colors, oracle_text, scryfall_id"
+)
+_TOKENS_OF_QUERY = (
+    f"SELECT card_token.oracle_id, {_PIECE_COLUMNS} FROM card_token"  # noqa: S608 — constant fragments only
+    " JOIN token ON token.oracle_id = card_token.token_oracle_id WHERE card_token.oracle_id IN ({})"
+    " ORDER BY token.name, token.oracle_id"
+)
+
 _SCHEMA = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE oracle (
@@ -190,6 +200,24 @@ CREATE TABLE printing (
     eur_foil_cents INTEGER,
     regular INTEGER NOT NULL
 );
+-- Tokens, emblems and helper cards (the Monarch), one row per token, with the image printing chosen.
+CREATE TABLE token (
+    oracle_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    type_line TEXT NOT NULL,
+    power TEXT,
+    toughness TEXT,
+    colors TEXT NOT NULL,
+    oracle_text TEXT NOT NULL,
+    scryfall_id TEXT NOT NULL
+);
+-- The tokens any printing of a card links.
+CREATE TABLE card_token (
+    oracle_id TEXT NOT NULL,
+    token_oracle_id TEXT NOT NULL,
+    PRIMARY KEY (oracle_id, token_oracle_id)
+) WITHOUT ROWID;
 CREATE TABLE role_member (role TEXT NOT NULL, oracle_id TEXT NOT NULL, PRIMARY KEY (role, oracle_id))
     WITHOUT ROWID;
 CREATE TABLE role_available (role TEXT PRIMARY KEY);
@@ -332,6 +360,60 @@ class ParsedCard:
     rarity: str = ""
     # Scryfall's layout ("normal", "adventure", "split", "modal_dfc"); it decides how a two-part card is cast.
     layout: str = "normal"
+    # The printings its all_parts name as tokens, and those it names as other parts (combo_piece), where
+    # Scryfall files emblems, the Monarch and dungeons; the build keeps the ones that turn out to be tokens.
+    token_ids: tuple[str, ...] = ()
+    related_ids: tuple[str, ...] = ()
+
+
+class TokenKind(Enum):
+    TOKEN = "token"  # noqa: S105 — a game token, not a credential
+    EMBLEM = "emblem"
+    # A card that stands for a game state or an effect, not a permanent: the Monarch, Day // Night, a
+    # dungeon, the Copy marker.
+    HELPER = "helper"
+
+
+COPY_TOKEN_NAME = "Copy"  # noqa: S105 — a game token, not a credential
+
+
+def token_kind(layout: str, type_line: str) -> TokenKind:
+    """A token's type line starts with Token and an emblem's with Emblem; the rest (typed Card, Dungeon, plain
+    Token for the Copy marker, or Creature for the face-down reminder cards) are helpers."""
+    front = front_type(type_line)
+    if layout == "emblem" or front.split()[:1] == ["Emblem"]:
+        return TokenKind.EMBLEM
+    if front.startswith("Token "):
+        return TokenKind.TOKEN
+    return TokenKind.HELPER
+
+
+@dataclass(slots=True, frozen=True)
+class CardToken:
+    """A token, emblem or helper card (ADR 0061); a two-faced one has both faces in its name and type line."""
+
+    oracle_id: str
+    name: str
+    kind: TokenKind
+    type_line: str
+    power: str | None
+    toughness: str | None
+    colors: str
+    oracle_text: str
+    # The printing whose image shows it: the latest regular one.
+    scryfall_id: str
+
+
+@dataclass(slots=True, frozen=True)
+class ParsedToken:
+    """One token printing from the bulk file."""
+
+    token: CardToken
+    released_at: str
+    regular: bool = True
+
+
+type BulkItem = ParsedCard | ParsedToken
 
 
 @dataclass(slots=True, frozen=True)
@@ -759,6 +841,22 @@ class CardDb:
         data does (a preview); cards with no role are left out."""
         return self._roles(oracle_ids)
 
+    def tokens_of(self, oracle_ids: Iterable[str]) -> dict[str, tuple[CardToken, ...]]:
+        """The tokens, emblems and helper cards each card links, by the card's oracle id and ordered by name;
+        a card that links none is left out."""
+        found: dict[str, list[CardToken]] = {}
+        for row in self._select_in(_TOKENS_OF_QUERY, oracle_ids):
+            found.setdefault(row[0], []).append(_token(row[1:]))
+        return {oracle_id: tuple(tokens) for oracle_id, tokens in found.items()}
+
+    def token_named(self, name: str) -> CardToken | None:
+        """The token with this exact name (the Copy marker); the lowest oracle id when several share it."""
+        rows = self._query(
+            f"SELECT {_PIECE_COLUMNS} FROM token WHERE name = ? ORDER BY token.oracle_id LIMIT 1",  # noqa: S608
+            [name],
+        )
+        return _token(rows[0]) if rows else None
+
     def card_text(self, oracle_id: str) -> CardText | None:
         return self.card_texts([oracle_id]).get(oracle_id)
 
@@ -880,7 +978,7 @@ def read_meta(path: Path) -> CardDataMeta | None:
 
 def write_card_db(
     dest: Path,
-    cards: Iterable[ParsedCard],
+    cards: Iterable[BulkItem],
     role_members: Mapping[Role, frozenset[str]],
     meta: CardDataMeta,
     *,
@@ -915,7 +1013,7 @@ def write_card_db(
 
 def _fill(
     path: Path,
-    cards: Iterable[ParsedCard],
+    cards: Iterable[BulkItem],
     role_members: Mapping[Role, frozenset[str]],
     meta: CardDataMeta,
     *,
@@ -935,8 +1033,9 @@ def _fill(
         listed: dict[str, list[_Listed]] = {}
         gated = {oracle_id for gate in gates for oracle_id in gate.oracle_ids}
         gated_text: dict[str, str] = {}
+        tokens = _TokenBook()
         with db:
-            for batch in _batches(cards, 5000):
+            for batch in _batches(tokens.sift(cards), 5000):
                 db.executemany(
                     "INSERT OR REPLACE INTO printing VALUES (?, ?, ?, ?, ?, ?, ?)", _printing_rows(batch)
                 )
@@ -960,6 +1059,8 @@ def _fill(
                 ((*row, cheapest.get(oracle_id)) for oracle_id, row in oracle.items()),
             )
             db.executemany("INSERT INTO card_mana VALUES (?, ?, ?)", mana.values())
+            db.executemany("INSERT INTO token VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", tokens.token_rows())
+            db.executemany("INSERT INTO card_token VALUES (?, ?)", tokens.link_rows())
             db.executemany(
                 "INSERT INTO role_member VALUES (?, ?)",
                 (
@@ -984,6 +1085,69 @@ def _fill(
     finally:
         db.close()
     return count
+
+
+class _TokenBook:
+    """The tokens of a bulk file and the cards that link them, gathered as the file streams by.
+
+    A card names a token by one printing's id, which only a later line of the file can say the oracle id of.
+    """
+
+    def __init__(self) -> None:
+        self._best: dict[str, ParsedToken] = {}
+        self._oracle_of_printing: dict[str, str] = {}
+        # Per card, the printings its printings name, token parts and other parts alike.
+        self._linked: dict[str, set[str]] = {}
+        self._claimed: set[str] = set()
+
+    def sift(self, items: Iterable[BulkItem]) -> Iterator[ParsedCard]:
+        """The cards of items, with its tokens and their links taken for the book."""
+        for item in items:
+            if isinstance(item, ParsedToken):
+                self._add(item)
+                continue
+            if item.token_ids or item.related_ids:
+                linked = self._linked.setdefault(item.printing.oracle_id, set())
+                linked.update(item.token_ids, item.related_ids)
+                self._claimed.update(item.token_ids)
+            yield item
+
+    def token_rows(self) -> list[tuple[object, ...]]:
+        return [
+            (
+                t.oracle_id,
+                t.name,
+                t.kind.value,
+                t.type_line,
+                t.power,
+                t.toughness,
+                t.colors,
+                t.oracle_text,
+                t.scryfall_id,
+            )
+            for t in (parsed.token for parsed in self._best.values())
+        ]
+
+    def link_rows(self) -> list[tuple[str, str]]:
+        """Each card with the oracle ids of the tokens its printings link; other parts drop out."""
+        unknown = self._claimed - self._oracle_of_printing.keys()
+        if unknown:
+            log.info("%d token printings named by cards are not in the card data; skipped", len(unknown))
+        rows: set[tuple[str, str]] = set()
+        for oracle_id, printings in self._linked.items():
+            rows.update(
+                (oracle_id, self._oracle_of_printing[printing])
+                for printing in printings
+                if printing in self._oracle_of_printing
+            )
+        return sorted(rows)
+
+    def _add(self, parsed: ParsedToken) -> None:
+        token = parsed.token
+        self._oracle_of_printing[token.scryfall_id] = token.oracle_id
+        known = self._best.get(token.oracle_id)
+        if known is None or (parsed.regular, parsed.released_at) > (known.regular, known.released_at):
+            self._best[token.oracle_id] = parsed
 
 
 @dataclass(slots=True, frozen=True)
@@ -1073,6 +1237,11 @@ def _insert_tags(db: sqlite3.Connection, tags: Mapping[str, Tag]) -> None:
 
 def _printing(row: Sequence[Any]) -> Printing:
     return Printing(*row[:6], regular=bool(row[6]))
+
+
+def _token(row: Sequence[Any]) -> CardToken:
+    oracle_id, name, kind, type_line, power, toughness, colors, text, scryfall_id = row
+    return CardToken(oracle_id, name, TokenKind(kind), type_line, power, toughness, colors, text, scryfall_id)
 
 
 def _keep_lowest(lowest: dict[str, int], key: str, *prices: int | None) -> None:

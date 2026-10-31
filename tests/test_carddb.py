@@ -14,11 +14,11 @@ from commander.archidekt import parse_deck
 from commander.carddb import (
     FACE_SEPARATOR,
     SCHEMA_VERSION,
+    BulkItem,
     CardDataError,
     CardDataMeta,
     CardDb,
     CardInfo,
-    ParsedCard,
     Role,
     TagCount,
     TextGate,
@@ -663,7 +663,7 @@ def test_each_build_works_in_its_own_temp_file(tmp_path: Path) -> None:
     dest = tmp_path / "cards.sqlite"
     seen: list[list[str]] = []
 
-    def watching() -> Iterator[ParsedCard]:
+    def watching() -> Iterator[BulkItem]:
         seen.append(sorted(p.name for p in tmp_path.iterdir() if p.name.endswith(".building")))
         yield from read_cards(cards_gz)
 
@@ -692,7 +692,7 @@ def test_two_builds_into_one_database_do_not_break_each_other(tmp_path: Path) ->
     in_flight, resume = threading.Event(), threading.Event()
     errors: list[BaseException] = []
 
-    def slow() -> Iterator[ParsedCard]:
+    def slow() -> Iterator[BulkItem]:
         cards = read_cards(cards_gz)
         yield next(cards)
         in_flight.set()

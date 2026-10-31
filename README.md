@@ -53,6 +53,8 @@ uv run cmdr suggest magda --max-price 5             # one deck: cards to add up 
 uv run cmdr meta                                    # every bracket 4 and 5 deck against the meta, side by side
 uv run cmdr meta magda                              # one deck: staples it misses, meta threats, meta combos
 uv run cmdr meta ellivere --card "Sylvan Safekeeper" # how performing lists use one card
+uv run cmdr tokens                                  # every token, emblem and helper card the decks make, once
+uv run cmdr tokens ellivere                         # one deck's tokens, each with the cards of the deck that make it
 uv run cmdr card "Sylvan Safekeeper"                # a card's rules text, price, roles and Tagger tags
 uv run cmdr tags hatebear                           # find Tagger tags by name, for deck profiles
 uv run cmdr profile ellivere --init                 # start a deck profile: themes, exclusions, targets
@@ -763,6 +765,25 @@ uv run cmdr toget ellivere "Sylvan Safekeeper" --arrived   # clear its label
 Labels set on the Archidekt website come back with the next `sync`. See
 [ADR 0010](docs/adr/0010-buying-cards-through-archidekt-labels.md).
 
+### Tokens
+
+`cmdr tokens` lists the tokens, emblems and helper cards (the Monarch, Day // Night, a dungeon, the Copy
+marker) the cards of the decks make, each with the cards that make it
+([ADR 0061](docs/adr/0061-list-the-tokens-each-deck-makes.md)). Without a deck it lists every token once with
+the cards of each deck that make it; with one it lists that deck's tokens, the ones more cards make first.
+`--json` gives the same as JSON.
+
+The links come from Scryfall's card data, so the tokens are the ones Scryfall knows a card makes. A card whose
+text copies a token (populate, "create a token that's a copy of") makes the Copy marker whether or not Scryfall
+links it (populate, myriad, "the copy becomes a token"). A card whose text creates a token, or makes you the
+monarch, gives you an emblem, takes the initiative, ventures into a dungeon, tempts you with the Ring or has
+ascend, but links nothing of that kind, is listed apart, as one to check by hand. Token doublers are not.
+
+`sync` ends each deck's `list.md` with a `## Tokens (N)` section, one line per token, for example
+`- W 1/1 Vampire (Lifelink): Charismatic Conqueror, Preacher of the Schism`; a deck that makes no token has no
+section. The app's deck page ends with a Tokens group of their images, outside the deck and in no total, with
+the cards that make a token in its tooltip.
+
 ### Deck folders
 
 `sync` writes one folder per deck, `decks/<archidekt-id>-<name>/`, containing:
@@ -770,7 +791,7 @@ Labels set on the Archidekt website come back with the next `sync`. See
 | File | Contents | Written by |
 |---|---|---|
 | `deck.json` | Normalised deck snapshot (cards, quantities, categories, Scryfall IDs) | `sync`, every time |
-| `list.md` | Readable deck list grouped by category | `sync`, every time |
+| `list.md` | Readable deck list grouped by category, ending in the deck's tokens | `sync`, every time |
 | `notes.md` | Your research notes and plans | `sync` creates it once and never overwrites it |
 | `profile.toml` | What the deck wants from `suggest` | You, starting from `cmdr profile <deck> --init` |
 | `board.json` | Cards under consideration, their research and your decisions | `cmdr board`, the app, `suggest --to-board`, `meta --to-board`, `sync` |

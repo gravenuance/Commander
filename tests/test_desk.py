@@ -1534,7 +1534,9 @@ def test_the_deck_view_carries_the_card_grid(desk: Desk) -> None:
     assert view["tags"] == ["Dwarves", "Vehicles", "cEDH"]
     # No recent decks with Magda are cached, so there is nothing to lean against.
     assert view["leanings"] == []
-    grid = items(view, "grid")
+    # The last group is the deck's tokens (test_decktokens).
+    *grid, tokens = items(view, "grid")
+    assert tokens["name"] == "Tokens"
     assert [(g["name"], g["count"], g["inDeck"]) for g in grid] == [
         ("Commander", 1, True),
         ("Creature", 1, True),

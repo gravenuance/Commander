@@ -3,11 +3,16 @@
 from collections import defaultdict
 
 from commander.models import COMMANDER_CATEGORY, Deck, DeckCard
+from commander.tokens import DeckTokens, describe
 
 LAND_CATEGORY = "Land"
+TOKENS_HEADING = "## Tokens ("
+# Before the generated section, so that it is told from a category named Tokens.
+TOKENS_MARKER = "<!-- cmdr:tokens -->"
+CHECK_BY_HAND = "Check by hand"
 
 
-def deck_list_markdown(deck: Deck) -> str:
+def deck_list_markdown(deck: Deck, tokens: DeckTokens | None = None) -> str:
     lines = [f"# {deck.name}", ""]
     commanders = " + ".join(deck.commanders) or "none set"
     bracket = str(deck.bracket) if deck.bracket is not None else "not set"
@@ -25,7 +30,25 @@ def deck_list_markdown(deck: Deck) -> str:
     if aside:
         lines += ["", "## Not in deck"]
         lines += _sections(aside, heading_level=3)
+    if tokens is not None and tokens.tokens:
+        lines += _token_section(tokens)
     return "\n".join(lines) + "\n"
+
+
+def kept_tokens_section(markdown: str) -> str:
+    """The generated Tokens section at the end of an earlier list.md, from its blank line; empty if it has
+    none. It is found by its marker: a deck category named Tokens has the same heading. A list written
+    before the marker has none to find, and the next sync writes the section."""
+    start = markdown.rfind(f"\n{TOKENS_MARKER}\n")
+    return "" if start < 0 else markdown[start:].rstrip("\n") + "\n"
+
+
+def _token_section(tokens: DeckTokens) -> list[str]:
+    lines = ["", TOKENS_MARKER, f"{TOKENS_HEADING}{len(tokens.tokens)})", ""]
+    lines += [f"- {describe(row.token)}: {', '.join(row.makers)}" for row in tokens.tokens]
+    if tokens.check_by_hand:
+        lines.append(f"- {CHECK_BY_HAND}: {', '.join(tokens.check_by_hand)}")
+    return lines
 
 
 def notes_template(deck: Deck) -> str:

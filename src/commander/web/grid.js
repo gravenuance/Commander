@@ -148,7 +148,7 @@ function syncStack(known, group) {
     const key = JSON.stringify([card, aside, card.share ? grace : null]);
     let entry = old.get(id);
     if (!entry || entry.key !== key) {
-      const node = buildGridCard(card, aside);
+      const node = group.kind === "tokens" ? buildTokenCard(card) : buildGridCard(card, aside);
       // The commander is never offered as a cut.
       if (groupKey(group) === "Commander") node.dataset.commander = "1";
       entry?.node.replaceWith(node);
@@ -263,6 +263,23 @@ function buildGridCard(card, aside = null) {
     swap,
     countTools(card, aside));
   gridParts.set(node, { note: outNote, swap });
+  zoomOnActivate(node, card);
+  return node;
+}
+
+// A token, emblem or helper card the deck's cards make: its image, with the makers in its tooltip. It is in
+// no total and has no counts or label to change.
+function buildTokenCard(card) {
+  const makers = `Made by ${card.makers.join(", ")}`;
+  const node = el("li", { class: "gcard token", "data-token": card.name, title: `${card.name}\n${makers}` },
+    cardImage(card.image, card.name, "face"),
+    el("span", { class: "sr-only", text: `${card.name}. ${makers}` }));
+  zoomOnActivate(node, card);
+  return node;
+}
+
+// A click on the card, or Enter or Space on it, shows its image large.
+function zoomOnActivate(node, card) {
   node.addEventListener("click", (event) => {
     if (!event.target.closest("button")) zoom(card);
   });
@@ -275,7 +292,6 @@ function buildGridCard(card, aside = null) {
       }
     });
   }
-  return node;
 }
 
 // The card large in the middle of the screen, everything else faded; × or Esc closes it.

@@ -24,7 +24,8 @@ from commander.jsonshape import (
     str_list,
 )
 from commander.models import Deck, DeckCard
-from commander.render import deck_list_markdown, notes_template
+from commander.render import deck_list_markdown, kept_tokens_section, notes_template
+from commander.tokens import DeckTokens
 
 log = logging.getLogger(__name__)
 
@@ -201,7 +202,9 @@ class Workspace:
             raise DeckInUseError(f"cannot rename {existing.name}: its board is in use ({error})") from error
 
     def save(self, deck: Deck) -> Path:
-        """Write deck.json and list.md, renaming the folder to match the deck name; never touches notes.md."""
+        """Write deck.json and list.md, renaming the folder to match the deck name; never touches notes.md.
+
+        The list keeps the Tokens section it had; the sync, which knows the card data, rewrites it."""
         target = self.root / folder_name(deck)
         existing = self.folder_for(deck.id)
         if existing is not None and existing != target:
@@ -210,11 +213,28 @@ class Workspace:
             self._rename_folder(existing, target)
         target.mkdir(parents=True, exist_ok=True)
         write_text_atomic(target / SNAPSHOT_FILE, snapshot_json(deck))
-        write_text_atomic(target / LIST_FILE, deck_list_markdown(deck))
+        list_file = target / LIST_FILE
+        write_text_atomic(list_file, deck_list_markdown(deck) + _kept_tokens(list_file))
         notes = target / NOTES_FILE
         if not notes.exists():
             write_text_atomic(notes, notes_template(deck))
         return target
+
+    @staticmethod
+    def write_list(folder: Path, deck: Deck, tokens: DeckTokens) -> None:
+        """Rewrite list.md in the deck's folder with its Tokens section; nothing if the folder is gone."""
+        if folder.is_dir():
+            write_text_atomic(folder / LIST_FILE, deck_list_markdown(deck, tokens))
+
+
+def _kept_tokens(list_file: Path) -> str:
+    try:
+        return kept_tokens_section(list_file.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return ""
+    except (OSError, UnicodeDecodeError) as error:
+        log.warning("%s unreadable, its Tokens section dropped until the next sync: %s", list_file, error)
+        return ""
 
 
 def parse_labels(raw: object) -> list[tuple[str, str]]:

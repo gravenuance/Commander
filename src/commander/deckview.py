@@ -13,8 +13,12 @@ from commander.copylimit import copy_limits
 from commander.deckgrid import GridCard, GridGroup, PendingAdd, aside_grid, deck_grid, image_url
 from commander.deckstats import deck_stats, stat_cards, stats_after
 from commander.models import COMMANDER_CATEGORY, Deck
+from commander.tokens import DeckTokens, deck_tokens
 
 type Json = dict[str, Any]
+
+# Apart from the outside:<category> keys, which a category named Tokens could share.
+TOKENS_KEY = "tokens-made"
 
 
 def card_images(db: CardDb, infos: Iterable[CardInfo]) -> dict[str, str]:
@@ -60,6 +64,9 @@ def decklist_json(
         _group_json(group, colours, share, edits)
         for group in (*deck_grid(main, _pending_adds(board, db, held)), *aside_grid(outside))
     ]
+    made = deck_tokens(db, main)
+    if made.tokens:
+        groups.append(_tokens_json(made))
     saved = deck_stats(stat_cards(main))
     after = stats_after(deck, main, board, db) if board.pending else saved
     return {
@@ -172,6 +179,37 @@ def _group_json(
                 **edits.json(c, group),
             }
             for c in group.cards
+        ],
+    }
+
+
+def _tokens_json(made: DeckTokens) -> Json:
+    """The last group: the tokens the deck's cards make (ADR 0061). It is outside the deck and in no total,
+    and its kind tells the page to draw the images alone, with no counts or labels."""
+    return {
+        "key": TOKENS_KEY,
+        "kind": "tokens",
+        "name": "Tokens",
+        "inDeck": False,
+        "count": len(made.tokens),
+        "cents": 0,
+        "cards": [
+            {
+                "name": row.token.name,
+                "quantity": 1,
+                "image": image_url(row.token.scryfall_id) if row.token.scryfall_id else "",
+                "category": "Tokens",
+                "label": "",
+                "labelColour": "",
+                "cents": 0,
+                "share": None,
+                "pending": None,
+                "more": False,
+                "less": False,
+                "tokenKind": row.token.kind.value,
+                "makers": list(row.makers),
+            }
+            for row in made.tokens
         ],
     }
 

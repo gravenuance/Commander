@@ -13,6 +13,15 @@
   deck's grid and in its figures after the save before the card data knows it. Boards are now version 5;
   the first change keeps the old file as `board.v4.bak` and removes the backups of older versions, and an
   older cmdr refuses a version 5 board.
+- `cmdr tokens` lists the tokens, emblems and helper cards (the Monarch, Day // Night, dungeons, the Copy
+  marker) the decks make, each with the cards that make it: every token once across the decks, or one deck's
+  (`--json` too). A card whose text copies a token makes the Copy marker, and one that creates a token
+  Scryfall does not link is listed to check by hand (ADR 0061).
+- Each deck's `list.md` ends with a `## Tokens (N)` section, and the app's deck page ends with a Tokens group
+  of their images, outside the deck and in no total, with the cards that make a token in its tooltip.
+
+### Changed
+- The card data is rebuilt once after the update, to keep the tokens and the cards that link them.
 
 ## 1.4.2 - 2026-10-30
 

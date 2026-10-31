@@ -259,6 +259,14 @@ def card_db_file(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return build_card_db(tmp_path_factory.mktemp("carddb"))
 
 
+@pytest.fixture(scope="session")
+def token_db_file(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The card database with the real cards and tokens of scryfall_tokens.jsonl added (ADR 0061)."""
+    return build_card_db(
+        tmp_path_factory.mktemp("tokendb"), extra_cards=fixture_lines("scryfall_tokens.jsonl")
+    )
+
+
 @pytest.fixture
 def own_cache(tmp_path: Path, card_db_file: Path) -> Path:
     """A cache folder of this test's own, so cached bracket estimates never leak between tests."""

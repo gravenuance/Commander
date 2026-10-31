@@ -23,13 +23,18 @@ from commander.carddb import (
     CARD_DB_FILE,
     COLORS,
     FACE_SEPARATOR,
+    BulkItem,
     CardDataMeta,
+    CardToken,
     ParsedCard,
+    ParsedToken,
     Printing,
     Role,
     Tag,
     TextGate,
+    front_type,
     read_meta,
+    token_kind,
     ungate,
     write_card_db,
 )
@@ -77,6 +82,13 @@ NEW_CARD_SET_TYPES = frozenset({"core", "expansion", "masters", "draft_innovatio
 # Tokens, emblems, art cards and Planechase/Archenemy pieces never sit in a Commander deck.
 _NON_CARD_LAYOUTS = frozenset(
     {"token", "double_faced_token", "emblem", "art_series", "vanguard", "scheme", "planar", "augment", "host"}
+)
+# The ones among them that tokens.py lists: what a deck's cards make (ADR 0061).
+_TOKEN_LAYOUTS = frozenset({"token", "double_faced_token", "emblem"})
+_CHECKLIST_NAME = re.compile(r" Checklist(?: \d+)?$")
+_CHECKLIST_TEXT = (
+    "(You can mark this card to represent a",
+    "(Use this card to represent a double-faced",
 )
 
 # Gold-bordered World Championship decks and silver-bordered Un-cards are not tournament printings.
@@ -563,6 +575,7 @@ def parse_card(raw: object) -> ParsedCard | None:
         req_str(f, "type_line", where) for f in faces
     )
     prices = req_object(card, "prices", where)
+    token_ids, related_ids = _part_ids(card, where)
     return ParsedCard(
         printing=Printing(
             scryfall_id=req_str(card, "id", where),
@@ -589,7 +602,86 @@ def parse_card(raw: object) -> ParsedCard | None:
         produced="".join(c for c in "WUBRGC" if c in str_list(card, "produced_mana", where)),
         rarity=opt_str(card, "rarity", where) or "",
         layout=layout,
+        token_ids=token_ids,
+        related_ids=related_ids,
     )
+
+
+def parse_token(raw: object) -> ParsedToken | None:
+    """One bulk token, emblem or helper card object; None for a digital-only printing and for a checklist
+    card, which a double-faced card names as a part but no deck makes."""
+    card = as_object(raw, "token")
+    where = f"token {card.get('id')}"
+    if card.get("digital") is True:
+        return None
+    faces = [as_object(face, f"{where}.card_faces") for face in as_list(card.get("card_faces") or [], where)]
+    front: Mapping[str, object] = faces[0] if faces else {}
+    oracle_id = opt_str(card, "oracle_id", where) or opt_str(front, "oracle_id", where)
+    if not oracle_id:
+        raise ShapeError(f"{where}: no oracle_id")
+    name = req_str(card, "name", where)
+    text = _oracle_text(card, faces, where)
+    if _is_checklist(name, text):
+        return None
+    type_line = opt_str(card, "type_line", where) or " // ".join(
+        req_str(f, "type_line", where) for f in faces
+    )
+    return ParsedToken(
+        CardToken(
+            oracle_id=oracle_id,
+            name=name,
+            kind=token_kind(req_str(card, "layout", where), type_line),
+            type_line=type_line,
+            power=opt_str(card, "power", where) or opt_str(front, "power", where),
+            toughness=opt_str(card, "toughness", where) or opt_str(front, "toughness", where),
+            colors=_card_colors(card, front, where),
+            oracle_text=text,
+            scryfall_id=req_str(card, "id", where),
+        ),
+        released_at=req_str(card, "released_at", where),
+        regular=_regular(card, where),
+    )
+
+
+def _is_checklist(name: str, text: str) -> bool:
+    """The cards that mark a double-faced card in a library ("Ixalan Checklist", "... Checklist 2")."""
+    return _CHECKLIST_NAME.search(name) is not None or text.startswith(_CHECKLIST_TEXT)
+
+
+def parse_bulk_item(raw: object) -> BulkItem | None:
+    """One bulk object as a token, emblem or helper card, or as a card; None for what is neither."""
+    card = as_object(raw, "card")
+    if _is_token(card, f"card {card.get('id')}"):
+        return parse_token(card)
+    return parse_card(card)
+
+
+def _is_token(card: Mapping[str, object], where: str) -> bool:
+    """Scryfall files some tokens under another layout (a flip token, the dungeons), so the type tells too."""
+    if card.get("layout") in _TOKEN_LAYOUTS:
+        return True
+    faces = as_list(card.get("card_faces") or [], where)
+    front: Mapping[str, object] = as_object(faces[0], f"{where}.card_faces") if faces else {}
+    type_line = opt_str(card, "type_line", where) or opt_str(front, "type_line", where) or ""
+    return front_type(type_line).split()[:1] in (["Token"], ["Dungeon"])
+
+
+def _part_ids(card: Mapping[str, object], where: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The printings the card's all_parts name as tokens and as other parts, not counting the card itself."""
+    own = req_str(card, "id", where)
+    tokens: list[str] = []
+    related: list[str] = []
+    for part in as_list(card.get("all_parts") or [], where):
+        entry = as_object(part, f"{where}.all_parts")
+        part_id = req_str(entry, "id", f"{where}.all_parts")
+        component = req_str(entry, "component", f"{where}.all_parts")
+        if part_id == own:
+            continue
+        if component == "token":
+            tokens.append(part_id)
+        elif component == "combo_piece":
+            related.append(part_id)
+    return tuple(tokens), tuple(related)
 
 
 def _oracle_text(card: Mapping[str, object], faces: list[Mapping[str, object]], where: str) -> str:
@@ -599,9 +691,10 @@ def _oracle_text(card: Mapping[str, object], faces: list[Mapping[str, object]], 
     return opt_str(card, "oracle_text", where) or ""
 
 
-def read_cards(path: Path) -> Iterator[ParsedCard]:
-    """Stream the cards bulk file; raises after the last card when too much of it was unreadable."""
-    return _parse_lines(path, parse_card, MIN_CARDS)
+def read_cards(path: Path) -> Iterator[BulkItem]:
+    """Stream the cards bulk file, its tokens among the cards; raises after the last line when too much of it
+    was unreadable."""
+    return _parse_lines(path, parse_bulk_item, MIN_CARDS)
 
 
 def read_tags(path: Path) -> dict[str, Tag]:
