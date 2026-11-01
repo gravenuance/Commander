@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.5.0 - 2026-11-01
 
 ### Added
 - *Clear* in the *Turned down* fold (asked twice) removes every turned-down card from the deck's board and
@@ -21,7 +21,8 @@
   of their images, outside the deck and in no total, with the cards that make a token in its tooltip.
 
 ### Changed
-- The card data is rebuilt once after the update, to keep the tokens and the cards that link them.
+- The card data is rebuilt once after the update, to keep the tokens and the cards that link them, so the
+  first sync downloads Scryfall's card data again and takes a few minutes longer.
 
 ## 1.4.2 - 2026-10-30
 
