@@ -1248,6 +1248,28 @@ def test_a_moved_preview_queued_to_come_in_shows_in_the_grid_by_its_snapshot_tho
     )
 
 
+def test_a_queued_land_preview_the_card_data_lacks_leaves_the_average_mana_value_alone(
+    desk_settings: DeskSettings, raw_deck: Json
+) -> None:
+    previewed(desk_settings)
+    desk = make_desk(desk_settings)
+    deck_id = int(raw_deck["id"])
+    moved = cast("Json", desk.move_preview(deck_id, QUARK_NAME)["card"])
+    assert "error" not in desk.decide(deck_id, str(moved["id"]), "add", None, "")
+    # The snapshot as a land would hold it: lands are not in the average, whatever their mana value.
+    folder = Workspace(desk_settings.workspace).folder_for(deck_id)
+    assert folder is not None
+    raw = json.loads((folder / board_module.BOARD_FILE).read_text(encoding="utf-8"))
+    raw["cards"][0]["printing"].update(typeLine="Land Creature — Forest Dryad", manaValue=0.0)
+    (folder / board_module.BOARD_FILE).write_text(json.dumps(raw), encoding="utf-8")
+
+    stats = cast("dict[str, Json]", desk.deck(deck_id)["stats"])
+
+    saved, after = stats["saved"], stats["after"]
+    assert after["cards"] == cast("int", saved["cards"]) + 1
+    assert after["averageManaValue"] == saved["averageManaValue"]
+
+
 def test_the_fits_in_the_reason_name_the_commander_and_the_short_role_as_the_tile_does(
     tmp_path: Path, raw_deck: Json, commander_db_file: Path
 ) -> None:

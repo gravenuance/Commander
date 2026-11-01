@@ -37,8 +37,9 @@ Option 1, with a sync of the cleared deck started at once, decided with the owne
   queued deck ("Syncing Magda", or "Syncing N decks"), in the same step under the lock that ends it, so a
   clear arriving at that moment is either in the set or finds the new sync running. No sync starts beside a
   write (ADR 0042), so a clear made while another deck's write runs (with no sync at all, or as a sync ends)
-  is queued too, and the queued sync starts as the last write ends. The page says the ideas are compiled
-  once the running sync ends.
+  is queued too, and the queued sync starts as the last write ends. Only a queue that waited for a sync
+  takes on that sync's summary (below). The page says the ideas are compiled once the running sync or save
+  ends.
 - A limited sync lists the account's decks once, but fetches, writes and settles only that deck, reads the
   meta and Archidekt decks for it alone, refreshes TopDeck's tournaments for it alone and merges only its
   board, so the deck list shows only that deck fetching. The card data and previews checks run as in any

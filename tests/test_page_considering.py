@@ -284,7 +284,7 @@ def test_clear_asks_first_then_clears_reloads_the_deck_and_reads_the_sync_the_br
 @pytest.mark.parametrize(
     ("answer", "status"),
     [
-        ("queued", "Cleared 1 turned down card; its ideas are compiled once the running sync ends"),
+        ("queued", "Cleared 1 turned down card; its ideas are compiled once the running sync or save ends"),
         ("none", "Cleared 1 turned down card"),
     ],
 )

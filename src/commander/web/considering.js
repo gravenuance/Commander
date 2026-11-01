@@ -168,8 +168,8 @@ function setupClearRejected() {
 
 // Removes every turned down card, then reloads the deck. The bridge starts a sync of this deck alone, which
 // compiles Considering again (a card the lists still play may come back as an idea); the account is read
-// afterwards so the sync shows at once and the poll follows it. A sync already running is followed by one
-// of this deck ("queued").
+// afterwards so the sync shows at once and the poll follows it. A sync or save already running is followed
+// by one of this deck ("queued").
 async function clearRejected() {
   const controls = [$("clear-rejected"), $("clear-cancel")];
   await whileBusy(controls, async () => {
@@ -179,7 +179,7 @@ async function clearRejected() {
       const count = `${answer.cleared} turned down ${answer.cleared === 1 ? "card" : "cards"}`;
       const compiling = {
         started: "; compiling its ideas again",
-        queued: "; its ideas are compiled once the running sync ends",
+        queued: "; its ideas are compiled once the running sync or save ends",
       };
       showStatus(`Cleared ${count}${compiling[answer.sync] ?? ""}`);
       await refresh();

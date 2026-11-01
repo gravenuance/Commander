@@ -769,6 +769,45 @@ def test_clearing_a_deck_while_a_write_to_another_runs_queues_its_sync_until_the
     assert (status["running"], status["progress"]) == (True, "Syncing Magda")
 
 
+def test_a_sync_queued_behind_a_write_alone_takes_on_no_earlier_failure(
+    settings: DeskSettings, fake: FakeArchidekt, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_extra_decks(settings, fake, raw_deck)
+    desk, pending = deferred_desk(settings, fake)
+    reject_signet(desk, 20001)
+    open_card = str(cast("Json", desk.propose(20003, "Chaos Warp")["card"])["id"])
+    stub_meta(monkeypatch)
+    stub_card_download(monkeypatch)
+    real_run_sync: Callable[..., SyncOutcome] = desk_module.run_sync
+    failures = [True]
+
+    def run_sync(*args: object, **kwargs: object) -> SyncOutcome:
+        outcome = real_run_sync(*args, **kwargs)
+        if failures:
+            failures.pop()
+            raise desk_module.NetworkError("Archidekt answered HTTP 429")
+        return outcome
+
+    monkeypatch.setattr(desk_module, "run_sync", run_sync)
+    desk.sync()
+    pending[0]()
+    assert desk.sync_status()["failed"] is True
+    write = HeldWrite(desk, monkeypatch, 20003, open_card)
+
+    write.start()
+    assert desk.clear_rejected(20001)["sync"] == "queued"
+    write.finish()
+    pending[1]()
+
+    status = desk.sync_status()
+    # The failure came before the queue formed, so the queued sync answers for itself alone.
+    assert (status["running"], status["failed"], status["summary"]) == (
+        False,
+        False,
+        "Synced 1 deck, 0 changed.",
+    )
+
+
 def test_signing_in_forgets_the_decks_queued_for_a_sync(
     settings: DeskSettings,
     fake: FakeArchidekt,

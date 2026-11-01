@@ -349,6 +349,8 @@ class Desk:
         self._resync: set[int] = set()
         # The end of the sync that handed over to them, until that sync ends too.
         self._handed_over: _SyncState | None = None
+        # The end of the sync the queued decks waited for, while a write holds off their sync.
+        self._waited_on: _SyncState | None = None
         # The page errors already logged, as (message, source, line), under their own lock.
         self._page_errors: set[tuple[str, str, int]] = set()
         self._page_errors_capped = False
@@ -410,6 +412,7 @@ class Desk:
             with self._sync_lock:
                 # With no account there is nothing to sync them for.
                 self._resync.clear()
+                self._waited_on = None
             log.info("signed out %s; decks stay in %s", user, self._settings.workspace)
         return self.account()
 
@@ -532,6 +535,7 @@ class Desk:
             self._open_deck = None
             # Deck ids of the account left behind.
             self._resync.clear()
+            self._waited_on = None
 
     @contextmanager
     def _writing(
@@ -742,6 +746,8 @@ class Desk:
                 warnings = list(dict.fromkeys([*earlier.warnings, *warnings]))
             self._sync = _SyncState(summary=summary, failed=failed, warnings=list(warnings))
             self._priority = None
+            # The queue waited for this sync, so the sync it hands over to, now or after a write, follows it.
+            self._waited_on = self._sync if self._resync else None
             handed = self._hand_over()
         if handed is not None:
             self._launch_resync(user, *handed)
@@ -753,7 +759,8 @@ class Desk:
         if not self._resync or self._writes or self._sync.running:
             return None
         waiting, self._resync = frozenset(self._resync), set()
-        self._handed_over = self._sync
+        # A queue that formed during a write alone waited for no sync, and follows none.
+        self._handed_over, self._waited_on = self._waited_on, None
         return self._mark_running("Starting the sync"), waiting
 
     def _launch_resync(self, user: str, priority: FetchPriority, waiting: frozenset[int]) -> None:
@@ -1351,9 +1358,9 @@ class Desk:
     def clear_rejected(self, deck_id: int) -> Json:
         """Take every turned-down card off the board, then compile the deck's ideas again with a sync of that
         deck alone, which may offer a cleared card as an idea. `sync` says whether that sync is `started`,
-        is `queued` to start when the sync that runs ends (whatever that one covers, since it may have
-        merged the deck's board before the clear), or could not start (`none`, also when nothing was
-        cleared)."""
+        is `queued` to start when the sync or the other deck's write that runs ends (a running sync, whatever
+        it covers, may have merged the deck's board before the clear), or could not start (`none`, also when
+        nothing was cleared)."""
         with self._writing("clearing", "clear the list", deck_id, needs_cards=False) as busy:
             if busy:
                 return busy
