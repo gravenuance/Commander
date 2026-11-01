@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from commander.apply import NotYourDeckError, SaveError, SaveReadBackError
+from commander.apply import ChangeKind, NotYourDeckError, SaveError, SaveReadBackError
 from commander.archidekt import parse_deck
 from commander.archidekt_edit import ArchidektEditor, CardEdit
 from commander.board import (
@@ -25,7 +25,15 @@ from commander.boardsave import BoardPreview, BoardSave, preview_board, save_boa
 from commander.carddb import CardDb
 from commander.net import Fetcher, NetworkError
 from commander.store import StoredDeck, Workspace
-from conftest import ACCESS_TOKEN, DECK_ID, FakeArchidekt, Json, card_entry, put_on_sideboard
+from conftest import (
+    ACCESS_TOKEN,
+    DECK_ID,
+    FakeArchidekt,
+    Json,
+    card_entry,
+    put_on_sideboard,
+    upcoming,
+)
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 
@@ -535,3 +543,96 @@ def test_a_swap_of_another_card_saved_but_not_marked_applied_is_not_cut_again(
     assert len(fake.writes) == sent
     assert (live_quantity(fake, "Lightning Bolt"), live_quantity(fake, "Mountain")) == (1, mountains)
     assert saved.applied == ("Lightning Bolt",)
+
+
+# --- an upcoming card the card data lacks, saved from the board's snapshot of it (ADR 0055)
+
+
+def queue_upcoming(
+    service: BoardService, cut: str | None = "Battered Golem", category: str | None = None
+) -> str:
+    card = service.propose_preview(upcoming(), Actor.YOU)
+    service.decide(card.id, Status.ADD, Actor.YOU, choice=cut, category=category)
+    return card.id
+
+
+def test_the_review_of_an_upcoming_card_before_its_release_says_the_card_data_lacks_it(
+    fake: FakeArchidekt, service: BoardService, preview: Callable[..., BoardPreview]
+) -> None:
+    queue_upcoming(service)
+
+    resolution = preview().resolution
+
+    assert [(c.kind.value, c.name, c.before, c.after) for c in resolution.changes] == [
+        ("remove", "Battered Golem", 1, 0),
+        ("add", "Dahar Master", 0, 1),
+    ]
+    add = resolution.changes[1]
+    assert (add.category, add.set_code, add.collector_number, add.scryfall_id, add.price_cents) == (
+        "Creature",
+        "trk",
+        "157",
+        "0c340eba-645d-416a-9ed4-f2303aa8c919",
+        None,
+    )
+    assert resolution.problems == ()
+    assert "Dahar Master: not in the card data yet; no price or bracket check" in resolution.warnings
+    assert fake.writes == []
+
+
+def test_an_upcoming_card_is_saved_to_archidekt_before_its_release_with_its_cut(
+    fake: FakeArchidekt, service: BoardService, commit: Callable[[], BoardSave], stored: StoredDeck
+) -> None:
+    fake.extra_printings.append(upcoming())
+    queue_upcoming(service)
+
+    saved = commit()
+
+    assert (live_quantity(fake, "Dahar Master"), live_quantity(fake, "Battered Golem")) == (1, 0)
+    assert saved.applied == ("Dahar Master",)
+    assert [(c["action"], c["categories"]) for c in fake.card_writes()] == [
+        ("remove", ["Combo Pieces", "Ramp"]),
+        ("add", ["Creature"]),
+    ]
+    assert [c.status for c in read_board(stored.folder).cards] == [Status.APPLIED]
+
+
+def test_an_upcoming_card_is_saved_without_a_cut_under_the_category_asked_for(
+    fake: FakeArchidekt, service: BoardService, commit: Callable[[], BoardSave]
+) -> None:
+    fake.extra_printings.append(upcoming())
+    queue_upcoming(service, cut=None, category="Ramp")
+
+    commit()
+
+    assert (live_quantity(fake, "Dahar Master"), live_quantity(fake, "Battered Golem")) == (1, 1)
+    assert [(c["action"], c["categories"]) for c in fake.card_writes()] == [("add", ["Ramp"])]
+
+
+def test_a_save_stops_before_any_write_when_archidekt_does_not_know_the_upcoming_printing(
+    fake: FakeArchidekt, service: BoardService, commit: Callable[[], BoardSave], stored: StoredDeck
+) -> None:
+    queue_upcoming(service)
+
+    with pytest.raises(SaveError, match=r"Archidekt has no Dahar Master from TRK 157.*Nothing was changed"):
+        commit()
+
+    assert fake.writes == []
+    assert [c.status for c in read_board(stored.folder).cards] == [Status.ADD]
+    assert read_activity(stored.folder)[-1].action == "save to Archidekt failed"
+
+
+def test_an_upcoming_card_outside_the_decks_colours_blocks_the_save_with_a_problem(
+    service: BoardService, preview: Callable[..., BoardPreview], stored: StoredDeck
+) -> None:
+    queue_upcoming(service)
+    # The snapshot's colours, as a board written by hand or an older version might hold them.
+    path = stored.folder / BOARD_FILE
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["cards"][0]["printing"]["identity"] = "U"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    resolution = preview().resolution
+
+    assert [c.name for c in resolution.changes if c.kind is ChangeKind.ADD] == []
+    assert resolution.problems == ("add Dahar Master: its colours (U) are outside the deck's (R)",)

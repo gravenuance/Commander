@@ -149,6 +149,10 @@ function hideStatus() {
   $("status").hidden = true;
 }
 
+// Release days are calendar dates, so they are shown as written, never shifted by the viewer's time zone.
+const OUT_DATE = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+const outLabel = (day) => `Out ${OUT_DATE.format(new Date(`${day}T00:00:00Z`))}`;
+
 const times = (copies, name) => (copies > 1 ? `${copies} × ${name}` : name);
 const euro = (cents) => (cents === null || cents === undefined ? "" : `€${(cents / 100).toFixed(2)}`);
 const pct = (share) => `${Math.round(share * 100)}%`;

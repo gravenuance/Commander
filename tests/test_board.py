@@ -35,7 +35,7 @@ from commander.board import (
 from commander.carddb import CardDb, ResolvedCard
 from commander.models import Deck
 from commander.plan import AddCard, Plan, RemoveCard
-from conftest import Json
+from conftest import Json, upcoming
 
 WAIT_SECONDS = 30
 
@@ -909,3 +909,233 @@ def test_a_pool_needs_an_alike_or_tagged_idea_and_a_count_within_a_non_empty_tot
         OriginPool(4, 3)
     with pytest.raises(ValueError, match="pool"):
         OriginPool(0, 0)
+
+
+# --- clearing the turned-down list
+
+
+def test_clearing_the_turned_down_list_removes_every_such_card_whoever_put_it_there_and_logs_each(
+    tmp_path: Path, service: BoardService
+) -> None:
+    mine = service.propose("Lightning Bolt", Actor.YOU)
+    claudes = service.propose("Arcane Signet", Actor.CLAUDE)
+    idea = service.propose("Mind Stone", Actor.CMDR, origin=Origin.META)
+    service.propose("Mountain", Actor.YOU)
+    queued = service.propose("Chaos Warp", Actor.YOU)
+    service.decide(queued.id, Status.ADD, Actor.YOU)
+    for turned in (mine, claudes, idea):
+        service.decide(turned.id, Status.REJECTED, Actor.YOU, note="no")
+    service.set_count("Battered Golem", 0, Actor.YOU)
+
+    cleared = service.clear_rejected(Actor.YOU)
+
+    assert [c.name for c in cleared] == ["Lightning Bolt", "Arcane Signet", "Mind Stone"]
+    board = read_board(tmp_path)
+    assert [(c.name, c.status) for c in board.cards] == [
+        ("Mountain", Status.OPEN),
+        ("Chaos Warp", Status.ADD),
+    ]
+    assert [change.name for change in board.counts] == ["Battered Golem"]
+    lines = [(e.actor, e.card, e.detail) for e in read_activity(tmp_path) if e.action == "removed"]
+    assert lines == [
+        (Actor.YOU, "Lightning Bolt", "turned-down list cleared"),
+        (Actor.YOU, "Arcane Signet", "turned-down list cleared"),
+        (Actor.YOU, "Mind Stone", "turned-down list cleared"),
+    ]
+
+
+def test_clearing_an_empty_turned_down_list_changes_nothing(tmp_path: Path, service: BoardService) -> None:
+    service.propose("Lightning Bolt", Actor.YOU)
+    before = (tmp_path / BOARD_FILE).read_text(encoding="utf-8"), len(read_activity(tmp_path))
+
+    assert service.clear_rejected(Actor.YOU) == []
+
+    assert ((tmp_path / BOARD_FILE).read_text(encoding="utf-8"), len(read_activity(tmp_path))) == before
+
+
+def test_a_card_cleared_from_the_turned_down_list_can_be_proposed_again(service: BoardService) -> None:
+    card = service.propose("Lightning Bolt", Actor.CMDR, origin=Origin.META)
+    service.decide(card.id, Status.REJECTED, Actor.YOU)
+    service.clear_rejected(Actor.YOU)
+    assert service.propose("Lightning Bolt", Actor.CMDR, origin=Origin.META).status is Status.OPEN
+
+
+# --- upcoming cards moved from the previews (ADR 0055)
+
+
+def test_an_upcoming_card_goes_on_the_board_open_as_yours_with_its_snapshot_and_no_cut(
+    tmp_path: Path, service: BoardService
+) -> None:
+    card = service.propose_preview(upcoming(), Actor.YOU, reason="Upcoming: fits #Treasure")
+
+    assert (card.name, card.source, card.status, card.printing) == (
+        "Dahar Master",
+        Actor.YOU,
+        Status.OPEN,
+        upcoming(),
+    )
+    assert (card.oracle_id, card.reason, card.replace, card.choice) == (
+        "c9bc1a28-8d3c-4d9f-a67d-b044cfe9d6c1",
+        "Upcoming: fits #Treasure",
+        (),
+        None,
+    )
+    assert read_board(tmp_path).cards == (card,)
+    [entry] = read_activity(tmp_path)
+    assert (entry.actor, entry.action, entry.card, entry.detail) == (
+        Actor.YOU,
+        "proposed (considering)",
+        "Dahar Master",
+        "Upcoming: fits #Treasure",
+    )
+
+
+@pytest.mark.parametrize("fate", [None, Status.REJECTED, Status.ADD])
+def test_an_upcoming_card_already_on_the_board_in_any_state_is_not_listed_twice(
+    service: BoardService, fate: Status | None
+) -> None:
+    card = service.propose_preview(upcoming(), Actor.YOU)
+    if fate is not None:
+        service.decide(card.id, fate, Actor.YOU)
+    with pytest.raises(BoardError, match="Dahar Master is already on the board"):
+        service.propose_preview(upcoming(), Actor.YOU)
+
+
+@pytest.mark.parametrize(
+    ("name", "identity", "message"),
+    [
+        ("Dahar Master", "U", "Dahar Master is outside the deck's colours (R)"),
+        ("Battered Golem", "R", "Battered Golem is already in the deck"),
+        ("  ", "R", "the card name is empty"),
+    ],
+)
+def test_an_upcoming_card_outside_the_decks_colours_or_already_in_it_or_nameless_is_refused(
+    tmp_path: Path, service: BoardService, name: str, identity: str, message: str
+) -> None:
+    with pytest.raises(BoardError, match=re.escape(message)):
+        service.propose_preview(upcoming(name, identity), Actor.YOU)
+    assert not (tmp_path / BOARD_FILE).exists()
+
+
+def test_a_full_board_takes_no_upcoming_card(service: BoardService, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(board_module, "MAX_CARDS", 1)
+    service.propose("Lightning Bolt", Actor.YOU)
+    with pytest.raises(BoardError, match="the board holds at most 1 cards"):
+        service.propose_preview(upcoming(), Actor.YOU)
+
+
+def test_an_upcoming_card_can_be_queued_before_its_release_day_with_a_cut(
+    tmp_path: Path, service: BoardService, deck: Deck
+) -> None:
+    card = service.propose_preview(upcoming(), Actor.YOU)
+
+    queued = service.decide(card.id, Status.ADD, Actor.YOU, choice="Battered Golem")
+
+    assert (queued.status, queued.choice, queued.printing) == (Status.ADD, "Battered Golem", upcoming())
+    assert board_plan(deck, read_board(tmp_path)) == Plan(
+        "10000001", (AddCard("Dahar Master"),), (RemoveCard("Battered Golem"),)
+    )
+
+
+def test_an_upcoming_card_can_be_queued_before_its_release_day_without_a_cut_under_a_category(
+    tmp_path: Path, service: BoardService, deck: Deck
+) -> None:
+    card = service.propose_preview(upcoming(), Actor.YOU)
+
+    queued = service.decide(card.id, Status.ADD, Actor.YOU, category="Creature")
+
+    assert (queued.status, queued.choice, queued.category) == (Status.ADD, None, "Creature")
+    assert board_plan(deck, read_board(tmp_path)) == Plan(
+        "10000001", (AddCard("Dahar Master", category="Creature"),), ()
+    )
+
+
+def test_the_syncs_steps_leave_an_upcoming_card_alone_until_the_deck_holds_it(
+    tmp_path: Path, service: BoardService, deck: Deck, db: CardDb
+) -> None:
+    card = service.propose_preview(upcoming(), Actor.YOU)
+    # Yours, so the re-judge never turns it down; the card data does not know it, and the deck lacks it.
+    assert service.turn_down_open(card.id, "no longer makes the cut", 0.1) is None
+    assert service.close_held() == []
+
+    later = BoardService(tmp_path, holding(deck, "Dahar Master"), db, now=Clock())
+
+    assert [(c.name, c.status) for c in later.close_held()] == [("Dahar Master", Status.APPLIED)]
+
+
+def test_an_upcoming_card_can_be_turned_down_reopened_and_removed_before_its_release_day(
+    tmp_path: Path, service: BoardService
+) -> None:
+    card = service.propose_preview(upcoming(), Actor.YOU)
+    assert service.decide(card.id, Status.REJECTED, Actor.YOU, note="no").status is Status.REJECTED
+    reopened = service.decide(card.id, Status.OPEN, Actor.YOU)
+    assert (reopened.status, reopened.printing) == (Status.OPEN, upcoming())
+    service.remove(card.id, Actor.YOU)
+    assert read_board(tmp_path).cards == ()
+
+
+def test_an_unreleased_card_on_the_board_adds_nothing_to_the_next_save(
+    tmp_path: Path, service: BoardService, deck: Deck
+) -> None:
+    service.propose_preview(upcoming(), Actor.YOU)
+    assert board_plan(deck, read_board(tmp_path)) is None
+
+
+def test_the_snapshot_is_saved_with_the_card_and_read_back_and_other_cards_carry_none(
+    tmp_path: Path, service: BoardService
+) -> None:
+    service.propose_preview(upcoming(), Actor.YOU)
+    service.propose("Lightning Bolt", Actor.YOU)
+
+    saved = json.loads((tmp_path / BOARD_FILE).read_text(encoding="utf-8"))
+
+    assert saved["cards"][0]["printing"] == {
+        "scryfallId": "0c340eba-645d-416a-9ed4-f2303aa8c919",
+        "oracleId": "c9bc1a28-8d3c-4d9f-a67d-b044cfe9d6c1",
+        "name": "Dahar Master",
+        "manaCost": "{1}{R}",
+        "manaValue": 2.0,
+        "typeLine": "Creature — Dwarf",
+        "text": "Haste",
+        "power": "2",
+        "keywords": ["Haste"],
+        "identity": "R",
+        "set": "trk",
+        "setName": "Star Trek",
+        "collectorNumber": "157",
+        "releasedAt": "2026-10-20",
+        "alreadyOut": False,
+    }
+    assert saved["cards"][1]["printing"] is None
+    assert [c.printing for c in read_board(tmp_path).cards] == [upcoming(), None]
+    assert saved["version"] == 4
+
+
+def test_a_board_without_the_snapshot_key_reads_with_none(tmp_path: Path, service: BoardService) -> None:
+    service.propose("Lightning Bolt", Actor.YOU)
+    stored = json.loads((tmp_path / BOARD_FILE).read_text(encoding="utf-8"))
+    del stored["cards"][0]["printing"]
+    (tmp_path / BOARD_FILE).write_text(json.dumps(stored), encoding="utf-8")
+
+    assert [c.printing for c in read_board(tmp_path).cards] == [None]
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "message"),
+    [
+        ("releasedAt", "soon", "not a date"),
+        ("scryfallId", "not-an-id", "not a Scryfall id"),
+        ("collectorNumber", None, "collectorNumber"),
+        ("name", 7, "name"),
+    ],
+)
+def test_a_bad_snapshot_is_refused_by_shape_validation(
+    tmp_path: Path, service: BoardService, key: str, value: object, message: str
+) -> None:
+    service.propose_preview(upcoming(), Actor.YOU)
+    stored = json.loads((tmp_path / BOARD_FILE).read_text(encoding="utf-8"))
+    stored["cards"][0]["printing"][key] = value
+    (tmp_path / BOARD_FILE).write_text(json.dumps(stored), encoding="utf-8")
+
+    with pytest.raises(BoardError, match=message):
+        read_board(tmp_path)

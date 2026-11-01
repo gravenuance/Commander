@@ -12,9 +12,11 @@ from typing import Any, cast
 
 import pytest
 
+from commander import board as board_module
 from commander import desk as desk_module
 from commander import previews as previews_module
 from commander import syncrun
+from commander.board import Actor, Status, read_activity, read_board
 from commander.carddb import CARD_DB_FILE, CardDb, Role
 from commander.config import MetaSettings
 from commander.deckprofile import Profile, ThemeSpec
@@ -474,6 +476,7 @@ def found_fits(
     profile: Profile | None = None,
     cards: Sequence[SetCard] | None = None,
     targets: Mapping[Role, int] = DEFAULT_TARGETS,
+    on_board: Sequence[str] = (),
 ) -> list[PreviewFit]:
     return fitting_previews(
         deck,
@@ -483,6 +486,7 @@ def found_fits(
         parse_search_page(search_page()).cards if cards is None else cards,
         today=today,
         targets=targets,
+        on_board=on_board,
     )
 
 
@@ -674,6 +678,17 @@ def test_at_most_the_shown_number_of_previews_fit(
         "Quark, Humble Proprietor",
         "Captain's Tutelage",
     ]
+
+
+def test_a_card_on_the_board_is_left_out_before_the_cut_so_the_next_fit_takes_its_place(
+    deck: Deck, db: CardDb, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(previews_module, "SHOWN", 2)
+    themed = themed_deck(deck, ("Flash", "Treasure"))
+    assert [n for n, *_ in fits(themed, db)] == ["Quark, Humble Proprietor", "Captain's Tutelage"]
+    # By name in any case, as the deck's own cards are matched.
+    found = found_fits(themed, db, on_board=["quark, humble proprietor"])
+    assert [f.card.name for f in found] == ["Captain's Tutelage", "Munitions Enthusiast"]
 
 
 def test_dominant_tags_count_with_the_tag_search_off(deck: Deck, db: CardDb) -> None:
@@ -1136,3 +1151,192 @@ def test_the_config_files_targets_decide_which_roles_run_short(
         "Dahar Master",
     ]
     assert wanted[0][Role.RAMP] == 0
+
+
+# --- moving a preview to Considering
+
+QUARK_NAME = "Quark, Humble Proprietor"
+
+
+def desk_at(settings: DeskSettings, clock: list[datetime]) -> Desk:
+    return Desk(
+        settings,
+        client_factory=FakeArchidekt().client,
+        token_store=MemoryTokenStore(),
+        now=lambda: clock[0],
+        pacer_factory=lambda _: Pacer(0),
+    )
+
+
+def board_of(settings: DeskSettings, deck_id: int) -> board_module.Board:
+    folder = Workspace(settings.workspace).folder_for(deck_id)
+    assert folder is not None
+    return read_board(folder)
+
+
+def previewed(settings: DeskSettings) -> None:
+    write_previews(settings.cache, PreviewCache(TODAY, parse_search_page(search_page()).cards))
+
+
+def panel_names(desk: Desk, deck_id: int) -> list[object]:
+    return [c["name"] for c in cast("list[Json]", desk.previews(deck_id)["cards"])]
+
+
+def test_moving_a_preview_puts_it_on_the_board_as_yours_and_the_next_fit_takes_its_place(
+    desk_settings: DeskSettings, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(previews_module, "SHOWN", 2)
+    previewed(desk_settings)
+    desk = make_desk(desk_settings)
+    deck_id = int(raw_deck["id"])
+    assert panel_names(desk, deck_id) == [QUARK_NAME, "Munitions Enthusiast"]
+    assert desk.deck(deck_id)["previews"] == 2
+
+    answer = desk.move_preview(deck_id, QUARK_NAME)
+
+    moved = cast("Json", answer["card"])
+    assert (moved["name"], moved["source"], moved["status"]) == (QUARK_NAME, "you", "open")
+    assert moved["reason"] == "Upcoming: fits #Treasure"
+    [card] = board_of(desk_settings, deck_id).cards
+    assert (card.name, card.source, card.status, card.replace) == (QUARK_NAME, Actor.YOU, Status.OPEN, ())
+    # The board keeps the card as the previews saw it, to add from it.
+    assert card.printing is not None
+    assert (card.printing.released_at, card.printing.set_code, card.printing.collector_number) == (
+        date(2026, 11, 13),
+        "trk",
+        "166",
+    )
+    # The panel and the deck view's count both skip the card at once and fill its place: the next in line.
+    assert panel_names(desk, deck_id) == ["Munitions Enthusiast", "Captain's Tutelage"]
+    assert desk.deck(deck_id)["previews"] == 2
+
+
+def test_the_fits_in_the_reason_name_the_commander_and_the_short_role_as_the_tile_does(
+    tmp_path: Path, raw_deck: Json, commander_db_file: Path
+) -> None:
+    settings = settings_with(tmp_path, raw_deck, commander_db_file)
+    previewed(settings)
+    desk = make_desk(settings)
+    deck_id = int(raw_deck["id"])
+
+    desk.move_preview(deck_id, QUARK_NAME)
+    desk.move_preview(deck_id, "Munitions Enthusiast")
+
+    assert [c.reason for c in board_of(settings, deck_id).cards] == [
+        "Upcoming: fits #Treasure #Magda",
+        "Upcoming: fits #Treasure #Ramp",
+    ]
+
+
+def test_a_preview_cannot_be_moved_twice_nor_when_the_panel_does_not_offer_it(
+    desk_settings: DeskSettings, raw_deck: Json
+) -> None:
+    previewed(desk_settings)
+    desk = make_desk(desk_settings)
+    deck_id = int(raw_deck["id"])
+    desk.move_preview(deck_id, QUARK_NAME)
+
+    assert desk.move_preview(deck_id, QUARK_NAME) == {
+        "error": "'Quark, Humble Proprietor' is not among the previews that fit this deck"
+    }
+    # Kirk is red and white, outside the deck's colours; the reprint is already legal; the third is no card.
+    for name in ("Kirk, Commanding Officer", "Reckless Impulse", "Black Lotus", "  "):
+        assert "error" in desk.move_preview(deck_id, name), name
+    assert [c.name for c in board_of(desk_settings, deck_id).cards] == [QUARK_NAME]
+    folder = Workspace(desk_settings.workspace).folder_for(deck_id)
+    assert folder is not None
+    assert [e.action for e in read_activity(folder)] == ["proposed (considering)"]
+
+
+def test_a_moved_preview_stays_off_the_panel_whatever_becomes_of_it_and_a_removed_one_comes_back(
+    desk_settings: DeskSettings, raw_deck: Json
+) -> None:
+    previewed(desk_settings)
+    desk = make_desk(desk_settings)
+    deck_id = int(raw_deck["id"])
+    card = cast("Json", desk.move_preview(deck_id, QUARK_NAME)["card"])
+
+    desk.decide(deck_id, str(card["id"]), "reject", None, "no")
+    assert QUARK_NAME not in panel_names(desk, deck_id)
+    desk.decide(deck_id, str(card["id"]), "reopen", None, "")
+    assert QUARK_NAME not in panel_names(desk, deck_id)
+    assert desk.remove(deck_id, str(card["id"])) == {"ok": True}
+    assert QUARK_NAME in panel_names(desk, deck_id)
+
+
+def test_the_deck_view_shows_an_upcoming_card_the_card_data_lacks_from_the_boards_snapshot(
+    desk_settings: DeskSettings, raw_deck: Json
+) -> None:
+    previewed(desk_settings)
+    desk = make_desk(desk_settings)
+    deck_id = int(raw_deck["id"])
+    desk.move_preview(deck_id, QUARK_NAME)
+
+    view = desk.deck(deck_id)
+
+    [card] = cast("list[Json]", view["cards"])
+    assert (card["name"], card["status"], card["upcoming"], card["out"]) == (
+        QUARK_NAME,
+        "open",
+        True,
+        "2026-11-13",
+    )
+    assert (card["manaCost"], card["typeLine"]) == ("{2}{R}", "Legendary Creature — Ferengi Rogue")
+    assert str(card["text"]).startswith("You can't sacrifice Treasure tokens.")
+    assert card["image"] == (
+        "https://cards.scryfall.io/normal/front/9/6/96104754-57e2-46e9-948d-628aab2aa0ad.jpg"
+    )
+    assert (card["targets"], card["share"], card["held"], card["priceCents"]) == ([], None, False, None)
+    # Filed by its type, as a card the card data knows is.
+    assert card["typeCategory"] == "Creature"
+    assert "printing" not in card
+    assert "error" not in view
+
+
+def test_an_upcoming_card_keeps_its_face_in_the_view_when_the_previews_cache_is_emptied(
+    desk_settings: DeskSettings, raw_deck: Json
+) -> None:
+    previewed(desk_settings)
+    desk = make_desk(desk_settings)
+    deck_id = int(raw_deck["id"])
+    desk.move_preview(deck_id, QUARK_NAME)
+    write_previews(desk_settings.cache, PreviewCache(TODAY, ()))
+
+    [card] = cast("list[Json]", desk.deck(deck_id)["cards"])
+
+    assert (card["name"], card["upcoming"], card["out"]) == (QUARK_NAME, True, "2026-11-13")
+    assert (card["typeLine"], card["manaCost"]) == ("Legendary Creature — Ferengi Rogue", "{2}{R}")
+
+
+def test_an_upcoming_card_is_upcoming_in_the_view_only_until_its_release_day(
+    desk_settings: DeskSettings, raw_deck: Json
+) -> None:
+    previewed(desk_settings)
+    clock = [NOW]
+    desk = desk_at(desk_settings, clock)
+    deck_id = int(raw_deck["id"])
+    desk.move_preview(deck_id, QUARK_NAME)
+
+    [before] = cast("list[Json]", desk.deck(deck_id)["cards"])
+    clock[0] = RELEASE_DAY
+    [after] = cast("list[Json]", desk.deck(deck_id)["cards"])
+
+    assert (before["upcoming"], after["upcoming"]) == (True, False)
+    # Out, the card data still lacks it until the next rebuild, so the snapshot still shows it.
+    assert (after["out"], after["typeLine"]) == ("2026-11-13", "Legendary Creature — Ferengi Rogue")
+
+
+@pytest.mark.parametrize("cut", ["Battered Golem", None])
+def test_an_upcoming_card_can_be_queued_through_the_bridge_before_its_release_day(
+    desk_settings: DeskSettings, raw_deck: Json, cut: str | None
+) -> None:
+    previewed(desk_settings)
+    desk = desk_at(desk_settings, [NOW])
+    deck_id = int(raw_deck["id"])
+    card_id = str(cast("Json", desk.move_preview(deck_id, QUARK_NAME)["card"])["id"])
+
+    queued = cast("Json", desk.decide(deck_id, card_id, "add", cut, "")["card"])
+
+    assert (queued["status"], queued["choice"]) == ("add", cut)
+    [card] = cast("list[Json]", desk.deck(deck_id)["cards"])
+    assert (card["status"], card["upcoming"], card["out"]) == ("add", True, "2026-11-13")

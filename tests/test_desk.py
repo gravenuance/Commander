@@ -59,6 +59,7 @@ from conftest import (
     MemoryTokenStore,
     card_entry,
     deck_page,
+    upcoming,
 )
 from test_cli_apply import run
 from test_cli_meta import PEER_ID, kinnan_events, magda_events, peer_row
@@ -467,6 +468,100 @@ def test_a_card_turned_down_keeps_its_reason_for_the_rejected_list(desk: Desk) -
     assert (card["status"], card["note"]) == ("rejected", "rejected in design: no rocks")
     desk.decide(DECK, card_id, "reopen", None, "")
     assert items(desk.deck(DECK), "cards")[0]["status"] == "open"
+
+
+def reject_signet(desk: Desk) -> None:
+    """Arcane Signet turned down for a reason, and Chaos Warp left open, on the fixture deck's board."""
+    desk.propose(DECK, "Arcane Signet")
+    desk.propose(DECK, "Chaos Warp")
+    desk.decide(DECK, first_card_id(desk), "reject", None, "no rocks")
+
+
+def stub_card_download(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The sync's card data check answers with a fresh download instead of asking Scryfall."""
+
+    def download(*_: object, **__: object) -> CardRefresh:
+        return DOWNLOADED
+
+    monkeypatch.setattr(syncrun, "refresh_card_db", download)
+
+
+def test_clearing_the_turned_down_list_removes_those_cards_alone_logs_it_and_starts_a_sync_of_the_deck(
+    settings: DeskSettings, fake: FakeArchidekt, caplog: pytest.LogCaptureFixture
+) -> None:
+    desk, pending = deferred_desk(settings, fake)
+    reject_signet(desk)
+    caplog.set_level(logging.INFO, logger="commander.desk")
+
+    assert desk.clear_rejected(DECK) == {"cleared": 1, "sync": "started"}
+
+    assert [c["name"] for c in items(desk.deck(DECK), "cards")] == ["Chaos Warp"]
+    assert any("cleared 1 turned-down cards from deck" in r.getMessage() for r in caplog.records)
+    assert any("sync started for TESTER (clear of deck 10000001)" in r.getMessage() for r in caplog.records)
+    assert len(pending) == 1
+    status = desk.sync_status()
+    assert (status["running"], status["progress"]) == (True, "Syncing Magda")
+
+
+def test_clearing_a_list_with_no_turned_down_cards_starts_no_sync(
+    settings: DeskSettings, fake: FakeArchidekt
+) -> None:
+    desk, pending = deferred_desk(settings, fake)
+    desk.propose(DECK, "Chaos Warp")
+
+    assert desk.clear_rejected(DECK) == {"cleared": 0, "sync": "none"}
+
+    assert pending == []
+    assert desk.sync_status()["running"] is False
+
+
+def test_clearing_the_list_without_an_account_clears_it_and_starts_no_sync(
+    settings: DeskSettings, fake: FakeArchidekt
+) -> None:
+    desk, pending = deferred_desk(replace(settings, user=None), fake)
+    reject_signet(desk)
+
+    assert desk.clear_rejected(DECK) == {"cleared": 1, "sync": "none"}
+
+    assert pending == []
+
+
+def test_the_sync_after_a_clear_reads_and_reports_that_deck_alone(
+    settings: DeskSettings, fake: FakeArchidekt, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_extra_decks(settings, fake, raw_deck)
+    desk, pending = deferred_desk(settings, fake)
+    reject_signet(desk)
+    fetching: list[object] = []
+    reads = stub_meta(monkeypatch, lambda _: fetching.append(desk.sync_status()["decks"]))
+    stub_card_download(monkeypatch)
+
+    assert desk.clear_rejected(DECK) == {"cleared": 1, "sync": "started"}
+    [start] = pending
+    start()
+
+    assert reads.gathered == [DECK]
+    assert fetching == [{str(DECK): "fetching"}]
+    status = desk.sync_status()
+    assert (status["failed"], status["summary"], status["decks"]) == (False, "Synced 1 deck, 0 changed.", {})
+
+
+def test_clearing_the_list_while_a_sync_runs_leaves_that_sync_to_do_the_work(
+    settings: DeskSettings, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    desk, pending = deferred_desk(settings, fake)
+    reject_signet(desk)
+    answers: list[Json] = []
+    # The deck's read is under way, so the pull is over and the deck takes writes again.
+    stub_meta(monkeypatch, lambda _: answers.append(desk.clear_rejected(DECK)))
+    stub_card_download(monkeypatch)
+
+    desk.sync()
+    [start] = pending
+    start()
+
+    assert answers == [{"cleared": 1, "sync": "running"}]
+    assert len(pending) == 1
 
 
 def legacy_card(settings: DeskSettings, name: str) -> str:
@@ -1414,6 +1509,59 @@ def test_preview_and_commit_save_the_queued_cards(desk: Desk, fake: FakeArchidek
     # The save leaves the Maybeboard cards on Archidekt as they were.
     assert {c["categories"][0] for c in fake.decks[DECK]["cards"]} >= {"Maybeboard"}
     assert [w["action"] for w in fake.card_writes()] == ["remove", "add"]
+
+
+def queue_upcoming(settings: DeskSettings, desk: Desk, cut: str) -> None:
+    """Put the made-up upcoming card on the board as the previews panel's move does, queued with a cut."""
+    store = Workspace(settings.workspace)
+    deck = store.load(DECK)
+    folder = store.folder_for(DECK)
+    assert deck is not None
+    assert folder is not None
+    with CardDb(settings.card_db) as db:
+        BoardService(folder, deck, db, now=lambda: NOW).propose_preview(upcoming(), Actor.YOU)
+    desk.decide(DECK, first_card_id(desk), "add", cut, "")
+
+
+def test_preview_and_commit_save_an_upcoming_card_the_card_data_lacks_before_its_release(
+    settings: DeskSettings, desk: Desk, fake: FakeArchidekt
+) -> None:
+    fake.extra_printings.append(upcoming())
+    queue_upcoming(settings, desk, "Disruptor Flute")
+
+    preview = desk.preview(DECK)
+
+    assert [(c["mark"], c["name"]) for c in items(preview, "changes")] == [
+        ("-", "Disruptor Flute"),
+        ("+", "Dahar Master"),
+    ]
+    assert items(preview, "changes")[1]["text"] == "+ Dahar Master (TRK 157, no price) in Creature"
+    assert preview["problems"] == []
+    assert "Dahar Master: not in the card data yet; no price or bracket check" in names(preview, "warnings")
+    assert not fake.card_writes()
+
+    saved = desk.commit(DECK, str(preview["stamp"]))
+
+    assert (saved["saved"], saved["applied"], saved["mismatches"]) == (True, ["Dahar Master"], [])
+    assert [(w["action"], w["categories"]) for w in fake.card_writes()] == [
+        ("remove", ["Stax"]),
+        ("add", ["Creature"]),
+    ]
+    assert items(desk.deck(DECK), "cards")[0]["status"] == "applied"
+
+
+def test_commit_of_an_upcoming_card_archidekt_does_not_know_yet_sends_nothing_and_says_so(
+    settings: DeskSettings, desk: Desk, fake: FakeArchidekt
+) -> None:
+    queue_upcoming(settings, desk, "Disruptor Flute")
+
+    answer = desk.commit(DECK, reviewed(desk))
+
+    assert str(answer["error"]).startswith("Archidekt has no Dahar Master from TRK 157")
+    assert str(answer["error"]).endswith("Nothing was changed")
+    # Only the logins' token refreshes were sent: no snapshot and no card.
+    assert {path for _, path, _, _ in fake.writes} == {"/api/rest-auth/token/refresh/"}
+    assert items(desk.deck(DECK), "cards")[0]["status"] == "add"
 
 
 def test_commit_without_a_login_says_how_to_sign_in_in_the_apps_words(

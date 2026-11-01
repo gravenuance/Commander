@@ -116,6 +116,20 @@ def test_selecting_a_card_offers_every_deck_card_as_a_cut_and_a_click_again_clea
     assert seen["off"] == {"tile": "card", "pressed": "false", "swaps": 0}
 
 
+def test_selecting_an_upcoming_card_offers_every_deck_card_as_its_cut_like_any_idea_with_none() -> None:
+    seen = run("""
+    const soon = idea("u", [], { source: "you", origin: null, upcoming: true, out: "2026-11-13" });
+    renderConsidering([...ideas, soon]);
+    select("u");
+    const swaps = () => [...state.gridCards.values()].filter((n) => !n.querySelector(".swap").hidden).length;
+    const upcoming = swaps();
+    select("u");
+    select("a");
+    return { upcoming, ordinary: swaps() };
+    """)
+    assert seen == {"upcoming": 20, "ordinary": 20}
+
+
 def test_a_card_queued_to_replace_another_marks_that_card_going_out() -> None:
     seen = run("""
     const queued = idea("q", [1], { status: "add", choice: "Creature 7", targets: [] });

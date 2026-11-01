@@ -1,6 +1,8 @@
 """The Considering lists and the decisions made on their cards: its real scripts run under Node
 (`pagerun`)."""
 
+import pytest
+
 from pagerun import Answer, needs_node, page
 from test_page import PRELUDE as BOARD_PRELUDE
 
@@ -227,3 +229,187 @@ def test_a_refusal_from_the_bridge_on_a_decision_is_shown_but_not_sent_to_the_ap
       status: $("status-text").textContent };
     """)
     assert seen == {"sent": 0, "status": "Wait for the sync to finish"}
+
+
+CLEAR_PRELUDE = """
+const gone = (id) => card({ id, name: `Gone ${id}`, status: "rejected", updatedAt: "2026-05-01T00:00:00Z" });
+const syncing = { user: "T", signedIn: true,
+  sync: { running: true, progress: "Starting", summary: "", failed: false, decks: {} } };
+// What the bridge says of the sync it started for the cleared deck: "started", "running" or "none".
+let syncAnswer = "started";
+stub.clear_rejected = async () => {
+  const cleared = board.filter((c) => c.status === "rejected").length;
+  board = board.filter((c) => c.status !== "rejected");
+  return { cleared, sync: syncAnswer };
+};
+stub.sync = async () => ({});
+stub.account = async () => syncing;
+setupClearRejected();
+"""
+
+
+def test_clear_asks_first_then_clears_reloads_the_deck_and_reads_the_sync_the_bridge_started() -> None:
+    seen = run(
+        CLEAR_PRELUDE
+        + """
+    showBoard([gone("1"), gone("2"), card({ id: "o", name: "Open one" })]);
+    const button = $("clear-rejected");
+    const shown = () => ({ label: button.textContent, cancelHidden: $("clear-cancel").hidden });
+    const before = shown();
+    await fire(button, "click");
+    const asking = { ...shown(), sent: calls.length };
+    await fire($("clear-cancel"), "click");
+    const cancelled = { ...shown(), sent: calls.length };
+    await fire(button, "click");
+    await fire(button, "click");
+    await settle();
+    return { before, asking, cancelled,
+      order: calls.map((c) => c[0]).filter((n) => ["clear_rejected", "deck", "account", "sync"].includes(n)),
+      clear: calls.find((c) => c[0] === "clear_rejected"), hidden: $("rejected").hidden,
+      status: $("status-text").textContent, syncOff: $("sync-decks").disabled,
+      focus: document.activeElement.id };
+    """
+    )
+    assert seen["before"] == {"label": "Clear", "cancelHidden": True}
+    assert seen["asking"] == {"label": "Clear 2 cards?", "cancelHidden": False, "sent": 0}
+    assert seen["cancelled"] == {"label": "Clear", "cancelHidden": True, "sent": 0}
+    # The page asks for no sync itself: the bridge started one, and the account read shows it running.
+    assert seen["order"] == ["clear_rejected", "deck", "account"]
+    assert seen["clear"] == ["clear_rejected", 1]
+    assert seen["hidden"] is True
+    assert seen["status"] == "Cleared 2 turned down cards; compiling its ideas again"
+    assert (seen["syncOff"], seen["focus"]) == (True, "h-considering")
+
+
+@pytest.mark.parametrize("answer", ["running", "none"])
+def test_clear_names_no_new_compile_when_the_bridge_started_no_sync(answer: str) -> None:
+    seen = run(
+        CLEAR_PRELUDE
+        + f"""
+    syncAnswer = "{answer}";
+    showBoard([gone("1")]);
+    await fire($("clear-rejected"), "click");
+    await fire($("clear-rejected"), "click");
+    await settle();
+    return {{ cleared: calls.filter((c) => c[0] === "clear_rejected").length,
+      synced: calls.filter((c) => c[0] === "sync").length,
+      accounts: calls.filter((c) => c[0] === "account").length, status: $("status-text").textContent }};
+    """
+    )
+    assert seen == {
+        "cleared": 1,
+        "synced": 0,
+        "accounts": 1 if answer == "running" else 0,
+        "status": "Cleared 1 turned down card",
+    }
+
+
+def test_a_refused_clear_is_shown_and_starts_no_sync() -> None:
+    seen = run(
+        CLEAR_PRELUDE
+        + """
+    showBoard([gone("1")]);
+    stub.clear_rejected = async () => ({ error: "Wait for the sync to finish, then clear the list." });
+    await fire($("clear-rejected"), "click");
+    await fire($("clear-rejected"), "click");
+    await settle();
+    return { synced: calls.filter((c) => c[0] === "sync").length, status: $("status-text").textContent,
+      accounts: calls.filter((c) => c[0] === "account").length, label: $("clear-rejected").textContent };
+    """
+    )
+    assert seen == {
+        "synced": 0,
+        "accounts": 0,
+        "status": "Wait for the sync to finish, then clear the list.",
+        "label": "Clear",
+    }
+
+
+def test_a_confirmation_to_clear_gives_up_when_the_list_changes_or_escape_is_pressed() -> None:
+    seen = run(
+        CLEAR_PRELUDE
+        + """
+    showBoard([gone("1"), gone("2")]);
+    const button = $("clear-rejected");
+    await fire(button, "click");
+    showBoard([gone("1")]);
+    const changed = button.textContent;
+    await fire(button, "click");
+    const again = button.textContent;
+    const escape = await fire(button, "keydown", { key: "Escape" });
+    return { changed, again, afterEscape: button.textContent, stopped: escape.stopped,
+      cancelHidden: $("clear-cancel").hidden, calls: calls.filter((c) => c[0] === "clear_rejected").length };
+    """
+    )
+    assert seen == {
+        "changed": "Clear",
+        "again": "Clear 1 card?",
+        "afterEscape": "Clear",
+        "stopped": True,
+        "cancelHidden": True,
+        "calls": 0,
+    }
+
+
+UPCOMING = """
+const soon = (over = {}) => card({ id: "u", name: "Quark", source: "you", origin: null, targets: [],
+  upcoming: true, out: "2026-11-13", typeLine: "Legendary Creature", ...over });
+"""
+
+
+def test_an_upcoming_card_with_no_cut_is_listed_like_any_with_its_release_day_for_a_share() -> None:
+    seen = run(
+        UPCOMING
+        + """
+    showBoard([soon(), card({ id: "n", name: "Plain", targets: [] })]);
+    const labels = (list) => [...$(list).children].map((n) => n.getAttribute("aria-label"));
+    const tile = state.tiles.get("u").node;
+    select("u");
+    const add = tile.querySelector(".add-plain button");
+    const badge = tile.querySelector(".badge");
+    return { considering: labels("list-considering"), uncut: labels("list-uncut"),
+      badges: texts(tile, ".badge"), badgeTitle: badge.title,
+      pills: tile.querySelectorAll(".share-pill").length,
+      addDisabled: add.disabled, categoryDisabled: tile.querySelector(".add-plain select").disabled,
+      plainShown: !tile.querySelector(".add-plain").hidden };
+    """
+    )
+    assert seen == {
+        "considering": [],
+        "uncut": ["Quark", "Plain"],
+        "badges": ["Out 13 Nov 2026"],
+        "badgeTitle": "Not out yet; no share to show",
+        "pills": 0,
+        "addDisabled": False,
+        "categoryDisabled": False,
+        "plainShown": True,
+    }
+
+
+def test_an_upcoming_card_with_cuts_sits_in_considering_and_offers_them() -> None:
+    seen = run(
+        UPCOMING
+        + """
+    showBoard([soon({ targets: [{ name: "Creature 7", reason: "fewer plays", source: "picked" }] })]);
+    const tile = state.tiles.get("u").node;
+    select("u");
+    return { considering: [...$("list-considering").children].length,
+      uncut: [...$("list-uncut").children].length,
+      cuts: !tile.querySelector(".targets").hidden, badges: texts(tile, ".badge") };
+    """
+    )
+    assert seen == {"considering": 1, "uncut": 0, "cuts": True, "badges": ["Out 13 Nov 2026"]}
+
+
+def test_once_out_a_card_is_an_idea_like_any_other_with_its_add_on_offer() -> None:
+    seen = run(
+        UPCOMING
+        + """
+    showBoard([soon({ upcoming: false })]);
+    select("u");
+    const tile = state.tiles.get("u").node;
+    return { uncut: [...$("list-uncut").children].length, badges: texts(tile, ".badge"),
+      addDisabled: tile.querySelector(".add-plain button").disabled };
+    """
+    )
+    assert seen == {"uncut": 1, "badges": ["you"], "addDisabled": False}

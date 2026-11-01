@@ -94,6 +94,7 @@ def sync_decks(
     on_progress: Callable[[str], None] = lambda _: None,
     warn: Callable[[str], None] = lambda _: None,
     watch: PullWatch = PullWatch(),  # noqa: B008 — frozen, so one shared default is safe
+    only: int | None = None,
 ) -> list[SyncResult]:
     """Fetch decks whose Archidekt edit time moved (or all, with force) and save them unless dry_run.
 
@@ -103,6 +104,9 @@ def sync_decks(
     such a deck whose own page answers 404 (REMOVED, or WOULD_REMOVE on a dry run) and keeps the others,
     reported as missing (ADR 0045). The results are in listing order; each fetched deck is written as soon
     as it arrives.
+
+    With `only`, the listing is still read whole but just that deck is fetched, written and settled; the
+    folders set aside by earlier removals are left for the next full sync.
     """
     try:
         summaries = client.list_commander_decks(user)
@@ -115,6 +119,8 @@ def sync_decks(
     results: list[SyncResult] = []
     to_fetch: list[_Plan] = []
     for summary in summaries:
+        if only is not None and summary.id != only:
+            continue
         try:
             previous = workspace.load(summary.id)
         except WorkspaceError as error:
@@ -150,14 +156,17 @@ def sync_decks(
     results += [fetched[plan.summary.id] for plan in to_fetch]
 
     upstream_ids = {summary.id for summary in summaries}
-    results += [
-        _finish_removal(workspace, deck_id, folder, dry_run, watch)
-        for deck_id, folder in workspace.leftover_removals()
-    ]
+    if only is None:
+        results += [
+            _finish_removal(workspace, deck_id, folder, dry_run, watch)
+            for deck_id, folder in workspace.leftover_removals()
+        ]
     results += [
         _settle_missing(client, workspace, user, stored, dry_run, watch)
         for stored in workspace.load_all()
-        if stored.deck.id not in upstream_ids and (client.signed_in or not stored.deck.needs_login)
+        if (only is None or stored.deck.id == only)
+        and stored.deck.id not in upstream_ids
+        and (client.signed_in or not stored.deck.needs_login)
     ]
     return results
 

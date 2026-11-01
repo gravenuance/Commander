@@ -612,7 +612,9 @@ base against Frank Karsten's published numbers
   click one, then the deck card it replaces. A clicked idea also offers **Add without a cut**, under one of
   the deck's categories (its card type's first); like every add it is labelled Don't Have when saved.
   × turns the idea down, with a reason if you like: turned-down cards wait under *Turned down* (closed until
-  opened) with their reasons, and Reconsider brings one back. Considering, Meta, each Meta section and each
+  opened) with their reasons, and Reconsider brings one back. Clear (asked twice) removes the whole list
+  from the board and syncs that deck alone, so a card the lists still play can come back as an idea
+  ([ADR 0060](docs/adr/0060-clear-the-turned-down-list.md)). Considering, Meta, each Meta section and each
   category under *What stops you* fold, and stay as you left them.
   While a set is being previewed, a folded *Previews* panel below *No cut yet* shows up to 12 of its announced
   cards that suit the deck, in its colours: those matching its three main Archidekt tags (the cards that
@@ -620,10 +622,13 @@ base against Frank Karsten's published numbers
   wide board), those its commander asks for (big artifacts or enchantments to animate, Treasure or token
   makers, creatures with power 2 or less, Auras, big spells, removal, or its tribe), and those filling a role
   the deck runs short of. A rare match weighs more than a common one, and the commander's twice. A card that
-  works against the commander, like a +1/+1 counter for Arabella, goes last with a warning. They are only to
-  look at: a preview cannot be added or priced, and it leaves the panel on its release day, after which the
-  usual ideas can bring it. The sync fetches them from Scryfall, with that day's Tagger tags, at most once a
-  day, and only while a set is upcoming
+  works against the commander, like a +1/+1 counter for Arabella, goes last with a warning. *Move to
+  Considering* puts a preview on the board, and the panel fills its place with the next fit. There it shows
+  "Out <date>" in place of a share, and it can be queued, reviewed and saved at once, with a cut or without,
+  like any card you suggest; Archidekt must already list the card, or the save stops before changing anything.
+  Until the card data knows it, the review has no price or bracket check for it and says so. A preview
+  leaves the panel on its release day, after which the usual ideas can bring it. The sync fetches them from
+  Scryfall, with that day's Tagger tags, at most once a day, and only while a set is upcoming
   ([ADR 0055](docs/adr/0055-show-upcoming-cards-that-fit-a-deck.md),
   [ADR 0058](docs/adr/0058-previews-ranked-by-weight-conflict-and-need.md)).
   The suggested targets are the cards you or Claude picked, or else the four best scoring deck cards

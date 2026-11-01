@@ -3,7 +3,7 @@ import json
 import logging
 import shutil
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from concurrent.futures import Future
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
@@ -335,6 +335,83 @@ def test_each_deck_is_queued_in_the_order_of_its_requests_then_fetching_then_don
     for deck_id in DECK_IDS:
         assert [state for deck, state in events if deck == deck_id] == ["queued", "fetching", "done"]
     assert len(events) == 9
+
+
+def sync_only(
+    tmp_path: Path, fake: FakeArchidekt, deck_id: int, events: list[tuple[int, str]], *, force: bool = False
+) -> SyncOutcome:
+    return run_sync(
+        services(tmp_path, fake),
+        Workspace(tmp_path / "decks"),
+        "TESTER",
+        MetaSettings(),
+        SyncOptions(cards=False, force=force, only=deck_id),
+        on_deck=lambda deck, state: events.append((deck, state.value)),
+        on_progress=lambda _: None,
+    )
+
+
+def test_a_sync_limited_to_one_deck_reads_and_merges_that_deck_alone_and_reports_only_it(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = three_decks(tmp_path, raw_deck, card_db_file)
+    reads = stub_meta(monkeypatch)
+    merged: list[int] = []
+    tournament_decks: list[list[int]] = []
+
+    def compile_ideas(stored: StoredDeck, *_: object, **__: object) -> dict[Origin, list[BoardCard]]:
+        merged.append(stored.deck.id)
+        return {}
+
+    def start_topdeck(decks: Iterable[Deck], *_: object, **__: object) -> None:
+        tournament_decks.append([deck.id for deck in decks])
+
+    monkeypatch.setattr(syncrun, "compile_ideas", compile_ideas)
+    monkeypatch.setattr(syncrun, "start_tournament_refresh", start_topdeck)
+    sync_ideas(tmp_path, fake)
+    reads.gathered.clear()
+    merged.clear()
+    tournament_decks.clear()
+    events: list[tuple[int, str]] = []
+
+    outcome = sync_only(tmp_path, fake, 102, events, force=True)
+
+    assert reads.gathered == [102]
+    assert merged == [102]
+    assert tournament_decks
+    assert all(decks == [102] for decks in tournament_decks)
+    assert events == [(102, "queued"), (102, "fetching"), (102, "done")]
+    assert [r.deck_id for r in outcome.results] == [102]
+
+
+def test_a_sync_limited_to_one_deck_pulls_that_deck_alone(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = three_decks(tmp_path, raw_deck, card_db_file)
+    stub_meta(monkeypatch)
+    sync_ideas(tmp_path, fake)
+    for deck_id in DECK_IDS:
+        fake.decks[deck_id]["updatedAt"] = "2026-10-20T00:00:00.000000Z"
+    fake.requests.clear()
+
+    outcome = sync_only(tmp_path, fake, 103, [])
+
+    assert [p for p in fake.requests if p.startswith("/api/decks/1")] == ["/api/decks/103/"]
+    assert [(r.deck_id, r.status.value) for r in outcome.results] == [(103, "unchanged")]
+
+
+def test_a_sync_limited_to_a_deck_the_account_lacks_reads_and_merges_nothing(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = three_decks(tmp_path, raw_deck, card_db_file)
+    reads = stub_meta(monkeypatch)
+    sync_ideas(tmp_path, fake)
+    reads.gathered.clear()
+    events: list[tuple[int, str]] = []
+
+    outcome = sync_only(tmp_path, fake, 999, events)
+
+    assert (reads.gathered, events, outcome.results) == ([], [], [])
 
 
 def test_a_deck_whose_ideas_fail_is_incomplete_and_the_others_carry_on(

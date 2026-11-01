@@ -207,6 +207,8 @@ class SetCard:
     color_identity: str
     set_code: str
     set_name: str
+    # Within the set; with the set code it names the printing a deck save adds.
+    collector_number: str
     released_at: date
     # Legal, restricted or banned in Commander: a card already out, like a reprint, not a preview.
     already_out: bool
@@ -538,6 +540,7 @@ def parse_set_card(raw: object, where: str) -> SetCard | None:
         color_identity=_colors(str_list(card, "color_identity", where)),
         set_code=req_str(card, "set", where),
         set_name=req_str(card, "set_name", where),
+        collector_number=req_str(card, "collector_number", where),
         released_at=released_at,
         already_out=legality in {"legal", "restricted", "banned"},
     )

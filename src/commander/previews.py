@@ -57,7 +57,7 @@ log = logging.getLogger(__name__)
 
 PREVIEWS_FILE = "previews.json"
 # Bump when the file's fields change; a file of another version is ignored until the next probe replaces it.
-FORMAT_VERSION = 3
+FORMAT_VERSION = 4
 # Half Scryfall's asked-for 10 requests a second.
 PROBE_INTERVAL_SECONDS = 0.2
 # 1,750 cards a set, more than any set has had.
@@ -249,6 +249,7 @@ def fitting_previews(
     targets: Mapping[Role, int],
     tags: Mapping[str, frozenset[str]] | None = None,
     roles: Mapping[str, frozenset[Role]] | None = None,
+    on_board: Iterable[str] = (),
 ) -> list[PreviewFit]:
     """The previews in the deck's colour identity that match its dominant tags, that its commander wants or
     that fill a role it runs short of. Those working against the commander go last, still shown. The rest
@@ -259,13 +260,16 @@ def fitting_previews(
     its average mana value (`_like_the_deck`), then by name; at most SHOWN. today is the local day; tags and
     roles are the probe's (`PreviewCache`), beside the card data's.
     Like every suggestion, a card the profile excludes, by name or by its [exclude] types, keywords or tags,
-    is never one, nor is a card the deck already has."""
+    is never one, nor is a card the deck already has or one of the names on_board (the deck's board, in any
+    state), left out before the cut to SHOWN so the next fit takes its place."""
     identity = deck_identity(main)
     if identity is None:
         log.debug("deck %d: no previews, its commander is missing or not in the card data", deck.id)
         return []
     # The deck's own cards too: one just added on Archidekt may be too new for the card data.
-    excluded = name_keys_of(profile.exclude_cards) | name_keys_of(r.card.name for r in main)
+    excluded = (
+        name_keys_of(profile.exclude_cards) | name_keys_of(r.card.name for r in main) | name_keys_of(on_board)
+    )
     live = [
         c
         for c in cards
@@ -391,26 +395,59 @@ def _cache_json(cache: PreviewCache) -> dict[str, object]:
         "probedOn": cache.probed_on.isoformat() if cache.probed_on else None,
         "cards": [
             {
-                "scryfallId": c.scryfall_id,
-                "oracleId": c.oracle_id,
-                "name": c.name,
-                "manaCost": c.mana_cost,
-                "manaValue": c.mana_value,
-                "typeLine": c.type_line,
-                "text": c.oracle_text,
-                "power": c.power,
-                "keywords": list(c.keywords),
-                "identity": c.color_identity,
-                "set": c.set_code,
-                "setName": c.set_name,
-                "releasedAt": c.released_at.isoformat(),
-                "alreadyOut": c.already_out,
+                **set_card_json(c),
                 "tags": sorted(cache.tags.get(c.oracle_id, ())),
                 "roles": sorted(role.value for role in cache.roles.get(c.oracle_id, ())),
             }
             for c in cache.cards
         ],
     }
+
+
+def set_card_json(c: SetCard) -> dict[str, object]:
+    """A card as the previews cache and a board card's snapshot of it (ADR 0055) store it."""
+    return {
+        "scryfallId": c.scryfall_id,
+        "oracleId": c.oracle_id,
+        "name": c.name,
+        "manaCost": c.mana_cost,
+        "manaValue": c.mana_value,
+        "typeLine": c.type_line,
+        "text": c.oracle_text,
+        "power": c.power,
+        "keywords": list(c.keywords),
+        "identity": c.color_identity,
+        "set": c.set_code,
+        "setName": c.set_name,
+        "collectorNumber": c.collector_number,
+        "releasedAt": c.released_at.isoformat(),
+        "alreadyOut": c.already_out,
+    }
+
+
+def set_card_from_json(card: Mapping[str, object], where: str) -> SetCard:
+    """The card `set_card_json` wrote; a ShapeError when a field is missing or wrong, or the id is not a
+    Scryfall one (its image address and its printing on Archidekt are made from it)."""
+    scryfall_id = req_str(card, "scryfallId", where)
+    if not is_scryfall_id(scryfall_id):
+        raise ShapeError(f"{where}.scryfallId: not a Scryfall id: {scryfall_id!r}")
+    return SetCard(
+        scryfall_id=scryfall_id,
+        oracle_id=req_str(card, "oracleId", where),
+        name=req_str(card, "name", where),
+        mana_cost=req_str(card, "manaCost", where),
+        mana_value=req_float(card, "manaValue", where),
+        type_line=req_str(card, "typeLine", where),
+        oracle_text=req_str(card, "text", where),
+        power=opt_str(card, "power", where),
+        keywords=str_list(card, "keywords", where),
+        color_identity=req_str(card, "identity", where),
+        set_code=req_str(card, "set", where),
+        set_name=req_str(card, "setName", where),
+        collector_number=req_str(card, "collectorNumber", where),
+        released_at=_date(req_str(card, "releasedAt", where), where),
+        already_out=req_bool(card, "alreadyOut", where),
+    )
 
 
 def _cache_from_json(raw: object) -> PreviewCache:
@@ -425,24 +462,7 @@ def _cache_from_json(raw: object) -> PreviewCache:
         if not is_scryfall_id(req_str(card, "scryfallId", where)):
             log.warning("%s (%s) skipped: not a Scryfall id", where, card.get("name"))
             continue
-        cards.append(
-            SetCard(
-                scryfall_id=req_str(card, "scryfallId", where),
-                oracle_id=req_str(card, "oracleId", where),
-                name=req_str(card, "name", where),
-                mana_cost=req_str(card, "manaCost", where),
-                mana_value=req_float(card, "manaValue", where),
-                type_line=req_str(card, "typeLine", where),
-                oracle_text=req_str(card, "text", where),
-                power=opt_str(card, "power", where),
-                keywords=str_list(card, "keywords", where),
-                color_identity=req_str(card, "identity", where),
-                set_code=req_str(card, "set", where),
-                set_name=req_str(card, "setName", where),
-                released_at=_date(req_str(card, "releasedAt", where), where),
-                already_out=req_bool(card, "alreadyOut", where),
-            )
-        )
+        cards.append(set_card_from_json(card, where))
         oracle_id = cards[-1].oracle_id
         if slugs := str_list(card, "tags", where):
             tags[oracle_id] = frozenset(slugs)

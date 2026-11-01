@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- *Clear* in the *Turned down* fold (asked twice) removes every turned-down card from the deck's board and
+  syncs that deck alone, so cards the lists still play can come back as ideas (ADR 0060).
+- *Move to Considering* on a preview puts the upcoming card on the board, and the Previews panel fills its
+  place with the next fit. It shows "Out <date>" in place of a share and can be queued, reviewed and saved
+  at once, with a cut or without; the save adds the printing the board kept, and the review notes that the
+  card data has no price or bracket check for it yet (ADR 0055).
+
 ## 1.4.2 - 2026-10-30
 
 ### Changed

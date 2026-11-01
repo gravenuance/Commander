@@ -83,6 +83,8 @@ class SyncOptions:
     dry_run: bool = False
     cards: bool = True
     ideas: bool = True
+    # A deck id: the pull and the ideas phase then handle that deck alone, as when only its board changed.
+    only: int | None = None
 
 
 class FetchState(Enum):
@@ -170,7 +172,16 @@ def run_sync(
                 cards_job.add_done_callback(lambda _: on_cards())
         # TopDeck's window loads from here on when a deck on disk reads tournament lists, while the pull runs.
         meta = (
-            _start_meta(workspace, user, settings, services, http, progress=on_progress, priority=priority)
+            _start_meta(
+                workspace,
+                user,
+                settings,
+                services,
+                http,
+                progress=on_progress,
+                priority=priority,
+                only=options.only,
+            )
             if options.ideas and not options.dry_run
             else None
         )
@@ -188,8 +199,11 @@ def run_sync(
                 on_progress=on_progress,
                 warn=warnings.append,
                 watch=pull,
+                only=options.only,
             )
-            if not login.attempted and any(stored.deck.needs_login for stored in workspace.load_all()):
+            if not login.attempted and any(
+                stored.deck.needs_login for stored in _in_scope(workspace.load_all(), options.only)
+            ):
                 warnings.append(f"Not signed in to Archidekt: {PRIVATE_NOT_UPDATED}")
             labels = None if options.dry_run else _sync_labels(fetcher, workspace, login, warnings)
             cards = _card_status(cards_job, options)
@@ -198,7 +212,7 @@ def run_sync(
             # The probe goes on while the ideas are compiled; its warning keeps the place it would have had.
             probe_warnings: list[str] = []
             probe_at = len(warnings)
-            _add_grace_tables(workspace, warnings, deck_lock)
+            _add_grace_tables(workspace, warnings, deck_lock, options.only)
             phase = (
                 _compile_ideas(
                     workspace,
@@ -209,6 +223,7 @@ def run_sync(
                     warnings=warnings,
                     on_deck=on_deck or _ignore_deck,
                     deck_lock=deck_lock,
+                    only=options.only,
                 )
                 if meta is not None
                 else _IdeasPhase()
@@ -267,10 +282,14 @@ def _start_card_jobs(
     return cards_job, previews_job
 
 
-def _add_grace_tables(workspace: Workspace, warnings: list[str], deck_lock: DeckLock) -> None:
-    """Give each deck's profile the empty [grace] table (ADR 0039), writing the template for a deck with no
-    profile yet, under the deck's lock; a profile that cannot be written is a warning."""
+def _add_grace_tables(
+    workspace: Workspace, warnings: list[str], deck_lock: DeckLock, only: int | None
+) -> None:
+    """Give each deck's profile (`only` that deck's) the empty [grace] table (ADR 0039), writing the template
+    for a deck with no profile yet, under the deck's lock; a profile that cannot be written is a warning."""
     for deck_id, folder in workspace.deck_folders():
+        if only is not None and deck_id != only:
+            continue
         try:
             with deck_lock(deck_id):
                 _add_grace_table(workspace, folder)
@@ -419,11 +438,12 @@ def _start_meta(
     *,
     progress: Progress,
     priority: FetchPriority | None,
+    only: int | None,
 ) -> _MetaStart:
     shown = threading.Event()
     # Reads run side by side, so the line names each one that is under way.
     phases = ActivePhases(lambda line: progress(line) if shown.is_set() else None, idle=_COMPILING)
-    waiting = _most_viewed_first(workspace.load_all(), services)
+    waiting = _most_viewed_first(workspace.load_all(), services, only)
     order = [s.deck.id for s in waiting]
     next_up = priority or FetchPriority()
     sources = meta_sources(
@@ -453,11 +473,12 @@ def _compile_ideas(
     warnings: list[str],
     on_deck: DeckProgress,
     deck_lock: DeckLock,
+    only: int | None,
 ) -> _IdeasPhase:
     """Each deck's new ideas from the meta and recent Archidekt decks (ADR 0028), by short name, the open
     ideas turned down on the way for no longer passing the idea test, the open cards closed first
     because the main deck holds them (ADR 0046) and the queued count changes it already meets, cleared
-    (ADR 0043).
+    (ADR 0043). With `only`, that deck alone is read and merged.
 
     Answers under a day old come from the cache. A deck whose sources fail keeps its board as it was.
     Every deck's reads start at once, each on its own thread, and the sync thread merges them as they finish.
@@ -473,7 +494,7 @@ def _compile_ideas(
         return _IdeasPhase()
     phase = _IdeasPhase()
     phases, next_up = meta.phases, meta.next_up
-    waiting = _most_viewed_first(workspace.load_all(), services)
+    waiting = _most_viewed_first(workspace.load_all(), services, only)
     meta.order[:] = [s.deck.id for s in waiting]
     meta.open()
     with db:
@@ -814,10 +835,17 @@ def _current(workspace: Workspace, fetched: StoredDeck) -> StoredDeck | None:
     return StoredDeck(fetched.folder, replace(deck, bracket=bracket))
 
 
-def _most_viewed_first(decks: list[StoredDeck], services: SyncServices) -> list[StoredDeck]:
-    """The decks with a commander, by view score and then in the workspace's order."""
+def _in_scope(decks: list[StoredDeck], only: int | None) -> list[StoredDeck]:
+    """All the decks, or just the one a limited sync is for."""
+    return decks if only is None else [s for s in decks if s.deck.id == only]
+
+
+def _most_viewed_first(decks: list[StoredDeck], services: SyncServices, only: int | None) -> list[StoredDeck]:
+    """The decks with a commander (just `only`, if set), by view score and then in the workspace's order."""
     scores = ViewScores(services.cache / VIEWS_FILE, services.now).scores()
-    return sorted((s for s in decks if s.deck.commanders), key=lambda s: -scores.get(s.deck.id, 0.0))
+    return sorted(
+        (s for s in _in_scope(decks, only) if s.deck.commanders), key=lambda s: -scores.get(s.deck.id, 0.0)
+    )
 
 
 def _ignore_deck(_deck_id: int, _state: FetchState) -> None:

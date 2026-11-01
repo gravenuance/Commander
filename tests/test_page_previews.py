@@ -1,5 +1,5 @@
-"""The Previews panel (ADR 0055): shown for a deck with fitting previews, folded, loaded when opened, and only
-to look at. Its real scripts run under Node (`pagerun`)."""
+"""The Previews panel (ADR 0055): shown for a deck with fitting previews, folded, loaded when opened, and a
+card in it can be moved to Considering. Its real scripts run under Node (`pagerun`)."""
 
 from pagerun import Answer, needs_node, page
 
@@ -64,7 +64,7 @@ def test_the_panel_shows_folded_with_its_count_and_loads_only_once_opened() -> N
     assert seen["tiles"] == 1
 
 
-def test_a_tile_shows_the_card_and_its_fit_with_no_action_but_zooming_its_art() -> None:
+def test_a_tile_shows_the_card_and_its_fit_with_two_actions_zooming_its_art_and_moving_it() -> None:
     seen = run("""
     previewsPanel.render(1, { cards: [tutelage] });
     const tile = $("list-previews").children[0];
@@ -73,10 +73,12 @@ def test_a_tile_shows_the_card_and_its_fit_with_no_action_but_zooming_its_art() 
       text: walk(tile).filter((n) => n.childNodes.length && n.childNodes.every((c) => !c.tagName))
         .map((n) => n.textContent),
       buttons: buttons.map((b) => b.getAttribute("aria-label")),
+      moveTitle: buttons[1].title,
       folds: walk(tile).filter((n) => n.tagName === "SUMMARY").map((n) => n.textContent),
     };
     """)
-    assert seen["buttons"] == ["Zoom Captain's Tutelage"]
+    assert seen["buttons"] == ["Zoom Captain's Tutelage", "Move Captain's Tutelage to Considering"]
+    assert seen["moveTitle"] == "Queue it for the deck like any suggestion"
     assert seen["folds"] == ["Rules text"]
     for shown in [
         "Captain's Tutelage",
@@ -110,3 +112,64 @@ def test_opening_another_deck_drops_the_last_decks_previews() -> None:
     return { before, after: $("list-previews").children.length, hidden: $("previews").hidden };
     """)
     assert seen == {"before": 1, "after": 0, "hidden": True}
+
+
+def test_moving_a_tile_asks_the_bridge_then_rereads_the_deck_and_the_panel_and_keeps_focus_in_the_list() -> (
+    None
+):
+    seen = run("""
+    const kirk = { ...tutelage, name: "Kirk" };
+    let moved = false;
+    stub.deck = async (id) => view(id, moved ? 1 : 2);
+    stub.decks = async () => ({ decks: state.decks });
+    stub.previews = async () => ({ cards: moved ? [kirk] : [tutelage, kirk] });
+    stub.move_preview = async () => { moved = true; return { card: {} }; };
+    await openDeck(1);
+    await fire($("h-previews"), "click");
+    await settle();
+    const before = [...$("list-previews").children].map((t) => t.getAttribute("aria-label"));
+    const move = $("list-previews").children[0].querySelector(".move");
+    await fire(move, "click");
+    await settle();
+    return { before, after: [...$("list-previews").children].map((t) => t.getAttribute("aria-label")),
+      count: $("count-previews").textContent, status: $("status-text").textContent,
+      sent: calls.filter((c) => c[0] === "move_preview"),
+      focus: document.activeElement.getAttribute("aria-label") };
+    """)
+    assert seen["before"] == ["Captain's Tutelage", "Kirk"]
+    assert seen["after"] == ["Kirk"]
+    assert seen["count"] == "1"
+    assert seen["status"] == "Captain's Tutelage moved to Considering"
+    assert seen["sent"] == [["move_preview", 1, "Captain's Tutelage"]]
+    assert seen["focus"] == "Move Kirk to Considering"
+
+
+def test_a_double_click_on_move_sends_one_request() -> None:
+    seen = run("""
+    stub.move_preview = async () => ({ card: {} });
+    stub.deck = async (id) => view(id, 1);
+    stub.decks = async () => ({ decks: state.decks });
+    state.current = 1;
+    previewsPanel.render(1, { cards: [tutelage] });
+    const move = $("list-previews").children[0].querySelector(".move");
+    await Promise.all([fire(move, "click"), fire(move, "click")]);
+    return calls.filter((c) => c[0] === "move_preview").length;
+    """)
+    assert seen == 1
+
+
+def test_a_refused_move_is_shown_and_leaves_the_panel_as_it_was() -> None:
+    seen = run("""
+    stub.move_preview = async () => ({ error: "Wait for the sync to finish, then move the card." });
+    state.current = 1;
+    previewsPanel.render(1, { cards: [tutelage] });
+    await fire($("list-previews").children[0].querySelector(".move"), "click");
+    await settle();
+    return { status: $("status-text").textContent, tiles: $("list-previews").children.length,
+      reloaded: calls.filter((c) => c[0] === "deck").length };
+    """)
+    assert seen == {
+        "status": "Wait for the sync to finish, then move the card.",
+        "tiles": 1,
+        "reloaded": 0,
+    }

@@ -2,7 +2,7 @@
 
 import logging
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import Enum
@@ -19,12 +19,13 @@ from commander.archidekt_edit import (
     label_value,
     new_entry_state,
 )
-from commander.carddb import CardDb, CardInfo, Printing, Role
+from commander.carddb import CardDb, CardInfo, Printing, Role, front_type, name_keys
 from commander.copylimit import copy_limit
 from commander.models import COMMANDER_CATEGORY, DONT_HAVE_LABEL, Deck, DeckCard
 from commander.net import NetworkError
 from commander.plan import AddCard, Plan, RemoveCard
 from commander.pricing import FOIL_FINISH, NONFOIL_FINISH
+from commander.scryfall import SetCard
 from commander.suggest import BracketRaise, card_raise, deck_identity
 
 log = logging.getLogger(__name__)
@@ -129,6 +130,8 @@ class _Resolver:
     bracket: int | None
     # The extra-turn cards the deck holds, counting those added so far; two lift a deck to bracket 4.
     extra_turns: int = 0
+    # Upcoming cards the card data lacks, by casefolded name, for an add of one (`_add_unlisted`).
+    snapshots: Mapping[str, SetCard] = field(default_factory=dict[str, SetCard])
     problems: list[str] = field(default_factory=list[str])
     warnings: list[str] = field(default_factory=list[str])
     skipped: list[str] = field(default_factory=list[str])
@@ -179,16 +182,15 @@ class _Resolver:
     def add(self, wanted: AddCard, identity: str | None, changers: int) -> int:
         """Resolve one add; returns the game changers the deck holds after it."""
         info = self.db.card_named(wanted.name)
-        if info is None:
-            self.problems.append(f"add {wanted.name}: no such card in the card data (check the spelling)")
-            return changers
-        if wanted.category is not None and wanted.category.casefold() in _RETIRED_CATEGORIES:
-            self.problems.append(
-                f"add {info.name}: the Maybeboard and Sideboard are retired; name a category in the deck"
-            )
+        # A card data built during a preview season holds the upcoming card, but as not legal and unpriced.
+        if info is None or (not info.commander_legal and wanted.name.casefold() in self.snapshots):
+            return self._add_unlisted(wanted, identity, changers)
+        if self._retired(wanted, info.name):
             return changers
         held = [e for e in _entries_named(self.deck, info.name) if e.in_deck]
-        problem = self._add_problem(info, identity, held)
+        problem = self._add_problem(
+            info.oracle_id, info.color_identity, identity, held, legal=info.commander_legal
+        )
         if problem is not None:
             self.problems.append(f"add {info.name}: {problem}")
             return changers
@@ -200,12 +202,7 @@ class _Resolver:
         elif limit is not None and wanted.quantity > limit:
             self.warnings.append(f"{info.name}: {wanted.quantity} copies; the card allows {limit}")
         if held:
-            entry = held[0]
-            have = sum(e.quantity for e in held)
-            if have >= wanted.quantity:
-                self.skipped.append(f"add {info.name}: already {have} in the deck")
-            else:
-                self.changes.append(_change(ChangeKind.MORE, entry, entry.quantity + wanted.quantity - have))
+            self._hold(info.name, wanted, held)
             return changers
         raises = card_raise(info, self.bracket, changers, extra_turns=self.extra_turns)
         pick = self._printing(info, wanted)
@@ -233,18 +230,78 @@ class _Resolver:
             self.extra_turns += 1
         return changers + 1 if info.game_changer else changers
 
+    def _add_unlisted(self, wanted: AddCard, identity: str | None, changers: int) -> int:
+        """Resolve an add of a card the card data lacks, or holds only as not yet legal: from the snapshot the
+        board kept of an upcoming card (ADR 0055) when there is one. Its copy limit, price and bracket raise
+        are unknown, so none is checked and the review says so."""
+        card = self.snapshots.get(wanted.name.casefold())
+        if card is None:
+            self.problems.append(f"add {wanted.name}: no such card in the card data (check the spelling)")
+            return changers
+        if self._retired(wanted, card.name):
+            return changers
+        held = [e for e in _entries_named(self.deck, card.name) if e.in_deck]
+        problem = self._add_problem(card.oracle_id, card.color_identity, identity, held)
+        if problem is not None:
+            self.problems.append(f"add {card.name}: {problem}")
+            return changers
+        if held:
+            self._hold(card.name, wanted, held)
+            return changers
+        category = wanted.category or type_category(card.type_line)
+        self.changes.append(
+            Change(
+                kind=ChangeKind.ADD,
+                name=card.name,
+                before=0,
+                after=wanted.quantity,
+                category=category,
+                in_deck=counts_in_deck(category, self.categories),
+                set_code=card.set_code,
+                collector_number=card.collector_number,
+                scryfall_id=card.scryfall_id,
+            )
+        )
+        self.warnings.append(f"{card.name}: not in the card data yet; no price or bracket check")
+        return changers
+
+    def _retired(self, wanted: AddCard, name: str) -> bool:
+        if wanted.category is None or wanted.category.casefold() not in _RETIRED_CATEGORIES:
+            return False
+        self.problems.append(
+            f"add {name}: the Maybeboard and Sideboard are retired; name a category in the deck"
+        )
+        return True
+
+    def _hold(self, name: str, wanted: AddCard, held: Sequence[DeckCard]) -> None:
+        """An add of a card the deck already holds: nothing to do, or the copies it lacks."""
+        entry = held[0]
+        have = sum(e.quantity for e in held)
+        if have >= wanted.quantity:
+            self.skipped.append(f"add {name}: already {have} in the deck")
+        else:
+            self.changes.append(_change(ChangeKind.MORE, entry, entry.quantity + wanted.quantity - have))
+
     def _copy_limit(self, info: CardInfo) -> int | None:
         text = self.db.card_text(info.oracle_id)
         return copy_limit(info, text.text if text else "")
 
-    def _add_problem(self, info: CardInfo, identity: str | None, held: Sequence[DeckCard]) -> str | None:
-        if info.oracle_id in self.added:
+    def _add_problem(
+        self,
+        oracle_id: str,
+        card_identity: str,
+        identity: str | None,
+        held: Sequence[DeckCard],
+        *,
+        legal: bool = True,
+    ) -> str | None:
+        if oracle_id in self.added:
             return "the plan already adds this card"
-        self.added.add(info.oracle_id)
-        if not info.commander_legal:
+        self.added.add(oracle_id)
+        if not legal:
             return "not legal in Commander"
-        if identity is not None and not set(info.color_identity) <= set(identity):
-            return f"its colours ({info.color_identity}) are outside the deck's ({identity or 'colourless'})"
+        if identity is not None and not set(card_identity) <= set(identity):
+            return f"its colours ({card_identity}) are outside the deck's ({identity or 'colourless'})"
         if any(e.entry_id in self.removed_entries for e in held):
             return "the plan also removes this card"
         return None
@@ -281,15 +338,25 @@ def resolve_plan(
     *,
     categories: Mapping[str, bool] | None = None,
     estimated: int | None = None,
+    upcoming: Iterable[SetCard] = (),
 ) -> Resolution:
     """Check every change in the plan against the deck; problems block saving, warnings do not.
 
     categories holds the deck's own setting of which categories count in the deck. estimated is the lowest
     bracket of the deck's estimate: with no bracket set on the deck, an add's bracket raise goes by it.
+    upcoming are cards the card data may lack, a board's snapshots of previews (ADR 0055): an add of one the
+    card data does not know is resolved from its snapshot.
     """
     bracket = live.bracket if live.bracket is not None else estimated
     main = db.resolve(live.main_cards)
-    resolver = _Resolver(live, db, categories or {}, bracket, extra_turns=tagged_count(main, Role.EXTRA_TURN))
+    resolver = _Resolver(
+        live,
+        db,
+        categories or {},
+        bracket,
+        extra_turns=tagged_count(main, Role.EXTRA_TURN),
+        snapshots={key: card for card in upcoming for key in name_keys(card.name)},
+    )
     identity = deck_identity(main)
     if identity is None:
         resolver.warnings.append("the deck has no known commander, so colours are not checked")
@@ -318,7 +385,12 @@ def counts_in_deck(category: str, categories: Mapping[str, bool]) -> bool:
 
 
 def default_category(info: CardInfo) -> str:
-    front = info.front_type_line
+    return type_category(info.type_line)
+
+
+def type_category(type_line: str) -> str:
+    """The category a card of this type line is filed under: its front face's first card type."""
+    front = front_type(type_line)
     return next((t for t in _TYPE_CATEGORIES if t in front.split("—")[0].split()), "Uncategorized")
 
 
@@ -364,8 +436,8 @@ def save(
             if card_id is None:
                 raise SaveError(
                     f"Archidekt has no {change.name} from {change.set_code.upper()}"
-                    f' {change.collector_number}; pick another printing with set = "...".'
-                    " Nothing was changed"
+                    f" {change.collector_number} (yet, for a card just out); a plan can name another"
+                    ' printing with set = "...". Nothing was changed'
                 )
             card_ids[change.scryfall_id] = card_id
     colours, warnings = _account_colours(editor, on_progress)
@@ -510,10 +582,13 @@ def apply_to_live(
     on_progress: Callable[[str], None] = lambda _: None,
     estimated: int | None = None,
     before_send: Callable[[], None] = lambda: None,
+    upcoming: Iterable[SetCard] = (),
 ) -> ApplyOutcome:
     """Check a plan against a deck fetched from Archidekt; save it when asked and nothing is wrong.
-    estimated is as for `resolve_plan`, before_send as for `save`."""
-    resolution = resolve_plan(live.deck, plan, db, categories=live.categories, estimated=estimated)
+    estimated and upcoming are as for `resolve_plan`, before_send as for `save`."""
+    resolution = resolve_plan(
+        live.deck, plan, db, categories=live.categories, estimated=estimated, upcoming=upcoming
+    )
     if not (save_changes and resolution.changes and not resolution.problems):
         return ApplyOutcome(resolution, None)
     saved = save(editor, live, resolution, now=now, on_progress=on_progress, before_send=before_send)

@@ -39,6 +39,8 @@ from commander.jsonshape import (
 )
 from commander.models import COMMANDER_CATEGORY, Deck
 from commander.plan import MAX_CATEGORY_LENGTH, AddCard, Plan, RemoveCard
+from commander.previews import set_card_from_json, set_card_json
+from commander.scryfall import SetCard
 from commander.suggest import Suggestions, deck_identity, name_keys
 
 log = logging.getLogger(__name__)
@@ -63,6 +65,8 @@ STALE_LOCK_SECONDS = 60.0
 RETURN_RISE = 0.20
 # Why a sync closes an open card the main deck holds.
 ALREADY_IN_THE_DECK = "already in the deck"
+# The detail of each activity line when the turned-down list is cleared.
+CLEARED_REJECTED = "turned-down list cleared"
 _LOCK_POLL_SECONDS = 0.05
 # Basic land names, Wastes included, for telling a basic swap; manabase and manaplan list only the five
 # coloured basics, by type or colour, because Wastes has no land type and makes no colour.
@@ -176,6 +180,10 @@ class BoardCard:
     # this was kept. A swap landed only if the add rose and the cut fell, as a Mountain added by hand moves
     # the first alone.
     sent_cut_held: int | None = None
+    # For an upcoming card moved here from the previews (ADR 0055): the card as the previews saw it. The card
+    # data lacks it until it is out, so its face, its colours and its printing come from this; None for any
+    # other card.
+    printing: SetCard | None = None
 
     def with_status(self, status: Status, **changes: object) -> Self:
         """The card in another status with `changes`; leaving ADD drops the count held when sent, and a
@@ -468,6 +476,7 @@ def parse_board(raw: Mapping[str, object]) -> Board:
                 category=opt_str(card, "category", where),
                 sent_held=opt_int(card, "sentHeld", where),
                 sent_cut_held=opt_int(card, "sentCutHeld", where),
+                printing=_printing(card, where),
             )
         )
     counts: list[CountChange] = []
@@ -489,6 +498,13 @@ def parse_board(raw: Mapping[str, object]) -> Board:
 
 def _origin(value: str | None) -> Origin | None:
     return Origin(value) if value else None
+
+
+def _printing(card: Mapping[str, object], where: str) -> SetCard | None:
+    raw = card.get("printing")
+    if raw is None:
+        return None
+    return set_card_from_json(as_object(raw, f"{where}.printing"), f"{where}.printing")
 
 
 def _pool(card: Mapping[str, object], where: str) -> OriginPool | None:
@@ -543,6 +559,7 @@ def card_json(card: BoardCard) -> dict[str, object]:
         "category": card.category,
         "sentHeld": card.sent_held,
         "sentCutHeld": card.sent_cut_held,
+        "printing": set_card_json(card.printing) if card.printing else None,
     }
 
 
@@ -754,8 +771,7 @@ class BoardService:
                 )
                 save(_swap(board, card), Activity(stamp, actor, "reopened", card.name, reason))
                 return card
-            if len(board.cards) >= MAX_CARDS:
-                raise BoardError(f"the board holds at most {MAX_CARDS} cards; remove some first")
+            _check_room(board)
             card = BoardCard(
                 id=secrets.token_hex(4),
                 name=info.name,
@@ -778,6 +794,41 @@ class BoardService:
                 Activity(stamp, actor, "proposed (considering)", card.name, reason),
             )
             return card
+
+    def propose_preview(self, card: SetCard, actor: Actor, *, reason: str = "") -> BoardCard:
+        """Put an upcoming card on the board as open, from the previews (ADR 0055), keeping the card with it.
+        The card data lacks it until it is out, so it is checked against the deck's colours and cards alone,
+        not for legality, and a card on the board in any state is refused, since it cannot be reopened
+        without that data. Like any open card it can be queued at once; the save adds the kept printing."""
+        name = card.name.strip()
+        if not name:
+            raise BoardError("the card name is empty")
+        self._check_placeable(name, card.color_identity)
+        reason = _bounded(reason, MAX_REASON, "the reason")
+        with self._editing() as (board, save):
+            if (existing := board.find(name)) is not None:
+                raise BoardError(f"{name} is already on the board ({existing.status.value})")
+            _check_room(board)
+            stamp = self._stamp()
+            added = BoardCard(
+                id=secrets.token_hex(4),
+                name=name,
+                oracle_id=card.oracle_id,
+                source=actor,
+                reason=reason,
+                replace=(),
+                status=Status.OPEN,
+                choice=None,
+                note="",
+                added_at=stamp,
+                updated_at=stamp,
+                printing=card,
+            )
+            save(
+                Board((*board.cards, added), board.counts),
+                Activity(stamp, actor, "proposed (considering)", name, reason),
+            )
+            return added
 
     def research(
         self,
@@ -884,6 +935,20 @@ class BoardService:
             card = _require(board, key)
             remaining = Board(tuple(c for c in board.cards if c.id != card.id), board.counts)
             save(remaining, Activity(self._stamp(), actor, "removed", card.name, ""))
+
+    def clear_rejected(self, actor: Actor) -> list[BoardCard]:
+        """Take every turned-down card off the board, whoever put it there, in one write with a line for each.
+        A card still an idea at the next sync comes back, as any card not on the board does. Returns the cards
+        removed, in board order."""
+        with self._editing() as (board, save):
+            cleared = [c for c in board.cards if c.status is Status.REJECTED]
+            if not cleared:
+                return []
+            stamp = self._stamp()
+            lines = [Activity(stamp, actor, "removed", c.name, CLEARED_REJECTED) for c in cleared]
+            kept = tuple(c for c in board.cards if c.status is not Status.REJECTED)
+            save(Board(kept, board.counts), *lines)
+            return cleared
 
     def mark_applied(
         self,
@@ -1159,14 +1224,17 @@ class BoardService:
             raise BoardError(f"no card named {name.strip()!r} (check the spelling)")
         if not info.commander_legal:
             raise BoardError(f"{info.name} is not legal in Commander")
-        identity = self._identity
-        if identity is not None and not set(info.color_identity) <= set(identity):
-            raise BoardError(f"{info.name} is outside the deck's colours ({identity or 'colourless'})")
         # A deck may run any number of a basic land, so a basic can be added when it already runs some.
-        basic = info.front_type_line.startswith("Basic ")
-        if not basic and any(name_keys(c.name) & name_keys(info.name) for c in self._deck.main_cards):
-            raise BoardError(f"{info.name} is already in the deck")
+        self._check_placeable(info.name, info.color_identity, basic=info.front_type_line.startswith("Basic "))
         return info
+
+    def _check_placeable(self, name: str, color_identity: str, *, basic: bool = False) -> None:
+        """Refuse a card outside the deck's colours, or one the deck runs (a basic land may be added)."""
+        identity = self._identity
+        if identity is not None and not set(color_identity) <= set(identity):
+            raise BoardError(f"{name} is outside the deck's colours ({identity or 'colourless'})")
+        if not basic and any(name_keys(c.name) & name_keys(name) for c in self._deck.main_cards):
+            raise BoardError(f"{name} is already in the deck")
 
     def _options(self, options: Sequence[ReplaceOption]) -> tuple[ReplaceOption, ...]:
         if len(options) > MAX_REPLACE:
@@ -1222,7 +1290,7 @@ class BoardService:
         with board_lock(self._folder):
             board, stored_version = _read_stored(self._folder)
 
-            def save(updated: Board, entry: Activity) -> None:
+            def save(updated: Board, entry: Activity, *more: Activity) -> None:
                 nonlocal stored_version
                 if stored_version < BOARD_VERSION:
                     _back_up_older(self._folder, stored_version)
@@ -1232,7 +1300,8 @@ class BoardService:
                     json.dumps(board_json(updated), ensure_ascii=False, indent=2) + "\n",
                 )
                 try:
-                    _append_activity(self._folder, entry)
+                    for line in (entry, *more):
+                        _append_activity(self._folder, line)
                 except OSError as error:
                     # The board is written first, so the decision stands; say that the log is short of it.
                     log.exception("board saved but its activity line was not written (%s)", entry.action)
@@ -1259,6 +1328,11 @@ def _outside_step(current: int, was: int, step: int) -> int:
     if step < 0:
         return 0 if current > 0 else -1
     return was if current == 0 else current + step
+
+
+def _check_room(board: Board) -> None:
+    if len(board.cards) >= MAX_CARDS:
+        raise BoardError(f"the board holds at most {MAX_CARDS} cards; remove some first")
 
 
 def _require(board: Board, key: str) -> BoardCard:

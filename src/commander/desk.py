@@ -11,7 +11,7 @@ import threading
 from collections.abc import Callable, Collection, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from enum import Enum
 from functools import wraps
 from pathlib import Path
@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from commander import __version__
 from commander.answers import card_key
-from commander.apply import NotYourDeckError, Resolution, SaveError, default_category
+from commander.apply import NotYourDeckError, Resolution, SaveError, default_category, type_category
 from commander.archidekt import ArchidektError, AuthError, SignInRequiredError
 from commander.archidekt_edit import (
     ArchidektAuth,
@@ -105,9 +105,9 @@ from commander.previews import PREVIEWS_FILE, PreviewFit, fitting_previews, loca
 from commander.profileedit import save_settings
 from commander.spellbook import FRESH_FOR, BracketEstimate, SpellbookClient
 from commander.store import SNAPSHOT_FILE, StoredDeck, Workspace, WorkspaceError
-from commander.suggest import DEFAULT_TARGETS, deck_identity
+from commander.suggest import DEFAULT_TARGETS, deck_identity, name_keys
 from commander.sync import PullWatch, SyncStatus
-from commander.syncrun import CardState, FetchState, SyncOutcome, SyncServices, run_sync
+from commander.syncrun import CardState, FetchState, SyncOptions, SyncOutcome, SyncServices, run_sync
 from commander.targets import CutRules, Target, deck_counts, deck_cut_rules, targets_for, with_ideas
 from commander.topdeck import DEVELOPERS_URL, NO_KEY_MESSAGE, TopdeckError, TopdeckKeyError
 from commander.updates import UpdateError, Updater, running_exe
@@ -210,6 +210,16 @@ class _Wait(Enum):
     SYNC = ""
     DECK = "still syncing"
     CARDS = "card data downloading"
+
+
+class _SyncStart(Enum):
+    """What asking for a sync did; the values are what `clear_rejected` tells the page."""
+
+    STARTED = "started"
+    # One was under way already, and it was left alone.
+    RUNNING = "running"
+    # Nothing could start it: no account to sync, or a write under way.
+    NONE = "none"
 
 
 @dataclass(slots=True)
@@ -394,8 +404,8 @@ class Desk:
     @_guarded
     def sync(self) -> Json:
         """Start syncing the account's decks in the background; sync_status follows it."""
-        if busy := self._start_sync(self._user()):
-            return busy
+        if isinstance(started := self._start_sync(self._user()), dict):
+            return started
         return self._sync_json()
 
     @_guarded
@@ -574,23 +584,28 @@ class Desk:
             deck = None
         return deck.short_name if deck is not None else f"deck {deck_id}"
 
-    def _start_sync(self, user: str, trigger: str = "sync button") -> Json | None:
-        """Starts the sync unless one runs already; the refusal when a write is under way."""
+    def _start_sync(
+        self, user: str, trigger: str = "sync button", only: int | None = None
+    ) -> _SyncStart | Json:
+        """Starts the sync (of one deck, with `only`) unless one runs already; the refusal when a write is
+        under way."""
+        # Read before the lock: it is the deck's name for the progress line.
+        starting = "Starting the sync" if only is None else f"Syncing {self._deck_name(only)}"
         with self._sync_lock:
             if self._writes:
                 return {"error": f"Wait for the {self._writes[0]} to finish, then sync."}
             if self._sync.running:
-                return None
-            self._sync = _SyncState(running=True, progress="Starting the sync", started_at=self._now())
+                return _SyncStart.RUNNING
+            self._sync = _SyncState(running=True, progress=starting, started_at=self._now())
             self._priority = priority = FetchPriority(self._open_deck)
         log.info("sync started for %s (%s)", user, trigger)
-        self._background(lambda: self._run_sync(user, priority))
-        return None
+        self._background(lambda: self._run_sync(user, priority, only))
+        return _SyncStart.STARTED
 
     def _elapsed(self, started_at: datetime | None) -> str:
         return "0s" if started_at is None else f"{max((self._now() - started_at).total_seconds(), 0):.0f}s"
 
-    def _run_sync(self, user: str, priority: FetchPriority) -> None:
+    def _run_sync(self, user: str, priority: FetchPriority, only: int | None) -> None:
         services = SyncServices(
             self._client_factory, self._token_store, self._settings.cache, self._now, self._pacer_factory
         )
@@ -602,6 +617,7 @@ class Desk:
                 self._workspace,
                 user,
                 self._settings.meta,
+                SyncOptions(only=only),
                 priority=priority,
                 on_deck=self._sync_deck,
                 on_progress=self._sync_progress,
@@ -778,10 +794,15 @@ class Desk:
             budget = resolved_budget(playing.bracket, main, profile.max_card_cents)
             shares = self._shares(stored)
             held = held_keys(stored.deck, db)
+            today = local_day(self._now())
             cards = [
                 {
-                    **self._card_view(
-                        card, infos.get(card.oracle_id), texts.get(card.oracle_id), images.get(card.oracle_id)
+                    **_card_view(
+                        card,
+                        infos.get(card.oracle_id),
+                        texts.get(card.oracle_id),
+                        images.get(card.oracle_id),
+                        today=today,
                     ),
                     "held": card_key(card.name) in held,
                     "withinBudget": None
@@ -792,7 +813,7 @@ class Desk:
                         _target_json(t)
                         for t in targets_for(card, infos.get(card.oracle_id), main, rules, counts)
                     ],
-                    "typeCategory": default_category(info) if (info := infos.get(card.oracle_id)) else None,
+                    "typeCategory": _type_category(card, infos.get(card.oracle_id)),
                 }
                 for card in board.cards
             ]
@@ -958,8 +979,8 @@ class Desk:
 
     @_guarded
     def previews(self, deck_id: int) -> Json:
-        """The upcoming cards that fit the deck, best first, to look at only: they cannot be added until they
-        are out (ADR 0055)."""
+        """The upcoming cards that fit the deck and are not on its board, best first. They can be moved to
+        Considering (`move_preview`), and from there queued like any card (ADR 0055)."""
         stored = self._stored(deck_id)
         profile = read_profile(stored.folder)
         with self._db() as db:
@@ -975,13 +996,7 @@ class Desk:
                     "image": image_url(fit.card.scryfall_id),
                     "set": fit.card.set_name,
                     "out": fit.card.released_at.isoformat(),
-                    # A card the commander wants shows the deck's name among the tags it fits.
-                    # The tags it fits, the commander that wants it and the short roles it fills.
-                    "fits": [
-                        *fit.tags,
-                        *([stored.deck.short_name] if fit.fits_commander else []),
-                        *(role.value.capitalize() for role in fit.roles),
-                    ],
+                    "fits": _fits(stored.deck, fit),
                     # The commander a card works against, for its warning; none for most.
                     "against": [stored.deck.short_name] if fit.against_commander else [],
                 }
@@ -989,15 +1004,37 @@ class Desk:
             ]
         }
 
+    @_guarded
+    def move_preview(self, deck_id: int, name: str) -> Json:
+        """Put a card of the previews panel on the board under Considering, with the printing a save adds.
+        Only a card the panel offers the deck can be moved."""
+        with self._writing("proposal", "move the card", deck_id) as busy:
+            if busy:
+                return busy
+            stored = self._stored(deck_id)
+            profile = read_profile(stored.folder)
+            wanted = name_keys(name.strip())
+            with self._db_or_download(deck_id, "move the card") as db:
+                main = db.resolve(stored.deck.main_cards)
+                offered = self._fitting_previews(stored, main, profile, db)
+                fit = next((f for f in offered if name_keys(f.card.name) & wanted), None)
+                if fit is None:
+                    raise BoardError(f"{name.strip()!r} is not among the previews that fit this deck")
+                fits = " ".join(f"#{tag}" for tag in _fits(stored.deck, fit))
+                service = BoardService(stored.folder, stored.deck, db, now=self._now)
+                card = service.propose_preview(fit.card, Actor.YOU, reason=f"Upcoming: fits {fits}")
+            log.info("board: moved the preview %s to deck %d", card.name, deck_id)
+        return {"card": card_json(card)}
+
     def _fitting_previews(
         self, stored: StoredDeck, main: Sequence[ResolvedCard], profile: Profile, db: CardDb
     ) -> list[PreviewFit]:
-        """The previews that fit the deck, kept until its snapshot, its profile, the probe's cache, the card
-        data, the targets or the local day change."""
+        """The previews that fit the deck and are not on its board, kept until its snapshot, profile or board,
+        the probe's cache, the card data, the targets or the local day change."""
         today = local_day(self._now())
         targets = {**DEFAULT_TARGETS, **self._settings.targets, **profile.targets}
         stamp = (
-            f"{files_stamp(stored.folder, ('deck.json', 'profile.toml'))}"
+            f"{board_stamp(stored.folder)}"
             f"|{self._previews_stamp()}|{self._card_data_stamp()}"
             f"|{sorted((role.value, n) for role, n in self._settings.targets.items())}"
         )
@@ -1017,6 +1054,7 @@ class Desk:
                 targets=targets,
                 tags=cache.tags,
                 roles=cache.roles,
+                on_board=[card.name for card in read_board(stored.folder).cards],
             )
             if cache.cards
             else []
@@ -1240,6 +1278,25 @@ class Desk:
                 service.remove(card_id, Actor.YOU)
             log.info("board: removed %s from deck %d", held.name if held else card_id, deck_id)
         return {"ok": True}
+
+    @_guarded
+    def clear_rejected(self, deck_id: int) -> Json:
+        """Take every turned-down card off the board, then compile the deck's ideas again with a sync of that
+        deck alone, which may offer a cleared card as an idea. `sync` says whether that sync is `started`,
+        was `running` already (and is left to do the whole account), or could not start (`none`, also when
+        nothing was cleared)."""
+        with self._writing("clearing", "clear the list", deck_id, needs_cards=False) as busy:
+            if busy:
+                return busy
+            with self._service(deck_id, "clear the list") as service:
+                cleared = service.clear_rejected(Actor.YOU)
+            log.info("board: cleared %d turned-down cards from deck %d", len(cleared), deck_id)
+        start = _SyncStart.NONE
+        if cleared and self._settings.user:
+            started = self._start_sync(self._settings.user, f"clear of deck {deck_id}", only=deck_id)
+            if isinstance(started, _SyncStart):
+                start = started
+        return {"cleared": len(cleared), "sync": start.value}
 
     @_guarded
     def preview(self, deck_id: int) -> Json:
@@ -1497,20 +1554,46 @@ class Desk:
         with self._db() as db:
             yield BoardService(stored.folder, stored.deck, db, now=self._now), db
 
-    def _card_view(
-        self, card: BoardCard, info: CardInfo | None, text: CardText | None, image: str | None
-    ) -> Json:
-        view = card_json(card)
-        view.update(
-            manaCost=info.mana_cost if info else "",
-            typeLine=info.type_line if info else "",
-            priceCents=info.cheapest_cents if info else None,
-            gameChanger=info.game_changer if info else False,
-            text=text.text if text else "",
-            image=image,
-            pool=_pool_json(card),
-        )
-        return view
+
+def _card_view(
+    card: BoardCard, info: CardInfo | None, text: CardText | None, image: str | None, *, today: date
+) -> Json:
+    """A board card as the page shows it. One moved from the previews that the card data lacks takes its
+    face from the snapshot the board kept; `out` is its release day and `upcoming` whether that is after
+    today, which puts "Out <day>" on the tile in place of a share."""
+    view = card_json(card)
+    view.pop("printing")
+    # Only while the card data lacks the card; once it knows it, the card data is the truth.
+    kept = card.printing if info is None else None
+    view.update(
+        manaCost=info.mana_cost if info else kept.mana_cost if kept else "",
+        typeLine=info.type_line if info else kept.type_line if kept else "",
+        priceCents=info.cheapest_cents if info else None,
+        gameChanger=info.game_changer if info else False,
+        text=text.text if text else kept.oracle_text if kept else "",
+        image=image or (image_url(kept.scryfall_id) if kept else None),
+        pool=_pool_json(card),
+        out=card.printing.released_at.isoformat() if card.printing else None,
+        upcoming=card.printing is not None and card.printing.released_at > today,
+    )
+    return view
+
+
+def _type_category(card: BoardCard, info: CardInfo | None) -> str | None:
+    """The category a card is filed under by its type, from the card data or else the board's snapshot."""
+    if info is not None:
+        return default_category(info)
+    return type_category(card.printing.type_line) if card.printing else None
+
+
+def _fits(deck: Deck, fit: PreviewFit) -> list[str]:
+    """What a preview fits, as its tile and its board reason say it: the deck tags it matches, the commander
+    that wants it (by the deck's short name) and the short roles it fills."""
+    return [
+        *fit.tags,
+        *([deck.short_name] if fit.fits_commander else []),
+        *(role.value.capitalize() for role in fit.roles),
+    ]
 
 
 def _pool_json(card: BoardCard) -> Json | None:

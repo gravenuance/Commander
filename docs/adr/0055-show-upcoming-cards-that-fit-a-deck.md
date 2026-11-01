@@ -145,3 +145,37 @@ of their Tagger tags, each tag's count divided by the cards carrying it so a rar
 a common one, then by the mana value nearest the deck's average (the whole order for a preview with no tag
 the deck's cards carry), and only then by name (`previews._like_the_deck`). It costs one tag lookup over the
 deck's cards and one over the live previews, inside the cached ranking, and only while a set is previewed.
+
+## Amendment (2026-10-31): a preview can be moved to Considering
+
+A tile has a **Move to Considering** button, so a preview the owner wants to plan around is on the deck's
+board before the card is out.
+
+- **On the board:** the card is open and yours (`BoardService.propose_preview`), with its oracle id, name, the
+  reason "Upcoming: fits #Tag ..." and no cut, and a snapshot of the card as the previews saw it
+  (`BoardCard.printing`, a `SetCard` in `board.json` under `printing`, written by the same code as the
+  previews cache: `previews.set_card_json`). The card data does not know the card, so the usual card checks
+  cannot run: it must be within the deck's colours, not in the deck, not on the board in any state, and the
+  board not full. Only a card the panel offers the deck can be moved (`Desk.move_preview`).
+- **Addable at any time (owner's decision, 2026-10-31):** a moved card is queued like any card the owner
+  suggested, before its release day too: pick a cut on the grid or add it without a cut, queue, review and
+  save. There is no release-day gate. The tile still shows "Out <date>" in place of a percentage until the
+  release day (`upcoming` in the deck view is that and nothing else). This also covers the days after the
+  release before the weekly card data has the card.
+- **The save adds from the snapshot:** while the card data lacks the card, or holds it only as not legal (a
+  weekly build during the preview season takes in revealed cards that way, unpriced), `resolve_plan` takes
+  it from the board's snapshots (`upcoming=`; the `cmdr apply` plan path passes none, so is unchanged). It
+  checks the colours against the deck's and the plan's repeats, files the card under the category asked for
+  or the first card type of its front face (`apply.type_category`), and adds the snapshot's printing (set,
+  collector number, Scryfall id) in the nonfoil finish. It has no price, copy limit, game changer or
+  bracket-raise check, so the review warns "<name>: not in the card data yet; no price or bracket check".
+  When Archidekt has no such printing (`find_card`), the save stops before the snapshot and any write, and
+  says so. Once the card data knows the card as legal, the usual path is used.
+- **The cache:** `previews.json` is version 4: each card carries its collector number, which the save needs.
+  A version 3 file is ignored and the next probe fetches it again; a moved card keeps its own snapshot.
+- **The panel:** the ranking leaves out every card on the board, in any state, before the cut to 12, so the
+  next fit takes the place; the cache of fits is stamped with the board too.
+- **The tile:** Considering shows the card (its face from the snapshot while the card data lacks it) with
+  "Out <date>" where the share goes. With no cut suggested it waits under *No cut yet* like any idea, where
+  selecting it offers every deck card as its cut. The sync's steps leave it alone, since they touch only the
+  ideas cmdr compiled, and close it when the deck holds it.

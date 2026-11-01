@@ -16,6 +16,7 @@ from commander.apply import (
     default_category,
     resolve_plan,
     save,
+    type_category,
     verify,
 )
 from commander.archidekt import AuthError, parse_deck
@@ -36,6 +37,7 @@ from conftest import (
     build_card_db,
     priced_printing,
     put_on_sideboard,
+    upcoming,
 )
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
@@ -898,3 +900,97 @@ def card_with(deck: Deck, name: str, category: str, *, entry_id: int, quantity: 
         scryfall_id=f"{entry_id}",
     )
     return replace(deck, cards=(*deck.cards, added))
+
+
+# --- an upcoming card the card data lacks, resolved from the board's snapshot of it (ADR 0055)
+
+
+def test_an_add_of_a_card_the_card_data_lacks_comes_from_its_snapshot(deck: Deck, db: CardDb) -> None:
+    resolution = resolve_plan(deck, plan([AddCard("dahar master")]), db, upcoming=[upcoming()])
+
+    assert resolution.problems == ()
+    [change] = resolution.changes
+    assert (change.kind, change.name, change.before, change.after) == (ChangeKind.ADD, "Dahar Master", 0, 1)
+    assert (change.category, change.in_deck) == ("Creature", True)
+    assert (change.set_code, change.collector_number, change.scryfall_id) == (
+        "trk",
+        "157",
+        "0c340eba-645d-416a-9ed4-f2303aa8c919",
+    )
+    assert (change.price_cents, change.finish, change.raises) == (None, "Normal", None)
+    assert "Dahar Master: not in the card data yet; no price or bracket check" in resolution.warnings
+    assert change_text(change) == "+ Dahar Master (TRK 157, no price) in Creature"
+
+
+def test_an_upcoming_add_is_filed_where_asked_and_by_the_decks_setting_of_that_category(
+    deck: Deck, db: CardDb
+) -> None:
+    wanted = AddCard("Dahar Master", category="Maybeboard")
+    resolution = resolve_plan(deck, plan([wanted]), db, upcoming=[upcoming()])
+
+    assert resolution.problems == (
+        "add Dahar Master: the Maybeboard and Sideboard are retired; name a category in the deck",
+    )
+
+    named = resolve_plan(
+        deck,
+        plan([AddCard("Dahar Master", category="Ramp")]),
+        db,
+        categories={"Ramp": False},
+        upcoming=[upcoming()],
+    )
+    assert [(c.category, c.in_deck) for c in named.changes] == [("Ramp", False)]
+
+
+def test_an_upcoming_add_outside_the_decks_colours_is_a_problem(deck: Deck, db: CardDb) -> None:
+    resolution = resolve_plan(deck, plan([AddCard("Dahar Master")]), db, upcoming=[upcoming(identity="UR")])
+
+    assert resolution.changes == ()
+    assert resolution.problems == ("add Dahar Master: its colours (UR) are outside the deck's (R)",)
+
+
+def test_an_upcoming_card_the_card_data_holds_as_not_legal_yet_comes_from_its_snapshot(
+    deck: Deck, db: CardDb
+) -> None:
+    # Mana Crypt stands in for a preview a card data rebuild took in before release: known, but not legal.
+    snapshot = replace(upcoming("Mana Crypt", identity=""), type_line="Artifact")
+    resolution = resolve_plan(deck, plan([AddCard("Mana Crypt")]), db, upcoming=[snapshot])
+
+    assert resolution.problems == ()
+    assert [(c.name, c.set_code, c.category, c.price_cents) for c in resolution.changes] == [
+        ("Mana Crypt", "trk", "Artifact", None)
+    ]
+    assert "Mana Crypt: not in the card data yet; no price or bracket check" in resolution.warnings
+
+
+def test_an_add_of_an_unknown_card_without_a_snapshot_stays_a_problem(deck: Deck, db: CardDb) -> None:
+    resolution = resolve_plan(deck, plan([AddCard("Dahar Master")]), db)
+
+    assert resolution.problems == ("add Dahar Master: no such card in the card data (check the spelling)",)
+    other = resolve_plan(deck, plan([AddCard("Dahar Master")]), db, upcoming=[upcoming("Dahar Mastiff")])
+    assert other.problems == resolution.problems
+
+
+def test_an_upcoming_card_twice_in_the_plan_is_added_once(deck: Deck, db: CardDb) -> None:
+    resolution = resolve_plan(
+        deck, plan([AddCard("Dahar Master"), AddCard("dahar master")]), db, upcoming=[upcoming()]
+    )
+
+    assert [c.name for c in resolution.changes] == ["Dahar Master"]
+    assert resolution.problems == ("add Dahar Master: the plan already adds this card",)
+
+
+def test_a_snapshot_is_ignored_once_the_card_data_knows_the_card(deck: Deck, db: CardDb) -> None:
+    resolution = resolve_plan(
+        deck, plan([AddCard("Arcane Signet")]), db, upcoming=[upcoming("Arcane Signet")]
+    )
+
+    [change] = resolution.changes
+    assert (change.set_code, change.price_cents is not None) == ("frc", True)
+    assert not any("not in the card data" in w for w in resolution.warnings)
+
+
+def test_the_default_category_of_a_two_faced_card_is_its_front_faces() -> None:
+    assert type_category("Creature — Human // Land") == "Creature"
+    assert type_category("Land // Creature — Human") == "Land"
+    assert type_category("Conspiracy") == "Uncategorized"

@@ -48,6 +48,7 @@ def pull(
     watch: PullWatch = PullWatch(),  # noqa: B008 - frozen
     handler: Callable[[httpx.Request], httpx.Response] | None = None,
     workspace: Workspace | None = None,
+    only: int | None = None,
 ) -> list[SyncResult]:
     """One sync_decks over the fake, as the signed-in owner unless told otherwise."""
     with httpx.Client(transport=httpx.MockTransport(handler or fake.handler)) as http:
@@ -57,7 +58,7 @@ def pull(
             pacer=instant_pacer(),
         )
         return sync_decks(
-            client, workspace or Workspace(root / "decks"), "TESTER", dry_run=dry_run, watch=watch
+            client, workspace or Workspace(root / "decks"), "TESTER", dry_run=dry_run, watch=watch, only=only
         )
 
 
@@ -94,6 +95,27 @@ def test_a_deck_deleted_on_archidekt_loses_its_folder_and_is_reported_removed(
     assert [m for m in caplog.messages if "removed" in m] == [
         f"deck {GONE_ID} (Other) was deleted on Archidekt; removed its folder {GONE_FOLDER}"
     ]
+
+
+def test_a_pull_limited_to_another_deck_leaves_a_deck_deleted_on_archidekt_alone(
+    tmp_path: Path, raw_deck: Json
+) -> None:
+    fake = synced_then_deleted_upstream(tmp_path, raw_deck)
+
+    results = pull(tmp_path, fake, only=DECK_ID)
+
+    assert by_id(results) == {DECK_ID: SyncStatus.UNCHANGED}
+    assert (folder(tmp_path) / SNAPSHOT_FILE).is_file()
+    assert f"/api/decks/{GONE_ID}/" not in fake.requests
+
+
+def test_a_pull_limited_to_a_deck_deleted_on_archidekt_removes_it(tmp_path: Path, raw_deck: Json) -> None:
+    fake = synced_then_deleted_upstream(tmp_path, raw_deck)
+
+    results = pull(tmp_path, fake, only=GONE_ID)
+
+    assert by_id(results) == {GONE_ID: SyncStatus.REMOVED}
+    assert not folder(tmp_path).exists()
 
 
 def test_the_removal_runs_under_the_decks_lock_and_tells_the_caller(tmp_path: Path, raw_deck: Json) -> None:

@@ -31,6 +31,7 @@ from commander.board import (
 )
 from commander.carddb import CardDb
 from commander.plan import Plan
+from commander.scryfall import SetCard
 from commander.store import StoredDeck, Workspace
 
 log = logging.getLogger(__name__)
@@ -80,7 +81,16 @@ def preview_board(
     if plan is None:
         resolution = _nothing_to_change(live, board)
     else:
-        outcome = apply_to_live(editor, live, plan, db, save_changes=False, now=now, estimated=estimated)
+        outcome = apply_to_live(
+            editor,
+            live,
+            plan,
+            db,
+            save_changes=False,
+            now=now,
+            estimated=estimated,
+            upcoming=_snapshots(board),
+        )
         resolution = _noting_done(outcome, live, board).resolution
     _log_dropped(stored.deck.id, resolution, "preview")
     return BoardPreview(resolution, _done_names(live, board))
@@ -136,6 +146,7 @@ def save_board(
             on_progress=on_progress,
             estimated=estimated,
             before_send=record_sending,
+            upcoming=_snapshots(board),
         )
     except SaveError as error:
         service.note(actor, "save to Archidekt failed", str(error))
@@ -161,6 +172,11 @@ def save_board(
     return BoardSave(
         outcome.resolution, result, (*(card.name for card in applied), *(change.name for change in counts))
     )
+
+
+def _snapshots(board: Board) -> list[SetCard]:
+    """The upcoming cards the board holds (ADR 0055), which a save adds from when the card data lacks them."""
+    return [card.printing for card in board.cards if card.printing is not None]
 
 
 def _log_dropped(deck_id: int, resolution: Resolution, doing: str) -> None:

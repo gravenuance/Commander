@@ -51,6 +51,13 @@ function sourceBadge(card) {
   return el("span", { class: `badge ${card.source}`, text: originLabel(card), title: originTitle(card) });
 }
 
+// An upcoming card has no share yet; its badge says when it comes out. It can be queued before.
+const OUT_TITLE = "Not out yet; no share to show";
+
+function outBadge(card) {
+  return el("span", { class: "badge status", text: outLabel(card.out), title: OUT_TITLE });
+}
+
 // The colour key of each origin, as app.css names its --origin-* tokens; ideas of no origin are neutral.
 const ORIGIN_KEY = { "meta": "meta", "archidekt decks": "decks", "adjacent decks": "adjacent", "tagged decks": "tagged" };
 
@@ -111,6 +118,9 @@ function renderRejected(cards) {
   const key = JSON.stringify(rejected.map((c) => [c.id, c.note, c.updatedAt]));
   if (state.rejectedKey === key) return;
   state.rejectedKey = key;
+  // The count a confirmation names must be the list's now.
+  state.rejectedCount = rejected.length;
+  askClear(false);
   $("rejected").hidden = !rejected.length;
   $("count-rejected").textContent = rejected.length ? `(${rejected.length})` : "";
   $("list-rejected").replaceChildren(...rejected.map((card) => {
@@ -124,6 +134,55 @@ function renderRejected(cards) {
         reconsider),
       card.note ? el("p", { class: "muted small rejected-note", text: card.note }) : null);
   }));
+}
+
+// Clear asks twice, since it removes the cards for good: the first click names how many go, the second clears.
+let clearAsking = false;
+
+function askClear(on) {
+  clearAsking = on;
+  const count = state.rejectedCount ?? 0;
+  const label = `Clear ${count} ${count === 1 ? "card" : "cards"}?`;
+  const button = $("clear-rejected");
+  button.textContent = on ? label : "Clear";
+  button.setAttribute("aria-label", on ? label : "Clear the turned down list");
+  button.classList.toggle("danger", on);
+  button.classList.toggle("quiet", !on);
+  $("clear-cancel").hidden = !on;
+}
+
+function setupClearRejected() {
+  $("clear-rejected").addEventListener("click", () => (clearAsking ? clearRejected() : askClear(true)));
+  $("clear-cancel").addEventListener("click", () => {
+    askClear(false);
+    $("clear-rejected").focus();
+  });
+  $("rejected").addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || !clearAsking) return;
+    event.stopPropagation();
+    askClear(false);
+    $("clear-rejected").focus();
+  });
+  $("rejected").addEventListener("toggle", () => askClear(false));
+}
+
+// Removes every turned down card, then reloads the deck. The bridge starts a sync of this deck alone, which
+// compiles Considering again (a card the lists still play may come back as an idea); the account is read
+// afterwards so the sync shows at once and the poll follows it. A sync already running is left alone.
+async function clearRejected() {
+  const controls = [$("clear-rejected"), $("clear-cancel")];
+  await whileBusy(controls, async () => {
+    askClear(false);
+    try {
+      const answer = await api("clear_rejected", state.current);
+      const count = `${answer.cleared} turned down ${answer.cleared === 1 ? "card" : "cards"}`;
+      showStatus(answer.sync === "started" ? `Cleared ${count}; compiling its ideas again` : `Cleared ${count}`);
+      await refresh();
+      // The list hides with its last card, taking the focus with it.
+      $("h-considering").focus();
+      if (answer.sync === "started" || answer.sync === "running") await loadAccount();
+    } catch (error) { noteFailure(error); }
+  });
 }
 
 function tileFor(card) {
@@ -236,7 +295,7 @@ function buildTile(card) {
   const meta = el("div", { class: "card-meta" },
     el("span", { class: "type", text: card.typeLine, title: card.typeLine }),
     card.priceCents !== null ? el("span", { text: euro(card.priceCents) }) : null,
-    card.share || card.pool ? sharePill(card) : sourceBadge(card),
+    card.upcoming ? outBadge(card) : card.share || card.pool ? sharePill(card) : sourceBadge(card),
     card.gameChanger ? el("span", { class: "badge status gc", text: "Game changer" }) : null,
     card.withinBudget === false
       ? el("span", { class: "badge status over", text: "Over budget", title: "Over 25% above the deck's average card" })

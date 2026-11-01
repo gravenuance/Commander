@@ -5,7 +5,7 @@ import json
 import shutil
 import uuid
 from collections.abc import Callable, Iterator, Sequence
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -18,10 +18,12 @@ import pytest
 from commander import fsutil, net
 from commander.carddb import CARD_DB_FILE, CardDataMeta, write_card_db
 from commander.net import HTTP_OK
-from commander.scryfall import read_cards, read_tags, role_gates, role_members
+from commander.scryfall import SetCard, read_cards, read_tags, role_gates, role_members
 
 FIXTURES = Path(__file__).parent / "fixtures"
 DECK_ID = 10000001
+# The day the made-up upcoming card `upcoming` is out; the tests' clocks stand a few days before it.
+OUT_DAY = date(2026, 10, 20)
 
 type Json = dict[str, Any]
 type Handler = Callable[[httpx.Request], httpx.Response]
@@ -55,6 +57,27 @@ def card_entry(
             "oracleCard": {"name": name, "cmc": 1},
         },
     }
+
+
+def upcoming(name: str = "Dahar Master", identity: str = "R", out: date = OUT_DAY) -> SetCard:
+    """A made-up card of an upcoming set, one the card data fixtures lack, as the previews' search saw it."""
+    return SetCard(
+        scryfall_id="0c340eba-645d-416a-9ed4-f2303aa8c919",
+        oracle_id="c9bc1a28-8d3c-4d9f-a67d-b044cfe9d6c1",
+        name=name,
+        mana_cost="{1}{R}",
+        mana_value=2.0,
+        type_line="Creature — Dwarf",
+        oracle_text="Haste",
+        power="2",
+        keywords=("Haste",),
+        color_identity=identity,
+        set_code="trk",
+        set_name="Star Trek",
+        collector_number="157",
+        released_at=out,
+        already_out=False,
+    )
 
 
 def put_on_sideboard(raw: Json, entry_id: int, name: str) -> None:
@@ -585,6 +608,20 @@ class FakeArchidekt:
         self.labels_status = 200
         # How many of the first reads answer 500 before the rest are served as labels_status says.
         self.labels_failures = 0
+        # Printings Archidekt knows that the card data fixtures lack, such as a card newly out.
+        self.extra_printings: list[SetCard] = []
+
+    def _known_cards(self) -> Iterator[Json]:
+        """Every printing the card lookup and an add can name, as Scryfall's card objects."""
+        yield from map(json.loads, fixture_lines("scryfall_cards.jsonl"))
+        for c in self.extra_printings:
+            yield {
+                "id": c.scryfall_id,
+                "name": c.name,
+                "set": c.set_code,
+                "collector_number": c.collector_number,
+                "cmc": c.mana_value,
+            }
 
     def put(self, deck: Json) -> None:
         self.decks[deck["id"]] = copy.deepcopy(deck)
@@ -688,17 +725,15 @@ class FakeArchidekt:
 
     def _card_search(self, params: httpx.QueryParams) -> Json:
         assert "exact" in params, "card lookups must ask for the exact name"
-        results: list[Json] = []
-        for line in fixture_lines("scryfall_cards.jsonl"):
-            card = json.loads(line)
-            if card["name"] == params.get("name") and card["set"] == params.get("edition"):
-                results.append(
-                    {
-                        "id": archidekt_card_id(card["id"]),
-                        "uid": card["id"],
-                        "edition": {"editioncode": card["set"]},
-                    }
-                )
+        results: list[Json] = [
+            {
+                "id": archidekt_card_id(card["id"]),
+                "uid": card["id"],
+                "edition": {"editioncode": card["set"]},
+            }
+            for card in self._known_cards()
+            if card["name"] == params.get("name") and card["set"] == params.get("edition")
+        ]
         return {"count": len(results), "next": None, "results": results}
 
     def _write(self, request: httpx.Request) -> httpx.Response:
@@ -745,8 +780,7 @@ class FakeArchidekt:
             quantity = edit["modifications"]["quantity"]
             if edit["action"] == "add":
                 self.next_entry += 1
-                cards = map(json.loads, fixture_lines("scryfall_cards.jsonl"))
-                card = next(c for c in cards if archidekt_card_id(c["id"]) == edit["cardid"])
+                card = next(c for c in self._known_cards() if archidekt_card_id(c["id"]) == edit["cardid"])
                 entry = card_entry(self.next_entry, card["name"], edit["categories"], quantity)
                 entry["label"] = edit["modifications"]["label"]
                 entry["card"].update(

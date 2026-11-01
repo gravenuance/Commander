@@ -107,6 +107,10 @@
               <p id="empty-considering" class="empty" hidden><span aria-hidden="true">🃏</span> Nothing to consider. Propose a card above.</p>
               <details id="rejected" class="fold-group" hidden>
                 <summary>Turned down <span class="count" id="count-rejected"></span></summary>
+                <div class="rejected-actions">
+                  <button id="clear-rejected" class="button quiet small" type="button" aria-label="Clear the turned down list">Clear</button>
+                  <button id="clear-cancel" class="button quiet small" type="button" hidden>Cancel</button>
+                </div>
                 <ul id="list-rejected" class="rejected-list"></ul>
               </details>
               <p class="credit muted small">Tournament lists from <a href="https://topdeck.gg" target="_blank" rel="noopener">TopDeck.gg</a></p>
