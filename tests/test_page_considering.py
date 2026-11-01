@@ -235,7 +235,7 @@ CLEAR_PRELUDE = """
 const gone = (id) => card({ id, name: `Gone ${id}`, status: "rejected", updatedAt: "2026-05-01T00:00:00Z" });
 const syncing = { user: "T", signedIn: true,
   sync: { running: true, progress: "Starting", summary: "", failed: false, decks: {} } };
-// What the bridge says of the sync it started for the cleared deck: "started", "running" or "none".
+// What the bridge says of the sync it started for the cleared deck: "started", "queued" or "none".
 let syncAnswer = "started";
 stub.clear_rejected = async () => {
   const cleared = board.filter((c) => c.status === "rejected").length;
@@ -281,8 +281,14 @@ def test_clear_asks_first_then_clears_reloads_the_deck_and_reads_the_sync_the_br
     assert (seen["syncOff"], seen["focus"]) == (True, "h-considering")
 
 
-@pytest.mark.parametrize("answer", ["running", "none"])
-def test_clear_names_no_new_compile_when_the_bridge_started_no_sync(answer: str) -> None:
+@pytest.mark.parametrize(
+    ("answer", "status"),
+    [
+        ("queued", "Cleared 1 turned down card; its ideas are compiled once the running sync ends"),
+        ("none", "Cleared 1 turned down card"),
+    ],
+)
+def test_clear_names_no_new_compile_when_the_bridge_started_no_sync(answer: str, status: str) -> None:
     seen = run(
         CLEAR_PRELUDE
         + f"""
@@ -299,8 +305,8 @@ def test_clear_names_no_new_compile_when_the_bridge_started_no_sync(answer: str)
     assert seen == {
         "cleared": 1,
         "synced": 0,
-        "accounts": 1 if answer == "running" else 0,
-        "status": "Cleared 1 turned down card",
+        "accounts": 1 if answer == "queued" else 0,
+        "status": status,
     }
 
 

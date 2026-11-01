@@ -391,8 +391,8 @@ def test_unreadable_or_newer_boards_are_refused(tmp_path: Path) -> None:
     (tmp_path / BOARD_FILE).write_text("{", encoding="utf-8")
     with pytest.raises(BoardError, match="cannot read"):
         read_board(tmp_path)
-    (tmp_path / BOARD_FILE).write_text(json.dumps({"version": 5, "cards": []}), encoding="utf-8")
-    with pytest.raises(BoardError, match="board version 5 is newer than this cmdr reads"):
+    (tmp_path / BOARD_FILE).write_text(json.dumps({"version": 6, "cards": []}), encoding="utf-8")
+    with pytest.raises(BoardError, match="board version 6 is newer than this cmdr reads"):
         read_board(tmp_path)
     (tmp_path / BOARD_FILE).write_text(json.dumps({"version": 0, "cards": []}), encoding="utf-8")
     with pytest.raises(BoardError, match="board version 0 is not supported"):
@@ -427,13 +427,31 @@ def test_a_version_1_board_reads_with_every_card_considering_and_is_backed_up_be
     service.decide("Lightning Bolt", Status.REJECTED, Actor.YOU)
 
     saved = json.loads((tmp_path / BOARD_FILE).read_text(encoding="utf-8"))
-    assert saved["version"] == 4
+    assert saved["version"] == 5
     assert all("section" not in card for card in saved["cards"])
     assert (tmp_path / "board.v1.bak").read_text(encoding="utf-8") == original
     # A board already at the current version is not backed up again.
     (tmp_path / "board.v1.bak").write_text("kept", encoding="utf-8")
     service.decide("Lightning Bolt", Status.OPEN, Actor.YOU)
     assert (tmp_path / "board.v1.bak").read_text(encoding="utf-8") == "kept"
+
+
+def test_a_version_4_board_reads_as_it_is_and_is_backed_up_before_its_next_save_as_version_5(
+    tmp_path: Path, service: BoardService
+) -> None:
+    service.propose("Lightning Bolt", Actor.CLAUDE)
+    older = json.loads((tmp_path / BOARD_FILE).read_text(encoding="utf-8"))
+    older["version"] = 4
+    original = json.dumps(older, indent=2) + "\n"
+    (tmp_path / BOARD_FILE).write_text(original, encoding="utf-8")
+    assert [c.name for c in read_board(tmp_path).cards] == ["Lightning Bolt"]
+
+    service.decide("Lightning Bolt", Status.REJECTED, Actor.YOU)
+
+    saved = json.loads((tmp_path / BOARD_FILE).read_text(encoding="utf-8"))
+    assert saved["version"] == 5
+    assert saved["cards"][0]["status"] == "rejected"
+    assert (tmp_path / "board.v4.bak").read_text(encoding="utf-8") == original
 
 
 def test_the_stamp_changes_with_every_edit(tmp_path: Path, service: BoardService) -> None:
@@ -575,7 +593,7 @@ def test_a_card_without_an_origin_tag_saves_none_and_a_board_from_before_it_read
     service.propose("Lightning Bolt", Actor.CMDR, origin=Origin.DECKS)
     path = tmp_path / BOARD_FILE
     saved = json.loads(path.read_text(encoding="utf-8"))
-    assert saved["version"] == 4
+    assert saved["version"] == 5
     assert saved["cards"][0]["originTag"] is None
     del saved["cards"][0]["originTag"]
     path.write_text(json.dumps(saved), encoding="utf-8")
@@ -862,7 +880,7 @@ def test_an_ideas_pool_goes_through_the_board_file_as_origin_pool(
     assert read_board(tmp_path).cards == (card,)
     assert read_board(tmp_path).cards[0].origin_pool == OriginPool(7, 15)
     saved = json.loads((tmp_path / BOARD_FILE).read_text(encoding="utf-8"))
-    assert saved["version"] == 4
+    assert saved["version"] == 5
     assert saved["cards"][0]["originPool"] == {"count": 7, "total": 15}
 
 
@@ -1108,7 +1126,7 @@ def test_the_snapshot_is_saved_with_the_card_and_read_back_and_other_cards_carry
     }
     assert saved["cards"][1]["printing"] is None
     assert [c.printing for c in read_board(tmp_path).cards] == [upcoming(), None]
-    assert saved["version"] == 4
+    assert saved["version"] == 5
 
 
 def test_a_board_without_the_snapshot_key_reads_with_none(tmp_path: Path, service: BoardService) -> None:

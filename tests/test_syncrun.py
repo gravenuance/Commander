@@ -338,14 +338,19 @@ def test_each_deck_is_queued_in_the_order_of_its_requests_then_fetching_then_don
 
 
 def sync_only(
-    tmp_path: Path, fake: FakeArchidekt, deck_id: int, events: list[tuple[int, str]], *, force: bool = False
+    tmp_path: Path,
+    fake: FakeArchidekt,
+    deck_ids: Iterable[int],
+    events: list[tuple[int, str]],
+    *,
+    force: bool = False,
 ) -> SyncOutcome:
     return run_sync(
         services(tmp_path, fake),
         Workspace(tmp_path / "decks"),
         "TESTER",
         MetaSettings(),
-        SyncOptions(cards=False, force=force, only=deck_id),
+        SyncOptions(cards=False, force=force, only=frozenset(deck_ids)),
         on_deck=lambda deck, state: events.append((deck, state.value)),
         on_progress=lambda _: None,
     )
@@ -374,7 +379,7 @@ def test_a_sync_limited_to_one_deck_reads_and_merges_that_deck_alone_and_reports
     tournament_decks.clear()
     events: list[tuple[int, str]] = []
 
-    outcome = sync_only(tmp_path, fake, 102, events, force=True)
+    outcome = sync_only(tmp_path, fake, [102], events, force=True)
 
     assert reads.gathered == [102]
     assert merged == [102]
@@ -394,7 +399,7 @@ def test_a_sync_limited_to_one_deck_pulls_that_deck_alone(
         fake.decks[deck_id]["updatedAt"] = "2026-10-20T00:00:00.000000Z"
     fake.requests.clear()
 
-    outcome = sync_only(tmp_path, fake, 103, [])
+    outcome = sync_only(tmp_path, fake, [103], [])
 
     assert [p for p in fake.requests if p.startswith("/api/decks/1")] == ["/api/decks/103/"]
     assert [(r.deck_id, r.status.value) for r in outcome.results] == [(103, "unchanged")]
@@ -409,9 +414,39 @@ def test_a_sync_limited_to_a_deck_the_account_lacks_reads_and_merges_nothing(
     reads.gathered.clear()
     events: list[tuple[int, str]] = []
 
-    outcome = sync_only(tmp_path, fake, 999, events)
+    outcome = sync_only(tmp_path, fake, [999], events)
 
     assert (reads.gathered, events, outcome.results) == ([], [], [])
+
+
+def test_a_sync_limited_to_two_decks_pulls_reads_and_merges_those_two_and_leaves_the_third(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = three_decks(tmp_path, raw_deck, card_db_file)
+    reads = stub_meta(monkeypatch)
+    merged: list[int] = []
+
+    def compile_ideas(stored: StoredDeck, *_: object, **__: object) -> dict[Origin, list[BoardCard]]:
+        merged.append(stored.deck.id)
+        return {}
+
+    monkeypatch.setattr(syncrun, "compile_ideas", compile_ideas)
+    sync_ideas(tmp_path, fake)
+    reads.gathered.clear()
+    merged.clear()
+    for deck_id in DECK_IDS:
+        fake.decks[deck_id]["updatedAt"] = "2026-10-20T00:00:00.000000Z"
+    fake.requests.clear()
+    events: list[tuple[int, str]] = []
+
+    outcome = sync_only(tmp_path, fake, [101, 103], events)
+
+    assert sorted(reads.gathered) == [101, 103]
+    assert sorted(merged) == [101, 103]
+    assert sorted({deck for deck, _ in events}) == [101, 103]
+    fetched = sorted(p for p in fake.requests if p.startswith("/api/decks/1"))
+    assert fetched == ["/api/decks/101/", "/api/decks/103/"]
+    assert sorted(r.deck_id for r in outcome.results) == [101, 103]
 
 
 def test_a_deck_whose_ideas_fail_is_incomplete_and_the_others_carry_on(

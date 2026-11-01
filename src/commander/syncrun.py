@@ -83,8 +83,8 @@ class SyncOptions:
     dry_run: bool = False
     cards: bool = True
     ideas: bool = True
-    # A deck id: the pull and the ideas phase then handle that deck alone, as when only its board changed.
-    only: int | None = None
+    # Deck ids: the pull and the ideas phase then handle those decks alone, as when only their boards changed.
+    only: frozenset[int] | None = None
 
 
 class FetchState(Enum):
@@ -283,12 +283,13 @@ def _start_card_jobs(
 
 
 def _add_grace_tables(
-    workspace: Workspace, warnings: list[str], deck_lock: DeckLock, only: int | None
+    workspace: Workspace, warnings: list[str], deck_lock: DeckLock, only: frozenset[int] | None
 ) -> None:
-    """Give each deck's profile (`only` that deck's) the empty [grace] table (ADR 0039), writing the template
-    for a deck with no profile yet, under the deck's lock; a profile that cannot be written is a warning."""
+    """Give each deck's profile (just the `only` decks') the empty [grace] table (ADR 0039), writing the
+    template for a deck with no profile yet, under the deck's lock; a profile that cannot be written is a
+    warning."""
     for deck_id, folder in workspace.deck_folders():
-        if only is not None and deck_id != only:
+        if only is not None and deck_id not in only:
             continue
         try:
             with deck_lock(deck_id):
@@ -438,7 +439,7 @@ def _start_meta(
     *,
     progress: Progress,
     priority: FetchPriority | None,
-    only: int | None,
+    only: frozenset[int] | None,
 ) -> _MetaStart:
     shown = threading.Event()
     # Reads run side by side, so the line names each one that is under way.
@@ -473,12 +474,12 @@ def _compile_ideas(
     warnings: list[str],
     on_deck: DeckProgress,
     deck_lock: DeckLock,
-    only: int | None,
+    only: frozenset[int] | None,
 ) -> _IdeasPhase:
     """Each deck's new ideas from the meta and recent Archidekt decks (ADR 0028), by short name, the open
     ideas turned down on the way for no longer passing the idea test, the open cards closed first
     because the main deck holds them (ADR 0046) and the queued count changes it already meets, cleared
-    (ADR 0043). With `only`, that deck alone is read and merged.
+    (ADR 0043). With `only`, those decks alone are read and merged.
 
     Answers under a day old come from the cache. A deck whose sources fail keeps its board as it was.
     Every deck's reads start at once, each on its own thread, and the sync thread merges them as they finish.
@@ -835,13 +836,16 @@ def _current(workspace: Workspace, fetched: StoredDeck) -> StoredDeck | None:
     return StoredDeck(fetched.folder, replace(deck, bracket=bracket))
 
 
-def _in_scope(decks: list[StoredDeck], only: int | None) -> list[StoredDeck]:
-    """All the decks, or just the one a limited sync is for."""
-    return decks if only is None else [s for s in decks if s.deck.id == only]
+def _in_scope(decks: list[StoredDeck], only: frozenset[int] | None) -> list[StoredDeck]:
+    """All the decks, or just those a limited sync is for."""
+    return decks if only is None else [s for s in decks if s.deck.id in only]
 
 
-def _most_viewed_first(decks: list[StoredDeck], services: SyncServices, only: int | None) -> list[StoredDeck]:
-    """The decks with a commander (just `only`, if set), by view score and then in the workspace's order."""
+def _most_viewed_first(
+    decks: list[StoredDeck], services: SyncServices, only: frozenset[int] | None
+) -> list[StoredDeck]:
+    """The decks with a commander (just the `only` ones, if set), by view score and then in the workspace's
+    order."""
     scores = ViewScores(services.cache / VIEWS_FILE, services.now).scores()
     return sorted(
         (s for s in _in_scope(decks, only) if s.deck.commanders), key=lambda s: -scores.get(s.deck.id, 0.0)

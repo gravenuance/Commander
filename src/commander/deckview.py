@@ -114,11 +114,38 @@ def _pending_adds(board: Board, db: CardDb, held: set[str]) -> list[PendingAdd]:
     queued = [card for card in board.queued if card_key(card.name) not in held]
     infos = db.cards(card.oracle_id for card in queued)
     images = card_images(db, infos.values())
-    return [
-        PendingAdd(card.id, info, card.copies, card.category, images.get(info.oracle_id, ""))
-        for card in queued
-        if (info := infos.get(card.oracle_id)) is not None
-    ]
+    adds: list[PendingAdd] = []
+    for card in queued:
+        if (info := infos.get(card.oracle_id)) is not None:
+            image = images.get(info.oracle_id, "")
+            adds.append(
+                PendingAdd(
+                    card.id,
+                    info.name,
+                    info.type_line,
+                    info.cmc,
+                    info.cheapest_cents,
+                    card.copies,
+                    card.category,
+                    image,
+                )
+            )
+        elif (printing := card.printing) is not None:
+            # A moved preview the card data lacks: the board's snapshot of it stands in, with no price.
+            image = image_url(printing.scryfall_id)
+            adds.append(
+                PendingAdd(
+                    card.id,
+                    printing.name,
+                    printing.type_line,
+                    printing.mana_value,
+                    None,
+                    card.copies,
+                    card.category,
+                    image,
+                )
+            )
+    return adds
 
 
 def _group_json(

@@ -171,6 +171,11 @@ board before the card is out.
   bracket-raise check, so the review warns "<name>: not in the card data yet; no price or bracket check".
   When Archidekt has no such printing (`find_card`), the save stops before the snapshot and any write, and
   says so. Once the card data knows the card as legal, the usual path is used.
+- **Board version 5:** `printing` is a new field of a board card, so `board.json` is now version 5. A version
+  4 board reads as it is and is kept as `board.v4.bak` on its first save; an older `cmdr` refuses a version 5
+  board rather than dropping the snapshot at its next save.
+- **The grid:** a moved card queued to come in shows in its card type's group at once, taking its name, type,
+  mana value and image from the snapshot (no price), though the card data lacks it.
 - **The cache:** `previews.json` is version 4: each card carries its collector number, which the save needs.
   A version 3 file is ignored and the next probe fetches it again; a moved card keeps its own snapshot.
 - **The panel:** the ranking leaves out every card on the board, in any state, before the cut to 12, so the

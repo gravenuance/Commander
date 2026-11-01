@@ -4,8 +4,8 @@ each category of cards outside the deck (Sideboard, Maybeboard) as a group of it
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from commander.apply import default_category
-from commander.carddb import CardInfo, ResolvedCard
+from commander.apply import default_category, type_category
+from commander.carddb import ResolvedCard
 from commander.models import COMMANDER_CATEGORY, DONT_HAVE_LABEL
 from commander.pricing import card_price
 
@@ -62,7 +62,11 @@ class PendingAdd:
     """A card queued on the board to come into the deck, as the grid shows it until it is saved."""
 
     board_id: str
-    info: CardInfo
+    name: str
+    type_line: str
+    cmc: float
+    # The price of one copy; None for a card without one, as a preview the card data lacks.
+    unit_cents: int | None
     copies: int
     # The category it is saved under; None files it by its card type.
     category: str | None
@@ -88,16 +92,17 @@ def deck_grid(main: Sequence[ResolvedCard], adds: Sequence[PendingAdd] = ()) -> 
             group = default_category(r.info) if r.info is not None else "Uncategorized"
         groups.setdefault(group, []).append(_grid_card(r))
     for add in adds:
-        groups.setdefault(default_category(add.info), []).append(
+        type_group = type_category(add.type_line)
+        groups.setdefault(type_group, []).append(
             GridCard(
-                name=add.info.name,
+                name=add.name,
                 quantity=add.copies,
                 image=add.image,
-                category=add.category or default_category(add.info),
+                category=add.category or type_group,
                 label=DONT_HAVE_LABEL,
                 label_colour="",
-                cents=add.info.cheapest_cents * add.copies if add.info.cheapest_cents is not None else None,
-                cmc=add.info.cmc,
+                cents=add.unit_cents * add.copies if add.unit_cents is not None else None,
+                cmc=add.cmc,
                 board_id=add.board_id,
             )
         )

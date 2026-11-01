@@ -218,6 +218,8 @@ class _SyncStart(Enum):
     STARTED = "started"
     # One was under way already, and it was left alone.
     RUNNING = "running"
+    # One was under way already; a sync of the asked-for decks starts when it ends.
+    QUEUED = "queued"
     # Nothing could start it: no account to sync, or a write under way.
     NONE = "none"
 
@@ -340,6 +342,11 @@ class Desk:
         self._brackets: dict[int, tuple[str, datetime, Json]] = {}
         self._sync_lock = threading.Lock()
         self._sync = _SyncState()
+        # The decks whose sync was asked for while one ran; the running sync hands over to one of them when
+        # it ends. Guarded by _sync_lock like the sync.
+        self._resync: set[int] = set()
+        # The end of the sync that handed over to them, until that sync ends too.
+        self._handed_over: _SyncState | None = None
         # The page errors already logged, as (message, source, line), under their own lock.
         self._page_errors: set[tuple[str, str, int]] = set()
         self._page_errors_capped = False
@@ -518,6 +525,8 @@ class Desk:
             memo.clear()
         with self._sync_lock:
             self._open_deck = None
+            # Deck ids of the account left behind.
+            self._resync.clear()
 
     @contextmanager
     def _writing(
@@ -563,6 +572,10 @@ class Desk:
         finally:
             with self._sync_lock:
                 self._writes.remove(doing)
+                # A sync that ended during the write left the decks cleared meanwhile for now.
+                handed = self._hand_over() if self._settings.user else None
+            if handed is not None and self._settings.user:
+                self._launch_resync(self._settings.user, *handed)
 
     def _wait_text(self, wait: _Wait, then: str, deck_id: int | None) -> str:
         """The refusal shown to the user, within the 12-word budget (ui.md); the log line has the phase."""
@@ -584,28 +597,50 @@ class Desk:
             deck = None
         return deck.short_name if deck is not None else f"deck {deck_id}"
 
+    def _syncing_line(self, only: Collection[int] | None) -> str:
+        """The progress line a sync starts with: the deck's name, the number of decks, or the plain start."""
+        if only is None:
+            return "Starting the sync"
+        if len(only) == 1:
+            return f"Syncing {self._deck_name(next(iter(only)))}"
+        return f"Syncing {len(only)} decks"
+
     def _start_sync(
-        self, user: str, trigger: str = "sync button", only: int | None = None
+        self, user: str, trigger: str = "sync button", only: frozenset[int] | None = None
     ) -> _SyncStart | Json:
-        """Starts the sync (of one deck, with `only`) unless one runs already; the refusal when a write is
-        under way."""
+        """Starts the sync (of just the `only` decks, if set) unless one runs already; the refusal when a
+        write is under way. A sync of `only` decks asked for while one runs waits for it (`_finish_sync`);
+        a full one is left to the sync that runs."""
         # Read before the lock: it is the deck's name for the progress line.
-        starting = "Starting the sync" if only is None else f"Syncing {self._deck_name(only)}"
+        starting = self._syncing_line(only)
         with self._sync_lock:
             if self._writes:
                 return {"error": f"Wait for the {self._writes[0]} to finish, then sync."}
             if self._sync.running:
-                return _SyncStart.RUNNING
-            self._sync = _SyncState(running=True, progress=starting, started_at=self._now())
-            self._priority = priority = FetchPriority(self._open_deck)
+                if only is None:
+                    return _SyncStart.RUNNING
+                self._resync |= only
+                return _SyncStart.QUEUED
+            priority = self._mark_running(starting)
+        self._launch_sync(user, trigger, priority, only)
+        return _SyncStart.STARTED
+
+    def _mark_running(self, progress: str) -> FetchPriority:
+        """The state of a sync that has just started; call with _sync_lock held."""
+        self._sync = _SyncState(running=True, progress=progress, started_at=self._now())
+        self._priority = FetchPriority(self._open_deck)
+        return self._priority
+
+    def _launch_sync(
+        self, user: str, trigger: str, priority: FetchPriority, only: frozenset[int] | None
+    ) -> None:
         log.info("sync started for %s (%s)", user, trigger)
         self._background(lambda: self._run_sync(user, priority, only))
-        return _SyncStart.STARTED
 
     def _elapsed(self, started_at: datetime | None) -> str:
         return "0s" if started_at is None else f"{max((self._now() - started_at).total_seconds(), 0):.0f}s"
 
-    def _run_sync(self, user: str, priority: FetchPriority, only: int | None) -> None:
+    def _run_sync(self, user: str, priority: FetchPriority, only: frozenset[int] | None) -> None:
         services = SyncServices(
             self._client_factory, self._token_store, self._settings.cache, self._now, self._pacer_factory
         )
@@ -628,17 +663,17 @@ class Desk:
             )
         except _EXPECTED as error:
             log.warning("sync for %s failed after %s: %s", user, self._elapsed(started_at), error)
-            self._finish_sync(f"Sync failed: {error}", failed=True)
+            self._finish_sync(user, f"Sync failed: {error}", failed=True)
             return
         except Exception:
             log.exception("sync for %s failed unexpectedly after %s", user, self._elapsed(started_at))
-            self._finish_sync("Sync failed; the details are in the log.", failed=True)
+            self._finish_sync(user, "Sync failed; the details are in the log.", failed=True)
             return
         for warning in outcome.warnings:
             log.warning("sync: %s", warning)
         summary = sync_summary(outcome)
         log.info("sync finished for %s in %s: %s", user, self._elapsed(started_at), summary)
-        self._finish_sync(summary, failed=outcome.failed, warnings=outcome.warnings)
+        self._finish_sync(user, summary, failed=outcome.failed, warnings=outcome.warnings)
 
     def _sync_progress(self, message: str) -> None:
         with self._sync_lock:
@@ -688,10 +723,37 @@ class Desk:
             self._sync.decks[deck_id] = state
         log.info("sync deck %d: %s", deck_id, state.value)
 
-    def _finish_sync(self, summary: str, *, failed: bool, warnings: Sequence[str] = ()) -> None:
+    def _finish_sync(self, user: str, summary: str, *, failed: bool, warnings: Sequence[str] = ()) -> None:
+        """Ends the sync, whether it worked or not, and starts one of the decks asked for meanwhile. The end
+        and the start are one step under the lock, so a request arriving now is among those decks or finds
+        that sync running. What a sync handed over from reported is kept in front of this one's, so a
+        failure or warning of the first still shows."""
         with self._sync_lock:
+            earlier, self._handed_over = self._handed_over, None
+            if earlier is not None:
+                summary = f"{earlier.summary} Then: {summary}"
+                failed = failed or earlier.failed
+                warnings = [*earlier.warnings, *warnings]
             self._sync = _SyncState(summary=summary, failed=failed, warnings=list(warnings))
             self._priority = None
+            handed = self._hand_over()
+        if handed is not None:
+            self._launch_resync(user, *handed)
+
+    def _hand_over(self) -> tuple[FetchPriority, frozenset[int]] | None:
+        """Mark the sync of the decks asked for during the last one as running, unless none was asked for or a
+        write still runs: no sync starts beside a write (`_writing`), which hands over when it ends. Call with
+        _sync_lock held."""
+        if not self._resync or self._writes or self._sync.running:
+            return None
+        waiting, self._resync = frozenset(self._resync), set()
+        self._handed_over = self._sync
+        return self._mark_running("Starting the sync"), waiting
+
+    def _launch_resync(self, user: str, priority: FetchPriority, waiting: frozenset[int]) -> None:
+        # Named after the lock, as in _start_sync; the sync thread starts only after the line is set.
+        self._sync_progress(self._syncing_line(waiting))
+        self._launch_sync(user, "decks cleared during the last sync", priority, waiting)
 
     def _sync_json(self) -> Json:
         with self._sync_lock:
@@ -1283,8 +1345,9 @@ class Desk:
     def clear_rejected(self, deck_id: int) -> Json:
         """Take every turned-down card off the board, then compile the deck's ideas again with a sync of that
         deck alone, which may offer a cleared card as an idea. `sync` says whether that sync is `started`,
-        was `running` already (and is left to do the whole account), or could not start (`none`, also when
-        nothing was cleared)."""
+        is `queued` to start when the sync that runs ends (whatever that one covers, since it may have
+        merged the deck's board before the clear), or could not start (`none`, also when nothing was
+        cleared)."""
         with self._writing("clearing", "clear the list", deck_id, needs_cards=False) as busy:
             if busy:
                 return busy
@@ -1293,7 +1356,9 @@ class Desk:
             log.info("board: cleared %d turned-down cards from deck %d", len(cleared), deck_id)
         start = _SyncStart.NONE
         if cleared and self._settings.user:
-            started = self._start_sync(self._settings.user, f"clear of deck {deck_id}", only=deck_id)
+            started = self._start_sync(
+                self._settings.user, f"clear of deck {deck_id}", only=frozenset({deck_id})
+            )
             if isinstance(started, _SyncStart):
                 start = started
         return {"cleared": len(cleared), "sync": start.value}

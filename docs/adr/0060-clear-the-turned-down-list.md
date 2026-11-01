@@ -28,9 +28,16 @@ Option 1, with a sync of the cleared deck started at once, decided with the owne
   the list or folding it gives up), then `Desk.clear_rejected` takes every turned-down card off the board,
   whoever put it there (`BoardService.clear_rejected`), in one write, with one activity line per card
   ("removed", "turned-down list cleared").
-- `Desk.clear_rejected` then starts a sync limited to that deck (`SyncOptions.only`), unless nothing was
-  cleared, no account can sync or a sync is already running; it answers `sync` as `started`, `running` or
-  `none`. The page reloads the deck and reads the account, so the running sync shows at once.
+- `Desk.clear_rejected` then starts a sync limited to that deck (`SyncOptions.only`, a set of deck ids),
+  unless nothing was cleared or no account can sync; it answers `sync` as `started`, `queued` or `none`.
+  The page reloads the deck and reads the account, so the running sync shows at once.
+- **A sync already running** may not cover the deck: it may be limited to another deck, or have merged this
+  deck's board before the clear. So the deck goes into a set kept by the desk (under the sync lock) and the
+  answer is `queued`. When the running sync ends, successfully or not, it starts one sync limited to every
+  queued deck ("Syncing Magda", or "Syncing N decks"), in the same step under the lock that ends it, so a
+  clear arriving at that moment is either in the set or finds the new sync running. No sync starts beside a
+  write (ADR 0042), so when a write is still running as the sync ends, the queued sync starts as the last
+  write ends. The page says the ideas are compiled once the running sync ends.
 - A limited sync lists the account's decks once, but fetches, writes and settles only that deck, reads the
   meta and Archidekt decks for it alone, refreshes TopDeck's tournaments for it alone and merges only its
   board, so the deck list shows only that deck fetching. The card data and previews checks run as in any
@@ -42,5 +49,12 @@ Option 1, with a sync of the cleared deck started at once, decided with the owne
 - A cleared card loses its share baseline: if it is still among its source's top ideas, the next sync puts
   it back as an open idea, with no rise in share needed.
 - The activity log keeps who turned each card down and that the list was cleared.
-- Clearing one deck recompiles that deck alone; the others' boards and fetch states are untouched. If a full
-  sync is already running, the clear leaves it to do the account and starts nothing.
+- Clearing one deck recompiles that deck alone; the others' boards and fetch states are untouched. If a sync
+  is already running, the deck waits for it and is recompiled by the sync that follows, even when the running
+  one is a full sync (it may have merged the board before the clear). Decks cleared meanwhile share that one
+  sync.
+- A failed sync is followed by the queued one all the same. The status keeps the finished sync's summary
+  and warnings in front of the queued one's ("Sync failed: ... Then: Synced 1 deck, 0 changed."), and
+  shows a failure if either failed.
+- The page reloads the decks when no sync runs any more, so with a queued sync it does so once that ends.
+- Switching account forgets the queued decks, which belong to the account left.

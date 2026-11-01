@@ -339,7 +339,7 @@ def test_a_version_2_board_reads_without_count_changes_and_is_backed_up_on_its_n
     service.step_count("Mountain", 1, Actor.YOU)
 
     saved = json.loads((tmp_path / BOARD_FILE).read_text(encoding="utf-8"))
-    assert saved["version"] == 4
+    assert saved["version"] == 5
     assert saved["counts"] == [
         {"name": "Mountain", "was": 6, "count": 7, "by": "you", "at": STAMP, "category": None}
     ]

@@ -1211,6 +1211,33 @@ def test_moving_a_preview_puts_it_on_the_board_as_yours_and_the_next_fit_takes_i
     assert desk.deck(deck_id)["previews"] == 2
 
 
+def test_a_moved_preview_queued_to_come_in_shows_in_the_grid_by_its_snapshot_though_the_card_data_lacks_it(
+    desk_settings: DeskSettings, raw_deck: Json
+) -> None:
+    previewed(desk_settings)
+    desk = make_desk(desk_settings)
+    deck_id = int(raw_deck["id"])
+    moved = cast("Json", desk.move_preview(deck_id, QUARK_NAME)["card"])
+    assert "error" not in desk.decide(deck_id, str(moved["id"]), "add", None, "")
+
+    view = desk.deck(deck_id)
+
+    creatures = next(g for g in cast("list[Json]", view["grid"]) if g["name"] == "Creature")
+    shown = {c["name"]: c for c in cast("list[Json]", creatures["cards"])}
+    assert QUARK_NAME in shown
+    quark = shown[QUARK_NAME]
+    assert quark["pending"] == {"kind": "add", "id": moved["id"]}
+    assert quark["image"] == (
+        "https://cards.scryfall.io/normal/front/9/6/96104754-57e2-46e9-948d-628aab2aa0ad.jpg"
+    )
+    assert (quark["quantity"], quark["category"], quark["label"], quark["cents"]) == (
+        1,
+        "Creature",
+        "Don't Have",
+        None,
+    )
+
+
 def test_the_fits_in_the_reason_name_the_commander_and_the_short_role_as_the_tile_does(
     tmp_path: Path, raw_deck: Json, commander_db_file: Path
 ) -> None:

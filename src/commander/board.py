@@ -48,7 +48,7 @@ log = logging.getLogger(__name__)
 BOARD_FILE = "board.json"
 ACTIVITY_FILE = "activity.jsonl"
 LOCK_FILE = ".board.lock"
-BOARD_VERSION = 4
+BOARD_VERSION = 5
 MAX_REASON = 4000
 MAX_NOTE = 1000
 MAX_REPLACE = 10
@@ -1414,6 +1414,8 @@ def _migrate(raw: Mapping[str, object]) -> Mapping[str, object]:
                 for card in req_list(raw, "cards", "board")
             ],
         }
+    # Versions 2 to 5 only added optional fields (counts, a card's rejectedShare and printing), which an
+    # older file binds without; the bump makes an older cmdr refuse the file instead of dropping them.
     return raw
 
 

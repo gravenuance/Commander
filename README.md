@@ -429,7 +429,7 @@ holds are only for a basic land or a card whose rules text allows them ("A deck 
 named ...", "up to seven"). A count change and a queued swap never touch the same card. A decrease means at
 most that many copies and an increase at least that many, so a change the deck already meets (it was edited on
 Archidekt) sends nothing, and `sync` clears it. The board file is
-`board.json` version 3; opening an older file keeps a copy as `board.v1.bak` or `board.v2.bak` before the first
+`board.json` version 5; opening an older file keeps a copy as `board.v<N>.bak` (its version) before the first
 save.
 
 ```sh
@@ -613,8 +613,9 @@ base against Frank Karsten's published numbers
   the deck's categories (its card type's first); like every add it is labelled Don't Have when saved.
   × turns the idea down, with a reason if you like: turned-down cards wait under *Turned down* (closed until
   opened) with their reasons, and Reconsider brings one back. Clear (asked twice) removes the whole list
-  from the board and syncs that deck alone, so a card the lists still play can come back as an idea
-  ([ADR 0060](docs/adr/0060-clear-the-turned-down-list.md)). Considering, Meta, each Meta section and each
+  from the board and syncs that deck alone (after the running sync, if one is under way), so a card the lists
+  still play can come back as an idea ([ADR 0060](docs/adr/0060-clear-the-turned-down-list.md)).
+  Considering, Meta, each Meta section and each
   category under *What stops you* fold, and stay as you left them.
   While a set is being previewed, a folded *Previews* panel below *No cut yet* shows up to 12 of its announced
   cards that suit the deck, in its colours: those matching its three main Archidekt tags (the cards that

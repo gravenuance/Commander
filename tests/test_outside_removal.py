@@ -192,7 +192,7 @@ def test_a_plan_file_removes_from_a_category_and_may_add_the_same_card_to_the_de
         parse_plan({"deck": "magda", "remove": [{"name": HOVERBIKE, "category": "Maybeboard"}] * 2})
 
 
-def test_the_board_is_written_as_version_4_with_the_category_and_a_version_3_board_is_backed_up(
+def test_the_board_is_written_as_version_5_with_the_category_and_a_version_3_board_is_backed_up(
     tmp_path: Path, service: BoardService
 ) -> None:
     original = json.dumps({"version": 3, "cards": [], "counts": []}) + "\n"
@@ -201,7 +201,7 @@ def test_the_board_is_written_as_version_4_with_the_category_and_a_version_3_boa
     service.step_count(HOVERBIKE, -1, Actor.YOU, category="Maybeboard")
 
     saved = json.loads((tmp_path / BOARD_FILE).read_text(encoding="utf-8"))
-    assert saved["version"] == 4
+    assert saved["version"] == 5
     assert saved["counts"] == [
         {"name": HOVERBIKE, "was": 1, "count": 0, "by": "you", "at": STAMP, "category": "Maybeboard"}
     ]
