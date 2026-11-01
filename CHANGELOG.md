@@ -10,8 +10,9 @@
   place with the next fit. It shows "Out <date>" in place of a share and can be queued, reviewed and saved
   at once, with a cut or without; the save adds the printing the board kept, and the review notes that the
   card data has no price or bracket check for it yet (ADR 0055). A card queued to come in shows in the
-  deck's grid before the card data knows it. Boards are now version 5; the first change keeps the old file as
-  `board.v4.bak`, and an older cmdr refuses a version 5 board.
+  deck's grid and in its figures after the save before the card data knows it. Boards are now version 5;
+  the first change keeps the old file as `board.v4.bak` and removes the backups of older versions, and an
+  older cmdr refuses a version 5 board.
 
 ## 1.4.2 - 2026-10-30
 

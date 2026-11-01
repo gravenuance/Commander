@@ -241,6 +241,11 @@ def front_type(type_line: str) -> str:
     return front_face(type_line)
 
 
+def is_land_type(type_line: str) -> bool:
+    # A modal card with a land back is played as a spell, so only the front face counts.
+    return "Land" in front_type(type_line).split()
+
+
 def name_keys(name: str) -> frozenset[str]:
     """The casefolded names a card answers to: its full name and, for two faces, the front face's."""
     key = name.casefold()
@@ -281,8 +286,7 @@ class CardInfo:
 
     @property
     def is_land(self) -> bool:
-        # A modal card with a land back is played as a spell, so only the front face counts.
-        return "Land" in self.front_type_line.split()
+        return is_land_type(self.type_line)
 
 
 @dataclass(slots=True, frozen=True)

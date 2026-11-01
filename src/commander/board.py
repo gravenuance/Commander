@@ -1373,12 +1373,18 @@ def _note_line(stamp: str, actor: Actor, action: str, detail: str, card: str | N
 
 
 def _back_up_older(folder: Path, version: int) -> None:
-    """Keep the board file as it was written in an older format, so a bad migration can be recovered."""
+    """Keep the board file as it was written in an older format, so a bad migration can be recovered; the
+    backups of still older formats go, as the last one is all a recovery needs (data.md)."""
     backup = folder / f"board.v{version}.bak"
     try:
         shutil.copyfile(folder / BOARD_FILE, backup)
     except OSError as error:
         raise BoardIOError(f"cannot back up {folder / BOARD_FILE} to {backup}: {error}") from error
+    for older in range(1, version):
+        try:
+            (folder / f"board.v{older}.bak").unlink(missing_ok=True)
+        except OSError as error:
+            log.warning("could not delete the older board backup v%d in %s: %s", older, folder, error)
 
 
 def _append_activity(folder: Path, entry: Activity) -> None:

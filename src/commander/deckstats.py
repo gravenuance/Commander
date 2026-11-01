@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 
 from commander.answers import card_key
 from commander.board import Board, board_plan
-from commander.carddb import CardDb, ResolvedCard
+from commander.carddb import CardDb, ResolvedCard, is_land_type
 from commander.models import DONT_HAVE_LABEL, Deck
 from commander.pricing import card_price
 
@@ -96,14 +96,16 @@ def stats_after(deck: Deck, main: Sequence[ResolvedCard], board: Board, db: Card
             cards[0] = replace(cards[0], quantity=cards[0].quantity + max(add.quantity - held, 0))
             continue
         info = db.card_named(add.name)
+        # A moved preview the card data lacks counts by the board's snapshot of it, with no price.
+        printing = None if info else (card.printing if (card := board.find(add.name)) else None)
         entries[key] = [
             StatCard(
                 add.name,
                 add.quantity,
                 DONT_HAVE_LABEL,
                 info.cheapest_cents if info else None,
-                info.cmc if info else 0.0,
-                info.is_land if info else False,
+                info.cmc if info else printing.mana_value if printing else 0.0,
+                info.is_land if info else is_land_type(printing.type_line) if printing else False,
             )
         ]
     return deck_stats(card for cards in entries.values() for card in cards)

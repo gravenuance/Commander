@@ -454,6 +454,21 @@ def test_a_version_4_board_reads_as_it_is_and_is_backed_up_before_its_next_save_
     assert (tmp_path / "board.v4.bak").read_text(encoding="utf-8") == original
 
 
+def test_a_backup_of_an_older_format_replaces_the_backups_of_still_older_ones(
+    tmp_path: Path, service: BoardService
+) -> None:
+    service.propose("Lightning Bolt", Actor.CLAUDE)
+    older = json.loads((tmp_path / BOARD_FILE).read_text(encoding="utf-8"))
+    older["version"] = 4
+    (tmp_path / BOARD_FILE).write_text(json.dumps(older), encoding="utf-8")
+    for version in (1, 3):
+        (tmp_path / f"board.v{version}.bak").write_text("old", encoding="utf-8")
+
+    service.decide("Lightning Bolt", Status.REJECTED, Actor.YOU)
+
+    assert sorted(p.name for p in tmp_path.glob("board.v*.bak")) == ["board.v4.bak"]
+
+
 def test_the_stamp_changes_with_every_edit(tmp_path: Path, service: BoardService) -> None:
     before = board_stamp(tmp_path)
     service.propose("Lightning Bolt", Actor.YOU)

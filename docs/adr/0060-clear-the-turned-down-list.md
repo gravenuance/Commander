@@ -36,8 +36,9 @@ Option 1, with a sync of the cleared deck started at once, decided with the owne
   answer is `queued`. When the running sync ends, successfully or not, it starts one sync limited to every
   queued deck ("Syncing Magda", or "Syncing N decks"), in the same step under the lock that ends it, so a
   clear arriving at that moment is either in the set or finds the new sync running. No sync starts beside a
-  write (ADR 0042), so when a write is still running as the sync ends, the queued sync starts as the last
-  write ends. The page says the ideas are compiled once the running sync ends.
+  write (ADR 0042), so a clear made while another deck's write runs (with no sync at all, or as a sync ends)
+  is queued too, and the queued sync starts as the last write ends. The page says the ideas are compiled
+  once the running sync ends.
 - A limited sync lists the account's decks once, but fetches, writes and settles only that deck, reads the
   meta and Archidekt decks for it alone, refreshes TopDeck's tournaments for it alone and merges only its
   board, so the deck list shows only that deck fetching. The card data and previews checks run as in any
@@ -53,8 +54,11 @@ Option 1, with a sync of the cleared deck started at once, decided with the owne
   is already running, the deck waits for it and is recompiled by the sync that follows, even when the running
   one is a full sync (it may have merged the board before the clear). Decks cleared meanwhile share that one
   sync.
-- A failed sync is followed by the queued one all the same. The status keeps the finished sync's summary
-  and warnings in front of the queued one's ("Sync failed: ... Then: Synced 1 deck, 0 changed."), and
-  shows a failure if either failed.
+- A failed sync is followed by the queued one all the same. A finished sync that failed or warned keeps its
+  summary in front of the queued one's, once however many follow ("Sync failed: ... Then: Synced 1 deck, 0
+  changed."), with the warnings of both, each once, and the status shows a failure if either failed; one
+  that went well gives way to the queued one's summary.
 - The page reloads the decks when no sync runs any more, so with a queued sync it does so once that ends.
-- Switching account forgets the queued decks, which belong to the account left.
+- Switching account or signing out forgets the queued decks, which belong to the account left, and so does
+  closing the app: the queue is not kept, and the next sync of the deck compiles its ideas.
+- A full sync asked for while a sync runs is still left to the running one (the Sync button is off then).

@@ -1236,6 +1236,16 @@ def test_a_moved_preview_queued_to_come_in_shows_in_the_grid_by_its_snapshot_tho
         "Don't Have",
         None,
     )
+    # The figures after the save count it by the snapshot too: a nonland card at mana value 3, above the
+    # deck's average, raises it, where a card read as mana value 0 would lower it.
+    stats = cast("dict[str, Json]", view["stats"])
+    saved, after = stats["saved"], stats["after"]
+    assert cast("float", saved["averageManaValue"]) < 3
+    assert cast("float", after["averageManaValue"]) > cast("float", saved["averageManaValue"])
+    assert (after["cards"], after["dontHaveUnpriced"]) == (
+        cast("int", saved["cards"]) + 1,
+        cast("int", saved["dontHaveUnpriced"]) + 1,
+    )
 
 
 def test_the_fits_in_the_reason_name_the_commander_and_the_short_role_as_the_tile_does(

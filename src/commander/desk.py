@@ -129,6 +129,8 @@ log = logging.getLogger(__name__)
 
 ACTIVITY_SHOWN = 60
 _MAX_MESSAGE_WORDS = 12  # ui.md
+# Between a failed or warning sync's summary and that of the sync it handed over to.
+_THEN = " Then: "
 _EXPECTED = (
     BoardError,
     CardDataError,
@@ -405,6 +407,9 @@ class Desk:
                 self._token_store.delete(user)
             forget_account(config)
             self._settings = replace(self._settings, user=None)
+            with self._sync_lock:
+                # With no account there is nothing to sync them for.
+                self._resync.clear()
             log.info("signed out %s; decks stay in %s", user, self._settings.workspace)
         return self.account()
 
@@ -609,18 +614,18 @@ class Desk:
         self, user: str, trigger: str = "sync button", only: frozenset[int] | None = None
     ) -> _SyncStart | Json:
         """Starts the sync (of just the `only` decks, if set) unless one runs already; the refusal when a
-        write is under way. A sync of `only` decks asked for while one runs waits for it (`_finish_sync`);
-        a full one is left to the sync that runs."""
+        write is under way. A sync of `only` decks asked for while one runs, or while a write does, waits for
+        it (`_finish_sync`, `_writing`); a full one is left to the sync that runs."""
         # Read before the lock: it is the deck's name for the progress line.
         starting = self._syncing_line(only)
         with self._sync_lock:
+            if only is not None and (self._writes or self._sync.running):
+                self._resync |= only
+                return _SyncStart.QUEUED
             if self._writes:
                 return {"error": f"Wait for the {self._writes[0]} to finish, then sync."}
             if self._sync.running:
-                if only is None:
-                    return _SyncStart.RUNNING
-                self._resync |= only
-                return _SyncStart.QUEUED
+                return _SyncStart.RUNNING
             priority = self._mark_running(starting)
         self._launch_sync(user, trigger, priority, only)
         return _SyncStart.STARTED
@@ -726,14 +731,15 @@ class Desk:
     def _finish_sync(self, user: str, summary: str, *, failed: bool, warnings: Sequence[str] = ()) -> None:
         """Ends the sync, whether it worked or not, and starts one of the decks asked for meanwhile. The end
         and the start are one step under the lock, so a request arriving now is among those decks or finds
-        that sync running. What a sync handed over from reported is kept in front of this one's, so a
-        failure or warning of the first still shows."""
+        that sync running. A sync handed over from that failed or warned keeps its summary in front of this
+        one's, once however many hand-overs followed, so its failure or warning still shows."""
         with self._sync_lock:
             earlier, self._handed_over = self._handed_over, None
-            if earlier is not None:
-                summary = f"{earlier.summary} Then: {summary}"
+            if earlier is not None and (earlier.failed or earlier.warnings):
+                first = (earlier.summary or "").split(_THEN)[0]
+                summary = f"{first}{_THEN}{summary}"
                 failed = failed or earlier.failed
-                warnings = [*earlier.warnings, *warnings]
+                warnings = list(dict.fromkeys([*earlier.warnings, *warnings]))
             self._sync = _SyncState(summary=summary, failed=failed, warnings=list(warnings))
             self._priority = None
             handed = self._hand_over()

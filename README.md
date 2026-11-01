@@ -430,7 +430,7 @@ named ...", "up to seven"). A count change and a queued swap never touch the sam
 most that many copies and an increase at least that many, so a change the deck already meets (it was edited on
 Archidekt) sends nothing, and `sync` clears it. The board file is
 `board.json` version 5; opening an older file keeps a copy as `board.v<N>.bak` (its version) before the first
-save.
+save, and removes the backups of still older versions.
 
 ```sh
 uv run cmdr board add ellivere "Sylvan Safekeeper" --reason "protects stax pieces" --replace "Compost=not stax"

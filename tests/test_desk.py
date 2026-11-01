@@ -579,11 +579,8 @@ def test_clearing_the_list_during_a_full_sync_queues_the_deck_for_a_sync_of_it_a
     pending[1]()
     assert reads.gathered == [DECK, DECK]
     status = desk.sync_status()
-    # The full sync's own summary stays in front of the one it handed over to.
-    assert (status["failed"], status["summary"]) == (
-        False,
-        "Synced 1 deck, 0 changed. Then: Synced 1 deck, 0 changed.",
-    )
+    # The full sync went well, so its summary gives way to the one it handed over to.
+    assert (status["failed"], status["summary"]) == (False, "Synced 1 deck, 0 changed.")
     assert status["running"] is False
     assert len(pending) == 2
 
@@ -633,7 +630,7 @@ def test_decks_cleared_during_a_sync_are_synced_together_by_one_sync(
     assert reads.gathered[0] == 20001
     assert sorted(reads.gathered[1:]) == [20002, 20003]
     assert len(pending) == 2
-    assert desk.sync_status()["summary"] == "Synced 1 deck, 0 changed. Then: Synced 2 decks, 0 changed."
+    assert desk.sync_status()["summary"] == "Synced 2 decks, 0 changed."
 
 
 def test_a_deck_queued_for_a_sync_is_not_synced_again_by_the_sync_after_it(
@@ -703,23 +700,13 @@ def test_a_sync_ending_during_a_write_hands_over_only_once_the_write_ends(
     open_card = str(cast("Json", desk.propose(20003, "Chaos Warp")["card"])["id"])
     answers: list[Json] = []
     clear = clear_while_reading(desk, answers, {20001: [20002]})
-    entered, release = threading.Event(), threading.Event()
-    removed: list[Json] = []
-    writer = threading.Thread(target=lambda: removed.append(desk.remove(20003, open_card)))
-    real_remove = BoardService.remove
-
-    def remove(service: BoardService, key: str, actor: Actor) -> None:
-        entered.set()
-        assert release.wait(WAIT_SECONDS)
-        real_remove(service, key, actor)
+    write = HeldWrite(desk, monkeypatch, 20003, open_card)
 
     def read_begins(read_deck: int) -> None:
         # While 20001 is read, 20002 is cleared and a removal from 20003 starts and holds on.
         clear(read_deck)
-        writer.start()
-        assert entered.wait(WAIT_SECONDS)
+        write.start()
 
-    monkeypatch.setattr(BoardService, "remove", remove)
     stub_meta(monkeypatch, read_begins)
     stub_card_download(monkeypatch)
 
@@ -730,13 +717,119 @@ def test_a_sync_ending_during_a_write_hands_over_only_once_the_write_ends(
     # The sync of 20001 ended while the removal ran: no sync starts beside a write.
     assert len(pending) == 1
     assert desk.sync_status()["running"] is False
-    release.set()
-    writer.join(WAIT_SECONDS)
-    assert removed == [{"ok": True}]
+    write.finish()
     assert len(pending) == 2
     status = desk.sync_status()
     # The extra decks share the fixture deck's commander, so its short name.
     assert (status["running"], status["progress"]) == (True, "Syncing Magda")
+
+
+class HeldWrite:
+    """A removal of a board card on its own thread, held open inside its write until `finish`."""
+
+    def __init__(self, desk: Desk, monkeypatch: pytest.MonkeyPatch, deck_id: int, card_id: str) -> None:
+        self._entered, self._release = threading.Event(), threading.Event()
+        self.answers: list[Json] = []
+        self._thread = threading.Thread(target=lambda: self.answers.append(desk.remove(deck_id, card_id)))
+        real_remove = BoardService.remove
+
+        def remove(service: BoardService, key: str, actor: Actor) -> None:
+            self._entered.set()
+            assert self._release.wait(WAIT_SECONDS)
+            real_remove(service, key, actor)
+
+        monkeypatch.setattr(BoardService, "remove", remove)
+
+    def start(self) -> None:
+        self._thread.start()
+        assert self._entered.wait(WAIT_SECONDS)
+
+    def finish(self) -> None:
+        self._release.set()
+        self._thread.join(WAIT_SECONDS)
+        assert self.answers == [{"ok": True}]
+
+
+def test_clearing_a_deck_while_a_write_to_another_runs_queues_its_sync_until_the_write_ends(
+    settings: DeskSettings, fake: FakeArchidekt, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_extra_decks(settings, fake, raw_deck)
+    desk, pending = deferred_desk(settings, fake)
+    reject_signet(desk, 20001)
+    open_card = str(cast("Json", desk.propose(20003, "Chaos Warp")["card"])["id"])
+    write = HeldWrite(desk, monkeypatch, 20003, open_card)
+
+    write.start()
+    assert desk.clear_rejected(20001) == {"cleared": 1, "sync": "queued"}
+
+    assert pending == []
+    write.finish()
+    assert len(pending) == 1
+    status = desk.sync_status()
+    assert (status["running"], status["progress"]) == (True, "Syncing Magda")
+
+
+def test_signing_in_forgets_the_decks_queued_for_a_sync(
+    settings: DeskSettings,
+    fake: FakeArchidekt,
+    raw_deck: Json,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with_extra_decks(settings, fake, raw_deck)
+    config = tmp_path / "config.toml"
+    config.write_text(f"version = 1\nuser = 'tester'\nworkspace = '{settings.workspace}'\n", encoding="utf-8")
+    pending: list[Callable[[], None]] = []
+    desk = Desk(
+        replace(settings, config=config, documents=tmp_path / "docs"),
+        client_factory=fake.client,
+        token_store=MemoryTokenStore({"tester": REFRESH_TOKEN}),
+        now=lambda: NOW,
+        pacer_factory=lambda _: Pacer(0),
+        background=pending.append,
+    )
+    reject_signet(desk, 20001)
+    open_card = str(cast("Json", desk.propose(20003, "Chaos Warp")["card"])["id"])
+    write = HeldWrite(desk, monkeypatch, 20003, open_card)
+    write.start()
+    assert desk.clear_rejected(20001)["sync"] == "queued"
+
+    # The fake Archidekt knows one account, so this signs in to the same folder; the switch still runs.
+    assert desk.sign_in("tester", PASSWORD).get("error") is None
+    write.finish()
+
+    assert pending == []
+
+
+def test_a_failed_sync_shows_in_front_once_however_many_syncs_follow_it(
+    settings: DeskSettings, fake: FakeArchidekt, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_extra_decks(settings, fake, raw_deck)
+    desk, pending = deferred_desk(settings, fake)
+    for deck_id in (20001, 20002, 20003):
+        reject_signet(desk, deck_id)
+    answers: list[Json] = []
+    stub_meta(monkeypatch, clear_while_reading(desk, answers, {20001: [20002], 20002: [20003]}))
+    stub_card_download(monkeypatch)
+    real_run_sync: Callable[..., SyncOutcome] = desk_module.run_sync
+    failures = [True]
+
+    def run_sync(*args: object, **kwargs: object) -> SyncOutcome:
+        outcome = real_run_sync(*args, **kwargs)
+        if failures:
+            failures.pop()
+            raise desk_module.NetworkError("Archidekt answered HTTP 429")
+        return outcome
+
+    monkeypatch.setattr(desk_module, "run_sync", run_sync)
+
+    desk.clear_rejected(20001)
+    for start in (0, 1, 2):
+        pending[start]()
+
+    status = desk.sync_status()
+    assert (status["running"], status["failed"]) == (False, True)
+    assert status["summary"] == "Sync failed: Archidekt answered HTTP 429 Then: Synced 1 deck, 0 changed."
 
 
 def legacy_card(settings: DeskSettings, name: str) -> str:
