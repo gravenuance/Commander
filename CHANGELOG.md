@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.6.0 - 2026-11-03
 
 ### Changed
 - A bracket 5 deck's spare lands, which a nonland idea may take the place of, now count down to Karsten's
