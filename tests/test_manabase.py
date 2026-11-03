@@ -6,12 +6,16 @@ from commander.carddb import CardMana
 from commander.manabase import (
     Casting,
     DeckLands,
+    FetchBase,
+    Fetcher,
     Need,
     Source,
     analyse_mana,
     castings,
     cheap_draw,
     cheap_ramp,
+    fetch_base,
+    fetcher,
     land_count,
     mana_only_land,
     needed_sources,
@@ -317,6 +321,152 @@ def test_fetches_choosing_lands_and_opponent_lands_count_as_karsten_says() -> No
     lands = {c.colour: c.lands for c in report.colours}
     # Strand: 1 W and 1 U; Passage: 2/3 each in a three-colour deck; Orchard: 3/4 each.
     assert lands == {"W": 1 + 2 + 3, "U": 1 + 2 + 3, "B": 2 + 3}
+
+
+HEATH = card(
+    "Windswept Heath",
+    type_line="Land",
+    text="{T}, Pay 1 life, Sacrifice this land: Search your library for a Forest or Plains card, put it onto "
+    "the battlefield, then shuffle.",
+)
+VISTA = card(
+    "Prismatic Vista",
+    type_line="Land",
+    text="{T}, Pay 1 life, Sacrifice this land: Search your library for a basic land card, put it onto the "
+    "battlefield, then shuffle.",
+)
+LAND_TAX = card(
+    "Land Tax",
+    "{W}",
+    1,
+    "Enchantment",
+    text="At the beginning of your upkeep, if an opponent controls more lands than you, you may search your "
+    "library for up to three basic land cards, reveal them, put them into your hand, then shuffle.",
+)
+YASHARN = card(
+    "Yasharn, Implacable Earth",
+    "{2}{G}{W}",
+    4,
+    "Legendary Creature — Elemental Boar",
+    text="When Yasharn enters, search your library for a basic Forest card and a basic Plains card, reveal "
+    "those cards, put them into your hand, then shuffle.\nPlayers can't pay life or sacrifice nonland "
+    "permanents to cast spells or activate abilities.",
+)
+FARSEEK = card(
+    "Farseek",
+    "{1}{G}",
+    2,
+    "Sorcery",
+    text="Search your library for a Plains, Island, Swamp, or Mountain card, put it onto the battlefield "
+    "tapped, then shuffle.",
+)
+CROP_ROTATION = card(
+    "Crop Rotation",
+    "{G}",
+    1,
+    text="As an additional cost to cast this spell, sacrifice a land.\nSearch your library for a land card, "
+    "put that card onto the battlefield, then shuffle.",
+)
+PATH = card(
+    "Path to Exile",
+    "{W}",
+    1,
+    text="Exile target creature. Its controller may search their library for a basic land card, put that "
+    "card onto the battlefield tapped, then shuffle.",
+)
+SURVEY = card(
+    "Slimefoot's Survey",
+    "{4}{G}",
+    5,
+    "Sorcery",
+    text="Domain — Search your library for up to two land cards that each have a basic land type, put them "
+    "onto the battlefield tapped, then shuffle. Look at the top X cards of your library, where X is the "
+    "number of basic land types among lands you control.",
+)
+GLACIERS = card(
+    "Thawing Glaciers",
+    type_line="Land",
+    text="This land enters tapped.\n{1}, {T}: Search your library for a basic land card, put that card onto "
+    "the battlefield tapped, then shuffle. Return this land to its owner's hand at the beginning of the next "
+    "cleanup step.",
+)
+DEMOLITION = card(
+    "Demolition Field",
+    type_line="Land",
+    text="{T}: Add {C}.\n{2}, {T}, Sacrifice this land: Destroy target nonbasic land an opponent controls. "
+    "That land's controller may search their library for a basic land card, put it onto the battlefield, "
+    "then shuffle. You may search your library for a basic land card, put it onto the battlefield, then "
+    "shuffle.",
+)
+SAVANNAH = card("Savannah", type_line="Land — Forest Plains", text="({T}: Add {G} or {W}.)", produced="GW")
+FOREST = card("Forest", type_line="Basic Land — Forest", produced="G")
+FIVE_TYPES = frozenset({"plains", "island", "swamp", "mountain", "forest"})
+
+
+@pytest.mark.parametrize(
+    ("found", "expected"),
+    [
+        (HEATH, Fetcher(frozenset({"forest", "plains"}), basic_only=False)),
+        (VISTA, Fetcher(FIVE_TYPES, basic_only=True)),
+        (LAND_TAX, Fetcher(FIVE_TYPES, basic_only=True)),
+        (YASHARN, Fetcher(frozenset({"forest", "plains"}), basic_only=True)),
+        (FARSEEK, Fetcher(frozenset({"plains", "island", "swamp", "mountain"}), basic_only=False)),
+        (SURVEY, Fetcher(FIVE_TYPES, basic_only=False)),
+        (DEMOLITION, Fetcher(FIVE_TYPES, basic_only=True)),
+        (CROP_ROTATION, None),
+        (PATH, None),
+        (GLACIERS, None),
+        (SAVANNAH, None),
+        (PLAINS, None),
+    ],
+    ids=lambda value: value.name if isinstance(value, CardMana) else "",
+)
+def test_a_fetcher_searches_for_a_basic_land_or_a_land_type(
+    found: CardMana, expected: Fetcher | None
+) -> None:
+    # Crop Rotation finds any land and never runs dry; Path to Exile searches its target's library; Thawing
+    # Glaciers returns to hand rather than going. Slimefoot's Survey takes any land with a basic land type,
+    # typed duals too, and Demolition Field's "nonbasic" is about what it destroys, not what it finds.
+    assert fetcher(found) == expected
+
+
+def test_the_fetch_base_counts_the_fetchers_and_the_lands_they_can_find() -> None:
+    # Two Heaths and Land Tax: three fetchers. Savannah and the Plains answer a Heath; Land Tax finds the
+    # Islands too, since it takes any basic.
+    cards = [(2, HEATH), (1, LAND_TAX), (1, SAVANNAH), (3, PLAINS), (2, ISLAND), (1, WRATH)]
+    assert fetch_base(cards) == FetchBase(fetchers=3, targets=6, stranded=0)
+    assert fetch_base(cards).per_fetch == 2.0
+    # Without Land Tax the Islands are no target, and with only Islands left both Heaths find nothing.
+    assert fetch_base([(2, HEATH), (1, SAVANNAH), (2, ISLAND)]) == FetchBase(2, 1, 0)
+    assert fetch_base([(2, HEATH), (2, ISLAND)]) == FetchBase(2, 0, 2)
+    # Yasharn takes only basics, so Savannah is no target of it.
+    assert fetch_base([(1, YASHARN), (1, SAVANNAH), (1, FOREST)]) == FetchBase(1, 1, 0)
+    # No fetcher, no target, no ratio.
+    assert fetch_base([(3, PLAINS)]) == FetchBase(0, 0, 0)
+    assert fetch_base([(3, PLAINS)]).per_fetch is None
+
+
+def test_the_comparison_keeps_the_median_targets_per_fetch_of_the_lists_that_fetch() -> None:
+    deck = deck_of(("Plains", 30), ("Wrath of God", 1))
+    cards = by_name(LEADER, PLAINS, ISLAND, WRATH, HEATH, SAVANNAH)
+    lists = [
+        {"Windswept Heath": 2, "Savannah": 1, "Plains": 3},  # 4 targets for 2 fetches: 2.0
+        {"Windswept Heath": 4, "Savannah": 1},  # 0.25
+        {"Windswept Heath": 1, "Plains": 1},  # 1.0
+        {"Plains": 30},  # no fetch: left out of the median
+    ]
+    compared = analyse_mana(deck, cards, comparison=("lists", lists)).comparison
+    assert compared is not None
+    assert (compared.targets_per_fetch, compared.fetch_lists) == (1.0, 3)
+    none = analyse_mana(deck, cards, comparison=("lists", [{"Plains": 30}])).comparison
+    assert none is not None
+    assert (none.targets_per_fetch, none.fetch_lists) == (None, 0)
+
+
+def test_the_report_holds_the_fetch_base_of_the_99() -> None:
+    deck = deck_of(("Windswept Heath", 2), ("Plains", 5), ("Island", 3))
+    report = analyse_mana(deck, by_name(LEADER, HEATH, PLAINS, ISLAND))
+    assert report.fetches == FetchBase(2, 5, 0)
 
 
 def test_a_rock_that_depends_on_opponents_counts_half_a_source() -> None:

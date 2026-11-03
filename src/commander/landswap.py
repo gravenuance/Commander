@@ -2,26 +2,30 @@
 
 A cut target or an idea that is a land is allowed only while the land count ends within LAND_TOLERANCE of
 Karsten's count for the deck, closer to it than before, or inside the range of three or more lists compared
-with, and every colour keeps the sources its spells need (ADR 0030). The guard also counts the lands and
-colour sources a deck has to spare, for the land cuts of nonland ideas (ADR 0036).
+with, every colour keeps the sources its spells need (ADR 0030), and the deck's fetches keep lands to find
+(ADR 0063). The guard also counts the lands and colour sources a deck has to spare, for the land cuts of
+nonland ideas (ADR 0036, ADR 0062).
 """
 
 import logging
 import math
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 
 from commander.carddb import COLORS, CardDb, CardMana
 from commander.manabase import (
     ALTERNATIVE_COST_TAGS,
+    Comparison,
+    FetchBase,
     LandCount,
     ManaBase,
     analyse_mana,
     mana_only_land,
+    median_targets_per_fetch,
 )
 from commander.manaplan import LAND_TOLERANCE, deck_with_counts
 from commander.meta import MIN_PEER_LISTS, performing_entries
-from commander.metadata import MetaData
+from commander.metadata import MetaData, entries_since
 from commander.models import CEDH_BRACKET, Deck
 
 log = logging.getLogger(__name__)
@@ -30,6 +34,7 @@ log = logging.getLogger(__name__)
 type _Need = tuple[str, str]
 # Sources are counted to a tenth; this keeps float noise from reading as a loss.
 _SOURCE_NOISE = 0.05
+NO_FETCHES = FetchBase(0, 0, 0)
 
 
 def comparison_lists(deck: Deck, data: MetaData | None) -> tuple[str, list[dict[str, int]]]:
@@ -72,6 +77,14 @@ class ManaGuard:
     # How many sources each colour has beyond what its most demanding spell needs; the colour's lands when
     # no spell needs it.
     slack: Mapping[str, float]
+    # At bracket 5, the median of the top-cut lists' land counts less Karsten's count for each (ADR 0062);
+    # None below it or without MIN_PEER_LISTS lists.
+    karsten_gap: float | None = None
+    # The deck's fetchers and the lands they find now (ADR 0063).
+    fetches: FetchBase = NO_FETCHES
+    # The targets per fetcher a swap may not take the deck under, unless it was under already and the swap
+    # lowers nothing; None without a field to measure it on (`fetch_bar`).
+    fetch_bar: float | None = None
     # What `allows` answered, by the names as asked. Every other field is fixed for the guard's life, so an
     # answer never goes stale; `with_cards` hands the memo on unless a new card could change an answer.
     _answers: dict[tuple[str, str], bool] = field(
@@ -86,6 +99,8 @@ class ManaGuard:
         alternative_cost: Iterable[str] = (),
         land_range: tuple[float, float] | None = None,
         land_median: float | None = None,
+        karsten_gap: float | None = None,
+        fetch_bar: float | None = None,
     ) -> "ManaGuard":
         alternative = frozenset(name.casefold() for name in alternative_cost)
         report = analyse_mana(deck, cards, alternative_cost=alternative)
@@ -98,6 +113,9 @@ class ManaGuard:
             land_median,
             report.lands,
             _slack(report),
+            karsten_gap,
+            report.fetches,
+            fetch_bar,
         )
 
     def with_cards(self, cards: Mapping[str, CardMana]) -> "ManaGuard":
@@ -129,21 +147,35 @@ class ManaGuard:
         )
         # A spell with a land back counts as part of a land, so its swap moves the count too.
         moves_count = not math.isclose(after.lands.lands, self.lands.lands)
-        allowed = (not moves_count or self._count_holds(after.lands)) and self._sources_hold(after)
+        allowed = (
+            (not moves_count or self._count_holds(after.lands))
+            and self._sources_hold(after)
+            and self._fetches_hold(after.fetches)
+        )
         self._answers[add, cut] = allowed
         return allowed
 
     def spare_lands(self) -> int:
-        """How many lands the deck could lose before it falls below its floor: the greater of Karsten's count
-        less LAND_TOLERANCE and the compared lists' median land count (Karsten's alone without enough lists).
+        """How many lands the deck could lose before it falls below its floor (`land_floor`).
 
         Worked out on the deck as it stands, with Karsten's count kept; `allows` then judges the real swap.
-        The compared lists' lowest count is no floor: it is the least anyone runs, not what to aim for.
         """
+        return max(math.floor(round(self.lands.lands - self.land_floor(), 2)), 0)
+
+    def land_floor(self) -> float:
+        """The fewest lands the deck should run. At bracket 5 with enough top-cut lists, Karsten's count for
+        the deck moved by the lists' median gap from theirs (ADR 0062): his formula tells lists of one
+        commander apart, but sits several lands above what cEDH runs. Otherwise the greater of Karsten's
+        count less LAND_TOLERANCE and the compared lists' median land count (Karsten's alone without enough
+        lists). The compared lists' lowest count is no floor: it is the least anyone runs, not what to aim
+        for.
+        """
+        if self.karsten_gap is not None:
+            return self.lands.suggested + self.karsten_gap
         floor = self.lands.suggested - LAND_TOLERANCE
         if self.land_median is not None:
             floor = max(floor, self.land_median)
-        return max(math.floor(round(self.lands.lands - floor, 2)), 0)
+        return floor
 
     def spare_sources(self, land: str) -> float | None:
         """How many sources the colours the land makes could lose, the least of them; None when the land's
@@ -181,6 +213,16 @@ class ManaGuard:
                     return False
         return True
 
+    def _fetches_hold(self, after: FetchBase) -> bool:
+        """No fetcher may be left with nothing to find, and the targets per fetcher may not drop under the
+        bar, nor lower when they are under it already (ADR 0063)."""
+        if after.stranded > self.fetches.stranded:
+            return False
+        ratio, before = after.per_fetch, self.fetches.per_fetch
+        if self.fetch_bar is None or ratio is None:
+            return True
+        return _at_least(ratio, self.fetch_bar) or (before is not None and _at_least(ratio, before))
+
 
 def mana_guard(deck: Deck, db: CardDb, data: MetaData | None) -> ManaGuard:
     """The guard for a deck: its cards' mana data, and the land range of the lists it is compared with."""
@@ -202,6 +244,8 @@ def mana_guard(deck: Deck, db: CardDb, data: MetaData | None) -> ManaGuard:
     enough = compared is not None and compared.lists >= MIN_PEER_LISTS
     land_range = (compared.lands_low, compared.lands_high) if compared is not None and enough else None
     land_median = compared.lands if compared is not None and enough else None
+    cedh = deck.bracket == CEDH_BRACKET
+    karsten_gap = compared.karsten_gap if compared is not None and enough and cedh else None
     return ManaGuard(
         deck,
         cards,
@@ -211,7 +255,56 @@ def mana_guard(deck: Deck, db: CardDb, data: MetaData | None) -> ManaGuard:
         land_median,
         report.lands,
         _slack(report),
+        karsten_gap,
+        report.fetches,
+        fetch_bar(deck, db, data, compared),
     )
+
+
+def fetch_bar(deck: Deck, db: CardDb, data: MetaData | None, compared: Comparison | None) -> float | None:
+    """The targets per fetcher the deck should keep (ADR 0063): the median of the compared lists that run a
+    fetcher, given MIN_PEER_LISTS of them. Short of that, at bracket 5, the median of the lists of the top
+    commanders with as many colours as the deck's, which run alike mana bases whoever leads them. None
+    otherwise: then only a fetcher left with nothing to find is refused."""
+    if compared is not None and compared.fetch_lists >= MIN_PEER_LISTS:
+        return compared.targets_per_fetch
+    if deck.bracket != CEDH_BRACKET or data is None or not data.field.data:
+        return None
+    colours = _identity_size(db, deck.commanders)
+    if colours is None:
+        return None
+    lists: list[dict[str, int]] = []
+    for commander in data.field.data:
+        names = commander.stats.name.split(" / ")
+        if _identity_size(db, names) != colours:
+            continue
+        # The commanders are left out of their lists, as they are of the deck's (ADR 0062).
+        leaders = {name.casefold() for name in names}
+        lists += [
+            {card.name: card.count for card in entry.cards if card.name.casefold() not in leaders}
+            for entry in entries_since(commander.entries, data.since)
+            if entry.cards
+        ]
+    cards = db.card_mana({name for listed in lists for name in listed})
+    resolved = [
+        [(quantity, info) for name, quantity in listed.items() if (info := cards.get(name.casefold()))]
+        for listed in lists
+    ]
+    bar, counted = median_targets_per_fetch(resolved)
+    return bar if counted >= MIN_PEER_LISTS else None
+
+
+def _identity_size(db: CardDb, commanders: Sequence[str]) -> int | None:
+    """How many colours the commanders' identity holds; None without commanders or when the card data does
+    not know one of them, since a colourless count would then be a guess."""
+    found = db.cards_named(commanders)
+    if not commanders or len(found) < len({name.casefold() for name in commanders}):
+        return None
+    return len({colour for info in found.values() for colour in info.color_identity})
+
+
+def _at_least(value: float, bar: float) -> bool:
+    return value > bar or math.isclose(value, bar)
 
 
 def _lands_over(lands: LandCount) -> float:

@@ -1,6 +1,7 @@
 """The deck cards a board card could replace: picked by hand, else the best scoring cuts (ADRs 0029, 0036)."""
 
 import logging
+import math
 from collections import Counter
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -52,6 +53,8 @@ SURPLUS_ROLES = frozenset({Role.RAMP, Role.DRAW, Role.REMOVAL, Role.TUTOR})
 _SHARE_NOISE = 1e-9
 # Scores equal up to this many digits tie, and go on to the tie-break.
 _SCORE_DIGITS = 9
+# The group of the spare-land candidates, which fill one place among an idea's targets (ADR 0063).
+_SPARE_LAND = "spare land"
 _PICKERS = frozenset({Actor.YOU, Actor.CLAUDE})
 
 
@@ -307,13 +310,12 @@ def role_targets(
     for c in sorted(candidates, key=lambda c: (-round(c.score, _SCORE_DIGITS), c.order)):
         if len(taken) == MAX_TARGETS:
             break
-        if c.group in groups:
+        if c.group in groups or not _sound(info, c.cut, rules):
             continue
-        # The first of a group is the only one considered, offered or not.
+        # A group fills one place: the first of it the guard allows, the rest give way.
         if c.group is not None:
             groups.add(c.group)
-        if _sound(info, c.cut, rules):
-            taken.append(Target(c.cut.card.name, c.reason, TargetSource.ROLE))
+        taken.append(Target(c.cut.card.name, c.reason, TargetSource.ROLE))
     return tuple(taken)
 
 
@@ -324,10 +326,11 @@ class _Candidate:
     cut: ResolvedCard
     score: float
     reason: str
-    # Breaks ties: the bigger surplus first, then (for basic lands) the colour with more sources to spare,
-    # then the lower EDHREC popularity (the higher rank number first, unranked last), then the name.
+    # Breaks ties: the bigger surplus first, then (for spare lands) a basic before any other land and the
+    # colour with more sources to spare, then the lower EDHREC popularity (the higher rank number first,
+    # unranked last), then the name.
     order: tuple[float, float, bool, int, str]
-    # At most one candidate of a group is offered (one basic land).
+    # At most one candidate of a group is offered (one spare land).
     group: str | None = None
 
 
@@ -506,12 +509,13 @@ def _land_candidates(info: CardInfo, main: Sequence[ResolvedCard], rules: CutRul
     """Lands a nonland idea may replace while the mana base has lands to spare.
 
     None without the shares, the peers' counts or the mana data, or while the guard counts no spare land
-    (`ManaGuard.spare_lands`). Each scores SURPLUS_BONUS per spare land, up to MAX_SURPLUS_CARDS. The basic
-    with the most spare sources of its colour is one candidate, however played basics are (nearly every list
-    runs them); a
-    nonbasic land is another only when it does nothing but make mana (`ManaGuard.mana_only`), carries no
-    role, serves no theme or leaning (a utility or theme land is never spare) and is clearly less played than
-    the idea (`_clearly_less_played`), and adds its own share gap.
+    (`ManaGuard.spare_lands`). The candidates fill one place among the targets: the first the guard allows
+    (ADR 0063). Each scores SURPLUS_BONUS per spare land, up to MAX_SURPLUS_CARDS, plus its share gap to the
+    idea. A basic counts as played by no list (`_played`), so it comes first, the colour with most sources
+    to spare before the others: the cheapest land to lose, unless the guard keeps it for the deck's fetches.
+    A nonbasic land is a candidate only when it does nothing but make mana (`ManaGuard.mana_only`), carries
+    no role, serves no theme or leaning (a utility or theme land is never spare) and is clearly less played
+    than the idea (`_clearly_less_played`).
     """
     mana, shares = rules.mana, rules.shares
     if info.is_land or mana is None or not shares or rules.peers is None:
@@ -526,11 +530,12 @@ def _land_candidates(info: CardInfo, main: Sequence[ResolvedCard], rules: CutRul
         if not _cuttable(r, info, rules.protected) or cut is None or not cut.is_land:
             continue
         reason = _reason(r, (), frozenset(), rules, note)
+        score = _surplus_bonus(spare) + _gap(info.name, r, shares)
         if _is_basic(r):
             sources = mana.spare_sources(r.card.name)
             if sources is not None:
                 order = (-float(spare), -sources, True, 0, r.card.name.casefold())
-                found.append(_Candidate(r, _surplus_bonus(spare), reason, order, group="basic"))
+                found.append(_Candidate(r, score, reason, order, group=_SPARE_LAND))
         elif (
             mana.mana_only(r.card.name)
             and not cut.roles
@@ -538,8 +543,10 @@ def _land_candidates(info: CardInfo, main: Sequence[ResolvedCard], rules: CutRul
             and not _themes_of(r, rules)
             and _clearly_less_played(info.name, r, shares)
         ):
-            score = _surplus_bonus(spare) + _gap(info.name, r, shares)
-            found.append(_Candidate(r, score, reason, _order(r, float(spare))))
+            # Infinite: a nonbasic that ties with a basic gives way to it.
+            _, _, unranked, rank, name = _order(r, float(spare))
+            order = (-float(spare), math.inf, unranked, rank, name)
+            found.append(_Candidate(r, score, reason, order, group=_SPARE_LAND))
     return found
 
 

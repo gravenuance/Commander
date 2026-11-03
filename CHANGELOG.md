@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- A bracket 5 deck's spare lands, which a nonland idea may take the place of, now count down to Karsten's
+  count for the deck moved by the median gap between the commander's top-cut lists and Karsten's count for
+  each of them (ADR 0062). Top-cut lists run well under his count, so every cEDH deck had read as having
+  none to spare. Other brackets keep their floor. The lists compared now leave their commanders out,
+  as the deck does.
+- An idea's spare-land cut is one place among its targets, and a basic takes it first: a basic counts as
+  played by no list, so it adds the idea's whole share to its score, where it once scored the spare-land
+  bonus alone and fell behind a less-played nonbasic such as Exotic Orchard. When the guard refuses a land,
+  the next one takes the place (ADR 0063).
+- A land swap must keep the deck's fetches finding something: no fetch land, nor a card like Land Tax,
+  Yasharn or Farseek, is left without a land of its types, and the lands they find per fetcher stay at the
+  median of the compared lists that fetch, or, at bracket 5 short of those, of the top commanders' lists
+  with as many colours. A deck under that already may swap but not sink further. A deck without a fetcher
+  gives its basics first (ADR 0063).
+
 ## 1.5.0 - 2026-11-01
 
 ### Added

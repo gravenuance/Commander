@@ -5,7 +5,9 @@
 targets) and [ADR 0030](0030-land-swaps-guarded-by-the-mana-base.md) (a nonland idea may replace a land
 under the guard). [ADR 0016](0016-replacements-like-for-like.md)'s protection of leanings stands.
 Amended in part by [ADR 0041](0041-a-cut-clearly-less-played-than-the-idea.md) (a computed cut must be clearly
-less played than the idea).
+less played than the idea), [ADR 0062](0062-cedh-land-floor-from-the-top-cut-gap.md) (the spare-land floor
+at bracket 5) and [ADR 0063](0063-the-spare-land-by-the-fetch-ratio.md) (how a spare land scores, and one
+place for the spare lands).
 
 ## Context
 

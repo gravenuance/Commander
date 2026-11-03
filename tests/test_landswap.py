@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping
 from dataclasses import replace
+from datetime import date
 
 import pytest
 
@@ -10,9 +11,12 @@ from commander.board import ReplaceOption
 from commander.carddb import CardDb, CardMana, ResolvedCard, Role
 from commander.landswap import ManaGuard, comparison_lists, mana_guard
 from commander.manabase import ManaBase
+from commander.manaplan import deck_with_counts
+from commander.metadata import MetaCommander
 from commander.models import Deck
 from commander.peercounts import PeerCounts
 from commander.targets import MAX_TARGETS, CutRules, TargetSource, role_targets, targets_for, with_ideas
+from commander.tournaments import CommanderStats, DecklistCard, Entry, Tournament
 from test_manabase import ISLAND, LEADER, PLAINS, by_name, card, deck_of
 from test_meta import TOP_CUT_LISTS, db, deck, meta_data, peer
 from test_targets import board_card, info, names, table
@@ -37,8 +41,14 @@ VESUVA_CARD = card(
     text="You may have Vesuva enter tapped as a copy of any land on the battlefield.",
 )
 MAZE = card("Maze of Ith", type_line="Land", text="{T}: Untap target attacking creature.")
+STRAND = card(
+    "Flooded Strand",
+    type_line="Land",
+    text="{T}, Pay 1 life, Sacrifice this land: Search your library for a Plains or Island card, put it onto "
+    "the battlefield, then shuffle.",
+)
 CARDS = by_name(
-    LEADER, PLAINS, ISLAND, FILLER, COUNTERSPELL, WASTES, GUILDGATE, GADGET, TEMPLE, VESUVA_CARD, MAZE
+    LEADER, PLAINS, ISLAND, FILLER, COUNTERSPELL, WASTES, GUILDGATE, GADGET, TEMPLE, VESUVA_CARD, MAZE, STRAND
 )
 
 
@@ -46,8 +56,10 @@ def guard(
     plains: int,
     islands: int,
     spells: int,
+    *,
     land_range: tuple[float, float] | None = None,
     land_median: float | None = None,
+    karsten_gap: float | None = None,
 ) -> ManaGuard:
     """A white and blue deck of one gold commander, lands and two-mana filler.
 
@@ -58,6 +70,7 @@ def guard(
         CARDS,
         land_range=land_range,
         land_median=land_median,
+        karsten_gap=karsten_gap,
     )
 
 
@@ -276,6 +289,49 @@ def test_the_peer_ranges_low_end_is_no_floor_for_spare_lands() -> None:
     assert guard(19, 19, 61, land_range=(34, 41)).spare_lands() == 1
 
 
+def test_a_cedh_deck_spares_lands_down_to_karstens_count_moved_by_the_top_cut_gap() -> None:
+    # 39 lands, Karsten's 37.7. A gap of -2 puts the floor at 35.7: three to spare, where the median of 38
+    # alone would leave one. No tolerance comes off the gap's floor: -0.7 puts it at 37.0, two to spare.
+    assert guard(20, 19, 60, land_median=38.0, karsten_gap=-2.0).spare_lands() == 3
+    assert guard(20, 19, 60, karsten_gap=-0.7).spare_lands() == 2
+    # Lists running more lands than Karsten raise the floor above his count: 38.7 leaves none.
+    assert guard(20, 19, 60, karsten_gap=1.0).spare_lands() == 0
+
+
+def top_cut(standing: int, *cards: tuple[str, int]) -> Entry:
+    return Entry(
+        standing=standing,
+        tournament=Tournament(f"t{standing}-40", date(2026, 9, 1), 40, 8),
+        cards=tuple(DecklistCard(name, count) for name, count in cards),
+    )
+
+
+def test_the_top_cut_gap_is_the_median_of_each_lists_lands_less_its_karsten_count(
+    deck: Deck, db: CardDb
+) -> None:
+    # Battered Golem alone is the 99's spells: Karsten's 31.42 + 3.13 x 3 = 40.8. Lists of 30, 28 and 33
+    # lands are 10.8, 12.8 and 7.8 under. Counting Magda (mana value 2) would make the first two 9.2 and 11.2.
+    lists = [
+        top_cut(1, ("Mountain", 30), ("Battered Golem", 1), ("Magda, Brazen Outlaw", 1)),
+        top_cut(2, ("Mountain", 28), ("Battered Golem", 1), ("Magda, Brazen Outlaw", 1)),
+        top_cut(3, ("Mountain", 33), ("Battered Golem", 1)),
+    ]
+    assert mana_guard(deck, db, meta_data(lists)).karsten_gap == -10.8
+    # Two lists are too few to go by.
+    assert mana_guard(deck, db, meta_data(lists[:2])).karsten_gap is None
+    # 34 Mountains and the Golem: Karsten's 40.8 less 10.8 is a floor of 30, four to spare. Karsten's count
+    # less the tolerance, 39.8, would leave none.
+    heavy = deck_with_counts(deck, {"Mountain": 34, "Battered Golem": 1})
+    assert mana_guard(heavy, db, meta_data(lists)).spare_lands() == 4
+
+
+def test_below_bracket_5_the_land_floor_keeps_karstens_count(deck: Deck, db: CardDb) -> None:
+    runs = [replace(peer(n, ["Battered Golem", "Mountain"]), multiples=(("Mountain", m),)) for n, m in LANDS]
+    guarded = mana_guard(replace(deck, bracket=4), db, meta_data([], runs))
+    assert guarded.land_median == 37.0
+    assert guarded.karsten_gap is None
+
+
 def test_the_sources_a_colour_could_lose_are_what_its_most_demanding_spell_leaves() -> None:
     # 39 lands scale the commander's 18 sources to 17.1 and add one for its two colours: 18.1.
     base = guard(20, 19, 60)
@@ -298,23 +354,23 @@ def land_rules(mana: ManaGuard, played: dict[str, float], idea: str = "gadget") 
 
 
 def test_a_spare_land_may_go_for_a_spell_and_only_the_basic_with_most_sources_to_spare_is_offered() -> None:
-    # 39 lands can lose two. White has 1.9 sources to spare, blue 0.9: of the two basics, the Plains.
+    # 39 lands can lose two. White has 1.9 sources to spare, blue 0.9: of the two basics, the Plains. A basic
+    # counts as played by no list: 0.06 + 0.9 ahead of Filler's 0.10 + 0.6.
     found = role_targets(GADGET_IDEA, deck_cards(), land_rules(guard(20, 19, 60), {"filler": 0.3}))
-    assert names(found) == ["Filler", "Plains"]
-    assert found[1].reason.startswith("spare land: the mana base holds with 2 fewer lands; in 0% of")
+    assert names(found) == ["Plains", "Filler"]
+    assert found[0].reason.startswith("spare land: the mana base holds with 2 fewer lands; in 0% of")
     flipped = role_targets(GADGET_IDEA, deck_cards(), land_rules(guard(19, 20, 60), {"filler": 0.3}))
-    assert names(flipped) == ["Filler", "Island"]
+    assert names(flipped) == ["Island", "Filler"]
 
 
 def test_a_land_target_scores_per_spare_land_against_the_other_candidates() -> None:
-    # A barely played idea needs a cut at most half as played, which keeps Filler's score low enough for a
-    # basic to pass it: Filler 0.10 + 0.1 - 0.04 = 0.16. Plains with two spare lands: 0.06; with six it would
-    # be 0.18, but the bonus counts three cards at most: 0.09, still behind Filler.
-    played = {"gadget": 0.1, "filler": 0.04}
+    # A barely played idea: Filler 0.10 + 0.1 - 0.03 = 0.17. Plains with two spare lands: 0.06 + 0.1 = 0.16,
+    # behind it. With six, the bonus counts three cards at most: 0.09 + 0.1 = 0.19, ahead.
+    played = {"gadget": 0.1, "filler": 0.03}
     two = land_rules(guard(20, 19, 60), played)
     assert names(role_targets(GADGET_IDEA, deck_cards(), two)) == ["Filler", "Plains"]
     six = land_rules(guard(22, 21, 56), played)
-    assert names(role_targets(GADGET_IDEA, deck_cards(), six)) == ["Filler", "Plains"]
+    assert names(role_targets(GADGET_IDEA, deck_cards(), six)) == ["Plains", "Filler"]
 
 
 def test_a_single_spare_land_reads_in_the_singular_and_a_card_as_played_as_the_idea_is_no_target() -> None:
@@ -363,18 +419,25 @@ def test_a_mana_only_land_idea_never_replaces_a_utility_land_but_a_utility_land_
     assert "Vesuva" in names(role_targets(maze, deck, land_rules(mana, PLAYED, "maze of ith")))
 
 
-def test_a_nonbasic_land_less_played_than_the_idea_adds_its_gap_to_the_score() -> None:
+def test_a_basic_goes_before_a_nonbasic_land_and_one_spare_land_is_offered() -> None:
     cards = [*deck_cards(), NONBASIC]
     mana = ManaGuard.of(
         deck_of(("Plains", 20), ("Island", 18), ("Azorius Guildgate", 1), ("Filler", 60)), CARDS
     )
-    # 39 lands can lose two. Guildgate at 20%: 0.06 + 0.7, ahead of Filler's 0.10 + 0.6 and the Plains' 0.06.
-    found = role_targets(GADGET_IDEA, cards, land_rules(mana, {"filler": 0.3, "azorius guildgate": 0.2}))
-    assert names(found) == ["Azorius Guildgate", "Filler", "Plains"]
+    # 39 lands can lose two. The Plains score 0.06 + 0.9, the Guildgate at 20% 0.06 + 0.7, Filler 0.10 + 0.6:
+    # the spare lands fill one place, and the basic takes it.
+    rules = land_rules(mana, {"filler": 0.3, "azorius guildgate": 0.2})
+    assert names(role_targets(GADGET_IDEA, cards, rules)) == ["Plains", "Filler"]
+    # With the basics kept, the Guildgate takes the place, ahead of Filler.
+    kept = replace(rules, protected={"plains", "island"})
+    found = role_targets(GADGET_IDEA, cards, kept)
+    assert names(found) == ["Azorius Guildgate", "Filler"]
     assert found[0].reason.startswith("spare land: the mana base holds with 2 fewer lands;")
-    # As played as the idea it is not offered, though a basic still is.
-    level = land_rules(mana, {"filler": 0.3, "azorius guildgate": 0.9})
-    assert names(role_targets(GADGET_IDEA, cards, level)) == ["Filler", "Plains"]
+    # As played as the idea it is no candidate at all.
+    level = replace(
+        land_rules(mana, {"filler": 0.3, "azorius guildgate": 0.9}), protected={"plains", "island"}
+    )
+    assert names(role_targets(GADGET_IDEA, cards, level)) == ["Filler"]
 
 
 @pytest.mark.parametrize(
@@ -394,11 +457,13 @@ def test_a_nonbasic_land_with_a_role_or_a_theme_is_never_a_spare_land(
     mana = ManaGuard.of(
         deck_of(("Plains", 20), ("Island", 18), ("Azorius Guildgate", 1), ("Filler", 60)), CARDS
     )
+    # The basics are kept, so only the Guildgate could take the spare land's place.
     rules = replace(
         land_rules(mana, {"filler": 0.3, "azorius guildgate": 0.2}),
         themes={"azorius guildgate": themes},
+        protected={"plains", "island"},
     )
-    assert names(role_targets(GADGET_IDEA, [*deck_cards(), utility], rules)) == ["Filler", "Plains"]
+    assert names(role_targets(GADGET_IDEA, [*deck_cards(), utility], rules)) == ["Filler"]
 
 
 VESUVA = "You may have this land enter tapped as a copy of any land on the battlefield."
@@ -425,7 +490,8 @@ def test_only_a_land_that_does_nothing_but_make_mana_is_a_spare_land(
         deck_of(("Plains", 20), ("Island", 18), (name, 1), ("Filler", 60)), {**CARDS, name.casefold(): land}
     )
     cut = resolved(name, rank=2000, categories=("Land",), type_line="Land")
-    rules = land_rules(mana, {"filler": 0.3, name.casefold(): 0.2})
+    # The basics are kept, so the land is the only spare-land candidate.
+    rules = replace(land_rules(mana, {"filler": 0.3, name.casefold(): 0.2}), protected={"plains", "island"})
     assert (name in names(role_targets(GADGET_IDEA, [*deck_cards(), cut], rules))) is offered
 
 
@@ -452,7 +518,7 @@ def test_a_land_idea_never_gets_the_spare_land_cuts_of_a_spell() -> None:
 def test_land_targets_need_the_shares_the_peers_and_the_mana_data() -> None:
     mana = guard(20, 19, 60)
     full = land_rules(mana, {"filler": 0.3})
-    assert names(role_targets(GADGET_IDEA, deck_cards(), full)) == ["Filler", "Plains"]
+    assert names(role_targets(GADGET_IDEA, deck_cards(), full)) == ["Plains", "Filler"]
     for lacking in (replace(full, shares=None), replace(full, peers=None), replace(full, mana=None)):
         assert names(role_targets(GADGET_IDEA, deck_cards(), lacking)) == ["Filler"]
     # A guard that knows none of the cards refuses every swap of a land.
@@ -463,7 +529,7 @@ def test_land_targets_need_the_shares_the_peers_and_the_mana_data() -> None:
 
 def test_a_kept_land_is_never_a_spare_land_cut() -> None:
     rules = replace(land_rules(guard(20, 19, 60), {"filler": 0.3}), protected={"plains"})
-    assert names(role_targets(GADGET_IDEA, deck_cards(), rules)) == ["Filler", "Island"]
+    assert names(role_targets(GADGET_IDEA, deck_cards(), rules)) == ["Island", "Filler"]
 
 
 def test_at_most_four_targets_are_offered_by_score_with_the_lands_among_them() -> None:
@@ -479,19 +545,108 @@ def test_at_most_four_targets_are_offered_by_score_with_the_lands_among_them() -
 def test_a_basic_land_needs_no_gap_to_the_idea_so_a_well_played_basic_is_still_offered() -> None:
     # Basics are in nearly every list; the Plains at 95% is more played than the idea at 90%.
     rules = land_rules(guard(20, 19, 60), {"filler": 0.3, "plains": 0.95})
-    assert names(role_targets(GADGET_IDEA, deck_cards(), rules)) == ["Filler", "Plains"]
+    assert names(role_targets(GADGET_IDEA, deck_cards(), rules)) == ["Plains", "Filler"]
 
 
-def test_only_the_basic_of_the_colour_with_most_to_spare_is_considered_so_a_refusal_offers_no_other(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_refused_basic_gives_its_place_to_the_next_spare_land(monkeypatch: pytest.MonkeyPatch) -> None:
     def refuse_plains(self: ManaGuard, add: str, cut: str) -> bool:  # noqa: ARG001 — replaces a method
         return cut != "Plains"
 
     monkeypatch.setattr(ManaGuard, "allows", refuse_plains)
-    # White has the most to spare (1.9 against 0.9), the guard refuses its Plains, and the Island stays out.
+    # White has the most to spare (1.9 against 0.9), the guard refuses its Plains, and the Island goes.
     rules = land_rules(guard(20, 19, 60), {"filler": 0.3})
-    assert names(role_targets(GADGET_IDEA, deck_cards(), rules)) == ["Filler"]
+    assert names(role_targets(GADGET_IDEA, deck_cards(), rules)) == ["Island", "Filler"]
+
+
+def fetching(
+    guildgates: int = 0, *, plains: int = 0, islands: int = 0, bar: float | None = None
+) -> ManaGuard:
+    """A deck of Plains, Islands, Azorius Guildgates and one Flooded Strand, with 60 fillers."""
+    counts = [("Plains", plains), ("Island", islands), ("Azorius Guildgate", guildgates)]
+    held = [(name, n) for name, n in counts if n > 0]
+    return ManaGuard.of(deck_of(*held, ("Flooded Strand", 1), ("Filler", 60)), CARDS, fetch_bar=bar)
+
+
+def test_a_swap_may_not_leave_a_fetch_with_nothing_to_find() -> None:
+    # The Strand finds the one Plains. Trading it for a Guildgate leaves the Strand nothing; an Island does.
+    mana = fetching(37, plains=1)
+    assert mana.fetches.stranded == 0
+    assert not mana.allows("Azorius Guildgate", "Plains")
+    assert mana.allows("Island", "Plains")
+
+
+def test_a_swap_may_not_take_the_targets_per_fetch_under_the_bar() -> None:
+    # 20 Plains and 18 Islands for one Strand: 38 targets per fetch. Cutting a Plains for a spell leaves 37.
+    assert not fetching(plains=20, islands=18, bar=38.0).allows("Gadget", "Plains")
+    assert fetching(plains=20, islands=18, bar=37.0).allows("Gadget", "Plains")
+    # Without a bar, only a stranded fetch is refused.
+    assert fetching(plains=20, islands=18).allows("Gadget", "Plains")
+
+
+def test_a_deck_under_the_bar_may_swap_a_target_for_a_target_but_lose_none() -> None:
+    under = fetching(plains=20, islands=18, bar=40.0)
+    assert under.allows("Island", "Plains")
+    assert not under.allows("Azorius Guildgate", "Plains")
+
+
+def test_a_fetching_deck_keeps_its_basics_and_a_land_no_fetch_finds_takes_the_spare_place() -> None:
+    cards = [*deck_cards(), NONBASIC]
+    # 40 lands can lose three. The Strand finds 38 basics; the bar of 38 keeps every one of them, so the
+    # Guildgate, which no fetch finds, takes the place: 0.09 + 0.7 ahead of Filler's 0.10 + 0.6.
+    rules = land_rules(
+        fetching(1, plains=20, islands=18, bar=38.0), {"filler": 0.3, "azorius guildgate": 0.2}
+    )
+    assert names(role_targets(GADGET_IDEA, cards, rules)) == ["Azorius Guildgate", "Filler"]
+    # With room under the bar the basic goes first: 0.09 + 0.9.
+    room = land_rules(fetching(1, plains=20, islands=18, bar=30.0), {"filler": 0.3, "azorius guildgate": 0.2})
+    assert names(role_targets(GADGET_IDEA, cards, room)) == ["Plains", "Filler"]
+
+
+def fetch_list(standing: int, mountains: int, fetches: int) -> Entry:
+    return top_cut(standing, ("Mountain", mountains), ("Fetch Red Green Test", fetches))
+
+
+def field_of(name: str, *entries: Entry) -> MetaCommander:
+    return MetaCommander(CommanderStats(name, 1000, 300, 0.3, 0.05), entries)
+
+
+def test_the_fetch_bar_is_the_median_of_the_commanders_lists_that_fetch(deck: Deck, db: CardDb) -> None:
+    # 6 Mountains for 2 fetches is 3.0, 4 for 4 is 1.0, 2 for 1 is 2.0; a list without a fetch is left out.
+    lists = [fetch_list(1, 6, 2), fetch_list(2, 4, 4), fetch_list(3, 2, 1), top_cut(4, ("Mountain", 30))]
+    assert mana_guard(deck, db, meta_data(lists)).fetch_bar == 2.0
+
+
+def test_short_of_lists_a_cedh_deck_takes_the_fetch_bar_from_top_commanders_of_its_colour_count(
+    deck: Deck, db: CardDb
+) -> None:
+    own = [fetch_list(1, 6, 2), fetch_list(2, 4, 4)]
+    # Magda is red: 3 Mountains for 3 fetches is 1.0, 5 for 1 is 5.0, 1 for 2 is 0.5. A commander the card
+    # data does not know has no colour count to match, so its lists are left out.
+    mono = field_of("Magda, Brazen Outlaw", fetch_list(1, 3, 3), fetch_list(2, 5, 1), fetch_list(3, 1, 2))
+    other = field_of("Unknown Commander", *(fetch_list(n, 20, 1) for n in range(1, 4)))
+    assert mana_guard(deck, db, meta_data(own, field=[mono, other])).fetch_bar == 1.0
+    # Two such lists are too few to go by, and below bracket 5 the field says nothing.
+    two = field_of("Magda, Brazen Outlaw", fetch_list(1, 3, 3), fetch_list(2, 5, 1))
+    assert mana_guard(deck, db, meta_data(own, field=[two])).fetch_bar is None
+    assert mana_guard(replace(deck, bracket=4), db, meta_data(own, field=[mono])).fetch_bar is None
+
+
+def test_the_field_lists_leave_their_commanders_out_and_an_unknown_commander_matches_none(db: CardDb) -> None:
+    # A colourless commander that is itself a fetcher. Left out of its lists, 2 Mountains for 1 fetch, 4 for
+    # 2 and 3 for 1 make 2.0, 2.0 and 3.0; counted, it would make 1.0, 1.33 and 1.5.
+    leader = "Fetch Basic Test"
+    lists = [
+        top_cut(n, (leader, 1), ("Mountain", m), ("Fetch Red Green Test", f))
+        for n, (m, f) in enumerate([(2, 1), (4, 2), (3, 1)], 1)
+    ]
+    colourless = replace(deck_of(("Mountain", 30), commander=leader), bracket=5)
+    assert mana_guard(colourless, db, meta_data([], field=[field_of(leader, *lists)])).fetch_bar == 2.0
+    # A deck whose commander the card data does not know takes no bar from the field.
+    unknown = replace(deck_of(("Mountain", 30), commander="Unknown Commander"), bracket=5)
+    assert (
+        mana_guard(unknown, db, meta_data([], field=[field_of("Unknown Commander", *lists)])).fetch_bar
+        is None
+    )
 
 
 def test_a_land_count_with_a_part_land_counts_the_whole_lands_above_the_floor() -> None:

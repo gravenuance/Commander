@@ -649,13 +649,19 @@ base against Frank Karsten's published numbers
   card of another theme goes the same way when the deck runs 2 over the peers' median of every theme it
   serves and the idea is 0.20 more played; a leaning, or a card that would empty one of those four roles, never goes
   as a theme surplus. A nonland idea may replace a land the mana base can spare, +0.03 per spare land
-  (lands above the greater of Karsten's count less one and the peers' median land count): the basic land of
-  the colour with most sources to spare, and nonbasic lands that only make one mana at a time (no fetch, copy, cycling or other ability, and none that can make more than one mana, like Ancient Tomb or Gaea's Cradle), fill no role, serve no theme and are less played
+  (lands above the greater of Karsten's count less one and the peers' median land count; at bracket 5,
+  above Karsten's count moved by how far the top-cut lists run from theirs, ADR 0062), plus the idea's
+  share gap to it. The spare lands fill one place among the targets: a basic first (it counts as played by
+  no list), the colour with most sources to spare, then nonbasic lands that only make one mana at a time (no fetch, copy, cycling or other ability, and none that can make more than one mana, like Ancient Tomb or Gaea's Cradle), fill no role, serve no theme and are less played
   than the idea. Surplus cuts need at least three recent decks of the commander read, and the reason says
   which kind allows each cut. A swap that takes a land out or puts one in is offered only if the land count
   ends within one of Karsten's, closer to it than before, or inside the range of three or more other lists,
-  and every colour keeps its sources
-  ([ADR 0030](docs/adr/0030-land-swaps-guarded-by-the-mana-base.md)).
+  every colour keeps its sources
+  ([ADR 0030](docs/adr/0030-land-swaps-guarded-by-the-mana-base.md)), and the deck's fetches keep what
+  they find: no fetcher (a fetch land, or a card like Land Tax or Farseek that searches for a basic or a
+  land type) is left with nothing, and the lands they find per fetcher stay at the median of the compared
+  lists that fetch, or at bracket 5 of the top commanders' lists with as many colours, unless the swap
+  lowers nothing ([ADR 0063](docs/adr/0063-the-spare-land-by-the-fetch-ratio.md)).
 - **Labels**: the flag in a grid card's top-left corner sets its Archidekt label. Every deck offers your
   account's labels in their colours, read on each signed-in `sync` and before each label change
   ([ADR 0012](docs/adr/0012-card-labels-from-the-archidekt-account.md)). A change is written to

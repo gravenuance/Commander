@@ -71,6 +71,10 @@ _SOMETIMES_TAPPED = ("unless", "if you control", "if you don't", "untap that lan
 _TYPED_CONDITION = ("unless you control a", "you may reveal a")
 _BOND = "unless you have two or more opponents"
 _TYPE_WORD = re.compile(r"\b(plains|island|swamp|mountain|forest)\b")
+# A search for basic lands only: "a basic land card", "a basic Forest card"; not "a basic land type".
+_BASIC_SEARCH = re.compile(r"\bbasic (?:land cards?|plains|island|swamp|mountain|forest)\b")
+# A search for any land with a basic land type (Slimefoot's Survey): typed duals answer it as well.
+_ANY_TYPED_LAND = "have a basic land type"
 # What a land that does nothing but make mana may say, a line at a time (see `mana_only_land`). A mana
 # ability: a tap cost and perhaps others (a life payment, a filter land's mana), then "Add", and a painland's
 # damage to its controller.
@@ -133,9 +137,14 @@ class Comparison:
     lands: float
     lands_low: float
     lands_high: float
+    # The median of each list's land count less Karsten's count for that list (ADR 0062).
+    karsten_gap: float
     # Nonland cards that make mana: rocks, dorks, rituals, fast mana.
     mana_cards: float
     deck_mana_cards: int
+    # The median targets per fetcher of the lists that run a fetcher, and how many do (ADR 0063).
+    targets_per_fetch: float | None = None
+    fetch_lists: int = 0
 
 
 @dataclass(slots=True, frozen=True)
@@ -181,6 +190,86 @@ class ManaBase:
     tapped_lands: float
     # Cards the colour check leaves out: cast for an alternative cost, or paid with hybrid or Phyrexian mana.
     skipped: tuple[str, ...]
+    fetches: "FetchBase"
+
+
+@dataclass(slots=True, frozen=True)
+class Fetcher:
+    """A card that searches the library for a land by its basic land types, or for a basic land (ADR 0063)."""
+
+    types: frozenset[str]
+    # Finds only basic lands: Prismatic Vista, Land Tax, Yasharn.
+    basic_only: bool
+
+    def reaches(self, types: frozenset[str], *, basic: bool) -> bool:
+        return bool(self.types & types) and (basic or not self.basic_only)
+
+
+@dataclass(slots=True, frozen=True)
+class FetchBase:
+    """The 99's fetchers and the lands they can find, copies counted (ADR 0063)."""
+
+    fetchers: int
+    # Lands with a basic land type that at least one fetcher finds.
+    targets: int
+    # Fetchers that no land of the 99 answers.
+    stranded: int
+
+    @property
+    def per_fetch(self) -> float | None:
+        return self.targets / self.fetchers if self.fetchers else None
+
+
+def fetcher(info: CardMana) -> Fetcher | None:
+    """The card as a fetcher: a land that sacrifices itself to search, or any other card that searches your
+    library for a basic land or a land type. A search for any land (Crop Rotation) never runs dry, so it is
+    none; nor is a search of another player's library (Path to Exile)."""
+    text = _rules_text(info)
+    line = next((line for line in text.split("\n") if "search your library for" in line), None)
+    if line is None or (info_is_land(info) and "sacrifice" not in line):
+        return None
+    # What the search asks for, up to the end of its sentence: "nonbasic" or "basic" elsewhere on the line
+    # says nothing about it.
+    searched = line.partition("search your library for")[2].partition(".")[0]
+    if _ANY_TYPED_LAND in searched:
+        return Fetcher(frozenset(BASIC_TYPES), basic_only=False)
+    types = frozenset(_TYPE_WORD.findall(searched))
+    basic = _BASIC_SEARCH.search(searched) is not None
+    if not types and not basic:
+        return None
+    return Fetcher(types or frozenset(BASIC_TYPES), basic_only=basic)
+
+
+def fetch_base(cards: Sequence[tuple[int, CardMana]]) -> FetchBase:
+    """The fetchers among cards and the lands they can find, each by its front face's basic land types."""
+    fetchers = [(quantity, found) for quantity, info in cards if (found := fetcher(info)) is not None]
+    lands = [
+        (quantity, types, front_type(info.type_line).startswith("Basic "))
+        for quantity, info in cards
+        if info_is_land(info) and (types := _land_types(info))
+    ]
+    targets = sum(
+        quantity
+        for quantity, types, basic in lands
+        if any(found.reaches(types, basic=basic) for _, found in fetchers)
+    )
+    stranded = sum(
+        quantity
+        for quantity, found in fetchers
+        if not any(found.reaches(types, basic=basic) for _, types, basic in lands)
+    )
+    return FetchBase(sum(quantity for quantity, _ in fetchers), targets, stranded)
+
+
+def _land_types(info: CardMana) -> frozenset[str]:
+    """The basic land types on the card's front face; in hand or in the library it has only that face."""
+    return frozenset(_TYPE_WORD.findall(front_type(info.type_line).casefold().partition("—")[2]))
+
+
+def median_targets_per_fetch(lists: Iterable[Sequence[tuple[int, CardMana]]]) -> tuple[float | None, int]:
+    """The median targets per fetcher of the lists that run a fetcher, and how many do."""
+    ratios = [ratio for listed in lists if (ratio := fetch_base(listed).per_fetch) is not None]
+    return (median(ratios) if ratios else None), len(ratios)
 
 
 COLOUR_NAMES = {"W": "White", "U": "Blue", "B": "Black", "R": "Red", "G": "Green"}
@@ -229,11 +318,12 @@ def analyse_mana(
     tapped = sum(source.tapped * source.quantity for source in sources if source.land)
     return ManaBase(
         lands,
-        _compare(comparison, cards, the_99),
+        _compare(comparison, cards, the_99, frozenset(name.casefold() for name in deck.commanders)),
         found,
         turn_one,
         round(tapped, 2),
         skipped,
+        fetch_base(the_99),
     )
 
 
@@ -544,26 +634,40 @@ def _compare(
     comparison: tuple[str, Sequence[Mapping[str, int]]] | None,
     cards: Mapping[str, CardMana],
     the_99: Sequence[tuple[int, CardMana]],
+    commanders: frozenset[str],
 ) -> Comparison | None:
+    """The lists' land counts, mana cards and fetches, their commanders left out as the deck's are."""
     if comparison is None or not comparison[1]:
         return None
     label, lists = comparison
     counts: list[float] = []
+    gaps: list[float] = []
     mana: list[float] = []
-    for listed in lists:
-        known = [
-            (quantity, info) for name, quantity in listed.items() if (info := cards.get(name.casefold()))
+    resolved = [
+        [
+            (quantity, info)
+            for name, quantity in listed.items()
+            if name.casefold() not in commanders and (info := cards.get(name.casefold()))
         ]
-        counts.append(land_count(known).lands)
+        for listed in lists
+    ]
+    for known in resolved:
+        listed_lands = land_count(known)
+        counts.append(listed_lands.lands)
+        gaps.append(listed_lands.lands - listed_lands.suggested)
         mana.append(sum(q for q, info in known if is_mana_card(info)))
+    per_fetch, fetch_lists = median_targets_per_fetch(resolved)
     return Comparison(
         label,
         len(lists),
         round(median(counts), 1),
         min(counts),
         max(counts),
+        round(median(gaps), 1),
         round(median(mana), 1),
         sum(q for q, info in the_99 if is_mana_card(info)),
+        per_fetch,
+        fetch_lists,
     )
 
 
