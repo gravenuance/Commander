@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.7.0 - 2026-11-04
+
+### Changed
+- A swap that adds a fetcher is no longer held to the lands per fetcher, which every added fetcher lowers:
+  it must leave no fetcher without a land and lose no land a fetcher finds, and may not bring the deck over
+  the most fetchers any compared list runs. Glarb, under every list of its field, can now be offered one
+  (ADR 0064).
+- A mana-only land may replace a fetch land when another fetcher the deck keeps finds it, so Glarb is
+  offered Bayou, Tropical Island and Underground Sea for its fetches (ADR 0064).
+- A fetcher spell such as Farseek or Land Tax replacing a spell is now checked for what it can find
+  (ADR 0064).
+- The Mana tab shows the land floor at bracket 5, and for a deck with a fetcher its fetchers, the lands they
+  find, the lands per fetcher, any fetcher that finds nothing, and the lists' median and most fetchers.
+
 ## 1.6.0 - 2026-11-03
 
 ### Changed
