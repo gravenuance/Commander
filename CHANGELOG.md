@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.1 - 2026-11-04
 
 ### Changed
 - A swap that cuts a fetch land is no longer refused for lowering the lands per fetcher: every fetcher the
