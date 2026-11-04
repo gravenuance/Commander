@@ -698,6 +698,31 @@ def test_a_fetcher_spell_replacing_a_spell_is_judged_by_the_fetch_check_alone() 
     assert names(role_targets(GADGET_IDEA, deck_cards(), rules(gates))) == ["Filler"]
 
 
+def test_a_fetcher_spell_may_be_cut_for_a_spell_even_when_the_targets_per_fetcher_fall() -> None:
+    # The Vista finds the two Plains, Farseek those and the ten Tundras: 12 targets for 2 fetchers. Without
+    # Farseek the Vista keeps its 2, under the bar of 6, yet it finds what it found (ADR 0065). The swap is
+    # left unjudged, and the fetch check would let it through too.
+    held = deck_of(("Plains", 2), ("Tundra", 10), ("Prismatic Vista", 1), ("Farseek", 1), ("Filler", 85))
+    mana = ManaGuard.of(held, FETCH_CARDS, fetch_bar=6.0)
+    assert (mana.fetches.fetchers, mana.fetches.targets) == (2, 12)
+    assert mana.allows_fetcher("Gadget", "Farseek")
+    farseek = resolved("Farseek", rank=800, type_line="Sorcery")
+    offered = role_targets(GADGET_IDEA, [*deck_cards(), farseek], CutRules((), None, mana=mana))
+    assert sorted(names(offered)) == ["Farseek", "Filler"]
+
+
+def test_a_swap_that_cuts_a_fetch_land_is_not_held_to_the_bar() -> None:
+    # The Vista finds the two Plains, the Strand those and the ten Tundras: 12 targets for 2 fetchers. A
+    # Tundra for the Strand leaves the Vista 2, under the bar of 6, yet it finds what it found (ADR 0065).
+    lands = (("Plains", 2), ("Tundra", 10), ("Prismatic Vista", 1), ("Flooded Strand", 1))
+    held = deck_of(*lands, ("Filler", 85))
+    mana = ManaGuard.of(held, FETCH_CARDS, fetch_bar=6.0)
+    assert (mana.fetches.fetchers, mana.fetches.targets) == (2, 12)
+    assert mana.allows("Tundra", "Flooded Strand")
+    # A swap that keeps both fetchers is still held to the bar: a Guildgate for a Plains leaves 11 targets.
+    assert not mana.allows("Azorius Guildgate", "Plains")
+
+
 def fetch_list(standing: int, mountains: int, fetches: int) -> Entry:
     return top_cut(standing, ("Mountain", mountains), ("Fetch Red Green Test", fetches))
 

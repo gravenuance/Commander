@@ -669,7 +669,10 @@ base against Frank Karsten's published numbers
   lowers nothing ([ADR 0063](docs/adr/0063-the-spare-land-by-the-fetch-ratio.md)). A swap that adds a fetcher
   is held instead to losing no target and to the most fetchers any of those lists runs, and a fetcher spell
   that replaces a spell is checked the same way; a mana-only land may replace a fetch land when another
-  fetcher of the deck finds it ([ADR 0064](docs/adr/0064-a-fetcher-is-added-against-a-cap.md)).
+  fetcher of the deck finds it ([ADR 0064](docs/adr/0064-a-fetcher-is-added-against-a-cap.md)). A swap
+  that cuts a fetcher skips the lands per fetcher, since every fetcher kept still finds what it found, and a
+  fetcher spell cut for a spell is not checked at all
+  ([ADR 0065](docs/adr/0065-a-fetcher-cut-skips-the-bar.md)).
 - **Labels**: the flag in a grid card's top-left corner sets its Archidekt label. Every deck offers your
   account's labels in their colours, read on each signed-in `sync` and before each label change
   ([ADR 0012](docs/adr/0012-card-labels-from-the-archidekt-account.md)). A change is written to

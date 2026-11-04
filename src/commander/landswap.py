@@ -3,8 +3,9 @@
 A cut target or an idea that is a land is allowed only while the land count ends within LAND_TOLERANCE of
 Karsten's count for the deck, closer to it than before, or inside the range of three or more lists compared
 with, every colour keeps the sources its spells need (ADR 0030), and the deck's fetches keep lands to find
-(ADR 0063, ADR 0064). A fetcher spell for a spell is judged by the fetches alone. The guard also counts the
-lands and colour sources a deck has to spare, for the land cuts of nonland ideas (ADR 0036, ADR 0062).
+(ADR 0063, ADR 0064, ADR 0065). A fetcher spell for a spell is judged by the fetches alone. The guard also
+counts the lands and colour sources a deck has to spare, for the land cuts of nonland ideas (ADR 0036,
+ADR 0062).
 """
 
 import logging
@@ -252,10 +253,13 @@ class ManaGuard:
     def _fetches_hold(self, after: FetchBase) -> bool:
         """No fetcher may be left with nothing to find (ADR 0063). A swap that adds a fetcher may not cut a
         target nor bring the deck over the most fetchers a list of the field runs: the ratio falls with every
-        fetcher, so the bar cannot judge it (ADR 0064). Any other swap may not take the targets per fetcher
-        under the bar, nor lower them when they are under it already."""
+        fetcher, so the bar cannot judge it (ADR 0064). A swap that cuts a fetcher skips the bar: no fetch
+        land has a basic land type, so every fetcher kept finds what it found (ADR 0065). Any other swap may
+        not take the targets per fetcher under the bar, nor lower them when they are under it already."""
         if after.stranded > self.fetches.stranded:
             return False
+        if after.fetchers < self.fetches.fetchers:
+            return True
         if after.fetchers > self.fetches.fetchers:
             return after.targets >= self.fetches.targets and (
                 self.fetch_cap is None or after.fetchers <= self.fetch_cap

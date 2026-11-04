@@ -2,7 +2,9 @@
 
 **Status:** Accepted · **Date:** 2026-11-04 · Amends [ADR 0063](0063-the-spare-land-by-the-fetch-ratio.md)
 (how the guard judges a swap that adds a fetcher, which swaps it judges, and what the Mana tab shows) and
-[ADR 0036](0036-surplus-cuts-on-one-score.md) (`_fits_land`: a mana-only land may replace a fetch land)
+[ADR 0036](0036-surplus-cuts-on-one-score.md) (`_fits_land`: a mana-only land may replace a fetch land).
+Amended by [ADR 0065](0065-a-fetcher-cut-skips-the-bar.md) (a fetcher spell cut for a spell stays
+unguarded on purpose; a swap that cuts a fetcher skips the bar)
 
 ## Context
 

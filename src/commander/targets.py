@@ -589,7 +589,8 @@ def _roles_of(r: ResolvedCard) -> list[Role]:
 def _sound(info: CardInfo | None, cut: ResolvedCard, rules: CutRules) -> bool:
     """Whether the deck card may be cut for the idea: a swap of a land, or of a spell with a land back that
     counts as part of one, is judged by the mana base. A fetcher spell for another spell is judged by the
-    deck's fetches alone (ADR 0064)."""
+    deck's fetches alone (ADR 0064). Cutting a fetcher spell for a spell is not judged: every fetcher kept
+    finds what it found (ADR 0065)."""
     if rules.mana is None or info is None or cut.info is None:
         return True
     if any(_counts_as_land(card) for card in (info, cut.info)):

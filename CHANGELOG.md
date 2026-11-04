@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- A swap that cuts a fetch land is no longer refused for lowering the lands per fetcher: every fetcher the
+  deck keeps still finds what it found. None of today's decks was refused one (ADR 0065).
+
 ## 1.7.0 - 2026-11-04
 
 ### Changed

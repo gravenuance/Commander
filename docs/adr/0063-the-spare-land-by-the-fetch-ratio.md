@@ -5,7 +5,7 @@ spare land scores, and that the spare lands fill one place) and
 [ADR 0030](0030-land-swaps-guarded-by-the-mana-base.md) (the guard also checks the deck's fetches). Amended in
 part by [ADR 0064](0064-a-fetcher-is-added-against-a-cap.md) (a swap that adds a fetcher is held to a cap, not
 to the bar; a mana-only land may replace a fetch land; a fetcher spell is checked; the Mana tab shows the
-fetches)
+fetches) and by [ADR 0065](0065-a-fetcher-cut-skips-the-bar.md) (a swap that cuts a fetcher skips the bar)
 
 ## Context
 
