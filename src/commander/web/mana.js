@@ -29,7 +29,11 @@ function renderMana(deck, m) {
     el("p", { class: `mana-line ${cedh ? "muted" : ""}` },
       el("span", { text: `Karsten's formula: ${fmt(l.suggested)}` }),
       el("span", { class: "muted small", text: `average mana value ${fmt(l.averageManaValue)}, ${l.cheapDraw} cheap draw, ${l.cheapRamp} cheap ramp` }),
-      cedh ? el("span", { class: "muted small", text: "Made for casual games; the tournament lists are the better guide here." }) : null));
+      cedh ? el("span", { class: "muted small", text: "Made for casual games; the tournament lists are the better guide here." }) : null),
+    m.landFloor != null ? el("p", { class: "mana-line" },
+      el("span", { text: `Land floor: ${fmt(m.landFloor)}` }),
+      el("span", { class: "muted small", text: "Karsten's formula moved by the top-cut lists' gap" })) : null,
+    m.fetches ? fetchLine(m.fetches) : null);
   const colours = el("section", { class: "mana-section" }, el("h3", { text: "Colour sources" }),
     ...m.colours.map((colour) => {
       const short = colour.needs.filter((n) => n.short);
@@ -55,6 +59,22 @@ function renderMana(deck, m) {
     el("a", { href: KARSTEN_LANDS, target: "_blank", rel: "noopener", text: "land count" }), document.createTextNode(" and "),
     el("a", { href: KARSTEN_SOURCES, target: "_blank", rel: "noopener", text: "colour source" }), document.createTextNode(" articles."));
   $("mana").replaceChildren(lands, colours, tapped, skipped || "", m.plan ? planSection(deck, m.plan) : "", source);
+}
+
+// The deck's fetchers, the lands they find, and the field's bar and cap they are held to (ADR 0063, 0064).
+function fetchLine(f) {
+  const ratio = (n) => n.toFixed(2);
+  const field = [
+    f.bar != null ? `a median ${ratio(f.bar)} lands per fetcher` : null,
+    f.cap != null ? `up to ${f.cap} fetchers` : null,
+  ].filter(Boolean);
+  return el("p", { class: "mana-line" },
+    el("span", { text: `Fetchers: ${f.fetchers}, finding ${f.targets} land${f.targets === 1 ? "" : "s"}` }),
+    el("span", { class: "muted small", text: `${ratio(f.perFetch)} lands per fetcher` }),
+    f.stranded
+      ? el("span", { class: "badge status rejected", text: `${f.stranded} fetcher${f.stranded === 1 ? " finds" : "s find"} nothing` })
+      : null,
+    field.length ? el("span", { class: "muted small", text: `Lists run ${field.join(", ")}` }) : null);
 }
 
 // The suggested mana base below bracket 5 (ADR 0024): land count, basics by colour, then named swaps.

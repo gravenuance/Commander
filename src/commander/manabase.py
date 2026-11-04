@@ -145,6 +145,8 @@ class Comparison:
     # The median targets per fetcher of the lists that run a fetcher, and how many do (ADR 0063).
     targets_per_fetch: float | None = None
     fetch_lists: int = 0
+    # The most fetchers any of the lists runs (ADR 0064).
+    most_fetchers: int = 0
 
 
 @dataclass(slots=True, frozen=True)
@@ -244,7 +246,7 @@ def fetch_base(cards: Sequence[tuple[int, CardMana]]) -> FetchBase:
     """The fetchers among cards and the lands they can find, each by its front face's basic land types."""
     fetchers = [(quantity, found) for quantity, info in cards if (found := fetcher(info)) is not None]
     lands = [
-        (quantity, types, front_type(info.type_line).startswith("Basic "))
+        (quantity, types, _is_basic_land(info))
         for quantity, info in cards
         if info_is_land(info) and (types := _land_types(info))
     ]
@@ -261,15 +263,41 @@ def fetch_base(cards: Sequence[tuple[int, CardMana]]) -> FetchBase:
     return FetchBase(sum(quantity for quantity, _ in fetchers), targets, stranded)
 
 
+def finds_land(found: Fetcher, info: CardMana) -> bool:
+    """Whether the fetcher can find the card: a land with a basic land type on its front face."""
+    types = _land_types(info)
+    return info_is_land(info) and bool(types) and found.reaches(types, basic=_is_basic_land(info))
+
+
 def _land_types(info: CardMana) -> frozenset[str]:
     """The basic land types on the card's front face; in hand or in the library it has only that face."""
     return frozenset(_TYPE_WORD.findall(front_type(info.type_line).casefold().partition("—")[2]))
 
 
-def median_targets_per_fetch(lists: Iterable[Sequence[tuple[int, CardMana]]]) -> tuple[float | None, int]:
-    """The median targets per fetcher of the lists that run a fetcher, and how many do."""
-    ratios = [ratio for listed in lists if (ratio := fetch_base(listed).per_fetch) is not None]
-    return (median(ratios) if ratios else None), len(ratios)
+def _is_basic_land(info: CardMana) -> bool:
+    return front_type(info.type_line).startswith("Basic ")
+
+
+@dataclass(slots=True, frozen=True)
+class FetchField:
+    """How a set of lists fetches (ADR 0063, 0064)."""
+
+    # The median targets per fetcher of the lists that run a fetcher; None when none does.
+    per_fetch: float | None
+    # How many lists run a fetcher.
+    fetch_lists: int
+    # The most fetchers any of the lists runs.
+    most_fetchers: int
+
+
+def field_fetches(lists: Iterable[Sequence[tuple[int, CardMana]]]) -> FetchField:
+    """The median targets per fetcher of the lists that run a fetcher, how many do, and the most fetchers
+    any list runs, all from the same lists."""
+    bases = [fetch_base(listed) for listed in lists]
+    ratios = [ratio for base in bases if (ratio := base.per_fetch) is not None]
+    return FetchField(
+        median(ratios) if ratios else None, len(ratios), max((base.fetchers for base in bases), default=0)
+    )
 
 
 COLOUR_NAMES = {"W": "White", "U": "Blue", "B": "Black", "R": "Red", "G": "Green"}
@@ -656,7 +684,7 @@ def _compare(
         counts.append(listed_lands.lands)
         gaps.append(listed_lands.lands - listed_lands.suggested)
         mana.append(sum(q for q, info in known if is_mana_card(info)))
-    per_fetch, fetch_lists = median_targets_per_fetch(resolved)
+    fetching = field_fetches(resolved)
     return Comparison(
         label,
         len(lists),
@@ -666,8 +694,9 @@ def _compare(
         round(median(gaps), 1),
         round(median(mana), 1),
         sum(q for q, info in the_99 if is_mana_card(info)),
-        per_fetch,
-        fetch_lists,
+        fetching.per_fetch,
+        fetching.fetch_lists,
+        fetching.most_fetchers,
     )
 
 

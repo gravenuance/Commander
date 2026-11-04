@@ -21,6 +21,7 @@ import pytest
 from commander import apply as apply_module
 from commander import desk as desk_module
 from commander import syncrun
+from commander import targets as targets_module
 from commander.app import desk_settings, page_html
 from commander.apply import Resolution
 from commander.archidekt import parse_deck
@@ -41,6 +42,7 @@ from commander.carddb import CARD_DB_FILE, CardDb
 from commander.config import MetaSettings
 from commander.desk import Desk, DeskSettings
 from commander.ideas import compile_ideas
+from commander.landswap import ManaGuard
 from commander.metadata import CACHE_FOLDER, gather_for, meta_sources
 from commander.net import Pacer
 from commander.scryfall import CardRefresh
@@ -65,6 +67,7 @@ from test_cli_apply import run
 from test_cli_meta import PEER_ID, kinnan_events, magda_events, peer_row
 from test_cli_meta import meta as cli_meta
 from test_ideas import ALIKE, tag_pool
+from test_manabase import HEATH, ISLAND, LEADER, PLAINS, WRATH, by_name, deck_of
 from test_meta import meta_data, peer
 from test_syncrun import DOWNLOADED, StubbedReads, stub_meta
 
@@ -1190,6 +1193,71 @@ def test_the_mana_tab_reports_lands_and_colour_sources(desk: Desk) -> None:
     assert [colour["colour"] for colour in colours] == ["R"]
     # Without cached meta answers there is nothing to compare with.
     assert mana["comparison"] is None
+
+
+def test_a_deck_without_fetchers_or_a_calibrated_floor_reports_neither(desk: Desk) -> None:
+    mana = desk.mana(DECK)
+    assert mana.get("landFloor", "missing") is None
+    assert mana.get("fetches", "missing") is None
+
+
+# Karsten's count with one four-drop as the only spell is 31.42 + 3.13 x 4 = 43.94.
+MARSH = (("Plains", 4), ("Island", 3), ("Wrath of God", 1))
+
+
+@pytest.mark.parametrize(
+    ("counts", "gap", "bar", "cap", "floor", "fetches"),
+    [
+        (
+            (("Windswept Heath", 2), *MARSH),
+            -10.8,
+            1.5,
+            4,
+            33.1,
+            {"fetchers": 2, "targets": 4, "perFetch": 2.0, "stranded": 0, "bar": 1.5, "cap": 4},
+        ),
+        (
+            (("Windswept Heath", 2), *MARSH),
+            None,
+            None,
+            None,
+            None,
+            {"fetchers": 2, "targets": 4, "perFetch": 2.0, "stranded": 0, "bar": None, "cap": None},
+        ),
+        (
+            (("Windswept Heath", 2), ("Island", 3), ("Wrath of God", 1)),
+            -10.8,
+            1.5,
+            4,
+            33.1,
+            {"fetchers": 2, "targets": 0, "perFetch": 0.0, "stranded": 2, "bar": 1.5, "cap": 4},
+        ),
+        # Magda's bar of 1.5 comes from the few lists of the field that fetch; the deck runs none.
+        (MARSH, None, 1.5, 4, None, None),
+    ],
+    ids=["fetchers and a floor", "fetchers, no field", "stranded", "no fetchers, a bar"],
+)
+def test_the_mana_tab_reports_the_land_floor_and_fetches_the_guard_works_to(
+    desk: Desk,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    counts: tuple[tuple[str, int], ...],
+    gap: float | None,
+    bar: float | None,
+    cap: int | None,
+    floor: float | None,
+    fetches: Json | None,
+) -> None:
+    cards = by_name(LEADER, HEATH, PLAINS, ISLAND, WRATH)
+    guard = ManaGuard.of(deck_of(*counts), cards, karsten_gap=gap, fetch_bar=bar, fetch_cap=cap)
+
+    def fixed(*_args: object) -> ManaGuard:
+        return guard
+
+    monkeypatch.setattr(targets_module, "mana_guard", fixed)
+    mana = desk.mana(DECK)
+    assert mana.get("landFloor", "missing") == floor
+    assert mana.get("fetches", "missing") == fetches
 
 
 def test_bracket_5_decks_get_no_mana_suggestion(desk: Desk) -> None:

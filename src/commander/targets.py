@@ -588,12 +588,13 @@ def _roles_of(r: ResolvedCard) -> list[Role]:
 
 def _sound(info: CardInfo | None, cut: ResolvedCard, rules: CutRules) -> bool:
     """Whether the deck card may be cut for the idea: a swap of a land, or of a spell with a land back that
-    counts as part of one, is judged by the mana base."""
+    counts as part of one, is judged by the mana base. A fetcher spell for another spell is judged by the
+    deck's fetches alone (ADR 0064)."""
     if rules.mana is None or info is None or cut.info is None:
         return True
-    if not any(_counts_as_land(card) for card in (info, cut.info)):
-        return True
-    return rules.mana.allows(info.name, cut.card.name)
+    if any(_counts_as_land(card) for card in (info, cut.info)):
+        return rules.mana.allows(info.name, cut.card.name)
+    return not rules.mana.is_fetcher(info.name) or rules.mana.allows_fetcher(info.name, cut.card.name)
 
 
 def _counts_as_land(info: CardInfo) -> bool:
@@ -625,14 +626,19 @@ def _eligible(r: ResolvedCard, info: CardInfo, protected: Collection[str]) -> bo
 
 def _fits_land(idea: CardInfo, r: ResolvedCard, rules: CutRules) -> bool:
     """Whether a land idea may take the deck land's place (ADR 0036): a basic only when the idea makes one of
-    its colours, any other land only when it does nothing but make mana, unless the idea does more too. The
-    mana base's data is needed to tell; without it every land fits."""
+    its colours, any other land only when it does nothing but make mana, unless the idea does more too. A
+    land that does only make mana may also take a fetch land's place when another fetcher the deck keeps
+    finds it (ADR 0064). The mana base's data is needed to tell; without it every land fits."""
     mana = rules.mana
     if not idea.is_land or mana is None:
         return True
     if _is_basic(r):
         return mana.makes_colour_of(idea.name, r.card.name)
-    return not mana.mana_only(idea.name) or mana.mana_only(r.card.name)
+    return (
+        not mana.mana_only(idea.name)
+        or mana.mana_only(r.card.name)
+        or mana.found_by_other_fetch(idea.name, r.card.name)
+    )
 
 
 def _same_role(r: ResolvedCard, roles: Sequence[Role]) -> bool:

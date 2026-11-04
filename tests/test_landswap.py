@@ -17,7 +17,7 @@ from commander.models import Deck
 from commander.peercounts import PeerCounts
 from commander.targets import MAX_TARGETS, CutRules, TargetSource, role_targets, targets_for, with_ideas
 from commander.tournaments import CommanderStats, DecklistCard, Entry, Tournament
-from test_manabase import ISLAND, LEADER, PLAINS, by_name, card, deck_of
+from test_manabase import FARSEEK, HEATH, ISLAND, LEADER, PLAINS, VISTA, by_name, card, deck_of
 from test_meta import TOP_CUT_LISTS, db, deck, meta_data, peer
 from test_targets import board_card, info, names, table
 from test_targets import card as resolved
@@ -602,6 +602,102 @@ def test_a_fetching_deck_keeps_its_basics_and_a_land_no_fetch_finds_takes_the_sp
     assert names(role_targets(GADGET_IDEA, cards, room)) == ["Plains", "Filler"]
 
 
+TUNDRA = card("Tundra", type_line="Land — Plains Island", text="({T}: Add {W} or {U}.)", produced="WU")
+MIRE = card(
+    "Bloodstained Mire",
+    type_line="Land",
+    text="{T}, Pay 1 life, Sacrifice this land: Search your library for a Swamp or Mountain card, put it "
+    "onto the battlefield, then shuffle.",
+)
+FETCH_CARDS = {**CARDS, **by_name(HEATH, VISTA, FARSEEK, TUNDRA, MIRE)}
+
+
+def fetch_deck(
+    *, plains: int = 18, islands: int = 17, bar: float | None = None, cap: int | None = None
+) -> ManaGuard:
+    """Plains, Islands, one Flooded Strand finding all of them, and 61 fillers; by default 36 lands."""
+    held = deck_of(("Plains", plains), ("Island", islands), ("Flooded Strand", 1), ("Filler", 61))
+    return ManaGuard.of(held, FETCH_CARDS, fetch_bar=bar, fetch_cap=cap)
+
+
+def test_a_swap_that_adds_a_fetcher_is_not_held_to_the_bar_only_to_the_cap() -> None:
+    # The Strand finds 35 basics: 35 per fetcher, under a bar of 40. A Vista halves that to 17.5 and loses no
+    # target, so only the most fetchers a list of the field runs counts.
+    assert fetch_deck(bar=40.0, cap=2).allows("Prismatic Vista", "Filler")
+    assert not fetch_deck(bar=40.0, cap=1).allows("Prismatic Vista", "Filler")
+    # Without a field there is no bar and no cap.
+    assert fetch_deck().allows("Prismatic Vista", "Filler")
+
+
+def test_a_swap_that_adds_a_fetcher_may_not_cut_a_target_nor_strand_the_new_fetcher() -> None:
+    held = fetch_deck(bar=1.0, cap=5)
+    # A Vista for a Plains leaves two fetchers over 34 basics, one target fewer; with no field the same.
+    assert not held.allows("Prismatic Vista", "Plains")
+    assert not fetch_deck().allows("Prismatic Vista", "Island")
+    # A Mire finds Swamps and Mountains, of which the deck holds none.
+    assert not held.allows("Bloodstained Mire", "Filler")
+    # The Vista for a spell cuts no target.
+    assert held.allows("Prismatic Vista", "Filler")
+
+
+def test_a_swap_that_adds_no_fetcher_is_still_held_to_the_bar() -> None:
+    # 20 Plains and 18 Islands for the Strand: 38 per fetcher. Cutting a Plains for a spell leaves 37.
+    assert not fetch_deck(plains=20, islands=18, bar=38.0, cap=5).allows("Gadget", "Plains")
+    assert fetch_deck(plains=20, islands=18, bar=37.0, cap=5).allows("Gadget", "Plains")
+    # The cap binds only a swap that adds one: a deck above it may still trade a target for a target.
+    assert fetch_deck(plains=20, islands=18, bar=40.0, cap=0).allows("Island", "Plains")
+
+
+def fetch_lands(*held: str) -> list[ResolvedCard]:
+    return [resolved(name, rank=2000, categories=("Land",), type_line="Land") for name in held]
+
+
+def test_a_mana_only_land_may_replace_a_fetch_land_another_fetcher_of_the_deck_finds_it_through() -> None:
+    tundra = info("Tundra", type_line="Land — Plains Island")
+
+    def offered(*fetching_lands: str) -> list[str]:
+        held = [(name, 1) for name in fetching_lands]
+        mana = ManaGuard.of(deck_of(("Plains", 17), ("Island", 17), *held, ("Filler", 63)), FETCH_CARDS)
+        # The basics are kept, so only the fetch lands could go. The Tundra is played by 90% of the lists.
+        played = {name.casefold(): 0.1 for name in fetching_lands}
+        rules = replace(land_rules(mana, played, "tundra"), protected={"plains", "island"})
+        return sorted(names(role_targets(tundra, [*deck_cards(), *fetch_lands(*fetching_lands)], rules)))
+
+    # The Heath finds the Tundra's Plains, and the Strand its Plains and Island: each may go for it.
+    assert offered("Flooded Strand", "Windswept Heath") == ["Flooded Strand", "Windswept Heath"]
+    # The Vista takes basics only, so it leaves the Strand's place to nothing; the Strand finds a Tundra.
+    assert offered("Flooded Strand", "Prismatic Vista") == ["Prismatic Vista"]
+    # A lone fetcher leaves none to find it.
+    assert offered("Flooded Strand") == []
+
+
+def test_a_fetcher_spell_replacing_a_spell_is_judged_by_the_fetch_check_alone() -> None:
+    farseek = info("Farseek", type_line="Sorcery")
+
+    def rules(mana: ManaGuard) -> CutRules:
+        return CutRules((), None, mana=mana)
+
+    def typed(cap: int | None = None) -> ManaGuard:
+        held = deck_of(("Plains", 18), ("Island", 18), ("Flooded Strand", 1), ("Filler", 61))
+        return ManaGuard.of(held, FETCH_CARDS, fetch_cap=cap)
+
+    # Farseek finds the Plains and Islands. Its green pip has no source in the deck, so the full check
+    # would refuse the swap; the fetch check does not look at spells' colours.
+    assert not typed().allows("Farseek", "Filler")
+    assert names(role_targets(farseek, deck_cards(), rules(typed()))) == ["Filler"]
+    # A second fetcher where the field's lists run one at most.
+    assert names(role_targets(farseek, deck_cards(), rules(typed(cap=1)))) == []
+    assert names(role_targets(farseek, deck_cards(), rules(typed(cap=2)))) == ["Filler"]
+    # With nothing in the deck for it to find it would be stranded.
+    gates = ManaGuard.of(deck_of(("Azorius Guildgate", 36), ("Filler", 62)), FETCH_CARDS)
+    assert names(role_targets(farseek, deck_cards(), rules(gates))) == []
+    pick = board_card("Farseek", (ReplaceOption("Filler", "weakest"),))
+    assert targets_for(pick, farseek, deck_cards(), rules(gates)) == ()
+    assert names(targets_for(pick, farseek, deck_cards(), rules(typed()))) == ["Filler"]
+    # A spell that fetches nothing is no business of the mana base, whatever the lands.
+    assert names(role_targets(GADGET_IDEA, deck_cards(), rules(gates))) == ["Filler"]
+
+
 def fetch_list(standing: int, mountains: int, fetches: int) -> Entry:
     return top_cut(standing, ("Mountain", mountains), ("Fetch Red Green Test", fetches))
 
@@ -647,6 +743,31 @@ def test_the_field_lists_leave_their_commanders_out_and_an_unknown_commander_mat
         mana_guard(unknown, db, meta_data([], field=[field_of("Unknown Commander", *lists)])).fetch_bar
         is None
     )
+
+
+def test_the_fetch_cap_is_the_most_fetchers_a_list_of_the_bars_lists_runs(deck: Deck, db: CardDb) -> None:
+    # The same lists as the bar's: 2, 4 and 1 fetchers, and a list without one.
+    lists = [fetch_list(1, 6, 2), fetch_list(2, 4, 4), fetch_list(3, 2, 1), top_cut(4, ("Mountain", 30))]
+    guarded = mana_guard(deck, db, meta_data(lists))
+    assert (guarded.fetch_bar, guarded.fetch_cap) == (2.0, 4)
+    # Two lists that fetch are too few for a bar, and so for a cap.
+    few = mana_guard(deck, db, meta_data(lists[:2]))
+    assert (few.fetch_bar, few.fetch_cap) == (None, None)
+
+
+def test_short_of_lists_the_fetch_cap_comes_from_the_same_field_lists_as_the_bar(
+    deck: Deck, db: CardDb
+) -> None:
+    own = [fetch_list(1, 6, 2), fetch_list(2, 4, 4)]
+    mono = field_of("Magda, Brazen Outlaw", fetch_list(1, 3, 3), fetch_list(2, 5, 1), fetch_list(3, 1, 2))
+    # A commander of another colour count, and one the card data does not know, add no list to the field.
+    other = field_of("Unknown Commander", *(fetch_list(n, 20, 7) for n in range(1, 4)))
+    guarded = mana_guard(deck, db, meta_data(own, field=[mono, other]))
+    assert (guarded.fetch_bar, guarded.fetch_cap) == (1.0, 3)
+    two = field_of("Magda, Brazen Outlaw", fetch_list(1, 3, 3), fetch_list(2, 5, 1))
+    assert mana_guard(deck, db, meta_data(own, field=[two])).fetch_cap is None
+    assert mana_guard(replace(deck, bracket=4), db, meta_data(own, field=[mono])).fetch_cap is None
+    assert mana_guard(deck, db, None).fetch_cap is None
 
 
 def test_a_land_count_with_a_part_land_counts_the_whole_lands_above_the_floor() -> None:
@@ -697,6 +818,15 @@ def test_a_swap_asked_again_gets_the_same_answer_without_analysing_the_mana_base
     assert len(runs) == 2
     assert base.allows("Filler", "Plains")
     assert len(runs) == 3
+
+
+def test_the_full_and_the_fetch_only_answer_for_one_swap_are_remembered_apart() -> None:
+    held = deck_of(("Plains", 18), ("Island", 18), ("Flooded Strand", 1), ("Filler", 61))
+    base = ManaGuard.of(held, FETCH_CARDS)
+    # The full check refuses Farseek for its green pip; the fetch check alone, asked after it, allows it.
+    assert not base.allows("Farseek", "Filler")
+    assert base.allows_fetcher("Farseek", "Filler")
+    assert not base.allows("Farseek", "Filler")
 
 
 def test_a_guard_given_more_cards_knows_the_new_cards_and_keeps_the_answers_already_given(

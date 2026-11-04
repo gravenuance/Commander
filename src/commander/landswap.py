@@ -3,8 +3,8 @@
 A cut target or an idea that is a land is allowed only while the land count ends within LAND_TOLERANCE of
 Karsten's count for the deck, closer to it than before, or inside the range of three or more lists compared
 with, every colour keeps the sources its spells need (ADR 0030), and the deck's fetches keep lands to find
-(ADR 0063). The guard also counts the lands and colour sources a deck has to spare, for the land cuts of
-nonland ideas (ADR 0036, ADR 0062).
+(ADR 0063, ADR 0064). A fetcher spell for a spell is judged by the fetches alone. The guard also counts the
+lands and colour sources a deck has to spare, for the land cuts of nonland ideas (ADR 0036, ADR 0062).
 """
 
 import logging
@@ -20,8 +20,12 @@ from commander.manabase import (
     LandCount,
     ManaBase,
     analyse_mana,
+    deck_entries,
+    fetcher,
+    field_fetches,
+    finds_land,
     mana_only_land,
-    median_targets_per_fetch,
+    without_commanders,
 )
 from commander.manaplan import LAND_TOLERANCE, deck_with_counts
 from commander.meta import MIN_PEER_LISTS, performing_entries
@@ -82,13 +86,16 @@ class ManaGuard:
     karsten_gap: float | None = None
     # The deck's fetchers and the lands they find now (ADR 0063).
     fetches: FetchBase = NO_FETCHES
-    # The targets per fetcher a swap may not take the deck under, unless it was under already and the swap
-    # lowers nothing; None without a field to measure it on (`fetch_bar`).
+    # The targets per fetcher a swap that adds no fetcher may not take the deck under, unless it was under
+    # already and the swap lowers nothing; None without a field to measure it on (`fetch_standard`).
     fetch_bar: float | None = None
-    # What `allows` answered, by the names as asked. Every other field is fixed for the guard's life, so an
-    # answer never goes stale; `with_cards` hands the memo on unless a new card could change an answer.
-    _answers: dict[tuple[str, str], bool] = field(
-        repr=False, compare=False, default_factory=dict[tuple[str, str], bool]
+    # The most fetchers a swap may bring the deck to, from the same lists as the bar (ADR 0064).
+    fetch_cap: int | None = None
+    # What `allows` and `allows_fetcher` answered, by the names as asked and whether only the fetches were
+    # judged. Every other field is fixed for the guard's life, so an answer never goes stale; `with_cards`
+    # hands the memo on unless a new card could change an answer.
+    _answers: dict[tuple[str, str, bool], bool] = field(
+        repr=False, compare=False, default_factory=dict[tuple[str, str, bool], bool]
     )
 
     @staticmethod
@@ -101,6 +108,7 @@ class ManaGuard:
         land_median: float | None = None,
         karsten_gap: float | None = None,
         fetch_bar: float | None = None,
+        fetch_cap: int | None = None,
     ) -> "ManaGuard":
         alternative = frozenset(name.casefold() for name in alternative_cost)
         report = analyse_mana(deck, cards, alternative_cost=alternative)
@@ -116,6 +124,7 @@ class ManaGuard:
             karsten_gap,
             report.fetches,
             fetch_bar,
+            fetch_cap,
         )
 
     def with_cards(self, cards: Mapping[str, CardMana]) -> "ManaGuard":
@@ -133,11 +142,39 @@ class ManaGuard:
     def allows(self, add: str, cut: str) -> bool:
         """Whether swapping the deck's card `cut` for `add` is sound; one of them is a land, or a spell with a
         land back."""
+        return self._judged(add, cut, fetches_only=False)
+
+    def allows_fetcher(self, add: str, cut: str) -> bool:
+        """Whether swapping the deck's spell `cut` for the fetcher spell `add` leaves the deck's fetches sound
+        (ADR 0064). Only the fetches are judged: a spell for a spell moves no land count, and the colour
+        sources check would refuse a Farseek for the green pip it adds, which has nothing to do with lands."""
+        return self._judged(add, cut, fetches_only=True)
+
+    def is_fetcher(self, card: str) -> bool:
+        """Whether the card is a fetcher (`manabase.fetcher`); False when its text is unknown."""
+        info = self.cards.get(card.casefold())
+        if info is None:
+            log.debug("No mana data for %s: it is taken for no fetcher", card)
+            return False
+        return fetcher(info) is not None
+
+    def found_by_other_fetch(self, land: str, fetch_land: str) -> bool:
+        """Whether `fetch_land` is a fetcher of the deck and, with one copy of it gone, another fetcher the
+        deck keeps finds `land` (ADR 0064): then the land may take its place."""
+        idea, cut = self.cards.get(land.casefold()), self.cards.get(fetch_land.casefold())
+        if idea is None or cut is None or fetcher(cut) is None:
+            return False
+        counts = self.deck.main_counts
+        counts[fetch_land] = counts.get(fetch_land, 0) - 1
+        kept = without_commanders(deck_entries(deck_with_counts(self.deck, counts), self.cards))
+        return any((found := fetcher(info)) is not None and finds_land(found, idea) for _, info in kept)
+
+    def _judged(self, add: str, cut: str, *, fetches_only: bool) -> bool:
         added, cut_card = self.cards.get(add.casefold()), self.cards.get(cut.casefold())
         if added is None or cut_card is None:
             log.warning("No mana data for %s or %s: the swap is refused", add, cut)
             return False
-        if (known := self._answers.get((add, cut))) is not None:
+        if (known := self._answers.get((add, cut, fetches_only))) is not None:
             return known
         counts = self.deck.main_counts
         counts[cut] = counts.get(cut, 0) - 1
@@ -147,12 +184,11 @@ class ManaGuard:
         )
         # A spell with a land back counts as part of a land, so its swap moves the count too.
         moves_count = not math.isclose(after.lands.lands, self.lands.lands)
-        allowed = (
-            (not moves_count or self._count_holds(after.lands))
-            and self._sources_hold(after)
-            and self._fetches_hold(after.fetches)
+        allowed = self._fetches_hold(after.fetches) and (
+            fetches_only
+            or ((not moves_count or self._count_holds(after.lands)) and self._sources_hold(after))
         )
-        self._answers[add, cut] = allowed
+        self._answers[add, cut, fetches_only] = allowed
         return allowed
 
     def spare_lands(self) -> int:
@@ -214,10 +250,16 @@ class ManaGuard:
         return True
 
     def _fetches_hold(self, after: FetchBase) -> bool:
-        """No fetcher may be left with nothing to find, and the targets per fetcher may not drop under the
-        bar, nor lower when they are under it already (ADR 0063)."""
+        """No fetcher may be left with nothing to find (ADR 0063). A swap that adds a fetcher may not cut a
+        target nor bring the deck over the most fetchers a list of the field runs: the ratio falls with every
+        fetcher, so the bar cannot judge it (ADR 0064). Any other swap may not take the targets per fetcher
+        under the bar, nor lower them when they are under it already."""
         if after.stranded > self.fetches.stranded:
             return False
+        if after.fetchers > self.fetches.fetchers:
+            return after.targets >= self.fetches.targets and (
+                self.fetch_cap is None or after.fetchers <= self.fetch_cap
+            )
         ratio, before = after.per_fetch, self.fetches.per_fetch
         if self.fetch_bar is None or ratio is None:
             return True
@@ -246,6 +288,7 @@ def mana_guard(deck: Deck, db: CardDb, data: MetaData | None) -> ManaGuard:
     land_median = compared.lands if compared is not None and enough else None
     cedh = deck.bracket == CEDH_BRACKET
     karsten_gap = compared.karsten_gap if compared is not None and enough and cedh else None
+    standard = fetch_standard(deck, db, data, compared)
     return ManaGuard(
         deck,
         cards,
@@ -257,17 +300,53 @@ def mana_guard(deck: Deck, db: CardDb, data: MetaData | None) -> ManaGuard:
         _slack(report),
         karsten_gap,
         report.fetches,
-        fetch_bar(deck, db, data, compared),
+        standard.bar if standard else None,
+        standard.cap if standard else None,
     )
 
 
-def fetch_bar(deck: Deck, db: CardDb, data: MetaData | None, compared: Comparison | None) -> float | None:
-    """The targets per fetcher the deck should keep (ADR 0063): the median of the compared lists that run a
-    fetcher, given MIN_PEER_LISTS of them. Short of that, at bracket 5, the median of the lists of the top
-    commanders with as many colours as the deck's, which run alike mana bases whoever leads them. None
-    otherwise: then only a fetcher left with nothing to find is refused."""
+def guard_json(guard: ManaGuard) -> dict[str, object]:
+    """What the guard adds to the app's Mana tab (ADR 0064): the land floor when it is the calibrated one
+    (`ManaGuard.karsten_gap`), and the fetch figures of a deck that runs a fetcher. A deck without one has no
+    fetch figures at all, bar and cap included: a field's bar says nothing about it."""
+    fetches = guard.fetches
+    shown = (
+        {
+            "fetchers": fetches.fetchers,
+            "targets": fetches.targets,
+            "perFetch": fetches.per_fetch,
+            "stranded": fetches.stranded,
+            "bar": guard.fetch_bar,
+            "cap": guard.fetch_cap,
+        }
+        if fetches.fetchers
+        else None
+    )
+    floor = round(guard.land_floor(), 1) if guard.karsten_gap is not None else None
+    return {"landFloor": floor, "fetches": shown}
+
+
+@dataclass(slots=True, frozen=True)
+class FetchStandard:
+    """What the field's lists run, to hold a deck's fetches to (ADR 0063, 0064)."""
+
+    # The median targets per fetcher of the lists that run a fetcher.
+    bar: float
+    # The most fetchers any of the same lists runs.
+    cap: int
+
+
+def fetch_standard(
+    deck: Deck, db: CardDb, data: MetaData | None, compared: Comparison | None
+) -> FetchStandard | None:
+    """The bar and the cap, both from one set of lists. That is the compared lists when MIN_PEER_LISTS of them
+    run a fetcher. Short of that, at bracket 5, it is the lists of the top commanders with as many colours as
+    the deck's, which run alike mana bases whoever leads them. None otherwise: then only a fetcher left with
+    nothing to find is refused."""
     if compared is not None and compared.fetch_lists >= MIN_PEER_LISTS:
-        return compared.targets_per_fetch
+        if compared.targets_per_fetch is None:
+            return None
+        return FetchStandard(compared.targets_per_fetch, compared.most_fetchers)
     if deck.bracket != CEDH_BRACKET or data is None or not data.field.data:
         return None
     colours = _identity_size(db, deck.commanders)
@@ -290,8 +369,10 @@ def fetch_bar(deck: Deck, db: CardDb, data: MetaData | None, compared: Compariso
         [(quantity, info) for name, quantity in listed.items() if (info := cards.get(name.casefold()))]
         for listed in lists
     ]
-    bar, counted = median_targets_per_fetch(resolved)
-    return bar if counted >= MIN_PEER_LISTS else None
+    fetching = field_fetches(resolved)
+    if fetching.per_fetch is None or fetching.fetch_lists < MIN_PEER_LISTS:
+        return None
+    return FetchStandard(fetching.per_fetch, fetching.most_fetchers)
 
 
 def _identity_size(db: CardDb, commanders: Sequence[str]) -> int | None:

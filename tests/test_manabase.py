@@ -463,6 +463,18 @@ def test_the_comparison_keeps_the_median_targets_per_fetch_of_the_lists_that_fet
     assert (none.targets_per_fetch, none.fetch_lists) == (None, 0)
 
 
+def test_the_comparison_keeps_the_most_fetchers_any_list_runs() -> None:
+    deck = deck_of(("Plains", 30), ("Wrath of God", 1))
+    cards = by_name(LEADER, PLAINS, ISLAND, WRATH, HEATH, SAVANNAH)
+    lists = [{"Windswept Heath": 2, "Plains": 3}, {"Windswept Heath": 4, "Savannah": 1}, {"Plains": 30}]
+    compared = analyse_mana(deck, cards, comparison=("lists", lists)).comparison
+    assert compared is not None
+    assert compared.most_fetchers == 4
+    none = analyse_mana(deck, cards, comparison=("lists", [{"Plains": 30}])).comparison
+    assert none is not None
+    assert none.most_fetchers == 0
+
+
 def test_the_report_holds_the_fetch_base_of_the_99() -> None:
     deck = deck_of(("Windswept Heath", 2), ("Plains", 5), ("Island", 3))
     report = analyse_mana(deck, by_name(LEADER, HEATH, PLAINS, ISLAND))

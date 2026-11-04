@@ -83,7 +83,7 @@ from commander.deckview import card_images, decklist_json
 from commander.fetchpriority import FetchPriority
 from commander.ideas import idea_labels
 from commander.labels import LabelError, label_options, set_label
-from commander.landswap import comparison_lists
+from commander.landswap import comparison_lists, guard_json
 from commander.leanings import leaning_json
 from commander.manabase import ALTERNATIVE_COST_TAGS, analyse_mana, mana_json
 from commander.manaplan import BASIC_NAMES, LandOption, ManaPlan, plan_json, suggest_mana
@@ -1184,9 +1184,12 @@ class Desk:
 
     def _worked_out_mana(self, stored: StoredDeck) -> tuple[Json, ManaPlan | None]:
         deck = stored.deck
-        label, lists = comparison_lists(deck, self._pool(deck))
+        pool = self._pool(deck)
+        label, lists = comparison_lists(deck, pool)
         cedh = deck.bracket == CEDH_BRACKET
         with self._db() as db:
+            # The guard the swaps are judged by, so the tab shows the floor and fetch figures they work to.
+            rules = self._deck_rules(stored, db.resolve(deck.main_cards), read_profile(stored.folder), db)
             names = {card.name for card in deck.main_cards} | {name for listed in lists for name in listed}
             cards = db.card_mana(names | set(BASIC_NAMES.values()))
             ids = [info.oracle_id for card in deck.main_cards if (info := cards.get(card.name.casefold()))]
@@ -1201,6 +1204,8 @@ class Desk:
             deck, cards, alternative_cost=alternative, comparison=(label, lists) if lists else None
         )
         view = mana_json(report)
+        if rules.mana is not None:
+            view.update(guard_json(rules.mana))
         view["compareWith"] = label
         if cedh:
             return view, None

@@ -584,7 +584,12 @@ The right-hand rail has two tabs. **Activity** lists what changed on the board. 
 base against Frank Karsten's published numbers
 ([ADR 0019](docs/adr/0019-mana-base-from-karstens-numbers.md)):
 - **Lands:** the land count, beside his land count formula and the median of other lists of the commander
-  (top-cut tournament lists at bracket 5, recent Archidekt decks below).
+  (top-cut tournament lists at bracket 5, recent Archidekt decks below). At bracket 5 with enough lists it
+  also gives the land floor, Karsten's count moved by the lists' gap
+  ([ADR 0062](docs/adr/0062-cedh-land-floor-from-the-top-cut-gap.md)). A deck with a fetch land or a
+  card that fetches also gets its fetchers, the lands they find, the lands per fetcher, any fetcher that
+  finds nothing, and the lists' median and most fetchers
+  ([ADR 0064](docs/adr/0064-a-fetcher-is-added-against-a-cap.md)).
 - **Colour sources:** each colour's sources, with every card short of what his table asks to cast it on
   curve.
 - **Turn one:** one-drops without enough untapped lands.
@@ -661,7 +666,10 @@ base against Frank Karsten's published numbers
   they find: no fetcher (a fetch land, or a card like Land Tax or Farseek that searches for a basic or a
   land type) is left with nothing, and the lands they find per fetcher stay at the median of the compared
   lists that fetch, or at bracket 5 of the top commanders' lists with as many colours, unless the swap
-  lowers nothing ([ADR 0063](docs/adr/0063-the-spare-land-by-the-fetch-ratio.md)).
+  lowers nothing ([ADR 0063](docs/adr/0063-the-spare-land-by-the-fetch-ratio.md)). A swap that adds a fetcher
+  is held instead to losing no target and to the most fetchers any of those lists runs, and a fetcher spell
+  that replaces a spell is checked the same way; a mana-only land may replace a fetch land when another
+  fetcher of the deck finds it ([ADR 0064](docs/adr/0064-a-fetcher-is-added-against-a-cap.md)).
 - **Labels**: the flag in a grid card's top-left corner sets its Archidekt label. Every deck offers your
   account's labels in their colours, read on each signed-in `sync` and before each label change
   ([ADR 0012](docs/adr/0012-card-labels-from-the-archidekt-account.md)). A change is written to

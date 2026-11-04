@@ -1194,6 +1194,7 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .mana-big { font-size: var(--text-m); }
 .mana-big strong { font-size: var(--text-l); }
 .mana-line { display: grid; gap: 2px; }
+.mana-line .badge { justify-self: start; }
 .mana-colour { padding: var(--space-2) 0; border-top: 1px solid var(--border); }
 .mana-colour-head { display: flex; align-items: center; gap: var(--space-2); margin: 0 !important; }
 .mana-colour-head .badge, .mana-colour-head .muted { margin-left: auto; }

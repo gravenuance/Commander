@@ -2,7 +2,10 @@
 
 **Status:** Accepted · **Date:** 2026-11-03 · Amends [ADR 0036](0036-surplus-cuts-on-one-score.md) (how a
 spare land scores, and that the spare lands fill one place) and
-[ADR 0030](0030-land-swaps-guarded-by-the-mana-base.md) (the guard also checks the deck's fetches)
+[ADR 0030](0030-land-swaps-guarded-by-the-mana-base.md) (the guard also checks the deck's fetches). Amended in
+part by [ADR 0064](0064-a-fetcher-is-added-against-a-cap.md) (a swap that adds a fetcher is held to a cap, not
+to the bar; a mana-only land may replace a fetch land; a fetcher spell is checked; the Mana tab shows the
+fetches)
 
 ## Context
 
@@ -50,7 +53,7 @@ Option 2, chosen by the owner.
   included.
 - **Targets** (`manabase.fetch_base`) are the lands with a basic land type on the front face that some
   fetcher finds. A fetcher of basics finds only basics.
-- **The bar** (`landswap.fetch_bar`) is the median targets per fetcher of the compared lists that run a
+- **The bar** (`landswap.fetch_bar`, now `fetch_standard`) is the median targets per fetcher of the compared lists that run a
   fetcher, given `MIN_PEER_LISTS` of them. Short of that, at bracket 5, it is the median of the cached top
   commanders' lists (TopDeck's meta) with as many colours as the deck's commanders, those commanders left
   out of their lists as the deck's are. Their mana bases depend on the colours more than on who leads them.
