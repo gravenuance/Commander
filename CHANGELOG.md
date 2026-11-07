@@ -8,6 +8,20 @@
   of their own; a Moxfield deck counts as much as an Archidekt one, and a list posted to both counts once.
   If Moxfield refuses the requests, `sync` warns and carries on with Archidekt alone (ADR 0066).
 
+### Changed
+- The app answers faster with the same answers: a deck's meta answers are kept until a file they were read
+  from changes, the other decks are worked out in the background after the first deck view and after each
+  sync, and the mana guard, preview counts and theme sizes do less repeated work. The first sync after
+  updating rebuilds the card data.
+- Share tooltips and breakdowns name their sites: "peers" on the card list, "Archidekt and Moxfield decks"
+  for the peer pools, and Archidekt alone for the tagged pool.
+
+### Fixed
+- A double-faced commander is found on Moxfield by either face.
+- `meta --to-board` and `sync` warn when a peer-deck site could not be read or refreshed; a site blocking
+  the requests is stopped for the run, and a private Moxfield deck costs only that deck.
+- The meta report lists its peer decks most viewed first, and its play styles in a fixed order.
+
 ## 1.7.1 - 2026-11-04
 
 ### Changed
