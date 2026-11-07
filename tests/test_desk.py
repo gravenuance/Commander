@@ -2064,7 +2064,11 @@ def _mana_to_board(desk: Desk) -> Json:
     return desk.mana_to_board(DECK)
 
 
-def deferred_desk(settings: DeskSettings, fake: FakeArchidekt) -> tuple[Desk, list[Callable[[], None]]]:
+def deferred_desk(
+    settings: DeskSettings,
+    fake: FakeArchidekt,
+    warm_up: Callable[[Callable[[], None]], object] | None = None,
+) -> tuple[Desk, list[Callable[[], None]]]:
     """A desk whose sync waits in the returned list, as if still running until the test runs it."""
     pending: list[Callable[[], None]] = []
     desk = Desk(
@@ -2074,6 +2078,7 @@ def deferred_desk(settings: DeskSettings, fake: FakeArchidekt) -> tuple[Desk, li
         now=lambda: NOW,
         pacer_factory=lambda _: Pacer(0),
         background=pending.append,
+        warm_up=warm_up,
     )
     return desk, pending
 
@@ -2406,6 +2411,148 @@ def test_a_sync_without_an_open_deck_goes_by_views(
     desk, pending = deferred_desk(settings, fake)
     ViewScores(settings.cache / "views.json", lambda: NOW).record_open(20001)
     assert sync_with_stubs(desk, pending, monkeypatch).request_order() == [20001, DECK, 20002, 20003]
+
+
+def warming_desk(settings: DeskSettings, fake: FakeArchidekt) -> tuple[Desk, list[Callable[[], None]]]:
+    """A desk whose warm-up waits in the returned list until the test runs it."""
+    jobs: list[Callable[[], None]] = []
+    desk = Desk(
+        settings,
+        client_factory=fake.client,
+        token_store=MemoryTokenStore({"tester": REFRESH_TOKEN}),
+        now=lambda: NOW,
+        pacer_factory=lambda _: Pacer(0),
+        warm_up=jobs.append,
+    )
+    return desk, jobs
+
+
+def test_the_first_deck_view_queues_one_warm_up_that_leaves_every_deck_as_a_cold_view_makes_it(
+    settings: DeskSettings, fake: FakeArchidekt, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_extra_decks(settings, fake, raw_deck)
+    desk, jobs = warming_desk(settings, fake)
+    assert jobs == []
+    desk.deck(DECK)
+    desk.deck(DECK)
+    assert len(jobs) == 1
+
+    jobs[0]()
+    calls = count_calls(
+        monkeypatch, desk_module, "deck_cut_rules", "weighted_shares", "read_previews", "gather_for"
+    )
+    warmed = {deck_id: desk.deck(deck_id) for deck_id in EXTRA_DECKS}
+    cold = make_desk(settings, fake)
+
+    assert sum(calls.values()) == 0
+    assert warmed == {deck_id: cold.deck(deck_id) for deck_id in EXTRA_DECKS}
+
+
+def test_the_warm_up_goes_by_the_decks_in_the_lists_order(
+    settings: DeskSettings, fake: FakeArchidekt, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_extra_decks(settings, fake, raw_deck)
+    desk, jobs = warming_desk(settings, fake)
+    desk.deck(DECK)
+    order: list[int] = []
+    rules_for = desk_module.deck_cut_rules
+
+    def spy(deck: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        order.append(deck.id)
+        return rules_for(deck, *args, **kwargs)
+
+    monkeypatch.setattr(desk_module, "deck_cut_rules", spy)
+    jobs[0]()
+
+    assert order == [int(row["id"]) for row in items(desk.decks(), "decks") if row["id"] != DECK]
+
+
+def test_the_warm_up_waits_for_a_bridge_call_that_runs_and_goes_on_once_it_ends(
+    settings: DeskSettings, fake: FakeArchidekt, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_extra_decks(settings, fake, raw_deck)
+    desk, jobs = warming_desk(settings, fake)
+    desk.deck(DECK)
+    in_call, release, warming = threading.Event(), threading.Event(), threading.Event()
+    rules_for = desk_module.deck_cut_rules
+
+    def blocked() -> Json:
+        in_call.set()
+        assert release.wait(WAIT_SECONDS)
+        return {}
+
+    def spy(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        warming.set()
+        return rules_for(*args, **kwargs)
+
+    monkeypatch.setattr(desk, "_sync_json", blocked)
+    monkeypatch.setattr(desk_module, "deck_cut_rules", spy)
+    call = threading.Thread(target=desk.account)
+    call.start()
+    assert in_call.wait(WAIT_SECONDS)
+    warm = threading.Thread(target=jobs[0])
+    warm.start()
+
+    assert not warming.wait(0.3)
+    release.set()
+    call.join(WAIT_SECONDS)
+    assert warming.wait(WAIT_SECONDS)
+    warm.join(WAIT_SECONDS)
+    assert not warm.is_alive()
+
+
+def test_closing_the_desk_stops_the_warm_up_before_its_next_deck_and_queues_no_more(
+    settings: DeskSettings, fake: FakeArchidekt, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_extra_decks(settings, fake, raw_deck)
+    desk, jobs = warming_desk(settings, fake)
+    desk.deck(DECK)
+    monkeypatch.setattr(desk_module, "WARM_CLOSE_SECONDS", 0)
+    started: list[object] = []
+    rules_for = desk_module.deck_cut_rules
+
+    def spy(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        started.append(args[0])
+        desk.close()
+        return rules_for(*args, **kwargs)
+
+    monkeypatch.setattr(desk_module, "deck_cut_rules", spy)
+    jobs[0]()
+    assert len(started) == 1
+
+    desk.deck(DECK)
+    assert len(jobs) == 1
+
+
+def test_the_warm_up_queues_again_when_a_sync_ends(
+    settings: DeskSettings, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    jobs: list[Callable[[], None]] = []
+    desk, pending = deferred_desk(settings, fake, warm_up=jobs.append)
+    sync_with_stubs(desk, pending, monkeypatch)
+    assert len(jobs) == 1
+
+    jobs[0]()
+    desk.deck(DECK)
+    assert len(jobs) == 2
+
+
+def test_the_traffic_lets_a_waiter_through_once_no_call_runs_or_it_is_told_to_stop() -> None:
+    traffic = desk_module.Traffic()
+    stop = threading.Event()
+    assert traffic.wait_idle(stop)
+
+    through = threading.Event()
+    with traffic.call():
+        waiter = threading.Thread(target=lambda: through.set() if traffic.wait_idle(stop) else None)
+        waiter.start()
+        assert not through.wait(0.3)
+    assert through.wait(WAIT_SECONDS)
+    waiter.join(WAIT_SECONDS)
+
+    stop.set()
+    with traffic.call():
+        assert not traffic.wait_idle(stop)
 
 
 def test_the_apps_sync_pulls_a_private_deck_and_a_later_signed_out_one_warns_and_keeps_it(

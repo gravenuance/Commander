@@ -157,7 +157,39 @@ PAGE_ERROR_MESSAGE_CHARS = 500
 PAGE_ERROR_SOURCE_CHARS = 200
 PAGE_ERROR_STACK_CHARS = 1500
 
+# How long the warm-up waits for the bridge to fall idle before it looks at whether it was told to stop, and
+# how long closing the app waits for it to let go.
+WARM_POLL_SECONDS = 0.25
+WARM_CLOSE_SECONDS = 2.0
+
 type Json = dict[str, object]
+
+
+class Traffic:
+    """How many bridge calls run now, so work in the background can step aside for them."""
+
+    def __init__(self) -> None:
+        self._changed = threading.Condition()
+        self._running = 0
+
+    @contextmanager
+    def call(self) -> Generator[None]:
+        with self._changed:
+            self._running += 1
+        try:
+            yield
+        finally:
+            with self._changed:
+                self._running -= 1
+                if not self._running:
+                    self._changed.notify_all()
+
+    def wait_idle(self, stop: threading.Event) -> bool:
+        """Block until no bridge call runs; False, at once or within WARM_POLL_SECONDS, once `stop` is set."""
+        with self._changed:
+            while self._running and not stop.is_set():
+                self._changed.wait(WARM_POLL_SECONDS)
+            return not stop.is_set()
 
 
 def _guarded[**P](method: Callable[P, Json]) -> Callable[P, Json]:
@@ -174,8 +206,10 @@ def _guard[**P](method: Callable[P, Json], *, show_args: bool) -> Callable[P, Js
     @wraps(method)
     def call(*args: P.args, **kwargs: P.kwargs) -> Json:
         log.debug("bridge call %s %s", method.__name__, args[1:] if show_args else "(arguments withheld)")
+        desk = cast("Desk", args[0])
         try:
-            return method(*args, **kwargs)
+            with desk._traffic.call():  # noqa: SLF001 # pyright: ignore[reportPrivateUsage]
+                return method(*args, **kwargs)
         except CardDataDownloadingError as error:
             # A routine wait, already logged where it was raised.
             return {"error": _app_text(error)}
@@ -200,6 +234,10 @@ def _app_text(error: Exception) -> str:
 
 def _sync_thread(work: Callable[[], None]) -> object:
     return in_background(work, name="app-sync")
+
+
+def warm_thread(work: Callable[[], None]) -> object:
+    return in_background(work, name="app-warm")
 
 
 class CardDataDownloadingError(CardDataError):
@@ -314,6 +352,7 @@ class Desk:
         background: Callable[[Callable[[], None]], object] | None = None,
         updater: Updater | None = None,
         quit_app: Callable[[], None] = lambda: None,
+        warm_up: Callable[[Callable[[], None]], object] | None = None,
     ) -> None:
         self._settings = settings
         # New versions from GitHub (ADR 0059), and how the app closes after it starts one.
@@ -365,6 +404,20 @@ class Desk:
         self._writes: list[str] = []
         # Held by each write to a deck and by the sync's ideas merge into it (ADR 0042).
         self._deck_locks = DeckLocks()
+        # Runs the warm-up of the decks' kept answers off the window's thread; None for none (tests). The
+        # app's `launch` closes the desk, which stops it.
+        self._warm_up = warm_up
+        self._traffic = Traffic()
+        self._stop_warming = threading.Event()
+        self._warm_lock = threading.Lock()
+        # Guarded by _warm_lock: a warm-up is queued or running, and one more is wanted after it.
+        self._warming = False
+        self._warm_again = False
+        # Set while no warm-up runs.
+        self._warmed = threading.Event()
+        self._warmed.set()
+        # Whether a deck view has asked for the warm-up yet; the first one does.
+        self._viewed = False
 
     @_guarded
     def account(self) -> Json:
@@ -752,6 +805,9 @@ class Desk:
             handed = self._hand_over()
         if handed is not None:
             self._launch_resync(user, *handed)
+        else:
+            # What the sync fetched or rebuilt has made the decks' kept answers old.
+            self._warm_decks()
 
     def _hand_over(self) -> tuple[FetchPriority, frozenset[int]] | None:
         """Mark the sync of the decks asked for during the last one as running, unless none was asked for or a
@@ -903,6 +959,10 @@ class Desk:
                 share=lambda name: _share_json(shares.of(name)),
             )
         activity = read_recent_activity(stored.folder, ACTIVITY_SHOWN)
+        # The first deck view is the first thing the user waits for; the rest of the decks come after it.
+        if not self._viewed:
+            self._viewed = True
+            self._warm_decks()
         return {
             "id": stored.deck.id,
             "short": stored.deck.short_name,
@@ -928,6 +988,76 @@ class Desk:
             **decklist,
             "activity": [activity_json(entry) for entry in reversed(activity)],
         }
+
+    def close(self) -> None:
+        """Stop the warm-up and wait briefly for it to let go; the app calls this as its window closes."""
+        self._stop_warming.set()
+        self._warmed.wait(WARM_CLOSE_SECONDS)
+
+    def _warm_decks(self) -> None:
+        """Ask for the decks' kept cut rules and previews to be worked out in the background, as a deck view
+        does, so the first view of each is quick. A request made while one runs asks for a pass after it."""
+        if self._warm_up is None or self._stop_warming.is_set():
+            return
+        with self._warm_lock:
+            if self._warming:
+                self._warm_again = True
+                return
+            self._warming = True
+            self._warmed.clear()
+        self._warm_up(self._warm_passes)
+
+    def _warm_passes(self) -> None:
+        over = False
+        try:
+            while not over:
+                with self._warm_lock:
+                    self._warm_again = False
+                self._warm_pass()
+                with self._warm_lock:
+                    over = not self._warm_again or self._stop_warming.is_set()
+                    if over:
+                        self._warming = False
+                        self._warmed.set()
+        except Exception:
+            log.exception("warming the decks' answers failed unexpectedly")
+        finally:
+            if not over:
+                with self._warm_lock:
+                    self._warming = False
+                    self._warmed.set()
+
+    def _warm_pass(self) -> None:
+        """Each deck in the list's order, skipping a deck while a bridge call runs, never holding one up."""
+        workspace = self._workspace
+        decks: list[StoredDeck] = []
+        for deck_id, _ in workspace.deck_folders():
+            try:
+                decks.append(self._stored(deck_id))
+            except BoardError as error:
+                log.info("warm-up skips deck %d: %s", deck_id, error)
+        decks.sort(key=lambda stored: stored.deck.short_name.casefold())
+        for stored in decks:
+            # An account switch while warming leaves the other account's decks alone.
+            if workspace is not self._workspace or not self._traffic.wait_idle(self._stop_warming):
+                return
+            try:
+                self._warm_deck(stored)
+            except CardDataError as error:
+                log.info("warm-up waits for the card data: %s", error)
+                return
+            except _EXPECTED as error:
+                log.info("warm-up skips deck %d: %s", stored.deck.id, error)
+
+    def _warm_deck(self, stored: StoredDeck) -> None:
+        """The same calls a deck view makes, so a view finds their answers kept."""
+        profile = read_profile(stored.folder)
+        with self._db() as db:
+            main = db.resolve(stored.deck.main_cards)
+            self._deck_rules(stored, main, profile, db)
+            self._shares(stored)
+            if self._traffic.wait_idle(self._stop_warming):
+                self._fitting_previews(stored, main, profile, db)
 
     @_guarded
     def set_label(self, deck_id: int, name: str, label: str) -> Json:

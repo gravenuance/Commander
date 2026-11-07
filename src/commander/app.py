@@ -18,7 +18,7 @@ from commander.applog import install_file_log
 from commander.carddb import CARD_DB_FILE
 from commander.config import ConfigError, cache_dir, config_path, read_config, resolve_user, resolve_workspace
 from commander.credentials import TokenStore
-from commander.desk import Desk, DeskSettings
+from commander.desk import Desk, DeskSettings, warm_thread
 from commander.updates import remove_old_exe, running_exe
 
 if TYPE_CHECKING:
@@ -128,9 +128,17 @@ def launch(
     setup_logging(cache_dir(env), env, settings)
     remove_old_exe(running_exe())
     desk = Desk(
-        settings, client_factory=client_factory, token_store=token_store, now=now, quit_app=close_windows
+        settings,
+        client_factory=client_factory,
+        token_store=token_store,
+        now=now,
+        quit_app=close_windows,
+        warm_up=warm_thread,
     )
-    run_app(desk, storage=cache_dir(env) / WEBVIEW_FOLDER, debug=debug)
+    try:
+        run_app(desk, storage=cache_dir(env) / WEBVIEW_FOLDER, debug=debug)
+    finally:
+        desk.close()
 
 
 def close_windows() -> None:
