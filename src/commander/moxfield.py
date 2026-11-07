@@ -154,7 +154,8 @@ class MoxfieldSearch:
             raise MoxfieldBlockedError(self._blocked)
         try:
             answer = self._guard.send(
-                lambda: self._fetcher.get_json(url, params, surface_rate_limit=True), target(url, params)
+                lambda: self._fetcher.get_json(url, params, surface_rate_limit=True, surface_challenge=True),
+                target(url, params),
             )
         except (HttpStatusError, NotJsonError) as error:
             refusal = _refusal(error)

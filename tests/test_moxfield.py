@@ -17,7 +17,7 @@ from commander.moxfield import (
     parse_deck,
     parse_search_page,
 )
-from commander.net import Fetcher, Pacer, RateLimitedError
+from commander.net import Fetcher, HttpStatusError, Pacer, RateLimitedError
 from commander.peersearch import SEARCH_INTERVAL_SECONDS, PeerDeck, Site
 from conftest import FakeMoxfield, load_fixture, moxfield_deck, moxfield_page, moxfield_row
 
@@ -319,6 +319,41 @@ def test_a_search_page_is_retried_after_a_429_too() -> None:
     decks = limited.search().popular_decks("W1", brackets=(3,), since=SINCE, label="winota")
     assert limited.at == [0.0, 60.0]
     assert len(decks) == 12
+
+
+CHALLENGE_PAGE = "<!DOCTYPE html><html><title>Just a moment...</title></html>"
+
+
+@pytest.mark.parametrize(
+    "challenge",
+    [
+        httpx.Response(503, text=CHALLENGE_PAGE),
+        httpx.Response(503, json={"ok": False}, headers={"cf-mitigated": "challenge"}),
+    ],
+    ids=["html body", "cf-mitigated header"],
+)
+def test_a_challenge_served_as_503_is_not_retried_and_blocks_the_run(challenge: httpx.Response) -> None:
+    limited = Limited(challenge, card_search_answer())
+    search = limited.search()
+    with pytest.raises(MoxfieldBlockedError, match="challenge"):
+        search.commander_card_id(WINOTA)
+    with pytest.raises(MoxfieldBlockedError):
+        search.deck("abc")
+    assert limited.at == [0.0]
+
+
+def test_a_503_that_is_no_challenge_is_still_retried() -> None:
+    limited = Limited(httpx.Response(503, json={"ok": False}), card_search_answer())
+    assert limited.search().commander_card_id(WINOTA) == "Er9bV"
+    assert len(limited.at) == 2
+
+
+def test_a_deleted_deck_whose_404_is_a_page_is_no_challenge() -> None:
+    limited = Limited(httpx.Response(404, text=CHALLENGE_PAGE), card_search_answer())
+    search = limited.search()
+    with pytest.raises(HttpStatusError, match="404"):
+        search.deck("gone")
+    assert search.commander_card_id(WINOTA) == "Er9bV"
 
 
 def test_a_second_429_gives_up_on_moxfield_for_the_rest_of_the_run() -> None:

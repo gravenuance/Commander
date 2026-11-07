@@ -76,7 +76,9 @@ What the API offers, from a dozen honest, paced requests on 2026-11-07 (User-Age
   unreadable and the other without decks) is there no answer: nothing is re-judged, as before Moxfield.
   A deck is not marked incomplete for a site that was not read.
 - **Failing soft.** A 429 is handled as on Archidekt: one retry after the pause, then Moxfield is given up
-  for the run. A 403, or a 200 that is not JSON (a bot challenge page), on the card lookup or a search ends
+  for the run. A bot challenge is a 200 that is not JSON, or any other answer (a 503 too) that is a page, not
+  JSON, or carries a `cf-mitigated` header; it is never retried, as other 5xx answers are (a 404 or 410 page
+  is a deleted deck, and a 429 page a rate limit). A 403, or a challenge, on the card lookup or a search ends
   Moxfield for the run: nothing more is sent. So does a challenge page on a deck read. A 403 on a single
   deck read (a private deck answers 403) skips that deck only, until three deck reads in a row are refused
   (a read that succeeds starts the count again), which ends Moxfield for the run too. The failure is reported, not analysed: `sync` warns once per run
