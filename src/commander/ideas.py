@@ -18,7 +18,7 @@ longer passes its source's test is turned down (`rejudge_ideas`).
 """
 
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from functools import cache
@@ -573,16 +573,22 @@ def compile_ideas_with_adjacent(
     on_progress: Progress | None = None,
 ) -> dict[Origin, list[BoardCard]]:
     """`compile_ideas` with the pools `gather_idea_pools` reads; each site unread for the alike commanders is
-    named to warn once."""
+    named to warn once, and each whose refresh failed."""
     pools = gather_idea_pools(
         stored, db, sources, cache_root, now=now, refresh=refresh, warn=warn, on_progress=on_progress
     )
-    warned: set[Site] = set()
-    for site, why in pools.unread:
-        if site not in warned:
-            warned.add(site)
-            warn(unread_site_warning(site, why))
+    for site, why in _first_per_site(pools.unread):
+        warn(unread_site_warning(site, why))
+    for site, why in _first_per_site(pools.stale):
+        warn(stale_site_warning(site, why))
     return compile_ideas(stored, data, db, now=now, adjacent=pools.decks, tagged=pools.tagged)
+
+
+def _first_per_site(items: Iterable[tuple[Site, str]]) -> list[tuple[Site, str]]:
+    first: dict[Site, str] = {}
+    for site, why in items:
+        first.setdefault(site, why)
+    return list(first.items())
 
 
 def unread_site_prefix(site: Site) -> str:
@@ -593,6 +599,16 @@ def unread_site_prefix(site: Site) -> str:
 def unread_site_warning(site: Site, why: str) -> str:
     """That a peer-deck site could not be read; the ideas were judged by the decks that were (ADR 0066)."""
     return f"{unread_site_prefix(site)} ({why}); ideas are judged by the decks that were read"
+
+
+def stale_site_prefix(site: Site) -> str:
+    """How `stale_site_warning` starts for the site, whatever the reason."""
+    return f"{site.value} decks could not be refreshed"
+
+
+def stale_site_warning(site: Site, why: str) -> str:
+    """That a peer-deck site could not be refreshed, so its stored decks stand in (ADR 0066)."""
+    return f"{stale_site_prefix(site)} ({why}); ideas use the copy read earlier"
 
 
 def ideas_summary(added: dict[Origin, list[BoardCard]]) -> str:

@@ -821,6 +821,25 @@ def test_to_board_warns_once_of_a_site_it_could_not_read_for_the_alike_commander
     assert "Magda board: +1 from meta, +1 from adjacent decks\n" in result.err
 
 
+def test_to_board_warns_once_when_a_site_could_not_be_refreshed_for_the_alike_commanders(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    (home / "decks" / FOLDER / "profile.toml").write_text(ALIKE_PROFILE, encoding="utf-8")
+    put_ygra_decks(fake)
+    fake.moxfield.cards[YGRA.casefold()] = "Y1"
+    fake.moxfield.pages["Y1"] = [moxfield_page([moxfield_row("mox-y", 800, "2026-10-01T00:00:00Z")])]
+    fake.moxfield.decks["mox-y"] = moxfield_deck("mox-y", [YGRA], {"Arcane Signet": 1, "Mountain": 30})
+    assert meta(home, fake, "magda", "--to-board").code == 0
+    fake.moxfield.status = 403
+    result = meta(home, fake, "magda", "--to-board", "--refresh")
+    assert result.code == 0, result.err
+    warning = (
+        "cmdr: Moxfield decks could not be refreshed (Moxfield refused cmdr's requests (HTTP 403)); "
+        "ideas use the copy read earlier\n"
+    )
+    assert result.err.count(warning) == 1
+
+
 def test_sync_names_an_alike_commander_it_cannot_search_and_carries_on(
     home: Path, fake: FakeArchidekt
 ) -> None:

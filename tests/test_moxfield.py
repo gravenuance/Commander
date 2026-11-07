@@ -432,6 +432,20 @@ def test_a_stale_site_makes_the_joined_answer_stale_and_as_old_as_the_older() ->
     assert joined.data.missing == ()
 
 
+def test_a_site_whose_refresh_failed_is_named_stale_while_its_stored_decks_still_count() -> None:
+    older = Answer(
+        PeerLists((peer(Site.MOXFIELD, "m1", (WINOTA,)),), 0),
+        AnswerSource.STALE,
+        datetime(2026, 10, 1, tzinfo=UTC),
+        "refused",
+    )
+    joined = joined_peers(answer(peer(Site.ARCHIDEKT, 1, (WINOTA, "Sol Ring"))), older)
+    assert joined.data is not None
+    assert [p.deck.id for p in joined.data.decks] == [1, "m1"]
+    assert joined.data.stale == ((Site.MOXFIELD, "refused"),)
+    assert joined.data.missing == ()
+
+
 def test_both_sites_cached_is_cached() -> None:
     joined = joined_peers(
         answer(source=AnswerSource.CACHED), answer(peer(Site.MOXFIELD, "m", ()), source=AnswerSource.CACHED)

@@ -1484,6 +1484,18 @@ def test_moxfield_refusing_leaves_the_archidekt_decks_and_says_moxfield_was_not_
     assert len(fake.requests) == 1
 
 
+def test_moxfield_refusing_a_refresh_names_it_stale_while_its_stored_decks_still_count(rig: Rig) -> None:
+    fake = moxfield_rig(rig)
+    rig.gather()
+    fake.status = 403
+    peers = rig.gather(refresh=True).peers
+    assert peers.data is not None
+    assert peers.data.stale == ((Site.MOXFIELD, "Moxfield refused cmdr's requests (HTTP 403)"),)
+    assert peers.data.missing == ()
+    assert [p.deck.id for p in peers.data.decks if p.deck.site is Site.MOXFIELD] == ["mox-a", "mox-b"]
+    assert peers.source is AnswerSource.STALE
+
+
 def test_a_cache_only_read_of_a_commander_never_fetched_names_no_site_as_unread(rig: Rig) -> None:
     moxfield_rig(rig)
     cached = gather(
@@ -1570,6 +1582,22 @@ def test_an_alike_commander_moxfield_refuses_pools_archidekts_decks_as_the_whole
     assert not found.groups_failed
     # What could not be read is reported for the sync to warn of once.
     assert found.unread == ((Site.MOXFIELD, "Moxfield refused cmdr's requests (HTTP 403)"),)
+
+
+def test_an_alike_commanders_moxfield_refresh_that_fails_is_stale_and_its_stored_decks_stay_in_the_pool(
+    rig: Rig,
+) -> None:
+    fake = moxfield_rig(rig, commander=MAGDA)
+    rig.archidekt.commander = MAGDA
+    adjacent(rig, (MAGDA,))
+    fake.status = 403
+    found = gather_adjacent(
+        ellivere_deck(), [(MAGDA,)], rig.sources(), rig.cache, now=lambda: rig.now, refresh=True
+    )
+    assert [p.deck.site for p in found.decks] == [Site.ARCHIDEKT, Site.MOXFIELD]
+    assert found.stale == ((Site.MOXFIELD, "Moxfield refused cmdr's requests (HTTP 403)"),)
+    assert found.unread == ()
+    assert not found.groups_failed
 
 
 def test_an_alike_commander_neither_site_can_read_is_a_failed_group(rig: Rig) -> None:
