@@ -13,7 +13,7 @@ function considering(cards) {
   return sortSuggestions(cards.filter((c) => c.status === "add" || (isOpenIdea(c) && c.targets.length)));
 }
 
-// Your cards, then Claude's, then meta ideas, then the deck's own commander's Archidekt decks, then alike
+// Your cards, then Claude's, then meta ideas, then the deck's own commander's peer decks, then alike
 // commanders', then tagged decks', then everything else. Within each group, cards over the deck's budget
 // (ADR 0025) go last; then the largest share the pill shows first.
 const ORIGIN_RANK = ["meta", "archidekt decks", "adjacent decks", "tagged decks"];
@@ -29,9 +29,9 @@ function suggestionGroup(card) {
 function originLabel(card) {
   switch (card.origin) {
     case "meta": return "Tournament lists";
-    case "archidekt decks": return `Archidekt: ${state.view?.short ?? "this commander"} decks`;
-    case "adjacent decks": return "Archidekt: alike commanders";
-    case "tagged decks": return card.originTag ? `Archidekt: tagged ${card.originTag}` : "Archidekt: tagged decks";
+    case "archidekt decks": return `Peers: ${state.view?.short ?? "this commander"} decks`;
+    case "adjacent decks": return "Peers: alike commanders";
+    case "tagged decks": return card.originTag ? `Peers: tagged ${card.originTag}` : "Peers: tagged decks";
     default: return card.origin ?? card.source;
   }
 }
@@ -39,8 +39,8 @@ function originLabel(card) {
 function originTitle(card) {
   const from = {
     "meta": "TopDeck.gg tournament lists",
-    "archidekt decks": "recent Archidekt decks of this commander",
-    "adjacent decks": "recent Archidekt decks of commanders that play alike",
+    "archidekt decks": "recent Archidekt and Moxfield decks of this commander",
+    "adjacent decks": "recent Archidekt and Moxfield decks of alike commanders",
     "tagged decks": card.originTag ? `recent Archidekt decks tagged ${card.originTag}` : "recent Archidekt decks with a theme tag of the deck",
   }[card.origin];
   return from ? `compiled by ${card.source} from ${from}` : `added by ${card.source}`;
@@ -69,7 +69,7 @@ function originKey(origin) {
 function originPhrase(card) {
   switch (card.origin) {
     case "meta": return "mostly tournament lists";
-    case "archidekt decks": return `mostly ${state.view?.short ?? "this commander"} Archidekt decks`;
+    case "archidekt decks": return `mostly ${state.view?.short ?? "this commander"} peer decks`;
     case "adjacent decks": return "mostly alike commanders' decks";
     case "tagged decks": return card.originTag ? `mostly decks tagged ${card.originTag}` : "mostly tagged decks";
     default: return `added by ${card.source}`;

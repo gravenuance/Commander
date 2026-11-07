@@ -75,7 +75,7 @@ def test_a_tile_without_any_share_names_where_the_idea_came_from() -> None:
       badge: tile.querySelector(".badge.cmdr").textContent };
     """)
     assert tile["pills"] == 0
-    assert tile["badge"] == "Archidekt: this commander decks"
+    assert tile["badge"] == "Peers: this commander decks"
 
 
 def test_an_alike_or_tagged_pill_shows_the_pool_share_and_says_so() -> None:
@@ -94,8 +94,8 @@ def test_an_alike_or_tagged_pill_shows_the_pool_share_and_says_so() -> None:
     assert pills == [
         ["50%", "50% of alike commanders' decks"],
         ["25%", "25% of Storm-tagged decks"],
-        ["40%", "40% played; mostly this commander Archidekt decks"],
-        ["40%", "40% played; mostly Magda Archidekt decks"],
+        ["40%", "40% played; mostly this commander peer decks"],
+        ["40%", "40% played; mostly Magda peer decks"],
     ]
 
 
@@ -112,10 +112,10 @@ def test_the_breakdown_lists_each_source_and_asks_for_the_next_sync_when_a_pool_
     """)
     assert rows["both"] == [
         ["Tournament lists", "80% · 4 of 5 lists"],
-        ["Archidekt: this commander decks", "60% · 3 of 5 decks"],
+        ["Peers: this commander decks", "60% · 3 of 5 decks"],
     ]
-    assert rows["alike"] == [["Archidekt: alike commanders", "50% · 2 of 4 decks"]]
-    assert rows["old"] == [["Archidekt: tagged Storm", "Counted on the next sync"]]
+    assert rows["alike"] == [["Peers: alike commanders", "50% · 2 of 4 decks"]]
+    assert rows["old"] == [["Peers: tagged Storm", "Counted on the next sync"]]
 
 
 def test_ideas_sort_by_group_then_budget_then_the_share_the_pill_shows() -> None:
