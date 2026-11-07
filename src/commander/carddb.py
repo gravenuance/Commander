@@ -3,6 +3,7 @@
 import logging
 import re
 import sqlite3
+import string
 import threading
 import time
 from collections.abc import Callable, Collection, Hashable, Iterable, Iterator, Mapping, Sequence
@@ -504,6 +505,15 @@ class LegalFace:
     text: str
 
 
+@dataclass(slots=True, frozen=True)
+class _TypesAndKeywords:
+    """What `_theme_sql` matches a theme's types and keywords against, for the Commander-legal cards."""
+
+    # Each type line as the SQL reads it: lowercased in ASCII only, em dashes and slashes as spaces, padded.
+    type_lines: tuple[str, ...]
+    keywords: tuple[str, ...]
+
+
 @dataclass(slots=True, eq=False)
 class _BuildAnswers:
     """Counts that depend only on one build of the card database and cost a table scan to work out."""
@@ -511,6 +521,7 @@ class _BuildAnswers:
     stamp: tuple[object, ...]
     legal_cards: int | None = None
     legal_faces: tuple[LegalFace, ...] | None = None
+    types_and_keywords: _TypesAndKeywords | None = None
     tag_sizes: dict[str, int] = field(default_factory=dict[str, int])
     theme_sizes: dict[Theme, int] = field(default_factory=dict[Theme, int])
     role_sizes: dict[Role, int] | None = None
@@ -726,10 +737,35 @@ class CardDb:
             return 0
         answers = self._build_answers()
         if (size := answers.theme_sizes.get(theme)) is None:
-            cte, condition, params = _theme_sql(theme)
-            sql = f"{cte} SELECT count(*) FROM oracle WHERE commander_legal = 1 AND ({condition})"  # noqa: S608 — built from constant fragments and placeholders; every value is bound
-            size = answers.theme_sizes[theme] = int(self._query_named(sql, params)[0][0])
+            if theme.tag_ids:
+                cte, condition, params = _theme_sql(theme)
+                sql = f"{cte} SELECT count(*) FROM oracle WHERE commander_legal = 1 AND ({condition})"  # noqa: S608 — built from constant fragments and placeholders; every value is bound
+                size = int(self._query_named(sql, params)[0][0])
+            else:
+                size = self._count_types_and_keywords(answers, theme)
+            answers.theme_sizes[theme] = size
         return size
+
+    def _count_types_and_keywords(self, answers: _BuildAnswers, theme: Theme) -> int:
+        """`theme_size` for a theme of types and keywords alone, counted in Python from one read of the
+        legal cards: a query per theme costs far more than the match, as a deck asks for dozens."""
+        if answers.types_and_keywords is None:
+            rows = self._query("SELECT type_line, keywords FROM oracle WHERE commander_legal = 1")
+            answers.types_and_keywords = _TypesAndKeywords(
+                tuple(_sql_type_line(type_line) for type_line, _ in rows),
+                tuple(keywords for _, keywords in rows),
+            )
+        read = answers.types_and_keywords
+        types = [_type_needle(word) for word in theme.types]
+        keywords = [_keyword_needle(word) for word in theme.keywords]
+        if not keywords:
+            return _count_holding(types, read.type_lines)
+        if not types:
+            return _count_holding(keywords, read.keywords)
+        return sum(
+            any(t in line for t in types) or any(k in cell for k in keywords)
+            for line, cell in zip(read.type_lines, read.keywords, strict=True)
+        )
 
     def legal_cards(self) -> int:
         answers = self._build_answers()
@@ -929,18 +965,43 @@ class CardDb:
             raise CardDataError(f"card data is unreadable ({error}); run `cmdr sync --force`") from error
 
 
+def _type_needle(word: str) -> str:
+    return f" {word.casefold()} "
+
+
+def _keyword_needle(keyword: str) -> str:
+    return f"|{keyword.casefold()}|"
+
+
+# SQLite's lower() changes the letters A-Z alone, so "É" stays and a casefolded "é" never matches it.
+_ASCII_LOWER = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
+
+
+def _sql_type_line(type_line: str) -> str:
+    """The type line as `_theme_sql` matches it: words between spaces, em dashes and slashes as spaces."""
+    return f" {type_line.replace('—', ' ').replace('//', ' ').translate(_ASCII_LOWER)} "
+
+
+def _count_holding(needles: Sequence[str], cells: Sequence[str]) -> int:
+    """How many cells hold any of the needles."""
+    if len(needles) == 1:
+        needle = needles[0]
+        return sum(needle in cell for cell in cells)
+    return sum(any(needle in cell for needle in needles) for cell in cells)
+
+
 def _theme_sql(theme: Theme) -> tuple[str, str, dict[str, object]]:
     """The WITH clause, the condition on oracle and the named parameters that match a theme."""
     params: dict[str, object] = {}
     parts: list[str] = []
     for index, word in enumerate(theme.types):
-        params[f"type{index}"] = f" {word.casefold()} "
+        params[f"type{index}"] = _type_needle(word)
         # Spaces around each word of the type line, so "Elf" never matches "Elfball" or "Self".
         parts.append(
             f"instr(' ' || lower(replace(replace(type_line, '—', ' '), '//', ' ')) || ' ', :type{index}) > 0"
         )
     for index, keyword in enumerate(theme.keywords):
-        params[f"keyword{index}"] = f"|{keyword.casefold()}|"
+        params[f"keyword{index}"] = _keyword_needle(keyword)
         parts.append(f"instr(keywords, :keyword{index}) > 0")
     cte = ""
     if theme.tag_ids:

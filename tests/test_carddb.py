@@ -433,6 +433,61 @@ def test_theme_matches_keywords_whole(card_db_file: Path) -> None:
         assert db.matching(Theme(keywords=("fly",)), cards) == set()
 
 
+def accented_card(index: int, type_line: str, keywords: list[str]) -> str:
+    line = json.loads(filler_card(index))
+    line["type_line"], line["keywords"] = type_line, keywords
+    return json.dumps(line, ensure_ascii=False)
+
+
+@pytest.fixture(scope="module")
+def accented_db_file(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    cards = [
+        accented_card(41_001, "Creature — élan Dwarf", ["Étude", "Flash"]),
+        accented_card(41_002, "Creature — Élan", ["ÉTUDE"]),
+        accented_card(41_003, "Legendary Artifact // Land — Dwarf", ["Flash"]),
+        accented_card(41_004, "Creature — Dwarf Noble", []),
+    ]
+    return build_card_db(tmp_path_factory.mktemp("accenteddb"), extra_cards=cards)
+
+
+def sql_theme_size(db_file: Path, types: Sequence[str] = (), keywords: Sequence[str] = ()) -> int:
+    """What the card database's own SQL counts: lower() changes ASCII letters alone, instr is exact."""
+    line = "' ' || lower(replace(replace(type_line, '—', ' '), '//', ' ')) || ' '"
+    conditions = [f"instr({line}, ?) > 0" for _ in types] + ["instr(keywords, ?) > 0" for _ in keywords]
+    params = [f" {t.casefold()} " for t in types] + [f"|{k.casefold()}|" for k in keywords]
+    with sqlite3.connect(db_file) as plain:
+        sql = f"SELECT count(*) FROM oracle WHERE commander_legal = 1 AND ({' OR '.join(conditions)})"  # noqa: S608
+        return int(plain.execute(sql, params).fetchone()[0])
+
+
+def test_a_types_and_keywords_theme_is_counted_as_the_database_query_would(accented_db_file: Path) -> None:
+    with CardDb(accented_db_file) as db:
+        # Hand-derived: SQLite lower() leaves the capital É of "Élan" alone, so the casefolded "élan" finds
+        # only the card whose type line has a lowercase é; both "Étude" spellings are casefolded when stored.
+        assert db.theme_size(Theme(types=("Élan",))) == 1
+        assert db.theme_size(Theme(types=("élan",))) == 1
+        assert db.theme_size(Theme(keywords=("Étude",))) == 2
+        # Beside the fixture's Magda, who is a Dwarf, and its two Flash cards (Disruptor Flute, Hoverbike).
+        assert db.theme_size(Theme(keywords=("flash",))) == 4
+        assert db.theme_size(Theme(types=("Dwarf",))) == 4
+        # A slash or a dash separates words, and a part of a word is none.
+        assert db.theme_size(Theme(types=("Noble",))) == 1
+        assert db.theme_size(Theme(types=("Dwar",))) == 0
+        assert db.theme_size(Theme(types=("Dwarf", "Noble"), keywords=("flash",))) == 6
+        shapes: list[tuple[tuple[str, ...], tuple[str, ...]]] = [
+            (("Élan",), ()),
+            (("Dwarf", "Land"), ()),
+            ((), ("Étude", "Flash")),
+            (("Artifact",), ("Étude",)),
+            (("Creature", "Elf", "Dwarf"), ("Flash", "Haste")),
+            (("nothing",), ("nothing",)),
+        ]
+        for types, keywords in shapes:
+            assert db.theme_size(Theme(types=types, keywords=keywords)) == sql_theme_size(
+                accented_db_file, types, keywords
+            ), (types, keywords)
+
+
 def test_theme_tags_include_their_sub_tags(card_db_file: Path) -> None:
     with CardDb(card_db_file) as db:
         combat_ramp = db.tag_ids(["combat-ramp"])["combat-ramp"]
@@ -497,12 +552,13 @@ def test_a_builds_counts_are_scanned_once_however_many_connections_ask(
         monkeypatch.setattr(CardDb, name, _spy(getattr(CardDb, name), counting))
     expected = ({"ramp": 7, "combat-ramp": 1, "filler-9999": 1}, artifacts, legal)
     assert counts_of(db_file) == expected
-    # Three tag counts, one theme count, one legal-card count.
-    assert sum("count(" in sql for sql in counting) == 5
+    # Three tag counts and one legal-card count; the theme count reads the legal cards' types once.
+    assert sum("count(" in sql for sql in counting) == 4
+    assert sum("SELECT type_line, keywords" in sql for sql in counting) == 1
     counting.clear()
     assert counts_of(db_file) == expected
     assert counts_of(db_file) == expected
-    assert not any("count(" in sql for sql in counting)
+    assert not any("count(" in sql or "type_line, keywords" in sql for sql in counting)
 
 
 def test_the_legal_faces_are_read_once_per_build_however_many_connections_ask(
