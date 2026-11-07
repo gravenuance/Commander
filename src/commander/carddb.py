@@ -20,7 +20,7 @@ from commander.pricefilter import Prices, drop_glitches
 log = logging.getLogger(__name__)
 
 # Bump whenever the tables or the meaning of a column change; an old file is rebuilt, never migrated.
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 CARD_DB_FILE = "cards.sqlite"
 # The suffix of a database being built beside the real one; a crash can leave such a file behind.
 BUILD_SUFFIX = ".building"
@@ -240,6 +240,8 @@ _INDEXES = (
     "CREATE INDEX role_member_card ON role_member (oracle_id)",
     "CREATE INDEX tag_slug ON tag (slug)",
     "CREATE INDEX tag_member_card ON tag_member (oracle_id)",
+    # The tag lineage and ancestor walks go from a child up to its parents, against the primary key's order.
+    "CREATE INDEX tag_child_child ON tag_child (child_id, parent_id)",
 )
 
 

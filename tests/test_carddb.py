@@ -632,6 +632,15 @@ def test_tag_count_and_theme_queries_walk_the_tag_subtree_into_tag_member(card_d
         assert "SEARCH tag_member USING" in plan
 
 
+def test_the_walks_up_the_tag_tree_find_a_tags_parents_by_index(card_db_file: Path) -> None:
+    internals = vars(carddb)
+    lineage = _plan(card_db_file, internals["_LINEAGE_QUERY"].format("?, ?"), [MAGDA_ORACLE, ARCANE_SIGNET])
+    ancestors = _plan(card_db_file, internals["_ANCESTORS_QUERY"].format("?"), ["combat-ramp"])
+    for plan in (lineage, ancestors):
+        assert "SEARCH tag_child USING COVERING INDEX tag_child_child" in plan
+        assert "SCAN tag_child" not in plan
+
+
 def test_a_cards_printings_and_roles_are_found_by_index(card_db_file: Path) -> None:
     printings = _plan(card_db_file, "SELECT * FROM printing WHERE oracle_id = ?", [MAGDA_ORACLE])
     roles = _plan(card_db_file, "SELECT role FROM role_member WHERE oracle_id = ?", [MAGDA_ORACLE])
@@ -652,6 +661,7 @@ def test_a_built_database_is_sound_and_holds_every_index(card_db_file: Path) -> 
         "role_member_card",
         "tag_slug",
         "tag_member_card",
+        "tag_child_child",
     } <= indexes
     # A finished build is one file: no journal beside it.
     assert [p.name for p in card_db_file.parent.glob("cards.sqlite*")] == ["cards.sqlite"]
