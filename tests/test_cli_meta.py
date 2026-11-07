@@ -583,6 +583,34 @@ def test_meta_says_a_site_was_not_read_without_calling_the_decks_an_old_copy(
     assert "Moxfield: Moxfield refused cmdr's requests (HTTP 403)" in result.err
 
 
+def test_meta_names_the_one_stale_site_and_its_copy_and_says_the_other_sites_decks_are_current(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    assert meta(home, fake, "magda").code == 0
+    fake.moxfield.status = 403
+    result = meta(home, fake, "magda", "--refresh")
+    assert result.code == 0, result.err
+    assert (
+        "cmdr: Magda: Archidekt and Moxfield decks partly read (Moxfield failed "
+        "(Moxfield refused cmdr's requests (HTTP 403)); showing its copy from 2026-10-15 12:00 UTC; "
+        "the Archidekt decks are current)\n"
+    ) in result.err
+    assert "decks failed" not in result.err
+
+
+def test_meta_calls_the_whole_peer_answer_an_old_copy_when_both_sites_are_stale(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    assert meta(home, fake, "magda").code == 0
+    fake.moxfield.status = 403
+    fake.peer_page = {"unexpected": True}
+    result = meta(home, fake, "magda", "--refresh")
+    assert result.code == 0, result.err
+    assert "Archidekt and Moxfield decks failed (" in result.err
+    assert "showing the copy from 2026-10-15 12:00 UTC" in result.err
+    assert "partly read" not in result.err
+
+
 def test_sync_with_every_source_down_keeps_the_board_and_succeeds(home: Path, fake: FakeArchidekt) -> None:
     fake.topdeck.status = 403
     fake.peer_page = {"unexpected": True}

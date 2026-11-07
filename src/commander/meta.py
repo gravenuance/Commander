@@ -15,7 +15,7 @@ from commander.deckprofile import Profile
 from commander.keycards import KeyCard, key_cards
 from commander.manabase import searched_colours
 from commander.metacombos import AnswerRole, DeckAnswers, MetaCombo, combo_answers, infos_answers, meta_combos
-from commander.metadata import MetaCommander, MetaData, PeerList, entries_since, listed_entries
+from commander.metadata import MetaCommander, MetaData, PeerList, PeerLists, entries_since, listed_entries
 from commander.models import COMMANDER_CATEGORY, Deck
 from commander.peersearch import PeerDeck, Site
 from commander.playstyle import NEUTRAL, Fit, PlayStyle, Weight, deck_play_style, staple_weights
@@ -113,6 +113,8 @@ class SourceState:
     source: AnswerSource
     fetched_at: datetime | None
     error: str | None
+    # The peer-deck sites that fell back to a stored copy, with why, when only they did (ADR 0066).
+    stale_sites: tuple[tuple[Site, str], ...] = ()
 
 
 @dataclass(slots=True, frozen=True)
@@ -200,7 +202,7 @@ def analyse(deck: Deck, data: MetaData, profile: Profile, db: CardDb, *, now: Cl
         sources=(
             _state("TopDeck lists", data.lists),
             _state("TopDeck meta", data.field),
-            _state("Archidekt and Moxfield decks", data.peers),
+            _peers_state(data.peers),
             _state("Spellbook combos", data.combos),
             _state("Spellbook deck combos", data.own_combos),
         ),
@@ -533,6 +535,11 @@ def _plays(entry: Entry, key: str) -> bool:
 
 def _state[T](name: str, answer: Answer[T]) -> SourceState:
     return SourceState(name, answer.source, answer.fetched_at, answer.error)
+
+
+def _peers_state(answer: Answer[PeerLists]) -> SourceState:
+    stale = answer.data.stale if answer.data else ()
+    return SourceState("Archidekt and Moxfield decks", answer.source, answer.fetched_at, answer.error, stale)
 
 
 def _list_counts(entries: Iterable[Entry]) -> Counter[str]:

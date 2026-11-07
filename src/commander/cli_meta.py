@@ -19,6 +19,7 @@ from commander.meta import (
     CardCheck,
     MetaAnswer,
     MetaReport,
+    SourceState,
     analyse,
     check_card,
 )
@@ -35,6 +36,7 @@ from commander.metadata import (
 from commander.metadata import meta_sources as shared_meta_sources
 from commander.metajson import report_json
 from commander.models import Deck, short_commander_name
+from commander.peersearch import Site
 from commander.playstyle import Fit
 from commander.spellbook import SpellbookClient
 from commander.store import StoredDeck, Workspace
@@ -232,7 +234,9 @@ def _warn_sources(report: MetaReport, err: TextIO) -> None:
     for state in report.sources:
         if state.error in NOT_READ:
             continue
-        if state.source is AnswerSource.STALE and state.fetched_at is not None:
+        if (one_stale := _one_site_stale(state)) is not None:
+            print(f"cmdr: {report.deck}: {state.name} partly read ({one_stale})", file=err)
+        elif state.source is AnswerSource.STALE and state.fetched_at is not None:
             print(
                 f"cmdr: {report.deck}: {state.name} failed ({state.error}); "
                 f"showing the copy from {state.fetched_at:%Y-%m-%d %H:%M} UTC",
@@ -243,6 +247,21 @@ def _warn_sources(report: MetaReport, err: TextIO) -> None:
         elif state.error is not None:
             # Answered, but a site was not read (ADR 0066): what is shown is what the others gave.
             print(f"cmdr: {report.deck}: {state.name} partly read ({state.error})", file=err)
+
+
+def _one_site_stale(state: SourceState) -> str | None:
+    """What to say when the answer is old for one site alone, the other having been read now and nothing
+    else having failed; None otherwise."""
+    if state.source is not AnswerSource.STALE or state.fetched_at is None or len(state.stale_sites) != 1:
+        return None
+    [(stale, why)] = state.stale_sites
+    if state.error != f"{stale.value}: {why}":
+        return None
+    current = next(site for site in Site if site is not stale)
+    return (
+        f"{stale.value} failed ({why}); showing its copy from {state.fetched_at:%Y-%m-%d %H:%M} UTC; "
+        f"the {current.value} decks are current"
+    )
 
 
 def _percent(share: float) -> str:
