@@ -173,13 +173,13 @@ def test_a_card_no_list_plays_is_zero_of_the_lists_read() -> None:
 def test_the_wording_names_the_sources_there_are() -> None:
     both = WeightedShare(0.34, 12, 35, SourceShare(0.41, 8, 20), SourceShare(0.27, 4, 15))
     assert share_reason(both) == "in 34% of meta lists and recent decks (12/35)"
-    assert share_tip(both) == "12/35 · meta 41% (8/20 lists) · Archidekt 27% (4/15 decks)"
+    assert share_tip(both) == "12/35 · meta 41% (8/20 lists) · peers 27% (4/15 decks)"
     meta = WeightedShare(0.41, 8, 20, SourceShare(0.41, 8, 20), None)
     assert share_reason(meta) == "in 41% of meta lists (8/20)"
     assert share_tip(meta) == "meta 41% (8/20 lists)"
     decks = WeightedShare(0.27, 4, 15, None, SourceShare(0.27, 4, 15))
     assert share_reason(decks) == "in 27% of recent decks (4/15)"
-    assert share_tip(decks) == "Archidekt 27% (4/15 decks)"
+    assert share_tip(decks) == "peers 27% (4/15 decks)"
 
 
 def test_the_wilson_lower_bound_matches_hand_computed_values() -> None:
