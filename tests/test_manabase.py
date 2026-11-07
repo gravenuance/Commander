@@ -1,5 +1,7 @@
 """A deck's mana base against Karsten's land count formula and colour source table."""
 
+from dataclasses import replace
+
 import pytest
 
 from commander.carddb import CardMana
@@ -16,6 +18,7 @@ from commander.manabase import (
     cheap_ramp,
     fetch_base,
     fetcher,
+    info_is_land,
     land_count,
     mana_only_land,
     needed_sources,
@@ -73,6 +76,28 @@ def test_karstens_cheap_draw_and_ramp_follow_his_text_rules() -> None:
     assert not cheap_ramp(
         card("Cultivate", "{2}{G}", 3, "Sorcery", text="Search your library for basic land cards")
     )
+
+
+def test_each_judgement_of_a_card_follows_all_its_fields_not_its_name_or_id() -> None:
+    # Same name and id throughout: only the fields that the judgements read differ.
+    base = card("Chameleon", "{1}{G}", 2, "Creature — Elf", text="Flash")
+    ramper = replace(base, oracle_text="{T}: Add {G}.")
+    drawer = replace(base, oracle_text="When this enters, draw a card.")
+    fetches = replace(base, oracle_text="Search your library for a Forest card, put it onto the battlefield.")
+    forest = replace(base, type_line="Basic Land — Forest", oracle_text="")
+
+    ramps = [cheap_ramp(c) for c in (base, ramper, base, drawer, fetches, base)]
+    assert ramps == [False, True, False, False, True, False]
+    assert [cheap_draw(c) for c in (base, drawer, base, ramper, base)] == [False, True, False, False, False]
+    assert [fetcher(c) for c in (base, fetches, base)] == [
+        None,
+        Fetcher(frozenset({"forest"}), basic_only=False),
+        None,
+    ]
+    assert [info_is_land(c) for c in (base, forest, base)] == [False, True, False]
+    assert [fetch_base([(1, c)]).targets for c in (base, forest, base)] == [0, 0, 0]
+    assert fetch_base([(1, fetches), (1, forest)]) == FetchBase(1, 1, 0)
+    assert fetch_base([(1, fetches), (1, base)]) == FetchBase(1, 0, 1)
 
 
 def test_karstens_cheap_draw_and_ramp_ignore_reminder_text() -> None:

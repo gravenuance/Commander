@@ -11,6 +11,7 @@ import math
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from functools import lru_cache
 from statistics import median
 
 from commander.carddb import (
@@ -222,6 +223,12 @@ class FetchBase:
         return self.targets / self.fetchers if self.fetchers else None
 
 
+# The judgements of one card are pure in its frozen fields and repeat for every land swap the mana guard
+# tries; each is kept for this many distinct cards. None of them returns a value a caller may change.
+_per_card = lru_cache(maxsize=4096)
+
+
+@_per_card
 def fetcher(info: CardMana) -> Fetcher | None:
     """The card as a fetcher: a land that sacrifices itself to search, or any other card that searches your
     library for a basic land or a land type. A search for any land (Crop Rotation) never runs dry, so it is
@@ -269,11 +276,13 @@ def finds_land(found: Fetcher, info: CardMana) -> bool:
     return info_is_land(info) and bool(types) and found.reaches(types, basic=_is_basic_land(info))
 
 
+@_per_card
 def _land_types(info: CardMana) -> frozenset[str]:
     """The basic land types on the card's front face; in hand or in the library it has only that face."""
     return frozenset(_TYPE_WORD.findall(front_type(info.type_line).casefold().partition("—")[2]))
 
 
+@_per_card
 def _is_basic_land(info: CardMana) -> bool:
     return front_type(info.type_line).startswith("Basic ")
 
@@ -378,6 +387,7 @@ def land_count(cards: Sequence[tuple[int, CardMana]]) -> LandCount:
     return LandCount(round(lands, 2), land_spells, round(average, 2), draw, ramp, round(suggested, 1))
 
 
+@_per_card
 def cheap_draw(info: CardMana) -> bool:
     """Karsten's "cheap card draw spell", from the card's rules text as he defined it."""
     text = _rules_text(info)
@@ -402,6 +412,7 @@ def cheap_draw(info: CardMana) -> bool:
     return draws or looks
 
 
+@_per_card
 def cheap_ramp(info: CardMana) -> bool:
     """Karsten's "cheap mana ramp spell": a cheap card that adds mana or puts a land into play."""
     text = _rules_text(info)
@@ -416,6 +427,7 @@ def cheap_ramp(info: CardMana) -> bool:
     return adds or fetches or aura or cheats
 
 
+@_per_card
 def _rules_text(info: CardMana) -> str:
     """The card's rules text in lower case, reminder text left out: a Treasure's or dredge's own wording
     says nothing about what the card does."""
@@ -438,6 +450,7 @@ def needed_sources(mana_value: int, pips: int) -> int:
     return SOURCES_NEEDED[(min(max(mana_value, min(known)), max(known)), pips)]
 
 
+@_per_card
 def info_is_land(info: CardMana) -> bool:
     return "Land" in front_type(info.type_line).split()
 
