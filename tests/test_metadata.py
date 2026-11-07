@@ -1441,6 +1441,22 @@ def test_the_commanders_moxfield_decks_join_its_archidekt_decks_under_caps_of_th
     assert deck_reads(fake) == ["/v3/decks/all/mox-a", "/v3/decks/all/mox-b"]
 
 
+def test_each_site_steps_down_its_own_view_bar_whatever_the_other_site_reaches(rig: Rig) -> None:
+    rig.settings = replace(SETTINGS, peer_decks=60)
+    fake = moxfield_rig(rig)
+    popular = [f"mox-{n}" for n in range(10)]
+    fake.pages["C1"] = [moxfield_page([moxfield_row(public_id, 2000, IN_WINDOW) for public_id in popular])]
+    for public_id in popular:
+        fake.decks[public_id] = moxfield_deck(public_id, [ELLIVERE], {"Mana Vault": 1})
+    peers = rig.gather().peers.data
+    assert peers is not None
+    # Ten Moxfield decks reach 1000 views, but Archidekt's own three do not, so its bar still steps down to
+    # 500 and its two decks of 673 and 607 views are read too.
+    archidekt_views = [p.deck.views for p in peers.decks if p.deck.site is Site.ARCHIDEKT]
+    assert archidekt_views == [2131, 1847, 1782, 673, 607]
+    assert len([p for p in peers.decks if p.deck.site is Site.MOXFIELD]) == 10
+
+
 def test_moxfield_decks_are_cached_with_their_site_and_each_deck_is_read_once(rig: Rig) -> None:
     fake = moxfield_rig(rig)
     rig.gather()
