@@ -224,15 +224,52 @@ def test_a_403_on_one_deck_read_skips_that_deck_and_blocks_nothing() -> None:
     assert search.commander_card_id(WINOTA) == "W1"
 
 
-def test_a_challenge_page_in_place_of_one_deck_skips_that_deck_and_blocks_nothing() -> None:
+def test_a_challenge_page_in_place_of_one_deck_blocks_every_later_request_of_the_run() -> None:
     fake = FakeMoxfield()
+    fake.decks["fine"] = moxfield_deck("fine", [WINOTA], {"Sol Ring": 1})
     search = search_for(fake)
     fake.challenge = True
-    with pytest.raises(MoxfieldError, match="odd-one"):
+    with pytest.raises(MoxfieldBlockedError, match="challenge"):
         search.deck("odd-one")
     fake.challenge = False
-    fake.cards[WINOTA.casefold()] = "W1"
-    assert search.commander_card_id(WINOTA) == "W1"
+    with pytest.raises(MoxfieldBlockedError):
+        search.deck("fine")
+    with pytest.raises(MoxfieldBlockedError):
+        search.commander_card_id(WINOTA)
+    assert len(fake.requests) == 1
+
+
+def test_three_refused_deck_reads_in_a_row_block_the_run_and_a_read_between_resets_the_count() -> None:
+    fake = FakeMoxfield()
+    fake.decks["fine"] = moxfield_deck("fine", [WINOTA], {"Sol Ring": 1})
+    search = search_for(fake)
+    fake.deck_status = 403
+    for _ in range(2):
+        with pytest.raises(MoxfieldError):
+            search.deck("private")
+    fake.deck_status = 200
+    assert search.deck("fine").cards == ("Sol Ring", WINOTA)
+    fake.deck_status = 403
+    for _ in range(2):
+        with pytest.raises(MoxfieldError):
+            search.deck("private")
+    with pytest.raises(MoxfieldBlockedError, match="HTTP 403"):
+        search.deck("private")
+    sent = len(fake.requests)
+    with pytest.raises(MoxfieldBlockedError):
+        search.commander_card_id(WINOTA)
+    with pytest.raises(MoxfieldBlockedError):
+        search.deck("fine")
+    assert len(fake.requests) == sent == 6
+
+
+def test_a_deck_of_an_odd_shape_never_counts_toward_a_block() -> None:
+    fake = FakeMoxfield()
+    fake.decks["odd"] = {"format": "commander"}
+    search = search_for(fake)
+    for _ in range(4):
+        with pytest.raises(MoxfieldError):
+            search.deck("odd")
 
 
 class Limited:

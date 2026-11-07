@@ -1533,6 +1533,23 @@ def test_a_403_on_one_moxfield_deck_skips_that_deck_and_the_rest_are_still_read(
     assert peers.data.skipped == 2
 
 
+def test_moxfield_refusing_every_deck_read_is_given_up_after_three_and_the_site_is_named_unread(
+    rig: Rig,
+) -> None:
+    rig.settings = replace(SETTINGS, peer_decks=60)
+    fake = moxfield_rig(rig)
+    popular = [f"mox-{n}" for n in range(6)]
+    fake.pages["C1"] = [moxfield_page([moxfield_row(public_id, 2000, IN_WINDOW) for public_id in popular])]
+    for public_id in popular:
+        fake.decks[public_id] = moxfield_deck(public_id, [ELLIVERE], {"Mana Vault": 1})
+    fake.deck_status = 403
+    peers = rig.gather().peers
+    assert peers.data is not None
+    assert len(deck_reads(fake)) == 3
+    assert [p.deck.site for p in peers.data.decks] == [Site.ARCHIDEKT] * 5
+    assert [site for site, _ in peers.data.missing] == [Site.MOXFIELD]
+
+
 def test_moxfield_giving_up_after_a_second_429_leaves_the_archidekt_decks(rig: Rig) -> None:
     fake = moxfield_rig(rig)
     fake.status = 429

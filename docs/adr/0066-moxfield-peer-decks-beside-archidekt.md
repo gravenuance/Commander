@@ -77,8 +77,9 @@ What the API offers, from a dozen honest, paced requests on 2026-11-07 (User-Age
   A deck is not marked incomplete for a site that was not read.
 - **Failing soft.** A 429 is handled as on Archidekt: one retry after the pause, then Moxfield is given up
   for the run. A 403, or a 200 that is not JSON (a bot challenge page), on the card lookup or a search ends
-  Moxfield for the run: nothing more is sent. A 403 or a challenge page on a single deck read (a private
-  deck answers 403) skips that deck only. The failure is reported, not analysed: `sync` warns once per run
+  Moxfield for the run: nothing more is sent. So does a challenge page on a deck read. A 403 on a single
+  deck read (a private deck answers 403) skips that deck only, until three deck reads in a row are refused
+  (a read that succeeds starts the count again), which ends Moxfield for the run too. The failure is reported, not analysed: `sync` warns once per run
   per site ("Moxfield decks could not be read (Moxfield refused cmdr's requests (HTTP 403)); ideas are
   judged by the decks that were read"), not once per deck or alike commander, and `cmdr meta` notes that the
   decks shown are partly read. A cache-only read (the app's panels) treats a site with nothing stored as

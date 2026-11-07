@@ -3,8 +3,9 @@
 Moxfield has no public API and its API host's robots.txt disallows everything; the owner chose to read it
 anyway, for a few paced requests a run that identify as cmdr, cached so each deck is fetched once. Nothing
 here works around bot protection: a 403 or a challenge page on the card lookup or a search stops every
-Moxfield request for the run, and the callers carry on with the decks they have. A refused deck read costs
-that deck alone. Every answer is shape-checked before use.
+Moxfield request for the run, and the callers carry on with the decks they have. A challenge page on a deck
+read does the same; a 403 on one costs that deck alone, until three deck reads in a row are refused. Every
+answer is shape-checked before use.
 """
 
 import logging
@@ -44,6 +45,8 @@ COMMANDER_FORMAT = "commander"
 # As many decks a page as Archidekt's listings hold, so MAX_SEARCH_PAGES reaches as deep on both (ADR 0066).
 SEARCH_PAGE_SIZE = 60
 _FORBIDDEN = 403
+# Private decks answer 403, so a few refused deck reads in a row are not yet a block.
+DECK_REFUSALS_TO_BLOCK = 3
 _REFUSED = "Moxfield refused cmdr's requests (HTTP 403)"
 _CHALLENGE = "Moxfield answered cmdr's request with a challenge page, not JSON"
 
@@ -53,9 +56,9 @@ class MoxfieldError(Exception):
 
 
 class MoxfieldBlockedError(Exception):
-    """Moxfield refused cmdr's card lookup or search (a 403 or a challenge page, as a block or a bot challenge
-    answers); no more requests are sent this run. Not a MoxfieldError, so a caller skipping one unreadable
-    deck never skips past a block."""
+    """Moxfield refused cmdr's requests (a 403 or a challenge page, as a block or a bot challenge answers; for
+    deck reads, a challenge page or three 403s in a row); no more requests are sent this run. Not a
+    MoxfieldError, so a caller skipping one unreadable deck never skips past a block."""
 
 
 class MoxfieldSearch:
@@ -66,6 +69,7 @@ class MoxfieldSearch:
         self._base_url = base_url.rstrip("/")
         self._guard = LimitGuard(pacer, Site.MOXFIELD)
         self._blocked: str | None = None
+        self._deck_refusals = 0
 
     def commander_card_id(self, name: str) -> str | None:
         """Moxfield's id for the card named exactly `name`, a double-faced card by both its faces (its search
@@ -133,32 +137,39 @@ class MoxfieldSearch:
         return decks, (url, {**params, "pageNumber": int(params["pageNumber"]) + 1})
 
     def deck(self, public_id: str) -> DeckRead:
-        """A deck's list. A refusal here is that deck's alone (a private deck answers 403): it raises a
-        MoxfieldError and blocks nothing."""
-        raw = self._get(f"{self._base_url}/v3/decks/all/{public_id}", None, blocks=False)
+        """A deck's list. A 403 here is that deck's alone (a private deck answers 403) and raises a
+        MoxfieldError, until `DECK_REFUSALS_TO_BLOCK` in a row block the run; a challenge page blocks it at
+        once."""
+        raw = self._get(f"{self._base_url}/v3/decks/all/{public_id}", None, deck=True)
         try:
             return parse_deck(raw)
         except (ShapeError, ValueError) as error:
             raise MoxfieldError(f"unexpected data for Moxfield deck {public_id}: {error}") from error
 
-    def _get(self, url: str, params: Mapping[str, str | int] | None, *, blocks: bool = True) -> object:
-        """One paced request, held by a 429 as `LimitGuard` says. A refusal (`_refusal`) of a request that
-        `blocks` stops every later one this run; of one that does not, it fails that request alone."""
+    def _get(self, url: str, params: Mapping[str, str | int] | None, *, deck: bool = False) -> object:
+        """One paced request, held by a 429 as `LimitGuard` says. A refusal (`_refusal`) stops every later
+        request this run, except a 403 of a deck read (`deck`), which fails that read alone until
+        `DECK_REFUSALS_TO_BLOCK` in a row; a deck read that succeeds starts that count again."""
         if self._blocked is not None:
             raise MoxfieldBlockedError(self._blocked)
         try:
-            return self._guard.send(
+            answer = self._guard.send(
                 lambda: self._fetcher.get_json(url, params, surface_rate_limit=True), target(url, params)
             )
         except (HttpStatusError, NotJsonError) as error:
             refusal = _refusal(error)
             if refusal is None:
                 raise
-            if not blocks:
-                raise MoxfieldError(f"{refusal} for {url}") from error
+            if deck and isinstance(error, HttpStatusError):
+                self._deck_refusals += 1
+                if self._deck_refusals < DECK_REFUSALS_TO_BLOCK:
+                    raise MoxfieldError(f"{refusal} for {url}") from error
             self._blocked = refusal
             log.warning("%s for %s; no more Moxfield requests are sent this run", refusal, url)
             raise MoxfieldBlockedError(refusal) from error
+        if deck:
+            self._deck_refusals = 0
+        return answer
 
 
 def _refusal(error: HttpStatusError | NotJsonError) -> str | None:
