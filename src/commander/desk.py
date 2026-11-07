@@ -1041,6 +1041,9 @@ class Desk:
             # An account switch while warming leaves the other account's decks alone.
             if workspace is not self._workspace or not self._traffic.wait_idle(self._stop_warming):
                 return
+            if self._cards_may_change():
+                log.info("warm-up stands aside until the sync has its card data in place")
+                return
             try:
                 self._warm_deck(stored)
             except CardDataError as error:
@@ -1056,8 +1059,14 @@ class Desk:
             main = db.resolve(stored.deck.main_cards)
             self._deck_rules(stored, main, profile, db)
             self._shares(stored)
-            if self._traffic.wait_idle(self._stop_warming):
+            if self._traffic.wait_idle(self._stop_warming) and not self._cards_may_change():
                 self._fitting_previews(stored, main, profile, db)
+
+    def _cards_may_change(self) -> bool:
+        """True while a sync may still swap the card data, which an open reader of it makes fail on Windows;
+        the warm-up queues again when the sync ends."""
+        with self._sync_lock:
+            return self._sync.running and not self._sync.cards_ready
 
     @_guarded
     def set_label(self, deck_id: int, name: str, label: str) -> Json:
@@ -1697,9 +1706,11 @@ class Desk:
         return self._pool_entry(playing)[2]
 
     def _pool_entry(self, playing: Deck) -> tuple[str, FilesRead, MetaData]:
-        """The pool with the day and bracket it was read for, and the cache files it read: a save of any other
-        file leaves it valid. A read that logged no file is never kept."""
-        stamp = f"{playing.bracket}|{self._now().date()}"
+        """The pool with the day, bracket, commanders and meta settings it was read for, and the cache files
+        it read: a save of any other file leaves it valid. A read that logged no file is never kept."""
+        # The commanders and meta settings choose which cache files the gather asks for: after a commander
+        # change, the old commander's files stay current while the new one's are never read.
+        stamp = f"{playing.bracket}|{playing.commanders}|{self._settings.meta!r}|{self._now().date()}"
         known = self._pools.get(playing.id)
         if known is not None and known[0] == stamp and known[1].states and known[1].current():
             return known

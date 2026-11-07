@@ -2549,6 +2549,58 @@ def test_the_warm_up_queues_again_when_a_sync_ends(
     assert len(jobs) == 2
 
 
+def test_the_warm_up_leaves_the_card_data_alone_until_the_sync_has_put_it_in_place(
+    settings: DeskSettings, fake: FakeArchidekt, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An open reader of the card data makes the sync's swap of it fail on Windows.
+    with_extra_decks(settings, fake, raw_deck)
+    jobs: list[Callable[[], None]] = []
+    desk, pending = deferred_desk(settings, fake, warm_up=jobs.append)
+    stub_meta(monkeypatch)
+    calls = count_calls(monkeypatch, desk_module, "deck_cut_rules")
+    during: list[int] = []
+
+    def download(*_: object, **__: object) -> CardRefresh:
+        desk.deck(DECK)
+        [warm] = jobs
+        before = calls["deck_cut_rules"]
+        warm()
+        during.append(calls["deck_cut_rules"] - before)
+        return DOWNLOADED
+
+    monkeypatch.setattr(syncrun, "refresh_card_db", download)
+    desk.sync()
+    [start] = pending
+    start()
+
+    assert during == [0]
+    [_, after_sync] = jobs
+    after_sync()
+    assert calls["deck_cut_rules"] == 1 + len(EXTRA_DECKS)
+
+
+def test_a_new_commander_reads_its_own_meta_though_no_cached_answer_changed(
+    settings: DeskSettings, fake: FakeArchidekt, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fetch_meta(settings, fake)
+    desk = make_desk(settings, fake)
+    assert "error" not in desk.meta(DECK)
+    for entry in raw_deck["cards"]:
+        name = entry["card"]["oracleCard"]["name"]
+        if name == "Magda, Brazen Outlaw":
+            entry["categories"] = ["Creature"]
+        elif name == "Tempestra, Dame of Games":
+            entry["categories"] = ["Commander"]
+    raw_deck["updatedAt"] = "2030-01-01T00:00:00.000000Z"
+    fake.put(raw_deck)
+    sync = ["sync", "--no-cards", "--no-ideas", "--workspace", str(settings.workspace)]
+    assert run(sync, settings.workspace.parent, fake).code == 0
+    calls = count_calls(monkeypatch, desk_module, "gather_for")
+
+    desk.meta(DECK)
+    assert calls["gather_for"] == 1
+
+
 def test_the_traffic_lets_a_waiter_through_once_no_call_runs_or_it_is_told_to_stop() -> None:
     traffic = desk_module.Traffic()
     stop = threading.Event()
