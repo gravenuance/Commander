@@ -1235,12 +1235,14 @@ class Desk:
     def _fitting_previews(
         self, stored: StoredDeck, main: Sequence[ResolvedCard], profile: Profile, db: CardDb
     ) -> list[PreviewFit]:
-        """The previews that fit the deck and are not on its board, kept until its snapshot, profile or board,
-        the probe's cache, the card data, the targets or the local day change."""
+        """The previews that fit the deck and are not on its board, kept until its snapshot, profile, the
+        names on its board (a card's state or the activity log leaves them alone), the probe's cache, the
+        card data, the targets or the local day change."""
         today = local_day(self._now())
         targets = {**DEFAULT_TARGETS, **self._settings.targets, **profile.targets}
+        on_board = sorted({card.name for card in read_board(stored.folder).cards})
         stamp = (
-            f"{board_stamp(stored.folder)}"
+            f"{files_stamp(stored.folder, ('deck.json', 'profile.toml'))}|{on_board}"
             f"|{self._previews_stamp()}|{self._card_data_stamp()}"
             f"|{sorted((role.value, n) for role, n in self._settings.targets.items())}"
         )
@@ -1260,7 +1262,7 @@ class Desk:
                 targets=targets,
                 tags=cache.tags,
                 roles=cache.roles,
-                on_board=[card.name for card in read_board(stored.folder).cards],
+                on_board=on_board,
             )
             if cache.cards
             else []
