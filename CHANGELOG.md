@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- `cmdr meta` and the app's meta answers credit a lock that names several card types with all of them:
+  Doorkeeper Thrull now stops creatures' enter triggers such as Thassa's Oracle's, and Clarion Conqueror
+  creatures' activated abilities such as Kinnan's, where both counted artifacts alone.
+
 ## 1.8.0 - 2026-11-07
 
 ### Added

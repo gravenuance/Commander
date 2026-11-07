@@ -136,9 +136,10 @@ class ComboGroup:
 
 @dataclass(slots=True, frozen=True)
 class LockScope:
-    """What a lock reaches (a card type or any, some zones or all) and whether mana abilities escape."""
+    """What a lock reaches (some card types or any, some zones or all) and whether mana abilities escape."""
 
-    type_word: str | None = None
+    # "Artifact" and "Creature" for Doorkeeper Thrull; empty for a lock on every type.
+    types: frozenset[str] = frozenset()
     spares_mana: bool = False
     # "graveyard" and "library" for Grafdigger's Cage; empty for a lock on every zone.
     zones: frozenset[str] = frozenset()
@@ -330,7 +331,7 @@ def _enter_trigger(line: str, scope: LockScope, pieces: Sequence[ComboPiece]) ->
     what = found.group(1)
     # "When it enters" means the piece the step casts.
     named = _named_pieces(line if what == "it" else what, pieces)
-    return _of_type(scope.type_word, what, named)
+    return _of_type(scope.types, what, named)
 
 
 def _put_onto_battlefield(line: str, scope: LockScope, pieces: Sequence[ComboPiece]) -> bool:
@@ -341,21 +342,22 @@ def _put_onto_battlefield(line: str, scope: LockScope, pieces: Sequence[ComboPie
         zone = _FROM_ZONE.search(line)
         if zone is None or zone.group(1) not in scope.zones:
             return False
-    return _of_type(scope.type_word, line, _named_pieces(line, pieces))
+    return _of_type(scope.types, line, _named_pieces(line, pieces))
 
 
 def _named_pieces(text: str, pieces: Sequence[ComboPiece]) -> list[ComboPiece]:
     return [p for p in pieces if _short(p.name) in text]
 
 
-def _of_type(type_word: str | None, text: str, named: Sequence[ComboPiece]) -> bool:
-    """Whether what enters is of the lock's type: by the pieces named, else by a type word, else unknown."""
-    if type_word is None:
+def _of_type(types: frozenset[str], text: str, named: Sequence[ComboPiece]) -> bool:
+    """Whether what enters is of a type the lock reaches: by the pieces named, else by a type word, else
+    unknown."""
+    if not types:
         return True
     if named:
-        return any(type_word in front_type(p.type_line).split() for p in named)
+        return any(types & set(front_type(p.type_line).split()) for p in named)
     hinted = {kind for word, kind in _TYPE_HINTS.items() if word in text}
-    return not hinted or type_word in hinted
+    return not hinted or bool(types & hinted)
 
 
 def _casts_only_creatures(combo: ComboDetail, steps: str) -> bool:
@@ -371,7 +373,7 @@ def _short(name: str) -> str:
 def _activated(piece: ComboPiece, scope: LockScope, steps: str) -> bool:
     if piece.zones and not set(piece.zones) & _BATTLEFIELD:
         return False
-    if scope.type_word and scope.type_word not in front_type(piece.type_line).split():
+    if scope.types and not scope.types & set(front_type(piece.type_line).split()):
         return False
     short = _short(piece.name)
     for line in steps.splitlines():
@@ -475,6 +477,9 @@ def card_stops(
     return tuple(found)
 
 
+_LOCK_TYPES = ("Artifact", "Creature", "Planeswalker")
+
+
 def _scope(sentence: str) -> LockScope:
     """Which permanents a lock covers, from the sentence that sets it up."""
     words = sentence.casefold()
@@ -485,12 +490,10 @@ def _scope(sentence: str) -> LockScope:
         if stem in words
     )
     if "noncreature" in words:
-        return LockScope(None, spares_mana, zones, noncreature=True)
-    if "artifact" in words:
-        return LockScope("Artifact", spares_mana, zones)
-    if "creature" in words:
-        return LockScope("Creature", spares_mana, zones)
-    return LockScope(None, spares_mana, zones)
+        return LockScope(frozenset(), spares_mana, zones, noncreature=True)
+    # Every type named: Clarion Conqueror's lock reaches artifacts, creatures and planeswalkers alike.
+    types = frozenset(kind for kind in _LOCK_TYPES if kind.casefold() in words)
+    return LockScope(types, spares_mana, zones)
 
 
 def _stop_tags(db: CardDb, oracle_ids: Sequence[str]) -> dict[Stop, frozenset[str]]:

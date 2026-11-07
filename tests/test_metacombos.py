@@ -59,17 +59,17 @@ def combo(description: str, *, results: tuple[str, ...] = (), zones: tuple[str, 
 
 def test_activation_locks_reach_the_pieces_whose_abilities_the_steps_activate() -> None:
     kinnan = details()["129-4131"]
-    assert stop_applies(Stop.ACTIVATIONS, LockScope("Artifact"), kinnan)
+    assert stop_applies(Stop.ACTIVATIONS, LockScope(frozenset({"Artifact"})), kinnan)
     # Kinnan is the creature, but the steps only activate the Monolith.
-    assert not stop_applies(Stop.ACTIVATIONS, LockScope("Creature"), kinnan)
+    assert not stop_applies(Stop.ACTIVATIONS, LockScope(frozenset({"Creature"})), kinnan)
 
 
 def test_a_lock_that_spares_mana_abilities_misses_steps_that_add_mana() -> None:
     mana_only = combo("Activate Basalt Monolith by tapping it, adding {3}.\nRepeat.")
-    assert not stop_applies(Stop.ACTIVATIONS, LockScope(None, spares_mana=True), mana_only)
-    assert stop_applies(Stop.ACTIVATIONS, LockScope("Artifact"), mana_only)
+    assert not stop_applies(Stop.ACTIVATIONS, LockScope(spares_mana=True), mana_only)
+    assert stop_applies(Stop.ACTIVATIONS, LockScope(frozenset({"Artifact"})), mana_only)
     # Untapping the Monolith is no mana ability, so the same lock stops Kinnan's loop.
-    assert stop_applies(Stop.ACTIVATIONS, LockScope(None, spares_mana=True), details()["129-4131"])
+    assert stop_applies(Stop.ACTIVATIONS, LockScope(spares_mana=True), details()["129-4131"])
 
 
 def test_casting_locks_meet_storm_and_repeated_casts() -> None:
@@ -109,7 +109,7 @@ def steps(description: str, *pieces: ComboPiece, results: tuple[str, ...] = ()) 
 
 
 def test_enter_trigger_locks_need_a_trigger_on_a_card_of_their_type() -> None:
-    creatures = LockScope("Creature")
+    creatures = LockScope(frozenset({"Creature"}))
     # Real Spellbook steps: Eternal Witness's trigger, Talon Gates' (a land) and Hullbreaker's plain entering.
     witness = steps(
         "When Eternal Witness enters, it triggers, returning Snap from your graveyard to your hand.", WITNESS
@@ -131,9 +131,47 @@ def test_enter_trigger_locks_need_a_trigger_on_a_card_of_their_type() -> None:
     )
 
 
+KINNAN_PIECE = ComboPiece(KINNAN, "Legendary Creature — Human Druid", ("B",))
+BASALT = ComboPiece("Basalt Monolith", "Artifact", ("B",))
+
+
+def _scope_of(rules: str, stop: Stop) -> LockScope:
+    [(_, scope)] = [found for found in card_stops(rules, set()) if found[0] is stop]
+    return scope
+
+
+@pytest.mark.parametrize(
+    ("rules", "stop", "reached", "missed"),
+    [
+        # Doorkeeper Thrull: creatures too, so Eternal Witness's trigger stops; a land's still goes off.
+        (
+            "Flash\nFlying\nArtifacts and creatures entering don't cause abilities to trigger.",
+            Stop.ENTER_TRIGGERS,
+            steps("When Eternal Witness enters, it triggers, returning Snap to your hand.", WITNESS),
+            steps("When Talon Gates of Madara enters, it triggers, phasing out a creature.", TALON_GATES),
+        ),
+        # Clarion Conqueror: creatures too, so Kinnan's ability stops; a land's ability still activates.
+        (
+            "Flying\nActivated abilities of artifacts, creatures, and planeswalkers can't be activated.",
+            Stop.ACTIVATIONS,
+            steps("Activate Kinnan's last ability, looking at the top five cards.", KINNAN_PIECE),
+            steps("Activate Talon Gates of Madara's third ability.", TALON_GATES),
+        ),
+    ],
+)
+def test_a_lock_naming_several_types_reaches_each_of_them(
+    rules: str, stop: Stop, reached: ComboDetail, missed: ComboDetail
+) -> None:
+    scope = _scope_of(rules, stop)
+    assert stop_applies(stop, scope, reached)
+    artifact = steps("Activate Basalt Monolith. When Basalt Monolith enters, it triggers.", BASALT)
+    assert stop_applies(stop, scope, artifact)
+    assert not stop_applies(stop, scope, missed)
+
+
 def test_a_lock_on_some_zones_misses_cards_put_in_from_others() -> None:
     [(_, scope)] = [found for found in card_stops(CAGE, set()) if found[0] is Stop.CHEATED_IN]
-    assert scope == LockScope("Creature", zones=frozenset({"graveyard", "library"}))
+    assert scope == LockScope(frozenset({"Creature"}), zones=frozenset({"graveyard", "library"}))
     from_hand = steps(
         "Activate Talon Gates of Madara's third ability by paying {4}, "
         "putting it from your hand onto the battlefield.",
@@ -447,12 +485,12 @@ def test_an_off_hand_casting_lock_reaches_only_the_zones_it_names() -> None:
     )
     from_graveyard = combo("Cast Basalt Monolith from your graveyard.")
     cage = card_stops(CAGE, set())
-    assert (Stop.OFF_HAND_CASTING, LockScope(None, zones=frozenset({"graveyard", "library"}))) in cage
+    assert (Stop.OFF_HAND_CASTING, LockScope(zones=frozenset({"graveyard", "library"}))) in cage
     assert not stop_applies(
-        Stop.OFF_HAND_CASTING, LockScope(None, zones=frozenset({"graveyard", "library"})), from_exile
+        Stop.OFF_HAND_CASTING, LockScope(zones=frozenset({"graveyard", "library"})), from_exile
     )
     assert stop_applies(
-        Stop.OFF_HAND_CASTING, LockScope(None, zones=frozenset({"graveyard", "library"})), from_graveyard
+        Stop.OFF_HAND_CASTING, LockScope(zones=frozenset({"graveyard", "library"})), from_graveyard
     )
     # Drannith Magistrate names no zone: anywhere but the hand.
     assert stop_applies(Stop.OFF_HAND_CASTING, LockScope(), from_exile)
