@@ -68,15 +68,14 @@ class MoxfieldSearch:
         self._blocked: str | None = None
 
     def commander_card_id(self, name: str) -> str | None:
-        """Moxfield's id for the card named exactly `name` (a double-faced card by its front face too); None
-        when Moxfield knows no such card."""
-        front = name.split(" // ", maxsplit=1)[0]
-        if '"' in front:
+        """Moxfield's id for the card named exactly `name`, a double-faced card by both its faces (its search
+        matches no front face alone); None when Moxfield knows no such card."""
+        if '"' in name:
             log.info("not looking up %r on Moxfield: its name has a quote mark", name)
             return None
-        raw = self._get(f"{self._base_url}/v2/cards/search", {"q": f'!"{front}"', "page": 1})
+        raw = self._get(f"{self._base_url}/v2/cards/search", {"q": f'!"{name}"', "page": 1})
         try:
-            return parse_card_id(raw, {name.casefold(), front.casefold()})
+            return parse_card_id(raw, name)
         except ShapeError as error:
             raise MoxfieldError(f"unexpected card search answer from Moxfield: {error}") from error
 
@@ -170,13 +169,13 @@ def _refusal(error: HttpStatusError | NotJsonError) -> str | None:
     return _REFUSED if error.status == _FORBIDDEN else None
 
 
-def parse_card_id(raw: object, names: set[str]) -> str | None:
-    """The id of the search's exact match when its name (casefolded) is one of `names`."""
+def parse_card_id(raw: object, name: str) -> str | None:
+    """The id of the search's exact match when it is the card named `name` (in any case)."""
     found = as_object(raw, "cards").get("exactMatch")
     if found is None:
         return None
     card = as_object(found, "cards.exactMatch")
-    if req_str(card, "name", "cards.exactMatch").casefold() not in names:
+    if req_str(card, "name", "cards.exactMatch").casefold() != name.casefold():
         return None
     return req_str(card, "id", "cards.exactMatch")
 

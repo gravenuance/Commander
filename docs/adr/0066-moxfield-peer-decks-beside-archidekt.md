@@ -54,7 +54,8 @@ What the API offers, from a dozen honest, paced requests on 2026-11-07 (User-Age
   apart on Moxfield's own pacer, so both sites are read side by side. Search answers are cached and
   refreshed every third day, staggered, and each deck read is kept until its owner edits it, as on Archidekt
   (ADR 0027), in the same `peer-decks` cache folder.
-- **The commander's card id** is looked up by exact name (a double-faced card by its front face) each time
+- **The commander's card id** is looked up by exact name (a double-faced card by both faces, as Moxfield's search
+  matches no front face alone) each time
   the search is refreshed; a commander Moxfield does not know has no Moxfield decks, which is no error.
 - **No tag search on Moxfield.** Its `hubName` filter did not filter, and hubs are not Archidekt's deck tags;
   matching one to the other would be a guess, so tagged ideas stay Archidekt's alone.

@@ -22,6 +22,7 @@ from commander.peersearch import SEARCH_INTERVAL_SECONDS, PeerDeck, Site
 from conftest import FakeMoxfield, load_fixture, moxfield_deck, moxfield_page, moxfield_row
 
 WINOTA = "Winota, Joiner of Forces"
+ETALI = "Etali, Primal Conqueror // Etali, Primal Sickness"
 SINCE = datetime(2026, 8, 16, tzinfo=UTC)
 IN_WINDOW = "2026-10-01T10:00:00.5Z"
 BEFORE_WINDOW = "2026-08-15T23:59:59Z"
@@ -104,17 +105,30 @@ def test_a_deck_of_another_format_is_refused() -> None:
 
 def test_the_card_search_gives_the_exact_matchs_id_only_for_the_name_asked() -> None:
     raw = load_fixture("moxfield_card_search.json")
-    assert parse_card_id(raw, {WINOTA.casefold()}) == "Er9bV"
-    assert parse_card_id(raw, {"winota"}) is None
-    assert parse_card_id({"hasMore": False, "totalCards": 0}, {WINOTA.casefold()}) is None
+    assert parse_card_id(raw, WINOTA) == "Er9bV"
+    assert parse_card_id(raw, WINOTA.upper()) == "Er9bV"
+    assert parse_card_id(raw, "Winota") is None
+    assert parse_card_id({"hasMore": False, "totalCards": 0}, WINOTA) is None
 
 
-def test_a_double_faced_commander_is_looked_up_by_its_front_face() -> None:
+def test_the_card_search_names_a_double_faced_card_by_both_faces() -> None:
+    raw = load_fixture("moxfield_card_search_dfc.json")
+    assert parse_card_id(raw, ETALI) == "BXBrR"
+    assert parse_card_id(raw, "Etali, Primal Conqueror") is None
+
+
+def test_a_card_search_that_matched_nothing_finds_no_card() -> None:
+    # Moxfield's real answer to `!"Etali, Primal Conqueror"`, sent as HTTP 200.
+    raw = {"status": 404, "code": "not_found", "details": "Your query didn't match any cards."}
+    assert parse_card_id(raw, ETALI) is None
+
+
+def test_a_double_faced_commander_is_looked_up_by_its_full_name() -> None:
+    # Moxfield matches `!"…"` against the whole name only, so a front face alone finds nothing.
     fake = FakeMoxfield()
-    fake.cards["esika, queen of myriads"] = "Ek1"
-    found = search_for(fake).commander_card_id("Esika, Queen of Myriads // The Prismatic Bridge")
-    assert found == "Ek1"
-    assert fake.requests[0].params["q"] == '!"Esika, Queen of Myriads"'
+    fake.cards[ETALI.casefold()] = "BXBrR"
+    assert search_for(fake).commander_card_id(ETALI) == "BXBrR"
+    assert fake.requests[0].params["q"] == f'!"{ETALI}"'
 
 
 def test_each_bracket_is_searched_by_views_and_pages_until_the_last() -> None:
