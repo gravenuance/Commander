@@ -336,7 +336,7 @@ def pool_staple_keys(pool: Sequence[PeerList]) -> frozenset[str] | None:
 def all_staples(
     deck: Deck, data: MetaData, db: CardDb, *, is_staple: Callable[[str], bool] | None = None
 ) -> Staples:
-    """The staples the deck misses, uncapped: what the commander's lists or recent Archidekt decks play.
+    """The staples the deck misses, uncapped: what the commander's lists or recent peer decks play.
 
     A caller that judges with is_staple judges over every list read (ADR 0026), so the lists are all the
     window's lists then, not just the top cuts."""

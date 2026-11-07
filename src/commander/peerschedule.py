@@ -1,4 +1,4 @@
-"""When a cached Archidekt search answer is due again, staggered by group so a sync never refreshes them all.
+"""When a cached peer-deck search answer is due again, staggered by group so a sync never refreshes them all.
 
 Each group (a commander at a bracket, or a deck tag) gets a stable day from a hash of its cache item name, so
 the schedule needs no stored state and does not move between runs (ADR 0027).

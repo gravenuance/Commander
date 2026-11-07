@@ -115,7 +115,24 @@ def test_the_breakdown_lists_each_source_and_asks_for_the_next_sync_when_a_pool_
         ["Peers: this commander decks", "60% · 3 of 5 decks"],
     ]
     assert rows["alike"] == [["Peers: alike commanders", "50% · 2 of 4 decks"]]
-    assert rows["old"] == [["Peers: tagged Storm", "Counted on the next sync"]]
+    assert rows["old"] == [["Archidekt: tagged Storm", "Counted on the next sync"]]
+
+
+def test_the_tagged_pools_badge_names_archidekt_alone_and_the_other_pools_say_peers() -> None:
+    badges = run("""
+    state.view = { short: "Magda" };
+    const badge = (c) => buildTile(c).querySelector(".badge.cmdr").textContent;
+    return [badge(card({ id: "t", origin: "tagged decks", originTag: "Storm" })),
+      badge(card({ id: "u", origin: "tagged decks" })),
+      badge(card({ id: "a", origin: "adjacent decks" })),
+      badge(card({ id: "o", origin: "archidekt decks" }))];
+    """)
+    assert badges == [
+        "Archidekt: tagged Storm",
+        "Archidekt: tagged decks",
+        "Peers: alike commanders",
+        "Peers: Magda decks",
+    ]
 
 
 def test_ideas_sort_by_group_then_budget_then_the_share_the_pill_shows() -> None:

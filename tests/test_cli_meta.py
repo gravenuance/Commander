@@ -588,7 +588,7 @@ def test_sync_judges_no_deck_idea_when_neither_sites_decks_could_be_read(
     card = read_board(home / "decks" / FOLDER).find("Arcane Signet")
     assert card is not None
     assert card.status is Status.OPEN
-    assert "cmdr: Magda: no meta or Archidekt decks to learn from (" in result.err
+    assert "cmdr: Magda: no meta or peer decks to learn from (" in result.err
 
 
 def test_meta_says_a_site_was_not_read_without_calling_the_decks_an_old_copy(
@@ -635,7 +635,7 @@ def test_sync_with_every_source_down_keeps_the_board_and_succeeds(home: Path, fa
     fake.peer_page = {"unexpected": True}
     result = sync(home, fake)
     assert result.code == 0, result.err
-    assert "cmdr: Magda: no meta or Archidekt decks to learn from (" in result.err
+    assert "cmdr: Magda: no meta or peer decks to learn from (" in result.err
     assert "ideas:" not in result.out
     assert read_board(home / "decks" / FOLDER).find("Mind Stone") is None
 

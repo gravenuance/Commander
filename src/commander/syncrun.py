@@ -518,7 +518,7 @@ def _compile_ideas(
     deck_lock: DeckLock,
     only: frozenset[int] | None,
 ) -> _IdeasPhase:
-    """Each deck's new ideas from the meta and recent Archidekt decks (ADR 0028), by short name, the open
+    """Each deck's new ideas from the meta and recent peer decks (ADR 0028), by short name, the open
     ideas turned down on the way for no longer passing the idea test, the open cards closed first
     because the main deck holds them (ADR 0046) and the queued count changes it already meets, cleared
     (ADR 0043). With `only`, those decks alone are read and merged.
@@ -840,7 +840,7 @@ def _merge_deck(
         return
     if data.lists.data is None and data.peers.data is None:
         why = data.peers.error or data.lists.error
-        read.warnings.append(f"{deck.short_name}: no meta or Archidekt decks to learn from ({why})")
+        read.warnings.append(f"{deck.short_name}: no meta or peer decks to learn from ({why})")
     _note_sites(data, pools, warnings)
     warnings.extend(read.warnings)
     key_problem = _note_key_problem(data.lists.key_problem, warnings)

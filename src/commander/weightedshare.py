@@ -1,4 +1,4 @@
-"""One share per card from every list read about a commander: its tournament lists and recent Archidekt decks
+"""One share per card from every list read about a commander: its tournament lists and recent peer decks
 (ADR 0026).
 
 Each list or deck gets a weight, recent and well placed ones more. A source's weights are scaled to a mean

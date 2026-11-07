@@ -101,6 +101,7 @@ syncs) or asks us to stop, Moxfield is removed as a source: no workaround is tri
   re-judging of the ideas.
 - `cmdr meta` lists the peer decks of both sites, each with its link, and its source line reads "Archidekt
   and Moxfield decks".
-- The app's origin labels still say "Archidekt" for these pools; whether to rename them is open.
+- The app's origin labels for these pools read "Peers: …" ("Peers: alike commanders"), and the tagged pool,
+  which stays Archidekt's alone, "Archidekt: tagged …".
 - Revisit if Moxfield publishes an API or terms for it, if its `hubName` filter starts working (a tag search
   could then match hubs by exact name), or if the removal condition is met.

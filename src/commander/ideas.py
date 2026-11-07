@@ -1,14 +1,14 @@
 """Ideas for Considering, compiled on every sync (ADR 0028).
 
 Decks at brackets 4 and 5 get the staples of their commander's TopDeck lists ("meta") and of its most-viewed
-recent Archidekt decks ("archidekt decks"), the latter at the deck's own bracket and the one above; lower
-brackets get the Archidekt ones only. A card is one of these ideas when the lower bound of its weighted
-share, over every list read, reaches IDEA_LOWER_BOUND (ADR 0026); it belongs to the source that plays it
-more. An idea's score is that source's weighted share times its weight for the deck's play style (ADR 0031);
-adjacent and tagged ideas have no weighted share and use the pool's plain share.
+recent Archidekt and Moxfield decks ("archidekt decks"), the latter at the deck's own bracket and the one
+above; lower brackets get the peer decks' only. A card is one of these ideas when the lower bound of its
+weighted share, over every list read, reaches IDEA_LOWER_BOUND (ADR 0026); it belongs to the source that
+plays it more. An idea's score is that source's weighted share times its weight for the deck's play style
+(ADR 0031); adjacent and tagged ideas have no weighted share and use the pool's plain share.
 Each source puts at most MAX_PER_SOURCE ideas on the board, highest score first. An idea with no deck card
 to replace is still put on the board, where the app lists it as "No cut yet". A deck whose profile names
-commanders that play alike also gets the cards at least half of their pooled recent Archidekt decks play
+commanders that play alike also gets the cards at least half of their pooled recent peer decks play
 ("adjacent decks"). So does one whose Archidekt theme tags find recent decks of other commanders ("tagged
 decks"), each tag's decks a pool of their own. Ideas pass the profile's exclusions, bracket ceiling and
 price cap; below bracket 5 also the deck's budget (ADR 0025), those within its working budget first.

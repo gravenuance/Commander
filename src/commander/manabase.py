@@ -130,7 +130,7 @@ class LandCount:
 
 @dataclass(slots=True, frozen=True)
 class Comparison:
-    """What other lists of the commander run: recent Archidekt decks or tournament top cuts."""
+    """What other lists of the commander run: recent peer decks or tournament top cuts."""
 
     label: str
     lists: int

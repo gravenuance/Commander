@@ -31,7 +31,7 @@ function originLabel(card) {
     case "meta": return "Tournament lists";
     case "archidekt decks": return `Peers: ${state.view?.short ?? "this commander"} decks`;
     case "adjacent decks": return "Peers: alike commanders";
-    case "tagged decks": return card.originTag ? `Peers: tagged ${card.originTag}` : "Peers: tagged decks";
+    case "tagged decks": return card.originTag ? `Archidekt: tagged ${card.originTag}` : "Archidekt: tagged decks";
     default: return card.origin ?? card.source;
   }
 }

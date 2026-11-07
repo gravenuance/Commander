@@ -277,7 +277,7 @@ def _build_parser() -> argparse.ArgumentParser:
     sync.add_argument(
         "--no-ideas",
         action="store_true",
-        help="skip compiling each deck's ideas from the meta and recent Archidekt decks",
+        help="skip compiling each deck's ideas from the meta and recent peer decks",
     )
     sync.add_argument("--json", action="store_true", help="print results as JSON")
     sync.set_defaults(handler=_cmd_sync)

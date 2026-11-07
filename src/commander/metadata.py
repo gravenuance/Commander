@@ -421,7 +421,7 @@ def start_gather(
     on_done: Progress | None = None,
     prune: bool = True,
 ) -> FinishMeta:
-    """Start `gather`'s reads that need no TopDeck (the Archidekt decks and the deck's own combos) in the
+    """Start `gather`'s reads that need no TopDeck (the peer decks and the deck's own combos) in the
     background and return at once; calling what it returns reads the tournament lists, the meta field and its
     combos, which wait for TopDeck, and joins all of it. A caller that reads several decks side by side
     passes prune=False and prunes once, when they are all read (`prune_deck_reads`)."""
@@ -541,9 +541,9 @@ def gather_peers(
     on_progress: Progress | None = None,
     on_done: Progress | None = None,
 ) -> MetaData:
-    """The recent Archidekt decks for the commander at the deck's bracket and the one above, for decks below
-    bracket 5, plus the commander's tournament lists at bracket 4. The rest of what the tournaments cover (the
-    most played commanders and their combos) is left unavailable."""
+    """The recent Archidekt and Moxfield decks for the commander at the deck's bracket and the one above, for
+    decks below bracket 5, plus the commander's tournament lists at bracket 4. The rest of what the
+    tournaments cover (the most played commanders and their combos) is left unavailable."""
     return start_gather_peers(
         deck,
         sources,
@@ -568,7 +568,7 @@ def start_gather_peers(
     on_done: Progress | None = None,
     prune: bool = True,
 ) -> FinishMeta:
-    """Start `gather_peers`'s Archidekt read in the background and return at once; calling what it returns
+    """Start `gather_peers`'s peer-deck read in the background and return at once; calling what it returns
     reads the tournament lists (bracket 4), which wait for TopDeck, and joins both."""
     if not deck.commanders:
         raise ValueError(f"{deck.name} has no commander")
@@ -650,7 +650,7 @@ def start_gather_for(
     prune: bool = True,
 ) -> FinishMeta:
     """`gather_for` in two steps, so a caller can read the other sources while TopDeck is still answering:
-    the Archidekt and Spellbook reads start now, and calling what comes back waits for TopDeck's."""
+    the peer-deck and Spellbook reads start now, and calling what comes back waits for TopDeck's."""
     start = start_gather if deck.bracket == CEDH_BRACKET else start_gather_peers
     return start(
         deck,
@@ -718,7 +718,7 @@ class TaggedDecks:
 
 @dataclass(slots=True, frozen=True)
 class AdjacentDecks:
-    """The recent Archidekt decks of the commanders a profile names as playing alike, pooled (ADR 0028), and
+    """The recent peer decks of the commanders a profile names as playing alike, pooled (ADR 0028), and
     those of other commanders sharing the deck's theme tags, a pool per tag."""
 
     decks: tuple[PeerList, ...]

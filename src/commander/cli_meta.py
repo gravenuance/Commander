@@ -1,5 +1,5 @@
-"""`cmdr meta`: what performing tournament lists and recent Archidekt decks play with the deck's commander,
-and which of the meta's cards answer its key cards."""
+"""`cmdr meta`: what performing tournament lists and recent peer decks play with the deck's commander, and
+which of the meta's cards answer its key cards."""
 
 import argparse
 from collections.abc import Callable, Sequence
@@ -59,21 +59,22 @@ _DESCRIPTION = """examples:
 
 Compares a deck with its commander's tournament lists from TopDeck.gg (top cuts first, else every list; needs
 a TopDeck key, which `cmdr topdeck` saves) and the
-most-viewed recent Archidekt decks, and lists the cards the most-played commanders answer its key
+most-viewed recent Archidekt and Moxfield decks, and lists the cards the most-played commanders answer its key
 cards with: the commander, its combos, the cards filed under a combo or win category (by you or by
 other players), cards costing far above the deck's curve, and what profile.toml keeps. Answers are
 cached for a day (Spellbook's combos for a week); the window and sample sizes are set in the config's
 [meta] table.
 
 A deck with no bracket set counts as the lowest bracket of its Commander Spellbook estimate. Bracket 4 decks
-read their commander's tournament lists and recent Archidekt decks, not the most-played commanders.
+read their commander's tournament lists and recent Archidekt and Moxfield decks, not the most-played
+commanders.
 """
 
 
 def add_meta_command(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
     meta = add_parser(
         "meta",
-        help="what performing tournament lists and recent Archidekt decks play, and meta threats",
+        help="what performing tournament lists and recent peer decks play, and meta threats",
         description=_DESCRIPTION,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -294,7 +295,7 @@ def print_report(report: MetaReport, out: TextIO) -> None:
 def _print_missing(report: MetaReport, out: TextIO) -> None:
     style = report.style.label
     weighed = f"; weighed for {style}" if style else ""
-    print(f"\nStaples you don't play (share of lists read · recent Archidekt lists{weighed})", file=out)
+    print(f"\nStaples you don't play (share of lists read · recent peer lists{weighed})", file=out)
     if not report.missing:
         print("  none", file=out)
     for card in report.missing:
