@@ -1,0 +1,116 @@
+{
+ "pageNumber": 1,
+ "pageSize": 10,
+ "totalResults": 2572,
+ "totalPages": 258,
+ "data": [
+  {
+   "id": "oa4RPz",
+   "name": "All I do is WINota",
+   "hasPrimer": false,
+   "format": "commander",
+   "visibility": "public",
+   "publicUrl": "https://moxfield.com/decks/Dr4JXq5D7kSBufwF8krxqA",
+   "publicId": "Dr4JXq5D7kSBufwF8krxqA",
+   "likeCount": 23,
+   "viewCount": 3740,
+   "createdAtUtc": "2024-01-14T17:31:16.443Z",
+   "lastUpdatedAtUtc": "2025-04-10T06:38:18.583Z",
+   "mainboardCount": 100,
+   "hubNames": [],
+   "colorIdentity": [
+    "W",
+    "R"
+   ],
+   "commanders": [],
+   "bracket": 3,
+   "autoBracket": 3,
+   "ignoreBrackets": false,
+   "mainCardId": "Er9bV",
+   "createdByUser": {
+    "userName": "moxfield-player-1",
+    "displayName": "Player 1",
+    "badges": []
+   },
+   "authors": [
+    {
+     "userName": "moxfield-player-1",
+     "displayName": "Player 1",
+     "badges": []
+    }
+   ]
+  },
+  {
+   "id": "l6rVly",
+   "name": "$6 🐻Winota, Boros Robin Hood 🏹 [Ultra Budget Humans]",
+   "hasPrimer": false,
+   "format": "commander",
+   "visibility": "public",
+   "publicUrl": "https://moxfield.com/decks/qrfEU-QVOkC0N95RPAEFMA",
+   "publicId": "qrfEU-QVOkC0N95RPAEFMA",
+   "likeCount": 25,
+   "viewCount": 3358,
+   "createdAtUtc": "2024-12-13T18:51:22.33Z",
+   "lastUpdatedAtUtc": "2025-02-12T06:39:09.947Z",
+   "mainboardCount": 100,
+   "hubNames": [],
+   "colorIdentity": [
+    "W",
+    "R"
+   ],
+   "commanders": [],
+   "bracket": 3,
+   "autoBracket": 2,
+   "ignoreBrackets": false,
+   "mainCardId": "Er9bV",
+   "createdByUser": {
+    "userName": "moxfield-player-2",
+    "displayName": "Player 2",
+    "badges": []
+   },
+   "authors": [
+    {
+     "userName": "moxfield-player-2",
+     "displayName": "Player 2",
+     "badges": []
+    }
+   ]
+  },
+  {
+   "id": "RaMpR",
+   "name": "Jon Snow, The White Wolf 🐺 ",
+   "hasPrimer": false,
+   "format": "commander",
+   "visibility": "public",
+   "publicUrl": "https://moxfield.com/decks/Ql2cDaiJuEqc9u-pMDrV4Q",
+   "publicId": "Ql2cDaiJuEqc9u-pMDrV4Q",
+   "likeCount": 0,
+   "viewCount": 3237,
+   "createdAtUtc": "2022-05-20T11:20:39.753Z",
+   "lastUpdatedAtUtc": "2025-06-30T21:53:58.563Z",
+   "mainboardCount": 100,
+   "hubNames": [],
+   "colorIdentity": [
+    "W",
+    "R"
+   ],
+   "commanders": [],
+   "bracket": 3,
+   "autoBracket": 3,
+   "ignoreBrackets": false,
+   "mainCardId": "E1z9v",
+   "createdByUser": {
+    "userName": "moxfield-player-3",
+    "displayName": "Player 3",
+    "badges": []
+   },
+   "authors": [
+    {
+     "userName": "moxfield-player-3",
+     "displayName": "Player 3",
+     "badges": []
+    }
+   ]
+  }
+ ]
+}

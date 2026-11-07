@@ -5,8 +5,9 @@ from pathlib import Path
 
 import httpx
 
-from commander.archidekt import RATE_LIMIT_PAUSE_SECONDS, ArchidektClient
+from commander.archidekt import ArchidektClient
 from commander.net import Fetcher, Pacer
+from commander.peersearch import RATE_LIMIT_PAUSE_SECONDS
 from commander.store import Workspace
 from commander.sync import SyncStatus, sync_decks
 from conftest import FakeArchidekt, Json

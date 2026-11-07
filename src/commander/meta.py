@@ -9,7 +9,6 @@ from datetime import date, datetime
 from enum import Enum
 
 from commander.answers import AnswerKind, card_key, piece_facts
-from commander.archidekt import PeerDeck
 from commander.carddb import CardDb, CardInfo, CardText
 from commander.deckcache import Answer, AnswerSource, Clock
 from commander.deckprofile import Profile
@@ -18,6 +17,7 @@ from commander.manabase import searched_colours
 from commander.metacombos import AnswerRole, DeckAnswers, MetaCombo, combo_answers, infos_answers, meta_combos
 from commander.metadata import MetaCommander, MetaData, PeerList, entries_since, listed_entries
 from commander.models import COMMANDER_CATEGORY, Deck
+from commander.peersearch import PeerDeck, Site
 from commander.playstyle import NEUTRAL, Fit, PlayStyle, Weight, deck_play_style, staple_weights
 from commander.spellbook import ComboDetail
 from commander.suggest import deck_identity
@@ -200,7 +200,7 @@ def analyse(deck: Deck, data: MetaData, profile: Profile, db: CardDb, *, now: Cl
         sources=(
             _state("TopDeck lists", data.lists),
             _state("TopDeck meta", data.field),
-            _state("Archidekt decks", data.peers),
+            _state("Archidekt and Moxfield decks", data.peers),
             _state("Spellbook combos", data.combos),
             _state("Spellbook deck combos", data.own_combos),
         ),
@@ -308,10 +308,12 @@ class Staples:
     """Every staple the deck misses, and what was read to find them."""
 
     rows: tuple[CardShare, ...]
-    # Lists read from TopDeck (top-cut ones when enough made a cut), and Archidekt decks read.
+    # Lists read from TopDeck (top-cut ones when enough made a cut), and Archidekt and Moxfield decks read.
     lists: int
     basis: Basis
     peers: int
+    # Where the decks read are listed, as `peer_sites` names them.
+    sites: str = Site.ARCHIDEKT.value
 
 
 def pool_staples(deck: Deck, pool: Sequence[PeerList], db: CardDb) -> tuple[CardShare, ...]:
@@ -348,7 +350,14 @@ def all_staples(
     rows = missing_staples(
         deck, performing, peers, names, db, limit=None, style=deck_play_style(deck), is_staple=is_staple
     )
-    return Staples(rows, len(performing), basis, len(peers))
+    return Staples(rows, len(performing), basis, len(peers), peer_sites(peers))
+
+
+def peer_sites(peers: Sequence[PeerList]) -> str:
+    """ "Archidekt", "Moxfield" or "Archidekt and Moxfield": where the decks are listed (Archidekt for
+    none)."""
+    sites = [site.value for site in Site if any(peer.deck.site is site for peer in peers)]
+    return " and ".join(sites) or Site.ARCHIDEKT.value
 
 
 def outliers(

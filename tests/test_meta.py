@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from commander.answers import Piece, card_answers
-from commander.archidekt import PeerDeck, parse_deck
+from commander.archidekt import parse_deck
 from commander.carddb import CardDb, Theme
 from commander.deckcache import Answer, AnswerSource
 from commander.deckprofile import Profile
@@ -24,6 +24,7 @@ from commander.meta import (
 from commander.metacombos import AnswerRole, Stop
 from commander.metadata import CommanderEntries, MetaCommander, MetaData, PeerList, PeerLists
 from commander.models import Deck
+from commander.peersearch import PeerDeck
 from commander.spellbook import ComboDetail, ComboPiece
 from commander.tournaments import CommanderStats, DecklistCard, Entry, Tournament
 from conftest import CHAOS_WARP, FILLER_CARDS, LIGHTNING_BOLT, Json, build_card_db, filler_card
@@ -356,7 +357,7 @@ def test_an_unknown_commander_reports_as_unknown(deck: Deck, db: CardDb) -> None
     assert report.outliers == ()
     assert report.peers == ()
     assert [(s.name, s.source, s.error) for s in report.sources][2] == (
-        "Archidekt decks",
+        "Archidekt and Moxfield decks",
         AnswerSource.UNAVAILABLE,
         "offline",
     )

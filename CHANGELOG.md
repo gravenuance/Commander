@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- The ideas for Considering and `cmdr meta` also learn from other players' recent, most-viewed public
+  Moxfield decks of the commander and of its alike commanders, under the same rules as Archidekt's and caps
+  of their own; a Moxfield deck counts as much as an Archidekt one, and a list posted to both counts once.
+  If Moxfield refuses the requests, `sync` warns and carries on with Archidekt alone (ADR 0066).
+
 ## 1.7.1 - 2026-11-04
 
 ### Changed

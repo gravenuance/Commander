@@ -121,9 +121,10 @@ class Origin(Enum):
 
     # Staples of the commander's tournament lists (brackets 4 and 5).
     META = "meta"
-    # Staples of the most-viewed recent Archidekt decks for the commander, at the deck's bracket and above.
+    # Staples of the most-viewed recent Archidekt and Moxfield decks for the commander, at the deck's bracket
+    # and above; the value predates Moxfield (ADR 0066).
     DECKS = "archidekt decks"
-    # Staples of recent Archidekt decks led by the commanders the deck's profile names as alike (ADR 0028).
+    # Staples of recent Archidekt and Moxfield decks led by the commanders the profile names as alike.
     ADJACENT = "adjacent decks"
     # Staples of recent Archidekt decks of any commander carrying one of the deck's theme tags.
     TAGGED = "tagged decks"

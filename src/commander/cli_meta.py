@@ -407,7 +407,7 @@ def _print_field(report: MetaReport, out: TextIO) -> None:
 
 
 def _print_peers(report: MetaReport, out: TextIO) -> None:
-    print(f"\nMost-viewed Archidekt decks updated since {report.since}", file=out)
+    print(f"\nMost-viewed Archidekt and Moxfield decks updated since {report.since}", file=out)
     if not report.peers:
         print("  none", file=out)
     for peer in report.peers:

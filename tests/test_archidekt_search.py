@@ -6,18 +6,16 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
-from commander.archidekt import (
+from commander.archidekt import ArchidektError, ArchidektSearch, parse_search_page
+from commander.net import Fetcher, Pacer, RateLimitedError
+from commander.peersearch import (
     MAX_DECK_READS,
     MAX_SEARCH_PAGES,
     SEARCH_INTERVAL_SECONDS,
-    ArchidektError,
-    ArchidektSearch,
     PeerDeck,
     brackets_to_read,
     most_viewed,
-    parse_search_page,
 )
-from commander.net import Fetcher, Pacer, RateLimitedError
 from conftest import DECK_ID, Json, load_fixture
 
 SINCE = datetime(2026, 8, 16, tzinfo=UTC)
@@ -336,7 +334,7 @@ def test_searches_and_deck_reads_are_paced() -> None:
 
 def test_every_request_logs_its_target_and_time_at_debug(caplog: pytest.LogCaptureFixture) -> None:
     search = search_for(FakeSearch([listing(range(2000, 1990, -1), more=False)]))
-    with caplog.at_level(logging.DEBUG, logger="commander.archidekt"):
+    with caplog.at_level(logging.DEBUG, logger="commander.peersearch"):
         search.popular_decks(ELLIVERE, brackets=(5,), since=SINCE, label="ellivere")
         search.deck(DECK_ID)
     messages = [r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG]
@@ -350,7 +348,7 @@ def test_every_request_logs_its_target_and_time_at_debug(caplog: pytest.LogCaptu
 
 def test_a_search_logs_its_order_pages_and_decks_in_the_window(caplog: pytest.LogCaptureFixture) -> None:
     fake = FakeSearch([listing(range(5000, 4000, -100)), listing([900], first_id=FIRST_ID + 100, old={0})])
-    with caplog.at_level(logging.INFO, logger="commander.archidekt"):
+    with caplog.at_level(logging.INFO, logger="commander.peersearch"):
         found_by(fake)
     assert [r.getMessage() for r in caplog.records if r.levelno == logging.INFO] == [
         "Archidekt search for ellivere by views: 2 pages, 10 decks in the window"
@@ -447,7 +445,7 @@ def full_pages(count: int) -> list[Json]:
 
 def test_each_bracket_of_a_commander_is_searched_at_most_5_pages(caplog: pytest.LogCaptureFixture) -> None:
     fake = FakeSearch(full_pages(12))
-    with caplog.at_level(logging.INFO, logger="commander.archidekt"):
+    with caplog.at_level(logging.INFO, logger="commander.peersearch"):
         decks = found_by(fake, 3, 4)
     assert MAX_SEARCH_PAGES == 5
     # Every page links to another one over the floor, so each bracket stops at its fifth.
@@ -522,7 +520,7 @@ def test_a_429_is_logged_as_a_warning_naming_the_status_and_a_second_one_says_it
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     limited = Limited(httpx.Response(429), httpx.Response(429))
-    with caplog.at_level(logging.WARNING, logger="commander.archidekt"), pytest.raises(RateLimitedError):
+    with caplog.at_level(logging.WARNING, logger="commander.peersearch"), pytest.raises(RateLimitedError):
         limited.search().deck(DECK_ID)
     first, second = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert "429" in first.getMessage()

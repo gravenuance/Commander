@@ -831,6 +831,8 @@ def _merge_deck(
     if data.lists.data is None and data.peers.data is None:
         why = data.peers.error or data.lists.error
         read.warnings.append(f"{deck.short_name}: no meta or Archidekt decks to learn from ({why})")
+    for site, why in data.peers.data.missing if data.peers.data else ():
+        read.warnings.append(f"{deck.short_name}: no recent {site.value} decks to learn from ({why})")
     warnings.extend(read.warnings)
     key_problem = _note_key_problem(data.lists.key_problem, warnings)
     incomplete = bool(read.warnings) or data.peers.data is None or key_problem

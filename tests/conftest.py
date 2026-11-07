@@ -479,6 +479,75 @@ class FakeTopdeck:
         return httpx.Client(transport=httpx.MockTransport(self.handler))
 
 
+def moxfield_row(public_id: str, views: int, updated_at: str, bracket: int | None = 3) -> Json:
+    """A deck as Moxfield's search lists it: the first deck of the trimmed real page, with these values."""
+    row: Json = copy.deepcopy(load_fixture("moxfield_search.json")["data"][0])
+    return {
+        **row,
+        "publicId": public_id,
+        "publicUrl": f"https://moxfield.com/decks/{public_id}",
+        "viewCount": views,
+        "lastUpdatedAtUtc": updated_at,
+        "bracket": bracket,
+    }
+
+
+def moxfield_page(rows: list[Json], page: int = 1, pages: int = 1) -> Json:
+    return {"pageNumber": page, "pageSize": 60, "totalResults": len(rows), "totalPages": pages, "data": rows}
+
+
+def moxfield_deck(public_id: str, commanders: Sequence[str], cards: dict[str, int]) -> Json:
+    """The trimmed real Moxfield deck with these commanders and main cards (by name, with how many)."""
+    deck: Json = copy.deepcopy(load_fixture("moxfield_deck.json"))
+    template = next(iter(deck["boards"]["mainboard"]["cards"].values()))
+
+    def board(names: dict[str, int]) -> Json:
+        entries = {
+            f"e{index}": {**template, "quantity": count, "card": {**template["card"], "name": name}}
+            for index, (name, count) in enumerate(names.items())
+        }
+        return {"count": sum(names.values()), "cards": entries}
+
+    deck["boards"] = {"commanders": board(dict.fromkeys(commanders, 1)), "mainboard": board(cards)}
+    deck["authorTags"] = {}
+    return {**deck, "publicId": public_id}
+
+
+class FakeMoxfield:
+    """Answers Moxfield's card search, deck search and deck reads from dicts, as the real API does.
+
+    `cards` holds each known card's id by lower-cased name; `pages` the search pages by commander card id, in
+    page order; `decks` the decks by public id. `status` makes every answer that status instead (403 is how
+    Moxfield refuses). Every request's path and query is recorded.
+    """
+
+    def __init__(self) -> None:
+        self.cards: dict[str, str] = {}
+        self.pages: dict[str, list[Json]] = {}
+        self.decks: dict[str, Json] = {}
+        self.status = HTTP_OK
+        self.requests: list[httpx.URL] = []
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request.url)
+        if self.status != HTTP_OK:
+            return httpx.Response(self.status, text="<html>blocked</html>")
+        path, params = request.url.path, request.url.params
+        if path == "/v2/cards/search":
+            name = params["q"].removeprefix('!"').removesuffix('"')
+            card_id = self.cards.get(name.casefold())
+            found = {"id": card_id, "name": name} if card_id else None
+            return httpx.Response(
+                200, json={"hasMore": False, "totalCards": int(bool(found)), "exactMatch": found}
+            )
+        if path == "/v2/decks/search":
+            pages = self.pages.get(params["commanderCardId"], [])
+            number = int(params["pageNumber"])
+            return httpx.Response(200, json=pages[number - 1] if number <= len(pages) else moxfield_page([]))
+        deck = self.decks.get(path.removeprefix("/v3/decks/all/"))
+        return httpx.Response(200, json=deck) if deck is not None else httpx.Response(404)
+
+
 class MemoryKeyring(keyring.backend.KeyringBackend):
     """Stands in for Windows Credential Manager, so no test can read or write the real one."""
 
@@ -571,9 +640,9 @@ class FakeArchidekt:
 
     It also signs in, looks up cards from the Scryfall fixture, saves snapshots and applies modifyCards
     edits to its decks, recording each write with its JSON body and Authorization header.
-    Requests to Scryfall, Commander Spellbook and TopDeck go to its fakes of those, so one client covers any
-    command. A deck search by commander answers with its page in `peer_pages`, else `peer_page`; one by
-    deck tag with its page in `tag_pages`.
+    Requests to Scryfall, Commander Spellbook, TopDeck and Moxfield go to its fakes of those, so one client
+    covers any command. A deck search by commander answers with its page in `peer_pages`, else `peer_page`;
+    one by deck tag with its page in `tag_pages`.
     """
 
     def __init__(self, user: str = "TESTER") -> None:
@@ -603,6 +672,7 @@ class FakeArchidekt:
         self.scryfall = FakeScryfall()
         self.spellbook = FakeSpellbook()
         self.topdeck = FakeTopdeck()
+        self.moxfield = FakeMoxfield()
         self.peer_page: Json = deck_page([])
         # Search pages for particular commanders; any other commander gets peer_page.
         self.peer_pages: dict[str, Json] = {}
@@ -642,6 +712,8 @@ class FakeArchidekt:
             return self.spellbook.handler(request)
         if host.endswith("topdeck.gg"):
             return self.topdeck.handler(request)
+        if host.endswith("moxfield.com"):
+            return self.moxfield.handler(request)
         if request.url.path == "/api/decks/colorTags/":
             self.requests.append(request.url.path)
             return self.account_labels(request)

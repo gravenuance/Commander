@@ -89,6 +89,7 @@ def report_json(report: MetaReport) -> dict[str, object]:
         "peers": [
             {
                 "id": p.id,
+                "site": p.site.value,
                 "name": p.name,
                 "views": p.views,
                 "updatedAt": p.updated_at.isoformat(),

@@ -8,7 +8,8 @@ for a day unless stated, and the sources are fetched in parallel, each at its ow
   stored events,
 - the most-viewed recent Archidekt decks for the commander at the deck's bracket and the one above, other
   players' only (a search answer is refreshed every third day, staggered per commander, paging only to the
-  newest deck it already holds), each deck read kept until its owner edits it (ADR 0027),
+  newest deck it already holds), each deck read kept until its owner edits it (ADR 0027); and beside them,
+  under the same rules and caps of their own, the most-viewed recent Moxfield decks (ADR 0066),
 - the combos inside each top commander's core cards, from Commander Spellbook (a week; bracket 5 only),
 - the deck's own combos, from Commander Spellbook (a week, until the list changes; bracket 5 only),
 - for `sync`, the decks of the commanders the profile names as alike and of other commanders carrying one of
@@ -29,19 +30,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from commander.archidekt import (
-    ALIKE_READ_DIVISOR,
-    ALIKE_SEARCH_PAGES_PER_BRACKET,
-    MAX_SEARCH_PAGES,
-    MIN_DECKS,
-    SEARCH_INTERVAL_SECONDS,
     TAG_SEARCH_PAGES_PER_BRACKET,
     TAG_SEARCH_READS,
-    VIEW_FLOORS,
     ArchidektError,
     ArchidektSearch,
-    PeerDeck,
-    brackets_to_read,
-    most_viewed,
 )
 from commander.background import in_background
 from commander.config import MetaSettings
@@ -64,6 +56,7 @@ from commander.jsonshape import (
     as_list,
     as_object,
     opt_int,
+    opt_str,
     req_bool,
     req_float,
     req_int,
@@ -73,6 +66,7 @@ from commander.jsonshape import (
     str_list,
 )
 from commander.models import CEDH_BRACKET, Deck, short_commander_name
+from commander.moxfield import MoxfieldBlockedError, MoxfieldError, MoxfieldSearch
 from commander.net import (
     Fetcher,
     HttpStatusError,
@@ -83,6 +77,18 @@ from commander.net import (
     requests_for,
 )
 from commander.peerschedule import fresh_for as peer_fresh_for
+from commander.peersearch import (
+    ALIKE_READ_DIVISOR,
+    ALIKE_SEARCH_PAGES_PER_BRACKET,
+    MAX_SEARCH_PAGES,
+    MIN_DECKS,
+    SEARCH_INTERVAL_SECONDS,
+    VIEW_FLOORS,
+    PeerDeck,
+    Site,
+    brackets_to_read,
+    most_viewed,
+)
 from commander.spellbook import FRESH_FOR as SPELLBOOK_FRESH_FOR
 from commander.spellbook import (
     META_REQUEST_INTERVAL_SECONDS,
@@ -134,7 +140,17 @@ NOT_READ = frozenset({NOT_READ_BELOW_4, NOT_READ_BELOW_5})
 MAX_OWN_ENTRIES = 400
 
 
-_ERRORS = (NetworkError, TopdeckError, ArchidektError, SpellbookError, NotFetchedError)
+_ERRORS = (
+    NetworkError,
+    TopdeckError,
+    ArchidektError,
+    MoxfieldError,
+    MoxfieldBlockedError,
+    SpellbookError,
+    NotFetchedError,
+)
+# A Moxfield deck read answered with one of these was deleted or made private; a 403 is a block instead.
+_MOXFIELD_GONE_STATUSES = frozenset({404, 410})
 # A card in this share of a commander's lists is part of its core, where its combos are looked for.
 COMBO_CORE_SHARE = 0.2
 
@@ -173,6 +189,8 @@ class PeerLists:
     decks: tuple[PeerList, ...]
     # Decks the search listed but whose card list could not be read.
     skipped: int
+    # Each site whose decks could not be read at all, with why, when another site's stand in (ADR 0066).
+    missing: tuple[tuple[Site, str], ...] = ()
 
 
 @dataclass(slots=True, frozen=True)
@@ -237,6 +255,8 @@ class MetaSources:
     # Decks read side by side can want the same Archidekt search or Spellbook core; the second waits for
     # the first's answer.
     searches: ItemLocks = field(default_factory=ItemLocks)
+    # The second site of peer decks (ADR 0066); None reads Archidekt's alone.
+    moxfield: MoxfieldSearch | None = None
 
 
 def topdeck_client(
@@ -274,20 +294,24 @@ def meta_sources(
     rank_changes: Callable[[Callable[[], None]], None] | None = None,
     on_send: Callable[[str], None] | None = None,
 ) -> MetaSources:
-    """TopDeck, Archidekt search and Spellbook clients over one HTTP client, each at its own pace.
+    """TopDeck, Archidekt search, Moxfield search and Spellbook clients over one HTTP client, each at its own
+    pace.
 
-    With `rank`, Archidekt's requests for several decks at once go out by the deck's rank, lowest first
-    (`Pacer.rank_by`); `rank_changes` is given the function to call whenever the ranking changes. `on_send`
-    hears the step (`net.requests_for`) of each request as any of the three pacers grants its slot."""
+    With `rank`, Archidekt's and Moxfield's requests for several decks at once go out by the deck's rank,
+    lowest first (`Pacer.rank_by`); `rank_changes` is given the function to call whenever the ranking
+    changes. `on_send` hears the step (`net.requests_for`) of each request as any of the pacers grants its
+    slot."""
     archidekt_pacer = pacer_factory(SEARCH_INTERVAL_SECONDS)
+    moxfield_pacer = pacer_factory(SEARCH_INTERVAL_SECONDS)
     spellbook_pacer = pacer_factory(META_REQUEST_INTERVAL_SECONDS)
     if on_send is not None:
-        archidekt_pacer.on_grant(on_send)
-        spellbook_pacer.on_grant(on_send)
+        for pacer in (archidekt_pacer, moxfield_pacer, spellbook_pacer):
+            pacer.on_grant(on_send)
     if rank is not None:
-        archidekt_pacer.rank_by(rank)
-        if rank_changes is not None:
-            rank_changes(archidekt_pacer.rank_changed)
+        for pacer in (archidekt_pacer, moxfield_pacer):
+            pacer.rank_by(rank)
+            if rank_changes is not None:
+                rank_changes(pacer.rank_changed)
     return MetaSources(
         topdeck_client(http, pacer_factory, cache_root, waits=waits, on_send=on_send),
         ArchidektSearch(Fetcher(http), archidekt_pacer),
@@ -295,6 +319,7 @@ def meta_sources(
         spellbook_pacer,
         user,
         settings,
+        moxfield=MoxfieldSearch(Fetcher(http), moxfield_pacer),
     )
 
 
@@ -715,18 +740,19 @@ def gather_adjacent(
     on_done: Progress | None = None,
     prune: bool = True,
 ) -> AdjacentDecks:
-    """Each group's recent Archidekt decks at the deck's bracket, cached as a deck's own peers are; and for
-    each deck tag, those of any other commander than the deck's own."""
+    """Each group's recent Archidekt and Moxfield decks at the deck's bracket, cached as a deck's own peers
+    are; and for each deck tag, the Archidekt ones of any other commander than the deck's own (Moxfield has
+    no tag search, ADR 0066). A group with one site unread names it in `errors` and counts as failed."""
     since = window_start(now(), sources.settings)
     folder = cache_root / CACHE_FOLDER
     steps = _Steps(on_progress, on_done)
-    decks: dict[int, PeerList] = {}
+    decks: dict[tuple[Site, int | str], PeerList] = {}
     errors: list[tuple[str, str]] = []
     groups_failed = False
     for group in groups:
         name = commander_name(group)
         with steps.running(_alike_step(deck, name)):
-            answer = _group_peers(
+            answer = _peers_on_both_sites(
                 group,
                 deck.bracket,
                 sources,
@@ -741,8 +767,11 @@ def gather_adjacent(
             errors.append((name, answer.error or "unavailable"))
             groups_failed = True
             continue
+        for site, why in answer.data.missing:
+            errors.append((f"{site.value} {name}", why))
+            groups_failed = True
         for peer in answer.data.decks:
-            decks.setdefault(peer.deck.id, peer)
+            decks.setdefault((peer.deck.site, peer.deck.id), peer)
     own = {name.casefold() for name in deck.commanders}
     tagged: list[TaggedDecks] = []
     for tag in _distinct_tags(tags):
@@ -773,7 +802,7 @@ def _prune_reads(folder: Path, since: date, *, now: Clock, offline: bool) -> Non
     window_start = datetime(since.year, since.month, since.day, tzinfo=UTC)
     removed = DeckReads(folder / DECK_READS_FOLDER).prune(now=now(), window_start=window_start)
     if removed:
-        log.info("dropped %d cached Archidekt decks nothing will read again", removed)
+        log.info("dropped %d cached peer decks nothing will read again", removed)
 
 
 def _drop_retired(folder: Path) -> None:
@@ -801,9 +830,89 @@ def _peers(
     offline: bool,
 ) -> Answer[PeerLists]:
     group = tuple(deck.commanders)
-    return _group_peers(
+    return _peers_on_both_sites(
         group, deck.bracket, sources, folder, since, own_id=deck.id, now=now, refresh=refresh, offline=offline
     )
+
+
+def _peers_on_both_sites(
+    group: tuple[str, ...],
+    bracket: int | None,
+    sources: MetaSources,
+    folder: Path,
+    since: date,
+    *,
+    own_id: int | None,
+    now: Clock,
+    refresh: bool,
+    offline: bool,
+) -> Answer[PeerLists]:
+    """The group's Archidekt decks (`_group_peers`) and its Moxfield ones (`_moxfield_group_peers`), read side
+    by side, each at its own pace and under its own caps, and joined (`joined_peers`)."""
+
+    def moxfield_peers(search: MoxfieldSearch) -> Answer[PeerLists]:
+        return _moxfield_group_peers(
+            group,
+            bracket,
+            sources,
+            folder,
+            since,
+            search=search,
+            alike=own_id is None,
+            now=now,
+            refresh=refresh,
+            offline=offline,
+        )
+
+    moxfield = (
+        in_background(partial(moxfield_peers, sources.moxfield), name="meta-moxfield")
+        if sources.moxfield is not None
+        else None
+    )
+    archidekt = _group_peers(
+        group, bracket, sources, folder, since, own_id=own_id, now=now, refresh=refresh, offline=offline
+    )
+    return joined_peers(archidekt, moxfield.result() if moxfield is not None else None)
+
+
+def joined_peers(archidekt: Answer[PeerLists], moxfield: Answer[PeerLists] | None) -> Answer[PeerLists]:
+    """One answer for both sites' decks, Archidekt's first: a Moxfield deck with the same commanders and
+    main cards as an Archidekt one is the same list cross-posted and counts once. A site that could not be
+    read is named in `PeerLists.missing` while the other stands in; the answer is stale when either is, as
+    old as the older, and unavailable when no site could be read, or one could not and the other found no
+    decks. A cache-only read that finds no Moxfield answer stored leaves Archidekt's as it is."""
+    if moxfield is None or (moxfield.data is None and moxfield.error == NOT_FETCHED):
+        return archidekt
+    sites = ((Site.ARCHIDEKT, archidekt), (Site.MOXFIELD, moxfield))
+    error = "; ".join(f"{site.value}: {a.error}" for site, a in sites if a.error) or None
+    read = [(site, a.data) for site, a in sites if a.data is not None]
+    missing = tuple((site, a.error or "unavailable") for site, a in sites if a.data is None)
+    if not read or (missing and not any(lists.decks for _, lists in read)):
+        return Answer(None, AnswerSource.UNAVAILABLE, None, error, archidekt.key_problem)
+    first = archidekt.data.decks if archidekt.data else ()
+    seen = {_same_list_key(p) for p in first}
+    later = moxfield.data.decks if moxfield.data else ()
+    kept = tuple(p for p in later if _same_list_key(p) not in seen)
+    if len(kept) < len(later):
+        log.info("counted %d Moxfield decks once: Archidekt holds the same lists", len(later) - len(kept))
+    data = PeerLists((*first, *kept), sum(lists.skipped for _, lists in read), missing)
+    times = [a.fetched_at for _, a in sites if a.fetched_at is not None]
+    states = {a.source for _, a in sites}
+    if states & {AnswerSource.STALE, AnswerSource.UNAVAILABLE}:
+        source = AnswerSource.STALE
+    elif states == {AnswerSource.CACHED}:
+        source = AnswerSource.CACHED
+    else:
+        source = AnswerSource.FETCHED
+    return Answer(data, source, min(times) if times else None, error)
+
+
+_ListKey = tuple[frozenset[str], tuple[str, ...], tuple[tuple[str, int], ...] | None]
+
+
+def _same_list_key(peer: PeerList) -> _ListKey:
+    """What a list cross-posted to both sites has the same on each: its commanders, cards and counts."""
+    return frozenset(name.casefold() for name in peer.commanders), peer.cards, peer.multiples
 
 
 def _group_request(name: str, bracket: int | None, sources: MetaSources, reads: int) -> Mapping[str, object]:
@@ -883,6 +992,131 @@ def _group_peers(
             also_accept=accepted,
         )
     return _cut_to(answer, reads)
+
+
+def _moxfield_group_peers(
+    group: tuple[str, ...],
+    bracket: int | None,
+    sources: MetaSources,
+    folder: Path,
+    since: date,
+    *,
+    search: MoxfieldSearch,
+    alike: bool,
+    now: Clock,
+    refresh: bool,
+    offline: bool,
+) -> Answer[PeerLists]:
+    """Recent Moxfield decks led by the commander, or by both partners, at the bracket, under the caps
+    `_group_peers` keeps for Archidekt, counted apart from Archidekt's (ADR 0066): the deck's own commander
+    read in full, an alike one searched smaller and read for an alike_reads(peer_decks) cut. An alike answer
+    has an item of its own, and the own answer, cut, serves it while newer, as on Archidekt."""
+    settings = sources.settings
+    name = commander_name(group)
+    reads = alike_reads(settings.peer_decks) if alike else settings.peer_decks
+    pages = ALIKE_SEARCH_PAGES_PER_BRACKET if alike else MAX_SEARCH_PAGES
+
+    def question(decks: int, max_pages: int) -> Mapping[str, object]:
+        return {
+            "site": Site.MOXFIELD.value,
+            "commander": name,
+            "brackets": list(brackets_to_read(bracket)),
+            "pages": max_pages,
+            "decks": decks,
+            "viewFloors": list(VIEW_FLOORS),
+            "minDecks": MIN_DECKS,
+            "windowDays": settings.window_days,
+            "user": sources.user.casefold(),
+        }
+
+    request = question(reads, pages)
+    own_item = cache_item("moxfield", name, str(bracket))
+    item = cache_item("moxfield-alike", name, str(bracket)) if alike else own_item
+    accepted = [Accepted(own_item, question(settings.peer_decks, MAX_SEARCH_PAGES))] if alike else []
+    with sources.searches.hold(own_item):
+        answer = cached_answer(
+            item,
+            request,
+            _live(
+                offline,
+                lambda: _moxfield_peer_lists(
+                    search,
+                    sources,
+                    DeckReads(folder / DECK_READS_FOLDER),
+                    group,
+                    bracket,
+                    lone_alike=alike and len(group) == 1,
+                    since=since,
+                    now=now,
+                    item=item,
+                    limit=reads,
+                    max_pages=pages,
+                ),
+            ),
+            _peer_cache(folder, "Moxfield decks"),
+            now=now,
+            refresh=refresh,
+            fresh_for=peer_fresh_for(own_item, now()),
+            errors=_ERRORS,
+            also_accept=accepted,
+        )
+    return _cut_to(answer, reads)
+
+
+def _moxfield_peer_lists(
+    search: MoxfieldSearch,
+    sources: MetaSources,
+    reads: DeckReads,
+    group: tuple[str, ...],
+    bracket: int | None,
+    *,
+    lone_alike: bool,
+    since: date,
+    now: Clock,
+    item: str,
+    limit: int,
+    max_pages: int,
+) -> PeerLists:
+    """As `_peer_lists` reads Archidekt; a commander Moxfield has no card for has no decks there."""
+    if limit == 0:
+        return PeerLists((), 0)
+    card_id = search.commander_card_id(group[0])
+    if card_id is None:
+        log.info("Moxfield knows no card named %s, so it has no decks for %s", group[0], item)
+        return PeerLists((), 0)
+    found = search.popular_decks(
+        card_id,
+        brackets=brackets_to_read(bracket),
+        since=_start_of(since),
+        label=item,
+        max_pages=max_pages,
+        limit=limit,
+        readable=_other_players(sources, None),
+    )
+    wanted = {name.casefold() for name in group}
+    return _read_peers(
+        sources,
+        reads,
+        found,
+        limit,
+        own_id=None,
+        now=now,
+        keep=lambda read: _led_by(wanted, read, lone=lone_alike),
+        read_deck=partial(_read_moxfield_deck, search),
+    )
+
+
+def _read_moxfield_deck(search: MoxfieldSearch, peer: PeerDeck) -> DeckRead | None:
+    """The deck's list; None, logged, for one Moxfield cannot give, which costs only itself."""
+    try:
+        return search.deck(str(peer.id))
+    except MoxfieldError as error:
+        log.warning("skipping Moxfield deck %s: %s", peer.id, error)
+    except HttpStatusError as error:
+        if error.status not in _MOXFIELD_GONE_STATUSES:
+            raise
+        log.warning("skipping Moxfield deck %s: %s", peer.id, error)
+    return None
 
 
 def _distinct_tags(tags: Sequence[str]) -> list[str]:
@@ -1174,25 +1408,20 @@ def _read_peers(
     own_id: int | None,
     now: Clock,
     keep: Callable[[DeckRead], bool],
+    read_deck: Callable[[PeerDeck], DeckRead | None] | None = None,
 ) -> PeerLists:
-    """The most-viewed other players' decks of a search, read or cached, and filtered by keep."""
+    """The most-viewed other players' decks of a search, read or cached, and filtered by keep. `read_deck`
+    reads one deck, None for one that cannot be read; Archidekt's by default."""
     others = list(filter(_other_players(sources, own_id), found))
+    read_one = read_deck or partial(_read_archidekt_deck, sources.archidekt)
     lists: list[PeerList] = []
     skipped = 0
     for peer in most_viewed(others, limit=limit):
         read = reads.load(peer, now())
         if read is None:
-            try:
-                read = read_of(sources.archidekt.deck(peer.id))
-            except ArchidektError as error:
+            read = read_one(peer)
+            if read is None:
                 # One unreadable deck shouldn't cost the others; the count is shown with the results.
-                log.warning("skipping Archidekt deck %d: %s", peer.id, error)
-                skipped += 1
-                continue
-            except HttpStatusError as error:
-                if error.status not in _DECK_GONE_STATUSES:
-                    raise
-                log.warning("skipping Archidekt deck %d: %s", peer.id, error)
                 skipped += 1
                 continue
             _keep(reads, peer, read, now())
@@ -1201,11 +1430,26 @@ def _read_peers(
     return PeerLists(tuple(lists), skipped)
 
 
+def _read_archidekt_deck(search: ArchidektSearch, peer: PeerDeck) -> DeckRead | None:
+    """The deck's list; None, logged, for one that went private, was deleted or does not parse."""
+    if not isinstance(peer.id, int):
+        raise TypeError(f"{peer.site.value} deck {peer.id!r} is not an Archidekt deck")
+    try:
+        return read_of(search.deck(peer.id))
+    except ArchidektError as error:
+        log.warning("skipping Archidekt deck %d: %s", peer.id, error)
+    except HttpStatusError as error:
+        if error.status not in _DECK_GONE_STATUSES:
+            raise
+        log.warning("skipping Archidekt deck %d: %s", peer.id, error)
+    return None
+
+
 def _keep(reads: DeckReads, peer: PeerDeck, read: DeckRead, at: datetime) -> None:
     try:
         reads.save(peer, read, at)
     except OSError as error:
-        log.warning("could not cache Archidekt deck %d: %s", peer.id, error)
+        log.warning("could not cache %s deck %s: %s", peer.site.value, peer.id, error)
 
 
 def _cache[T](
@@ -1307,6 +1551,8 @@ def _decode_field(raw: object) -> tuple[MetaCommander, ...]:
 
 
 def _encode_peer_deck(deck: PeerDeck) -> dict[str, object]:
+    # An Archidekt deck carries no site, as answers stored before Moxfield (ADR 0066) do not.
+    site: dict[str, object] = {} if deck.site is Site.ARCHIDEKT else {"site": deck.site.value}
     return {
         "id": deck.id,
         "name": deck.name,
@@ -1314,6 +1560,7 @@ def _encode_peer_deck(deck: PeerDeck) -> dict[str, object]:
         "views": deck.views,
         "updatedAt": deck.updated_at.isoformat(),
         "bracket": deck.bracket,
+        **site,
     }
 
 
@@ -1321,13 +1568,15 @@ def _decode_peer_deck(d: Mapping[str, object], where: str) -> PeerDeck:
     updated_at = datetime.fromisoformat(req_str(d, "updatedAt", where))
     if updated_at.tzinfo is None:
         raise ShapeError(f"{where}.updatedAt: no time zone")
+    site = Site(opt_str(d, "site", where) or Site.ARCHIDEKT.value)
     return PeerDeck(
-        id=req_int(d, "id", where),
+        id=req_int(d, "id", where) if site is Site.ARCHIDEKT else req_str(d, "id", where),
         name=req_str(d, "name", where),
         owner=req_str(d, "owner", where),
         views=req_int(d, "views", where),
         updated_at=updated_at,
         bracket=opt_int(d, "bracket", where),
+        site=site,
     )
 
 

@@ -38,6 +38,7 @@ from commander.metadata import (
     AdjacentDecks,
     MetaData,
     MetaSources,
+    PeerLists,
     start_gather_for,
     start_tournament_refresh,
 )
@@ -178,7 +179,8 @@ def stub_meta(
         return cast(
             "MetaData",
             SimpleNamespace(
-                lists=SimpleNamespace(data=1, error=None, key_problem=False), peers=SimpleNamespace(data=1)
+                lists=SimpleNamespace(data=1, error=None, key_problem=False),
+                peers=SimpleNamespace(data=PeerLists((), 0)),
             ),
         )
 
@@ -645,7 +647,7 @@ def test_decks_whose_tournament_lists_hit_a_key_problem_are_incomplete_and_the_s
     )
 
     def gather(*_: object, **__: object) -> object:
-        return SimpleNamespace(lists=refused, peers=SimpleNamespace(data=1))
+        return SimpleNamespace(lists=refused, peers=SimpleNamespace(data=PeerLists((), 0)))
 
     stub_gather(monkeypatch, gather)
     states: dict[int, str] = {}
@@ -684,7 +686,8 @@ def test_a_deck_below_bracket_4_merges_without_waiting_for_topdeck_and_one_at_br
             if deck.bracket in TOURNAMENT_BRACKETS:
                 waited_for_release.append(released.wait(timeout=2))
             return SimpleNamespace(
-                lists=SimpleNamespace(data=1, error=None, key_problem=False), peers=SimpleNamespace(data=1)
+                lists=SimpleNamespace(data=1, error=None, key_problem=False),
+                peers=SimpleNamespace(data=PeerLists((), 0)),
             )
 
         return finish
@@ -743,7 +746,8 @@ def test_an_error_mid_sync_waits_for_topdeck_before_the_client_closes_and_logs_w
         if deck.id == DECK_IDS[1]:
             failing.set()
         return lambda: SimpleNamespace(
-            lists=SimpleNamespace(data=1, error=None, key_problem=False), peers=SimpleNamespace(data=1)
+            lists=SimpleNamespace(data=1, error=None, key_problem=False),
+            peers=SimpleNamespace(data=PeerLists((), 0)),
         )
 
     def compile_ideas(stored: StoredDeck, *_: object, **__: object) -> dict[Origin, list[BoardCard]]:

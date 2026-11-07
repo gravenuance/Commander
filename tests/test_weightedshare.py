@@ -5,8 +5,8 @@ from datetime import UTC, date, datetime
 
 import pytest
 
-from commander.archidekt import PeerDeck
 from commander.metadata import PeerList
+from commander.peersearch import PeerDeck
 from commander.weightedshare import (
     IDEA_LOWER_BOUND,
     MAX_GRACE,

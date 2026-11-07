@@ -6,10 +6,10 @@ from datetime import UTC, datetime
 
 import pytest
 
-from commander.archidekt import PeerDeck
 from commander.carddb import CardDb, Role, Theme
 from commander.metadata import PeerList
 from commander.peercounts import RoleBand, peer_counts
+from commander.peersearch import PeerDeck
 from conftest import build_card_db
 
 COMMANDER = "Filler Card 100"

@@ -1,0 +1,170 @@
+{
+ "id": "Pp4DA8",
+ "name": "Winota in Bracket 3",
+ "format": "commander",
+ "visibility": "public",
+ "publicUrl": "https://moxfield.com/decks/hxPRLvgHrUi-Z_W_4Muwpg",
+ "publicId": "hxPRLvgHrUi-Z_W_4Muwpg",
+ "likeCount": 8,
+ "viewCount": 3227,
+ "createdAtUtc": "2025-02-15T04:25:32.397Z",
+ "lastUpdatedAtUtc": "2025-02-16T05:06:21.967Z",
+ "autoBracket": 3,
+ "bracket": 3,
+ "createdByUser": {
+  "userName": "moxfield-player-9",
+  "displayName": "Player 9",
+  "badges": []
+ },
+ "boards": {
+  "commanders": {
+   "count": 1,
+   "cards": {
+    "LVg63": {
+     "quantity": 1,
+     "boardType": "commanders",
+     "finish": "nonFoil",
+     "isProxy": false,
+     "card": {
+      "id": "Er9bV",
+      "uniqueCardId": "LVg63",
+      "scryfall_id": "5dd13a6c-23d3-44ce-a628-cb1c19d777c4",
+      "set": "iko",
+      "name": "Winota, Joiner of Forces",
+      "cn": "216",
+      "type_line": "Legendary Creature — Human Warrior",
+      "color_identity": [
+       "R",
+       "W"
+      ]
+     }
+    }
+   }
+  },
+  "mainboard": {
+   "count": 24,
+   "cards": {
+    "EZyKV": {
+     "quantity": 1,
+     "boardType": "mainboard",
+     "finish": "nonFoil",
+     "isProxy": false,
+     "card": {
+      "id": "dXygv",
+      "uniqueCardId": "EZyKV",
+      "scryfall_id": "772edef7-2f17-4244-b1bb-4e7a53c253e1",
+      "set": "brc",
+      "name": "Sol Ring",
+      "cn": "160",
+      "type_line": "Artifact",
+      "color_identity": []
+     }
+    },
+    "kprNJ": {
+     "quantity": 1,
+     "boardType": "mainboard",
+     "finish": "nonFoil",
+     "isProxy": false,
+     "card": {
+      "id": "mPaAR",
+      "uniqueCardId": "kprNJ",
+      "scryfall_id": "14a41e7e-9f68-4449-9e2c-4c862036bce5",
+      "set": "plst",
+      "name": "Legion's Landing // Adanto, the First Fort",
+      "cn": "XLN-22",
+      "type_line": "Legendary Enchantment // Legendary Land",
+      "color_identity": [
+       "W"
+      ]
+     }
+    },
+    "YjQDl": {
+     "quantity": 1,
+     "boardType": "mainboard",
+     "finish": "nonFoil",
+     "isProxy": false,
+     "card": {
+      "id": "kAGex",
+      "uniqueCardId": "YjQDl",
+      "scryfall_id": "f3537373-ef54-4578-9d05-6216420ee349",
+      "set": "mh2",
+      "name": "Esper Sentinel",
+      "cn": "12",
+      "type_line": "Artifact Creature — Human Soldier",
+      "color_identity": [
+       "W"
+      ]
+     }
+    },
+    "LGnbo": {
+     "quantity": 1,
+     "boardType": "mainboard",
+     "finish": "nonFoil",
+     "isProxy": false,
+     "card": {
+      "id": "R9yBz",
+      "uniqueCardId": "LGnbo",
+      "scryfall_id": "24c0d87b-0049-4beb-b9cb-6f813b7aa7dc",
+      "set": "neo",
+      "name": "Fable of the Mirror-Breaker // Reflection of Kiki-Jiki",
+      "cn": "141",
+      "type_line": "Enchantment — Saga // Enchantment Creature — Goblin Shaman",
+      "color_identity": [
+       "R"
+      ]
+     }
+    },
+    "L3373": {
+     "quantity": 10,
+     "boardType": "mainboard",
+     "finish": "nonFoil",
+     "isProxy": false,
+     "card": {
+      "id": "kpbZw",
+      "uniqueCardId": "L3373",
+      "scryfall_id": "5474e67c-628f-41b0-aa31-3d85a267265a",
+      "set": "khm",
+      "name": "Snow-Covered Mountain",
+      "cn": "282",
+      "type_line": "Basic Snow Land — Mountain",
+      "color_identity": [
+       "R"
+      ]
+     }
+    },
+    "YB2MP": {
+     "quantity": 10,
+     "boardType": "mainboard",
+     "finish": "nonFoil",
+     "isProxy": false,
+     "card": {
+      "id": "LGQo6",
+      "uniqueCardId": "YB2MP",
+      "scryfall_id": "afd2730f-878e-47ee-ad2a-73f8fa4e0794",
+      "set": "khm",
+      "name": "Snow-Covered Plains",
+      "cn": "276",
+      "type_line": "Basic Snow Land — Plains",
+      "color_identity": [
+       "W"
+      ]
+     }
+    }
+   }
+  },
+  "sideboard": {
+   "count": 0,
+   "cards": {}
+  },
+  "maybeboard": {
+   "count": 0,
+   "cards": {}
+  }
+ },
+ "authorTags": {
+  "Sol Ring": [
+   "ramp"
+  ]
+ },
+ "hubs": []
+}

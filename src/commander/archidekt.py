@@ -1,9 +1,7 @@
 """Read access to Archidekt's undocumented JSON API; every response is shape-checked before use."""
 
 import logging
-import time
-from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 
 from commander.jsonshape import (
@@ -19,8 +17,19 @@ from commander.jsonshape import (
     req_str,
     str_list,
 )
-from commander.models import ARCHIDEKT_DECK_URL, Deck, DeckCard, DeckSummary
-from commander.net import HTTP_NOT_FOUND, Fetcher, HttpStatusError, Pacer, RateLimitedError
+from commander.models import Deck, DeckCard, DeckSummary
+from commander.net import HTTP_NOT_FOUND, Fetcher, HttpStatusError, Pacer
+from commander.peersearch import (
+    MAX_DECK_READS,
+    MAX_SEARCH_PAGES,
+    Cursor,
+    LimitGuard,
+    PageRequest,
+    PeerDeck,
+    Site,
+    descend,
+    target,
+)
 
 log = logging.getLogger(__name__)
 
@@ -29,27 +38,6 @@ _PLAIN_API_BASE = "http://archidekt.com/api"
 COMMANDER_FORMAT = 3
 # Archidekt's deck listings come 60 to a page whatever `pageSize` asks for (ADR 0048), so none is sent.
 MAX_PAGES = 20
-# Reading other players' decks: most viewed first, at most this many search pages per bracket searched (ADR
-# 0050), and a request every 6 seconds, the ten a minute Archidekt answers before it starts sending 429s
-# (ADR 0048, which says to go back to 6.5 on any 429 in the log).
-MAX_SEARCH_PAGES = 5
-SEARCH_INTERVAL_SECONDS = 6.0
-# After a 429 Archidekt gets this long without a request, or the Retry-After if that is longer; its limit
-# lifts within the minute.
-RATE_LIMIT_PAUSE_SECONDS = 60.0
-# A request that was rate limited is tried again this many times after the pause.
-RATE_LIMIT_RETRIES = 1
-# The top of Archidekt's bracket scale.
-TOP_BRACKET = 5
-# Which decks are read: every one with at least the first view count of VIEW_FLOORS that gives MIN_DECKS
-# decks, else every one with at least the last; at most MAX_DECK_READS of them, most viewed first.
-VIEW_FLOORS = (1000, 750, 500)
-MIN_DECKS = 10
-MAX_DECK_READS = 60
-# A commander the profile names as playing alike is searched smaller than the deck's own: this many pages per
-# bracket, and a quarter of the deck reads (rounded up).
-ALIKE_SEARCH_PAGES_PER_BRACKET = 3
-ALIKE_READ_DIVISOR = 4
 # A deck-tag search spans every commander, so it is smaller still: only the deck's MAX_SEARCH_TAGS most
 # prevalent theme tags, each with this many pages per bracket and at most this many deck reads (and never
 # more than an alike commander's). Fixed on purpose: no setting raises them.
@@ -87,47 +75,6 @@ class _ListingDrifted(Exception):  # noqa: N818 - control flow inside list_comma
     """A paged listing showed one deck on two pages."""
 
 
-class _LimitGuard:
-    """Sends Archidekt reads through a pacer and keeps away after a 429.
-
-    After a 429 nothing goes out for RATE_LIMIT_PAUSE_SECONDS or the Retry-After if longer, which holds the
-    next request of any caller of the pacer; the limited one is tried again after it. A request limited again
-    gives up: every later request of this guard fails at once, so callers fall back to their cache without
-    more waiting.
-    """
-
-    def __init__(self, pacer: Pacer) -> None:
-        self.pacer = pacer
-        self._gave_up: RateLimitedError | None = None
-
-    def send[T](self, send: Callable[[], T], target: str) -> T:
-        """`send` is a fetcher read made with surface_rate_limit=True."""
-        if self._gave_up is not None:
-            raise RateLimitedError(str(self._gave_up), self._gave_up.retry_after)
-        for attempt in range(RATE_LIMIT_RETRIES + 1):
-            self.pacer.wait()
-            started = time.perf_counter()
-            try:
-                return send()
-            except RateLimitedError as error:
-                if attempt == RATE_LIMIT_RETRIES:
-                    log.warning(
-                        "Archidekt answered 429 again for %s; no more requests are sent this run", target
-                    )
-                    self._gave_up = error
-                    raise
-                pause = max(RATE_LIMIT_PAUSE_SECONDS, error.retry_after or 0.0)
-                log.warning(
-                    "Archidekt answered 429 (too many requests) for %s; waiting %.0fs before the next one",
-                    target,
-                    pause,
-                )
-                self.pacer.cool_down(pause)
-            finally:
-                log.debug("Archidekt request %s took %.2fs", target, time.perf_counter() - started)
-        raise AssertionError("unreachable: the last attempt raises")  # pragma: no cover
-
-
 class ArchidektClient:
     """The owner's decks. With an access token the listing and the reads also cover the owner's private and
     unlisted decks (ADR 0040); without one they cover public decks only, as plain requests.
@@ -147,7 +94,7 @@ class ArchidektClient:
         self._fetcher = fetcher
         self._base_url = base_url.rstrip("/")
         self._headers = auth_headers(token)
-        self._guard = _LimitGuard(pacer or Pacer(0.0))
+        self._guard = LimitGuard(pacer or Pacer(0.0))
 
     @property
     def signed_in(self) -> bool:
@@ -224,7 +171,7 @@ class ArchidektClient:
         return False
 
     def _get(self, url: str, params: Mapping[str, str | int] | None) -> object:
-        return self._guard.send(lambda: self._read(url, params), _target(url, params))
+        return self._guard.send(lambda: self._read(url, params), target(url, params))
 
     def _read(self, url: str, params: Mapping[str, str | int] | None) -> object:
         if self._headers is None:
@@ -243,22 +190,6 @@ def _read_deck(raw: object, deck_id: int) -> Deck:
         raise ArchidektError(f"unexpected data for deck {deck_id}: {error}") from error
 
 
-@dataclass(slots=True, frozen=True)
-class PeerDeck:
-    """Another player's deck as the search lists it."""
-
-    id: int
-    name: str
-    owner: str
-    views: int
-    updated_at: datetime
-    bracket: int | None
-
-    @property
-    def url(self) -> str:
-        return ARCHIDEKT_DECK_URL.format(id=self.id)
-
-
 class ArchidektSearch:
     """Other players' public decks.
 
@@ -269,7 +200,7 @@ class ArchidektSearch:
     def __init__(self, fetcher: Fetcher, pacer: Pacer, base_url: str = API_BASE) -> None:
         self._fetcher = fetcher
         self._base_url = base_url.rstrip("/")
-        self._guard = _LimitGuard(pacer)
+        self._guard = LimitGuard(pacer)
 
     def popular_decks(
         self,
@@ -288,116 +219,48 @@ class ArchidektSearch:
         search in the log.
 
         One search per bracket (None searches every bracket), each paging at most `max_pages` pages down its
-        view-ordered listing. The searches go down the view floors together: to the first floor that
-        MIN_DECKS of the decks found reach, and never below the last, so a deck under it is never listed.
-        A bracket stops earlier once `most_viewed(..., limit=limit)` over the `readable` decks cannot change
-        (`_Cursor.settled`), so the decks to read are the same as from the full descent (ADR 0050).
+        view-ordered listing, as `peersearch.descend` reads them.
         """
-        found: dict[int, PeerDeck] = {}
-        cursors = [_Cursor(self._base_url, commander, bracket, tag) for bracket in brackets]
-        pages = 0
-        cut_short = False
-        for floor in VIEW_FLOORS:
-            for cursor in cursors:
-                while (url := cursor.pending(floor)) is not None:
-                    if cursor.pages == max_pages:
-                        cut_short = True
-                        break
-                    cursor.pages += 1
-                    pages += 1
-                    page, cursor.next_url = self._read_search_page(url, cursor.params)
-                    cursor.params = None
-                    cursor.lowest = min((deck.views for deck in page), default=0)
-                    found.update((deck.id, deck) for deck in page if deck.updated_at >= since)
-                    if cursor.settled([d for d in found.values() if readable(d)], floor, limit):
-                        break
-            if reaches_floor(found.values(), floor):
-                break
-        log.info(
-            "Archidekt search for %s by views: %d pages, %d decks in the window", label, pages, len(found)
+        # The first request carries the filters; the "next" links already hold them.
+        cursors = [
+            Cursor(
+                (
+                    f"{self._base_url}/decks/v3/",
+                    {"formats": COMMANDER_FORMAT, "orderBy": "-viewCount"}
+                    | ({"commanderName": commander} if commander is not None else {})
+                    | ({"edhBracket": bracket} if bracket is not None else {})
+                    | ({"deckTagName": tag} if tag is not None else {}),
+                )
+            )
+            for bracket in brackets
+        ]
+        return descend(
+            cursors,
+            self._read_search_page,
+            since=since,
+            site=Site.ARCHIDEKT,
+            label=label,
+            max_pages=max_pages,
+            limit=limit,
+            readable=readable,
         )
-        if cut_short:
-            log.info("Archidekt search for %s by views was cut short at %d pages a bracket", label, max_pages)
-        return list(found.values())
 
-    def _read_search_page(
-        self, url: str, params: Mapping[str, str | int] | None
-    ) -> tuple[list[PeerDeck], str | None]:
-        raw = self._get(url, params)
+    def _read_search_page(self, request: PageRequest) -> tuple[list[PeerDeck], PageRequest | None]:
+        raw = self._get(*request)
         try:
-            return parse_search_page(raw)
+            page, next_url = parse_search_page(raw)
         except (ShapeError, ValueError) as error:
             raise ArchidektError(f"unexpected search answer from Archidekt: {error}") from error
+        return page, None if next_url is None else (next_url, None)
 
     def deck(self, deck_id: int) -> Deck:
         return _read_deck(self._get(f"{self._base_url}/decks/{deck_id}/", None), deck_id)
 
     def _get(self, url: str, params: Mapping[str, str | int] | None) -> object:
-        """One paced request, held by a 429 as `_LimitGuard` says."""
+        """One paced request, held by a 429 as `LimitGuard` says."""
         return self._guard.send(
-            lambda: self._fetcher.get_json(url, params, surface_rate_limit=True), _target(url, params)
+            lambda: self._fetcher.get_json(url, params, surface_rate_limit=True), target(url, params)
         )
-
-
-class _Cursor:
-    """Where one bracket's view-ordered listing has been read to."""
-
-    def __init__(self, base_url: str, commander: str | None, bracket: int | None, tag: str | None) -> None:
-        self.next_url: str | None = f"{base_url}/decks/v3/"
-        # The first request carries the filters; the "next" links already hold them.
-        self.params: Mapping[str, str | int] | None = (
-            {"formats": COMMANDER_FORMAT, "orderBy": "-viewCount"}
-            | ({"commanderName": commander} if commander is not None else {})
-            | ({"edhBracket": bracket} if bracket is not None else {})
-            | ({"deckTagName": tag} if tag is not None else {})
-        )
-        self.pages = 0
-        # The fewest views on the last page read; None before the first.
-        self.lowest: int | None = None
-
-    def pending(self, floor: int) -> str | None:
-        """The page to read next to find every deck with at least `floor` views, if there is one: the listing
-        is most viewed first, so a page ending under the floor has every such deck above it."""
-        if self.next_url is None or (self.lowest is not None and self.lowest < floor):
-            return None
-        return self.next_url
-
-    def settled(self, readable: Sequence[PeerDeck], floor: int, limit: int) -> bool:
-        """Whether no deck further down this listing can change what `most_viewed(readable, limit=limit)`
-        takes: at least max(limit, MIN_DECKS) of the decks reach `floor`, so the bar is `floor`, and the
-        `limit`-th most viewed has more views than the last deck read, so every later deck is below it. The
-        views must be strictly more, because a later deck with as many could win the tie by its id."""
-        if self.lowest is None or limit < 1:
-            return False
-        views = sorted((deck.views for deck in readable if deck.views >= floor), reverse=True)
-        return len(views) >= max(limit, MIN_DECKS) and views[limit - 1] > self.lowest
-
-
-def _target(url: str, params: Mapping[str, str | int] | None) -> str:
-    import httpx  # noqa: PLC0415
-
-    return f"{url}?{httpx.QueryParams(params)}" if params else url
-
-
-def brackets_to_read(bracket: int | None) -> tuple[int | None, ...]:
-    """A deck's own bracket and the one above it, whose decks play what this one could grow into; None (any
-    bracket) stays one search, and the top bracket has none above."""
-    if bracket is None or bracket >= TOP_BRACKET:
-        return (bracket,)
-    return (bracket, bracket + 1)
-
-
-def reaches_floor(decks: Iterable[PeerDeck], floor: int) -> bool:
-    """Whether at least MIN_DECKS of the decks have `floor` views or more."""
-    return sum(deck.views >= floor for deck in decks) >= MIN_DECKS
-
-
-def most_viewed(decks: Sequence[PeerDeck], *, limit: int = MAX_DECK_READS) -> list[PeerDeck]:
-    """The decks worth reading, most viewed first: those with at least 1000 views, or 750, or 500 when fewer
-    than MIN_DECKS reach the bar; when fewer than MIN_DECKS reach even 500, those that do, however few."""
-    ranked = sorted(decks, key=lambda deck: (-deck.views, deck.id))
-    floor = next((bar for bar in VIEW_FLOORS if reaches_floor(ranked, bar)), VIEW_FLOORS[-1])
-    return [deck for deck in ranked if deck.views >= floor][:limit]
 
 
 def parse_search_page(raw: object) -> tuple[list[PeerDeck], str | None]:

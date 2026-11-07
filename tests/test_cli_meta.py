@@ -24,6 +24,9 @@ from conftest import (
     card_entry,
     deck_page,
     load_fixture,
+    moxfield_deck,
+    moxfield_page,
+    moxfield_row,
     topdeck_event,
     topdeck_fixture_events,
 )
@@ -133,7 +136,7 @@ def test_the_report_compares_the_deck_with_performing_lists(home: Path, fake: Fa
         "   40% · 0/1  Jeska's Will",
     ]
     assert section(result.out, "Your own picks") == ["    0% · 1/1  Disruptor Flute"]
-    assert section(result.out, "Most-viewed Archidekt decks") == [
+    assert section(result.out, "Most-viewed Archidekt and Moxfield decks") == [
         "     600 views  2026-10-01  Peer 777  https://archidekt.com/decks/777"
     ]
     assert section(result.out, "Your key cards") == [
@@ -393,7 +396,7 @@ def test_without_a_key_the_report_says_why_the_tournament_lists_are_missing(
         "or with `cmdr topdeck`\n"
     ) in result.err
     # The Archidekt side of the report still comes out, with the credit.
-    assert "Most-viewed Archidekt decks" in result.out
+    assert "Most-viewed Archidekt and Moxfield decks" in result.out
     assert result.out.splitlines()[-1].startswith("Tournament data from TopDeck.gg, https://topdeck.gg")
 
 
@@ -468,6 +471,53 @@ def test_sync_below_bracket_5_learns_from_recent_archidekt_decks_alone(
     card = read_board(home / "decks" / FOLDER).find("Arcane Signet")
     assert card is not None
     assert card.origin is Origin.DECKS
+
+
+def bracket_3_peers(fake: FakeArchidekt) -> None:
+    """Three recent Archidekt decks at bracket 3 that play Arcane Signet, beside a deck at bracket 3."""
+    fake.decks[DECK_ID]["edhBracket"] = 3
+    fake.decks[DECK_ID]["updatedAt"] = "2026-10-14T10:00:00.000000Z"
+    peers = (PEER_ID, PEER_ID + 1, PEER_ID + 2)
+    for peer_id in peers[1:]:
+        fake.put({**fake.decks[PEER_ID], "id": peer_id})
+    for peer_id in peers:
+        fake.decks[peer_id]["cards"].append(card_entry(9_100, "Arcane Signet", ["Ramp"]))
+    fake.peer_page = deck_page([{**peer_row(p, "someone", 600), "edhBracket": 3} for p in peers])
+
+
+def test_sync_counts_a_moxfield_deck_as_one_more_deck_of_the_commander(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    bracket_3_peers(fake)
+    fake.moxfield.cards[MAGDA.casefold()] = "M1"
+    fake.moxfield.pages["M1"] = [moxfield_page([moxfield_row("mox-1", 800, "2026-10-01T00:00:00Z")])]
+    fake.moxfield.decks["mox-1"] = moxfield_deck("mox-1", [MAGDA], {"Arcane Signet": 1, "Mountain": 30})
+    assert sync(home, fake, "--no-ideas").code == 0
+    result = sync(home, fake)
+    assert result.code == 0, result.err
+    assert "Magda ideas: +1 from archidekt decks\n" in result.out, result.err
+    card = read_board(home / "decks" / FOLDER).find("Arcane Signet")
+    assert card is not None
+    assert card.origin is Origin.DECKS
+    assert "in 4 of 4 most-viewed recent Archidekt and Moxfield decks" in card.reason
+
+
+def test_sync_warns_when_moxfield_refuses_and_learns_from_archidekt_alone(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    bracket_3_peers(fake)
+    fake.moxfield.status = 403
+    assert sync(home, fake, "--no-ideas").code == 0
+    result = sync(home, fake)
+    assert result.code == 0, result.err
+    assert (
+        "Magda: no recent Moxfield decks to learn from (Moxfield refused cmdr's requests (HTTP 403))"
+        in result.err
+    )
+    assert "Magda ideas: +1 from archidekt decks\n" in result.out, result.err
+    card = read_board(home / "decks" / FOLDER).find("Arcane Signet")
+    assert card is not None
+    assert "in 3 of 3 most-viewed recent Archidekt decks" in card.reason
 
 
 def test_sync_with_every_source_down_keeps_the_board_and_succeeds(home: Path, fake: FakeArchidekt) -> None:

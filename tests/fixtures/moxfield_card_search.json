@@ -1,0 +1,32 @@
+{
+ "hasMore": false,
+ "totalCards": 1,
+ "exactMatch": {
+  "id": "Er9bV",
+  "uniqueCardId": "LVg63",
+  "scryfall_id": "5dd13a6c-23d3-44ce-a628-cb1c19d777c4",
+  "set": "iko",
+  "name": "Winota, Joiner of Forces",
+  "cn": "216",
+  "type_line": "Legendary Creature — Human Warrior",
+  "color_identity": [
+   "R",
+   "W"
+  ]
+ },
+ "data": [
+  {
+   "id": "Er9bV",
+   "uniqueCardId": "LVg63",
+   "scryfall_id": "5dd13a6c-23d3-44ce-a628-cb1c19d777c4",
+   "set": "iko",
+   "name": "Winota, Joiner of Forces",
+   "cn": "216",
+   "type_line": "Legendary Creature — Human Warrior",
+   "color_identity": [
+    "R",
+    "W"
+   ]
+  }
+ ]
+}

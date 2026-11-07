@@ -9,7 +9,6 @@ from typing import Any
 
 import pytest
 
-from commander.archidekt import PeerDeck
 from commander.carddb import CardDb, ResolvedCard, Role
 from commander.deckcache import Answer, AnswerSource
 from commander.deckprofile import Profile, ThemeSpec
@@ -17,6 +16,7 @@ from commander.leanings import Leaning, find_leanings
 from commander.metadata import MetaData, PeerList, PeerLists
 from commander.models import Deck, DeckCard
 from commander.peercounts import RoleBand
+from commander.peersearch import PeerDeck
 from commander.spellbook import BracketEstimate, BracketTag, Combo, ComboDetail, ComboPiece, TwoCard
 from commander.targets import CutRules, deck_cut_rules, role_targets, with_ideas
 from conftest import ANCIENT_TOMB, build_card_db

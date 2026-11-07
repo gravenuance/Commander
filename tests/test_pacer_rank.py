@@ -96,7 +96,9 @@ def test_a_pacer_refuses_a_recheck_that_never_comes() -> None:
         Pacer(1.0, recheck=0.0)
 
 
-def test_the_meta_sources_hand_their_archidekt_pacer_to_the_rank_watcher(tmp_path: Path) -> None:
+def test_the_meta_sources_hand_their_archidekt_and_moxfield_pacers_to_the_rank_watcher(
+    tmp_path: Path,
+) -> None:
     pacers: list[Pacer] = []
     heard: list[object] = []
 
@@ -114,8 +116,8 @@ def test_the_meta_sources_hand_their_archidekt_pacer_to_the_rank_watcher(tmp_pat
             rank=lambda deck: deck,
             rank_changes=heard.append,
         )
-    assert len(heard) == 1
-    assert heard[0] == pacers[0].rank_changed
+    # Archidekt's pacer is made first, Moxfield's second (ADR 0066).
+    assert heard == [pacers[0].rank_changed, pacers[1].rank_changed]
 
 
 def test_the_meta_sources_tell_on_send_the_step_of_each_request_any_of_their_pacers_grants(
@@ -130,9 +132,9 @@ def test_the_meta_sources_tell_on_send_the_step_of_each_request_any_of_their_pac
 
     with httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(500))) as http:
         meta_sources(http, pacer_factory, "TESTER", MetaSettings(), tmp_path, on_send=heard.append)
-    # TopDeck's, Archidekt's and Spellbook's; the first slot of each is free.
-    assert len(pacers) == 3
+    # TopDeck's, Archidekt's, Moxfield's and Spellbook's; the first slot of each is free.
+    assert len(pacers) == 4
     for number, pacer in enumerate(pacers):
         with requests_for(f"Step {number}"):
             pacer.wait()
-    assert heard == ["Step 0", "Step 1", "Step 2"]
+    assert heard == ["Step 0", "Step 1", "Step 2", "Step 3"]

@@ -132,7 +132,7 @@ def _staple_idea(deck: Deck, row: CardShare, staples: Staples, since: date, tabl
     if staples.lists:
         parts.append(f"in {row.lists} of {staples.lists} {lists} on TopDeck since {since}")
     if staples.peers:
-        parts.append(f"in {row.peer_lists} of {staples.peers} most-viewed recent Archidekt decks")
+        parts.append(f"in {row.peer_lists} of {staples.peers} most-viewed recent {staples.sites} decks")
     reason = "; ".join(parts)
     meta = _source_share(table, row.name, Origin.META, row.share)
     decks = _source_share(table, row.name, Origin.DECKS, row.peer_share)
@@ -336,8 +336,9 @@ class _IdeaJudge:
                 keys = self.tag_keys.get((card.origin_tag or "").casefold())
             case Origin.META if self.data.lists.data is not None and self.table:
                 return self.table.is_idea(card.name)
-            case Origin.DECKS if self.data.peers.data is not None and self.table:
-                return self.table.is_idea(card.name)
+            # A pool missing one site's decks (ADR 0066) judges no deck idea, as a failed alike group does.
+            case Origin.DECKS if self.data.peers.data is not None and not self.data.peers.data.missing:
+                return self.table.is_idea(card.name) if self.table else True
             case None:
                 return self.old_pick_up_stands(card)
             case _:
@@ -383,8 +384,8 @@ def rejudge_ideas(
 
     Meta and Archidekt-deck ideas, and old pick-ups with no origin, are tested with `ShareTable.is_idea`,
     but only against sources read now: none without a list, no meta idea without the TopDeck lists and no
-    deck idea without the Archidekt decks. An alike idea is tested by the half of the pooled decks that
-    plays it, a tagged one by its own tag's pool; `adjacent` is None when a group's decks could not be
+    deck idea unless both sites' decks were read. An alike idea is tested by the half of the pooled decks
+    that plays it, a tagged one by its own tag's pool; `adjacent` is None when a group's decks could not be
     read, and a pool too small to name staples judges nothing. An alike idea whose commander groups the
     profile no longer lists, and a tagged one while the profile's tag search is off, have lost their source:
     they face the commander's own test (`ShareTable.is_idea`) like a meta idea, a failing one is turned

@@ -1,4 +1,4 @@
-"""Other players' Archidekt decks, read once and kept for as long as they are unchanged.
+"""Other players' Archidekt and Moxfield decks, read once and kept for as long as they are unchanged.
 
 A deck is cached under its id and the `updatedAt` the search listed it with, so the next run reads again
 only the decks their owners have edited since. Entries live in the meta cache folder, which is not the repo.
@@ -11,10 +11,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from commander.archidekt import PeerDeck
-from commander.deckcache import DeckCache, request_key
+from commander.deckcache import DeckCache, cache_item, request_key
 from commander.jsonshape import ShapeError, as_list, as_object, req_list, req_str, str_list
 from commander.models import Deck, plan_category
+from commander.peersearch import PeerDeck, Site
 
 log = logging.getLogger(__name__)
 
@@ -66,15 +66,17 @@ class DeckReads:
 
     def load(self, peer: PeerDeck, at: datetime) -> DeckRead | None:
         """The cached read, which counts as used at `at`."""
-        cached = self._cache.load(peer.id, _key(peer))
+        item = _item(peer)
+        cached = self._cache.load(item, _key(peer))
         if cached is None:
             return None
-        self._cache.touch(peer.id, at)
+        self._cache.touch(item, at)
         return cached.data.read
 
     def save(self, peer: PeerDeck, read: DeckRead, at: datetime) -> None:
-        self._cache.save(peer.id, _key(peer), _Stored(read, peer.updated_at), at)
-        self._cache.touch(peer.id, at)
+        item = _item(peer)
+        self._cache.save(item, _key(peer), _Stored(read, peer.updated_at), at)
+        self._cache.touch(item, at)
 
     def prune(self, *, now: datetime, window_start: datetime) -> int:
         """Delete the files unused for UNUSED_DAYS, those of decks last updated before window_start (no search
@@ -126,6 +128,11 @@ def _updated_at(raw: object, path: Path) -> datetime | None:
         log.info("dropping unparseable cached Archidekt deck %s: %s", path, error)
         return None
     return updated_at if updated_at.tzinfo is not None else None
+
+
+def _item(peer: PeerDeck) -> int | str:
+    """An Archidekt deck by its number, as ever; a Moxfield one by a safe name for its mixed-case id."""
+    return peer.id if peer.site is Site.ARCHIDEKT else cache_item(peer.site.value, str(peer.id))
 
 
 def _key(peer: PeerDeck) -> str:

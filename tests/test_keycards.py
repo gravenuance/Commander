@@ -6,12 +6,12 @@ from datetime import UTC, datetime
 
 import pytest
 
-from commander.archidekt import PeerDeck
 from commander.carddb import CardDb
 from commander.deckprofile import Profile
 from commander.keycards import KeyCard, key_cards
 from commander.metadata import PeerList
 from commander.models import Deck, DeckCard, plan_category
+from commander.peersearch import PeerDeck
 from commander.spellbook import ComboDetail, ComboPiece
 from conftest import build_card_db, filler_card
 

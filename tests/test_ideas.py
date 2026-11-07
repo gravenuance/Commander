@@ -36,8 +36,9 @@ from commander.ideas import (
     tagged_ideas,
 )
 from commander.meta import Basis, CardShare, Staples
-from commander.metadata import MetaData, PeerList, TaggedDecks
+from commander.metadata import MetaData, PeerList, PeerLists, TaggedDecks
 from commander.models import Deck
+from commander.peersearch import Site
 from commander.spellbook import BracketTag, ComboMatches, deck_request, parse_matches
 from commander.store import StoredDeck
 from commander.suggest import combos_cache, fresh_saved_combos
@@ -635,6 +636,20 @@ def test_a_compiled_idea_that_fails_the_idea_test_is_turned_down_and_a_passing_o
         "Jeska's Will",
         "no longer makes the cut",
     )
+
+
+def test_a_deck_idea_is_not_judged_while_one_sites_decks_are_missing(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    weak = seed(tmp_path, deck, db, "Jeska's Will", Actor.CMDR, origin=Origin.DECKS)
+    peers = [peer(i, ["Jeska's Will" if i < 1 else "Arcane Signet"]) for i in range(10)]
+    data = meta_data([], peers)
+    assert data.peers.data is not None
+    half = PeerLists(data.peers.data.decks, 0, ((Site.MOXFIELD, "refused"),))
+
+    # The same pool that turns it down in full judges nothing with Moxfield's decks missing (ADR 0066).
+    assert judge(tmp_path, deck, db, replace(data, peers=replace(data.peers, data=half))) == []
+    assert card_state(tmp_path, weak)[0] is Status.OPEN
 
 
 def test_cards_by_you_or_claude_and_cards_in_other_states_are_never_judged(

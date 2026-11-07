@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from commander.archidekt import PeerDeck
 from commander.deckreads import DeckRead, DeckReads
+from commander.peersearch import PeerDeck
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 WINDOW_START = datetime(2026, 8, 16, tzinfo=UTC)
