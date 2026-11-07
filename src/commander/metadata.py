@@ -149,7 +149,7 @@ _ERRORS = (
     SpellbookError,
     NotFetchedError,
 )
-# A Moxfield deck read answered with one of these was deleted or made private; a 403 is a block instead.
+# A Moxfield deck read answered with one of these was deleted or made private (a 403 comes as MoxfieldError).
 _MOXFIELD_GONE_STATUSES = frozenset({404, 410})
 # A card in this share of a commander's lists is part of its core, where its combos are looked for.
 COMBO_CORE_SHARE = 0.2
@@ -189,7 +189,8 @@ class PeerLists:
     decks: tuple[PeerList, ...]
     # Decks the search listed but whose card list could not be read.
     skipped: int
-    # Each site whose decks could not be read at all, with why, when another site's stand in (ADR 0066).
+    # Each site whose decks could not be read at all, with why, when another site's stand in; reported, and
+    # no part of what the ideas are judged by (ADR 0066).
     missing: tuple[tuple[Site, str], ...] = ()
 
 
@@ -724,6 +725,9 @@ class AdjacentDecks:
     tagged: tuple[TaggedDecks, ...] = ()
     # Whether a commander group's decks could not be read, so `decks` pools only part of the groups.
     groups_failed: bool = False
+    # Each site that could not be read for a group whose other site's decks stood in, with why: reported,
+    # never a reason to judge less (ADR 0066).
+    unread: tuple[tuple[Site, str], ...] = ()
 
 
 def gather_adjacent(
@@ -742,12 +746,15 @@ def gather_adjacent(
 ) -> AdjacentDecks:
     """Each group's recent Archidekt and Moxfield decks at the deck's bracket, cached as a deck's own peers
     are; and for each deck tag, the Archidekt ones of any other commander than the deck's own (Moxfield has
-    no tag search, ADR 0066). A group with one site unread names it in `errors` and counts as failed."""
+    no tag search, ADR 0066). The pool is whatever was gathered: a site unread for a group, while the other
+    stood in, is named in `unread` and changes nothing else; a group neither site could read names itself
+    in `errors` and counts as failed."""
     since = window_start(now(), sources.settings)
     folder = cache_root / CACHE_FOLDER
     steps = _Steps(on_progress, on_done)
     decks: dict[tuple[Site, int | str], PeerList] = {}
     errors: list[tuple[str, str]] = []
+    unread: list[tuple[Site, str]] = []
     groups_failed = False
     for group in groups:
         name = commander_name(group)
@@ -767,9 +774,7 @@ def gather_adjacent(
             errors.append((name, answer.error or "unavailable"))
             groups_failed = True
             continue
-        for site, why in answer.data.missing:
-            errors.append((f"{site.value} {name}", why))
-            groups_failed = True
+        unread.extend(item for item in answer.data.missing if item not in unread)
         for peer in answer.data.decks:
             decks.setdefault((peer.deck.site, peer.deck.id), peer)
     own = {name.casefold() for name in deck.commanders}
@@ -786,7 +791,7 @@ def gather_adjacent(
         tagged.append(TaggedDecks(tag, others))
     if prune:
         _prune_reads(folder, since, now=now, offline=offline)
-    return AdjacentDecks(tuple(decks.values()), tuple(errors), tuple(tagged), groups_failed)
+    return AdjacentDecks(tuple(decks.values()), tuple(errors), tuple(tagged), groups_failed, tuple(unread))
 
 
 def prune_deck_reads(cache_root: Path, settings: MetaSettings, *, now: Clock) -> None:
@@ -878,14 +883,18 @@ def _peers_on_both_sites(
 def joined_peers(archidekt: Answer[PeerLists], moxfield: Answer[PeerLists] | None) -> Answer[PeerLists]:
     """One answer for both sites' decks, Archidekt's first: a Moxfield deck with the same commanders and
     main cards as an Archidekt one is the same list cross-posted and counts once. A site that could not be
-    read is named in `PeerLists.missing` while the other stands in; the answer is stale when either is, as
-    old as the older, and unavailable when no site could be read, or one could not and the other found no
-    decks. A cache-only read that finds no Moxfield answer stored leaves Archidekt's as it is."""
-    if moxfield is None or (moxfield.data is None and moxfield.error == NOT_FETCHED):
+    read is named in `PeerLists.missing` and in the answer's error while the other stands in, and the
+    decks are as fresh as the site that was read: stale when either read one is, as old as the older. The
+    answer is unavailable when no site could be read, or one could not and the other found no decks. A
+    cache-only read treats a site with nothing stored (`NOT_FETCHED`) as no site at all: no error, not
+    missing."""
+    if moxfield is None or _not_fetched(moxfield):
         return archidekt
+    if _not_fetched(archidekt):
+        return moxfield
     sites = ((Site.ARCHIDEKT, archidekt), (Site.MOXFIELD, moxfield))
     error = "; ".join(f"{site.value}: {a.error}" for site, a in sites if a.error) or None
-    read = [(site, a.data) for site, a in sites if a.data is not None]
+    read = [(a, a.data) for _, a in sites if a.data is not None]
     missing = tuple((site, a.error or "unavailable") for site, a in sites if a.data is None)
     if not read or (missing and not any(lists.decks for _, lists in read)):
         return Answer(None, AnswerSource.UNAVAILABLE, None, error, archidekt.key_problem)
@@ -896,15 +905,20 @@ def joined_peers(archidekt: Answer[PeerLists], moxfield: Answer[PeerLists] | Non
     if len(kept) < len(later):
         log.info("counted %d Moxfield decks once: Archidekt holds the same lists", len(later) - len(kept))
     data = PeerLists((*first, *kept), sum(lists.skipped for _, lists in read), missing)
-    times = [a.fetched_at for _, a in sites if a.fetched_at is not None]
-    states = {a.source for _, a in sites}
-    if states & {AnswerSource.STALE, AnswerSource.UNAVAILABLE}:
+    times = [a.fetched_at for a, _ in read if a.fetched_at is not None]
+    states = {a.source for a, _ in read}
+    if AnswerSource.STALE in states:
         source = AnswerSource.STALE
     elif states == {AnswerSource.CACHED}:
         source = AnswerSource.CACHED
     else:
         source = AnswerSource.FETCHED
     return Answer(data, source, min(times) if times else None, error)
+
+
+def _not_fetched(answer: Answer[PeerLists]) -> bool:
+    """Whether a cache-only read found nothing stored for the answer."""
+    return answer.data is None and answer.error == NOT_FETCHED
 
 
 _ListKey = tuple[frozenset[str], tuple[str, ...], tuple[tuple[str, int], ...] | None]

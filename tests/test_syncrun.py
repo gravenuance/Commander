@@ -44,6 +44,7 @@ from commander.metadata import (
 )
 from commander.models import Deck
 from commander.net import Fetcher, NetworkError, Pacer
+from commander.peersearch import Site
 from commander.previews import PreviewProbe, ProbeState
 from commander.scryfall import CardRefresh, RefreshStatus
 from commander.store import LABELS_FILE, StoredDeck, Workspace
@@ -666,6 +667,78 @@ def test_decks_whose_tournament_lists_hit_a_key_problem_are_incomplete_and_the_s
         "add one in the app's TopDeck panel or with `cmdr topdeck`"
     )
     assert [w for w in outcome.warnings if "TopDeck key" in w] == [warning]
+
+
+def sync_with_unread_sites(
+    tmp_path: Path,
+    fake: FakeArchidekt,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    own: tuple[tuple[Site, str], ...] = (),
+    alike: tuple[tuple[Site, str], ...] = (),
+) -> tuple[dict[int, str], SyncOutcome, list[object]]:
+    """A sync of the three decks whose peer pools lack the sites named; their states, outcome and what each
+    deck's re-judge was given as the alike pool."""
+    stub_meta(monkeypatch)
+
+    def gather(*_: object, **__: object) -> object:
+        return SimpleNamespace(
+            lists=SimpleNamespace(data=1, error=None, key_problem=False),
+            peers=SimpleNamespace(data=PeerLists((), 0, own)),
+        )
+
+    stub_gather(monkeypatch, gather)
+    pools: list[object] = []
+
+    def rejudge(*_: object, adjacent: object, **__: object) -> list[BoardCard]:
+        pools.append(adjacent)
+        return []
+
+    def read_pools(*_: object, **__: object) -> AdjacentDecks:
+        return AdjacentDecks((), (), unread=alike)
+
+    monkeypatch.setattr(syncrun, "rejudge_ideas", rejudge)
+    monkeypatch.setattr(syncrun, "gather_idea_pools", read_pools)
+    states: dict[int, str] = {}
+    outcome = run_sync(
+        services(tmp_path, fake),
+        Workspace(tmp_path / "decks"),
+        "TESTER",
+        MetaSettings(),
+        SyncOptions(cards=False),
+        on_deck=lambda deck_id, state: states.__setitem__(deck_id, state.value),
+        on_progress=lambda _: None,
+    )
+    return states, outcome, pools
+
+
+def test_a_site_unread_for_every_deck_is_warned_of_once_and_leaves_no_deck_incomplete(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = three_decks(tmp_path, raw_deck, card_db_file)
+    unread = ((Site.MOXFIELD, "Moxfield refused cmdr's requests (HTTP 403)"),)
+    states, outcome, pools = sync_with_unread_sites(tmp_path, fake, monkeypatch, own=unread)
+    assert states == {101: "done", 102: "done", 103: "done"}
+    warning = (
+        "Moxfield decks could not be read (Moxfield refused cmdr's requests (HTTP 403)); "
+        "ideas are judged by the decks that were read"
+    )
+    assert [w for w in outcome.warnings if "Moxfield" in w] == [warning]
+    # Every deck's alike pool was judged, as the whole pool.
+    assert pools == [()] * 3
+
+
+def test_a_site_unread_for_own_and_alike_decks_is_one_warning_a_site(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = three_decks(tmp_path, raw_deck, card_db_file)
+    own = ((Site.MOXFIELD, "refused"),)
+    alike = ((Site.MOXFIELD, "refused"), (Site.ARCHIDEKT, "429"))
+    states, outcome, pools = sync_with_unread_sites(tmp_path, fake, monkeypatch, own=own, alike=alike)
+    assert states == {101: "done", 102: "done", 103: "done"}
+    assert len([w for w in outcome.warnings if w.startswith("Moxfield decks could not be read")]) == 1
+    assert len([w for w in outcome.warnings if w.startswith("Archidekt decks could not be read")]) == 1
+    assert pools == [()] * 3
 
 
 def test_a_deck_below_bracket_4_merges_without_waiting_for_topdeck_and_one_at_bracket_4_does_wait(

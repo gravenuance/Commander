@@ -67,12 +67,21 @@ What the API offers, from a dozen honest, paced requests on 2026-11-07 (User-Age
   commander's decks of both sites are one pool, "archidekt decks" (`Origin.DECKS`), and alike commanders' one
   pool, "adjacent decks". No board file or app grouping changes. The reason names the sites read ("in 7 of 9
   most-viewed recent Archidekt and Moxfield decks").
-- **Failing soft.** A 429 is handled as on Archidekt. A 403, which is how a block or a bot challenge answers,
-  ends Moxfield for the run: nothing more is sent, the reads carry on with Archidekt alone, and `sync` warns
-  per deck ("no recent Moxfield decks to learn from (Moxfield refused cmdr's requests (HTTP 403))"), as it
-  does for an alike commander it cannot read. While one site's decks are missing, the deck's Archidekt-deck
-  ideas are not re-judged, as alike ideas are not while a group's decks are missing. One site unreadable and
-  the other with no decks is no answer, as before.
+- **Getting the data is not analysing it.** The fetch step gathers peer decks from each site; the analysis
+  (`compile_ideas`, `rejudge_ideas`) sees one pool of them and never asks which site a deck came from or
+  which site is missing. When one site cannot be read, the ideas are compiled and re-judged against the
+  decks that were gathered, exactly as if they were the whole pool, so the board re-evaluates and never
+  just grows or freezes. Only when no peer decks at all could be gathered (neither site read, or one
+  unreadable and the other without decks) is there no answer: nothing is re-judged, as before Moxfield.
+  A deck is not marked incomplete for a site that was not read.
+- **Failing soft.** A 429 is handled as on Archidekt: one retry after the pause, then Moxfield is given up
+  for the run. A 403, or a 200 that is not JSON (a bot challenge page), on the card lookup or a search ends
+  Moxfield for the run: nothing more is sent. A 403 or a challenge page on a single deck read (a private
+  deck answers 403) skips that deck only. The failure is reported, not analysed: `sync` warns once per run
+  per site ("Moxfield decks could not be read (Moxfield refused cmdr's requests (HTTP 403)); ideas are
+  judged by the decks that were read"), not once per deck or alike commander, and `cmdr meta` notes that the
+  decks shown are partly read. A cache-only read (the app's panels) treats a site with nothing stored as
+  no site: no error, nothing missing.
 
 **Removal condition.** If Moxfield blocks honest requests (a Cloudflare challenge or 403 that persists across
 syncs) or asks us to stop, Moxfield is removed as a source: no workaround is tried.
@@ -84,7 +93,8 @@ syncs) or asks us to stop, Moxfield is removed as a source: no workaround is tri
   answer is about 600 KB, so a commander's first read is tens of megabytes; later syncs read only edited
   decks).
 - The tool depends on a second undocumented API that its owner's `robots.txt` disallows. Every answer is
-  shape-checked, and a change or block costs the Moxfield half of the ideas, never the sync.
+  shape-checked, and a change or block costs the Moxfield half of the decks, never the sync or the
+  re-judging of the ideas.
 - `cmdr meta` lists the peer decks of both sites, each with its link, and its source line reads "Archidekt
   and Moxfield decks".
 - The app's origin labels still say "Archidekt" for these pools; whether to rename them is open.

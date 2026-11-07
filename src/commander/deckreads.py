@@ -60,23 +60,27 @@ class DeckReads:
 
     def __init__(self, folder: Path) -> None:
         self._folder = folder
-        self._cache = DeckCache(
-            folder, version=CACHE_VERSION, what="Archidekt deck", encode=_encode, decode=_decode
-        )
+        # One cache object a site over the same folder, so each log line names the deck's site.
+        self._caches = {
+            site: DeckCache(
+                folder, version=CACHE_VERSION, what=f"{site.value} deck", encode=_encode, decode=_decode
+            )
+            for site in Site
+        }
 
     def load(self, peer: PeerDeck, at: datetime) -> DeckRead | None:
         """The cached read, which counts as used at `at`."""
-        item = _item(peer)
-        cached = self._cache.load(item, _key(peer))
+        item, cache = _item(peer), self._caches[peer.site]
+        cached = cache.load(item, _key(peer))
         if cached is None:
             return None
-        self._cache.touch(item, at)
+        cache.touch(item, at)
         return cached.data.read
 
     def save(self, peer: PeerDeck, read: DeckRead, at: datetime) -> None:
-        item = _item(peer)
-        self._cache.save(item, _key(peer), _Stored(read, peer.updated_at), at)
-        self._cache.touch(item, at)
+        item, cache = _item(peer), self._caches[peer.site]
+        cache.save(item, _key(peer), _Stored(read, peer.updated_at), at)
+        cache.touch(item, at)
 
     def prune(self, *, now: datetime, window_start: datetime) -> int:
         """Delete the files unused for UNUSED_DAYS, those of decks last updated before window_start (no search
@@ -91,7 +95,7 @@ class DeckReads:
             except FileNotFoundError:
                 continue
             except OSError as error:
-                log.warning("could not remove the cached Archidekt deck %s: %s", path, error)
+                log.warning("could not remove the cached %s %s: %s", _what(path), path, error)
                 continue
             removed += 1
         return removed
@@ -106,10 +110,10 @@ def _prunable(path: Path, unused_before: float, window_start: datetime) -> bool:
         return False
     except OSError as error:
         # Locked or unreadable for now: not proof that it is useless.
-        log.warning("could not read the cached Archidekt deck %s: %s", path, error)
+        log.warning("could not read the cached %s %s: %s", _what(path), path, error)
         return False
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        log.info("dropping unparseable cached Archidekt deck %s: %s", path, error)
+        log.info("dropping unparseable cached %s %s: %s", _what(path), path, error)
         return True
     updated_at = _updated_at(raw, path)
     return updated_at is None or updated_at < window_start
@@ -125,9 +129,15 @@ def _updated_at(raw: object, path: Path) -> datetime | None:
             req_str(as_object(obj.get("answer"), "answer"), "updatedAt", "answer")
         )
     except (ShapeError, ValueError) as error:
-        log.info("dropping unparseable cached Archidekt deck %s: %s", path, error)
+        log.info("dropping unparseable cached %s %s: %s", _what(path), path, error)
         return None
     return updated_at if updated_at.tzinfo is not None else None
+
+
+def _what(path: Path) -> str:
+    """What a cache file holds, for the log: `_item` keeps a Moxfield deck's file under its site's name."""
+    moxfield = path.name.startswith(f"{Site.MOXFIELD.value.casefold()}-")
+    return f"{(Site.MOXFIELD if moxfield else Site.ARCHIDEKT).value} deck"
 
 
 def _item(peer: PeerDeck) -> int | str:

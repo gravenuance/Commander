@@ -69,6 +69,10 @@ class ResponseTooLargeError(NetworkError):
     """The answer ran past the size cap; asking again would get the same answer, so it is not retried."""
 
 
+class NotJsonError(NetworkError):
+    """A 200 answer that is not JSON, like the HTML error or bot-challenge page some services serve."""
+
+
 class HttpStatusError(NetworkError):
     """The server answered with a status outside 2xx that retrying would not change; callers map some
     statuses to advice (a refused login, a rejected write).
@@ -665,4 +669,4 @@ def _decode_json(url: str, body: bytes) -> object:
         return json.loads(body)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         # Services sometimes answer 200 with an HTML error page.
-        raise NetworkError(f"{url} did not return JSON ({error.__class__.__name__})") from error
+        raise NotJsonError(f"{url} did not return JSON ({error.__class__.__name__})") from error

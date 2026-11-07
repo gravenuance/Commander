@@ -47,6 +47,7 @@ from commander.metadata import (
     start_tournament_refresh,
 )
 from commander.net import Fetcher, NetworkError, Pacer
+from commander.peersearch import Site
 from commander.phases import ActivePhases
 from commander.previews import PROBE_INTERVAL_SECONDS, PreviewProbe, ProbeState, probe_previews
 from commander.profileedit import ensure_grace_table
@@ -831,8 +832,9 @@ def _merge_deck(
     if data.lists.data is None and data.peers.data is None:
         why = data.peers.error or data.lists.error
         read.warnings.append(f"{deck.short_name}: no meta or Archidekt decks to learn from ({why})")
-    for site, why in data.peers.data.missing if data.peers.data else ():
-        read.warnings.append(f"{deck.short_name}: no recent {site.value} decks to learn from ({why})")
+    own_unread = data.peers.data.missing if data.peers.data else ()
+    for site, why in (*own_unread, *pools.unread):
+        _note_unread_site(site, why, warnings)
     warnings.extend(read.warnings)
     key_problem = _note_key_problem(data.lists.key_problem, warnings)
     incomplete = bool(read.warnings) or data.peers.data is None or key_problem
@@ -847,6 +849,14 @@ def _not_compiled(read: _ReadingDeck, why: str, warnings: list[str], on_deck: De
 
 _GONE = "the deck left its folder or changed its commander while its ideas were fetched"
 _KEY_WARNING = f"tournament lists skipped: missing or refused TopDeck key; {KEY_REMEDY}"
+
+
+def _note_unread_site(site: Site, why: str, warnings: list[str]) -> None:
+    """Warn once per sync that a peer-deck site could not be read; the ideas were judged by the decks that
+    were (ADR 0066), so no deck is incomplete for it."""
+    start = f"{site.value} decks could not be read"
+    if not any(warning.startswith(start) for warning in warnings):
+        warnings.append(f"{start} ({why}); ideas are judged by the decks that were read")
 
 
 def _note_key_problem(key_problem: bool, warnings: list[str]) -> bool:  # noqa: FBT001 — an answer's flag

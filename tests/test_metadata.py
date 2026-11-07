@@ -1,6 +1,8 @@
 import json
 import os
 import shutil
+import threading
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -10,7 +12,7 @@ import pytest
 
 from commander.archidekt import ArchidektSearch
 from commander.config import MetaSettings
-from commander.deckcache import AnswerSource, cache_item, request_key
+from commander.deckcache import NOT_FETCHED, AnswerSource, cache_item, request_key
 from commander.deckreads import FOLDER as DECK_READS_FOLDER
 from commander.deckreads import DeckRead, DeckReads
 from commander.metadata import (
@@ -136,6 +138,8 @@ class Rig:
         self.cache = tmp_path / "cache"
         # The pauses Archidekt's pacer would have slept.
         self.sleeps: list[float] = []
+        # The same for Moxfield's.
+        self.moxfield_sleeps: list[float] = []
         self.now = NOW
         self.keys = MemoryKeyStore()
         self.settings = SETTINGS
@@ -158,7 +162,9 @@ class Rig:
             Pacer(0),
             "tester",
             self.settings,
-            moxfield=None if self.moxfield is None else MoxfieldSearch(self.moxfield_fetcher(), Pacer(0)),
+            moxfield=None
+            if self.moxfield is None
+            else MoxfieldSearch(self.moxfield_fetcher(), Pacer(0, sleep=self.moxfield_sleeps.append)),
         )
 
     def moxfield_fetcher(self) -> Fetcher:
@@ -1455,9 +1461,59 @@ def test_moxfield_refusing_leaves_the_archidekt_decks_and_says_moxfield_was_not_
     assert peers.data is not None
     assert [p.deck.site for p in peers.data.decks] == [Site.ARCHIDEKT] * 3
     assert peers.data.missing == ((Site.MOXFIELD, "Moxfield refused cmdr's requests (HTTP 403)"),)
-    assert peers.source is AnswerSource.STALE
+    # Archidekt's decks are fresh, so they are not the copy of an earlier day; the note names the site.
+    assert peers.source is AnswerSource.FETCHED
+    assert peers.error == "Moxfield: Moxfield refused cmdr's requests (HTTP 403)"
     # The card lookup was refused, and nothing more was asked.
     assert len(fake.requests) == 1
+
+
+def test_a_cache_only_read_of_a_commander_never_fetched_names_no_site_as_unread(rig: Rig) -> None:
+    moxfield_rig(rig)
+    cached = gather(
+        ellivere_deck(), rig.sources(), rig.cache, now=lambda: rig.now, refresh=False, offline=True
+    ).peers
+    assert cached.data is None
+    assert cached.error == NOT_FETCHED
+
+
+def test_a_cache_only_read_with_only_moxfields_decks_stored_shows_them_without_an_error(rig: Rig) -> None:
+    moxfield_rig(rig)
+    rig.gather()
+    for stored in (rig.cache / CACHE_FOLDER).glob("archidekt-*.json"):
+        stored.unlink()
+    cached = gather(
+        ellivere_deck(), rig.sources(), rig.cache, now=lambda: rig.now, refresh=False, offline=True
+    ).peers
+    assert cached.data is not None
+    assert [p.deck.id for p in cached.data.decks] == ["mox-a", "mox-b"]
+    assert cached.data.missing == ()
+    assert cached.error is None
+
+
+def test_a_403_on_one_moxfield_deck_skips_that_deck_and_the_rest_are_still_read(rig: Rig) -> None:
+    fake = moxfield_rig(rig)
+    # Moxfield refuses deck reads alone: the card lookup and the search were answered.
+    fake.deck_status = 403
+    peers = rig.gather().peers
+    assert peers.data is not None
+    assert peers.data.missing == ()
+    assert peers.source is AnswerSource.FETCHED
+    assert [p.deck.site for p in peers.data.decks] == [Site.ARCHIDEKT] * 3
+    # Both decks over the floor were asked for: the first refusal blocked nothing.
+    assert deck_reads(fake) == ["/v3/decks/all/mox-a", "/v3/decks/all/mox-b"]
+    assert peers.data.skipped == 2
+
+
+def test_moxfield_giving_up_after_a_second_429_leaves_the_archidekt_decks(rig: Rig) -> None:
+    fake = moxfield_rig(rig)
+    fake.status = 429
+    peers = rig.gather().peers
+    assert peers.data is not None
+    assert [m[0] for m in peers.data.missing] == [Site.MOXFIELD]
+    assert peers.source is AnswerSource.FETCHED
+    # The card lookup, then once more after the pause, and no more.
+    assert len(fake.requests) == 2
 
 
 def test_a_commander_moxfield_does_not_know_has_no_moxfield_decks_and_no_error(rig: Rig) -> None:
@@ -1485,7 +1541,7 @@ def test_an_alike_commanders_moxfield_decks_join_its_pool_cut_to_the_alike_reads
     assert search["commanderCardId"] == "C1"
 
 
-def test_an_alike_commander_moxfield_refuses_is_named_and_the_group_counts_as_failed(rig: Rig) -> None:
+def test_an_alike_commander_moxfield_refuses_pools_archidekts_decks_as_the_whole_pool(rig: Rig) -> None:
     fake = moxfield_rig(rig, commander=MAGDA)
     rig.archidekt.commander = MAGDA
     fake.status = 403
@@ -1493,8 +1549,89 @@ def test_an_alike_commander_moxfield_refuses_is_named_and_the_group_counts_as_fa
         ellivere_deck(), [(MAGDA,)], rig.sources(), rig.cache, now=lambda: rig.now, refresh=False
     )
     assert [p.deck.site for p in found.decks] == [Site.ARCHIDEKT]
-    assert found.errors == ((f"Moxfield {MAGDA}", "Moxfield refused cmdr's requests (HTTP 403)"),)
+    # The pool is whatever was gathered: the group is not failed, and no error is filed against it.
+    assert found.errors == ()
+    assert not found.groups_failed
+    # What could not be read is reported for the sync to warn of once.
+    assert found.unread == ((Site.MOXFIELD, "Moxfield refused cmdr's requests (HTTP 403)"),)
+
+
+def test_an_alike_commander_neither_site_can_read_is_a_failed_group(rig: Rig) -> None:
+    fake = moxfield_rig(rig, commander=MAGDA)
+    fake.status = 403
+    rig.archidekt.status = 500
+    found = gather_adjacent(
+        ellivere_deck(), [(MAGDA,)], rig.sources(), rig.cache, now=lambda: rig.now, refresh=False
+    )
+    assert found.decks == ()
+    [(name, why)] = found.errors
+    assert name == MAGDA
+    assert "Moxfield" in why
     assert found.groups_failed
+
+
+@pytest.mark.parametrize("partner", [KODAMA, "Raised by Giants"])
+def test_a_partner_pair_on_moxfield_is_searched_by_the_first_commander_and_keeps_decks_led_by_both(
+    rig: Rig, partner: str
+) -> None:
+    fake = moxfield_rig(rig, commander=MAGDA)
+    rows = {"solo": [MAGDA], "pair": [MAGDA, partner], "trio": [MAGDA, partner, "Tymna the Weaver"]}
+    rows["other"] = [MAGDA, "Tymna the Weaver"]
+    fake.pages["C1"] = [
+        moxfield_page([moxfield_row(name, 5000 - n, IN_WINDOW) for n, name in enumerate(rows)])
+    ]
+    fake.decks = {name: moxfield_deck(name, led_by, {"Mana Vault": 1}) for name, led_by in rows.items()}
+    rig.settings = replace(SETTINGS, peer_decks=20)
+    found = adjacent(rig, (MAGDA, partner))
+    assert [(p.deck.site, p.deck.id) for p in found.decks if p.deck.site is Site.MOXFIELD] == [
+        (Site.MOXFIELD, "pair")
+    ]
+    # The first commander names the card searched; the whole pair filters the decks read.
+    lookup = next(url.params["q"] for url in fake.requests if url.path == "/v2/cards/search")
+    assert lookup == f'!"{MAGDA}"'
+    assert fake.requests[1].params["commanderCardId"] == "C1"
+
+
+def test_a_lone_alike_commander_keeps_moxfield_decks_that_pair_it_with_a_partner(rig: Rig) -> None:
+    fake = moxfield_rig(rig, commander=MAGDA)
+    rows = {"solo": [MAGDA], "pair": [MAGDA, KODAMA], "led-by-another": [KODAMA]}
+    fake.pages["C1"] = [
+        moxfield_page([moxfield_row(name, 5000 - n, IN_WINDOW) for n, name in enumerate(rows)])
+    ]
+    fake.decks = {name: moxfield_deck(name, led_by, {"Mana Vault": 1}) for name, led_by in rows.items()}
+    rig.settings = replace(SETTINGS, peer_decks=20)
+    found = adjacent(rig, (MAGDA,))
+    assert [p.deck.id for p in found.decks if p.deck.site is Site.MOXFIELD] == ["solo", "pair"]
+
+
+Handler = Callable[[httpx.Request], httpx.Response]
+
+
+def test_the_archidekt_and_moxfield_searches_overlap_instead_of_running_one_after_the_other(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = moxfield_rig(rig)
+    began = {Site.ARCHIDEKT: threading.Event(), Site.MOXFIELD: threading.Event()}
+    met: dict[Site, bool] = {}
+
+    def meeting(site: Site, other: Site, answer: Handler) -> Handler:
+        def handler(request: httpx.Request) -> httpx.Response:
+            # The first request of each site waits for the other site's first, which only comes if the two
+            # searches run at the same time.
+            if not began[site].is_set():
+                began[site].set()
+                met[site] = began[other].wait(timeout=5)
+            return answer(request)
+
+        return handler
+
+    archidekt_answers, moxfield_answers = rig.archidekt.handler, fake.handler
+    monkeypatch.setattr(rig.archidekt, "handler", meeting(Site.ARCHIDEKT, Site.MOXFIELD, archidekt_answers))
+    monkeypatch.setattr(fake, "handler", meeting(Site.MOXFIELD, Site.ARCHIDEKT, moxfield_answers))
+    peers = rig.gather().peers
+    assert met == {Site.ARCHIDEKT: True, Site.MOXFIELD: True}
+    assert peers.data is not None
+    assert {p.deck.site for p in peers.data.decks} == {Site.ARCHIDEKT, Site.MOXFIELD}
 
 
 def test_a_tag_search_reads_archidekt_alone(rig: Rig) -> None:

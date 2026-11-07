@@ -510,14 +510,77 @@ def test_sync_warns_when_moxfield_refuses_and_learns_from_archidekt_alone(
     assert sync(home, fake, "--no-ideas").code == 0
     result = sync(home, fake)
     assert result.code == 0, result.err
-    assert (
-        "Magda: no recent Moxfield decks to learn from (Moxfield refused cmdr's requests (HTTP 403))"
-        in result.err
-    )
+    assert "Moxfield decks could not be read (Moxfield refused cmdr's requests (HTTP 403))" in result.err
+    assert result.err.count("Moxfield decks could not be read") == 1
     assert "Magda ideas: +1 from archidekt decks\n" in result.out, result.err
     card = read_board(home / "decks" / FOLDER).find("Arcane Signet")
     assert card is not None
     assert "in 3 of 3 most-viewed recent Archidekt decks" in card.reason
+
+
+def play_no_arcane_signet(fake: FakeArchidekt) -> None:
+    """The three peers of `bracket_3_peers` edited since, and no longer playing Arcane Signet."""
+    peers = (PEER_ID, PEER_ID + 1, PEER_ID + 2)
+    for peer_id in peers:
+        cards = fake.decks[peer_id]["cards"]
+        fake.decks[peer_id]["cards"] = [
+            c for c in cards if c["card"]["oracleCard"]["name"] != "Arcane Signet"
+        ]
+    edited = "2026-10-02T10:00:00.000000Z"
+    fake.peer_page = deck_page(
+        [{**peer_row(p, "someone", 600), "edhBracket": 3, "updatedAt": edited} for p in peers]
+    )
+
+
+def file_the_arcane_signet_idea(home: Path, fake: FakeArchidekt) -> None:
+    bracket_3_peers(fake)
+    assert sync(home, fake, "--no-ideas").code == 0
+    assert sync(home, fake).code == 0
+    card = read_board(home / "decks" / FOLDER).find("Arcane Signet")
+    assert card is not None
+    assert (card.origin, card.status) == (Origin.DECKS, Status.OPEN)
+    # The next sync reads the decks again, as it does when the stored answers have grown old.
+    shutil.rmtree(home / "cache" / "meta")
+
+
+def test_sync_turns_down_a_deck_idea_the_archidekt_decks_no_longer_support_while_moxfield_is_blocked(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    file_the_arcane_signet_idea(home, fake)
+    play_no_arcane_signet(fake)
+    fake.moxfield.status = 403
+    result = sync(home, fake)
+    assert result.code == 0, result.err
+    card = read_board(home / "decks" / FOLDER).find("Arcane Signet")
+    assert card is not None
+    assert (card.status, card.note) == (Status.REJECTED, "no longer makes the cut")
+    assert "Moxfield decks could not be read" in result.err
+
+
+def test_sync_judges_no_deck_idea_when_neither_sites_decks_could_be_read(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    file_the_arcane_signet_idea(home, fake)
+    play_no_arcane_signet(fake)
+    fake.moxfield.status = 403
+    fake.peer_page = {"unexpected": True}
+    result = sync(home, fake)
+    assert result.code == 0, result.err
+    card = read_board(home / "decks" / FOLDER).find("Arcane Signet")
+    assert card is not None
+    assert card.status is Status.OPEN
+    assert "cmdr: Magda: no meta or Archidekt decks to learn from (" in result.err
+
+
+def test_meta_says_a_site_was_not_read_without_calling_the_decks_an_old_copy(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    fake.moxfield.status = 403
+    result = meta(home, fake, "magda")
+    assert result.code == 0, result.err
+    assert "showing the copy from" not in result.err
+    assert "Archidekt and Moxfield decks" in result.err
+    assert "Moxfield: Moxfield refused cmdr's requests (HTTP 403)" in result.err
 
 
 def test_sync_with_every_source_down_keeps_the_board_and_succeeds(home: Path, fake: FakeArchidekt) -> None:

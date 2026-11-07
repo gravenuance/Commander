@@ -336,8 +336,7 @@ class _IdeaJudge:
                 keys = self.tag_keys.get((card.origin_tag or "").casefold())
             case Origin.META if self.data.lists.data is not None and self.table:
                 return self.table.is_idea(card.name)
-            # A pool missing one site's decks (ADR 0066) judges no deck idea, as a failed alike group does.
-            case Origin.DECKS if self.data.peers.data is not None and not self.data.peers.data.missing:
+            case Origin.DECKS if self.data.peers.data is not None:
                 return self.table.is_idea(card.name) if self.table else True
             case None:
                 return self.old_pick_up_stands(card)
@@ -384,18 +383,18 @@ def rejudge_ideas(
 
     Meta and Archidekt-deck ideas, and old pick-ups with no origin, are tested with `ShareTable.is_idea`,
     but only against sources read now: none without a list, no meta idea without the TopDeck lists and no
-    deck idea unless both sites' decks were read. An alike idea is tested by the half of the pooled decks
-    that plays it, a tagged one by its own tag's pool; `adjacent` is None when a group's decks could not be
-    read, and a pool too small to name staples judges nothing. An alike idea whose commander groups the
-    profile no longer lists, and a tagged one while the profile's tag search is off, have lost their source:
-    they face the commander's own test (`ShareTable.is_idea`) like a meta idea, a failing one is turned
-    down and a passing one relabelled to the source that plays it more (`relabel_pooled_open`), nothing
-    without a list read. An old `suggest --to-board` idea (by cmdr, no origin) is turned down once what it
-    was filed for no longer holds: the deck holds its short role's target, it matches none of the deck's
-    themes as `suggest` reads them now, or it completes no near-miss combo of the saved combo list. That
-    list is `saved_combos`, which gives the deck's fresh one or None (`suggest.fresh_saved_combos`); with
-    none, and with no themes, those two reasons are left untested. Cards by you or Claude, and queued,
-    applied or turned-down ones, are never touched
+    deck idea without any peer decks (whichever site gave them, ADR 0066). An alike idea is tested by the
+    half of the pooled decks that plays it, a tagged one by its own tag's pool; `adjacent` is None when a
+    group's decks could not be read, and a pool too small to name staples judges nothing. An alike idea
+    whose commander groups the profile no longer lists, and a tagged one while the profile's tag search is
+    off, have lost their source: they face the commander's own test (`ShareTable.is_idea`) like a meta idea,
+    a failing one is turned down and a passing one relabelled to the source that plays it more
+    (`relabel_pooled_open`), nothing without a list read. An old `suggest --to-board` idea (by cmdr, no
+    origin) is turned down once what it was filed for no longer holds: the deck holds its short role's
+    target, it matches none of the deck's themes as `suggest` reads them now, or it completes no near-miss
+    combo of the saved combo list. That list is `saved_combos`, which gives the deck's fresh one or None
+    (`suggest.fresh_saved_combos`); with none, and with no themes, those two reasons are left untested.
+    Cards by you or Claude, and queued, applied or turned-down ones, are never touched
     (`turn_down_open` checks the card is still open), nor is one the user reopened until they decide it.
     share_table is `deck_shares` when the caller shares it with other steps.
     """

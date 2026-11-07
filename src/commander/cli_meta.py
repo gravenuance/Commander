@@ -240,6 +240,9 @@ def _warn_sources(report: MetaReport, err: TextIO) -> None:
             )
         elif state.source is AnswerSource.UNAVAILABLE:
             print(f"cmdr: {report.deck}: {state.name} unavailable: {state.error}", file=err)
+        elif state.error is not None:
+            # Answered, but a site was not read (ADR 0066): what is shown is what the others gave.
+            print(f"cmdr: {report.deck}: {state.name} partly read ({state.error})", file=err)
 
 
 def _percent(share: float) -> str:

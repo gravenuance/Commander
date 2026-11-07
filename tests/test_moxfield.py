@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -16,8 +17,8 @@ from commander.moxfield import (
     parse_deck,
     parse_search_page,
 )
-from commander.net import Fetcher, Pacer
-from commander.peersearch import PeerDeck, Site
+from commander.net import Fetcher, Pacer, RateLimitedError
+from commander.peersearch import SEARCH_INTERVAL_SECONDS, PeerDeck, Site
 from conftest import FakeMoxfield, load_fixture, moxfield_deck, moxfield_page, moxfield_row
 
 WINOTA = "Winota, Joiner of Forces"
@@ -43,13 +44,13 @@ def search_for(fake: FakeMoxfield, sleeps: list[float] | None = None) -> Moxfiel
 def test_a_search_page_lists_its_public_commander_decks_with_views_update_and_bracket() -> None:
     decks, more = parse_search_page(load_fixture("moxfield_search.json"))
     assert [(d.id, d.views, d.bracket, d.site) for d in decks] == [
-        ("Dr4JXq5D7kSBufwF8krxqA", 3740, 3, Site.MOXFIELD),
-        ("qrfEU-QVOkC0N95RPAEFMA", 3358, 3, Site.MOXFIELD),
-        ("Ql2cDaiJuEqc9u-pMDrV4Q", 3237, 3, Site.MOXFIELD),
+        ("made-up-deck-1", 3740, 3, Site.MOXFIELD),
+        ("made-up-deck-2", 3358, 3, Site.MOXFIELD),
+        ("made-up-deck-3", 3237, 3, Site.MOXFIELD),
     ]
     assert decks[0].updated_at == datetime(2025, 4, 10, 6, 38, 18, 583000, tzinfo=UTC)
     assert decks[0].owner == "moxfield-player-1"
-    assert decks[0].url == "https://moxfield.com/decks/Dr4JXq5D7kSBufwF8krxqA"
+    assert decks[0].url == "https://moxfield.com/decks/made-up-deck-1"
     # Page 1 of 258.
     assert more
 
@@ -60,7 +61,7 @@ def test_a_search_page_leaves_out_decks_that_are_not_public_commander_ones() -> 
     page["data"][1]["format"] = "brawl"
     page["pageNumber"] = page["totalPages"]
     decks, more = parse_search_page(page)
-    assert [d.id for d in decks] == ["Ql2cDaiJuEqc9u-pMDrV4Q"]
+    assert [d.id for d in decks] == ["made-up-deck-3"]
     assert not more
 
 
@@ -175,6 +176,115 @@ def test_a_403_is_no_moxfield_error_so_skipping_an_unreadable_deck_never_skips_a
     assert not issubclass(MoxfieldBlockedError, MoxfieldError)
 
 
+def test_a_challenge_page_answered_as_200_stops_every_later_request_of_the_run() -> None:
+    fake = FakeMoxfield()
+    fake.challenge = True
+    search = search_for(fake)
+    with pytest.raises(MoxfieldBlockedError, match="challenge"):
+        search.commander_card_id(WINOTA)
+    fake.challenge = False
+    with pytest.raises(MoxfieldBlockedError):
+        search.popular_decks("W1", brackets=(None,), since=SINCE, label="winota")
+    assert len(fake.requests) == 1
+
+
+def test_a_challenge_page_in_place_of_a_search_page_blocks_too() -> None:
+    fake = FakeMoxfield()
+    search = search_for(fake)
+    fake.challenge = True
+    with pytest.raises(MoxfieldBlockedError):
+        search.popular_decks("W1", brackets=(None,), since=SINCE, label="winota")
+    assert len(fake.requests) == 1
+
+
+def test_a_403_on_one_deck_read_skips_that_deck_and_blocks_nothing() -> None:
+    fake = FakeMoxfield()
+    fake.decks["fine"] = moxfield_deck("fine", [WINOTA], {"Sol Ring": 1})
+    fake.deck_status = 403
+    search = search_for(fake)
+    with pytest.raises(MoxfieldError, match="private-one"):
+        search.deck("private-one")
+    fake.deck_status = 200
+    assert search.deck("fine").cards == ("Sol Ring", WINOTA)
+    fake.cards[WINOTA.casefold()] = "W1"
+    assert search.commander_card_id(WINOTA) == "W1"
+
+
+def test_a_challenge_page_in_place_of_one_deck_skips_that_deck_and_blocks_nothing() -> None:
+    fake = FakeMoxfield()
+    search = search_for(fake)
+    fake.challenge = True
+    with pytest.raises(MoxfieldError, match="odd-one"):
+        search.deck("odd-one")
+    fake.challenge = False
+    fake.cards[WINOTA.casefold()] = "W1"
+    assert search.commander_card_id(WINOTA) == "W1"
+
+
+class Limited:
+    """Answers each request with the next scripted response; clock time passes only by sleeping."""
+
+    def __init__(self, *steps: httpx.Response) -> None:
+        self.steps = list(steps)
+        self.at: list[float] = []
+        self.sleeps: list[float] = []
+        self.clock = 0.0
+
+    def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.clock += seconds
+
+    def handler(self, _: httpx.Request) -> httpx.Response:
+        self.at.append(self.clock)
+        return self.steps.pop(0)
+
+    def search(self) -> MoxfieldSearch:
+        client = httpx.Client(transport=httpx.MockTransport(self.handler))
+        return MoxfieldSearch(
+            Fetcher(client, sleep=self.sleep),
+            Pacer(SEARCH_INTERVAL_SECONDS, sleep=self.sleep, monotonic=lambda: self.clock),
+        )
+
+
+def card_search_answer() -> httpx.Response:
+    return httpx.Response(200, json=load_fixture("moxfield_card_search.json"))
+
+
+def test_a_429_is_waited_out_for_a_minute_and_the_request_sent_once_more() -> None:
+    limited = Limited(httpx.Response(429), card_search_answer())
+    assert limited.search().commander_card_id(WINOTA) == "Er9bV"
+    assert limited.at == [0.0, 60.0]
+
+
+def test_a_retry_after_longer_than_a_minute_is_waited_instead() -> None:
+    limited = Limited(httpx.Response(429, headers={"Retry-After": "600"}), card_search_answer())
+    limited.search().commander_card_id(WINOTA)
+    assert limited.at == [0.0, 600.0]
+
+
+def test_a_search_page_is_retried_after_a_429_too() -> None:
+    page = moxfield_page([moxfield_row(f"d{n}", 2000 - n, IN_WINDOW) for n in range(12)])
+    limited = Limited(httpx.Response(429), httpx.Response(200, json=page))
+    decks = limited.search().popular_decks("W1", brackets=(3,), since=SINCE, label="winota")
+    assert limited.at == [0.0, 60.0]
+    assert len(decks) == 12
+
+
+def test_a_second_429_gives_up_on_moxfield_for_the_rest_of_the_run() -> None:
+    limited = Limited(httpx.Response(429), httpx.Response(429), card_search_answer())
+    search = limited.search()
+    with pytest.raises(RateLimitedError):
+        search.commander_card_id(WINOTA)
+    assert limited.at == [0.0, 60.0]
+    slept = list(limited.sleeps)
+    with pytest.raises(RateLimitedError):
+        search.deck("abc")
+    with pytest.raises(RateLimitedError):
+        search.popular_decks("W1", brackets=(3,), since=SINCE, label="winota")
+    assert limited.at == [0.0, 60.0]
+    assert limited.sleeps == slept
+
+
 def test_a_peer_deck_id_must_be_a_number_on_archidekt_and_text_on_moxfield() -> None:
     with pytest.raises(ValueError, match="wrong kind"):
         PeerDeck("12", "x", "o", 1, SINCE, 3)
@@ -195,6 +305,27 @@ def test_a_moxfield_deck_read_is_cached_under_a_safe_name_apart_from_archidekt_o
     # Ids that differ only in case are other decks.
     assert reads.load(other_case, FETCHED_AT) is None
     assert [p.name.startswith("moxfield-abc-d-e-") for p in tmp_path.iterdir()] == [True]
+
+
+def test_the_log_names_the_site_of_a_cached_deck_it_cannot_use(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    reads = DeckReads(tmp_path)
+    moxfield = PeerDeck("abc-d_e", "x", "o", 1, SINCE, 3, Site.MOXFIELD)
+    archidekt = PeerDeck(12, "x", "o", 1, SINCE, 3)
+    for deck in (moxfield, archidekt):
+        reads.save(deck, DeckRead((WINOTA,), (WINOTA,), (), ()), FETCHED_AT)
+    for path in tmp_path.iterdir():
+        path.write_text("{", encoding="utf-8")
+    with caplog.at_level(logging.INFO):
+        assert reads.load(moxfield, FETCHED_AT) is None
+        assert reads.load(archidekt, FETCHED_AT) is None
+        assert reads.prune(now=FETCHED_AT, window_start=SINCE) == 2
+    lines = caplog.messages
+    assert len([m for m in lines if "Moxfield deck" in m]) == 2
+    assert len([m for m in lines if "Archidekt deck" in m]) == 2
+    assert not [m for m in lines if "Moxfield deck" in m and "12.json" in m]
+    assert not [m for m in lines if "Archidekt deck" in m and "moxfield-" in m]
 
 
 def peer(site: Site, deck_id: int | str, cards: tuple[str, ...], views: int = 900) -> PeerList:
@@ -238,8 +369,23 @@ def test_a_site_that_cannot_be_read_is_named_while_the_other_stands_in() -> None
     assert joined.data is not None
     assert [p.deck.id for p in joined.data.decks] == [1]
     assert joined.data.missing == ((Site.MOXFIELD, "refused"),)
-    assert joined.source is AnswerSource.STALE
+    # Archidekt answered now, so the decks are as fresh as it; the note names the site not read.
+    assert joined.source is AnswerSource.FETCHED
+    assert joined.fetched_at == FETCHED_AT
     assert joined.error == "Moxfield: refused"
+
+
+def test_a_site_that_cannot_be_read_beside_a_cached_one_leaves_the_answer_cached() -> None:
+    cached = answer(peer(Site.ARCHIDEKT, 1, (WINOTA,)), source=AnswerSource.CACHED)
+    joined = joined_peers(cached, unavailable("refused"))
+    assert joined.source is AnswerSource.CACHED
+    assert joined.error == "Moxfield: refused"
+
+
+def test_a_site_that_cannot_be_read_beside_a_stale_one_leaves_the_answer_stale() -> None:
+    stale = answer(peer(Site.ARCHIDEKT, 1, (WINOTA,)), source=AnswerSource.STALE)
+    joined = joined_peers(stale, unavailable("refused"))
+    assert joined.source is AnswerSource.STALE
 
 
 def test_moxfield_decks_stand_in_when_archidekt_cannot_be_read() -> None:
@@ -283,3 +429,19 @@ def test_a_cache_only_read_without_a_stored_moxfield_answer_leaves_archidekts_as
     archidekt = answer(peer(Site.ARCHIDEKT, 1, (WINOTA,)))
     assert joined_peers(archidekt, unavailable(NOT_FETCHED)) is archidekt
     assert joined_peers(archidekt, None) is archidekt
+
+
+def test_a_cache_only_read_without_a_stored_archidekt_answer_leaves_moxfields_as_it_is() -> None:
+    joined = joined_peers(unavailable(NOT_FETCHED), answer(peer(Site.MOXFIELD, "m1", (WINOTA,))))
+    assert joined.data is not None
+    assert [p.deck.id for p in joined.data.decks] == ["m1"]
+    # Nothing was fetched, so nothing failed: no site is named as missing and there is no error to show.
+    assert joined.data.missing == ()
+    assert joined.error is None
+    assert joined.source is AnswerSource.FETCHED
+
+
+def test_a_cache_only_read_with_neither_answer_stored_is_not_fetched_yet_and_names_no_site() -> None:
+    joined = joined_peers(unavailable(NOT_FETCHED), unavailable(NOT_FETCHED))
+    assert joined.data is None
+    assert joined.error == NOT_FETCHED

@@ -480,7 +480,7 @@ class FakeTopdeck:
 
 
 def moxfield_row(public_id: str, views: int, updated_at: str, bracket: int | None = 3) -> Json:
-    """A deck as Moxfield's search lists it: the first deck of the trimmed real page, with these values."""
+    """A deck as Moxfield's search lists it: the first deck of the trimmed page, with these values."""
     row: Json = copy.deepcopy(load_fixture("moxfield_search.json")["data"][0])
     return {
         **row,
@@ -518,7 +518,8 @@ class FakeMoxfield:
 
     `cards` holds each known card's id by lower-cased name; `pages` the search pages by commander card id, in
     page order; `decks` the decks by public id. `status` makes every answer that status instead (403 is how
-    Moxfield refuses). Every request's path and query is recorded.
+    Moxfield refuses), `deck_status` only the deck reads, and `challenge` makes every answer a 200 HTML page,
+    as a bot challenge does. Every request's path and query is recorded.
     """
 
     def __init__(self) -> None:
@@ -526,13 +527,19 @@ class FakeMoxfield:
         self.pages: dict[str, list[Json]] = {}
         self.decks: dict[str, Json] = {}
         self.status = HTTP_OK
+        self.deck_status = HTTP_OK
+        self.challenge = False
         self.requests: list[httpx.URL] = []
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request.url)
+        path, params = request.url.path, request.url.params
+        if self.challenge:
+            return httpx.Response(200, text="<html>Just a moment...</html>")
         if self.status != HTTP_OK:
             return httpx.Response(self.status, text="<html>blocked</html>")
-        path, params = request.url.path, request.url.params
+        if self.deck_status != HTTP_OK and path.startswith("/v3/decks/all/"):
+            return httpx.Response(self.deck_status, text="<html>blocked</html>")
         if path == "/v2/cards/search":
             name = params["q"].removeprefix('!"').removesuffix('"')
             card_id = self.cards.get(name.casefold())

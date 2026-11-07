@@ -638,17 +638,32 @@ def test_a_compiled_idea_that_fails_the_idea_test_is_turned_down_and_a_passing_o
     )
 
 
-def test_a_deck_idea_is_not_judged_while_one_sites_decks_are_missing(
-    deck: Deck, db: CardDb, tmp_path: Path
+@pytest.mark.parametrize("unread", [Site.MOXFIELD, Site.ARCHIDEKT])
+def test_a_deck_idea_is_judged_by_the_decks_gathered_whichever_site_could_not_be_read(
+    deck: Deck, db: CardDb, tmp_path: Path, unread: Site
 ) -> None:
     weak = seed(tmp_path, deck, db, "Jeska's Will", Actor.CMDR, origin=Origin.DECKS)
+    strong = seed(tmp_path, deck, db, "Arcane Signet", Actor.CMDR, origin=Origin.DECKS)
     peers = [peer(i, ["Jeska's Will" if i < 1 else "Arcane Signet"]) for i in range(10)]
     data = meta_data([], peers)
     assert data.peers.data is not None
-    half = PeerLists(data.peers.data.decks, 0, ((Site.MOXFIELD, "refused"),))
+    half = PeerLists(data.peers.data.decks, 0, ((unread, "refused"),))
 
-    # The same pool that turns it down in full judges nothing with Moxfield's decks missing (ADR 0066).
-    assert judge(tmp_path, deck, db, replace(data, peers=replace(data.peers, data=half))) == []
+    # The pool is whatever was gathered, as if it were the whole: the same verdicts as with both sites read
+    # (ADR 0066).
+    assert judge(tmp_path, deck, db, replace(data, peers=replace(data.peers, data=half))) == ["Jeska's Will"]
+    assert card_state(tmp_path, weak) == (Status.REJECTED, "no longer makes the cut")
+    assert card_state(tmp_path, strong)[0] is Status.OPEN
+
+
+def test_a_deck_idea_is_judged_by_nothing_when_no_peer_decks_could_be_gathered(
+    deck: Deck, db: CardDb, tmp_path: Path
+) -> None:
+    weak = seed(tmp_path, deck, db, "Jeska's Will", Actor.CMDR, origin=Origin.DECKS)
+    data = meta_data([], [peer(i, ["Arcane Signet"]) for i in range(10)])
+    nothing = Answer[PeerLists](None, AnswerSource.UNAVAILABLE, None, "Archidekt: down; Moxfield: refused")
+
+    assert judge(tmp_path, deck, db, replace(data, peers=nothing)) == []
     assert card_state(tmp_path, weak)[0] is Status.OPEN
 
 
