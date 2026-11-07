@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.0 - 2026-11-07
 
 ### Added
 - The ideas for Considering and `cmdr meta` also learn from other players' recent, most-viewed public
