@@ -33,7 +33,15 @@ from commander.deckcache import Clock
 from commander.decklocks import DeckLock
 from commander.deckprofile import ProfileError, profile_path, write_profile_template
 from commander.fetchpriority import FetchPriority, fetching_deck
-from commander.ideas import compile_ideas, deck_shares, gather_idea_pools, rejudge_ideas, relabel_legacy_ideas
+from commander.ideas import (
+    compile_ideas,
+    deck_shares,
+    gather_idea_pools,
+    rejudge_ideas,
+    relabel_legacy_ideas,
+    unread_site_prefix,
+    unread_site_warning,
+)
 from commander.metadata import (
     TOURNAMENT_BRACKETS,
     TOURNAMENTS_STEP,
@@ -854,9 +862,9 @@ _KEY_WARNING = f"tournament lists skipped: missing or refused TopDeck key; {KEY_
 def _note_unread_site(site: Site, why: str, warnings: list[str]) -> None:
     """Warn once per sync that a peer-deck site could not be read; the ideas were judged by the decks that
     were (ADR 0066), so no deck is incomplete for it."""
-    start = f"{site.value} decks could not be read"
+    start = unread_site_prefix(site)
     if not any(warning.startswith(start) for warning in warnings):
-        warnings.append(f"{start} ({why}); ideas are judged by the decks that were read")
+        warnings.append(unread_site_warning(site, why))
 
 
 def _note_key_problem(key_problem: bool, warnings: list[str]) -> bool:  # noqa: FBT001 — an answer's flag

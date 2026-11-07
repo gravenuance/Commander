@@ -61,6 +61,7 @@ from commander.metadata import (
     gather_adjacent,
 )
 from commander.models import Deck, short_commander_name
+from commander.peersearch import Site
 from commander.playstyle import Fit
 from commander.spellbook import ComboMatches
 from commander.store import StoredDeck
@@ -571,11 +572,27 @@ def compile_ideas_with_adjacent(
     warn: Callable[[str], None],
     on_progress: Progress | None = None,
 ) -> dict[Origin, list[BoardCard]]:
-    """`compile_ideas` with the pools `gather_idea_pools` reads."""
+    """`compile_ideas` with the pools `gather_idea_pools` reads; each site unread for the alike commanders is
+    named to warn once."""
     pools = gather_idea_pools(
         stored, db, sources, cache_root, now=now, refresh=refresh, warn=warn, on_progress=on_progress
     )
+    warned: set[Site] = set()
+    for site, why in pools.unread:
+        if site not in warned:
+            warned.add(site)
+            warn(unread_site_warning(site, why))
     return compile_ideas(stored, data, db, now=now, adjacent=pools.decks, tagged=pools.tagged)
+
+
+def unread_site_prefix(site: Site) -> str:
+    """How `unread_site_warning` starts for the site, whatever the reason."""
+    return f"{site.value} decks could not be read"
+
+
+def unread_site_warning(site: Site, why: str) -> str:
+    """That a peer-deck site could not be read; the ideas were judged by the decks that were (ADR 0066)."""
+    return f"{unread_site_prefix(site)} ({why}); ideas are judged by the decks that were read"
 
 
 def ideas_summary(added: dict[Origin, list[BoardCard]]) -> str:

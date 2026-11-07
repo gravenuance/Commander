@@ -804,6 +804,23 @@ def test_to_board_names_an_alike_commander_it_cannot_search_and_carries_on(
     assert "Magda board: +1 from meta\n" in result.err
 
 
+def test_to_board_warns_once_of_a_site_it_could_not_read_for_the_alike_commanders(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    (home / "decks" / FOLDER / "profile.toml").write_text(ALIKE_PROFILE, encoding="utf-8")
+    put_ygra_decks(fake)
+    fake.moxfield.status = 403
+    result = meta(home, fake, "magda", "--to-board")
+    assert result.code == 0, result.err
+    warning = (
+        "cmdr: Moxfield decks could not be read (Moxfield refused cmdr's requests (HTTP 403)); "
+        "ideas are judged by the decks that were read\n"
+    )
+    assert result.err.count(warning) == 1
+    # The Ygra decks Archidekt gave were judged all the same.
+    assert "Magda board: +1 from meta, +1 from adjacent decks\n" in result.err
+
+
 def test_sync_names_an_alike_commander_it_cannot_search_and_carries_on(
     home: Path, fake: FakeArchidekt
 ) -> None:
