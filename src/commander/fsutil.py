@@ -2,7 +2,7 @@ import logging
 import os
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -25,6 +25,19 @@ def write_text_atomic(path: Path, text: str) -> None:
     except BaseException:
         temp.unlink(missing_ok=True)
         raise
+
+
+def files_stamp(folder: Path, names: Iterable[str]) -> str:
+    """Changes whenever one of the folder's files does: their times and sizes, "-" for a missing one."""
+    parts: list[str] = []
+    for name in names:
+        try:
+            stat = (folder / name).stat()
+        except FileNotFoundError:
+            parts.append("-")
+            continue
+        parts.append(f"{stat.st_mtime_ns}:{stat.st_size}")
+    return "|".join(parts)
 
 
 def new_temp_path(folder: Path, name: str, suffix: str) -> Path:

@@ -25,7 +25,7 @@ from typing import Protocol, Self
 from commander.answers import card_key
 from commander.carddb import CardDb, CardInfo
 from commander.copylimit import copy_limit, copy_limits
-from commander.fsutil import write_text_atomic
+from commander.fsutil import files_stamp, write_text_atomic
 from commander.jsonshape import (
     ShapeError,
     as_object,
@@ -343,19 +343,6 @@ def board_digest(folder: Path) -> str:
     except OSError as error:
         raise BoardIOError(f"cannot read {folder / BOARD_FILE}: {error}") from error
     return hashlib.sha256(data).hexdigest()
-
-
-def files_stamp(folder: Path, names: Iterable[str]) -> str:
-    """Changes whenever one of the folder's files does: their times and sizes, "-" for a missing one."""
-    parts: list[str] = []
-    for name in names:
-        try:
-            stat = (folder / name).stat()
-        except FileNotFoundError:
-            parts.append("-")
-            continue
-        parts.append(f"{stat.st_mtime_ns}:{stat.st_size}")
-    return "|".join(parts)
 
 
 def read_board(folder: Path) -> Board:

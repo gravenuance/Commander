@@ -1754,6 +1754,105 @@ def test_the_meta_is_worked_out_again_when_the_answers_the_profile_or_the_day_ch
     assert calls["analyse"] == 3
 
 
+def kept_views(desk: Desk) -> None:
+    """Ask for everything the desk keeps per deck, as the page does when it opens a deck."""
+    assert "error" not in desk.deck(DECK)
+    assert "error" not in desk.meta(DECK)
+    assert "error" not in desk.mana(DECK)
+
+
+def fetched_meta_files(settings: DeskSettings, fake: FakeArchidekt) -> list[Path]:
+    """Fetch the meta as a sync does, then drop Moxfield's peer decks, as if that site were not fetched yet:
+    every cache file the pool can read, one of them missing."""
+    fake.topdeck.events = [*magda_events(), *kinnan_events()]
+    fetch_meta(settings, fake)
+    folder = settings.cache / CACHE_FOLDER
+    [moxfield] = folder.glob("moxfield-magda-*.json")
+    files = sorted(folder.glob("*.json"))
+    moxfield.unlink()
+    assert len(files) >= 4
+    return files
+
+
+def test_a_meta_save_for_another_deck_leaves_the_kept_answers_of_this_one_alone(
+    desk: Desk, settings: DeskSettings, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fetched_meta_files(settings, fake)
+    kept_views(desk)
+    calls = count_calls(
+        monkeypatch, desk_module, "gather_for", "deck_cut_rules", "weighted_shares", "analyse"
+    )
+    mana = count_calls(monkeypatch, Desk, "_worked_out_mana")
+    polled = desk.stamps()["meta"]
+
+    # A sync saving another commander's peer decks: a new file in the folder, then rewritten.
+    other = settings.cache / CACHE_FOLDER / "archidekt-other-commander-4-12345678.json"
+    other.write_text("{}", encoding="utf-8")
+    rewritten = other.stat().st_mtime_ns + 1_000_000_000
+    os.utime(other, ns=(rewritten, rewritten))
+    kept_views(desk)
+
+    assert sum(calls.values()) + sum(mana.values()) == 0
+    # The page's own poll of the whole folder still sees the save.
+    assert desk.stamps()["meta"] != polled
+
+
+def test_a_save_of_any_file_the_deck_read_rebuilds_what_is_made_of_it(
+    desk: Desk, settings: DeskSettings, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files = fetched_meta_files(settings, fake)
+    kept_views(desk)
+    calls = count_calls(monkeypatch, desk_module, "deck_cut_rules", "weighted_shares", "analyse")
+    mana = count_calls(monkeypatch, Desk, "_worked_out_mana")
+    # Moxfield's file is saved for the first time; a file saved for the first time changes the answer as
+    # much as one rewritten.
+    moxfield = settings.cache / CACHE_FOLDER / "moxfield-magda-brazen-outlaw-5-b5ce4edd.json"
+
+    for number, path in enumerate([*files, moxfield], start=1):
+        if path.exists():
+            changed = path.stat().st_mtime_ns + 1_000_000_000
+            os.utime(path, ns=(changed, changed))
+        else:
+            path.write_text("{}", encoding="utf-8")
+        kept_views(desk)
+        assert dict(calls) == dict.fromkeys(("deck_cut_rules", "weighted_shares", "analyse"), number), (
+            path.name
+        )
+        assert dict(mana) == {"_worked_out_mana": number}, path.name
+
+
+def test_the_gather_opens_only_meta_files_a_save_is_seen_for_and_never_lists_the_folder(
+    desk: Desk, settings: DeskSettings, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files = fetched_meta_files(settings, fake)
+    folder = settings.cache / CACHE_FOLDER
+    touched: set[Path] = set()
+    listed: list[str] = []
+    opened = cast("Callable[..., Any]", Path.open)
+
+    def spy_open(self: Path, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        if folder in self.parents:
+            touched.add(self)
+        return opened(self, *args, **kwargs)
+
+    def spy_listing(original: Callable[..., Any]) -> Callable[..., Any]:
+        def listing(target: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+            if Path(target) == folder:
+                listed.append(str(target))
+            return original(target, *args, **kwargs)
+
+        return listing
+
+    monkeypatch.setattr(Path, "open", spy_open)
+    monkeypatch.setattr(os, "scandir", spy_listing(os.scandir))
+    monkeypatch.setattr(os, "listdir", spy_listing(os.listdir))
+    desk.meta(DECK)
+
+    assert touched
+    assert touched <= {*files, folder / "moxfield-magda-brazen-outlaw-5-b5ce4edd.json"}
+    assert listed == []
+
+
 def test_each_board_card_comes_with_the_deck_cards_it_could_replace(desk: Desk) -> None:
     desk.propose(DECK, "Lightning Bolt")
     [bolt] = items(desk.deck(DECK), "cards")

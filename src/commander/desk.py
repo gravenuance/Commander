@@ -42,7 +42,6 @@ from commander.board import (
     board_stamp,
     card_json,
     count_json,
-    files_stamp,
     held_keys,
     read_board,
     read_recent_activity,
@@ -65,7 +64,7 @@ from commander.carddb import CardDataError, CardDb, CardInfo, CardText, Resolved
 from commander.changetext import change_mark, change_text
 from commander.config import ConfigError, MetaSettings, forget_account, switch_account, validate_user
 from commander.credentials import CredentialError, KeyringKeyStore, KeyStore, TokenStore, check_api_key
-from commander.deckcache import NOT_FETCHED, AnswerSource, DeckCache
+from commander.deckcache import NOT_FETCHED, AnswerSource, DeckCache, FilesRead, logging_reads
 from commander.deckexport import cardmarket_wants_text, topdeck_text
 from commander.deckgrid import image_url
 from commander.decklocks import DeckLocks
@@ -81,6 +80,7 @@ from commander.deckprofile import (
 from commander.deckthemes import merge_themes
 from commander.deckview import card_images, decklist_json
 from commander.fetchpriority import FetchPriority
+from commander.fsutil import files_stamp
 from commander.ideas import idea_labels
 from commander.labels import LabelError, label_options, set_label
 from commander.landswap import comparison_lists, guard_json
@@ -327,8 +327,9 @@ class Desk:
         self._token_store = token_store
         self._topdeck_keys: KeyStore = KeyringKeyStore()
         self._now = now
-        # Per deck: the meta cache stamp the answers were read at, and what was made of them.
-        self._pools: dict[int, tuple[str, MetaData]] = {}
+        # Per deck: the day and bracket, and the cache files the meta answers were read from; then what was
+        # made of them.
+        self._pools: dict[int, tuple[str, FilesRead, MetaData]] = {}
         self._tables: dict[int, tuple[str, ShareTable]] = {}
         self._rules: dict[int, tuple[str, CutRules]] = {}
         # The deck list's rows by deck folder, each with the stamp of the files it was made from.
@@ -1170,10 +1171,11 @@ class Desk:
         # Only a deck below bracket 5 gets land suggestions, which skip the lands its board turned down.
         cedh = stored.deck.bracket == CEDH_BRACKET
         turned_down = [] if cedh else sorted(read_board(stored.folder).rejected_names)
+        playing = self._effective(stored.deck)
         stamp = (
             f"{files_stamp(stored.folder, ('deck.json', 'profile.toml'))}"
-            f"|{cache_stamp(self._settings.cache)}|{self._card_data_stamp()}|{self._now().date()}"
-            f"|{self._effective(stored.deck).bracket}|{turned_down}"
+            f"|{self._meta_stamp(playing)}|{self._card_data_stamp()}|{self._now().date()}"
+            f"|{playing.bracket}|{turned_down}"
         )
         known = self._manas.get(deck_id)
         if known is None or known[0] != stamp:
@@ -1453,7 +1455,7 @@ class Desk:
         # The page asks again after every board change and save: the answer is kept until what it is made
         # of changes, which is the deck, its profile, the cached meta answers, the card data or the day.
         stamp = (
-            f"{files_stamp(stored.folder, (SNAPSHOT_FILE, PROFILE_FILE))}|{cache_stamp(self._settings.cache)}"
+            f"{files_stamp(stored.folder, (SNAPSHOT_FILE, PROFILE_FILE))}|{self._meta_stamp(deck)}"
             f"|{self._card_data_stamp()}|{self._now().date()}|{deck.bracket}"
         )
         known = self._reports.get(stored.deck.id)
@@ -1493,9 +1495,10 @@ class Desk:
         answers and weighted by the deck's grace cards; empty without any lists. Kept until the cached
         answers or the deck's profile change."""
         deck = stored.deck
+        playing = self._effective(deck)
         stamp = (
             f"{files_stamp(stored.folder, ('profile.toml',))}"
-            f"|{cache_stamp(self._settings.cache)}|{self._now().date()}|{self._effective(deck).bracket}"
+            f"|{self._meta_stamp(playing)}|{self._now().date()}|{playing.bracket}"
         )
         known = self._tables.get(deck.id)
         if known is not None and known[0] == stamp:
@@ -1511,10 +1514,11 @@ class Desk:
         """The deck's cut rules, kept until its snapshot, its profile, the cached meta answers or the card
         data change; the mana guard in them remembers its answers for as long."""
         estimates = self._settings.cache / SPELLBOOK_CACHE_FOLDER
+        playing = self._effective(stored.deck)
         stamp = (
             f"{files_stamp(stored.folder, ('deck.json', 'profile.toml'))}"
-            f"|{cache_stamp(self._settings.cache)}|{self._card_data_stamp()}|{self._now().date()}"
-            f"|{self._effective(stored.deck).bracket}|{files_stamp(estimates, (f'{stored.deck.id}.json',))}"
+            f"|{self._meta_stamp(playing)}|{self._card_data_stamp()}|{self._now().date()}"
+            f"|{playing.bracket}|{files_stamp(estimates, (f'{stored.deck.id}.json',))}"
         )
         known = self._rules.get(stored.deck.id)
         if known is not None and known[0] == stamp:
@@ -1551,13 +1555,28 @@ class Desk:
     def _pool_of(self, playing: Deck) -> MetaData:
         """`_pool` for the deck as the panels act on it (`_effective`); the meta panel reads it too. Kept
         until the cached answers or the day change, since the lists read are those of the last window days."""
-        stamp = f"{cache_stamp(self._settings.cache)}|{playing.bracket}|{self._now().date()}"
+        return self._pool_entry(playing)[2]
+
+    def _pool_entry(self, playing: Deck) -> tuple[str, FilesRead, MetaData]:
+        """The pool with the day and bracket it was read for, and the cache files it read: a save of any other
+        file leaves it valid. A read that logged no file is never kept."""
+        stamp = f"{playing.bracket}|{self._now().date()}"
         known = self._pools.get(playing.id)
-        if known is not None and known[0] == stamp:
-            return known[1]
-        data = self._gather(playing)
-        self._pools[playing.id] = (stamp, data)
-        return data
+        if known is not None and known[0] == stamp and known[1].states and known[1].current():
+            return known
+        with logging_reads() as reads:
+            data = self._gather(playing)
+        entry = (stamp, reads.taken(), data)
+        self._pools[playing.id] = entry
+        return entry
+
+    def _meta_stamp(self, playing: Deck) -> str:
+        """Changes when a cached answer the deck's pool read does, not for another deck's: the state of
+        those files, or of the whole meta folder when the read logged none."""
+        if not playing.commanders:
+            return "-"
+        reads = self._pool_entry(playing)[1]
+        return reads.key if reads.states else cache_stamp(self._settings.cache)
 
     def _gather(self, deck: Deck) -> MetaData:
         """Cached meta answers only: fetching belongs to the sync. The deck is the effective one."""
