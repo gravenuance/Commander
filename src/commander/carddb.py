@@ -493,19 +493,6 @@ class ResolvedCard:
     printing: Printing | None
 
 
-@dataclass(slots=True, eq=False)
-class _BuildAnswers:
-    """Counts that depend only on one build of the card database and cost a table scan to work out."""
-
-    stamp: tuple[object, ...]
-    legal_cards: int | None = None
-    tag_sizes: dict[str, int] = field(default_factory=dict[str, int])
-    theme_sizes: dict[Theme, int] = field(default_factory=dict[Theme, int])
-    role_sizes: dict[Role, int] | None = None
-    # Counts a caller works out itself (`build_count`), by its own keys.
-    counts: dict[Hashable, int] = field(default_factory=dict[Hashable, int])
-
-
 @dataclass(slots=True, frozen=True)
 class LegalFace:
     """What of a Commander-legal card a scan over all of them reads."""
@@ -515,6 +502,20 @@ class LegalFace:
     mana_value: float
     power: str | None
     text: str
+
+
+@dataclass(slots=True, eq=False)
+class _BuildAnswers:
+    """Counts that depend only on one build of the card database and cost a table scan to work out."""
+
+    stamp: tuple[object, ...]
+    legal_cards: int | None = None
+    legal_faces: tuple[LegalFace, ...] | None = None
+    tag_sizes: dict[str, int] = field(default_factory=dict[str, int])
+    theme_sizes: dict[Theme, int] = field(default_factory=dict[Theme, int])
+    role_sizes: dict[Role, int] | None = None
+    # Counts a caller works out itself (`build_count`), by its own keys.
+    counts: dict[Hashable, int] = field(default_factory=dict[Hashable, int])
 
 
 # The newest build's answers per database file, so a rebuilt file replaces its old entry.
@@ -737,12 +738,16 @@ class CardDb:
             answers.legal_cards = int(rows[0][0])
         return answers.legal_cards
 
-    def legal_faces(self) -> list[LegalFace]:
-        """Every Commander-legal card, for a count no query can make (a scan of some 30,000 rows)."""
-        return [
-            LegalFace(oracle_id, type_line, float(cmc), power, text or "")
-            for oracle_id, type_line, cmc, power, text in self._query(_LEGAL_FACES_QUERY)
-        ]
+    def legal_faces(self) -> tuple[LegalFace, ...]:
+        """Every Commander-legal card, for a count no query can make (a scan of some 30,000 rows), read
+        once per build of the card data."""
+        answers = self._build_answers()
+        if answers.legal_faces is None:
+            answers.legal_faces = tuple(
+                LegalFace(oracle_id, type_line, float(cmc), power, text or "")
+                for oracle_id, type_line, cmc, power, text in self._query(_LEGAL_FACES_QUERY)
+            )
+        return answers.legal_faces
 
     def tag_members(self, slug: str) -> frozenset[str]:
         """The oracle ids in a tag, sub-tags included; none for a slug Scryfall does not have."""

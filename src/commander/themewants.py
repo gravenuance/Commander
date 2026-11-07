@@ -50,18 +50,22 @@ class Want:
     max_power: int | None = None
     min_mana_value: int | None = None
 
-    def matches(self, card: CardFacts) -> bool:
-        words = type_words(card.type_line)
-        wanted = (
+    def matches(self, card: CardFacts, words: str | None = None) -> bool:
+        """Whether the card is one; `words` is `type_words` of its type line, for a caller testing many
+        wants against one card."""
+        # The cheap limits first, so the rules text is searched only for a card that could still match.
+        if self.max_power is not None and not _power_at_most(card.power, self.max_power):
+            return False
+        if self.min_mana_value is not None and card.mana_value < self.min_mana_value:
+            return False
+        words = type_words(card.type_line) if words is None else words
+        if any(_has_word(words, t) for t in self.not_types):
+            return False
+        return (
             any(_has_word(words, t) for t in self.types)
             or any(t in card.slugs for t in self.tags)
             or bool(self.text and _pattern(self.text).search(card.text))
         )
-        if not wanted or any(_has_word(words, t) for t in self.not_types):
-            return False
-        if self.max_power is not None and not _power_at_most(card.power, self.max_power):
-            return False
-        return self.min_mana_value is None or card.mana_value >= self.min_mana_value
 
 
 ARTIFACT = Want("artifact", types=("Artifact",))
@@ -240,14 +244,20 @@ def want_sizes(db: CardDb, wants: Iterable[Want]) -> dict[Want, int]:
     asked = list(dict.fromkeys(wants))
     missing = [want for want in asked if db.build_count(("want", want)) is None]
     if missing:
-        members = {tag: db.tag_members(tag) for tag in {t for want in missing for t in want.tags}}
-        counts = dict.fromkeys(missing, 0)
+        tags_of: dict[str, set[str]] = {}
+        for tag in {t for want in missing for t in want.tags}:
+            for oracle_id in db.tag_members(tag):
+                tags_of.setdefault(oracle_id, set()).add(tag)
+        # A list by position: hashing a frozen dataclass for every card and want costs more than the match.
+        counts = [0] * len(missing)
         for face in db.legal_faces():
-            slugs = frozenset(tag for tag, cards in members.items() if face.oracle_id in cards)
+            slugs = frozenset(tags_of.get(face.oracle_id, ()))
             facts = CardFacts(face.type_line, face.mana_value, face.power, face.text, frozenset(), slugs)
-            for want in missing:
-                counts[want] += want.matches(facts)
-        for want, count in counts.items():
+            words = type_words(face.type_line)
+            for index, want in enumerate(missing):
+                if want.matches(facts, words):
+                    counts[index] += 1
+        for want, count in zip(missing, counts, strict=True):
             db.set_build_count(("want", want), count)
     return {want: db.build_count(("want", want)) or 0 for want in asked}
 
@@ -295,7 +305,12 @@ def _big(want: Want) -> Want:
 
 
 def _has_word(words: str, word: str) -> bool:
-    return f" {word.casefold()} " in words
+    return _spaced(word) in words
+
+
+@cache
+def _spaced(word: str) -> str:
+    return f" {word.casefold()} "
 
 
 @cache

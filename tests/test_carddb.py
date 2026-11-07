@@ -505,6 +505,21 @@ def test_a_builds_counts_are_scanned_once_however_many_connections_ask(
     assert not any("count(" in sql for sql in counting)
 
 
+def test_the_legal_faces_are_read_once_per_build_however_many_connections_ask(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_file = build_card_db(tmp_path)
+    scans: list[str] = []
+    monkeypatch.setattr(CardDb, "_query", _spy(getattr(CardDb, "_query"), scans))  # noqa: B009
+    with CardDb(db_file) as first, CardDb(db_file) as second:
+        faces = first.legal_faces()
+        assert second.legal_faces() == faces
+    assert sum("oracle_text" in sql for sql in scans) == 1
+    magda = next(face for face in faces if face.oracle_id == MAGDA_ORACLE)
+    assert (magda.mana_value, magda.power) == (2.0, "2")
+    assert "Treasure" in magda.text
+
+
 def _spy(original: Callable[..., list[Any]], seen: list[str]) -> Callable[..., list[Any]]:
     def spy(self: CardDb, sql: str, *args: object) -> list[Any]:
         seen.append(sql)
