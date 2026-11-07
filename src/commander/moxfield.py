@@ -18,7 +18,6 @@ from commander.jsonshape import (
     as_list,
     as_object,
     opt_int,
-    opt_str,
     req_int,
     req_list,
     req_object,
@@ -199,7 +198,7 @@ def parse_search_page(raw: object) -> tuple[list[PeerDeck], bool]:
     for index, item in enumerate(req_list(page, "data", "page")):
         where = f"page.data[{index}]"
         deck = as_object(item, where)
-        public = opt_str(deck, "visibility", where) == "public"
+        public = req_str(deck, "visibility", where) == "public"
         if req_str(deck, "format", where) != COMMANDER_FORMAT or not public:
             continue
         updated_at = datetime.fromisoformat(req_str(deck, "lastUpdatedAtUtc", where))

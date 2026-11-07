@@ -66,6 +66,24 @@ def test_a_search_page_leaves_out_decks_that_are_not_public_commander_ones() -> 
     assert not more
 
 
+def test_a_search_page_whose_decks_lack_a_visibility_is_refused_not_emptied() -> None:
+    page = load_fixture("moxfield_search.json")
+    for deck in page["data"]:
+        del deck["visibility"]
+    with pytest.raises(ShapeError, match=r"page\.data\[0\]"):
+        parse_search_page(page)
+
+
+def test_a_search_of_decks_without_a_visibility_is_a_moxfield_error() -> None:
+    fake = FakeMoxfield()
+    page = load_fixture("moxfield_search.json")
+    for deck in page["data"]:
+        del deck["visibility"]
+    fake.pages["W1"] = [page]
+    with pytest.raises(MoxfieldError, match="unexpected search answer"):
+        search_for(fake).popular_decks("W1", brackets=(None,), since=SINCE, label="winota")
+
+
 def test_a_search_page_without_view_counts_is_refused() -> None:
     page = load_fixture("moxfield_search.json")
     del page["data"][2]["viewCount"]
