@@ -229,6 +229,19 @@ def test_a_challenge_page_in_place_of_a_search_page_blocks_too() -> None:
     assert len(fake.requests) == 1
 
 
+def test_a_403_page_on_one_deck_read_is_a_refusal_of_that_deck_not_a_challenge() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/v3/decks/all/private-one"):
+            return httpx.Response(403, text="<html>This deck is private</html>")
+        return httpx.Response(200, json=moxfield_deck("fine", [WINOTA], {"Sol Ring": 1}))
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    search = MoxfieldSearch(Fetcher(client, max_attempts=1), Pacer(0.0))
+    with pytest.raises(MoxfieldError, match="HTTP 403"):
+        search.deck("private-one")
+    assert search.deck("fine").cards == ("Sol Ring", WINOTA)
+
+
 def test_a_403_on_one_deck_read_skips_that_deck_and_blocks_nothing() -> None:
     fake = FakeMoxfield()
     fake.decks["fine"] = moxfield_deck("fine", [WINOTA], {"Sol Ring": 1})

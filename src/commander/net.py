@@ -48,8 +48,8 @@ HTTP_TOO_MANY_REQUESTS = 429
 _SUCCESS = range(200, 300)
 _RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 _REDIRECTS = frozenset({301, 302, 303, 307, 308})
-# A deleted resource's answer may be a page too; it is an answer, not a challenge.
-_GONE_STATUSES = frozenset({404, 410})
+# A page in place of JSON is a challenge only from a server error status; a 4xx page is that status's answer.
+_SERVER_ERROR = 500
 _CHALLENGE_HEADER = "cf-mitigated"
 
 
@@ -203,8 +203,8 @@ class Fetcher:
 
         With surface_rate_limit a 429 is not retried here but raised as RateLimitedError, for a caller that
         paces its requests for a service with its own rules about how long to wait. With surface_challenge a
-        non-2xx answer that is a page, not JSON (or that carries a cf-mitigated header), is raised at once as
-        ChallengePageError instead of being retried; a 404 or 410 page and a 429 page are not challenges.
+        5xx answer that is a page, not JSON, or any non-2xx one that carries a cf-mitigated header, is raised
+        at once as ChallengePageError instead of being retried; a 4xx page keeps its status.
         """
         body = self._send(
             "GET",
@@ -681,16 +681,15 @@ def _error_start(response: "httpx.Response", *, surface_rate_limit: bool, surfac
 
 
 def _is_challenge(response: "httpx.Response", body: bytes) -> bool:
-    """Whether a non-2xx answer is a bot-challenge page: it says so in a cf-mitigated header, or its body
-    is markup, which JSON never starts with. A deleted resource's page and a 429's are answers."""
+    """Whether a non-2xx answer is a bot-challenge page: it says so in a cf-mitigated header, or it is a 5xx
+    whose body is markup, which JSON never starts with. A 4xx page (a private or deleted deck's) is an
+    answer with its status."""
     status = response.status_code
     if status in _SUCCESS:
         return False
     if _CHALLENGE_HEADER in response.headers:
         return True
-    if status in _GONE_STATUSES or status == HTTP_TOO_MANY_REQUESTS:
-        return False
-    return body.lstrip().startswith(b"<")
+    return status >= _SERVER_ERROR and body.lstrip().startswith(b"<")
 
 
 def _detail_text(body: bytes) -> str:

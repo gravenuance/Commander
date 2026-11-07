@@ -177,11 +177,10 @@ CHALLENGE_PAGE = "<!DOCTYPE html><html><title>Just a moment...</title></html>"
     "challenge",
     [
         httpx.Response(503, text=CHALLENGE_PAGE),
-        httpx.Response(403, text=CHALLENGE_PAGE),
         httpx.Response(503, json={"ok": False}, headers={"cf-mitigated": "challenge"}),
         httpx.Response(429, text=CHALLENGE_PAGE, headers={"cf-mitigated": "challenge"}),
     ],
-    ids=["503 page", "403 page", "503 header", "429 header"],
+    ids=["503 page", "503 header", "429 header"],
 )
 def test_a_caller_that_asks_sees_a_challenge_page_unretried(challenge: httpx.Response) -> None:
     script = Script(challenge, httpx.Response(200, json=[]))
@@ -199,9 +198,11 @@ def test_a_caller_that_asks_for_challenges_still_gets_other_failures_handled_as_
     page_429 = Script(httpx.Response(429, text=CHALLENGE_PAGE))
     with pytest.raises(RateLimitedError):
         fetcher(page_429, []).get_json(URL, surface_rate_limit=True, surface_challenge=True)
-    gone = Script(httpx.Response(404, text=CHALLENGE_PAGE))
-    with pytest.raises(HttpStatusError, match="404"):
-        fetcher(gone, []).get_json(URL, surface_challenge=True)
+    # A 4xx page keeps its status: a private deck's 403 page is a refusal, not a challenge.
+    for status in (403, 404):
+        page = Script(httpx.Response(status, text=CHALLENGE_PAGE))
+        with pytest.raises(HttpStatusError, match=str(status)):
+            fetcher(page, []).get_json(URL, surface_challenge=True)
 
 
 def test_a_challenge_page_is_retried_like_any_503_unless_the_caller_asks() -> None:
