@@ -328,6 +328,18 @@ def test_the_cut_rules_are_kept_between_views_until_the_card_data_is_replaced(
     assert calls["deck_cut_rules"] == 1
 
 
+def test_the_cut_rules_take_the_decks_share_table_the_view_works_out_instead_of_a_second_one(
+    desk: Desk, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    desk_calls = count_calls(monkeypatch, desk_module, "weighted_shares")
+    rules_calls = count_calls(monkeypatch, targets_module, "weighted_shares")
+
+    desk.deck(DECK)
+
+    assert desk_calls["weighted_shares"] == 1
+    assert rules_calls["weighted_shares"] == 0
+
+
 def test_the_cut_rules_get_the_decks_cached_estimate_and_are_rebuilt_when_it_changes(
     desk: Desk, settings: DeskSettings, monkeypatch: pytest.MonkeyPatch
 ) -> None:

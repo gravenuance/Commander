@@ -1657,7 +1657,14 @@ class Desk:
             return known[1]
         estimate = cached_estimate(stored.deck, estimate_cache(estimates), now=self._now)
         rules = deck_cut_rules(
-            stored.deck, main, profile, db, self._pool(stored.deck), now=self._now, estimate=estimate
+            stored.deck,
+            main,
+            profile,
+            db,
+            self._pool(stored.deck),
+            now=self._now,
+            estimate=estimate,
+            shares=self._shares(stored),
         )
         self._rules[stored.deck.id] = (stamp, rules)
         return rules

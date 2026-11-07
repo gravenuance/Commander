@@ -115,16 +115,19 @@ def deck_cut_rules(
     *,
     now: Clock,
     estimate: BracketEstimate | None = None,
+    shares: ShareTable | None = None,
 ) -> CutRules:
     """The deck's protected cards, the meta's and recent decks' shares, its leanings, the themes of its cards,
     and its mana base for judging swaps of lands.
 
     The profile's own themes go by their words ("Dinosaur", "Discover"). data is what other players do
     with the commander (`gather_for`), None when nothing was read. estimate is the deck's cached Spellbook
-    bracket estimate, whose combos stand in for `data.own_combos` when that was not read.
+    bracket estimate, whose combos stand in for `data.own_combos` when that was not read. shares is the
+    `weighted_shares` of data and the profile's grace cards when the caller holds them already.
     """
     peers = data.peers.data.decks if data is not None and data.peers.data else ()
-    shares = weighted_shares(data, now=now, grace=profile.grace_by_key())
+    if shares is None:
+        shares = weighted_shares(data, now=now, grace=profile.grace_by_key())
     ignored = {name.strip().casefold() for name in profile.ignore_themes}
     leanings = find_leanings(main, peers, db, ignore=ignored)
     tag_ids = db.tag_ids([*profile.themes.tags, *(leaning.tag for leaning in leanings)])
