@@ -47,7 +47,9 @@ class Env:
             documents=self.documents,
         )
 
-    def desk(self, *, inline: bool = True) -> Desk:
+    def desk(
+        self, *, inline: bool = True, warm_up: "Callable[[Callable[[], None]], object] | None" = None
+    ) -> Desk:
         # Inline, the sync runs inside sign_in; otherwise it waits in `pending`, as if still running.
         return Desk(
             self.settings,
@@ -56,6 +58,7 @@ class Env:
             now=lambda: NOW,
             pacer_factory=lambda _: Pacer(0),
             background=(lambda work: work()) if inline else self.pending.append,
+            warm_up=warm_up,
         )
 
 
@@ -145,6 +148,37 @@ def test_signing_in_again_drops_the_shares_kept_for_the_last_account(
     desk.sign_in("TESTER", PASSWORD)
     desk.deck(deck_id)
     assert len(computed) == 2
+
+
+def test_the_first_deck_view_after_signing_in_to_an_account_with_decks_warms_its_other_decks(
+    env: Env,
+) -> None:
+    # Each warm-up runs after the bridge call that queued it, as the app's own thread waits for one to end.
+    jobs: list[Callable[[], None]] = []
+    ran = 0
+
+    def run_queued() -> None:
+        nonlocal ran
+        while ran < len(jobs):
+            jobs[ran]()
+            ran += 1
+
+    desk = env.desk(warm_up=jobs.append)
+    desk.sign_in("TESTER", PASSWORD)
+    run_queued()
+    deck_id = int(cast("list[Json]", desk.decks()["decks"])[0]["id"])
+    desk.deck(deck_id)
+    run_queued()
+    before = len(jobs)
+
+    # The account's folder holds its decks now, so signing in again starts no sync to warm after.
+    desk.sign_out()
+    desk.sign_in("TESTER", PASSWORD)
+    assert len(jobs) == before
+    desk.deck(deck_id)
+    run_queued()
+    desk.deck(deck_id)
+    assert len(jobs) == before + 1
 
 
 def test_signing_in_and_out_is_logged_without_the_password(

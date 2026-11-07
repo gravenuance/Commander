@@ -585,6 +585,8 @@ class Desk:
         self._rows.clear()
         for memo in self._deck_memos():
             memo.clear()
+        # The new account's first deck view warms its other decks, as the app's first one did.
+        self._viewed = False
         with self._sync_lock:
             self._open_deck = None
             # Deck ids of the account left behind.
