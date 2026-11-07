@@ -502,6 +502,25 @@ def test_sync_counts_a_moxfield_deck_as_one_more_deck_of_the_commander(
     assert "in 4 of 4 most-viewed recent Archidekt and Moxfield decks" in card.reason
 
 
+def test_meta_lists_the_peer_decks_of_both_sites_most_viewed_first_in_text_and_json(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    bracket_3_peers(fake)
+    fake.moxfield.cards[MAGDA.casefold()] = "M1"
+    fake.moxfield.pages["M1"] = [moxfield_page([moxfield_row("mox-1", 800, "2026-10-01T00:00:00Z")])]
+    fake.moxfield.decks["mox-1"] = moxfield_deck("mox-1", [MAGDA], {"Arcane Signet": 1, "Mountain": 30})
+    [report] = json.loads(meta(home, fake, "magda", "--json").out)["reports"]
+    assert [(p["site"], p["views"]) for p in report["peers"]] == [
+        ("Moxfield", 800),
+        ("Archidekt", 600),
+        ("Archidekt", 600),
+        ("Archidekt", 600),
+    ]
+    heading = "Most-viewed Archidekt and Moxfield decks updated since"
+    printed = section(meta(home, fake, "magda").out, heading)
+    assert [line.split()[0] for line in printed] == ["800", "600", "600", "600"]
+
+
 def test_sync_warns_when_moxfield_refuses_and_learns_from_archidekt_alone(
     home: Path, fake: FakeArchidekt
 ) -> None:

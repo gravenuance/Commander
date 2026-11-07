@@ -196,7 +196,7 @@ def analyse(deck: Deck, data: MetaData, profile: Profile, db: CardDb, *, now: Cl
         ),
         own_combos=own_combos(data.own_combos.data or (), pool, db),
         field=tuple(c.stats for c in (data.field.data or ())),
-        peers=tuple(p.deck for p in peer_lists),
+        peers=tuple(sorted((p.deck for p in peer_lists), key=lambda deck: deck.rank)),
         peers_skipped=data.peers.data.skipped if data.peers.data else 0,
         key_cards=keys,
         sources=(

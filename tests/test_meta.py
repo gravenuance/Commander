@@ -24,7 +24,7 @@ from commander.meta import (
 from commander.metacombos import AnswerRole, Stop
 from commander.metadata import CommanderEntries, MetaCommander, MetaData, PeerList, PeerLists
 from commander.models import Deck
-from commander.peersearch import PeerDeck
+from commander.peersearch import PeerDeck, Site
 from commander.spellbook import ComboDetail, ComboPiece
 from commander.tournaments import CommanderStats, DecklistCard, Entry, Tournament
 from conftest import CHAOS_WARP, FILLER_CARDS, LIGHTNING_BOLT, Json, build_card_db, filler_card
@@ -196,6 +196,23 @@ def test_sample_counts_only_the_window_and_flags_thin_data(deck: Deck, db: CardD
     assert sample.basis is Basis.TOP_CUT
     # Five lists are under the ten it takes to judge a card.
     assert sample.thin
+
+
+def test_the_reports_peer_decks_are_most_viewed_first_whichever_site_they_came_from(
+    deck: Deck, db: CardDb
+) -> None:
+    moxfield = PeerList(PeerDeck("mox-1", "deck m", "someone", 800, NOW, 5, Site.MOXFIELD), ("Mind Stone",))
+    peers = [peer(1, ["Mind Stone"], views=600), peer(2, ["Mind Stone"], views=700), moxfield]
+    data = meta_data(TOP_CUT_LISTS, peers)
+    report = analyse(deck, data, Profile(), db, now=lambda: NOW)
+    assert [(p.site, p.id) for p in report.peers] == [
+        (Site.MOXFIELD, "mox-1"),
+        (Site.ARCHIDEKT, 2),
+        (Site.ARCHIDEKT, 1),
+    ]
+    # The gathered order, Archidekt's decks first, still decides which copy of a cross-posted list counts.
+    assert data.peers.data is not None
+    assert [p.deck.id for p in data.peers.data.decks] == [1, 2, "mox-1"]
 
 
 def test_missing_staples_come_from_performing_and_archidekt_lists(deck: Deck, db: CardDb) -> None:
