@@ -25,6 +25,9 @@ CARD_DB_FILE = "cards.sqlite"
 # The suffix of a database being built beside the real one; a crash can leave such a file behind.
 BUILD_SUFFIX = ".building"
 _QUERY_CHUNK = 500
+# Up to this many cards a tag's membership is probed per card; past it, building the whole membership once
+# is quicker (measured on the biggest tags: 1 ms against 3 ms at 100 cards, 3.6 against 3 at 200).
+_PER_CARD_TAG_CHUNK = 150
 _FRONT_FACE_CHUNK = 100
 _FRONT_FACES_QUERY = (
     "SELECT oracle_id, name, mana_cost, cmc, type_line, color_identity, game_changer, commander_legal,"
@@ -720,12 +723,14 @@ class CardDb:
         """The given cards that match the theme."""
         if theme.empty:
             return frozenset()
-        cte, condition, params = _theme_sql(theme)
+        cte, bulk_condition, params = _theme_sql(theme)
+        per_card_condition = _theme_sql(theme, per_card=True)[1]
         unique = sorted(set(oracle_ids))
         found: set[str] = set()
         for start in range(0, len(unique), _QUERY_CHUNK):
             chunk = {f"o{i}": key for i, key in enumerate(unique[start : start + _QUERY_CHUNK])}
             placeholders = ", ".join(f":{name}" for name in chunk)
+            condition = per_card_condition if len(chunk) <= _PER_CARD_TAG_CHUNK else bulk_condition
             where = f"oracle_id IN ({placeholders}) AND ({condition})"
             sql = f"{cte} SELECT oracle_id FROM oracle WHERE {where}"  # noqa: S608 — built from constant fragments and placeholders; every value is bound
             found.update(row[0] for row in self._query_named(sql, {**params, **chunk}))
@@ -990,8 +995,10 @@ def _count_holding(needles: Sequence[str], cells: Sequence[str]) -> int:
     return sum(any(needle in cell for needle in needles) for cell in cells)
 
 
-def _theme_sql(theme: Theme) -> tuple[str, str, dict[str, object]]:
-    """The WITH clause, the condition on oracle and the named parameters that match a theme."""
+def _theme_sql(theme: Theme, *, per_card: bool = False) -> tuple[str, str, dict[str, object]]:
+    """The WITH clause, the condition on oracle and the named parameters that match a theme. A query of a few
+    chosen cards asks per card (`per_card`) whether a tag holds it, which is far quicker than building the
+    tag's whole membership first; one over all cards must not (the whole membership is then the cheaper)."""
     params: dict[str, object] = {}
     parts: list[str] = []
     for index, word in enumerate(theme.types):
@@ -1008,10 +1015,11 @@ def _theme_sql(theme: Theme) -> tuple[str, str, dict[str, object]]:
         names = [f":tag{index}" for index in range(len(theme.tag_ids))]
         params.update({name[1:]: tag_id for name, tag_id in zip(names, theme.tag_ids, strict=True)})
         cte = _SUBTREE_CTE.format(", ".join(names))
+        members = "FROM subtree CROSS JOIN tag_member ON tag_member.tag_id = subtree.tag_id"
         parts.append(
-            "oracle.oracle_id IN"
-            " (SELECT tag_member.oracle_id"
-            " FROM subtree CROSS JOIN tag_member ON tag_member.tag_id = subtree.tag_id)"
+            f"EXISTS (SELECT 1 {members} WHERE tag_member.oracle_id = oracle.oracle_id)"
+            if per_card
+            else f"oracle.oracle_id IN (SELECT tag_member.oracle_id {members})"
         )
     return cte, " OR ".join(parts), params
 

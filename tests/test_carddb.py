@@ -498,6 +498,22 @@ def test_theme_tags_include_their_sub_tags(card_db_file: Path) -> None:
         }
 
 
+@pytest.mark.parametrize("fillers", [0, 10, 147, 148, 300, 600])
+def test_a_tag_matches_the_same_cards_however_many_are_asked_about(card_db_file: Path, fillers: int) -> None:
+    # Few cards are probed one by one against the tag, many are checked against its whole membership.
+    asked = {MAGDA_ORACLE, ARCANE_SIGNET, LIGHTNING_BOLT} | {
+        f"eeeeeeee-0000-4000-8000-{i:012d}" for i in range(1, fillers + 1)
+    }
+    with CardDb(card_db_file) as db:
+        assert db.matching(Theme(tag_ids=(RAMP_TAG,)), asked) == {MAGDA_ORACLE, ARCANE_SIGNET}
+        assert db.matching(Theme(tag_ids=(TUTOR_TAG,)), asked) == {MAGDA_ORACLE}
+        # A type or keyword of the theme still matches beside the tag.
+        assert db.matching(Theme(types=("Instant",), tag_ids=(TUTOR_TAG,)), asked) == {
+            MAGDA_ORACLE,
+            LIGHTNING_BOLT,
+        }
+
+
 def test_a_cycle_in_the_tag_tree_still_ends(card_db_file: Path) -> None:
     # tutor and tutor-artifact list each other as children in the real tag file; Magda is tutor-artifact.
     with CardDb(card_db_file) as db:
