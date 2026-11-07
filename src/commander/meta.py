@@ -15,7 +15,7 @@ from commander.deckprofile import Profile
 from commander.keycards import KeyCard, key_cards
 from commander.manabase import searched_colours
 from commander.metacombos import AnswerRole, DeckAnswers, MetaCombo, combo_answers, infos_answers, meta_combos
-from commander.metadata import MetaCommander, MetaData, PeerList, entries_since, listed_entries
+from commander.metadata import MetaCommander, MetaData, PeerList, PeerLists, entries_since, listed_entries
 from commander.models import COMMANDER_CATEGORY, Deck
 from commander.peersearch import PeerDeck, Site
 from commander.playstyle import NEUTRAL, Fit, PlayStyle, Weight, deck_play_style, staple_weights
@@ -113,6 +113,8 @@ class SourceState:
     source: AnswerSource
     fetched_at: datetime | None
     error: str | None
+    # The peer-deck sites that fell back to a stored copy, with why, when only they did (ADR 0066).
+    stale_sites: tuple[tuple[Site, str], ...] = ()
 
 
 @dataclass(slots=True, frozen=True)
@@ -194,13 +196,13 @@ def analyse(deck: Deck, data: MetaData, profile: Profile, db: CardDb, *, now: Cl
         ),
         own_combos=own_combos(data.own_combos.data or (), pool, db),
         field=tuple(c.stats for c in (data.field.data or ())),
-        peers=tuple(p.deck for p in peer_lists),
+        peers=tuple(sorted((p.deck for p in peer_lists), key=lambda deck: deck.rank)),
         peers_skipped=data.peers.data.skipped if data.peers.data else 0,
         key_cards=keys,
         sources=(
             _state("TopDeck lists", data.lists),
             _state("TopDeck meta", data.field),
-            _state("Archidekt and Moxfield decks", data.peers),
+            _peers_state(data.peers),
             _state("Spellbook combos", data.combos),
             _state("Spellbook deck combos", data.own_combos),
         ),
@@ -334,7 +336,7 @@ def pool_staple_keys(pool: Sequence[PeerList]) -> frozenset[str] | None:
 def all_staples(
     deck: Deck, data: MetaData, db: CardDb, *, is_staple: Callable[[str], bool] | None = None
 ) -> Staples:
-    """The staples the deck misses, uncapped: what the commander's lists or recent Archidekt decks play.
+    """The staples the deck misses, uncapped: what the commander's lists or recent peer decks play.
 
     A caller that judges with is_staple judges over every list read (ADR 0026), so the lists are all the
     window's lists then, not just the top cuts."""
@@ -533,6 +535,11 @@ def _plays(entry: Entry, key: str) -> bool:
 
 def _state[T](name: str, answer: Answer[T]) -> SourceState:
     return SourceState(name, answer.source, answer.fetched_at, answer.error)
+
+
+def _peers_state(answer: Answer[PeerLists]) -> SourceState:
+    stale = answer.data.stale if answer.data else ()
+    return SourceState("Archidekt and Moxfield decks", answer.source, answer.fetched_at, answer.error, stale)
 
 
 def _list_counts(entries: Iterable[Entry]) -> Counter[str]:

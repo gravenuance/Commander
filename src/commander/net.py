@@ -48,6 +48,9 @@ HTTP_TOO_MANY_REQUESTS = 429
 _SUCCESS = range(200, 300)
 _RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 _REDIRECTS = frozenset({301, 302, 303, 307, 308})
+# A page in place of JSON is a challenge only from a server error status; a 4xx page is that status's answer.
+_SERVER_ERROR = 500
+_CHALLENGE_HEADER = "cf-mitigated"
 
 
 class NetworkError(Exception):
@@ -71,6 +74,11 @@ class ResponseTooLargeError(NetworkError):
 
 class NotJsonError(NetworkError):
     """A 200 answer that is not JSON, like the HTML error or bot-challenge page some services serve."""
+
+
+class ChallengePageError(NotJsonError):
+    """A non-2xx answer that is a bot-challenge page, not a failure to retry
+    (`get_json(surface_challenge=True)`)."""
 
 
 class HttpStatusError(NetworkError):
@@ -189,11 +197,14 @@ class Fetcher:
         *,
         headers: Mapping[str, str] | None = None,
         surface_rate_limit: bool = False,
+        surface_challenge: bool = False,
     ) -> object:
         """GET a JSON document, retrying only transient failures.
 
         With surface_rate_limit a 429 is not retried here but raised as RateLimitedError, for a caller that
-        paces its requests for a service with its own rules about how long to wait.
+        paces its requests for a service with its own rules about how long to wait. With surface_challenge a
+        5xx answer that is a page, not JSON, or any non-2xx one that carries a cf-mitigated header, is raised
+        at once as ChallengePageError instead of being retried; a 4xx page keeps its status.
         """
         body = self._send(
             "GET",
@@ -203,6 +214,7 @@ class Fetcher:
             lambda r: _read_capped(r, url, MAX_RESPONSE_BYTES),
             headers=headers,
             surface_rate_limit=surface_rate_limit,
+            surface_challenge=surface_challenge,
         )
         return _decode_json(url, body)
 
@@ -317,12 +329,14 @@ class Fetcher:
         *,
         headers: Mapping[str, str] | None = None,
         surface_rate_limit: bool = False,
+        surface_challenge: bool = False,
     ) -> T:
         import httpx  # noqa: PLC0415
 
         for attempt in range(1, self._max_attempts + 1):
             started = self._monotonic()
             limit_body = b""
+            challenge = False
             try:
                 with self._client.stream(
                     method, url, params=params, json=payload, headers=headers
@@ -330,8 +344,10 @@ class Fetcher:
                     status = response.status_code
                     retry_after = response.headers.get("Retry-After")
                     value = read(response) if status == HTTP_OK else None
-                    if status == HTTP_TOO_MANY_REQUESTS and surface_rate_limit:
-                        limit_body = _read_start(response, ERROR_DETAIL_BYTES)
+                    limit_body = _error_start(
+                        response, surface_rate_limit=surface_rate_limit, surface_challenge=surface_challenge
+                    )
+                    challenge = surface_challenge and _is_challenge(response, limit_body)
             except (httpx.TimeoutException, httpx.TransportError) as error:
                 self._give_up_or_wait(attempt, url, str(error) or type(error).__name__, None)
                 continue
@@ -346,6 +362,9 @@ class Fetcher:
                 log.warning("slow request: %s took %.1fs", url, elapsed)
             if value is not None:
                 return value
+            if challenge:
+                log.warning("%s answered HTTP %d with a challenge page", url, status)
+                raise ChallengePageError(f"{url} answered HTTP {status} with a challenge page, not JSON")
             if status == HTTP_TOO_MANY_REQUESTS and surface_rate_limit:
                 log.info("rate limited: %s (Retry-After: %s)", url, retry_after or "none")
                 header_wait = _retry_after_seconds(retry_after, self._wall_clock())
@@ -652,6 +671,25 @@ def _read_start(response: "httpx.Response", limit: int) -> bytes:
         if len(start) >= limit:
             break
     return start[:limit]
+
+
+def _error_start(response: "httpx.Response", *, surface_rate_limit: bool, surface_challenge: bool) -> bytes:
+    """The start of a non-2xx answer's body, read only for a caller that asked to see 429s or challenges."""
+    status = response.status_code
+    wanted = surface_challenge or (status == HTTP_TOO_MANY_REQUESTS and surface_rate_limit)
+    return _read_start(response, ERROR_DETAIL_BYTES) if wanted and status not in _SUCCESS else b""
+
+
+def _is_challenge(response: "httpx.Response", body: bytes) -> bool:
+    """Whether a non-2xx answer is a bot-challenge page: it says so in a cf-mitigated header, or it is a 5xx
+    whose body is markup, which JSON never starts with. A 4xx page (a private or deleted deck's) is an
+    answer with its status."""
+    status = response.status_code
+    if status in _SUCCESS:
+        return False
+    if _CHALLENGE_HEADER in response.headers:
+        return True
+    return status >= _SERVER_ERROR and body.lstrip().startswith(b"<")
 
 
 def _detail_text(body: bytes) -> str:

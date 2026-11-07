@@ -17,11 +17,12 @@ from commander.moxfield import (
     parse_deck,
     parse_search_page,
 )
-from commander.net import Fetcher, Pacer, RateLimitedError
+from commander.net import Fetcher, HttpStatusError, Pacer, RateLimitedError
 from commander.peersearch import SEARCH_INTERVAL_SECONDS, PeerDeck, Site
 from conftest import FakeMoxfield, load_fixture, moxfield_deck, moxfield_page, moxfield_row
 
 WINOTA = "Winota, Joiner of Forces"
+ETALI = "Etali, Primal Conqueror // Etali, Primal Sickness"
 SINCE = datetime(2026, 8, 16, tzinfo=UTC)
 IN_WINDOW = "2026-10-01T10:00:00.5Z"
 BEFORE_WINDOW = "2026-08-15T23:59:59Z"
@@ -65,6 +66,24 @@ def test_a_search_page_leaves_out_decks_that_are_not_public_commander_ones() -> 
     assert not more
 
 
+def test_a_search_page_whose_decks_lack_a_visibility_is_refused_not_emptied() -> None:
+    page = load_fixture("moxfield_search.json")
+    for deck in page["data"]:
+        del deck["visibility"]
+    with pytest.raises(ShapeError, match=r"page\.data\[0\]"):
+        parse_search_page(page)
+
+
+def test_a_search_of_decks_without_a_visibility_is_a_moxfield_error() -> None:
+    fake = FakeMoxfield()
+    page = load_fixture("moxfield_search.json")
+    for deck in page["data"]:
+        del deck["visibility"]
+    fake.pages["W1"] = [page]
+    with pytest.raises(MoxfieldError, match="unexpected search answer"):
+        search_for(fake).popular_decks("W1", brackets=(None,), since=SINCE, label="winota")
+
+
 def test_a_search_page_without_view_counts_is_refused() -> None:
     page = load_fixture("moxfield_search.json")
     del page["data"][2]["viewCount"]
@@ -104,17 +123,30 @@ def test_a_deck_of_another_format_is_refused() -> None:
 
 def test_the_card_search_gives_the_exact_matchs_id_only_for_the_name_asked() -> None:
     raw = load_fixture("moxfield_card_search.json")
-    assert parse_card_id(raw, {WINOTA.casefold()}) == "Er9bV"
-    assert parse_card_id(raw, {"winota"}) is None
-    assert parse_card_id({"hasMore": False, "totalCards": 0}, {WINOTA.casefold()}) is None
+    assert parse_card_id(raw, WINOTA) == "Er9bV"
+    assert parse_card_id(raw, WINOTA.upper()) == "Er9bV"
+    assert parse_card_id(raw, "Winota") is None
+    assert parse_card_id({"hasMore": False, "totalCards": 0}, WINOTA) is None
 
 
-def test_a_double_faced_commander_is_looked_up_by_its_front_face() -> None:
+def test_the_card_search_names_a_double_faced_card_by_both_faces() -> None:
+    raw = load_fixture("moxfield_card_search_dfc.json")
+    assert parse_card_id(raw, ETALI) == "BXBrR"
+    assert parse_card_id(raw, "Etali, Primal Conqueror") is None
+
+
+def test_a_card_search_that_matched_nothing_finds_no_card() -> None:
+    # Moxfield's real answer to `!"Etali, Primal Conqueror"`, sent as HTTP 200.
+    raw = {"status": 404, "code": "not_found", "details": "Your query didn't match any cards."}
+    assert parse_card_id(raw, ETALI) is None
+
+
+def test_a_double_faced_commander_is_looked_up_by_its_full_name() -> None:
+    # Moxfield matches `!"…"` against the whole name only, so a front face alone finds nothing.
     fake = FakeMoxfield()
-    fake.cards["esika, queen of myriads"] = "Ek1"
-    found = search_for(fake).commander_card_id("Esika, Queen of Myriads // The Prismatic Bridge")
-    assert found == "Ek1"
-    assert fake.requests[0].params["q"] == '!"Esika, Queen of Myriads"'
+    fake.cards[ETALI.casefold()] = "BXBrR"
+    assert search_for(fake).commander_card_id(ETALI) == "BXBrR"
+    assert fake.requests[0].params["q"] == f'!"{ETALI}"'
 
 
 def test_each_bracket_is_searched_by_views_and_pages_until_the_last() -> None:
@@ -197,6 +229,19 @@ def test_a_challenge_page_in_place_of_a_search_page_blocks_too() -> None:
     assert len(fake.requests) == 1
 
 
+def test_a_403_page_on_one_deck_read_is_a_refusal_of_that_deck_not_a_challenge() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/v3/decks/all/private-one"):
+            return httpx.Response(403, text="<html>This deck is private</html>")
+        return httpx.Response(200, json=moxfield_deck("fine", [WINOTA], {"Sol Ring": 1}))
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    search = MoxfieldSearch(Fetcher(client, max_attempts=1), Pacer(0.0))
+    with pytest.raises(MoxfieldError, match="HTTP 403"):
+        search.deck("private-one")
+    assert search.deck("fine").cards == ("Sol Ring", WINOTA)
+
+
 def test_a_403_on_one_deck_read_skips_that_deck_and_blocks_nothing() -> None:
     fake = FakeMoxfield()
     fake.decks["fine"] = moxfield_deck("fine", [WINOTA], {"Sol Ring": 1})
@@ -210,15 +255,52 @@ def test_a_403_on_one_deck_read_skips_that_deck_and_blocks_nothing() -> None:
     assert search.commander_card_id(WINOTA) == "W1"
 
 
-def test_a_challenge_page_in_place_of_one_deck_skips_that_deck_and_blocks_nothing() -> None:
+def test_a_challenge_page_in_place_of_one_deck_blocks_every_later_request_of_the_run() -> None:
     fake = FakeMoxfield()
+    fake.decks["fine"] = moxfield_deck("fine", [WINOTA], {"Sol Ring": 1})
     search = search_for(fake)
     fake.challenge = True
-    with pytest.raises(MoxfieldError, match="odd-one"):
+    with pytest.raises(MoxfieldBlockedError, match="challenge"):
         search.deck("odd-one")
     fake.challenge = False
-    fake.cards[WINOTA.casefold()] = "W1"
-    assert search.commander_card_id(WINOTA) == "W1"
+    with pytest.raises(MoxfieldBlockedError):
+        search.deck("fine")
+    with pytest.raises(MoxfieldBlockedError):
+        search.commander_card_id(WINOTA)
+    assert len(fake.requests) == 1
+
+
+def test_three_refused_deck_reads_in_a_row_block_the_run_and_a_read_between_resets_the_count() -> None:
+    fake = FakeMoxfield()
+    fake.decks["fine"] = moxfield_deck("fine", [WINOTA], {"Sol Ring": 1})
+    search = search_for(fake)
+    fake.deck_status = 403
+    for _ in range(2):
+        with pytest.raises(MoxfieldError):
+            search.deck("private")
+    fake.deck_status = 200
+    assert search.deck("fine").cards == ("Sol Ring", WINOTA)
+    fake.deck_status = 403
+    for _ in range(2):
+        with pytest.raises(MoxfieldError):
+            search.deck("private")
+    with pytest.raises(MoxfieldBlockedError, match="HTTP 403"):
+        search.deck("private")
+    sent = len(fake.requests)
+    with pytest.raises(MoxfieldBlockedError):
+        search.commander_card_id(WINOTA)
+    with pytest.raises(MoxfieldBlockedError):
+        search.deck("fine")
+    assert len(fake.requests) == sent == 6
+
+
+def test_a_deck_of_an_odd_shape_never_counts_toward_a_block() -> None:
+    fake = FakeMoxfield()
+    fake.decks["odd"] = {"format": "commander"}
+    search = search_for(fake)
+    for _ in range(4):
+        with pytest.raises(MoxfieldError):
+            search.deck("odd")
 
 
 class Limited:
@@ -268,6 +350,41 @@ def test_a_search_page_is_retried_after_a_429_too() -> None:
     decks = limited.search().popular_decks("W1", brackets=(3,), since=SINCE, label="winota")
     assert limited.at == [0.0, 60.0]
     assert len(decks) == 12
+
+
+CHALLENGE_PAGE = "<!DOCTYPE html><html><title>Just a moment...</title></html>"
+
+
+@pytest.mark.parametrize(
+    "challenge",
+    [
+        httpx.Response(503, text=CHALLENGE_PAGE),
+        httpx.Response(503, json={"ok": False}, headers={"cf-mitigated": "challenge"}),
+    ],
+    ids=["html body", "cf-mitigated header"],
+)
+def test_a_challenge_served_as_503_is_not_retried_and_blocks_the_run(challenge: httpx.Response) -> None:
+    limited = Limited(challenge, card_search_answer())
+    search = limited.search()
+    with pytest.raises(MoxfieldBlockedError, match="challenge"):
+        search.commander_card_id(WINOTA)
+    with pytest.raises(MoxfieldBlockedError):
+        search.deck("abc")
+    assert limited.at == [0.0]
+
+
+def test_a_503_that_is_no_challenge_is_still_retried() -> None:
+    limited = Limited(httpx.Response(503, json={"ok": False}), card_search_answer())
+    assert limited.search().commander_card_id(WINOTA) == "Er9bV"
+    assert len(limited.at) == 2
+
+
+def test_a_deleted_deck_whose_404_is_a_page_is_no_challenge() -> None:
+    limited = Limited(httpx.Response(404, text=CHALLENGE_PAGE), card_search_answer())
+    search = limited.search()
+    with pytest.raises(HttpStatusError, match="404"):
+        search.deck("gone")
+    assert search.commander_card_id(WINOTA) == "Er9bV"
 
 
 def test_a_second_429_gives_up_on_moxfield_for_the_rest_of_the_run() -> None:
@@ -415,6 +532,20 @@ def test_a_stale_site_makes_the_joined_answer_stale_and_as_old_as_the_older() ->
     assert joined.fetched_at == datetime(2026, 10, 1, tzinfo=UTC)
     assert joined.data is not None
     assert joined.data.skipped == 1
+    assert joined.data.missing == ()
+
+
+def test_a_site_whose_refresh_failed_is_named_stale_while_its_stored_decks_still_count() -> None:
+    older = Answer(
+        PeerLists((peer(Site.MOXFIELD, "m1", (WINOTA,)),), 0),
+        AnswerSource.STALE,
+        datetime(2026, 10, 1, tzinfo=UTC),
+        "refused",
+    )
+    joined = joined_peers(answer(peer(Site.ARCHIDEKT, 1, (WINOTA, "Sol Ring"))), older)
+    assert joined.data is not None
+    assert [p.deck.id for p in joined.data.decks] == [1, "m1"]
+    assert joined.data.stale == ((Site.MOXFIELD, "refused"),)
     assert joined.data.missing == ()
 
 

@@ -1,10 +1,12 @@
 import logging
+import os
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
+from commander.background import in_background
 from commander.deckcache import (
     NOT_FETCHED,
     Accepted,
@@ -13,6 +15,7 @@ from commander.deckcache import (
     DeckCache,
     NotFetchedError,
     cached_answer,
+    logging_reads,
     request_key,
 )
 from commander.jsonshape import ShapeError
@@ -209,3 +212,46 @@ def test_the_newest_of_an_answer_and_its_accepted_ones_stands_and_a_fetch_leaves
     stored = cache.load("alike", request_key(narrow))
     assert stored is not None
     assert stored.data == "new alike"
+
+
+def test_the_loads_inside_a_read_log_are_listed_with_their_states_on_every_thread_and_a_missing_file_too(
+    tmp_path: Path,
+) -> None:
+    cache = cache_in(tmp_path)
+    cache.save("kept", request_key(REQUEST), "answer", NOW)
+    with logging_reads() as reads:
+        cache.load("kept", request_key(REQUEST))
+        in_background(lambda: cache.load("absent", request_key(REQUEST)), name="test-load").result()
+    cache.load("outside", request_key(REQUEST))
+
+    taken = reads.taken()
+
+    assert [path.name for path, _ in taken.states] == ["absent.json", "kept.json"]
+    assert taken.states[0][1] == "-"
+    assert taken.current()
+
+
+def test_a_file_read_is_no_longer_current_once_one_of_its_files_is_saved_rewritten_or_removed(
+    tmp_path: Path,
+) -> None:
+    cache = cache_in(tmp_path)
+    cache.save("kept", request_key(REQUEST), "answer", NOW)
+    with logging_reads() as reads:
+        cache.load("kept", request_key(REQUEST))
+        cache.load("absent", request_key(REQUEST))
+    taken = reads.taken()
+    assert taken.current()
+
+    cache.save("absent", request_key(REQUEST), "answer", NOW)
+    assert not taken.current()
+    (tmp_path / "absent.json").unlink()
+    assert taken.current()
+
+    kept = tmp_path / "kept.json"
+    changed = kept.stat().st_mtime_ns + 1_000_000_000
+    os.utime(kept, ns=(changed, changed))
+    assert not taken.current()
+    os.utime(kept, ns=(changed - 1_000_000_000, changed - 1_000_000_000))
+    assert taken.current()
+    kept.unlink()
+    assert not taken.current()

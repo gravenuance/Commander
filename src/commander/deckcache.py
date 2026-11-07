@@ -6,13 +6,15 @@ import logging
 import os
 import re
 import threading
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path
 
-from commander.fsutil import write_text_atomic
+from commander.fsutil import files_stamp, write_text_atomic
 from commander.jsonshape import ShapeError, as_object, req_str
 
 log = logging.getLogger(__name__)
@@ -104,6 +106,53 @@ class CachedAnswer[T]:
     fetched_at: datetime
 
 
+@dataclass(slots=True, frozen=True)
+class FilesRead:
+    """The cache files a piece of work read, with each one's state (`files_stamp`) when first looked at, so a
+    change after the look is never missed. A missing file is a read too: saving it changes the answer."""
+
+    states: tuple[tuple[Path, str], ...]
+
+    @property
+    def key(self) -> str:
+        return "|".join(f"{path}={state}" for path, state in self.states)
+
+    def current(self) -> bool:
+        """Whether none of the files has changed since they were read."""
+        return all(files_stamp(path.parent, (path.name,)) == state for path, state in self.states)
+
+
+class ReadLog:
+    """The cache items loaded so far (`logging_reads`)."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._states: dict[Path, str] = {}
+
+    def note(self, path: Path) -> None:
+        state = files_stamp(path.parent, (path.name,))
+        with self._lock:
+            self._states.setdefault(path, state)
+
+    def taken(self) -> FilesRead:
+        with self._lock:
+            return FilesRead(tuple(sorted(self._states.items())))
+
+
+_reads: ContextVar[ReadLog | None] = ContextVar("cache_reads", default=None)
+
+
+@contextmanager
+def logging_reads() -> Generator[ReadLog]:
+    """Log every cache item loaded inside, on this thread and on those started from it (`in_background`)."""
+    read_log = ReadLog()
+    token = _reads.set(read_log)
+    try:
+        yield read_log
+    finally:
+        _reads.reset(token)
+
+
 class DeckCache[T]:
     """One JSON file per deck (or per named item); unreadable files, other versions and other requests count
     as missing."""
@@ -129,6 +178,8 @@ class DeckCache[T]:
 
     def load(self, item: int | str, key: str) -> CachedAnswer[T] | None:
         path = self.file(item)
+        if (read_log := _reads.get()) is not None:
+            read_log.note(path)
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except FileNotFoundError:

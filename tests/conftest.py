@@ -517,9 +517,9 @@ class FakeMoxfield:
     """Answers Moxfield's card search, deck search and deck reads from dicts, as the real API does.
 
     `cards` holds each known card's id by lower-cased name; `pages` the search pages by commander card id, in
-    page order; `decks` the decks by public id. `status` makes every answer that status instead (403 is how
-    Moxfield refuses), `deck_status` only the deck reads, and `challenge` makes every answer a 200 HTML page,
-    as a bot challenge does. Every request's path and query is recorded.
+    page order; `decks` the decks by public id. `status` makes every answer that status instead, with a JSON
+    body (403 is how Moxfield refuses), `deck_status` only the deck reads, and `challenge` makes every answer
+    a 200 HTML page, as a bot challenge does. Every request's path and query is recorded.
     """
 
     def __init__(self) -> None:
@@ -537,9 +537,9 @@ class FakeMoxfield:
         if self.challenge:
             return httpx.Response(200, text="<html>Just a moment...</html>")
         if self.status != HTTP_OK:
-            return httpx.Response(self.status, text="<html>blocked</html>")
+            return httpx.Response(self.status, json={"message": "refused"})
         if self.deck_status != HTTP_OK and path.startswith("/v3/decks/all/"):
-            return httpx.Response(self.deck_status, text="<html>blocked</html>")
+            return httpx.Response(self.deck_status, json={"message": "refused"})
         if path == "/v2/cards/search":
             name = params["q"].removeprefix('!"').removesuffix('"')
             card_id = self.cards.get(name.casefold())

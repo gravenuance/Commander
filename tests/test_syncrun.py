@@ -676,15 +676,17 @@ def sync_with_unread_sites(
     *,
     own: tuple[tuple[Site, str], ...] = (),
     alike: tuple[tuple[Site, str], ...] = (),
+    own_stale: tuple[tuple[Site, str], ...] = (),
+    alike_stale: tuple[tuple[Site, str], ...] = (),
 ) -> tuple[dict[int, str], SyncOutcome, list[object]]:
-    """A sync of the three decks whose peer pools lack the sites named; their states, outcome and what each
-    deck's re-judge was given as the alike pool."""
+    """A sync of the three decks whose peer pools lack the sites named (or hold only a stale copy of them);
+    their states, outcome and what each deck's re-judge was given as the alike pool."""
     stub_meta(monkeypatch)
 
     def gather(*_: object, **__: object) -> object:
         return SimpleNamespace(
             lists=SimpleNamespace(data=1, error=None, key_problem=False),
-            peers=SimpleNamespace(data=PeerLists((), 0, own)),
+            peers=SimpleNamespace(data=PeerLists((), 0, own, own_stale)),
         )
 
     stub_gather(monkeypatch, gather)
@@ -695,7 +697,7 @@ def sync_with_unread_sites(
         return []
 
     def read_pools(*_: object, **__: object) -> AdjacentDecks:
-        return AdjacentDecks((), (), unread=alike)
+        return AdjacentDecks((), (), unread=alike, stale=alike_stale)
 
     monkeypatch.setattr(syncrun, "rejudge_ideas", rejudge)
     monkeypatch.setattr(syncrun, "gather_idea_pools", read_pools)
@@ -739,6 +741,22 @@ def test_a_site_unread_for_own_and_alike_decks_is_one_warning_a_site(
     assert len([w for w in outcome.warnings if w.startswith("Moxfield decks could not be read")]) == 1
     assert len([w for w in outcome.warnings if w.startswith("Archidekt decks could not be read")]) == 1
     assert pools == [()] * 3
+
+
+def test_a_site_whose_refresh_failed_is_warned_of_once_and_leaves_no_deck_incomplete(
+    tmp_path: Path, raw_deck: Json, card_db_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = three_decks(tmp_path, raw_deck, card_db_file)
+    own = ((Site.MOXFIELD, "Moxfield refused cmdr's requests (HTTP 403)"),)
+    alike = ((Site.MOXFIELD, "refused"), (Site.ARCHIDEKT, "429"))
+    states, outcome, _ = sync_with_unread_sites(tmp_path, fake, monkeypatch, own_stale=own, alike_stale=alike)
+    assert states == {101: "done", 102: "done", 103: "done"}
+    warning = (
+        "Moxfield decks could not be refreshed (Moxfield refused cmdr's requests (HTTP 403)); "
+        "ideas use the copy read earlier"
+    )
+    assert [w for w in outcome.warnings if w.startswith("Moxfield decks")] == [warning]
+    assert len([w for w in outcome.warnings if w.startswith("Archidekt decks could not be refreshed")]) == 1
 
 
 def test_a_deck_below_bracket_4_merges_without_waiting_for_topdeck_and_one_at_bracket_4_does_wait(

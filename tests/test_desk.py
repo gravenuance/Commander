@@ -328,6 +328,18 @@ def test_the_cut_rules_are_kept_between_views_until_the_card_data_is_replaced(
     assert calls["deck_cut_rules"] == 1
 
 
+def test_the_cut_rules_take_the_decks_share_table_the_view_works_out_instead_of_a_second_one(
+    desk: Desk, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    desk_calls = count_calls(monkeypatch, desk_module, "weighted_shares")
+    rules_calls = count_calls(monkeypatch, targets_module, "weighted_shares")
+
+    desk.deck(DECK)
+
+    assert desk_calls["weighted_shares"] == 1
+    assert rules_calls["weighted_shares"] == 0
+
+
 def test_the_cut_rules_get_the_decks_cached_estimate_and_are_rebuilt_when_it_changes(
     desk: Desk, settings: DeskSettings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1754,6 +1766,105 @@ def test_the_meta_is_worked_out_again_when_the_answers_the_profile_or_the_day_ch
     assert calls["analyse"] == 3
 
 
+def kept_views(desk: Desk) -> None:
+    """Ask for everything the desk keeps per deck, as the page does when it opens a deck."""
+    assert "error" not in desk.deck(DECK)
+    assert "error" not in desk.meta(DECK)
+    assert "error" not in desk.mana(DECK)
+
+
+def fetched_meta_files(settings: DeskSettings, fake: FakeArchidekt) -> list[Path]:
+    """Fetch the meta as a sync does, then drop Moxfield's peer decks, as if that site were not fetched yet:
+    every cache file the pool can read, one of them missing."""
+    fake.topdeck.events = [*magda_events(), *kinnan_events()]
+    fetch_meta(settings, fake)
+    folder = settings.cache / CACHE_FOLDER
+    [moxfield] = folder.glob("moxfield-magda-*.json")
+    files = sorted(folder.glob("*.json"))
+    moxfield.unlink()
+    assert len(files) >= 4
+    return files
+
+
+def test_a_meta_save_for_another_deck_leaves_the_kept_answers_of_this_one_alone(
+    desk: Desk, settings: DeskSettings, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fetched_meta_files(settings, fake)
+    kept_views(desk)
+    calls = count_calls(
+        monkeypatch, desk_module, "gather_for", "deck_cut_rules", "weighted_shares", "analyse"
+    )
+    mana = count_calls(monkeypatch, Desk, "_worked_out_mana")
+    polled = desk.stamps()["meta"]
+
+    # A sync saving another commander's peer decks: a new file in the folder, then rewritten.
+    other = settings.cache / CACHE_FOLDER / "archidekt-other-commander-4-12345678.json"
+    other.write_text("{}", encoding="utf-8")
+    rewritten = other.stat().st_mtime_ns + 1_000_000_000
+    os.utime(other, ns=(rewritten, rewritten))
+    kept_views(desk)
+
+    assert sum(calls.values()) + sum(mana.values()) == 0
+    # The page's own poll of the whole folder still sees the save.
+    assert desk.stamps()["meta"] != polled
+
+
+def test_a_save_of_any_file_the_deck_read_rebuilds_what_is_made_of_it(
+    desk: Desk, settings: DeskSettings, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files = fetched_meta_files(settings, fake)
+    kept_views(desk)
+    calls = count_calls(monkeypatch, desk_module, "deck_cut_rules", "weighted_shares", "analyse")
+    mana = count_calls(monkeypatch, Desk, "_worked_out_mana")
+    # Moxfield's file is saved for the first time; a file saved for the first time changes the answer as
+    # much as one rewritten.
+    moxfield = settings.cache / CACHE_FOLDER / "moxfield-magda-brazen-outlaw-5-b5ce4edd.json"
+
+    for number, path in enumerate([*files, moxfield], start=1):
+        if path.exists():
+            changed = path.stat().st_mtime_ns + 1_000_000_000
+            os.utime(path, ns=(changed, changed))
+        else:
+            path.write_text("{}", encoding="utf-8")
+        kept_views(desk)
+        assert dict(calls) == dict.fromkeys(("deck_cut_rules", "weighted_shares", "analyse"), number), (
+            path.name
+        )
+        assert dict(mana) == {"_worked_out_mana": number}, path.name
+
+
+def test_the_gather_opens_only_meta_files_a_save_is_seen_for_and_never_lists_the_folder(
+    desk: Desk, settings: DeskSettings, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files = fetched_meta_files(settings, fake)
+    folder = settings.cache / CACHE_FOLDER
+    touched: set[Path] = set()
+    listed: list[str] = []
+    opened = cast("Callable[..., Any]", Path.open)
+
+    def spy_open(self: Path, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        if folder in self.parents:
+            touched.add(self)
+        return opened(self, *args, **kwargs)
+
+    def spy_listing(original: Callable[..., Any]) -> Callable[..., Any]:
+        def listing(target: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+            if Path(target) == folder:
+                listed.append(str(target))
+            return original(target, *args, **kwargs)
+
+        return listing
+
+    monkeypatch.setattr(Path, "open", spy_open)
+    monkeypatch.setattr(os, "scandir", spy_listing(os.scandir))
+    monkeypatch.setattr(os, "listdir", spy_listing(os.listdir))
+    desk.meta(DECK)
+
+    assert touched
+    assert touched <= {*files, folder / "moxfield-magda-brazen-outlaw-5-b5ce4edd.json"}
+    assert listed == []
+
+
 def test_each_board_card_comes_with_the_deck_cards_it_could_replace(desk: Desk) -> None:
     desk.propose(DECK, "Lightning Bolt")
     [bolt] = items(desk.deck(DECK), "cards")
@@ -1965,7 +2076,11 @@ def _mana_to_board(desk: Desk) -> Json:
     return desk.mana_to_board(DECK)
 
 
-def deferred_desk(settings: DeskSettings, fake: FakeArchidekt) -> tuple[Desk, list[Callable[[], None]]]:
+def deferred_desk(
+    settings: DeskSettings,
+    fake: FakeArchidekt,
+    warm_up: Callable[[Callable[[], None]], object] | None = None,
+) -> tuple[Desk, list[Callable[[], None]]]:
     """A desk whose sync waits in the returned list, as if still running until the test runs it."""
     pending: list[Callable[[], None]] = []
     desk = Desk(
@@ -1975,6 +2090,7 @@ def deferred_desk(settings: DeskSettings, fake: FakeArchidekt) -> tuple[Desk, li
         now=lambda: NOW,
         pacer_factory=lambda _: Pacer(0),
         background=pending.append,
+        warm_up=warm_up,
     )
     return desk, pending
 
@@ -2307,6 +2423,200 @@ def test_a_sync_without_an_open_deck_goes_by_views(
     desk, pending = deferred_desk(settings, fake)
     ViewScores(settings.cache / "views.json", lambda: NOW).record_open(20001)
     assert sync_with_stubs(desk, pending, monkeypatch).request_order() == [20001, DECK, 20002, 20003]
+
+
+def warming_desk(settings: DeskSettings, fake: FakeArchidekt) -> tuple[Desk, list[Callable[[], None]]]:
+    """A desk whose warm-up waits in the returned list until the test runs it."""
+    jobs: list[Callable[[], None]] = []
+    desk = Desk(
+        settings,
+        client_factory=fake.client,
+        token_store=MemoryTokenStore({"tester": REFRESH_TOKEN}),
+        now=lambda: NOW,
+        pacer_factory=lambda _: Pacer(0),
+        warm_up=jobs.append,
+    )
+    return desk, jobs
+
+
+def test_the_first_deck_view_queues_one_warm_up_that_leaves_every_deck_as_a_cold_view_makes_it(
+    settings: DeskSettings, fake: FakeArchidekt, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_extra_decks(settings, fake, raw_deck)
+    desk, jobs = warming_desk(settings, fake)
+    assert jobs == []
+    desk.deck(DECK)
+    desk.deck(DECK)
+    assert len(jobs) == 1
+
+    jobs[0]()
+    calls = count_calls(
+        monkeypatch, desk_module, "deck_cut_rules", "weighted_shares", "read_previews", "gather_for"
+    )
+    warmed = {deck_id: desk.deck(deck_id) for deck_id in EXTRA_DECKS}
+    cold = make_desk(settings, fake)
+
+    assert sum(calls.values()) == 0
+    assert warmed == {deck_id: cold.deck(deck_id) for deck_id in EXTRA_DECKS}
+
+
+def test_the_warm_up_goes_by_the_decks_in_the_lists_order(
+    settings: DeskSettings, fake: FakeArchidekt, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_extra_decks(settings, fake, raw_deck)
+    desk, jobs = warming_desk(settings, fake)
+    desk.deck(DECK)
+    order: list[int] = []
+    rules_for = desk_module.deck_cut_rules
+
+    def spy(deck: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        order.append(deck.id)
+        return rules_for(deck, *args, **kwargs)
+
+    monkeypatch.setattr(desk_module, "deck_cut_rules", spy)
+    jobs[0]()
+
+    assert order == [int(row["id"]) for row in items(desk.decks(), "decks") if row["id"] != DECK]
+
+
+def test_the_warm_up_waits_for_a_bridge_call_that_runs_and_goes_on_once_it_ends(
+    settings: DeskSettings, fake: FakeArchidekt, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_extra_decks(settings, fake, raw_deck)
+    desk, jobs = warming_desk(settings, fake)
+    desk.deck(DECK)
+    in_call, release, warming = threading.Event(), threading.Event(), threading.Event()
+    rules_for = desk_module.deck_cut_rules
+
+    def blocked() -> Json:
+        in_call.set()
+        assert release.wait(WAIT_SECONDS)
+        return {}
+
+    def spy(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        warming.set()
+        return rules_for(*args, **kwargs)
+
+    monkeypatch.setattr(desk, "_sync_json", blocked)
+    monkeypatch.setattr(desk_module, "deck_cut_rules", spy)
+    call = threading.Thread(target=desk.account)
+    call.start()
+    assert in_call.wait(WAIT_SECONDS)
+    warm = threading.Thread(target=jobs[0])
+    warm.start()
+
+    assert not warming.wait(0.3)
+    release.set()
+    call.join(WAIT_SECONDS)
+    assert warming.wait(WAIT_SECONDS)
+    warm.join(WAIT_SECONDS)
+    assert not warm.is_alive()
+
+
+def test_closing_the_desk_stops_the_warm_up_before_its_next_deck_and_queues_no_more(
+    settings: DeskSettings, fake: FakeArchidekt, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_extra_decks(settings, fake, raw_deck)
+    desk, jobs = warming_desk(settings, fake)
+    desk.deck(DECK)
+    monkeypatch.setattr(desk_module, "WARM_CLOSE_SECONDS", 0)
+    started: list[object] = []
+    rules_for = desk_module.deck_cut_rules
+
+    def spy(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        started.append(args[0])
+        desk.close()
+        return rules_for(*args, **kwargs)
+
+    monkeypatch.setattr(desk_module, "deck_cut_rules", spy)
+    jobs[0]()
+    assert len(started) == 1
+
+    desk.deck(DECK)
+    assert len(jobs) == 1
+
+
+def test_the_warm_up_queues_again_when_a_sync_ends(
+    settings: DeskSettings, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    jobs: list[Callable[[], None]] = []
+    desk, pending = deferred_desk(settings, fake, warm_up=jobs.append)
+    sync_with_stubs(desk, pending, monkeypatch)
+    assert len(jobs) == 1
+
+    jobs[0]()
+    desk.deck(DECK)
+    assert len(jobs) == 2
+
+
+def test_the_warm_up_leaves_the_card_data_alone_until_the_sync_has_put_it_in_place(
+    settings: DeskSettings, fake: FakeArchidekt, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An open reader of the card data makes the sync's swap of it fail on Windows.
+    with_extra_decks(settings, fake, raw_deck)
+    jobs: list[Callable[[], None]] = []
+    desk, pending = deferred_desk(settings, fake, warm_up=jobs.append)
+    stub_meta(monkeypatch)
+    calls = count_calls(monkeypatch, desk_module, "deck_cut_rules")
+    during: list[int] = []
+
+    def download(*_: object, **__: object) -> CardRefresh:
+        desk.deck(DECK)
+        [warm] = jobs
+        before = calls["deck_cut_rules"]
+        warm()
+        during.append(calls["deck_cut_rules"] - before)
+        return DOWNLOADED
+
+    monkeypatch.setattr(syncrun, "refresh_card_db", download)
+    desk.sync()
+    [start] = pending
+    start()
+
+    assert during == [0]
+    [_, after_sync] = jobs
+    after_sync()
+    assert calls["deck_cut_rules"] == 1 + len(EXTRA_DECKS)
+
+
+def test_a_new_commander_reads_its_own_meta_though_no_cached_answer_changed(
+    settings: DeskSettings, fake: FakeArchidekt, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fetch_meta(settings, fake)
+    desk = make_desk(settings, fake)
+    assert "error" not in desk.meta(DECK)
+    for entry in raw_deck["cards"]:
+        name = entry["card"]["oracleCard"]["name"]
+        if name == "Magda, Brazen Outlaw":
+            entry["categories"] = ["Creature"]
+        elif name == "Tempestra, Dame of Games":
+            entry["categories"] = ["Commander"]
+    raw_deck["updatedAt"] = "2030-01-01T00:00:00.000000Z"
+    fake.put(raw_deck)
+    sync = ["sync", "--no-cards", "--no-ideas", "--workspace", str(settings.workspace)]
+    assert run(sync, settings.workspace.parent, fake).code == 0
+    calls = count_calls(monkeypatch, desk_module, "gather_for")
+
+    desk.meta(DECK)
+    assert calls["gather_for"] == 1
+
+
+def test_the_traffic_lets_a_waiter_through_once_no_call_runs_or_it_is_told_to_stop() -> None:
+    traffic = desk_module.Traffic()
+    stop = threading.Event()
+    assert traffic.wait_idle(stop)
+
+    through = threading.Event()
+    with traffic.call():
+        waiter = threading.Thread(target=lambda: through.set() if traffic.wait_idle(stop) else None)
+        waiter.start()
+        assert not through.wait(0.3)
+    assert through.wait(WAIT_SECONDS)
+    waiter.join(WAIT_SECONDS)
+
+    stop.set()
+    with traffic.call():
+        assert not traffic.wait_idle(stop)
 
 
 def test_the_apps_sync_pulls_a_private_deck_and_a_later_signed_out_one_warns_and_keeps_it(

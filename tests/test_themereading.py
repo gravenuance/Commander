@@ -29,6 +29,7 @@ from commander.themewants import (
     preview_facts,
     spec_wants,
     theme_wants,
+    type_words,
     want_sizes,
 )
 from conftest import (
@@ -230,6 +231,31 @@ def test_a_commander_counting_small_creatures_has_cards_that_grow_them_for_good_
     ):
         assert not GROWS_CREATURES.matches(replace(quark, text=text)), text
     assert GROWS_CREATURES.matches(replace(quark, slugs=frozenset({"anthem"})))
+
+
+def test_a_want_needs_one_of_its_kinds_and_every_limit_whether_or_not_given_the_type_words() -> None:
+    rule = Want(
+        "big treasure maker",
+        types=("Dragon",),
+        text=r"\bTreasure\b",
+        not_types=("Legendary",),
+        max_power=3,
+        min_mana_value=4,
+    )
+    card = CardFacts("Creature — Elf", 5.0, "2", "Create a Treasure token.", frozenset(), frozenset())
+    cases = [
+        (card, True),
+        (replace(card, text="Draw a card."), False),
+        (replace(card, type_line="Creature — Dragon", text="Draw a card."), True),
+        (replace(card, type_line="Legendary Creature — Dragon"), False),
+        (replace(card, power="4"), False),
+        (replace(card, power="*"), False),
+        (replace(card, mana_value=3.0), False),
+        (replace(card, mana_value=4.0), True),
+    ]
+    for facts, expected in cases:
+        assert rule.matches(facts) is expected, facts
+        assert rule.matches(facts, type_words(facts.type_line)) is expected, facts
 
 
 def test_a_wants_size_is_the_commander_legal_cards_it_matches(db: CardDb) -> None:

@@ -1,0 +1,34 @@
+{
+ "hasMore": false,
+ "totalCards": 1,
+ "exactMatch": {
+  "id": "BXBrR",
+  "uniqueCardId": "YMnOK",
+  "scryfall_id": "95c14c4d-6c16-4826-8d93-d89ad04aee09",
+  "set": "mom",
+  "name": "Etali, Primal Conqueror // Etali, Primal Sickness",
+  "cn": "137",
+  "layout": "transform",
+  "type_line": "Legendary Creature — Elder Dinosaur // Legendary Creature — Phyrexian Elder Dinosaur",
+  "color_identity": [
+   "G",
+   "R"
+  ]
+ },
+ "data": [
+  {
+   "id": "BXBrR",
+   "uniqueCardId": "YMnOK",
+   "scryfall_id": "95c14c4d-6c16-4826-8d93-d89ad04aee09",
+   "set": "mom",
+   "name": "Etali, Primal Conqueror // Etali, Primal Sickness",
+   "cn": "137",
+   "layout": "transform",
+   "type_line": "Legendary Creature — Elder Dinosaur // Legendary Creature — Phyrexian Elder Dinosaur",
+   "color_identity": [
+    "G",
+    "R"
+   ]
+  }
+ ]
+}

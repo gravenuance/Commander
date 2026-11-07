@@ -54,7 +54,8 @@ What the API offers, from a dozen honest, paced requests on 2026-11-07 (User-Age
   apart on Moxfield's own pacer, so both sites are read side by side. Search answers are cached and
   refreshed every third day, staggered, and each deck read is kept until its owner edits it, as on Archidekt
   (ADR 0027), in the same `peer-decks` cache folder.
-- **The commander's card id** is looked up by exact name (a double-faced card by its front face) each time
+- **The commander's card id** is looked up by exact name (a double-faced card by both faces, as Moxfield's search
+  matches no front face alone) each time
   the search is refreshed; a commander Moxfield does not know has no Moxfield decks, which is no error.
 - **No tag search on Moxfield.** Its `hubName` filter did not filter, and hubs are not Archidekt's deck tags;
   matching one to the other would be a guess, so tagged ideas stay Archidekt's alone.
@@ -75,9 +76,12 @@ What the API offers, from a dozen honest, paced requests on 2026-11-07 (User-Age
   unreadable and the other without decks) is there no answer: nothing is re-judged, as before Moxfield.
   A deck is not marked incomplete for a site that was not read.
 - **Failing soft.** A 429 is handled as on Archidekt: one retry after the pause, then Moxfield is given up
-  for the run. A 403, or a 200 that is not JSON (a bot challenge page), on the card lookup or a search ends
-  Moxfield for the run: nothing more is sent. A 403 or a challenge page on a single deck read (a private
-  deck answers 403) skips that deck only. The failure is reported, not analysed: `sync` warns once per run
+  for the run. A bot challenge is a 200 that is not JSON, or any other answer (a 503 too) that is a page, not
+  JSON, or carries a `cf-mitigated` header; it is never retried, as other 5xx answers are (a 404 or 410 page
+  is a deleted deck, and a 429 page a rate limit). A 403, or a challenge, on the card lookup or a search ends
+  Moxfield for the run: nothing more is sent. So does a challenge page on a deck read. A 403 on a single
+  deck read (a private deck answers 403) skips that deck only, until three deck reads in a row are refused
+  (a read that succeeds starts the count again), which ends Moxfield for the run too. The failure is reported, not analysed: `sync` warns once per run
   per site ("Moxfield decks could not be read (Moxfield refused cmdr's requests (HTTP 403)); ideas are
   judged by the decks that were read"), not once per deck or alike commander, and `cmdr meta` notes that the
   decks shown are partly read. A cache-only read (the app's panels) treats a site with nothing stored as
@@ -97,6 +101,7 @@ syncs) or asks us to stop, Moxfield is removed as a source: no workaround is tri
   re-judging of the ideas.
 - `cmdr meta` lists the peer decks of both sites, each with its link, and its source line reads "Archidekt
   and Moxfield decks".
-- The app's origin labels still say "Archidekt" for these pools; whether to rename them is open.
+- The app's origin labels for these pools read "Peers: …" ("Peers: alike commanders"), and the tagged pool,
+  which stays Archidekt's alone, "Archidekt: tagged …".
 - Revisit if Moxfield publishes an API or terms for it, if its `hubName` filter starts working (a tag search
   could then match hubs by exact name), or if the removal condition is met.

@@ -433,6 +433,61 @@ def test_theme_matches_keywords_whole(card_db_file: Path) -> None:
         assert db.matching(Theme(keywords=("fly",)), cards) == set()
 
 
+def accented_card(index: int, type_line: str, keywords: list[str]) -> str:
+    line = json.loads(filler_card(index))
+    line["type_line"], line["keywords"] = type_line, keywords
+    return json.dumps(line, ensure_ascii=False)
+
+
+@pytest.fixture(scope="module")
+def accented_db_file(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    cards = [
+        accented_card(41_001, "Creature — élan Dwarf", ["Étude", "Flash"]),
+        accented_card(41_002, "Creature — Élan", ["ÉTUDE"]),
+        accented_card(41_003, "Legendary Artifact // Land — Dwarf", ["Flash"]),
+        accented_card(41_004, "Creature — Dwarf Noble", []),
+    ]
+    return build_card_db(tmp_path_factory.mktemp("accenteddb"), extra_cards=cards)
+
+
+def sql_theme_size(db_file: Path, types: Sequence[str] = (), keywords: Sequence[str] = ()) -> int:
+    """What the card database's own SQL counts: lower() changes ASCII letters alone, instr is exact."""
+    line = "' ' || lower(replace(replace(type_line, '—', ' '), '//', ' ')) || ' '"
+    conditions = [f"instr({line}, ?) > 0" for _ in types] + ["instr(keywords, ?) > 0" for _ in keywords]
+    params = [f" {t.casefold()} " for t in types] + [f"|{k.casefold()}|" for k in keywords]
+    with sqlite3.connect(db_file) as plain:
+        sql = f"SELECT count(*) FROM oracle WHERE commander_legal = 1 AND ({' OR '.join(conditions)})"  # noqa: S608
+        return int(plain.execute(sql, params).fetchone()[0])
+
+
+def test_a_types_and_keywords_theme_is_counted_as_the_database_query_would(accented_db_file: Path) -> None:
+    with CardDb(accented_db_file) as db:
+        # Hand-derived: SQLite lower() leaves the capital É of "Élan" alone, so the casefolded "élan" finds
+        # only the card whose type line has a lowercase é; both "Étude" spellings are casefolded when stored.
+        assert db.theme_size(Theme(types=("Élan",))) == 1
+        assert db.theme_size(Theme(types=("élan",))) == 1
+        assert db.theme_size(Theme(keywords=("Étude",))) == 2
+        # Beside the fixture's Magda, who is a Dwarf, and its two Flash cards (Disruptor Flute, Hoverbike).
+        assert db.theme_size(Theme(keywords=("flash",))) == 4
+        assert db.theme_size(Theme(types=("Dwarf",))) == 4
+        # A slash or a dash separates words, and a part of a word is none.
+        assert db.theme_size(Theme(types=("Noble",))) == 1
+        assert db.theme_size(Theme(types=("Dwar",))) == 0
+        assert db.theme_size(Theme(types=("Dwarf", "Noble"), keywords=("flash",))) == 6
+        shapes: list[tuple[tuple[str, ...], tuple[str, ...]]] = [
+            (("Élan",), ()),
+            (("Dwarf", "Land"), ()),
+            ((), ("Étude", "Flash")),
+            (("Artifact",), ("Étude",)),
+            (("Creature", "Elf", "Dwarf"), ("Flash", "Haste")),
+            (("nothing",), ("nothing",)),
+        ]
+        for types, keywords in shapes:
+            assert db.theme_size(Theme(types=types, keywords=keywords)) == sql_theme_size(
+                accented_db_file, types, keywords
+            ), (types, keywords)
+
+
 def test_theme_tags_include_their_sub_tags(card_db_file: Path) -> None:
     with CardDb(card_db_file) as db:
         combat_ramp = db.tag_ids(["combat-ramp"])["combat-ramp"]
@@ -440,6 +495,22 @@ def test_theme_tags_include_their_sub_tags(card_db_file: Path) -> None:
         assert db.matching(Theme(tag_ids=(RAMP_TAG,)), {MAGDA_ORACLE, ARCANE_SIGNET, LIGHTNING_BOLT}) == {
             MAGDA_ORACLE,
             ARCANE_SIGNET,
+        }
+
+
+@pytest.mark.parametrize("fillers", [0, 10, 147, 148, 300, 600])
+def test_a_tag_matches_the_same_cards_however_many_are_asked_about(card_db_file: Path, fillers: int) -> None:
+    # Few cards are probed one by one against the tag, many are checked against its whole membership.
+    asked = {MAGDA_ORACLE, ARCANE_SIGNET, LIGHTNING_BOLT} | {
+        f"eeeeeeee-0000-4000-8000-{i:012d}" for i in range(1, fillers + 1)
+    }
+    with CardDb(card_db_file) as db:
+        assert db.matching(Theme(tag_ids=(RAMP_TAG,)), asked) == {MAGDA_ORACLE, ARCANE_SIGNET}
+        assert db.matching(Theme(tag_ids=(TUTOR_TAG,)), asked) == {MAGDA_ORACLE}
+        # A type or keyword of the theme still matches beside the tag.
+        assert db.matching(Theme(types=("Instant",), tag_ids=(TUTOR_TAG,)), asked) == {
+            MAGDA_ORACLE,
+            LIGHTNING_BOLT,
         }
 
 
@@ -497,12 +568,28 @@ def test_a_builds_counts_are_scanned_once_however_many_connections_ask(
         monkeypatch.setattr(CardDb, name, _spy(getattr(CardDb, name), counting))
     expected = ({"ramp": 7, "combat-ramp": 1, "filler-9999": 1}, artifacts, legal)
     assert counts_of(db_file) == expected
-    # Three tag counts, one theme count, one legal-card count.
-    assert sum("count(" in sql for sql in counting) == 5
+    # Three tag counts and one legal-card count; the theme count reads the legal cards' types once.
+    assert sum("count(" in sql for sql in counting) == 4
+    assert sum("SELECT type_line, keywords" in sql for sql in counting) == 1
     counting.clear()
     assert counts_of(db_file) == expected
     assert counts_of(db_file) == expected
-    assert not any("count(" in sql for sql in counting)
+    assert not any("count(" in sql or "type_line, keywords" in sql for sql in counting)
+
+
+def test_the_legal_faces_are_read_once_per_build_however_many_connections_ask(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_file = build_card_db(tmp_path)
+    scans: list[str] = []
+    monkeypatch.setattr(CardDb, "_query", _spy(getattr(CardDb, "_query"), scans))  # noqa: B009
+    with CardDb(db_file) as first, CardDb(db_file) as second:
+        faces = first.legal_faces()
+        assert second.legal_faces() == faces
+    assert sum("oracle_text" in sql for sql in scans) == 1
+    magda = next(face for face in faces if face.oracle_id == MAGDA_ORACLE)
+    assert (magda.mana_value, magda.power) == (2.0, "2")
+    assert "Treasure" in magda.text
 
 
 def _spy(original: Callable[..., list[Any]], seen: list[str]) -> Callable[..., list[Any]]:
@@ -545,6 +632,15 @@ def test_tag_count_and_theme_queries_walk_the_tag_subtree_into_tag_member(card_d
         assert "SEARCH tag_member USING" in plan
 
 
+def test_the_walks_up_the_tag_tree_find_a_tags_parents_by_index(card_db_file: Path) -> None:
+    internals = vars(carddb)
+    lineage = _plan(card_db_file, internals["_LINEAGE_QUERY"].format("?, ?"), [MAGDA_ORACLE, ARCANE_SIGNET])
+    ancestors = _plan(card_db_file, internals["_ANCESTORS_QUERY"].format("?"), ["combat-ramp"])
+    for plan in (lineage, ancestors):
+        assert "SEARCH tag_child USING COVERING INDEX tag_child_child" in plan
+        assert "SCAN tag_child" not in plan
+
+
 def test_a_cards_printings_and_roles_are_found_by_index(card_db_file: Path) -> None:
     printings = _plan(card_db_file, "SELECT * FROM printing WHERE oracle_id = ?", [MAGDA_ORACLE])
     roles = _plan(card_db_file, "SELECT role FROM role_member WHERE oracle_id = ?", [MAGDA_ORACLE])
@@ -565,6 +661,7 @@ def test_a_built_database_is_sound_and_holds_every_index(card_db_file: Path) -> 
         "role_member_card",
         "tag_slug",
         "tag_member_card",
+        "tag_child_child",
     } <= indexes
     # A finished build is one file: no journal beside it.
     assert [p.name for p in card_db_file.parent.glob("cards.sqlite*")] == ["cards.sqlite"]

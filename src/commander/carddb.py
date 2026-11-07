@@ -3,6 +3,7 @@
 import logging
 import re
 import sqlite3
+import string
 import threading
 import time
 from collections.abc import Callable, Collection, Hashable, Iterable, Iterator, Mapping, Sequence
@@ -19,11 +20,14 @@ from commander.pricefilter import Prices, drop_glitches
 log = logging.getLogger(__name__)
 
 # Bump whenever the tables or the meaning of a column change; an old file is rebuilt, never migrated.
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 CARD_DB_FILE = "cards.sqlite"
 # The suffix of a database being built beside the real one; a crash can leave such a file behind.
 BUILD_SUFFIX = ".building"
 _QUERY_CHUNK = 500
+# Up to this many cards a tag's membership is probed per card; past it, building the whole membership once
+# is quicker (measured on the biggest tags: 1 ms against 3 ms at 100 cards, 3.6 against 3 at 200).
+_PER_CARD_TAG_CHUNK = 150
 _FRONT_FACE_CHUNK = 100
 _FRONT_FACES_QUERY = (
     "SELECT oracle_id, name, mana_cost, cmc, type_line, color_identity, game_changer, commander_legal,"
@@ -236,6 +240,8 @@ _INDEXES = (
     "CREATE INDEX role_member_card ON role_member (oracle_id)",
     "CREATE INDEX tag_slug ON tag (slug)",
     "CREATE INDEX tag_member_card ON tag_member (oracle_id)",
+    # The tag lineage and ancestor walks go from a child up to its parents, against the primary key's order.
+    "CREATE INDEX tag_child_child ON tag_child (child_id, parent_id)",
 )
 
 
@@ -493,19 +499,6 @@ class ResolvedCard:
     printing: Printing | None
 
 
-@dataclass(slots=True, eq=False)
-class _BuildAnswers:
-    """Counts that depend only on one build of the card database and cost a table scan to work out."""
-
-    stamp: tuple[object, ...]
-    legal_cards: int | None = None
-    tag_sizes: dict[str, int] = field(default_factory=dict[str, int])
-    theme_sizes: dict[Theme, int] = field(default_factory=dict[Theme, int])
-    role_sizes: dict[Role, int] | None = None
-    # Counts a caller works out itself (`build_count`), by its own keys.
-    counts: dict[Hashable, int] = field(default_factory=dict[Hashable, int])
-
-
 @dataclass(slots=True, frozen=True)
 class LegalFace:
     """What of a Commander-legal card a scan over all of them reads."""
@@ -515,6 +508,30 @@ class LegalFace:
     mana_value: float
     power: str | None
     text: str
+
+
+@dataclass(slots=True, frozen=True)
+class _TypesAndKeywords:
+    """What `_theme_sql` matches a theme's types and keywords against, for the Commander-legal cards."""
+
+    # Each type line as the SQL reads it: lowercased in ASCII only, em dashes and slashes as spaces, padded.
+    type_lines: tuple[str, ...]
+    keywords: tuple[str, ...]
+
+
+@dataclass(slots=True, eq=False)
+class _BuildAnswers:
+    """Counts that depend only on one build of the card database and cost a table scan to work out."""
+
+    stamp: tuple[object, ...]
+    legal_cards: int | None = None
+    legal_faces: tuple[LegalFace, ...] | None = None
+    types_and_keywords: _TypesAndKeywords | None = None
+    tag_sizes: dict[str, int] = field(default_factory=dict[str, int])
+    theme_sizes: dict[Theme, int] = field(default_factory=dict[Theme, int])
+    role_sizes: dict[Role, int] | None = None
+    # Counts a caller works out itself (`build_count`), by its own keys.
+    counts: dict[Hashable, int] = field(default_factory=dict[Hashable, int])
 
 
 # The newest build's answers per database file, so a rebuilt file replaces its old entry.
@@ -708,12 +725,14 @@ class CardDb:
         """The given cards that match the theme."""
         if theme.empty:
             return frozenset()
-        cte, condition, params = _theme_sql(theme)
+        cte, bulk_condition, params = _theme_sql(theme)
+        per_card_condition = _theme_sql(theme, per_card=True)[1]
         unique = sorted(set(oracle_ids))
         found: set[str] = set()
         for start in range(0, len(unique), _QUERY_CHUNK):
             chunk = {f"o{i}": key for i, key in enumerate(unique[start : start + _QUERY_CHUNK])}
             placeholders = ", ".join(f":{name}" for name in chunk)
+            condition = per_card_condition if len(chunk) <= _PER_CARD_TAG_CHUNK else bulk_condition
             where = f"oracle_id IN ({placeholders}) AND ({condition})"
             sql = f"{cte} SELECT oracle_id FROM oracle WHERE {where}"  # noqa: S608 — built from constant fragments and placeholders; every value is bound
             found.update(row[0] for row in self._query_named(sql, {**params, **chunk}))
@@ -725,10 +744,35 @@ class CardDb:
             return 0
         answers = self._build_answers()
         if (size := answers.theme_sizes.get(theme)) is None:
-            cte, condition, params = _theme_sql(theme)
-            sql = f"{cte} SELECT count(*) FROM oracle WHERE commander_legal = 1 AND ({condition})"  # noqa: S608 — built from constant fragments and placeholders; every value is bound
-            size = answers.theme_sizes[theme] = int(self._query_named(sql, params)[0][0])
+            if theme.tag_ids:
+                cte, condition, params = _theme_sql(theme)
+                sql = f"{cte} SELECT count(*) FROM oracle WHERE commander_legal = 1 AND ({condition})"  # noqa: S608 — built from constant fragments and placeholders; every value is bound
+                size = int(self._query_named(sql, params)[0][0])
+            else:
+                size = self._count_types_and_keywords(answers, theme)
+            answers.theme_sizes[theme] = size
         return size
+
+    def _count_types_and_keywords(self, answers: _BuildAnswers, theme: Theme) -> int:
+        """`theme_size` for a theme of types and keywords alone, counted in Python from one read of the
+        legal cards: a query per theme costs far more than the match, as a deck asks for dozens."""
+        if answers.types_and_keywords is None:
+            rows = self._query("SELECT type_line, keywords FROM oracle WHERE commander_legal = 1")
+            answers.types_and_keywords = _TypesAndKeywords(
+                tuple(_sql_type_line(type_line) for type_line, _ in rows),
+                tuple(keywords for _, keywords in rows),
+            )
+        read = answers.types_and_keywords
+        types = [_type_needle(word) for word in theme.types]
+        keywords = [_keyword_needle(word) for word in theme.keywords]
+        if not keywords:
+            return _count_holding(types, read.type_lines)
+        if not types:
+            return _count_holding(keywords, read.keywords)
+        return sum(
+            any(t in line for t in types) or any(k in cell for k in keywords)
+            for line, cell in zip(read.type_lines, read.keywords, strict=True)
+        )
 
     def legal_cards(self) -> int:
         answers = self._build_answers()
@@ -737,12 +781,16 @@ class CardDb:
             answers.legal_cards = int(rows[0][0])
         return answers.legal_cards
 
-    def legal_faces(self) -> list[LegalFace]:
-        """Every Commander-legal card, for a count no query can make (a scan of some 30,000 rows)."""
-        return [
-            LegalFace(oracle_id, type_line, float(cmc), power, text or "")
-            for oracle_id, type_line, cmc, power, text in self._query(_LEGAL_FACES_QUERY)
-        ]
+    def legal_faces(self) -> tuple[LegalFace, ...]:
+        """Every Commander-legal card, for a count no query can make (a scan of some 30,000 rows), read
+        once per build of the card data."""
+        answers = self._build_answers()
+        if answers.legal_faces is None:
+            answers.legal_faces = tuple(
+                LegalFace(oracle_id, type_line, float(cmc), power, text or "")
+                for oracle_id, type_line, cmc, power, text in self._query(_LEGAL_FACES_QUERY)
+            )
+        return answers.legal_faces
 
     def tag_members(self, slug: str) -> frozenset[str]:
         """The oracle ids in a tag, sub-tags included; none for a slug Scryfall does not have."""
@@ -924,28 +972,56 @@ class CardDb:
             raise CardDataError(f"card data is unreadable ({error}); run `cmdr sync --force`") from error
 
 
-def _theme_sql(theme: Theme) -> tuple[str, str, dict[str, object]]:
-    """The WITH clause, the condition on oracle and the named parameters that match a theme."""
+def _type_needle(word: str) -> str:
+    return f" {word.casefold()} "
+
+
+def _keyword_needle(keyword: str) -> str:
+    return f"|{keyword.casefold()}|"
+
+
+# SQLite's lower() changes the letters A-Z alone, so "É" stays and a casefolded "é" never matches it.
+_ASCII_LOWER = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
+
+
+def _sql_type_line(type_line: str) -> str:
+    """The type line as `_theme_sql` matches it: words between spaces, em dashes and slashes as spaces."""
+    return f" {type_line.replace('—', ' ').replace('//', ' ').translate(_ASCII_LOWER)} "
+
+
+def _count_holding(needles: Sequence[str], cells: Sequence[str]) -> int:
+    """How many cells hold any of the needles."""
+    if len(needles) == 1:
+        needle = needles[0]
+        return sum(needle in cell for cell in cells)
+    return sum(any(needle in cell for needle in needles) for cell in cells)
+
+
+def _theme_sql(theme: Theme, *, per_card: bool = False) -> tuple[str, str, dict[str, object]]:
+    """The WITH clause, the condition on oracle and the named parameters that match a theme. A query of a few
+    chosen cards asks per card (`per_card`) whether a tag holds it, which is far quicker than building the
+    tag's whole membership first; one over all cards must not (the whole membership is then the cheaper)."""
     params: dict[str, object] = {}
     parts: list[str] = []
     for index, word in enumerate(theme.types):
-        params[f"type{index}"] = f" {word.casefold()} "
+        params[f"type{index}"] = _type_needle(word)
         # Spaces around each word of the type line, so "Elf" never matches "Elfball" or "Self".
         parts.append(
             f"instr(' ' || lower(replace(replace(type_line, '—', ' '), '//', ' ')) || ' ', :type{index}) > 0"
         )
     for index, keyword in enumerate(theme.keywords):
-        params[f"keyword{index}"] = f"|{keyword.casefold()}|"
+        params[f"keyword{index}"] = _keyword_needle(keyword)
         parts.append(f"instr(keywords, :keyword{index}) > 0")
     cte = ""
     if theme.tag_ids:
         names = [f":tag{index}" for index in range(len(theme.tag_ids))]
         params.update({name[1:]: tag_id for name, tag_id in zip(names, theme.tag_ids, strict=True)})
         cte = _SUBTREE_CTE.format(", ".join(names))
+        members = "FROM subtree CROSS JOIN tag_member ON tag_member.tag_id = subtree.tag_id"
         parts.append(
-            "oracle.oracle_id IN"
-            " (SELECT tag_member.oracle_id"
-            " FROM subtree CROSS JOIN tag_member ON tag_member.tag_id = subtree.tag_id)"
+            f"EXISTS (SELECT 1 {members} WHERE tag_member.oracle_id = oracle.oracle_id)"
+            if per_card
+            else f"oracle.oracle_id IN (SELECT tag_member.oracle_id {members})"
         )
     return cte, " OR ".join(parts), params
 

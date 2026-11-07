@@ -502,6 +502,25 @@ def test_sync_counts_a_moxfield_deck_as_one_more_deck_of_the_commander(
     assert "in 4 of 4 most-viewed recent Archidekt and Moxfield decks" in card.reason
 
 
+def test_meta_lists_the_peer_decks_of_both_sites_most_viewed_first_in_text_and_json(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    bracket_3_peers(fake)
+    fake.moxfield.cards[MAGDA.casefold()] = "M1"
+    fake.moxfield.pages["M1"] = [moxfield_page([moxfield_row("mox-1", 800, "2026-10-01T00:00:00Z")])]
+    fake.moxfield.decks["mox-1"] = moxfield_deck("mox-1", [MAGDA], {"Arcane Signet": 1, "Mountain": 30})
+    [report] = json.loads(meta(home, fake, "magda", "--json").out)["reports"]
+    assert [(p["site"], p["views"]) for p in report["peers"]] == [
+        ("Moxfield", 800),
+        ("Archidekt", 600),
+        ("Archidekt", 600),
+        ("Archidekt", 600),
+    ]
+    heading = "Most-viewed Archidekt and Moxfield decks updated since"
+    printed = section(meta(home, fake, "magda").out, heading)
+    assert [line.split()[0] for line in printed] == ["800", "600", "600", "600"]
+
+
 def test_sync_warns_when_moxfield_refuses_and_learns_from_archidekt_alone(
     home: Path, fake: FakeArchidekt
 ) -> None:
@@ -569,7 +588,7 @@ def test_sync_judges_no_deck_idea_when_neither_sites_decks_could_be_read(
     card = read_board(home / "decks" / FOLDER).find("Arcane Signet")
     assert card is not None
     assert card.status is Status.OPEN
-    assert "cmdr: Magda: no meta or Archidekt decks to learn from (" in result.err
+    assert "cmdr: Magda: no meta or peer decks to learn from (" in result.err
 
 
 def test_meta_says_a_site_was_not_read_without_calling_the_decks_an_old_copy(
@@ -583,12 +602,40 @@ def test_meta_says_a_site_was_not_read_without_calling_the_decks_an_old_copy(
     assert "Moxfield: Moxfield refused cmdr's requests (HTTP 403)" in result.err
 
 
+def test_meta_names_the_one_stale_site_and_its_copy_and_says_the_other_sites_decks_are_current(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    assert meta(home, fake, "magda").code == 0
+    fake.moxfield.status = 403
+    result = meta(home, fake, "magda", "--refresh")
+    assert result.code == 0, result.err
+    assert (
+        "cmdr: Magda: Archidekt and Moxfield decks partly read (Moxfield failed "
+        "(Moxfield refused cmdr's requests (HTTP 403)); showing its copy from 2026-10-15 12:00 UTC; "
+        "the Archidekt decks are current)\n"
+    ) in result.err
+    assert "decks failed" not in result.err
+
+
+def test_meta_calls_the_whole_peer_answer_an_old_copy_when_both_sites_are_stale(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    assert meta(home, fake, "magda").code == 0
+    fake.moxfield.status = 403
+    fake.peer_page = {"unexpected": True}
+    result = meta(home, fake, "magda", "--refresh")
+    assert result.code == 0, result.err
+    assert "Archidekt and Moxfield decks failed (" in result.err
+    assert "showing the copy from 2026-10-15 12:00 UTC" in result.err
+    assert "partly read" not in result.err
+
+
 def test_sync_with_every_source_down_keeps_the_board_and_succeeds(home: Path, fake: FakeArchidekt) -> None:
     fake.topdeck.status = 403
     fake.peer_page = {"unexpected": True}
     result = sync(home, fake)
     assert result.code == 0, result.err
-    assert "cmdr: Magda: no meta or Archidekt decks to learn from (" in result.err
+    assert "cmdr: Magda: no meta or peer decks to learn from (" in result.err
     assert "ideas:" not in result.out
     assert read_board(home / "decks" / FOLDER).find("Mind Stone") is None
 
@@ -802,6 +849,42 @@ def test_to_board_names_an_alike_commander_it_cannot_search_and_carries_on(
     assert result.code == 0, result.err
     assert "cmdr: Magda: no recent Ygra, Eater of All decks to learn from (" in result.err
     assert "Magda board: +1 from meta\n" in result.err
+
+
+def test_to_board_warns_once_of_a_site_it_could_not_read_for_the_alike_commanders(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    (home / "decks" / FOLDER / "profile.toml").write_text(ALIKE_PROFILE, encoding="utf-8")
+    put_ygra_decks(fake)
+    fake.moxfield.status = 403
+    result = meta(home, fake, "magda", "--to-board")
+    assert result.code == 0, result.err
+    warning = (
+        "cmdr: Moxfield decks could not be read (Moxfield refused cmdr's requests (HTTP 403)); "
+        "ideas are judged by the decks that were read\n"
+    )
+    assert result.err.count(warning) == 1
+    # The Ygra decks Archidekt gave were judged all the same.
+    assert "Magda board: +1 from meta, +1 from adjacent decks\n" in result.err
+
+
+def test_to_board_warns_once_when_a_site_could_not_be_refreshed_for_the_alike_commanders(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    (home / "decks" / FOLDER / "profile.toml").write_text(ALIKE_PROFILE, encoding="utf-8")
+    put_ygra_decks(fake)
+    fake.moxfield.cards[YGRA.casefold()] = "Y1"
+    fake.moxfield.pages["Y1"] = [moxfield_page([moxfield_row("mox-y", 800, "2026-10-01T00:00:00Z")])]
+    fake.moxfield.decks["mox-y"] = moxfield_deck("mox-y", [YGRA], {"Arcane Signet": 1, "Mountain": 30})
+    assert meta(home, fake, "magda", "--to-board").code == 0
+    fake.moxfield.status = 403
+    result = meta(home, fake, "magda", "--to-board", "--refresh")
+    assert result.code == 0, result.err
+    warning = (
+        "cmdr: Moxfield decks could not be refreshed (Moxfield refused cmdr's requests (HTTP 403)); "
+        "ideas use the copy read earlier\n"
+    )
+    assert result.err.count(warning) == 1
 
 
 def test_sync_names_an_alike_commander_it_cannot_search_and_carries_on(

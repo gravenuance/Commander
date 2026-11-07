@@ -33,7 +33,17 @@ from commander.deckcache import Clock
 from commander.decklocks import DeckLock
 from commander.deckprofile import ProfileError, profile_path, write_profile_template
 from commander.fetchpriority import FetchPriority, fetching_deck
-from commander.ideas import compile_ideas, deck_shares, gather_idea_pools, rejudge_ideas, relabel_legacy_ideas
+from commander.ideas import (
+    compile_ideas,
+    deck_shares,
+    gather_idea_pools,
+    rejudge_ideas,
+    relabel_legacy_ideas,
+    stale_site_prefix,
+    stale_site_warning,
+    unread_site_prefix,
+    unread_site_warning,
+)
 from commander.metadata import (
     TOURNAMENT_BRACKETS,
     TOURNAMENTS_STEP,
@@ -47,7 +57,6 @@ from commander.metadata import (
     start_tournament_refresh,
 )
 from commander.net import Fetcher, NetworkError, Pacer
-from commander.peersearch import Site
 from commander.phases import ActivePhases
 from commander.previews import PROBE_INTERVAL_SECONDS, PreviewProbe, ProbeState, probe_previews
 from commander.profileedit import ensure_grace_table
@@ -509,7 +518,7 @@ def _compile_ideas(
     deck_lock: DeckLock,
     only: frozenset[int] | None,
 ) -> _IdeasPhase:
-    """Each deck's new ideas from the meta and recent Archidekt decks (ADR 0028), by short name, the open
+    """Each deck's new ideas from the meta and recent peer decks (ADR 0028), by short name, the open
     ideas turned down on the way for no longer passing the idea test, the open cards closed first
     because the main deck holds them (ADR 0046) and the queued count changes it already meets, cleared
     (ADR 0043). With `only`, those decks alone are read and merged.
@@ -831,10 +840,8 @@ def _merge_deck(
         return
     if data.lists.data is None and data.peers.data is None:
         why = data.peers.error or data.lists.error
-        read.warnings.append(f"{deck.short_name}: no meta or Archidekt decks to learn from ({why})")
-    own_unread = data.peers.data.missing if data.peers.data else ()
-    for site, why in (*own_unread, *pools.unread):
-        _note_unread_site(site, why, warnings)
+        read.warnings.append(f"{deck.short_name}: no meta or peer decks to learn from ({why})")
+    _note_sites(data, pools, warnings)
     warnings.extend(read.warnings)
     key_problem = _note_key_problem(data.lists.key_problem, warnings)
     incomplete = bool(read.warnings) or data.peers.data is None or key_problem
@@ -851,12 +858,20 @@ _GONE = "the deck left its folder or changed its commander while its ideas were 
 _KEY_WARNING = f"tournament lists skipped: missing or refused TopDeck key; {KEY_REMEDY}"
 
 
-def _note_unread_site(site: Site, why: str, warnings: list[str]) -> None:
-    """Warn once per sync that a peer-deck site could not be read; the ideas were judged by the decks that
-    were (ADR 0066), so no deck is incomplete for it."""
-    start = f"{site.value} decks could not be read"
-    if not any(warning.startswith(start) for warning in warnings):
-        warnings.append(f"{start} ({why}); ideas are judged by the decks that were read")
+def _note_sites(data: MetaData, pools: AdjacentDecks, warnings: list[str]) -> None:
+    """Warn of each site the deck's own or its alike commanders' decks could not be read or refreshed from."""
+    peers = data.peers.data
+    for site, why in (*(peers.missing if peers else ()), *pools.unread):
+        _note_site(unread_site_prefix(site), unread_site_warning(site, why), warnings)
+    for site, why in (*(peers.stale if peers else ()), *pools.stale):
+        _note_site(stale_site_prefix(site), stale_site_warning(site, why), warnings)
+
+
+def _note_site(prefix: str, warning: str, warnings: list[str]) -> None:
+    """Warn once per sync that a peer-deck site could not be read or refreshed; the ideas were judged by the
+    decks that were gathered (ADR 0066), so no deck is incomplete for it."""
+    if not any(existing.startswith(prefix) for existing in warnings):
+        warnings.append(warning)
 
 
 def _note_key_problem(key_problem: bool, warnings: list[str]) -> bool:  # noqa: FBT001 — an answer's flag

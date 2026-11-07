@@ -1441,6 +1441,22 @@ def test_the_commanders_moxfield_decks_join_its_archidekt_decks_under_caps_of_th
     assert deck_reads(fake) == ["/v3/decks/all/mox-a", "/v3/decks/all/mox-b"]
 
 
+def test_each_site_steps_down_its_own_view_bar_whatever_the_other_site_reaches(rig: Rig) -> None:
+    rig.settings = replace(SETTINGS, peer_decks=60)
+    fake = moxfield_rig(rig)
+    popular = [f"mox-{n}" for n in range(10)]
+    fake.pages["C1"] = [moxfield_page([moxfield_row(public_id, 2000, IN_WINDOW) for public_id in popular])]
+    for public_id in popular:
+        fake.decks[public_id] = moxfield_deck(public_id, [ELLIVERE], {"Mana Vault": 1})
+    peers = rig.gather().peers.data
+    assert peers is not None
+    # Ten Moxfield decks reach 1000 views, but Archidekt's own three do not, so its bar still steps down to
+    # 500 and its two decks of 673 and 607 views are read too.
+    archidekt_views = [p.deck.views for p in peers.decks if p.deck.site is Site.ARCHIDEKT]
+    assert archidekt_views == [2131, 1847, 1782, 673, 607]
+    assert len([p for p in peers.decks if p.deck.site is Site.MOXFIELD]) == 10
+
+
 def test_moxfield_decks_are_cached_with_their_site_and_each_deck_is_read_once(rig: Rig) -> None:
     fake = moxfield_rig(rig)
     rig.gather()
@@ -1466,6 +1482,18 @@ def test_moxfield_refusing_leaves_the_archidekt_decks_and_says_moxfield_was_not_
     assert peers.error == "Moxfield: Moxfield refused cmdr's requests (HTTP 403)"
     # The card lookup was refused, and nothing more was asked.
     assert len(fake.requests) == 1
+
+
+def test_moxfield_refusing_a_refresh_names_it_stale_while_its_stored_decks_still_count(rig: Rig) -> None:
+    fake = moxfield_rig(rig)
+    rig.gather()
+    fake.status = 403
+    peers = rig.gather(refresh=True).peers
+    assert peers.data is not None
+    assert peers.data.stale == ((Site.MOXFIELD, "Moxfield refused cmdr's requests (HTTP 403)"),)
+    assert peers.data.missing == ()
+    assert [p.deck.id for p in peers.data.decks if p.deck.site is Site.MOXFIELD] == ["mox-a", "mox-b"]
+    assert peers.source is AnswerSource.STALE
 
 
 def test_a_cache_only_read_of_a_commander_never_fetched_names_no_site_as_unread(rig: Rig) -> None:
@@ -1503,6 +1531,23 @@ def test_a_403_on_one_moxfield_deck_skips_that_deck_and_the_rest_are_still_read(
     # Both decks over the floor were asked for: the first refusal blocked nothing.
     assert deck_reads(fake) == ["/v3/decks/all/mox-a", "/v3/decks/all/mox-b"]
     assert peers.data.skipped == 2
+
+
+def test_moxfield_refusing_every_deck_read_is_given_up_after_three_and_the_site_is_named_unread(
+    rig: Rig,
+) -> None:
+    rig.settings = replace(SETTINGS, peer_decks=60)
+    fake = moxfield_rig(rig)
+    popular = [f"mox-{n}" for n in range(6)]
+    fake.pages["C1"] = [moxfield_page([moxfield_row(public_id, 2000, IN_WINDOW) for public_id in popular])]
+    for public_id in popular:
+        fake.decks[public_id] = moxfield_deck(public_id, [ELLIVERE], {"Mana Vault": 1})
+    fake.deck_status = 403
+    peers = rig.gather().peers
+    assert peers.data is not None
+    assert len(deck_reads(fake)) == 3
+    assert [p.deck.site for p in peers.data.decks] == [Site.ARCHIDEKT] * 5
+    assert [site for site, _ in peers.data.missing] == [Site.MOXFIELD]
 
 
 def test_moxfield_giving_up_after_a_second_429_leaves_the_archidekt_decks(rig: Rig) -> None:
@@ -1554,6 +1599,22 @@ def test_an_alike_commander_moxfield_refuses_pools_archidekts_decks_as_the_whole
     assert not found.groups_failed
     # What could not be read is reported for the sync to warn of once.
     assert found.unread == ((Site.MOXFIELD, "Moxfield refused cmdr's requests (HTTP 403)"),)
+
+
+def test_an_alike_commanders_moxfield_refresh_that_fails_is_stale_and_its_stored_decks_stay_in_the_pool(
+    rig: Rig,
+) -> None:
+    fake = moxfield_rig(rig, commander=MAGDA)
+    rig.archidekt.commander = MAGDA
+    adjacent(rig, (MAGDA,))
+    fake.status = 403
+    found = gather_adjacent(
+        ellivere_deck(), [(MAGDA,)], rig.sources(), rig.cache, now=lambda: rig.now, refresh=True
+    )
+    assert [p.deck.site for p in found.decks] == [Site.ARCHIDEKT, Site.MOXFIELD]
+    assert found.stale == ((Site.MOXFIELD, "Moxfield refused cmdr's requests (HTTP 403)"),)
+    assert found.unread == ()
+    assert not found.groups_failed
 
 
 def test_an_alike_commander_neither_site_can_read_is_a_failed_group(rig: Rig) -> None:

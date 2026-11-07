@@ -19,6 +19,7 @@ from commander.peercounts import RoleBand
 from commander.peersearch import PeerDeck
 from commander.spellbook import BracketEstimate, BracketTag, Combo, ComboDetail, ComboPiece, TwoCard
 from commander.targets import CutRules, deck_cut_rules, role_targets, with_ideas
+from commander.weightedshare import weighted_shares
 from conftest import ANCIENT_TOMB, build_card_db
 
 
@@ -214,6 +215,27 @@ def test_the_rules_hold_the_peer_decks_role_and_theme_counts_only_with_enough_de
     few = deck_cut_rules(deck, main, Profile(), db, pool_of(peers(2, 50)), now=lambda: NOW)
     assert few.peers is None
     assert deck_cut_rules(deck, main, Profile(), db, None, now=lambda: NOW).peers is None
+
+
+def test_shares_the_caller_holds_stand_in_for_the_ones_the_rules_would_work_out(db: CardDb) -> None:
+    cards = deck_cards(1, 2, 50, 51)
+    deck = Deck(1, "test", "me", 3, "2026-10-16", tuple(cards))
+    main = resolved(db, cards)
+    graced = Profile(grace={"Filler Card 51": 4.0})
+    data = pool(50, 51)
+    held = weighted_shares(data, now=lambda: NOW, grace=graced.grace_by_key())
+
+    own = deck_cut_rules(deck, main, graced, db, data, now=lambda: NOW)
+    given = deck_cut_rules(deck, main, graced, db, data, now=lambda: NOW, shares=held)
+
+    assert given.shares is held
+    assert own.shares == held
+    assert given.protected == own.protected
+    assert given.leanings == own.leanings
+    # Nothing in the rules is worked out from a table other than the one given.
+    other = weighted_shares(data, now=lambda: NOW)
+    assert other != held
+    assert deck_cut_rules(deck, main, graced, db, data, now=lambda: NOW, shares=other).shares is other
 
 
 def test_the_profiles_themes_are_named_by_their_words(db: CardDb) -> None:

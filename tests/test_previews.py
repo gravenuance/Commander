@@ -1211,6 +1211,35 @@ def test_moving_a_preview_puts_it_on_the_board_as_yours_and_the_next_fit_takes_i
     assert desk.deck(deck_id)["previews"] == 2
 
 
+def test_the_previews_are_worked_out_again_for_a_new_name_on_the_board_not_for_a_change_of_a_cards_state(
+    desk_settings: DeskSettings, raw_deck: Json, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    previewed(desk_settings)
+    desk = make_desk(desk_settings)
+    deck_id = int(raw_deck["id"])
+    worked: list[int] = []
+    real = desk_module.fitting_previews
+
+    def counted(*args: Any, **kwargs: Any) -> list[PreviewFit]:  # noqa: ANN401
+        worked.append(1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(desk_module, "fitting_previews", counted)
+    before = panel_names(desk, deck_id)
+    assert (QUARK_NAME in before, len(worked)) == (True, 1)
+
+    moved = cast("Json", desk.move_preview(deck_id, QUARK_NAME)["card"])
+    # The card is a new name on the board, so the panel is worked out again and skips it.
+    after = panel_names(desk, deck_id)
+    assert (QUARK_NAME in after, len(worked)) == (False, 2)
+
+    # Queuing the card rewrites the board and its activity log but leaves the names as they were.
+    assert "error" not in desk.decide(deck_id, str(moved["id"]), "add", None, "")
+    assert panel_names(desk, deck_id) == after
+    assert desk.deck(deck_id)["previews"] == len(after)
+    assert len(worked) == 2
+
+
 def test_a_moved_preview_queued_to_come_in_shows_in_the_grid_by_its_snapshot_though_the_card_data_lacks_it(
     desk_settings: DeskSettings, raw_deck: Json
 ) -> None:

@@ -1,14 +1,14 @@
 """Ideas for Considering, compiled on every sync (ADR 0028).
 
 Decks at brackets 4 and 5 get the staples of their commander's TopDeck lists ("meta") and of its most-viewed
-recent Archidekt decks ("archidekt decks"), the latter at the deck's own bracket and the one above; lower
-brackets get the Archidekt ones only. A card is one of these ideas when the lower bound of its weighted
-share, over every list read, reaches IDEA_LOWER_BOUND (ADR 0026); it belongs to the source that plays it
-more. An idea's score is that source's weighted share times its weight for the deck's play style (ADR 0031);
-adjacent and tagged ideas have no weighted share and use the pool's plain share.
+recent Archidekt and Moxfield decks ("archidekt decks"), the latter at the deck's own bracket and the one
+above; lower brackets get the peer decks' only. A card is one of these ideas when the lower bound of its
+weighted share, over every list read, reaches IDEA_LOWER_BOUND (ADR 0026); it belongs to the source that
+plays it more. An idea's score is that source's weighted share times its weight for the deck's play style
+(ADR 0031); adjacent and tagged ideas have no weighted share and use the pool's plain share.
 Each source puts at most MAX_PER_SOURCE ideas on the board, highest score first. An idea with no deck card
 to replace is still put on the board, where the app lists it as "No cut yet". A deck whose profile names
-commanders that play alike also gets the cards at least half of their pooled recent Archidekt decks play
+commanders that play alike also gets the cards at least half of their pooled recent peer decks play
 ("adjacent decks"). So does one whose Archidekt theme tags find recent decks of other commanders ("tagged
 decks"), each tag's decks a pool of their own. Ideas pass the profile's exclusions, bracket ceiling and
 price cap; below bracket 5 also the deck's budget (ADR 0025), those within its working budget first.
@@ -18,7 +18,7 @@ longer passes its source's test is turned down (`rejudge_ideas`).
 """
 
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from functools import cache
@@ -61,6 +61,7 @@ from commander.metadata import (
     gather_adjacent,
 )
 from commander.models import Deck, short_commander_name
+from commander.peersearch import Site
 from commander.playstyle import Fit
 from commander.spellbook import ComboMatches
 from commander.store import StoredDeck
@@ -571,11 +572,43 @@ def compile_ideas_with_adjacent(
     warn: Callable[[str], None],
     on_progress: Progress | None = None,
 ) -> dict[Origin, list[BoardCard]]:
-    """`compile_ideas` with the pools `gather_idea_pools` reads."""
+    """`compile_ideas` with the pools `gather_idea_pools` reads; each site unread for the alike commanders is
+    named to warn once, and each whose refresh failed."""
     pools = gather_idea_pools(
         stored, db, sources, cache_root, now=now, refresh=refresh, warn=warn, on_progress=on_progress
     )
+    for site, why in _first_per_site(pools.unread):
+        warn(unread_site_warning(site, why))
+    for site, why in _first_per_site(pools.stale):
+        warn(stale_site_warning(site, why))
     return compile_ideas(stored, data, db, now=now, adjacent=pools.decks, tagged=pools.tagged)
+
+
+def _first_per_site(items: Iterable[tuple[Site, str]]) -> list[tuple[Site, str]]:
+    first: dict[Site, str] = {}
+    for site, why in items:
+        first.setdefault(site, why)
+    return list(first.items())
+
+
+def unread_site_prefix(site: Site) -> str:
+    """How `unread_site_warning` starts for the site, whatever the reason."""
+    return f"{site.value} decks could not be read"
+
+
+def unread_site_warning(site: Site, why: str) -> str:
+    """That a peer-deck site could not be read; the ideas were judged by the decks that were (ADR 0066)."""
+    return f"{unread_site_prefix(site)} ({why}); ideas are judged by the decks that were read"
+
+
+def stale_site_prefix(site: Site) -> str:
+    """How `stale_site_warning` starts for the site, whatever the reason."""
+    return f"{site.value} decks could not be refreshed"
+
+
+def stale_site_warning(site: Site, why: str) -> str:
+    """That a peer-deck site could not be refreshed, so its stored decks stand in (ADR 0066)."""
+    return f"{stale_site_prefix(site)} ({why}); ideas use the copy read earlier"
 
 
 def ideas_summary(added: dict[Origin, list[BoardCard]]) -> str:

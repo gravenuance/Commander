@@ -2,6 +2,7 @@
 
 from commander.meta import CardShare, MetaReport
 from commander.models import short_commander_name
+from commander.playstyle import Style
 
 
 def report_json(report: MetaReport) -> dict[str, object]:
@@ -19,7 +20,7 @@ def report_json(report: MetaReport) -> dict[str, object]:
             "basis": sample.basis.name.lower(),
             "thin": sample.thin,
         },
-        "playStyle": [style.value for style in report.style.styles],
+        "playStyle": [style.value for style in Style if style in report.style.styles],
         "racing": report.style.races,
         "missing": [{**_share_json(c), "fit": c.fit.value or None} for c in report.missing],
         "outliers": [_share_json(c, "kept") for c in report.outliers],

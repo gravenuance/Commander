@@ -1,4 +1,4 @@
-"""One share per card from every list read about a commander: its tournament lists and recent Archidekt decks
+"""One share per card from every list read about a commander: its tournament lists and recent peer decks
 (ADR 0026).
 
 Each list or deck gets a weight, recent and well placed ones more. A source's weights are scaled to a mean
@@ -133,7 +133,7 @@ def weighted_shares(
     data: MetaData | None, *, now: Clock, grace: Mapping[str, float] = NO_GRACE
 ) -> ShareTable:
     """Each card's weighted share of the commander's lists with a decklist in the window and of its recent
-    Archidekt decks; NO_SHARES when there are none.
+    Archidekt and Moxfield decks; NO_SHARES when there are none.
 
     grace maps `card_key`s to the factor a list holding the card weighs more by (the profile's, ADR 0039).
     """
@@ -257,14 +257,14 @@ def share_reason(share: WeightedShare) -> str:
 
 
 def share_tip(share: WeightedShare) -> str:
-    """'12/35 · meta 41% (8/20 lists) · Archidekt 27% (4/15 decks)'; the raw count leads only when two
-    sources add up to it."""
+    """'12/35 · meta 41% (8/20 lists) · peers 27% (4/15 decks)'; the raw count leads only when two sources
+    add up to it. The peers are the commander's recent Archidekt and Moxfield decks."""
     parts: list[str] = []
     if share.meta:
         parts.append(f"meta {share.meta.share:.0%} ({share.meta.count}/{share.meta.total} lists)")
     if share.archidekt:
         parts.append(
-            f"Archidekt {share.archidekt.share:.0%} ({share.archidekt.count}/{share.archidekt.total} decks)"
+            f"peers {share.archidekt.share:.0%} ({share.archidekt.count}/{share.archidekt.total} decks)"
         )
     if share.meta and share.archidekt:
         parts.insert(0, f"{share.count}/{share.total}")

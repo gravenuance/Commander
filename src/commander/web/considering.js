@@ -31,7 +31,7 @@ function originLabel(card) {
     case "meta": return "Tournament lists";
     case "archidekt decks": return `Peers: ${state.view?.short ?? "this commander"} decks`;
     case "adjacent decks": return "Peers: alike commanders";
-    case "tagged decks": return card.originTag ? `Peers: tagged ${card.originTag}` : "Peers: tagged decks";
+    case "tagged decks": return card.originTag ? `Archidekt: tagged ${card.originTag}` : "Archidekt: tagged decks";
     default: return card.origin ?? card.source;
   }
 }
@@ -413,6 +413,9 @@ function sharePopover(card, popId) {
     rows.length ? el("ul", { class: "share-rows" }, ...rows.map((row) => shareRow(card, row))) : null);
 }
 
+// The sites the peer pools read decks from.
+const PEER_DECKS = "Archidekt and Moxfield decks";
+
 // One row per source that plays the card, in the order the tile groups sources; the primary one always shows.
 // A pooled idea has no combined share when no list was read for the commander.
 function shareRows(card) {
@@ -420,11 +423,13 @@ function shareRows(card) {
   const rows = [];
   if (meta && (meta.count || card.origin === "meta")) rows.push({ origin: "meta", part: meta, unit: "lists" });
   if (archidekt && (archidekt.count || card.origin === "archidekt decks")) {
-    rows.push({ origin: "archidekt decks", part: archidekt, unit: "decks" });
+    rows.push({ origin: "archidekt decks", part: archidekt, unit: PEER_DECKS });
   }
-  // An alike or tagged idea was found in a pool of its own; the bridge sends the pool's numbers.
+  // An alike or tagged idea was found in a pool of its own; the bridge sends the pool's numbers. Only
+  // Archidekt tags its decks, so the tagged pool is Archidekt's alone.
   if (card.origin === "adjacent decks" || card.origin === "tagged decks") {
-    rows.push({ origin: card.origin, part: card.pool, unit: "decks" });
+    const unit = card.origin === "tagged decks" ? "Archidekt decks" : PEER_DECKS;
+    rows.push({ origin: card.origin, part: card.pool, unit });
   }
   return rows;
 }

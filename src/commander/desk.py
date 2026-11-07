@@ -42,7 +42,6 @@ from commander.board import (
     board_stamp,
     card_json,
     count_json,
-    files_stamp,
     held_keys,
     read_board,
     read_recent_activity,
@@ -65,7 +64,7 @@ from commander.carddb import CardDataError, CardDb, CardInfo, CardText, Resolved
 from commander.changetext import change_mark, change_text
 from commander.config import ConfigError, MetaSettings, forget_account, switch_account, validate_user
 from commander.credentials import CredentialError, KeyringKeyStore, KeyStore, TokenStore, check_api_key
-from commander.deckcache import NOT_FETCHED, AnswerSource, DeckCache
+from commander.deckcache import NOT_FETCHED, AnswerSource, DeckCache, FilesRead, logging_reads
 from commander.deckexport import cardmarket_wants_text, topdeck_text
 from commander.deckgrid import image_url
 from commander.decklocks import DeckLocks
@@ -81,6 +80,7 @@ from commander.deckprofile import (
 from commander.deckthemes import merge_themes
 from commander.deckview import card_images, decklist_json
 from commander.fetchpriority import FetchPriority
+from commander.fsutil import files_stamp
 from commander.ideas import idea_labels
 from commander.labels import LabelError, label_options, set_label
 from commander.landswap import comparison_lists, guard_json
@@ -157,7 +157,39 @@ PAGE_ERROR_MESSAGE_CHARS = 500
 PAGE_ERROR_SOURCE_CHARS = 200
 PAGE_ERROR_STACK_CHARS = 1500
 
+# How long the warm-up waits for the bridge to fall idle before it looks at whether it was told to stop, and
+# how long closing the app waits for it to let go.
+WARM_POLL_SECONDS = 0.25
+WARM_CLOSE_SECONDS = 2.0
+
 type Json = dict[str, object]
+
+
+class Traffic:
+    """How many bridge calls run now, so work in the background can step aside for them."""
+
+    def __init__(self) -> None:
+        self._changed = threading.Condition()
+        self._running = 0
+
+    @contextmanager
+    def call(self) -> Generator[None]:
+        with self._changed:
+            self._running += 1
+        try:
+            yield
+        finally:
+            with self._changed:
+                self._running -= 1
+                if not self._running:
+                    self._changed.notify_all()
+
+    def wait_idle(self, stop: threading.Event) -> bool:
+        """Block until no bridge call runs; False, at once or within WARM_POLL_SECONDS, once `stop` is set."""
+        with self._changed:
+            while self._running and not stop.is_set():
+                self._changed.wait(WARM_POLL_SECONDS)
+            return not stop.is_set()
 
 
 def _guarded[**P](method: Callable[P, Json]) -> Callable[P, Json]:
@@ -174,8 +206,10 @@ def _guard[**P](method: Callable[P, Json], *, show_args: bool) -> Callable[P, Js
     @wraps(method)
     def call(*args: P.args, **kwargs: P.kwargs) -> Json:
         log.debug("bridge call %s %s", method.__name__, args[1:] if show_args else "(arguments withheld)")
+        desk = cast("Desk", args[0])
         try:
-            return method(*args, **kwargs)
+            with desk._traffic.call():  # noqa: SLF001 # pyright: ignore[reportPrivateUsage]
+                return method(*args, **kwargs)
         except CardDataDownloadingError as error:
             # A routine wait, already logged where it was raised.
             return {"error": _app_text(error)}
@@ -200,6 +234,10 @@ def _app_text(error: Exception) -> str:
 
 def _sync_thread(work: Callable[[], None]) -> object:
     return in_background(work, name="app-sync")
+
+
+def warm_thread(work: Callable[[], None]) -> object:
+    return in_background(work, name="app-warm")
 
 
 class CardDataDownloadingError(CardDataError):
@@ -314,6 +352,7 @@ class Desk:
         background: Callable[[Callable[[], None]], object] | None = None,
         updater: Updater | None = None,
         quit_app: Callable[[], None] = lambda: None,
+        warm_up: Callable[[Callable[[], None]], object] | None = None,
     ) -> None:
         self._settings = settings
         # New versions from GitHub (ADR 0059), and how the app closes after it starts one.
@@ -327,8 +366,9 @@ class Desk:
         self._token_store = token_store
         self._topdeck_keys: KeyStore = KeyringKeyStore()
         self._now = now
-        # Per deck: the meta cache stamp the answers were read at, and what was made of them.
-        self._pools: dict[int, tuple[str, MetaData]] = {}
+        # Per deck: the day and bracket, and the cache files the meta answers were read from; then what was
+        # made of them.
+        self._pools: dict[int, tuple[str, FilesRead, MetaData]] = {}
         self._tables: dict[int, tuple[str, ShareTable]] = {}
         self._rules: dict[int, tuple[str, CutRules]] = {}
         # The deck list's rows by deck folder, each with the stamp of the files it was made from.
@@ -364,6 +404,20 @@ class Desk:
         self._writes: list[str] = []
         # Held by each write to a deck and by the sync's ideas merge into it (ADR 0042).
         self._deck_locks = DeckLocks()
+        # Runs the warm-up of the decks' kept answers off the window's thread; None for none (tests). The
+        # app's `launch` closes the desk, which stops it.
+        self._warm_up = warm_up
+        self._traffic = Traffic()
+        self._stop_warming = threading.Event()
+        self._warm_lock = threading.Lock()
+        # Guarded by _warm_lock: a warm-up is queued or running, and one more is wanted after it.
+        self._warming = False
+        self._warm_again = False
+        # Set while no warm-up runs.
+        self._warmed = threading.Event()
+        self._warmed.set()
+        # Whether a deck view has asked for the warm-up yet; the first one does.
+        self._viewed = False
 
     @_guarded
     def account(self) -> Json:
@@ -751,6 +805,9 @@ class Desk:
             handed = self._hand_over()
         if handed is not None:
             self._launch_resync(user, *handed)
+        else:
+            # What the sync fetched or rebuilt has made the decks' kept answers old.
+            self._warm_decks()
 
     def _hand_over(self) -> tuple[FetchPriority, frozenset[int]] | None:
         """Mark the sync of the decks asked for during the last one as running, unless none was asked for or a
@@ -902,6 +959,10 @@ class Desk:
                 share=lambda name: _share_json(shares.of(name)),
             )
         activity = read_recent_activity(stored.folder, ACTIVITY_SHOWN)
+        # The first deck view is the first thing the user waits for; the rest of the decks come after it.
+        if not self._viewed:
+            self._viewed = True
+            self._warm_decks()
         return {
             "id": stored.deck.id,
             "short": stored.deck.short_name,
@@ -927,6 +988,85 @@ class Desk:
             **decklist,
             "activity": [activity_json(entry) for entry in reversed(activity)],
         }
+
+    def close(self) -> None:
+        """Stop the warm-up and wait briefly for it to let go; the app calls this as its window closes."""
+        self._stop_warming.set()
+        self._warmed.wait(WARM_CLOSE_SECONDS)
+
+    def _warm_decks(self) -> None:
+        """Ask for the decks' kept cut rules and previews to be worked out in the background, as a deck view
+        does, so the first view of each is quick. A request made while one runs asks for a pass after it."""
+        if self._warm_up is None or self._stop_warming.is_set():
+            return
+        with self._warm_lock:
+            if self._warming:
+                self._warm_again = True
+                return
+            self._warming = True
+            self._warmed.clear()
+        self._warm_up(self._warm_passes)
+
+    def _warm_passes(self) -> None:
+        over = False
+        try:
+            while not over:
+                with self._warm_lock:
+                    self._warm_again = False
+                self._warm_pass()
+                with self._warm_lock:
+                    over = not self._warm_again or self._stop_warming.is_set()
+                    if over:
+                        self._warming = False
+                        self._warmed.set()
+        except Exception:
+            log.exception("warming the decks' answers failed unexpectedly")
+        finally:
+            if not over:
+                with self._warm_lock:
+                    self._warming = False
+                    self._warmed.set()
+
+    def _warm_pass(self) -> None:
+        """Each deck in the list's order, skipping a deck while a bridge call runs, never holding one up."""
+        workspace = self._workspace
+        decks: list[StoredDeck] = []
+        for deck_id, _ in workspace.deck_folders():
+            try:
+                decks.append(self._stored(deck_id))
+            except BoardError as error:
+                log.info("warm-up skips deck %d: %s", deck_id, error)
+        decks.sort(key=lambda stored: stored.deck.short_name.casefold())
+        for stored in decks:
+            # An account switch while warming leaves the other account's decks alone.
+            if workspace is not self._workspace or not self._traffic.wait_idle(self._stop_warming):
+                return
+            if self._cards_may_change():
+                log.info("warm-up stands aside until the sync has its card data in place")
+                return
+            try:
+                self._warm_deck(stored)
+            except CardDataError as error:
+                log.info("warm-up waits for the card data: %s", error)
+                return
+            except _EXPECTED as error:
+                log.info("warm-up skips deck %d: %s", stored.deck.id, error)
+
+    def _warm_deck(self, stored: StoredDeck) -> None:
+        """The same calls a deck view makes, so a view finds their answers kept."""
+        profile = read_profile(stored.folder)
+        with self._db() as db:
+            main = db.resolve(stored.deck.main_cards)
+            self._deck_rules(stored, main, profile, db)
+            self._shares(stored)
+            if self._traffic.wait_idle(self._stop_warming) and not self._cards_may_change():
+                self._fitting_previews(stored, main, profile, db)
+
+    def _cards_may_change(self) -> bool:
+        """True while a sync may still swap the card data, which an open reader of it makes fail on Windows;
+        the warm-up queues again when the sync ends."""
+        with self._sync_lock:
+            return self._sync.running and not self._sync.cards_ready
 
     @_guarded
     def set_label(self, deck_id: int, name: str, label: str) -> Json:
@@ -1104,12 +1244,14 @@ class Desk:
     def _fitting_previews(
         self, stored: StoredDeck, main: Sequence[ResolvedCard], profile: Profile, db: CardDb
     ) -> list[PreviewFit]:
-        """The previews that fit the deck and are not on its board, kept until its snapshot, profile or board,
-        the probe's cache, the card data, the targets or the local day change."""
+        """The previews that fit the deck and are not on its board, kept until its snapshot, profile, the
+        names on its board (a card's state or the activity log leaves them alone), the probe's cache, the
+        card data, the targets or the local day change."""
         today = local_day(self._now())
         targets = {**DEFAULT_TARGETS, **self._settings.targets, **profile.targets}
+        on_board = sorted({card.name for card in read_board(stored.folder).cards})
         stamp = (
-            f"{board_stamp(stored.folder)}"
+            f"{files_stamp(stored.folder, ('deck.json', 'profile.toml'))}|{on_board}"
             f"|{self._previews_stamp()}|{self._card_data_stamp()}"
             f"|{sorted((role.value, n) for role, n in self._settings.targets.items())}"
         )
@@ -1129,7 +1271,7 @@ class Desk:
                 targets=targets,
                 tags=cache.tags,
                 roles=cache.roles,
-                on_board=[card.name for card in read_board(stored.folder).cards],
+                on_board=on_board,
             )
             if cache.cards
             else []
@@ -1170,10 +1312,11 @@ class Desk:
         # Only a deck below bracket 5 gets land suggestions, which skip the lands its board turned down.
         cedh = stored.deck.bracket == CEDH_BRACKET
         turned_down = [] if cedh else sorted(read_board(stored.folder).rejected_names)
+        playing = self._effective(stored.deck)
         stamp = (
             f"{files_stamp(stored.folder, ('deck.json', 'profile.toml'))}"
-            f"|{cache_stamp(self._settings.cache)}|{self._card_data_stamp()}|{self._now().date()}"
-            f"|{self._effective(stored.deck).bracket}|{turned_down}"
+            f"|{self._meta_stamp(playing)}|{self._card_data_stamp()}|{self._now().date()}"
+            f"|{playing.bracket}|{turned_down}"
         )
         known = self._manas.get(deck_id)
         if known is None or known[0] != stamp:
@@ -1453,7 +1596,7 @@ class Desk:
         # The page asks again after every board change and save: the answer is kept until what it is made
         # of changes, which is the deck, its profile, the cached meta answers, the card data or the day.
         stamp = (
-            f"{files_stamp(stored.folder, (SNAPSHOT_FILE, PROFILE_FILE))}|{cache_stamp(self._settings.cache)}"
+            f"{files_stamp(stored.folder, (SNAPSHOT_FILE, PROFILE_FILE))}|{self._meta_stamp(deck)}"
             f"|{self._card_data_stamp()}|{self._now().date()}|{deck.bracket}"
         )
         known = self._reports.get(stored.deck.id)
@@ -1493,9 +1636,10 @@ class Desk:
         answers and weighted by the deck's grace cards; empty without any lists. Kept until the cached
         answers or the deck's profile change."""
         deck = stored.deck
+        playing = self._effective(deck)
         stamp = (
             f"{files_stamp(stored.folder, ('profile.toml',))}"
-            f"|{cache_stamp(self._settings.cache)}|{self._now().date()}|{self._effective(deck).bracket}"
+            f"|{self._meta_stamp(playing)}|{self._now().date()}|{playing.bracket}"
         )
         known = self._tables.get(deck.id)
         if known is not None and known[0] == stamp:
@@ -1511,17 +1655,25 @@ class Desk:
         """The deck's cut rules, kept until its snapshot, its profile, the cached meta answers or the card
         data change; the mana guard in them remembers its answers for as long."""
         estimates = self._settings.cache / SPELLBOOK_CACHE_FOLDER
+        playing = self._effective(stored.deck)
         stamp = (
             f"{files_stamp(stored.folder, ('deck.json', 'profile.toml'))}"
-            f"|{cache_stamp(self._settings.cache)}|{self._card_data_stamp()}|{self._now().date()}"
-            f"|{self._effective(stored.deck).bracket}|{files_stamp(estimates, (f'{stored.deck.id}.json',))}"
+            f"|{self._meta_stamp(playing)}|{self._card_data_stamp()}|{self._now().date()}"
+            f"|{playing.bracket}|{files_stamp(estimates, (f'{stored.deck.id}.json',))}"
         )
         known = self._rules.get(stored.deck.id)
         if known is not None and known[0] == stamp:
             return known[1]
         estimate = cached_estimate(stored.deck, estimate_cache(estimates), now=self._now)
         rules = deck_cut_rules(
-            stored.deck, main, profile, db, self._pool(stored.deck), now=self._now, estimate=estimate
+            stored.deck,
+            main,
+            profile,
+            db,
+            self._pool(stored.deck),
+            now=self._now,
+            estimate=estimate,
+            shares=self._shares(stored),
         )
         self._rules[stored.deck.id] = (stamp, rules)
         return rules
@@ -1551,13 +1703,30 @@ class Desk:
     def _pool_of(self, playing: Deck) -> MetaData:
         """`_pool` for the deck as the panels act on it (`_effective`); the meta panel reads it too. Kept
         until the cached answers or the day change, since the lists read are those of the last window days."""
-        stamp = f"{cache_stamp(self._settings.cache)}|{playing.bracket}|{self._now().date()}"
+        return self._pool_entry(playing)[2]
+
+    def _pool_entry(self, playing: Deck) -> tuple[str, FilesRead, MetaData]:
+        """The pool with the day, bracket, commanders and meta settings it was read for, and the cache files
+        it read: a save of any other file leaves it valid. A read that logged no file is never kept."""
+        # The commanders and meta settings choose which cache files the gather asks for: after a commander
+        # change, the old commander's files stay current while the new one's are never read.
+        stamp = f"{playing.bracket}|{playing.commanders}|{self._settings.meta!r}|{self._now().date()}"
         known = self._pools.get(playing.id)
-        if known is not None and known[0] == stamp:
-            return known[1]
-        data = self._gather(playing)
-        self._pools[playing.id] = (stamp, data)
-        return data
+        if known is not None and known[0] == stamp and known[1].states and known[1].current():
+            return known
+        with logging_reads() as reads:
+            data = self._gather(playing)
+        entry = (stamp, reads.taken(), data)
+        self._pools[playing.id] = entry
+        return entry
+
+    def _meta_stamp(self, playing: Deck) -> str:
+        """Changes when a cached answer the deck's pool read does, not for another deck's: the state of
+        those files, or of the whole meta folder when the read logged none."""
+        if not playing.commanders:
+            return "-"
+        reads = self._pool_entry(playing)[1]
+        return reads.key if reads.states else cache_stamp(self._settings.cache)
 
     def _gather(self, deck: Deck) -> MetaData:
         """Cached meta answers only: fetching belongs to the sync. The deck is the effective one."""
