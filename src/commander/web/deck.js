@@ -304,7 +304,8 @@ async function copyText(text) {
 // Opens or folds a panel without touching what the viewer chose to keep.
 function showPanel(toggle, open) {
   toggle.setAttribute("aria-expanded", String(open));
-  $(toggle.getAttribute("aria-controls")).hidden = !open;
+  // getElementById by name: code scanning takes `$` for jQuery, which would read the id as HTML.
+  document.getElementById(toggle.getAttribute("aria-controls")).hidden = !open;
 }
 
 // The panels start folded on every launch (index.html), so nothing about them is stored.

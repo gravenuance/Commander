@@ -642,6 +642,11 @@ def archidekt_card_id(scryfall_id: str) -> int:
     return ARCHIDEKT_CARD_ID_BASE + int(scryfall_id[:6], 16)
 
 
+def on_site(host: str, *domains: str) -> bool:
+    """The host is one of the domains or a subdomain of one; a bare suffix would match evilmoxfield.com."""
+    return any(host == domain or host.endswith(f".{domain}") for domain in domains)
+
+
 class FakeArchidekt:
     """Serves deck pages and decks from dicts, like the real API, and records every request.
 
@@ -713,13 +718,13 @@ class FakeArchidekt:
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         host = request.url.host
-        if host.endswith(("scryfall.com", "scryfall.io")):
+        if on_site(host, "scryfall.com", "scryfall.io"):
             return self.scryfall.handler(request)
-        if host.endswith("commanderspellbook.com"):
+        if on_site(host, "commanderspellbook.com"):
             return self.spellbook.handler(request)
-        if host.endswith("topdeck.gg"):
+        if on_site(host, "topdeck.gg"):
             return self.topdeck.handler(request)
-        if host.endswith("moxfield.com"):
+        if on_site(host, "moxfield.com"):
             return self.moxfield.handler(request)
         if request.url.path == "/api/decks/colorTags/":
             self.requests.append(request.url.path)

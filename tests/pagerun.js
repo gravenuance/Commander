@@ -297,8 +297,13 @@ class FakeDocument extends FakeElement {
 
 // A small parser for index.html, which is well-formed: tags, attributes, text and the script list.
 function buildPage(doc, html) {
-  const scripts = [...html.matchAll(/<script src="([^"]+)"><\/script>/g)].map((m) => m[1]);
-  const body = html.split("<body>", 2)[1].replace(/<script[\s\S]*?<\/script>/g, "");
+  const scripts = [...html.matchAll(/<script\b[^>]*?\bsrc="([^"]+)"[^>]*>\s*<\/script\b[^>]*>/gi)].map((m) => m[1]);
+  let body = html.split("<body>", 2)[1];
+  // Until nothing changes: one pass could join what is left around a removed script into a new one.
+  for (let before = null; before !== body; ) {
+    before = body;
+    body = body.replace(/<script\b[^>]*>[\s\S]*?<\/script\b[^>]*>/gi, "");
+  }
   const decode = (text) => text.replace(/&(?:amp|lt|gt|quot|#39);/g, (m) => ENTITIES[m]);
   let at = doc.body;
   for (const token of body.matchAll(/<!--[\s\S]*?-->|<\/([a-z0-9]+)>|<([a-z0-9]+)((?:\s+[\w-]+(?:="[^"]*")?)*)\s*\/?>|([^<]+)/g)) {
