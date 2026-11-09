@@ -122,6 +122,8 @@ function showSignedOut() {
   $("loading").hidden = true;
   $("no-decks").hidden = true;
   $("copy-to-buy").hidden = true;
+  $("buy-open").hidden = true;
+  buyForget();
   $("signed-out").hidden = false;
   paintSignedOut();
 }
@@ -164,6 +166,7 @@ async function signIn() {
 
 // The page starts over with the account's decks, which may live in another folder than the last ones.
 async function showAccountDecks() {
+  buyForget();
   state.current = null;
   state.view = null;
   state.stamps = {};

@@ -24,6 +24,7 @@
           <span class="spinner" aria-hidden="true" hidden></span><span>Sync</span>
         </button>
         <p id="sync-status" class="muted small sync-status" role="status" aria-live="polite"></p>
+        <button id="buy-open" class="button small" type="button" title="Find the cheapest Cardmarket sellers for your Don't Have cards" hidden>Buy cards</button>
         <button id="copy-to-buy" class="button small" type="button" title="Copy Don't Have cards for a Cardmarket wants list" hidden>Copy cards to buy</button>
         <button id="topdeck-open" class="button small" type="button" aria-haspopup="dialog">TopDeck</button>
         <button id="sign-out" class="button small" type="button" hidden>Sign out</button>
@@ -51,6 +52,83 @@
       <span>Sign in to see your decks</span>
       <button id="signed-out-sign-in" class="button primary" type="button">Sign in</button>
     </div>
+
+    <section id="buy" class="buy" hidden aria-labelledby="buy-title">
+      <header class="buy-head">
+        <h1 id="buy-title" class="deck-short" tabindex="-1">Buy cards</h1>
+        <p id="buy-summary" class="muted"></p>
+      </header>
+      <div class="buy-body">
+        <section id="buy-cards-block" class="buy-block" aria-labelledby="buy-cards-title">
+          <h2 id="buy-cards-title" class="buy-block-title">Cards to buy</h2>
+          <ul id="buy-decks" class="buy-decks"></ul>
+        </section>
+
+        <section class="buy-block" aria-labelledby="buy-filters-title">
+          <h2 id="buy-filters-title" class="buy-block-title">Offers</h2>
+          <div class="buy-filters">
+            <div class="buy-filter">
+              <span id="buy-language-label">Language</span>
+              <div id="buy-language" class="segmented" role="group" aria-labelledby="buy-language-label"></div>
+            </div>
+            <div class="buy-filter">
+              <label for="buy-condition">Minimum condition</label>
+              <select id="buy-condition" class="buy-select"></select>
+            </div>
+            <div class="buy-filter">
+              <span id="buy-foil-label">Foil</span>
+              <div id="buy-foil" class="segmented" role="group" aria-labelledby="buy-foil-label"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel buy-panel" aria-labelledby="h-buy-settings">
+          <h2 class="panel-title">
+            <button id="h-buy-settings" class="panel-toggle disclosure" type="button" aria-expanded="false" aria-controls="buy-settings-body">
+              Scan settings
+            </button>
+          </h2>
+          <div id="buy-settings-body" class="panel-body" hidden>
+            <label class="field buy-base">Base sellers
+              <input id="buy-base-sellers" type="number" min="1" max="40" step="1" inputmode="numeric">
+            </label>
+          </div>
+        </section>
+
+        <div id="buy-empty" class="state inline buy-empty" hidden>
+          <span class="state-icon" aria-hidden="true">🛒</span>
+          <span id="buy-empty-text"></span>
+        </div>
+
+        <div class="buy-actions">
+          <button id="buy-scan" class="button primary sync" type="button" aria-describedby="buy-progress">
+            <span class="spinner" aria-hidden="true" hidden></span><span id="buy-scan-label">Scan Cardmarket</span>
+          </button>
+          <button id="buy-cancel" class="button" type="button" hidden>Cancel scan</button>
+          <p id="buy-progress" class="muted buy-line" role="status" aria-live="polite"></p>
+        </div>
+        <p id="buy-error" class="field-error buy-line" role="alert" hidden></p>
+
+        <section id="buy-results" class="buy-block" aria-labelledby="buy-results-title" hidden>
+          <h2 id="buy-results-title" class="buy-block-title">
+            Packages <span id="buy-partial" class="badge status gc" hidden>Partial</span>
+          </h2>
+          <div class="curve-head" aria-hidden="true">
+            <span>Sellers</span><span class="num">Total</span><span class="num">Cards</span>
+            <span class="num">Shipping</span><span class="num">Saving</span><span></span>
+          </div>
+          <div id="buy-curve" class="curve" role="group" aria-label="Packages by number of sellers"></div>
+          <ul id="buy-notes" class="buy-notes"></ul>
+        </section>
+
+        <section id="buy-package" class="buy-block" aria-labelledby="buy-package-title" hidden>
+          <h2 id="buy-package-title" class="buy-block-title"></h2>
+          <p id="buy-package-sub" class="muted"></p>
+          <div id="buy-sellers" class="buy-sellers"></div>
+          <ul id="buy-package-notes" class="buy-notes"></ul>
+        </section>
+      </div>
+    </section>
 
     <section id="deck" class="deck" hidden aria-labelledby="deck-short">
       <header class="deck-head">
@@ -310,6 +388,7 @@
 <script src="meta.js"></script>
 <script src="account.js"></script>
 <script src="topdeck.js"></script>
+<script src="buy.js"></script>
 <script src="update.js"></script>
 <script src="main.js"></script>
 </body>

@@ -7,23 +7,28 @@ import threading
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
+import httpx
 import pytest
 
 from commander.buy import BuyEngine, BuyService, RouteSource
 from commander.buysettings import BuyError, BuyStore
+from commander.buywindows import production_engine
 from commander.cmpages import Condition, Offer, Want
 from commander.cmscan import Foil, ScanProgress, ScanRequest, ScanResult, ScanStage, ScanStatus
 from commander.cmsession import ChallengeError, FormBrowser, LoadTimeout, SignedOut
-from commander.cmshipping import ShippingMethod
+from commander.cmshipping import CardmarketShipping, ShippingMethod
 from commander.cmwants import QuantityMismatch, WantsCancelled, WantsProgress, WantsStep, WantsSync
-from commander.credentials import SessionCookie
+from commander.credentials import CardmarketSessionStore, SessionCookie
 from commander.models import Deck, DeckCard
 from commander.net import NetworkError
 from commander.sellersolve import WantedCard
 from test_sellersolve import LETTER, offer
+
+NOW = datetime(2026, 11, 9, 12, 0, tzinfo=UTC)
 
 DONT_HAVE = "Don't Have"
 SECRET = "SECRET-COOKIE-VALUE"
@@ -262,6 +267,16 @@ def scanned(rig: Rig) -> Json:
     rig.scan_result = scan_of(two_sellers())
     rig.service.start()
     return rig.service.status()
+
+
+def test_the_production_engine_reads_shipping_through_the_cache_and_keeps_the_session_in_the_credential_store(
+    tmp_path: Path,
+) -> None:
+    engine = production_engine(httpx.Client, tmp_path, lambda: NOW)
+
+    assert isinstance(engine.sessions, CardmarketSessionStore)
+    with engine.shipping() as shipping:
+        assert isinstance(shipping, CardmarketShipping)
 
 
 class TestTheCardsToBuy:

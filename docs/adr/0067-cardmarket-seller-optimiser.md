@@ -100,6 +100,14 @@ the owner picks into their Cardmarket cart for them to check out by hand.
   seller's shipping, exactly, and repeats for at most 1, 2, 3, … sellers, so the screen shows how the best
   total falls as sellers are added. Each pick shows its price against the card's Cardmarket trend price,
   which the card database already has.
+- **The Buy screen.** A main view opened from the sidebar lists every deck's Don't Have cards with a tick per
+  deck, takes the offer filters (language English or any, minimum condition Near Mint or any, foil any,
+  non-foil or foil; a blank Cardmarket field is a catch-all, so foil defaults to any) and scans in the
+  background with a progress line and a Cancel button. A cancelled or stopped scan keeps what it read and
+  solves it, marked partial. The curve shows one row per seller count; picking a row shows each seller's
+  shipping method and each card's price against its trend price (the cheapest printing's EUR price in the card
+  data). The choices, the base sellers (15) and the decks left out per account are kept in `buy.json` beside
+  the config file.
 - **The cart.** After the owner confirms a package (sellers, cards, prices, total), the app clicks each
   offer's own cart button, paced like the scan, then reads the cart: an offer that is gone is listed and can
   be solved again among the sellers already in the cart, and a seller whose shipping differs from the estimate

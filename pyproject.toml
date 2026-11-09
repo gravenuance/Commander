@@ -60,6 +60,7 @@ ignore = [
     "INP001",  # tests are not a package
     "S105",    # made-up passwords and tokens for the fake Archidekt
     "S106",    # same
+    "RUF001",  # expected page text holds the × and – the app shows
 ]
 "tools/**" = [
     "INP001",  # one-off scripts run by path, not a package

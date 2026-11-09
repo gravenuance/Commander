@@ -91,6 +91,8 @@ async function loadDecks() {
   $("loading").hidden = true;
   $("no-decks").hidden = state.decks.length > 0;
   $("copy-to-buy").hidden = state.decks.length === 0;
+  $("buy-open").hidden = state.decks.length === 0;
+  if (state.decks.length === 0) closeBuy();
   renderDecks();
   closeOpenDeckIfGone();
 }
@@ -100,6 +102,12 @@ async function loadDecks() {
 function closeOpenDeckIfGone() {
   if (state.current === null || state.decks.some((deck) => deck.id === state.current)) return;
   const name = state.view ? state.view.name : "The open deck";
+  closeDeckView();
+  showStatus(`${name} is no longer among your decks (deleted on Archidekt?), so it is closed.`);
+}
+
+// Empties the page of the open deck and closes its view; a deck request still on its way is dropped.
+function closeDeckView() {
   deckRequest++;
   state.current = null;
   state.view = null;
@@ -121,11 +129,11 @@ function closeOpenDeckIfGone() {
   resetPreviews();
   showRailFor(false);
   $("deck").hidden = true;
-  showStatus(`${name} is no longer among your decks (deleted on Archidekt?), so it is closed.`);
 }
 
 // Only the user opens a deck, so each opening is a view; the main area stays blank until they pick one.
 async function openDeck(id) {
+  closeBuy();
   if (state.current !== id) {
     state.current = id;
     // Tells the sync which deck to fetch first; the answer is not waited for, and api() shows a failure.
