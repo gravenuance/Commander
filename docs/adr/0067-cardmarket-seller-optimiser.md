@@ -129,8 +129,10 @@ the owner picks into their Cardmarket cart for them to check out by hand.
   gets an equal part of what is left, and runs upward from one seller, bounded from above by the best package
   of fewer sellers (it fits a higher cap too) and from below by the proven uncapped optimum. A solve that
   stops short of a proof gives a package marked unproven; one that finds nothing, or leaves a count unproven
-  that no row shows, is reported as timed out ("not found in time"), never silently dropped. Cancel is polled
-  between solves. Small seller counts are the hard part: choosing which few sellers cover 60 cards is a set
+  that no row shows, is reported as timed out: the curve lists that seller count as "Not found in time", and
+  a package not proven cheapest says "May not be cheapest", never silently dropped. Cancel is polled between
+  solves: one pressed while the packages are found ends the run as cancelled with no results, while one
+  pressed during the scan still solves what was read. Small seller counts are the hard part: choosing which few sellers cover 60 cards is a set
   cover, which no formulation here makes quick. Each pick shows its price against the card's Cardmarket trend
   price, which the card database already has.
 - **The Buy screen.** A main view opened from the sidebar lists every deck's Don't Have cards with a tick per
@@ -174,10 +176,13 @@ the owner picks into their Cardmarket cart for them to check out by hand.
   forgotten. A deck whose cards are all unticked is kept as a left-out deck.
 - **The cart.** After the owner confirms a package (sellers, cards, prices, total), the app sends, for each
   offer, the request its own cart button sends, paced like the scan, then reads the cart back. It lists what
-  was added, the offers that were gone (with Cardmarket's reason), cards the cart holds fewer copies of or
-  none of although Cardmarket accepted them, and each package seller whose cart shipping differs from the
-  estimate; a link opens the cart page in the owner's own browser for checkout. A gone offer is replaced by
-  scanning again. The app adds only what the owner confirmed, skips an article already in the cart (reported
+  was added, the offers that were gone or refused (with Cardmarket's reason), cards the cart holds fewer
+  copies of or none of although Cardmarket accepted them, and each package seller whose cart shipping differs
+  from the estimate; a link opens the cart page in the owner's own browser for checkout. A gone offer is
+  replaced by scanning again. The confirmation carries a check of the package it showed (its total and its
+  offers with their copies), and nothing is added when the package of that seller count is no longer that
+  one; new results redraw the open package and close an open confirmation. A run that fails after Cancel (or
+  after the app began closing) ends as cancelled, not as a failure. The app adds only what the owner confirmed, skips an article already in the cart (reported
   short when the cart holds fewer copies than picked, with nothing sent to top it up), and never removes
   anything, clears the cart or checks out. Adding stops early, with the reason shown, when Cardmarket answers
   an error other than "The item is not available." (the offer is gone), after three refusals in a row, when
