@@ -1615,7 +1615,7 @@ class TestSellerLocation:
             "controls": "buy-countries-menu",
             "menu": ["buy-countries-menu", "group", "Seller countries"],
             "label": "Seller location",
-            "popup": "true",
+            "popup": None,
         }
 
     def test_the_list_opens_on_the_first_ticked_country(self) -> None:
