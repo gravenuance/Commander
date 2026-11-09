@@ -160,10 +160,16 @@ the owner picks into their Cardmarket cart for them to check out by hand.
   forgotten. A deck whose cards are all unticked is kept as a left-out deck.
 - **The cart.** After the owner confirms a package (sellers, cards, prices, total), the app sends, for each
   offer, the request its own cart button sends, paced like the scan, then reads the cart back. It lists what
-  was added, the offers that were gone (with Cardmarket's reason), cards the cart holds fewer copies of, and
-  each package seller whose cart shipping differs from the estimate; a link opens the cart page in the owner's
-  own browser for checkout. A gone offer is replaced by scanning again. The app adds only what the owner
-  confirmed, skips an article already in the cart, and never removes anything, clears the cart or checks out.
+  was added, the offers that were gone (with Cardmarket's reason), cards the cart holds fewer copies of or
+  none of although Cardmarket accepted them, and each package seller whose cart shipping differs from the
+  estimate; a link opens the cart page in the owner's own browser for checkout. A gone offer is replaced by
+  scanning again. The app adds only what the owner confirmed, skips an article already in the cart (reported
+  short when the cart holds fewer copies than picked, with nothing sent to top it up), and never removes
+  anything, clears the cart or checks out. Adding stops early, with the reason shown, when Cardmarket answers
+  an error other than "The item is not available." (the offer is gone), after three refusals in a row, when
+  a request gets no answer or its start times out (the request may be out, so the cart read-back decides the
+  offer's result), and on Cancel, which ends the pacing waits and the answer polling at once. A cancel that
+  cannot read the cart back says so.
   Probed live on 2026-11-09 with the owner's OK (one 0,04 € card added and removed again):
   - The button is a form whose submit Cardmarket's script turns into an ajax `POST` to
     `/en/Magic/AjaxAction/ShoppingCart_Add_AddArticlesFromMetacardPage` with `__cmtkn` (the session's token),

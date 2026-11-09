@@ -4,10 +4,11 @@
 button sends: an ajax post with the session's token from the wants lists page, which the page script makes
 with `fetch`, so it carries the session and the headers Cardmarket's own script sends. Requests are paced
 like the scan's. It only ever adds what it was given: an article already in the cart is left as it is, and
-nothing is removed, cleared or checked out. When a request gets no answer the state of the cart is unknown,
-so adding stops and the cart page is read to say what is there. The cart is read once more at the end and
-compared with the package: each offer's copies, and each of the package's sellers' shipping against the
-estimate.
+nothing is removed, cleared or checked out. When a request gets no answer (or its start is not confirmed) the
+state of the cart is unknown, so adding stops and the cart page is read to say what is there. Only "The item
+is not available." is an expected refusal; any other error answer, or three refusals in a row, stops adding
+too. The cart is read once more at the end and compared with the package: each offer's copies, and each of
+the package's sellers' shipping against the estimate.
 """
 
 from __future__ import annotations
@@ -18,7 +19,6 @@ import logging
 import random
 import re
 import threading
-import time
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, cast
@@ -43,8 +43,15 @@ ADD_ACTION = "/en/Magic/AjaxAction/ShoppingCart_Add_AddArticlesFromMetacardPage"
 # How often the stored answer is looked at while the request is out.
 ANSWER_POLL_S = 0.5
 HTTP_OK = 200
+# Refused requests in a row after which adding stops: Cardmarket warns that cart abuse can suspend an account.
+MAX_REFUSALS_IN_A_ROW = 3
 
 _STARTED = "started"
+# What an error answer says of an article that is no longer for sale; any other error answer is not that.
+_GONE_REASON = "The item is not available."
+_ERROR_PREFIX = "An error has occurred."
+_NOT_ANSWERED = "Cardmarket did not answer; adding stopped."
+_NOT_READ_BACK = "The cart was not read back; check it on Cardmarket."
 _TOKEN_FIELD = "__cmtkn"  # noqa: S105 - the name of the page's token field, not a secret
 _TOKEN_SELECTOR = f'input[name="{_TOKEN_FIELD}"]'
 _ANSWER_KEY = "__cmdrCartAnswer"
@@ -61,11 +68,16 @@ class CartOutcome(Enum):
     ADDED = "added"
     # It was in the cart before, so no request was sent for it.
     ALREADY = "already"
-    # Cardmarket refused it; the message says why (the offer is gone).
+    # Cardmarket refused it because the offer is gone; the message is its reason.
     GONE = "gone"
+    # Cardmarket refused it for another reason, given in the message; adding stopped there.
+    REFUSED = "refused"
     # In the cart, but fewer copies than asked.
     SHORT = "short"
-    # The request got no answer and the cart does not show the offer.
+    # Cardmarket accepted the request but the cart read back holds none of its copies.
+    MISSING = "missing"
+    # The request got no answer (or its start was not confirmed), and the cart read back does not show every
+    # copy of the offer or was not read back.
     NO_ANSWER = "no-answer"
     # Adding ended before its turn.
     NOT_SENT = "not-sent"
@@ -120,7 +132,8 @@ class ShippingResult:
 @dataclass(slots=True, frozen=True)
 class CartRun:
     status: CartStatus
-    # Why adding stopped, in words for the owner; empty for a complete or cancelled run.
+    # Why adding stopped, or why the cart was not read back after a cancel, in words for the owner; empty for
+    # a complete run and for a cancelled one whose cart was read back.
     reason: str
     items: tuple[ItemResult, ...]
     # Only the package's sellers that have a shipment in the cart.
@@ -218,6 +231,15 @@ class _Sent:
     message: str = ""
 
 
+@dataclass(slots=True, frozen=True)
+class _Stop:
+    """Why one offer's request gave no answer to go on; `unanswered` when the request may have gone out."""
+
+    status: CartStatus
+    reason: str
+    unanswered: bool = False
+
+
 class _Adder:
     def __init__(
         self,
@@ -250,7 +272,8 @@ class _Adder:
             after = self._read_cart()
         except Cancelled:
             log.info("cart: cancelled while the cart was read back")
-            return CartRun(CartStatus.CANCELLED, "", _items(picks, sent, in_cart_before, None), ())
+            unchecked = _items(picks, sent, in_cart_before, None)
+            return CartRun(CartStatus.CANCELLED, _NOT_READ_BACK, unchecked, ())
         except (BrowserError, PageError) as error:
             log.warning("cart: the cart could not be read back: %s", error)
             unread = "Cardmarket's cart could not be read back; check it on Cardmarket."
@@ -283,6 +306,7 @@ class _Adder:
     def _send(self, todo: Sequence[Pick]) -> tuple[dict[int, _Sent], CartStatus, str]:
         """Send each offer's add request in turn; the outcome of each sent, and why sending ended early."""
         sent: dict[int, _Sent] = {}
+        refusals = 0
         for index, pick in enumerate(todo):
             if self._cancel.is_set():
                 return sent, CartStatus.CANCELLED, ""
@@ -291,21 +315,42 @@ class _Adder:
                 return sent, CartStatus.CANCELLED, ""
             offer = pick.offer
             self._on_progress(CartProgress(offer.card, index, len(todo)))
-            try:
-                self._start(pick)
-            except (BrowserError, PageError) as error:
-                log.warning("cart: article %d was not sent: %s", offer.article_id, error)
-                return sent, CartStatus.STOPPED, "Cardmarket's page was not as expected; adding stopped."
-            try:
-                answer = self._await_answer(pick)
-            except (BrowserError, PageError) as error:
-                log.warning("cart: no usable answer for article %d: %s", offer.article_id, error)
-                sent[offer.article_id] = _Sent(CartOutcome.NO_ANSWER)
-                return sent, CartStatus.STOPPED, "Cardmarket did not answer; adding stopped."
-            outcome = CartOutcome.ADDED if answer.ok else CartOutcome.GONE
+            answer = self._request(pick)
+            if isinstance(answer, _Stop):
+                if answer.unanswered:
+                    sent[offer.article_id] = _Sent(CartOutcome.NO_ANSWER)
+                return sent, answer.status, answer.reason
+            outcome = _outcome(answer)
             log.info("cart: article %d %s: %s", offer.article_id, outcome.value, answer.message)
             sent[offer.article_id] = _Sent(outcome, answer.message)
+            refusals = 0 if answer.ok else refusals + 1
+            enough = _enough_after(outcome, answer.message, refusals, more=index + 1 < len(todo))
+            if enough is not None:
+                return sent, CartStatus.STOPPED, enough
         return sent, CartStatus.COMPLETE, ""
+
+    def _request(self, pick: Pick) -> AddAnswer | _Stop:
+        """One offer's add request and its answer, or why there is no answer to use."""
+        article = pick.offer.article_id
+        try:
+            self._start(pick)
+        except PageError as error:
+            log.warning("cart: article %d was not sent: %s", article, error)
+            return _Stop(CartStatus.STOPPED, "Cardmarket's page was not as expected; adding stopped.")
+        except BrowserError as error:
+            # The script may have run before the window failed, so the request may be out.
+            return self._unanswered(article, error)
+        try:
+            return self._await_answer(pick)
+        except (BrowserError, PageError) as error:
+            return self._unanswered(article, error)
+
+    @staticmethod
+    def _unanswered(article: int, error: BrowserError | PageError) -> _Stop:
+        log.warning("cart: no usable answer for article %d: %s", article, error)
+        if isinstance(error, Cancelled):
+            return _Stop(CartStatus.CANCELLED, "", unanswered=True)
+        return _Stop(CartStatus.STOPPED, _NOT_ANSWERED, unanswered=True)
 
     def _start(self, pick: Pick) -> None:
         answer = self._browser.act(add_script(pick.offer.article_id, pick.copies))
@@ -318,6 +363,8 @@ class _Adder:
         for attempt in range(polls):
             if attempt > 0:
                 self._sleep(ANSWER_POLL_S)
+                if self._cancel.is_set():
+                    raise Cancelled(f"article {pick.offer.article_id}: cancelled while awaiting its answer")
             stored = _stored(self._browser.act(answer_script()), pick.offer.article_id)
             if stored is not None:
                 return stored
@@ -341,6 +388,24 @@ class _Adder:
                     )
                 )
         return tuple(results)
+
+
+def _outcome(answer: AddAnswer) -> CartOutcome:
+    """Only the item being gone is expected of Cardmarket's refusals; any other error answer is not."""
+    if answer.ok:
+        return CartOutcome.ADDED
+    if answer.message.removeprefix(_ERROR_PREFIX).strip() == _GONE_REASON:
+        return CartOutcome.GONE
+    return CartOutcome.REFUSED
+
+
+def _enough_after(outcome: CartOutcome, message: str, refusals: int, *, more: bool) -> str | None:
+    """The reason to stop sending after this answer, or None to carry on."""
+    if outcome is CartOutcome.REFUSED:
+        return f"Cardmarket refused a request ({message}); adding stopped."
+    if refusals >= MAX_REFUSALS_IN_A_ROW and more:
+        return f"Cardmarket refused {refusals} requests in a row; adding stopped."
+    return None
 
 
 def _copies_by_article(cart: Sequence[CartShipment]) -> dict[int, int]:
@@ -380,11 +445,12 @@ def _items(
         request = sent.get(article)
         held = None if after is None else after.get(article, 0)
         if article in before:
-            results.append(ItemResult(pick, CartOutcome.ALREADY, before[article]))
+            outcome = CartOutcome.ALREADY if before[article] >= pick.copies else CartOutcome.SHORT
+            results.append(ItemResult(pick, outcome, before[article]))
         elif request is None:
             results.append(ItemResult(pick, CartOutcome.NOT_SENT, held))
-        elif request.outcome is CartOutcome.GONE:
-            results.append(ItemResult(pick, CartOutcome.GONE, held, request.message))
+        elif request.outcome in (CartOutcome.GONE, CartOutcome.REFUSED):
+            results.append(ItemResult(pick, request.outcome, held, request.message))
         else:
             results.append(ItemResult(pick, _judged(request.outcome, pick.copies, held), held))
     return tuple(results)
@@ -396,7 +462,9 @@ def _judged(answered: CartOutcome, copies: int, held: int | None) -> CartOutcome
         return answered
     if held >= copies:
         return CartOutcome.ADDED
-    return CartOutcome.SHORT if held > 0 or answered is CartOutcome.ADDED else answered
+    if held > 0:
+        return CartOutcome.SHORT
+    return CartOutcome.MISSING if answered is CartOutcome.ADDED else answered
 
 
 def add_to_cart(
@@ -405,7 +473,7 @@ def add_to_cart(
     *,
     cancel: threading.Event | None = None,
     on_progress: Callable[[CartProgress], None] | None = None,
-    sleep: Callable[[float], object] = time.sleep,
+    sleep: Callable[[float], object] | None = None,
     uniform: Callable[[float, float], float] | None = None,
 ) -> CartRun:
     """Put the package's offers in the cart, each at its picked copies, and read the cart back.
@@ -413,14 +481,15 @@ def add_to_cart(
     Raises `PageError` or the browser's own errors, `Cancelled` among them, when the cart page cannot be read
     before anything is sent. Once sending has begun every failure is reported in the run instead. `cancel`
     ends the adding between two requests; the cart is still read back. `sleep` waits out the gap between
-    requests and polls for the answers.
+    requests and polls for the answers; the default waits on `cancel`, so a cancel ends the wait too.
     """
+    stop = cancel if cancel is not None else threading.Event()
     return _Adder(
         browser,
         package,
-        cancel=cancel if cancel is not None else threading.Event(),
+        cancel=stop,
         on_progress=on_progress if on_progress is not None else _ignore,
-        sleep=sleep,
+        sleep=sleep if sleep is not None else stop.wait,
         uniform=uniform if uniform is not None else random.uniform,
     ).run()
 
