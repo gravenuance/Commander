@@ -49,6 +49,7 @@ BLANK_PAGE = "<p style='font-family:sans-serif'>Starting…</p>"
 # Gentle pacing between scripted page loads, as a person clicking through would.
 PACE_SECONDS = 4.0
 LOAD_TIMEOUT_SECONDS = 30.0
+CLICK_PREFIX = "click:"
 
 # Signs of a signed-in page, read from the DOM because the session cookies are HttpOnly anyway. Cardmarket's
 # markup is undocumented, so the prototype reports each sign on its own rather than trusting one.
@@ -211,11 +212,31 @@ def prepare(window: "Window", store: SessionStore, visits: list[str]) -> None:
     native.Invoke(Action(on_ui_thread))
     print("restored the saved session cookie" if saved else "no saved session cookie", flush=True)
     window.load_url(START_URL)
-    for url in visits:
+    for step in visits:
         window.events.loaded.wait(LOAD_TIMEOUT_SECONDS)
         time.sleep(PACE_SECONDS)
-        print(f"\nvisiting {url}", flush=True)
-        window.load_url(url)
+        if step.startswith(CLICK_PREFIX):
+            selector = step.removeprefix(CLICK_PREFIX)
+            print(f"\nclicking {selector}: {window.evaluate_js(click_script(selector))}", flush=True)
+            continue
+        print(f"\nvisiting {step}", flush=True)
+        window.load_url(step)
+    window.events.loaded.wait(LOAD_TIMEOUT_SECONDS)
+    print("\nall steps done", flush=True)
+
+
+def click_script(selector: str) -> str:
+    """JS that clicks the first element matching `selector`, the way the user would, and says what it hit.
+    An empty amount field in the element's form is set to 1 first, as the cart buttons need one."""
+    return f"""(() => {{
+  const el = document.querySelector({json.dumps(selector)});
+  if (!el) return 'no element matches';
+  const amount = el.form && el.form.querySelector('[name^="amount"]');
+  if (amount && !amount.value) amount.value = '1';
+  el.click();
+  const label = el.getAttribute('aria-label') || el.textContent.trim().slice(0, 40);
+  return 'clicked ' + el.tagName + ' ' + label;
+}})()"""
 
 
 def main() -> int:
@@ -223,11 +244,15 @@ def main() -> int:
     parser.add_argument("--forget", action="store_true", help="delete the profile and the saved session")
     parser.add_argument("--save-pages", type=Path, metavar="DIR", help="write every page that loads to DIR")
     parser.add_argument(
-        "--visit", nargs="+", default=[], metavar="URL", help="Cardmarket pages to open in turn"
+        "--visit",
+        nargs="+",
+        default=[],
+        metavar="STEP",
+        help=f"Cardmarket pages to open in turn; a step '{CLICK_PREFIX}<css selector>' clicks on the page",
     )
     args = parser.parse_args()
     visits: list[str] = args.visit
-    if bad := [url for url in visits if not on_cardmarket(url)]:
+    if bad := [url for url in visits if not url.startswith(CLICK_PREFIX) and not on_cardmarket(url)]:
         parser.error(f"not a Cardmarket page: {bad[0]}")
     saver: PageSaver | None = None
     if args.save_pages is not None:
