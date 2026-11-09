@@ -84,7 +84,7 @@ def run_scan(status: Window, args: argparse.Namespace, cancel: threading.Event) 
         browser = WebviewBrowser(scan_window, CardmarketSessionStore())
         request = ScanRequest(
             wanted=[WantedCard(name, 1) for name in args.cards],
-            filters=ScanFilters(language=args.language, min_condition=args.condition),
+            filters=ScanFilters(languages=tuple(args.language), min_condition=args.condition),
             wants_list_id=args.wants_list,
             base_sellers=args.base_sellers,
         )
@@ -105,7 +105,13 @@ def main() -> int:
     parser.add_argument("cards", nargs="+", metavar="CARD", help="card names, as the wants list names them")
     parser.add_argument("--profile", type=Path, required=True, help="the WebView2 profile folder to share")
     parser.add_argument("--wants-list", type=int, help="the wants list id; without it there is no pass 2")
-    parser.add_argument("--language", type=int, default=ENGLISH, help="Cardmarket language id (1 English)")
+    parser.add_argument(
+        "--language",
+        type=int,
+        nargs="+",
+        default=[ENGLISH],
+        help="Cardmarket language ids (1 English, 7 Japanese)",
+    )
     parser.add_argument(
         "--condition", choices=[c.value for c in Condition], help="the worst condition to accept"
     )

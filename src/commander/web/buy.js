@@ -3,7 +3,7 @@
 /* Buy cards: the Don't Have cards by deck, and the Cardmarket scan that turns them into packages (ADR 0067) */
 
 const BUY_POLL_MS = 1000;
-const BUY_LANGUAGES = [["english", "English"], ["any", "Any"]];
+const BUY_LANGUAGES = [["english", "English"], ["japanese", "Japanese"], ["both", "Both"], ["any", "Any"]];
 const BUY_FOILS = [["any", "Any"], ["non-foil", "Non-foil"], ["foil", "Foil"]];
 // The longest a seller may take to deliver, in days.
 const BUY_DELIVERIES = [["any", "Any"], ["5", "5 days"], ["7", "1 week"], ["10", "10 days"], ["14", "2 weeks"]];

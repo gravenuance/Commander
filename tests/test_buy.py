@@ -160,7 +160,7 @@ def imported(list_id: int = 7, names: Sequence[str] = ("Arcane Signet",)) -> Wan
 @dataclass(slots=True)
 class SyncCall:
     wanted: list[WantedCard]
-    language: int | None
+    languages: tuple[int, ...]
     min_condition: Condition | None
     foil: Foil
 
@@ -237,14 +237,14 @@ class Rig:
         _browser: object,
         wanted: list[WantedCard],
         *,
-        language: int | None,
+        languages: tuple[int, ...],
         min_condition: Condition | None,
         foil: Foil,
         cancel: threading.Event,
         on_progress: Callable[[WantsProgress], None],
     ) -> WantsSync:
         self.events.append("sync")
-        self.sync_calls.append(SyncCall(wanted, language, min_condition, foil))
+        self.sync_calls.append(SyncCall(wanted, languages, min_condition, foil))
         on_progress(WantsProgress(WantsStep.IMPORT, "3 cards"))
         self.progress.append(str(self.service.status()["progress"]))
         self.sync_effect(cancel)
@@ -435,10 +435,10 @@ class TestTheFilters:
         rig.service.start()
 
         [call] = rig.sync_calls
-        assert (call.language, call.min_condition, call.foil) == (1, Condition.EX, Foil.FOIL)
+        assert (call.languages, call.min_condition, call.foil) == ((1,), Condition.EX, Foil.FOIL)
         [request] = rig.scan_requests
-        assert (request.filters.language, request.filters.min_condition, request.filters.foil) == (
-            1,
+        assert (request.filters.languages, request.filters.min_condition, request.filters.foil) == (
+            (1,),
             Condition.EX,
             Foil.FOIL,
         )
@@ -450,12 +450,42 @@ class TestTheFilters:
         rig.service.start()
 
         [call] = rig.sync_calls
-        assert (call.language, call.min_condition, call.foil) == (None, None, Foil.ANY)
+        assert (call.languages, call.min_condition, call.foil) == ((), None, Foil.ANY)
+        [request] = rig.scan_requests
+        assert request.filters.languages == ()
+
+    @pytest.mark.parametrize(
+        ("choice", "ids"),
+        [("english", (1,)), ("japanese", (7,)), ("both", (1, 7)), ("any", ())],
+    )
+    def test_each_language_choice_reaches_the_wants_list_and_the_scan_as_its_ids(
+        self, rig: Rig, choice: str, ids: tuple[int, ...]
+    ) -> None:
+        rig.service.set_filters(choice, "NM", "any", [], "any")
+
+        rig.service.start()
+
+        [call] = rig.sync_calls
+        [request] = rig.scan_requests
+        assert (call.languages, request.filters.languages) == (ids, ids)
+
+    @pytest.mark.parametrize("choice", ["english", "japanese", "both", "any"])
+    def test_each_language_choice_is_saved_and_found_again(
+        self, rig: Rig, tmp_path: Path, choice: str
+    ) -> None:
+        rig.service.set_filters(choice, "NM", "any", [], "any")
+
+        view = Rig(tmp_path, rig.card_db).service.view()
+
+        assert cast("Json", view["filters"])["language"] == choice
 
     @pytest.mark.parametrize(
         "choices",
         [
             ("french", "NM", "any", [], "any"),
+            ("Japanese", "NM", "any", [], "any"),
+            ("english,japanese", "NM", "any", [], "any"),
+            (["english", "japanese"], "NM", "any", [], "any"),
             ("english", "XX", "any", [], "any"),
             ("english", "NM", "shiny", [], "any"),
             (1, "NM", "any", [], "any"),
@@ -699,6 +729,36 @@ class TestTheFilters:
             (2, False),
         ]
         assert "klingon" in caplog.text
+
+    @pytest.mark.parametrize("language", ["english", "japanese", "both", "any"])
+    def test_every_language_choice_in_a_current_file_is_read_as_it_was_written(
+        self, rig: Rig, language: str
+    ) -> None:
+        rig.settings_path.parent.mkdir(parents=True)
+        rig.settings_path.write_text(
+            f'{{"version": 3, "filters": {{"language": "{language}"}}}}', encoding="utf-8"
+        )
+
+        view = rig.build().view()
+
+        assert cast("Json", view["filters"])["language"] == language
+        assert not rig.settings_path.with_name("buy.json.v3.bak").exists()
+
+    @pytest.mark.parametrize("language", ["Japanese", "english,japanese", "", 7, ["both"]])
+    def test_a_language_that_is_none_of_the_four_falls_back_to_english_and_says_so(
+        self, rig: Rig, caplog: pytest.LogCaptureFixture, language: object
+    ) -> None:
+        rig.settings_path.parent.mkdir(parents=True)
+        rig.settings_path.write_text(
+            json.dumps({"version": 3, "filters": {"language": language, "foil": "foil"}}), encoding="utf-8"
+        )
+
+        with caplog.at_level(logging.WARNING):
+            view = rig.build().view()
+
+        assert cast("Json", view["filters"])["language"] == "english"
+        assert cast("Json", view["filters"])["foil"] == "foil"
+        assert "filters.language" in caplog.text
 
     def test_the_decks_left_out_belong_to_the_account(self, rig: Rig, tmp_path: Path) -> None:
         rig.service.include(2, included=False)

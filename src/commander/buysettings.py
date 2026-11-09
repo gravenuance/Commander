@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import cast
 
 from commander.cmpages import Condition
-from commander.cmscan import DEFAULT_BASE_SELLERS, ENGLISH, Foil, ScanFilters
+from commander.cmscan import DEFAULT_BASE_SELLERS, ENGLISH, JAPANESE, Foil, ScanFilters
 from commander.fsutil import write_text_atomic
 from commander.jsonshape import ShapeError, as_list, as_object, req_int
 
@@ -49,14 +49,26 @@ class BuyError(Exception):
 
 
 class LanguageChoice(Enum):
-    """Cardmarket offers many languages, but the scan filters on one: English, or any."""
+    """Cardmarket offers many languages; the owner's decks take English, Japanese (the European market sells
+    it cheaply), both, or any, which saves the most."""
 
     ENGLISH = "english"
+    JAPANESE = "japanese"
+    BOTH = "both"
     ANY = "any"
 
     @property
-    def cardmarket_id(self) -> int | None:
-        return ENGLISH if self is LanguageChoice.ENGLISH else None
+    def cardmarket_ids(self) -> tuple[int, ...]:
+        """Cardmarket's language ids, sorted; empty for any, which Cardmarket reads as every language."""
+        return _LANGUAGE_IDS[self]
+
+
+_LANGUAGE_IDS = {
+    LanguageChoice.ENGLISH: (ENGLISH,),
+    LanguageChoice.JAPANESE: (JAPANESE,),
+    LanguageChoice.BOTH: (ENGLISH, JAPANESE),
+    LanguageChoice.ANY: (),
+}
 
 
 class DeliveryChoice(Enum):
@@ -89,7 +101,11 @@ class BuyFilters:
 
     def scan_filters(self) -> ScanFilters:
         return ScanFilters(
-            self.language.cardmarket_id, self.min_condition, self.foil, self.countries, self.delivery.max_days
+            self.language.cardmarket_ids,
+            self.min_condition,
+            self.foil,
+            self.countries,
+            self.delivery.max_days,
         )
 
     def to_json(self) -> dict[str, object]:

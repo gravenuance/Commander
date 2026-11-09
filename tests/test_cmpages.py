@@ -387,6 +387,23 @@ class TestWantsList:
 
         assert [w.languages for w in read_wants_list(any_language).wants] == [(), ()]
 
+    def test_a_want_of_two_languages_lists_both_in_page_order(self) -> None:
+        icons = "".join(
+            '<a href="https://help.cardmarket.com/en/CardLanguage" class="d-flex me-1">'
+            f'<span class="icon" aria-label="{label}" data-bs-original-title="{label}"></span></a>'
+            for label in ("English", "Japanese")
+        )
+        two_languages = re.sub(
+            r'(?s)<td class="languages.*?</td>',
+            f'<td class="languages min-size p-2"><div class="d-flex flex-wrap">{icons}</div></td>',
+            page(WANTS_PAGE),
+        )
+
+        assert [w.languages for w in read_wants_list(two_languages).wants] == [
+            ("English", "Japanese"),
+            ("English", "Japanese"),
+        ]
+
     def test_a_want_without_its_condition_names_the_want(self) -> None:
         broken = changed(
             page(WANTS_PAGE),

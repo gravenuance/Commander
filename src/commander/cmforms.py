@@ -34,6 +34,25 @@ def set_field_script(selector: str, value: str) -> str:
 }})()"""
 
 
+def select_options_script(selector: str, values: Sequence[str]) -> str:
+    """Select exactly the options of the first `<select>` matching `selector` whose value is in `values`, and
+    fire the events a person's choice would. Answers `OK` once the select reads back as `values`, so a
+    select that is not `multiple` and cannot hold them all says what it kept."""
+    return f"""(() => {{
+  const el = document.querySelector({json.dumps(selector)});
+  if (!el) return 'no element matches ' + {json.dumps(selector)};
+  const wanted = {json.dumps(sorted(values))};
+  for (const option of Array.from(el.options)) option.selected = wanted.includes(option.value);
+  el.dispatchEvent(new Event('input', {{bubbles: true}}));
+  el.dispatchEvent(new Event('change', {{bubbles: true}}));
+  const kept = Array.from(el.options).filter(o => o.selected).map(o => o.value).sort();
+  if (JSON.stringify(kept) !== JSON.stringify(wanted)) {{
+    return 'the field ' + {json.dumps(selector)} + ' kept ' + JSON.stringify(kept);
+  }}
+  return {json.dumps(OK)};
+}})()"""
+
+
 def submit_script(selector: str) -> str:
     """Click the first enabled element matching `selector`; answers `SUBMITTED` once it has."""
     return f"""(() => {{

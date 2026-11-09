@@ -10,6 +10,7 @@ import pytest
 from commander.cmforms import (
     OK,
     read_ticks,
+    select_options_script,
     set_field_script,
     submit_script,
     tick_all_wants_script,
@@ -27,8 +28,21 @@ const events = [];
 class Event { constructor(type) { this.type = type; } }
 const made = elements.map(spec => {
   let value = spec.value ?? '';
+  // A select's options. In one that is not `multiple`, selecting an option deselects the others.
+  const options = (spec.options ?? []).map(v => {
+    let on = (spec.selected ?? []).includes(v);
+    return {
+      value: v,
+      get selected() { return on; },
+      set selected(next) {
+        if (next && !spec.multiple) options.forEach(o => { o.off(); });
+        on = next;
+      },
+      off() { on = false; },
+    };
+  });
   return {
-    spec, checked: !!spec.checked, disabled: !!spec.disabled, clicks: 0,
+    spec, options, checked: !!spec.checked, disabled: !!spec.disabled, clicks: 0,
     get value() { return value; },
     set value(v) { value = (spec.allowed && !spec.allowed.includes(v)) ? '' : v; },
     dispatchEvent(e) { events.push([spec.selector, e.type]); },
@@ -52,6 +66,7 @@ const answer = new Function('document', 'Event', 'return ' + script)(document, E
 console.log(JSON.stringify({
   answer, events,
   clicks: made.map(n => n.clicks), checked: made.map(n => n.checked), values: made.map(n => n.value),
+  selected: made.map(n => n.options.filter(o => o.selected).map(o => o.value)),
 }));
 """
 
@@ -63,6 +78,7 @@ class Outcome:
     clicks: list[int]
     checked: list[bool]
     values: list[str]
+    selected: list[list[str]]
 
 
 @dataclass(slots=True)
@@ -75,6 +91,10 @@ class Element:
     group: str = ""
     want_id: str = ""
     allowed: list[str] | None = field(default=None)
+    # For a `<select>`: its option values, the ones selected at the start, and whether it is `multiple`.
+    options: list[str] = field(default_factory=list[str])
+    selected: list[str] = field(default_factory=list[str])
+    multiple: bool = True
 
     def spec(self) -> dict[str, object]:
         return {
@@ -86,6 +106,9 @@ class Element:
             "group": self.group,
             "wantId": self.want_id,
             "allowed": self.allowed,
+            "options": self.options,
+            "selected": self.selected,
+            "multiple": self.multiple,
         }
 
 
@@ -108,6 +131,7 @@ def run(script: str, *elements: Element) -> Outcome:
         clicks=cast("list[int]", data["clicks"]),
         checked=cast("list[bool]", data["checked"]),
         values=cast("list[str]", data["values"]),
+        selected=cast("list[list[str]]", data["selected"]),
     )
 
 
@@ -145,6 +169,64 @@ class TestSetField:
 
         assert out.answer == OK
         assert out.values == ["2"]
+
+
+LANGUAGES = 'select[name="idLanguages[]"]'
+
+
+def languages_select(*, selected: list[str] | None = None, multiple: bool = True) -> Element:
+    return Element(
+        LANGUAGES, kind="select", options=["", "1", "2", "7"], selected=selected or [], multiple=multiple
+    )
+
+
+@needs_node
+class TestSelectOptions:
+    def test_one_option_is_selected_and_the_select_hears_input_and_change(self) -> None:
+        out = run(select_options_script(LANGUAGES, ["1"]), languages_select())
+
+        assert out.answer == OK
+        assert out.selected == [["1"]]
+        assert out.events == [[LANGUAGES, "input"], [LANGUAGES, "change"]]
+
+    def test_both_options_are_selected_not_just_the_first(self) -> None:
+        out = run(select_options_script(LANGUAGES, ["1", "7"]), languages_select())
+
+        assert out.answer == OK
+        assert out.selected == [["1", "7"]]
+
+    def test_the_order_the_values_are_given_in_does_not_matter(self) -> None:
+        out = run(select_options_script(LANGUAGES, ["7", "1"]), languages_select())
+
+        assert out.answer == OK
+        assert out.selected == [["1", "7"]]
+
+    def test_options_selected_before_are_deselected(self) -> None:
+        out = run(select_options_script(LANGUAGES, ["7"]), languages_select(selected=["", "1"]))
+
+        assert out.answer == OK
+        assert out.selected == [["7"]]
+
+    def test_a_select_that_cannot_hold_both_says_what_it_kept(self) -> None:
+        out = run(select_options_script(LANGUAGES, ["1", "7"]), languages_select(multiple=False))
+
+        assert out.answer == f'the field {LANGUAGES} kept ["7"]'
+
+    def test_a_value_without_an_option_is_not_kept(self) -> None:
+        out = run(select_options_script(LANGUAGES, ["1", "99"]), languages_select())
+
+        assert out.answer == f'the field {LANGUAGES} kept ["1"]'
+
+    def test_a_missing_select_is_named(self) -> None:
+        answer = run(select_options_script(LANGUAGES, ["1"])).answer
+
+        assert answer == f"no element matches {LANGUAGES}"
+
+    def test_a_value_that_could_be_code_is_only_a_value(self) -> None:
+        out = run(select_options_script(LANGUAGES, ['1"]); throw 1; (["']), languages_select())
+
+        assert out.answer.startswith("the field")
+        assert out.selected == [[]]
 
 
 @needs_node

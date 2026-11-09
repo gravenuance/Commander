@@ -264,6 +264,66 @@ class TestChoices:
             ["buy_filters", "any", "any", "any", [], "any", ""],
         ]
 
+    def test_the_language_control_reads_english_japanese_both_any_with_english_pressed(self) -> None:
+        seen = run("""
+        await open();
+        return [...$("buy-language").children].map((b) => [b.textContent, b.dataset.value,
+          b.getAttribute("aria-pressed"), b.getAttribute("type")]);
+        """)
+        assert seen == [
+            ["English", "english", "true", "button"],
+            ["Japanese", "japanese", "false", "button"],
+            ["Both", "both", "false", "button"],
+            ["Any", "any", "false", "button"],
+        ]
+
+    def test_each_language_button_sends_its_choice_and_is_the_only_one_pressed_afterwards(self) -> None:
+        seen = run("""
+        await open();
+        stub.buy_filters = async (language, condition, foil) =>
+          withFilters({ language, condition, foil });
+        const trail = [];
+        for (const label of ["Japanese", "Both", "Any", "English"]) {
+          const button = [...$("buy-language").children].find((b) => b.textContent === label);
+          await fire(button, "click");
+          trail.push([calls[calls.length - 1][1], [...$("buy-language").children]
+            .filter((b) => b.getAttribute("aria-pressed") === "true").map((b) => b.textContent)]);
+        }
+        return trail;
+        """)
+        assert seen == [
+            ["japanese", ["Japanese"]],
+            ["both", ["Both"]],
+            ["any", ["Any"]],
+            ["english", ["English"]],
+        ]
+
+    def test_the_language_buttons_take_focus_in_reading_order_and_are_not_taken_out_of_it(self) -> None:
+        seen = run("""
+        await open();
+        const buttons = [...$("buy-language").children];
+        const focused = [];
+        for (const button of buttons) {
+          button.focus();
+          focused.push(document.activeElement.textContent);
+        }
+        return { focused, tabindex: buttons.map((b) => b.getAttribute("tabindex")),
+          disabled: buttons.map((b) => b.disabled) };
+        """)
+        assert seen == {
+            "focused": ["English", "Japanese", "Both", "Any"],
+            "tabindex": [None, None, None, None],
+            "disabled": [False, False, False, False],
+        }
+
+    def test_a_saved_both_shows_pressed_on_opening(self) -> None:
+        seen = run("""
+        await open(view({ filters: { ...FILTERS, language: "both" } }));
+        return [...$("buy-language").children]
+          .filter((b) => b.getAttribute("aria-pressed") === "true").map((b) => b.textContent);
+        """)
+        assert seen == ["Both"]
+
     def test_every_condition_is_offered_with_any_first(self) -> None:
         seen = run("""
         return [...$("buy-condition").children].map((o) => [o.getAttribute("value"), o.textContent]);
@@ -656,7 +716,7 @@ class TestKeyboard:
         assert seen == {
             "scan": "BUTTON",
             "cancel": "BUTTON",
-            "language": ["BUTTON", "BUTTON"],
+            "language": ["BUTTON", "BUTTON", "BUTTON", "BUTTON"],
             "foil": ["BUTTON", "BUTTON", "BUTTON"],
             "condition": "SELECT",
             "base": "INPUT",

@@ -92,7 +92,7 @@ def run_sync(status: Window, args: argparse.Namespace, cancel: threading.Event) 
         result = sync_wants(
             browser,
             args.wanted,
-            language=args.language,
+            languages=args.language,
             min_condition=args.condition,
             cancel=cancel,
             on_progress=print_progress,
@@ -116,7 +116,13 @@ def main() -> int:
     parser.add_argument("cards", nargs="*", metavar="CARD", help="NAME or NAME=QUANTITY")
     parser.add_argument("--file", type=Path, help="lines of '<quantity> <name>' (toget --cardmarket output)")
     parser.add_argument("--profile", type=Path, required=True, help="the WebView2 profile folder to share")
-    parser.add_argument("--language", type=int, default=ENGLISH, help="Cardmarket language id (1 English)")
+    parser.add_argument(
+        "--language",
+        type=int,
+        nargs="+",
+        default=[ENGLISH],
+        help="Cardmarket language ids (1 English, 7 Japanese)",
+    )
     parser.add_argument("--any-language", action="store_true", help="leave the language as imported")
     parser.add_argument(
         "--condition", choices=[c.value for c in Condition], help="the worst condition to accept"
@@ -129,7 +135,7 @@ def main() -> int:
     if not wanted:
         parser.error("name at least one card, or give --file")
     args.wanted = wanted
-    args.language = None if args.any_language else args.language
+    args.language = () if args.any_language else tuple(args.language)
     args.condition = Condition(args.condition) if args.condition else None
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, stream=sys.stderr)
 

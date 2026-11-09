@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 from commander.cmforms import (
     OK,
     read_ticks,
+    select_options_script,
     set_field_script,
     submit_script,
     tick_all_wants_script,
@@ -36,7 +37,7 @@ from commander.cmpages import (
     read_wants_list,
     read_wants_lists,
 )
-from commander.cmscan import ENGLISH, MAX_GAP_S, MIN_GAP_S, Foil
+from commander.cmscan import ENGLISH, JAPANESE, MAX_GAP_S, MIN_GAP_S, Foil
 from commander.cmsession import SUBMITTED
 from commander.sellersolve import card_key, merged_wants
 
@@ -64,7 +65,8 @@ _EDIT_LANGUAGE = 'select[name="idLanguages[]"]'
 _EDIT_CONDITION = "#minCondition"
 _EDIT_FOIL = "#isFoil"
 _EDIT_SUBMIT = 'input[type="submit"][form="ModifyForm"]'
-_LANGUAGE_LABELS = {ENGLISH: "English"}
+# The names the list page shows for the languages the sync can set.
+_LANGUAGE_LABELS = {ENGLISH: "English", JAPANESE: "Japanese"}
 # How many wants a failure message names.
 _NAMED = 5
 
@@ -127,7 +129,7 @@ class _Sync:
         browser: FormBrowser,
         wanted: Sequence[WantedCard],
         *,
-        language: int | None,
+        languages: tuple[int, ...],
         min_condition: Condition | None,
         foil: Foil,
         cancel: threading.Event,
@@ -135,9 +137,12 @@ class _Sync:
         sleep: Callable[[float], object],
         uniform: Callable[[float, float], float],
     ) -> None:
+        unknown = [language for language in languages if language not in _LANGUAGE_LABELS]
+        if unknown or len(set(languages)) != len(languages):
+            raise ValueError(f"the wants sync cannot set the languages {languages}")
         self._browser = browser
         self._wanted = merged_wants(wanted)
-        self._language = language
+        self._languages = languages
         self._min_condition = min_condition
         self._foil = foil
         self._cancel = cancel
@@ -155,7 +160,7 @@ class _Sync:
         if not self._wanted:
             return WantsSync(list_id, (), (), ())
         current = self._import(list_id)
-        if self._language is not None or self._min_condition is not None or self._foil is not Foil.ANY:
+        if self._languages or self._min_condition is not None or self._foil is not Foil.ANY:
             current = self._edit(current)
             self._check_filters(current)
         return self._report(current)
@@ -281,8 +286,9 @@ class _Sync:
             what = f"editing the {len(ids)} wants of quantity {quantity}"
             self._tick(tick_wants_script(ids), len(ids), what)
             self._act(set_field_script(_EDIT_AMOUNT, str(quantity)), what)
-            if self._language is not None:
-                self._act(set_field_script(_EDIT_LANGUAGE, str(self._language)), what)
+            if self._languages:
+                chosen = [str(language) for language in self._languages]
+                self._act(select_options_script(_EDIT_LANGUAGE, chosen), what)
             if self._min_condition is not None:
                 self._act(set_field_script(_EDIT_CONDITION, str(_condition_id(self._min_condition))), what)
             if self._foil is not Foil.ANY:
@@ -303,10 +309,9 @@ class _Sync:
     def _has_filters(self, want: Want) -> bool:
         if self._min_condition is not None and want.min_condition is not self._min_condition:
             return False
-        if self._language is None:
+        if not self._languages:
             return True
-        label = _LANGUAGE_LABELS.get(self._language)
-        return want.languages == (label,) if label is not None else bool(want.languages)
+        return sorted(want.languages) == sorted(_LANGUAGE_LABELS[language] for language in self._languages)
 
     # --- the result -----------------------------------------------------------------------------------
 
@@ -335,7 +340,7 @@ def sync_wants(
     browser: FormBrowser,
     wanted: Sequence[WantedCard],
     *,
-    language: int | None,
+    languages: tuple[int, ...],
     min_condition: Condition | None,
     foil: Foil = Foil.ANY,
     cancel: threading.Event | None = None,
@@ -343,7 +348,7 @@ def sync_wants(
     sleep: Callable[[float], object] | None = None,
     uniform: Callable[[float, float], float] = random.uniform,
 ) -> WantsSync:
-    """Make the app's wants list hold exactly `wanted`, at `language` (Cardmarket's id, None for any),
+    """Make the app's wants list hold exactly `wanted`, at `languages` (Cardmarket's ids, none for any),
     `min_condition` (None for the import's Poor) and `foil` (any leaves the import's blank field), when any
     is given, and read it back.
 
@@ -355,7 +360,7 @@ def sync_wants(
     return _Sync(
         browser,
         wanted,
-        language=language,
+        languages=languages,
         min_condition=min_condition,
         foil=foil,
         cancel=stop,

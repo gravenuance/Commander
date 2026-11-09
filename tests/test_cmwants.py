@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from commander.cmpages import Condition, PageError, Want
-from commander.cmscan import ENGLISH, Foil
+from commander.cmscan import ENGLISH, JAPANESE, Foil
 from commander.cmsession import SUBMITTED, BrowserError, SignedOut
 from commander.cmwants import (
     APP_LIST_NAME,
@@ -29,14 +29,14 @@ from conftest import FIXTURES
 
 LISTS_URL = "https://www.cardmarket.com/en/Magic/Wants"
 CONDITION_OF_ID = {"1": "MT", "2": "NM", "3": "EX", "4": "GD", "5": "LP", "6": "PL", "7": "PO"}
-LANGUAGE_OF_ID = {"1": "English"}
+LANGUAGE_OF_ID = {"1": "English", "7": "Japanese"}
+LANGUAGE_SELECT = 'select[name="idLanguages[]"]'
 NEW_LIST_ID = 100
 # The fields the sync fills in, by selector, and the name the fake keeps each under.
 FIELDS = {
     "#SWWantsListName": "new name",
     "#AddDecklist": "import",
     "#amount": "amount",
-    'select[name="idLanguages[]"]': "language",
     "#minCondition": "condition",
     "#isFoil": "foil",
 }
@@ -89,6 +89,12 @@ def value_set_by(script: str) -> str:
     return json.loads(match[1])
 
 
+def options_selected_by(script: str) -> list[str]:
+    match = re.search(r"const wanted = (\[.*?\]);", script)
+    assert match is not None, script
+    return json.loads(match[1])
+
+
 def ids_ticked_by(script: str) -> list[str]:
     match = re.search(r"new Set\((\[.*?\])\)", script)
     assert match is not None, script
@@ -110,6 +116,12 @@ class FakeSite:
     import_lag: int = 0
     # The bulk edit changes nothing.
     ignore_edits: bool = False
+    # The languages a want shows come back in the opposite order to the one they were selected in.
+    reverse_languages: bool = False
+    # Language ids the bulk edit does not apply (a select that is not `multiple` keeps one).
+    dropped_languages: set[str] = field(default_factory=set[str])
+    # The languages every edited want shows whatever was selected, when set.
+    shown_languages: tuple[str, ...] | None = None
     # A creation that creates nothing.
     create_fails: bool = False
     # Selectors the page does not have (their scripts answer "no element matches").
@@ -179,6 +191,10 @@ class FakeSite:
         if (refusal := self._missing(script)) is not None:
             self.record("act missing")
             return refusal
+        if json.dumps(LANGUAGE_SELECT) in script:
+            self.record("fill language")
+            self.fields["language"] = ",".join(options_selected_by(script))
+            return "ok"
         for selector, key in FIELDS.items():
             if json.dumps(selector) in script:
                 self.record(f"fill {key}")
@@ -249,7 +265,11 @@ class FakeSite:
                 continue
             want.quantity = int(self.fields["amount"])
             if "language" in self.fields:
-                want.languages = (LANGUAGE_OF_ID[self.fields["language"]],)
+                ids = [i for i in self.fields["language"].split(",") if i not in self.dropped_languages]
+                shown = [LANGUAGE_OF_ID[i] for i in ids]
+                want.languages = tuple(reversed(shown) if self.reverse_languages else shown)
+                if self.shown_languages is not None:
+                    want.languages = self.shown_languages
             if "condition" in self.fields:
                 want.condition = CONDITION_OF_ID[self.fields["condition"]]
         self.fields.pop("amount", None)
@@ -288,7 +308,7 @@ def sync(
     site: FakeSite,
     wanted: list[WantedCard],
     *,
-    language: int | None = None,
+    languages: tuple[int, ...] = (),
     min_condition: Condition | None = None,
     foil: Foil = Foil.ANY,
     cancel: threading.Event | None = None,
@@ -298,7 +318,7 @@ def sync(
     result = sync_wants(
         site,
         wanted,
-        language=language,
+        languages=languages,
         min_condition=min_condition,
         foil=foil,
         cancel=cancel,
@@ -368,7 +388,7 @@ class TestTheList:
     def test_another_list_is_never_touched(self) -> None:
         site = app_site(SiteWant("old", "Old Card", 1))
 
-        sync(site, cards(("Sol Ring", 1)), language=ENGLISH, min_condition=Condition.NM)
+        sync(site, cards(("Sol Ring", 1)), languages=(ENGLISH,), min_condition=Condition.NM)
 
         assert [w.card for w in site.wants[1]] == ["Keep Me"]
         assert not any(url.endswith(("/1", "/1/AddDeckList")) for url in site.loaded)
@@ -424,7 +444,7 @@ class TestEmptying:
     def test_an_empty_wanted_list_only_empties_the_list(self) -> None:
         site = app_site(SiteWant("old", "Old One", 1))
 
-        run = sync(site, [], language=ENGLISH, min_condition=Condition.NM)
+        run = sync(site, [], languages=(ENGLISH,), min_condition=Condition.NM)
 
         assert run.result == WantsSync(7, (), (), ())
         assert "fill import" not in site.events
@@ -540,7 +560,7 @@ class TestReporting:
         site = app_site()
         site.unknown = {"Nonesuch Card"}
 
-        run = sync(site, cards(("Sol Ring", 1), ("Nonesuch Card", 2)), language=ENGLISH)
+        run = sync(site, cards(("Sol Ring", 1), ("Nonesuch Card", 2)), languages=(ENGLISH,))
 
         assert run.result.unmatched == ("Nonesuch Card",)
         assert summary(run) == [("Sol Ring", 1)]
@@ -588,7 +608,7 @@ class TestFilters:
         run = sync(
             site,
             cards(("Sol Ring", 1), ("Arcane Signet", 1), ("Counterspell", 2), ("Command Tower", 3)),
-            language=ENGLISH,
+            languages=(ENGLISH,),
             min_condition=Condition.NM,
         )
 
@@ -628,21 +648,72 @@ class TestFilters:
         sync(
             site,
             cards(("A", 1), ("B", 2), ("C", 3)),
-            language=ENGLISH,
+            languages=(ENGLISH,),
             min_condition=Condition.EX,
         )
 
         amounts = [value_set_by(s) for s in site.scripts if '"#amount"' in s]
         conditions = [value_set_by(s) for s in site.scripts if '"#minCondition"' in s]
-        languages = [value_set_by(s) for s in site.scripts if "idLanguages" in s and "el.value =" in s]
+        languages = [options_selected_by(s) for s in site.scripts if "idLanguages" in s]
         assert amounts == ["1", "2", "3"]
         assert conditions == ["3", "3", "3"]
-        assert languages == ["1", "1", "1"]
+        assert languages == [["1"], ["1"], ["1"]]
+
+    def test_japanese_alone_selects_option_seven_only(self) -> None:
+        site = app_site()
+
+        run = sync(site, cards(("A", 1)), languages=(JAPANESE,))
+
+        assert [options_selected_by(s) for s in site.scripts if "idLanguages" in s] == [["7"]]
+        assert [w.languages for w in run.result.imported] == [("Japanese",)]
+
+    def test_both_selects_the_english_and_the_japanese_option_in_every_group(self) -> None:
+        site = app_site()
+
+        run = sync(site, cards(("A", 1), ("B", 2)), languages=(ENGLISH, JAPANESE))
+
+        assert [options_selected_by(s) for s in site.scripts if "idLanguages" in s] == [
+            ["1", "7"],
+            ["1", "7"],
+        ]
+        assert [w.languages for w in run.result.imported] == [("English", "Japanese")] * 2
+
+    def test_a_want_showing_both_languages_in_the_other_order_passes_the_check(self) -> None:
+        site = app_site()
+        site.reverse_languages = True
+
+        run = sync(site, cards(("A", 1)), languages=(ENGLISH, JAPANESE))
+
+        assert [w.languages for w in run.result.imported] == [("Japanese", "English")]
+
+    def test_a_want_that_kept_only_one_of_both_languages_fails_the_check(self) -> None:
+        site = app_site()
+        site.dropped_languages = {"7"}
+
+        with pytest.raises(WantsError, match="2 wants lack the language or condition set: A, B"):
+            sync(site, cards(("A", 1), ("B", 1)), languages=(ENGLISH, JAPANESE))
+
+    def test_a_want_with_an_extra_language_fails_the_check_for_one_language(self) -> None:
+        site = app_site()
+        site.shown_languages = ("English", "Japanese")
+
+        with pytest.raises(WantsError, match="1 wants lack the language or condition set: A"):
+            sync(site, cards(("A", 1)), languages=(ENGLISH,))
+
+    def test_a_language_the_sync_cannot_set_is_refused_before_anything_loads(self) -> None:
+        site = app_site()
+
+        with pytest.raises(ValueError, match="cannot set the languages"):
+            sync(site, cards(("A", 1)), languages=(99,))
+        with pytest.raises(ValueError, match="cannot set the languages"):
+            sync(site, cards(("A", 1)), languages=(ENGLISH, ENGLISH))
+
+        assert site.loaded == []
 
     def test_the_list_is_reloaded_between_two_groups_and_once_at_the_end(self) -> None:
         site = app_site()
 
-        sync(site, cards(("A", 1), ("B", 2)), language=ENGLISH)
+        sync(site, cards(("A", 1), ("B", 2)), languages=(ENGLISH,))
 
         assert [e for e in site.events if e.startswith(("load", "submit edit"))] == [
             "load ",
@@ -682,7 +753,7 @@ class TestFilters:
     def test_a_language_alone_leaves_the_condition_field_alone(self) -> None:
         site = app_site()
 
-        run = sync(site, cards(("A", 1)), language=ENGLISH)
+        run = sync(site, cards(("A", 1)), languages=(ENGLISH,))
 
         assert "fill condition" not in site.events
         assert [(w.languages, w.min_condition) for w in run.result.imported] == [(("English",), Condition.PO)]
@@ -702,7 +773,7 @@ class TestFilters:
     def test_any_foil_leaves_the_blank_field_alone(self) -> None:
         site = app_site()
 
-        sync(site, cards(("A", 1)), language=ENGLISH, min_condition=Condition.NM, foil=Foil.ANY)
+        sync(site, cards(("A", 1)), languages=(ENGLISH,), min_condition=Condition.NM, foil=Foil.ANY)
 
         assert "fill foil" not in site.events
         assert site.foil_set == [""]
@@ -728,7 +799,7 @@ class TestFilters:
         site.ignore_edits = True
 
         with pytest.raises(WantsError, match="2 wants lack the language or condition set: A, B"):
-            sync(site, cards(("A", 1), ("B", 1)), language=ENGLISH, min_condition=Condition.NM)
+            sync(site, cards(("A", 1), ("B", 1)), languages=(ENGLISH,), min_condition=Condition.NM)
 
     def test_the_failure_names_five_wants_and_counts_the_rest(self) -> None:
         site = app_site()
@@ -738,7 +809,7 @@ class TestFilters:
             sync(
                 site,
                 cards(*[(name, 1) for name in "ABCDEFG"]),
-                language=ENGLISH,
+                languages=(ENGLISH,),
                 min_condition=Condition.NM,
             )
 
@@ -749,7 +820,7 @@ class TestFilters:
         with pytest.raises(
             WantsError, match="editing the 1 wants of quantity 1: no element matches #minCondition"
         ):
-            sync(site, cards(("A", 1)), language=ENGLISH, min_condition=Condition.NM)
+            sync(site, cards(("A", 1)), languages=(ENGLISH,), min_condition=Condition.NM)
 
         assert "submit edit 1" not in site.events
 
@@ -758,7 +829,7 @@ class TestFilters:
         site.unticked_rows = {"w2"}
 
         with pytest.raises(WantsError, match="editing the 2 wants of quantity 1: expected 2 ticked"):
-            sync(site, cards(("A", 1), ("B", 1)), language=ENGLISH)
+            sync(site, cards(("A", 1), ("B", 1)), languages=(ENGLISH,))
 
         assert "submit edit 1" not in site.events
 
@@ -767,7 +838,9 @@ class TestPacing:
     def test_every_request_but_the_first_waits_four_to_six_seconds(self) -> None:
         site = app_site()
 
-        run = sync(site, cards(("A", 1), ("B", 2), ("C", 3)), language=ENGLISH, min_condition=Condition.NM)
+        run = sync(
+            site, cards(("A", 1), ("B", 2), ("C", 3)), languages=(ENGLISH,), min_condition=Condition.NM
+        )
 
         # Lists, list, import form, import click, read back, then three edits (a submit each, and a reload
         # before all but the first), and the final read: 5 + (1 + 2 + 2) + 1 = 11 requests.
@@ -801,7 +874,7 @@ class TestPacing:
     def test_acts_that_only_fill_a_field_are_not_paced(self) -> None:
         site = app_site()
 
-        sync(site, cards(("A", 1)), language=ENGLISH)
+        sync(site, cards(("A", 1)), languages=(ENGLISH,))
 
         for index, event in enumerate(site.events):
             if event.startswith(("fill", "tick")):
@@ -845,7 +918,7 @@ class TestCancel:
         site.on_event = lambda event: stop.set() if event == "submit edit 1" else None
 
         with pytest.raises(WantsCancelled):
-            sync(site, cards(("A", 1), ("B", 2)), language=ENGLISH, cancel=stop)
+            sync(site, cards(("A", 1), ("B", 2)), languages=(ENGLISH,), cancel=stop)
 
         assert "submit edit 2" not in site.events
         assert [w.languages for w in site.wants[7]] == [("English",), ()]
@@ -878,7 +951,7 @@ class TestProgress:
     def test_the_emptying_and_the_edits_have_their_own_steps(self) -> None:
         site = app_site(SiteWant("old", "Old", 1))
 
-        run = sync(site, cards(("A", 1)), language=ENGLISH)
+        run = sync(site, cards(("A", 1)), languages=(ENGLISH,))
 
         assert [p.step for p in run.progress] == [
             WantsStep.LISTS,

@@ -101,13 +101,19 @@ the owner picks into their Cardmarket cart for them to check out by hand.
   total falls as sellers are added. Each pick shows its price against the card's Cardmarket trend price,
   which the card database already has.
 - **The Buy screen.** A main view opened from the sidebar lists every deck's Don't Have cards with a tick per
-  deck, takes the offer filters (language English or any, minimum condition Near Mint or any, foil any,
-  non-foil or foil; a blank Cardmarket field is a catch-all, so foil defaults to any) and scans in the
-  background with a progress line and a Cancel button. A cancelled or stopped scan keeps what it read and
+  deck, takes the offer filters (language English, Japanese, both or any, minimum condition Near Mint or
+  any, foil any, non-foil or foil; a blank Cardmarket field is a catch-all, so foil defaults to any) and
+  scans in the background with a progress line and a Cancel button. A cancelled or stopped scan keeps what it read and
   solves it, marked partial. The curve shows one row per seller count; picking a row shows each seller's
   shipping method and each card's price against its trend price (the cheapest printing's EUR price in the card
   data). The choices, the base sellers (15) and the decks and cards left out per account are kept in
   `buy.json` beside the config file (format 3).
+- **Language.** English is the default. Japanese is the second choice because the European market sells it
+  cheaply; Both takes English and Japanese; Any (last, to save the most) asks Cardmarket nothing. The card page
+  takes one bracketed field per language, `language[1]=1&language[7]=7`, as Cardmarket's own form sends it
+  (probed 2026-11-09: 42 English and 8 Japanese offers for Both). The wants list's `idLanguages[]` select is
+  `multiple`, so the sync selects each chosen option and the check after it accepts a want whose languages are
+  exactly the chosen ones, in any order. The package already shows each card's language.
 - **Seller location and delivery time.** Two more offer filters, both blank (any) by default. The owner ticks
   seller countries (Cardmarket's own ids, the shipping help API's too), which go in the card page address as
   `sellerCountry[<id>]` and also drop other countries' offers, since the wants-filtered stock pages are not

@@ -120,6 +120,17 @@ def test_the_filters_and_base_sellers_are_saved_and_a_bad_choice_is_an_error(des
     assert desk.buy()["filters"] == chosen
 
 
+def test_japanese_and_both_come_through_the_bridge_and_an_unlisted_language_is_an_error(desk: Desk) -> None:
+    for language in ("japanese", "both", "english", "any"):
+        view = desk.buy_filters(language, "NM", "any", [], "any")
+        assert cast("Json", view["filters"])["language"] == language
+
+    assert desk.buy_filters("french", "NM", "any", [], "any") == {
+        "error": "Those filters are not available; choose again."
+    }
+    assert cast("Json", desk.buy()["filters"])["language"] == "any"
+
+
 def test_the_price_cap_is_optional_and_blank_means_any_price(desk: Desk) -> None:
     assert desk.buy_filters("english", "NM", "any", [], "any")["filters"] == {
         "language": "english",

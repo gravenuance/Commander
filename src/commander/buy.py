@@ -560,7 +560,7 @@ class BuyService:
             wants = self._engine.sync_wants(
                 browser,
                 list(run.wanted),
-                language=filters.language.cardmarket_id,
+                languages=filters.language.cardmarket_ids,
                 min_condition=filters.min_condition,
                 foil=filters.foil,
                 cancel=run.cancel,

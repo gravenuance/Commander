@@ -40,7 +40,9 @@ log = logging.getLogger(__name__)
 
 CARDS_URL = "https://www.cardmarket.com/en/Magic/Cards"
 USERS_URL = "https://www.cardmarket.com/en/Magic/Users"
+# Cardmarket's language ids.
 ENGLISH = 1
+JAPANESE = 7
 DEFAULT_BASE_SELLERS = 15
 # The delivery times the card page's filter offers, besides "7+" days, which cannot be narrowed.
 MIN_FORM_DAYS = 2
@@ -80,14 +82,10 @@ _FOIL_CODES = {Foil.NON_FOIL: "N", Foil.FOIL: "Y"}
 
 @dataclass(slots=True, frozen=True)
 class ScanFilters:
-    """What the offers must be, as the card page's own filters take it in the address.
+    """What the offers must be, as the card page's own filters take it in the address."""
 
-    One language only: Cardmarket's form names a field per language (`language[N]`), and how several go in an
-    address is not confirmed against the live site.
-    """
-
-    # Cardmarket's language id (1 is English); None for any.
-    language: int | None = ENGLISH
+    # Cardmarket's language ids, each a `language[N]` field as its form names them; empty for any.
+    languages: tuple[int, ...] = (ENGLISH,)
     min_condition: Condition | None = None
     foil: Foil = Foil.ANY
     # Cardmarket's country ids (the shipping help API's too); empty for any.
@@ -95,10 +93,13 @@ class ScanFilters:
     # The most days a seller may take to deliver; None for any. Cardmarket's form offers 2 to 6 days only.
     max_days: int | None = None
 
+    def __post_init__(self) -> None:
+        if len(set(self.languages)) != len(self.languages):
+            raise ValueError(f"the scan's languages repeat: {self.languages}")
+
     def query(self) -> str:
         params: list[tuple[str, int | str]] = []
-        if self.language is not None:
-            params.append(("language", self.language))
+        params.extend((f"language[{language}]", language) for language in sorted(self.languages))
         if self.min_condition is not None:
             # Cardmarket numbers the conditions from 1 (Mint) to 7 (Poor).
             params.append(("minCondition", list(Condition).index(self.min_condition) + 1))

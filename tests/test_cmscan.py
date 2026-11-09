@@ -30,10 +30,10 @@ SELLER_PAGE = "cm_seller_wants.html"
 EMPTY_SELLER_PAGE = "cm_seller_empty.html"
 CARDS = "https://www.cardmarket.com/en/Magic/Cards"
 USERS = "https://www.cardmarket.com/en/Magic/Users"
-SYLVAN_URL = f"{CARDS}/Sylvan-Safekeeper?language=1"
-KIRK_URL = f"{CARDS}/Captain-James-T-Kirk?language=1"
-CARD_B_URL = f"{CARDS}/Card-B?language=1"
-CARD_C_URL = f"{CARDS}/Card-C?language=1"
+SYLVAN_URL = f"{CARDS}/Sylvan-Safekeeper?language%5B1%5D=1"
+KIRK_URL = f"{CARDS}/Captain-James-T-Kirk?language%5B1%5D=1"
+CARD_B_URL = f"{CARDS}/Card-B?language%5B1%5D=1"
+CARD_C_URL = f"{CARDS}/Card-C?language%5B1%5D=1"
 SELLER01_URL = f"{USERS}/Seller01/Offers/Singles?idWantslist=999"
 UNRELATED = "<html><head><title>Cardmarket</title></head><body><main><h1>Help</h1></main></body></html>"
 SIGN_IN = "<html><body><form><input name='username'><input type='password'></form></body></html>"
@@ -187,12 +187,40 @@ class TestSlug:
 
 class TestUrls:
     def test_a_card_page_with_the_default_english_filter(self) -> None:
-        assert card_page_url("Sol Ring", ScanFilters()) == f"{CARDS}/Sol-Ring?language=1"
+        assert card_page_url("Sol Ring", ScanFilters()) == f"{CARDS}/Sol-Ring?language%5B1%5D=1"
 
     def test_language_and_minimum_condition_go_in_the_query(self) -> None:
-        filters = ScanFilters(language=1, min_condition=Condition.NM)
+        filters = ScanFilters(languages=(1,), min_condition=Condition.NM)
 
-        assert card_page_url("Sol Ring", filters) == f"{CARDS}/Sol-Ring?language=1&minCondition=2"
+        assert card_page_url("Sol Ring", filters) == f"{CARDS}/Sol-Ring?language%5B1%5D=1&minCondition=2"
+
+    @pytest.mark.parametrize(
+        ("languages", "suffix"),
+        [
+            ((), ""),
+            ((1,), "?language%5B1%5D=1"),
+            ((7,), "?language%5B7%5D=7"),
+            ((1, 7), "?language%5B1%5D=1&language%5B7%5D=7"),
+            # The order given does not matter: the address always lists the ids ascending.
+            ((7, 1), "?language%5B1%5D=1&language%5B7%5D=7"),
+        ],
+    )
+    def test_each_language_is_a_bracketed_field_as_cardmarkets_own_form_sends_it(
+        self, languages: tuple[int, ...], suffix: str
+    ) -> None:
+        assert card_page_url("Sol Ring", ScanFilters(languages=languages)) == f"{CARDS}/Sol-Ring{suffix}"
+
+    def test_both_languages_share_the_query_with_the_other_filters(self) -> None:
+        filters = ScanFilters(languages=(1, 7), min_condition=Condition.NM, foil=Foil.NON_FOIL)
+
+        assert card_page_url("Sol Ring", filters) == (
+            f"{CARDS}/Sol-Ring?language%5B1%5D=1&language%5B7%5D=7&minCondition=2&isFoil=N"
+        )
+
+    def test_the_default_language_is_english_and_a_repeated_one_is_refused(self) -> None:
+        assert ScanFilters().languages == (1,)
+        with pytest.raises(ValueError, match="languages repeat"):
+            ScanFilters(languages=(1, 1))
 
     @pytest.mark.parametrize(
         ("condition", "number"),
@@ -207,42 +235,45 @@ class TestUrls:
         ],
     )
     def test_the_conditions_are_numbered_from_mint(self, condition: Condition, number: int) -> None:
-        url = card_page_url("Sol Ring", ScanFilters(language=None, min_condition=condition))
+        url = card_page_url("Sol Ring", ScanFilters(languages=(), min_condition=condition))
 
         assert url == f"{CARDS}/Sol-Ring?minCondition={number}"
 
     def test_no_filters_leave_the_address_bare(self) -> None:
-        assert card_page_url("Sol Ring", ScanFilters(language=None)) == f"{CARDS}/Sol-Ring"
+        assert card_page_url("Sol Ring", ScanFilters(languages=())) == f"{CARDS}/Sol-Ring"
 
     @pytest.mark.parametrize(
         ("foil", "suffix"),
         [(Foil.ANY, ""), (Foil.NON_FOIL, "?isFoil=N"), (Foil.FOIL, "?isFoil=Y")],
     )
     def test_the_foil_choice_goes_in_the_query_and_any_leaves_it_out(self, foil: Foil, suffix: str) -> None:
-        url = card_page_url("Sol Ring", ScanFilters(language=None, foil=foil))
+        url = card_page_url("Sol Ring", ScanFilters(languages=(), foil=foil))
 
         assert url == f"{CARDS}/Sol-Ring{suffix}"
 
     def test_foil_follows_the_other_filters(self) -> None:
-        filters = ScanFilters(language=1, min_condition=Condition.NM, foil=Foil.FOIL)
+        filters = ScanFilters(languages=(1,), min_condition=Condition.NM, foil=Foil.FOIL)
 
-        assert card_page_url("Sol Ring", filters) == f"{CARDS}/Sol-Ring?language=1&minCondition=2&isFoil=Y"
+        assert (
+            card_page_url("Sol Ring", filters)
+            == f"{CARDS}/Sol-Ring?language%5B1%5D=1&minCondition=2&isFoil=Y"
+        )
 
     def test_foil_defaults_to_any(self) -> None:
         assert ScanFilters().foil is Foil.ANY
 
     def test_each_seller_country_is_a_bracketed_field_as_cardmarkets_own_form_sends_it(self) -> None:
-        filters = ScanFilters(language=None, seller_countries=frozenset({23, 7}))
+        filters = ScanFilters(languages=(), seller_countries=frozenset({23, 7}))
 
         assert card_page_url("Sol Ring", filters) == (
             f"{CARDS}/Sol-Ring?sellerCountry%5B7%5D=7&sellerCountry%5B23%5D=23"
         )
 
     def test_one_country_and_the_other_filters_share_the_query(self) -> None:
-        filters = ScanFilters(1, Condition.NM, Foil.FOIL, frozenset({28}), 5)
+        filters = ScanFilters((1,), Condition.NM, Foil.FOIL, frozenset({28}), 5)
 
         assert card_page_url("Sol Ring", filters) == (
-            f"{CARDS}/Sol-Ring?language=1&minCondition=2&isFoil=Y&sellerCountry%5B28%5D=28&maxShippingTime=5"
+            f"{CARDS}/Sol-Ring?language%5B1%5D=1&minCondition=2&isFoil=Y&sellerCountry%5B28%5D=28&maxShippingTime=5"
         )
 
     @pytest.mark.parametrize(
@@ -263,7 +294,7 @@ class TestUrls:
     def test_the_delivery_limit_is_in_the_query_only_where_the_form_has_the_choice(
         self, days: int | None, suffix: str
     ) -> None:
-        url = card_page_url("Sol Ring", ScanFilters(language=None, max_days=days))
+        url = card_page_url("Sol Ring", ScanFilters(languages=(), max_days=days))
 
         assert url == f"{CARDS}/Sol-Ring{suffix}"
 
@@ -339,8 +370,8 @@ class TestPassOne:
         assert result.pages_read == 2
 
     def test_the_filters_are_in_the_address(self) -> None:
-        filters = ScanFilters(language=1, min_condition=Condition.NM)
-        url = f"{CARDS}/Sylvan-Safekeeper?language=1&minCondition=2"
+        filters = ScanFilters(languages=(1,), min_condition=Condition.NM)
+        url = f"{CARDS}/Sylvan-Safekeeper?language%5B1%5D=1&minCondition=2"
 
         result, browser, _, _ = run({url: fixture(CARD_PAGE)}, [SYLVAN], filters=filters)
 
@@ -449,7 +480,7 @@ class TestPacing:
 
     def test_the_default_gap_is_drawn_between_4_and_6_seconds(self) -> None:
         waits: list[float] = []
-        pages = {f"{CARDS}/Card-{n}?language=1": NOT_FOUND for n in range(40)}
+        pages = {f"{CARDS}/Card-{n}?language%5B1%5D=1": NOT_FOUND for n in range(40)}
         browser = FakeBrowser(pages)
 
         scan(
@@ -748,8 +779,8 @@ class TestBaseSellersUnderLimits:
     Hungary, Croatia, Sweden, Belgium and Spain."""
 
     SELLER04_URL = f"{USERS}/Seller04/Offers/Singles?idWantslist=999"
-    THREE_DAYS_URL = f"{CARDS}/Sylvan-Safekeeper?language=1&maxShippingTime=3"
-    SWEDEN_URL = f"{CARDS}/Sylvan-Safekeeper?language=1&sellerCountry%5B28%5D=28"
+    THREE_DAYS_URL = f"{CARDS}/Sylvan-Safekeeper?language%5B1%5D=1&maxShippingTime=3"
+    SWEDEN_URL = f"{CARDS}/Sylvan-Safekeeper?language%5B1%5D=1&sellerCountry%5B28%5D=28"
     DAYS_OF_SELLER04 = '<span class="shippingTime-info">6</span>'
     NO_DAYS = '<span class="shippingTime-info">-</span>'
     ROUTE_OF_SWEDEN = "(Avg. delivery time from Sweden to Sweden :  4 days)"
