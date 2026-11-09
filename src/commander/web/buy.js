@@ -5,6 +5,11 @@
 const BUY_POLL_MS = 1000;
 const BUY_LANGUAGES = [["english", "English"], ["any", "Any"]];
 const BUY_FOILS = [["any", "Any"], ["non-foil", "Non-foil"], ["foil", "Foil"]];
+// The longest a seller may take to deliver, in days.
+const BUY_DELIVERIES = [["any", "Any"], ["5", "5 days"], ["7", "1 week"], ["10", "10 days"], ["14", "2 weeks"]];
+// The country names the summary spells out; more than this it counts them.
+const BUY_COUNTRIES_NAMED = 2;
+const BUY_MENU_KEYS = ["ArrowDown", "ArrowUp", "Home", "End", "Escape", "Tab"];
 const BUY_CONDITIONS = [
   ["any", "Any"], ["MT", "Mint"], ["NM", "Near Mint"], ["EX", "Excellent"],
   ["GD", "Good"], ["LP", "Light Played"], ["PL", "Played"], ["PO", "Poor"],
@@ -25,6 +30,11 @@ const buyState = {
   // True from a click on Scan until the bridge answers.
   requested: false,
   polling: false,
+  // Cardmarket's countries: null until fetched, then their names by id and the checkbox built for each.
+  countries: null,
+  countryNames: new Map(),
+  countryBoxes: new Map(),
+  loadingCountries: null,
 };
 
 const plural = (count, one, many) => `${count} ${count === 1 ? one : many}`;
@@ -35,6 +45,8 @@ function setupBuy() {
   $("buy-cancel").addEventListener("click", cancelBuyScan);
   setupBuyChoice($("buy-language"), BUY_LANGUAGES, "language");
   setupBuyChoice($("buy-foil"), BUY_FOILS, "foil");
+  setupBuyChoice($("buy-delivery"), BUY_DELIVERIES, "delivery");
+  setupBuyCountries();
   const condition = $("buy-condition");
   condition.replaceChildren(...BUY_CONDITIONS.map(([value, label]) => el("option", { value, text: label })));
   condition.addEventListener("change", () => changeBuyFilters({ condition: condition.value }));
@@ -62,11 +74,14 @@ async function openBuy() {
   $("buy-title").focus();
   try {
     await refreshBuy();
+    // The summary names the chosen countries once their names are known.
+    if (buyState.view && buyState.view.filters.countries.length) await loadBuyCountries();
   } catch (error) { noteFailure(error); }
 }
 
 // The screen stays built, with its last results, for the next visit.
 function closeBuy() {
+  closeBuyCountries(false);
   buyState.open = false;
   $("buy").hidden = true;
   $("buy-open").removeAttribute("aria-current");
@@ -86,6 +101,7 @@ function buyForget() {
   $("buy-notes").replaceChildren();
   $("buy-sellers").replaceChildren();
   $("buy-package-notes").replaceChildren();
+  $("buy-package-arrival").textContent = "";
   $("buy-results").hidden = true;
   $("buy-package").hidden = true;
 }
@@ -177,7 +193,7 @@ function paintBuyDeck(entry, deck, running) {
 function paintBuyFilters() {
   const view = buyState.view;
   const running = view.status.running;
-  for (const [id, key] of [["buy-language", "language"], ["buy-foil", "foil"]]) {
+  for (const [id, key] of [["buy-language", "language"], ["buy-foil", "foil"], ["buy-delivery", "delivery"]]) {
     for (const button of $(id).children) {
       button.setAttribute("aria-pressed", String(button.dataset.value === view.filters[key]));
       button.disabled = running;
@@ -186,6 +202,7 @@ function paintBuyFilters() {
   const condition = $("buy-condition");
   condition.value = view.filters.condition;
   condition.disabled = running;
+  paintBuyCountries(view.filters.countries, running);
   const base = $("buy-base-sellers");
   base.value = String(view.baseSellers);
   base.disabled = running;
@@ -283,7 +300,9 @@ async function setBuyDeck(id, included) {
 async function changeBuyFilters(change) {
   const filters = { ...buyState.view.filters, ...change };
   try {
-    acceptBuyView(await api("buy_filters", filters.language, filters.condition, filters.foil));
+    acceptBuyView(await api(
+      "buy_filters", filters.language, filters.condition, filters.foil, filters.countries, filters.delivery,
+    ));
   } catch (error) {
     noteFailure(error);
     paintBuyFilters();
@@ -297,6 +316,130 @@ async function changeBuyBaseSellers() {
     noteFailure(error);
     paintBuyFilters();
   }
+}
+
+/* Seller location: a button that opens a list of checkboxes, one per Cardmarket country; none ticked is any */
+
+function setupBuyCountries() {
+  const picker = $("buy-picker");
+  $("buy-countries").addEventListener("click", toggleBuyCountries);
+  picker.addEventListener("keydown", moveInBuyCountries);
+  document.addEventListener("mousedown", (event) => {
+    if (!picker.contains(event.target)) closeBuyCountries(false);
+  });
+}
+
+// The names are fetched once, when the list is first needed; a failure shows its message and tries again next time.
+function loadBuyCountries() {
+  if (buyState.countries) return Promise.resolve();
+  buyState.loadingCountries ??= api("buy_countries").then((answer) => {
+    buyState.countries = answer.countries;
+    buyState.countryNames = new Map(answer.countries.map((country) => [country.id, country.name]));
+    buildBuyCountries(answer.countries);
+    if (buyState.view) paintBuyFilters();
+  }).finally(() => { buyState.loadingCountries = null; });
+  return buyState.loadingCountries;
+}
+
+function buildBuyCountries(countries) {
+  const clear = el("button", {
+    id: "buy-countries-clear", class: "menu-item", type: "button", text: "Clear countries",
+    onclick: () => changeBuyFilters({ countries: [] }),
+  });
+  const boxes = new Map();
+  const items = countries.map((country) => {
+    const box = el("input", { type: "checkbox", id: `buy-country-${country.id}` });
+    box.addEventListener("change", () => changeBuyFilters({ countries: pickedBuyCountries() }));
+    boxes.set(country.id, box);
+    return el("label", { class: "menu-item", for: box.id }, box, el("span", { text: country.name }));
+  });
+  buyState.countryBoxes = boxes;
+  $("buy-countries-menu").replaceChildren(clear, ...items);
+}
+
+function pickedBuyCountries() {
+  return [...buyState.countryBoxes].filter(([, box]) => box.checked).map(([id]) => id).sort((a, b) => a - b);
+}
+
+function buyCountriesSummary(ids) {
+  if (!ids.length) return ["Any country", ""];
+  const names = ids.map((id) => buyState.countryNames.get(id));
+  if (names.some((name) => name === undefined)) return [plural(ids.length, "country", "countries"), ""];
+  const spelled = names.sort((a, b) => a.localeCompare(b)).join(", ");
+  return [ids.length <= BUY_COUNTRIES_NAMED ? spelled : plural(ids.length, "country", "countries"), spelled];
+}
+
+function paintBuyCountries(ids, running) {
+  const chosen = new Set(ids);
+  for (const [id, box] of buyState.countryBoxes) {
+    box.checked = chosen.has(id);
+    box.disabled = running;
+  }
+  const [text, full] = buyCountriesSummary(ids);
+  $("buy-countries-text").textContent = text;
+  $("buy-countries").title = full;
+  $("buy-countries").disabled = running;
+  const clear = $("buy-countries-clear");
+  if (clear) clear.disabled = running || ids.length === 0;
+  if (running) closeBuyCountries(false);
+}
+
+async function toggleBuyCountries() {
+  if (!$("buy-countries-menu").hidden) {
+    closeBuyCountries(true);
+    return;
+  }
+  try {
+    await loadBuyCountries();
+  } catch (error) {
+    noteFailure(error);
+    return;
+  }
+  openBuyCountries();
+}
+
+function buyCountryStops() {
+  return [...$("buy-countries-menu").querySelectorAll("button, input")].filter((stop) => !stop.disabled);
+}
+
+function openBuyCountries() {
+  $("buy-countries-menu").hidden = false;
+  $("buy-countries").setAttribute("aria-expanded", "true");
+  const stops = buyCountryStops();
+  (stops.find((stop) => stop.checked) || stops[0])?.focus();
+}
+
+function closeBuyCountries(refocus) {
+  const menu = $("buy-countries-menu");
+  if (menu.hidden) return;
+  menu.hidden = true;
+  $("buy-countries").setAttribute("aria-expanded", "false");
+  if (refocus) $("buy-countries").focus();
+}
+
+// Arrows, Home and End move between the countries; Escape closes the list and returns to its button, and
+// Tab leaves it for the next control.
+function moveInBuyCountries(event) {
+  if ($("buy-countries-menu").hidden || !BUY_MENU_KEYS.includes(event.key)) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopPropagation();
+    closeBuyCountries(true);
+    return;
+  }
+  if (event.key === "Tab") {
+    closeBuyCountries(false);
+    return;
+  }
+  const stops = buyCountryStops();
+  if (!stops.length) return;
+  const at = stops.indexOf(document.activeElement);
+  const last = stops.length - 1;
+  const next = {
+    ArrowDown: at < last ? at + 1 : 0, ArrowUp: at > 0 ? at - 1 : last, Home: 0, End: last,
+  }[event.key];
+  event.preventDefault();
+  stops[next].focus();
 }
 
 /* The packages */
@@ -378,14 +521,22 @@ function clearBuyPackage() {
   $("buy-package").hidden = true;
   $("buy-sellers").replaceChildren();
   $("buy-package-notes").replaceChildren();
+  $("buy-package-arrival").textContent = "";
 }
 
 function renderBuyPackage(detail) {
   $("buy-package").hidden = false;
   $("buy-package-title").textContent = `${plural(detail.sellers, "seller", "sellers")} · ${euro(detail.totalCents)}`;
   $("buy-package-sub").textContent = `Cards ${euro(detail.cardsCents)} · shipping ${euro(detail.shippingCents)}`;
+  const arrival = $("buy-package-arrival");
+  const unknown = detail.withoutEstimate ? ` · ${plural(detail.withoutEstimate, "seller", "sellers")} without an estimate` : "";
+  arrival.textContent = detail.slowestDays === null ? "" : `Arrives in about ${plural(detail.slowestDays, "day", "days")}${unknown}`;
   $("buy-sellers").replaceChildren(...detail.shipments.map(buildBuySeller));
   const notes = [];
+  if (detail.leftOutNoEstimate) {
+    notes.push(el("li", {}, el("strong", { text: "Left out, no delivery estimate: " }),
+      plural(detail.leftOutNoEstimate, "offer", "offers")));
+  }
   if (detail.missing.length) {
     notes.push(el("li", {}, el("strong", { text: "No usable offer: " }), detail.missing.join(", ")));
   }
@@ -394,6 +545,15 @@ function renderBuyPackage(detail) {
     notes.push(el("li", {}, el("strong", { text: "Fewer copies offered than wanted: " }), names.join(", ")));
   }
   $("buy-package-notes").replaceChildren(...notes);
+}
+
+// A seller's days to you: its own estimate, or "about" when it comes from its country.
+function buyDeliveryText(shipment) {
+  if (shipment.deliveryDays === null) return "no delivery estimate";
+  const days = plural(shipment.deliveryDays, "day", "days");
+  if (shipment.deliveryBasis === "own") return days;
+  const source = shipment.deliveryBasis === "country" ? `${shipment.country} median` : "Cardmarket's average";
+  return `about ${days} (${source})`;
 }
 
 function buildBuySeller(shipment) {
@@ -410,7 +570,7 @@ function buildBuySeller(shipment) {
     el("td", { class: "num", text: pick.trendCents === null ? "–" : euro(pick.trendCents) })));
   return el("section", { class: "buy-seller", "aria-label": `Seller ${shipment.seller}` },
     el("h3", { class: "buy-seller-name", text: shipment.seller }),
-    el("p", { class: "muted small", text: `${shipment.country} · ${how}` }),
+    el("p", { class: "muted small", text: `${shipment.country} · ${how} · ${buyDeliveryText(shipment)}` }),
     el("div", { class: "buy-table" }, el("table", {}, el("thead", {}, head), el("tbody", {}, ...rows))));
 }
 

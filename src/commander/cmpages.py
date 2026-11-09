@@ -72,7 +72,10 @@ class Offer:
     tracked_only: bool = False
     seller_sales: int | None = None
     seller_items: int | None = None
+    # The seller's own estimate to this buyer; None when Cardmarket shows "-".
     delivery_days: int | None = None
+    # Cardmarket's average from the seller's country to the buyer's, from a card-page row's calendar tooltip.
+    route_days: int | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -151,6 +154,7 @@ _WANTS_PAGE = "wants list page"
 _PRICE = re.compile(r"(?P<whole>\d{1,3}(?:\.\d{3})+|\d+),(?P<cents>\d{2})\s*€")
 _SALES_ITEMS = re.compile(r"(?P<sales>\d[\d.,]*)\s*Sales\s*\|\s*(?P<items>\d[\d.,]*)\s*Available items")
 _DELIVERY = re.compile(r"delivery time from [^:<]+? to (?P<destination>[^:<]+?)\s*:")
+_ROUTE_DAYS = re.compile(r"Avg\. delivery time from [^:<]+? to [^:<]+?\s*:\s*(?P<days>\d+)\s*days?")
 _PAGE_OF = re.compile(r"Page\s+\d+\s+of\s+(?P<pages>\d+)")
 _SHIPPING_PRICE_SUFFIX = re.compile(r"\s*\(\d[\d.,]*\s*€\)\s*$")
 _USER_PATH = re.compile(r"/en/Magic/Users/[^/?#]+")
@@ -322,13 +326,16 @@ def _card_row_offer(row: Node, card: str) -> tuple[Offer, str | None]:
     offer = _read_offer(row, article_id, _CARD_PAGE, card=card, seller=seller, country=_location(row))
     sales = _SALES_ITEMS.search(_attr_of(row, with_class("sell-count"), "data-bs-original-title") or "")
     days = _text_of(row, with_class("shippingTime-info"))
-    tooltip = _DELIVERY.search(_attr_of(row, with_class("fonticon-calendar"), "data-bs-original-title") or "")
+    calendar = _attr_of(row, with_class("fonticon-calendar"), "data-bs-original-title") or ""
+    tooltip = _DELIVERY.search(calendar)
+    route = _ROUTE_DAYS.search(calendar)
     full = replace(
         offer,
         seller_sales=None if sales is None else _number(sales["sales"], where, "seller sales"),
         seller_items=None if sales is None else _number(sales["items"], where, "seller items"),
         # A seller without enough deliveries for an estimate shows "-".
         delivery_days=None if days is None or days.strip() == "-" else _number(days, where, "delivery days"),
+        route_days=None if route is None else int(route["days"]),
     )
     return full, None if tooltip is None else tooltip["destination"].strip()
 

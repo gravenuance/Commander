@@ -1264,6 +1264,14 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 /* A label over a segmented control starts where its first option's text does, not at the pill's curve. */
 .buy-filter > span:first-child { padding-left: calc(3px + var(--space-2)); }
 .buy-select:disabled, .buy-base input:disabled { opacity: 0.5; cursor: not-allowed; }
+/* The seller-location button looks like the select beside it and opens the same menu as the grid's labels. */
+.buy-picker { position: relative; }
+.buy-picker-button { max-width: 16rem; text-align: left; cursor: pointer; }
+.buy-picker-button span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.buy-menu { position: absolute; top: calc(100% + 4px); left: 0; min-width: max(100%, 14rem); max-height: 18rem; }
+.buy-menu .menu-item:has(:focus-visible) { background: var(--surface-2); }
+.buy-menu .menu-item input { flex: none; width: 16px; height: 16px; margin: 0; accent-color: var(--primary); }
+.buy-menu .menu-item:disabled { opacity: 0.5; cursor: not-allowed; }
 .buy-base { max-width: 12rem; }
 .buy-empty { margin: 0; }
 .buy-empty .state-icon { font-size: 1.5rem; }

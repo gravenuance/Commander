@@ -2,9 +2,14 @@
 
 import re
 
+import pytest
+
 from pagerun import WEB, Answer, needs_node, page
 
 pytestmark = needs_node
+
+# The countries SETUP's fake bridge lists, by id.
+NAMES = {1: "Austria", 7: "Germany", 23: "Netherlands", 28: "Sweden"}
 
 SETUP = """
 setupBuy();
@@ -18,9 +23,14 @@ const PANTLAZA = deck(2, "Pantlaza", [{ name: "Arcane Signet", quantity: 2 }, { 
 const ELLIVERE = deck(1, "Ellivere", [{ name: "Lotus Petal", quantity: 1 }]);
 const idle = (extra = {}) => ({ phase: "idle", running: false, cancelling: false, progress: "", message: "",
   detail: "", results: null, ...extra });
+const FILTERS = { language: "english", condition: "NM", foil: "any", countries: [], delivery: "any" };
 const view = (extra = {}) => ({ decks: [ELLIVERE, PANTLAZA], copies: 4,
-  filters: { language: "english", condition: "NM", foil: "any" }, baseSellers: 15, status: idle(),
-    ...extra });
+  filters: FILTERS, baseSellers: 15, status: idle(), ...extra });
+const withFilters = (change, extra = {}) => view({ filters: { ...FILTERS, ...change }, ...extra });
+const COUNTRIES = [{ id: 1, name: "Austria" }, { id: 7, name: "Germany" }, { id: 23, name: "Netherlands" },
+  { id: 28, name: "Sweden" }];
+const COUNTRY_ERROR = { error: "Cardmarket's countries could not be loaded; try again." };
+stub.buy_countries = async () => ({ countries: COUNTRIES });
 const row = (sellers, total, cards, shipping, saving, cheapest) => ({ sellers, totalCents: total,
   cardsCents: total - shipping,
   shippingCents: shipping, cards, savingCents: saving, cheapest, optimal: true });
@@ -28,13 +38,16 @@ const RESULTS = { rows: [row(1, 760, 2, 200, null, false), row(2, 490, 2, 400, 2
   destination: "Sweden", notFound: [], noOffers: [], unmatched: [], quantityMismatch: [] };
 const done = (results = RESULTS, extra = {}) => idle({ phase: "results", results, ...extra });
 const PACKAGE = { sellers: 2, totalCents: 490, cardsCents: 90, shippingCents: 400, optimal: true,
+  slowestDays: 12, withoutEstimate: 0, leftOutNoEstimate: 0,
   shipments: [
     { seller: "SellerB", country: "France", cards: 1, valueCents: 30, method: "Lettre Internationale",
-      shippingCents: 255, tracked: false, picks: [{ card: "Arcane Signet", copies: 2,
+      shippingCents: 255, tracked: false, deliveryDays: 6, deliveryBasis: "own",
+      picks: [{ card: "Arcane Signet", copies: 2,
         expansion: "Commander Legends",
         condition: "NM", language: "English", foil: false, priceCents: 30, trendCents: 25 }] },
     { seller: "SellerA", country: "Germany", cards: 1, valueCents: 60, method: "Tracked Parcel",
-      shippingCents: 345, tracked: true, picks: [{ card: "Mind Stone", copies: 1, expansion: "Kaladesh",
+      shippingCents: 345, tracked: true, deliveryDays: 12, deliveryBasis: "country",
+      picks: [{ card: "Mind Stone", copies: 1, expansion: "Kaladesh",
         condition: "EX",
         language: "English", foil: true, priceCents: 60, trendCents: null }] },
   ], missing: ["Lotus Petal"], short: [{ card: "Mind Stone", wanted: 3, available: 1 }] };
@@ -213,11 +226,10 @@ class TestChoices:
         """)
         assert seen == {"checked": True, "toast": "Wait for the scan, or cancel it.", "alert": True}
 
-    def test_a_filter_choice_is_sent_with_the_other_two_and_resets_what_was_shown(self) -> None:
+    def test_a_filter_choice_is_sent_with_the_others_and_resets_what_was_shown(self) -> None:
         seen = run("""
         await open(view({ status: done() }));
-        stub.buy_filters = async () => view({ filters: { language: "english", condition: "NM",
-          foil: "non-foil" } });
+        stub.buy_filters = async () => withFilters({ foil: "non-foil" });
         const button = [...$("buy-foil").children].find((b) => b.textContent === "Non-foil");
         await fire(button, "click");
         const pressed = [...$("buy-foil").children].filter((b) => b.getAttribute("aria-pressed") === "true")
@@ -225,7 +237,7 @@ class TestChoices:
         return { call: calls.find((c) => c[0] === "buy_filters"), pressed, results: $("buy-results").hidden,
           curve: $("buy-curve").children.length };
         """)
-        assert seen["call"] == ["buy_filters", "english", "NM", "non-foil"]
+        assert seen["call"] == ["buy_filters", "english", "NM", "non-foil", [], "any"]
         assert seen["pressed"] == ["Non-foil"]
         assert seen["results"] is True
         assert seen["curve"] == 0
@@ -234,7 +246,7 @@ class TestChoices:
         seen = run("""
         await open();
         stub.buy_filters = async (language, condition, foil) =>
-          view({ filters: { language, condition, foil } });
+          withFilters({ language, condition, foil });
         $("buy-condition").value = "any";
         await fire($("buy-condition"), "change");
         const any = [...$("buy-language").children].find((b) => b.textContent === "Any");
@@ -242,8 +254,8 @@ class TestChoices:
         return calls.filter((c) => c[0] === "buy_filters");
         """)
         assert seen == [
-            ["buy_filters", "english", "any", "any"],
-            ["buy_filters", "any", "any", "any"],
+            ["buy_filters", "english", "any", "any", [], "any"],
+            ["buy_filters", "any", "any", "any", [], "any"],
         ]
 
     def test_every_condition_is_offered_with_any_first(self) -> None:
@@ -303,7 +315,8 @@ class TestScanning:
           progress: $("buy-progress").textContent, live: $("buy-progress").getAttribute("role"),
           ticks: [...$("buy-decks").children].map((i) => walk(i).find((n) => n.tagName === "INPUT").disabled),
           foil: [...$("buy-foil").children].map((b) => b.disabled), condition: $("buy-condition").disabled,
-          base: $("buy-base-sellers").disabled,
+          delivery: [...$("buy-delivery").children].map((b) => b.disabled),
+          countries: $("buy-countries").disabled, base: $("buy-base-sellers").disabled,
         });
         const started = lock();
         stub.buy_status = async () => idle({ phase: "scanning", running: true,
@@ -321,6 +334,8 @@ class TestScanning:
             "ticks": [True, True],
             "foil": [True, True, True],
             "condition": True,
+            "delivery": [True] * 5,
+            "countries": True,
             "base": True,
         }
         assert seen["polled"] == "Reading Sol Ring · 12 of 40"
@@ -533,12 +548,12 @@ class TestThePackages:
         assert seen["call"] == ["buy_package", 2]
         assert seen["sellers"] == [
             [
-                "SellerB", "France · Lettre Internationale €2.55, not tracked",
+                "SellerB", "France · Lettre Internationale €2.55, not tracked · 6 days",
                 "Card", "Set", "Condition", "Language", "Foil", "Price", "Trend",
                 "2 × Arcane Signet", "Commander Legends", "NM", "English", "€0.30", "€0.25",
             ],
             [
-                "SellerA", "Germany · Tracked Parcel €3.45, tracked",
+                "SellerA", "Germany · Tracked Parcel €3.45, tracked · about 12 days (Germany median)",
                 "Card", "Set", "Condition", "Language", "Foil", "Price", "Trend",
                 "Mind Stone", "Kaladesh", "EX", "English", "Foil", "€0.60", "–",
             ],
@@ -750,3 +765,481 @@ class TestAccount:
         return $("buy-summary").textContent;
         """)
         assert seen == "3 cards from 1 deck"
+
+
+class TestSellerLocation:
+    def test_the_button_says_any_country_until_some_are_chosen(self) -> None:
+        seen = run("""
+        await open();
+        const trigger = $("buy-countries");
+        return { text: $("buy-countries-text").textContent, tag: trigger.tagName,
+          type: trigger.getAttribute("type"), expanded: trigger.getAttribute("aria-expanded"),
+          menu: $("buy-countries-menu").hidden, calls: calls.map((c) => c[0]), tip: trigger.title };
+        """)
+        assert seen == {
+            "text": "Any country",
+            "tag": "BUTTON",
+            "type": "button",
+            "expanded": "false",
+            "menu": True,
+            "calls": ["buy"],
+            "tip": "",
+        }
+
+    @pytest.mark.parametrize(
+        ("ids", "text"),
+        [
+            ([7], "Germany"),
+            ([23, 7], "Germany, Netherlands"),
+            ([28, 7, 1], "3 countries"),
+            ([1, 7, 23, 28], "4 countries"),
+        ],
+    )
+    def test_the_button_names_one_or_two_countries_and_counts_more(self, ids: list[int], text: str) -> None:
+        seen = run(f"""
+        await open(withFilters({{ countries: {ids} }}));
+        return [$("buy-countries-text").textContent, $("buy-countries").title];
+        """)
+        assert seen[0] == text
+        assert seen[1] == ", ".join(sorted(n for i, n in NAMES.items() if i in ids))
+
+    def test_a_chosen_country_the_list_does_not_have_yet_is_counted(self) -> None:
+        seen = run("""
+        stub.buy_countries = async () => COUNTRY_ERROR;
+        await open(withFilters({ countries: [7, 23] }));
+        return [$("buy-countries-text").textContent, $("buy-countries").title, $("status-text").textContent];
+        """)
+        assert seen == ["2 countries", "", "Cardmarket's countries could not be loaded; try again."]
+
+    def test_names_are_fetched_on_opening_only_when_countries_are_chosen(self) -> None:
+        seen = run("""
+        await open();
+        const without = calls.map((c) => c[0]);
+        closeBuy();
+        await open(withFilters({ countries: [7] }));
+        return [without, calls.map((c) => c[0])];
+        """)
+        assert seen == [["buy"], ["buy", "buy", "buy_countries"]]
+
+    def test_pressing_the_button_fetches_once_and_shows_a_checkbox_per_country_after_a_clear_button(
+        self,
+    ) -> None:
+        seen = run("""
+        await open();
+        const trigger = $("buy-countries");
+        await fire(trigger, "click");
+        const shown = { menu: $("buy-countries-menu").hidden, expanded: trigger.getAttribute("aria-expanded"),
+          items: [...$("buy-countries-menu").children].map((n) => [n.tagName, n.textContent]),
+          boxes: walk($("buy-countries-menu")).filter((n) => n.tagName === "INPUT")
+            .map((n) => [n.getAttribute("type"), n.id, n.checked]),
+          focus: document.activeElement.id };
+        await fire(trigger, "click");
+        await fire(trigger, "click");
+        return { shown, fetched: calls.filter((c) => c[0] === "buy_countries").length };
+        """)
+        assert seen["shown"] == {
+            "menu": False,
+            "expanded": "true",
+            "items": [
+                ["BUTTON", "Clear countries"],
+                ["LABEL", "Austria"],
+                ["LABEL", "Germany"],
+                ["LABEL", "Netherlands"],
+                ["LABEL", "Sweden"],
+            ],
+            "boxes": [
+                ["checkbox", "buy-country-1", False],
+                ["checkbox", "buy-country-7", False],
+                ["checkbox", "buy-country-23", False],
+                ["checkbox", "buy-country-28", False],
+            ],
+            "focus": "buy-country-1",
+        }
+        assert seen["fetched"] == 1
+
+    def test_the_button_and_the_list_have_names_and_the_button_says_what_it_opens(self) -> None:
+        seen = run("""
+        await open();
+        const trigger = $("buy-countries");
+        return { labelledby: trigger.getAttribute("aria-labelledby"),
+          controls: trigger.getAttribute("aria-controls"),
+          menu: [$("buy-countries-menu").id, $("buy-countries-menu").getAttribute("role"),
+            $("buy-countries-menu").getAttribute("aria-label")],
+          label: $("buy-countries-label").textContent, popup: trigger.getAttribute("aria-haspopup") };
+        """)
+        assert seen == {
+            "labelledby": "buy-countries-label buy-countries-text",
+            "controls": "buy-countries-menu",
+            "menu": ["buy-countries-menu", "group", "Seller countries"],
+            "label": "Seller location",
+            "popup": "true",
+        }
+
+    def test_the_list_opens_on_the_first_ticked_country(self) -> None:
+        seen = run("""
+        await open(withFilters({ countries: [23] }));
+        await fire($("buy-countries"), "click");
+        return document.activeElement.id;
+        """)
+        assert seen == "buy-country-23"
+
+    def test_ticking_a_country_sends_the_ticked_ones_and_draws_the_answer(self) -> None:
+        seen = run("""
+        await open(view({ status: done() }));
+        await fire($("buy-countries"), "click");
+        stub.buy_filters = async (language, condition, foil, countries, delivery) =>
+          withFilters({ countries, delivery });
+        const box = (id) => $(`buy-country-${id}`);
+        box(23).checked = true;
+        await fire(box(23), "change");
+        box(7).checked = true;
+        await fire(box(7), "change");
+        return { sent: calls.filter((c) => c[0] === "buy_filters").map((c) => c.slice(1)),
+          checked: [1, 7, 23, 28].map((id) => box(id).checked), text: $("buy-countries-text").textContent,
+          open: !$("buy-countries-menu").hidden, results: $("buy-results").hidden,
+          focus: document.activeElement.id };
+        """)
+        assert seen["sent"] == [
+            ["english", "NM", "any", [23], "any"],
+            ["english", "NM", "any", [7, 23], "any"],
+        ]
+        assert seen["checked"] == [False, True, True, False]
+        assert seen["text"] == "Germany, Netherlands"
+        assert seen["open"] is True
+        assert seen["results"] is True
+        assert seen["focus"] == "buy-country-1"
+
+    def test_unticking_the_last_country_goes_back_to_any_country(self) -> None:
+        seen = run("""
+        await open(withFilters({ countries: [7] }));
+        await fire($("buy-countries"), "click");
+        stub.buy_filters = async (language, condition, foil, countries) => withFilters({ countries });
+        const box = $("buy-country-7");
+        box.checked = false;
+        await fire(box, "change");
+        return [calls.at(-1).slice(1), $("buy-countries-text").textContent];
+        """)
+        assert seen == [["english", "NM", "any", [], "any"], "Any country"]
+
+    def test_clear_countries_unticks_all_and_is_off_when_none_are_ticked(self) -> None:
+        seen = run("""
+        await open();
+        await fire($("buy-countries"), "click");
+        const before = $("buy-countries-clear").disabled;
+        stub.buy = async () => withFilters({ countries: [1, 28] });
+        await refreshBuy();
+        const during = $("buy-countries-clear").disabled;
+        stub.buy_filters = async (language, condition, foil, countries) => withFilters({ countries });
+        await fire($("buy-countries-clear"), "click");
+        return { before, during, sent: calls.at(-1).slice(1), text: $("buy-countries-text").textContent,
+          after: $("buy-countries-clear").disabled };
+        """)
+        assert seen == {
+            "before": True,
+            "during": False,
+            "sent": ["english", "NM", "any", [], "any"],
+            "text": "Any country",
+            "after": True,
+        }
+
+    def test_a_refused_tick_puts_the_box_back_and_says_why(self) -> None:
+        seen = run("""
+        await open();
+        await fire($("buy-countries"), "click");
+        stub.buy_filters = async () => ({ error: "Wait for the scan, or cancel it." });
+        const box = $("buy-country-7");
+        box.checked = true;
+        await fire(box, "change");
+        return [box.checked, $("status-text").textContent, $("buy-countries-text").textContent];
+        """)
+        assert seen == [False, "Wait for the scan, or cancel it.", "Any country"]
+
+    def test_a_list_that_cannot_be_fetched_stays_shut_and_the_next_press_tries_again(self) -> None:
+        seen = run("""
+        await open();
+        stub.buy_countries = async () => COUNTRY_ERROR;
+        await fire($("buy-countries"), "click");
+        const first = { menu: $("buy-countries-menu").hidden, toast: $("status-text").textContent,
+          expanded: $("buy-countries").getAttribute("aria-expanded") };
+        stub.buy_countries = async () => ({ countries: COUNTRIES });
+        await fire($("buy-countries"), "click");
+        return { first, menu: $("buy-countries-menu").hidden,
+          fetched: calls.filter((c) => c[0] === "buy_countries").length };
+        """)
+        assert seen["first"] == {
+            "menu": True,
+            "toast": "Cardmarket's countries could not be loaded; try again.",
+            "expanded": "false",
+        }
+        assert seen["menu"] is False
+        assert seen["fetched"] == 2
+
+    def test_a_second_press_while_the_list_loads_asks_once(self) -> None:
+        seen = run("""
+        await open();
+        let release;
+        stub.buy_countries = () => new Promise((resolve) => {
+          release = () => resolve({ countries: COUNTRIES });
+        });
+        const first = fire($("buy-countries"), "click");
+        const second = fire($("buy-countries"), "click");
+        release();
+        await Promise.all([first, second]);
+        return { fetched: calls.filter((c) => c[0] === "buy_countries").length,
+          boxes: walk($("buy-countries-menu")).filter((n) => n.tagName === "INPUT").length };
+        """)
+        assert seen == {"fetched": 1, "boxes": 4}
+
+    def test_a_scan_running_shuts_the_list_and_locks_the_choice(self) -> None:
+        seen = run("""
+        await open(withFilters({ countries: [7] }));
+        await fire($("buy-countries"), "click");
+        const listed = !$("buy-countries-menu").hidden;
+        paintBuyStatus(idle({ phase: "scanning", running: true, progress: "Reading Sol Ring · 1 of 2" }));
+        return { listed, menu: $("buy-countries-menu").hidden, trigger: $("buy-countries").disabled,
+          expanded: $("buy-countries").getAttribute("aria-expanded"),
+          boxes: walk($("buy-countries-menu")).filter((n) => n.tagName === "INPUT").map((n) => n.disabled) };
+        """)
+        assert seen == {
+            "listed": True,
+            "menu": True,
+            "trigger": True,
+            "expanded": "false",
+            "boxes": [True, True, True, True],
+        }
+
+    def test_the_list_built_once_is_kept_when_coming_back_to_the_screen(self) -> None:
+        seen = run("""
+        await open();
+        await fire($("buy-countries"), "click");
+        const box = $("buy-country-7");
+        closeBuy();
+        const closed = $("buy-countries-menu").hidden;
+        await open(withFilters({ countries: [7] }));
+        return { closed, same: $("buy-country-7") === box, checked: $("buy-country-7").checked,
+          fetched: calls.filter((c) => c[0] === "buy_countries").length };
+        """)
+        assert seen == {"closed": True, "same": True, "checked": True, "fetched": 1}
+
+    def test_signing_out_forgets_nothing_it_should_not_and_closes_the_list(self) -> None:
+        seen = run("""
+        await open();
+        await fire($("buy-countries"), "click");
+        showSignedOut();
+        return { menu: $("buy-countries-menu").hidden,
+          expanded: $("buy-countries").getAttribute("aria-expanded") };
+        """)
+        assert seen == {"menu": True, "expanded": "false"}
+
+
+class TestSellerLocationKeyboard:
+    def test_arrows_home_and_end_move_between_the_ticks_and_wrap(self) -> None:
+        seen = run("""
+        await open(withFilters({ countries: [7] }));
+        await fire($("buy-countries"), "click");
+        const at = () => document.activeElement.id;
+        const trail = [at()];
+        for (const key of ["ArrowDown", "ArrowDown", "ArrowDown", "ArrowDown", "ArrowUp", "End", "Home"]) {
+          const event = await fire(document.activeElement, "keydown", { key });
+          trail.push(at(), event.defaultPrevented);
+        }
+        return trail;
+        """)
+        assert seen == [
+            "buy-country-7",
+            "buy-country-23", True,
+            "buy-country-28", True,
+            "buy-countries-clear", True,
+            "buy-country-1", True,
+            "buy-countries-clear", True,
+            "buy-country-28", True,
+            "buy-countries-clear", True,
+        ]  # fmt: skip
+
+    def test_a_clear_button_that_is_off_is_skipped(self) -> None:
+        seen = run("""
+        await open();
+        await fire($("buy-countries"), "click");
+        await fire(document.activeElement, "keydown", { key: "Home" });
+        const first = document.activeElement.id;
+        await fire(document.activeElement, "keydown", { key: "ArrowUp" });
+        return [first, document.activeElement.id];
+        """)
+        assert seen == ["buy-country-1", "buy-country-28"]
+
+    def test_escape_shuts_the_list_returns_to_the_button_and_goes_no_further(self) -> None:
+        seen = run("""
+        await open();
+        await fire($("buy-countries"), "click");
+        const event = await fire(document.activeElement, "keydown", { key: "Escape" });
+        return { menu: $("buy-countries-menu").hidden, focus: document.activeElement.id,
+          expanded: $("buy-countries").getAttribute("aria-expanded"), prevented: event.defaultPrevented,
+          stopped: event.stopped };
+        """)
+        assert seen == {
+            "menu": True,
+            "focus": "buy-countries",
+            "expanded": "false",
+            "prevented": True,
+            "stopped": True,
+        }
+
+    def test_escape_does_nothing_while_the_list_is_shut(self) -> None:
+        seen = run("""
+        await open();
+        const event = await fire($("buy-countries"), "keydown", { key: "Escape" });
+        return [event.defaultPrevented, event.stopped];
+        """)
+        assert seen == [False, False]
+
+    def test_tab_leaves_the_list_and_shuts_it_without_taking_the_key(self) -> None:
+        seen = run("""
+        await open();
+        await fire($("buy-countries"), "click");
+        const event = await fire(document.activeElement, "keydown", { key: "Tab" });
+        return [$("buy-countries-menu").hidden, event.defaultPrevented,
+          $("buy-countries").getAttribute("aria-expanded")];
+        """)
+        assert seen == [True, False, "false"]
+
+    def test_pressing_elsewhere_shuts_the_list_and_pressing_inside_does_not(self) -> None:
+        seen = run("""
+        await open();
+        await fire($("buy-countries"), "click");
+        await fire($("buy-country-7"), "mousedown");
+        await fire($("buy-countries-text"), "mousedown");
+        const inside = !$("buy-countries-menu").hidden;
+        await fire($("buy-title"), "mousedown");
+        return { inside, after: $("buy-countries-menu").hidden,
+          expanded: $("buy-countries").getAttribute("aria-expanded") };
+        """)
+        assert seen == {"inside": True, "after": True, "expanded": "false"}
+
+    def test_the_checks_are_native_checkboxes_inside_labels_for_the_screen_reader(self) -> None:
+        seen = run("""
+        await open();
+        await fire($("buy-countries"), "click");
+        const label = $("buy-countries-menu").children[2];
+        const box = walk(label).find((n) => n.tagName === "INPUT");
+        return { labelFor: label.getAttribute("for"), box: box.id, text: label.textContent };
+        """)
+        assert seen == {"labelFor": "buy-country-7", "box": "buy-country-7", "text": "Germany"}
+
+
+class TestDeliveryTime:
+    def test_five_choices_with_any_first_and_the_chosen_one_pressed(self) -> None:
+        seen = run("""
+        await open(withFilters({ delivery: "10" }));
+        return { choices: [...$("buy-delivery").children].map((b) => [b.dataset.value, b.textContent,
+          b.getAttribute("aria-pressed"), b.tagName]),
+          group: [$("buy-delivery").getAttribute("role"), $("buy-delivery").getAttribute("aria-labelledby"),
+            $("buy-delivery-label").textContent] };
+        """)
+        assert seen["choices"] == [
+            ["any", "Any", "false", "BUTTON"],
+            ["5", "5 days", "false", "BUTTON"],
+            ["7", "1 week", "false", "BUTTON"],
+            ["10", "10 days", "true", "BUTTON"],
+            ["14", "2 weeks", "false", "BUTTON"],
+        ]
+        assert seen["group"] == ["group", "buy-delivery-label", "Delivery time"]
+
+    def test_a_choice_is_sent_with_the_other_filters_and_resets_what_was_shown(self) -> None:
+        seen = run("""
+        await open(withFilters({ countries: [7], foil: "foil" }, { status: done() }));
+        stub.buy_filters = async (language, condition, foil, countries, delivery) =>
+          withFilters({ foil, countries, delivery });
+        const week = [...$("buy-delivery").children].find((b) => b.textContent === "1 week");
+        await fire(week, "click");
+        const pressed = [...$("buy-delivery").children]
+          .filter((b) => b.getAttribute("aria-pressed") === "true").map((b) => b.textContent);
+        return { call: calls.find((c) => c[0] === "buy_filters"), pressed, results: $("buy-results").hidden,
+          curve: $("buy-curve").children.length };
+        """)
+        assert seen == {
+            "call": ["buy_filters", "english", "NM", "foil", [7], "7"],
+            "pressed": ["1 week"],
+            "results": True,
+            "curve": 0,
+        }
+
+    def test_a_refused_choice_goes_back_to_the_saved_one(self) -> None:
+        seen = run("""
+        await open();
+        stub.buy_filters = async () => ({ error: "Wait for the scan, or cancel it." });
+        const two = [...$("buy-delivery").children].find((b) => b.textContent === "2 weeks");
+        await fire(two, "click");
+        return [...$("buy-delivery").children].filter((b) => b.getAttribute("aria-pressed") === "true")
+          .map((b) => b.textContent);
+        """)
+        assert seen == ["Any"]
+
+
+class TestArrival:
+    def test_each_seller_shows_its_days_and_where_an_estimate_comes_from(self) -> None:
+        seen = run("""
+        await open(view({ status: done() }));
+        const unknown = { ...PACKAGE.shipments[0], seller: "SellerC", deliveryDays: null,
+          deliveryBasis: null };
+        const route = { ...PACKAGE.shipments[0], seller: "SellerD", country: "Italy", deliveryDays: 14,
+          deliveryBasis: "route" };
+        stub.buy_package = async () => ({ ...PACKAGE, shipments: [...PACKAGE.shipments, unknown, route] });
+        await fire($("buy-curve").children[1], "click");
+        return [...$("buy-sellers").children].map((s) => s.children[1].textContent);
+        """)
+        assert seen == [
+            "France · Lettre Internationale €2.55, not tracked · 6 days",
+            "Germany · Tracked Parcel €3.45, tracked · about 12 days (Germany median)",
+            "France · Lettre Internationale €2.55, not tracked · no delivery estimate",
+            "Italy · Lettre Internationale €2.55, not tracked · about 14 days (Cardmarket's average)",
+        ]
+
+    def test_the_package_says_when_its_slowest_seller_arrives(self) -> None:
+        seen = run("""
+        await open(view({ status: done() }));
+        stub.buy_package = async () => PACKAGE;
+        await fire($("buy-curve").children[1], "click");
+        return $("buy-package-arrival").textContent;
+        """)
+        assert seen == "Arrives in about 12 days"
+
+    def test_a_package_whose_sellers_have_no_estimate_says_nothing_of_arrival(self) -> None:
+        seen = run("""
+        await open(view({ status: done() }));
+        stub.buy_package = async () => ({ ...PACKAGE, slowestDays: null, withoutEstimate: 2 });
+        await fire($("buy-curve").children[1], "click");
+        return $("buy-package-arrival").textContent;
+        """)
+        assert seen == ""
+
+    def test_sellers_without_an_estimate_are_counted_beside_the_arrival(self) -> None:
+        seen = run("""
+        await open(view({ status: done() }));
+        stub.buy_package = async () => ({ ...PACKAGE, slowestDays: 1, withoutEstimate: 1 });
+        await fire($("buy-curve").children[1], "click");
+        return $("buy-package-arrival").textContent;
+        """)
+        assert seen == "Arrives in about 1 day · 1 seller without an estimate"
+
+    def test_offers_left_out_for_want_of_an_estimate_are_counted_in_the_notes(self) -> None:
+        seen = run("""
+        await open(view({ status: done() }));
+        stub.buy_package = async () => ({ ...PACKAGE, leftOutNoEstimate: 3 });
+        await fire($("buy-curve").children[1], "click");
+        return [...$("buy-package-notes").children].map((n) => n.textContent);
+        """)
+        assert seen == [
+            "Left out, no delivery estimate: 3 offers",
+            "No usable offer: Lotus Petal",
+            "Fewer copies offered than wanted: Mind Stone (3 wanted, 1 offered)",
+        ]
+
+    def test_closing_the_package_clears_the_arrival(self) -> None:
+        seen = run("""
+        await open(view({ status: done() }));
+        stub.buy_package = async () => PACKAGE;
+        await fire($("buy-curve").children[1], "click");
+        paintBuyStatus(done({ ...RESULTS, rows: [row(1, 700, 2, 200, null, true)] }));
+        return [$("buy-package").hidden, $("buy-package-arrival").textContent];
+        """)
+        assert seen == [True, ""]

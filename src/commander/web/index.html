@@ -79,6 +79,19 @@
               <span id="buy-foil-label">Foil</span>
               <div id="buy-foil" class="segmented" role="group" aria-labelledby="buy-foil-label"></div>
             </div>
+            <div class="buy-filter">
+              <span id="buy-countries-label">Seller location</span>
+              <div id="buy-picker" class="buy-picker">
+                <button id="buy-countries" class="buy-select buy-picker-button" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="buy-countries-menu" aria-labelledby="buy-countries-label buy-countries-text">
+                  <span id="buy-countries-text">Any country</span>
+                </button>
+                <div id="buy-countries-menu" class="menu buy-menu" role="group" aria-label="Seller countries" hidden></div>
+              </div>
+            </div>
+            <div class="buy-filter">
+              <span id="buy-delivery-label">Delivery time</span>
+              <div id="buy-delivery" class="segmented" role="group" aria-labelledby="buy-delivery-label"></div>
+            </div>
           </div>
         </section>
 
@@ -124,6 +137,7 @@
         <section id="buy-package" class="buy-block" aria-labelledby="buy-package-title" hidden>
           <h2 id="buy-package-title" class="buy-block-title"></h2>
           <p id="buy-package-sub" class="muted"></p>
+          <p id="buy-package-arrival" class="buy-line"></p>
           <div id="buy-sellers" class="buy-sellers"></div>
           <ul id="buy-package-notes" class="buy-notes"></ul>
         </section>

@@ -19,6 +19,7 @@ from commander.cmscan import (
     seller_page_url,
 )
 from commander.cmsession import BrowserError, ChallengeError, LoadTimeout, SignedOut
+from commander.offerlimits import OfferLimits
 from commander.sellersolve import WantedCard
 from conftest import FIXTURES
 
@@ -129,6 +130,7 @@ def run(
     wants_list_id: int | None = None,
     base_sellers: int = 15,
     filters: ScanFilters | None = None,
+    limits: OfferLimits | None = None,
     cancel: threading.Event | None = None,
     on_load: Callable[[str], None] | None = None,
     sleep: Callable[[float], object] | None = None,
@@ -144,6 +146,7 @@ def run(
         filters or ScanFilters(),
         wants_list_id=wants_list_id,
         base_sellers=base_sellers,
+        limits=limits or OfferLimits(),
     )
     result = scan(
         browser,
@@ -228,6 +231,45 @@ class TestUrls:
     def test_foil_defaults_to_any(self) -> None:
         assert ScanFilters().foil is Foil.ANY
 
+    def test_each_seller_country_is_a_bracketed_field_as_cardmarkets_own_form_sends_it(self) -> None:
+        filters = ScanFilters(language=None, seller_countries=frozenset({23, 7}))
+
+        assert card_page_url("Sol Ring", filters) == (
+            f"{CARDS}/Sol-Ring?sellerCountry%5B7%5D=7&sellerCountry%5B23%5D=23"
+        )
+
+    def test_one_country_and_the_other_filters_share_the_query(self) -> None:
+        filters = ScanFilters(1, Condition.NM, Foil.FOIL, frozenset({28}), 5)
+
+        assert card_page_url("Sol Ring", filters) == (
+            f"{CARDS}/Sol-Ring?language=1&minCondition=2&isFoil=Y&sellerCountry%5B28%5D=28&maxShippingTime=5"
+        )
+
+    @pytest.mark.parametrize(
+        ("days", "suffix"),
+        [
+            (None, ""),
+            (1, ""),
+            (2, "?maxShippingTime=2"),
+            (3, "?maxShippingTime=3"),
+            (5, "?maxShippingTime=5"),
+            (6, "?maxShippingTime=6"),
+            # The form's "7+" cannot be narrowed, so a longer limit is applied after the offers are read.
+            (7, ""),
+            (10, ""),
+            (14, ""),
+        ],
+    )
+    def test_the_delivery_limit_is_in_the_query_only_where_the_form_has_the_choice(
+        self, days: int | None, suffix: str
+    ) -> None:
+        url = card_page_url("Sol Ring", ScanFilters(language=None, max_days=days))
+
+        assert url == f"{CARDS}/Sol-Ring{suffix}"
+
+    def test_no_country_and_no_limit_by_default(self) -> None:
+        assert (ScanFilters().seller_countries, ScanFilters().max_days) == (frozenset(), None)
+
     def test_the_seller_page_is_filtered_by_the_wants_list(self) -> None:
         assert seller_page_url("Seller01", 999) == f"{USERS}/Seller01/Offers/Singles?idWantslist=999"
 
@@ -242,6 +284,16 @@ class TestRequest:
     def test_at_least_one_base_seller(self) -> None:
         with pytest.raises(ValueError, match="at least one base seller"):
             ScanRequest([WantedCard(SYLVAN, 1)], base_sellers=0)
+
+    def test_the_limits_must_match_the_address_filters(self) -> None:
+        wanted = [WantedCard(SYLVAN, 1)]
+
+        with pytest.raises(ValueError, match="delivery limit"):
+            ScanRequest(wanted, ScanFilters(max_days=7), limits=OfferLimits())
+        with pytest.raises(ValueError, match="seller countries"):
+            ScanRequest(wanted, ScanFilters(seller_countries=frozenset({7})), limits=OfferLimits())
+        with pytest.raises(ValueError, match="seller countries"):
+            ScanRequest(wanted, ScanFilters(), limits=OfferLimits(frozenset({"germany"})))
 
 
 class TestPassOne:
@@ -686,3 +738,87 @@ class TestPassTwo:
         assert result.base_sellers == ()
         assert browser.loaded == [SYLVAN_URL]
         assert result.not_found == (SYLVAN,)
+
+
+class TestBaseSellersUnderLimits:
+    """One wanted card, so every seller of the fixture page ties on scarcity and coverage and the first by
+    name is the base seller: Seller01 (Italy, 16 days). The others arrive in 11 (Seller02, Hungary), 16
+    (Seller03, Croatia), 6 (Seller04, Sweden), 12 (Seller05, Belgium) and 9 days (Seller07, Spain); Seller06
+    cannot be bought from. The page's route averages to Sweden are 14, 7, 8, 4, 7 and 7 days for Italy,
+    Hungary, Croatia, Sweden, Belgium and Spain."""
+
+    SELLER04_URL = f"{USERS}/Seller04/Offers/Singles?idWantslist=999"
+    THREE_DAYS_URL = f"{CARDS}/Sylvan-Safekeeper?language=1&maxShippingTime=3"
+    SWEDEN_URL = f"{CARDS}/Sylvan-Safekeeper?language=1&sellerCountry%5B28%5D=28"
+    DAYS_OF_SELLER04 = '<span class="shippingTime-info">6</span>'
+    NO_DAYS = '<span class="shippingTime-info">-</span>'
+    ROUTE_OF_SWEDEN = "(Avg. delivery time from Sweden to Sweden :  4 days)"
+
+    def run_one(
+        self, pages: Mapping[str, str | Exception], filters: ScanFilters, limits: OfferLimits
+    ) -> tuple[ScanResult, FakeBrowser]:
+        result, browser, _, _ = run(
+            pages, [SYLVAN], wants_list_id=999, base_sellers=1, filters=filters, limits=limits
+        )
+        return result, browser
+
+    def test_without_limits_the_first_seller_by_name_is_chosen(self) -> None:
+        pages = {SYLVAN_URL: fixture(CARD_PAGE), SELLER01_URL: fixture(SELLER_PAGE)}
+
+        result, _ = self.run_one(pages, ScanFilters(), OfferLimits())
+
+        assert result.base_sellers == ("Seller01",)
+
+    def test_only_sellers_from_the_chosen_countries_can_be_base_sellers(self) -> None:
+        pages = {self.SWEDEN_URL: fixture(CARD_PAGE), self.SELLER04_URL: fixture(SELLER_PAGE)}
+        filters = ScanFilters(seller_countries=frozenset({28}))
+
+        result, browser = self.run_one(pages, filters, OfferLimits(frozenset({"sweden"})))
+
+        assert result.base_sellers == ("Seller04",)
+        assert browser.loaded == [self.SWEDEN_URL, self.SELLER04_URL]
+
+    def test_only_sellers_arriving_within_the_limit_can_be_base_sellers(self) -> None:
+        pages = {SYLVAN_URL: fixture(CARD_PAGE), self.SELLER04_URL: fixture(SELLER_PAGE)}
+
+        result, browser = self.run_one(pages, ScanFilters(max_days=7), OfferLimits(max_days=7))
+
+        assert result.base_sellers == ("Seller04",)
+        assert browser.loaded == [SYLVAN_URL, self.SELLER04_URL]
+
+    def test_a_seller_without_an_estimate_is_chosen_on_its_route_average(self) -> None:
+        card = fixture(CARD_PAGE).replace(self.DAYS_OF_SELLER04, self.NO_DAYS)
+        pages = {SYLVAN_URL: card, self.SELLER04_URL: fixture(SELLER_PAGE)}
+
+        result, _ = self.run_one(pages, ScanFilters(max_days=7), OfferLimits(max_days=7))
+
+        # Nobody else is from Sweden, so Seller04 is judged by Sweden's 4-day route average.
+        assert result.base_sellers == ("Seller04",)
+
+    def test_a_route_average_over_the_limit_leaves_the_seller_out(self) -> None:
+        card = fixture(CARD_PAGE).replace(self.DAYS_OF_SELLER04, self.NO_DAYS)
+        pages = {self.THREE_DAYS_URL: card}
+
+        result, browser = self.run_one(pages, ScanFilters(max_days=3), OfferLimits(max_days=3))
+
+        # Seller04 is judged at Sweden's 4-day average, over the limit of 3, and no one else is as fast.
+        assert result.base_sellers == ()
+        assert browser.loaded == [self.THREE_DAYS_URL]
+
+    def test_a_seller_with_neither_an_estimate_nor_a_route_average_is_left_out(self) -> None:
+        card = fixture(CARD_PAGE).replace(self.DAYS_OF_SELLER04, self.NO_DAYS)
+        card = card.replace(self.ROUTE_OF_SWEDEN, "(no average yet)")
+        pages = {SYLVAN_URL: card, f"{USERS}/Seller07/Offers/Singles?idWantslist=999": fixture(SELLER_PAGE)}
+
+        result, _ = self.run_one(pages, ScanFilters(max_days=7), OfferLimits(max_days=7))
+
+        # Seller04 is out, and the next-fastest, Seller07 (9 days), is over the limit too.
+        assert result.base_sellers == ()
+        assert result.pages_read == 1
+
+    def test_the_offers_read_are_all_kept_for_the_solver_to_judge(self) -> None:
+        pages = {SYLVAN_URL: fixture(CARD_PAGE), self.SELLER04_URL: fixture(SELLER_PAGE)}
+
+        result, _ = self.run_one(pages, ScanFilters(max_days=7), OfferLimits(max_days=7))
+
+        assert ids_of(result) >= BUYABLE_FIXTURE_IDS

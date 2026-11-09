@@ -95,7 +95,38 @@ class TestCardOffers:
             seller_sales=60,
             seller_items=640,
             delivery_days=16,
+            route_days=14,
         )
+
+    def test_the_route_average_of_every_row_comes_from_its_calendar_tooltip(self) -> None:
+        offers = read_card_offers(page(CARD_PAGE)).offers
+
+        # "Avg. delivery time from <country> to Sweden : N days" in the fixture, row by row.
+        assert [(o.seller_country, o.route_days) for o in offers] == [
+            ("Italy", 14),
+            ("Hungary", 7),
+            ("Croatia", 8),
+            ("Sweden", 4),
+            ("Belgium", 7),
+            ("Switzerland", 7),
+            ("Spain", 7),
+        ]
+
+    def test_a_row_without_the_route_average_has_none(self) -> None:
+        bare = changed(
+            page(CARD_PAGE),
+            "(Avg. delivery time from Italy to Sweden :  14 days)",
+            "(no average yet)",
+        )
+
+        first = read_card_offers(bare).offers[0]
+
+        assert (first.route_days, first.delivery_days) == (None, 16)
+
+    def test_a_seller_stock_page_has_no_route_average(self) -> None:
+        offers = read_seller_offers(page(SELLER_PAGE)).offers
+
+        assert {o.route_days for o in offers} == {None}
 
     def test_all_seven_rows(self) -> None:
         offers = read_card_offers(page(CARD_PAGE)).offers

@@ -1,8 +1,9 @@
 """The Cardmarket scan: reads the offers of the wanted cards, two passes, one page at a time (ADR 0067).
 
-Pass 1 opens one card page per wanted card, with the owner's language and condition in the address, and reads
-its cheapest offers. Pass 2, given the wants list's id, opens the wants-filtered stock page of the base
-sellers (`choose_base_sellers`) and merges what it shows into the offers of pass 1.
+Pass 1 opens one card page per wanted card, with the owner's language, condition, seller countries and (up to
+6 days) delivery time in the address, and reads its cheapest offers. Pass 2, given the wants list's id, opens
+the wants-filtered stock page of the base sellers (`choose_base_sellers`, from the offers the request's
+limits allow) and merges what it shows into the offers of pass 1.
 
 The scan only loads pages through a `Browser`, 4 to 6 seconds apart and never in parallel. It stops at the
 first page that is not the expected one (a challenge that stays, a sign-in page, markup the readers do not
@@ -32,6 +33,7 @@ from commander.cmpages import (
     read_seller_offers,
 )
 from commander.cmsession import Browser, BrowserError
+from commander.offerlimits import OfferLimits, apply_limits
 from commander.sellersolve import WantedCard, card_key, fold_marks
 
 log = logging.getLogger(__name__)
@@ -40,6 +42,9 @@ CARDS_URL = "https://www.cardmarket.com/en/Magic/Cards"
 USERS_URL = "https://www.cardmarket.com/en/Magic/Users"
 ENGLISH = 1
 DEFAULT_BASE_SELLERS = 15
+# The delivery times the card page's filter offers, besides "7+" days, which cannot be narrowed.
+MIN_FORM_DAYS = 2
+MAX_FORM_DAYS = 6
 # Seconds between one page load and the next, drawn evenly from this range.
 MIN_GAP_S = 4.0
 MAX_GAP_S = 6.0
@@ -85,16 +90,24 @@ class ScanFilters:
     language: int | None = ENGLISH
     min_condition: Condition | None = None
     foil: Foil = Foil.ANY
+    # Cardmarket's country ids (the shipping help API's too); empty for any.
+    seller_countries: frozenset[int] = frozenset()
+    # The most days a seller may take to deliver; None for any. Cardmarket's form offers 2 to 6 days only.
+    max_days: int | None = None
 
     def query(self) -> str:
-        params: dict[str, int | str] = {}
+        params: list[tuple[str, int | str]] = []
         if self.language is not None:
-            params["language"] = self.language
+            params.append(("language", self.language))
         if self.min_condition is not None:
             # Cardmarket numbers the conditions from 1 (Mint) to 7 (Poor).
-            params["minCondition"] = list(Condition).index(self.min_condition) + 1
+            params.append(("minCondition", list(Condition).index(self.min_condition) + 1))
         if self.foil is not Foil.ANY:
-            params["isFoil"] = self.foil.code
+            params.append(("isFoil", self.foil.code))
+        # The form's own spelling: one bracketed field per country.
+        params.extend((f"sellerCountry[{country}]", country) for country in sorted(self.seller_countries))
+        if self.max_days is not None and MIN_FORM_DAYS <= self.max_days <= MAX_FORM_DAYS:
+            params.append(("maxShippingTime", self.max_days))
         return urlencode(params)
 
 
@@ -117,10 +130,16 @@ class ScanRequest:
     # The wants list holding the wanted cards; without it there is no pass 2.
     wants_list_id: int | None = None
     base_sellers: int = DEFAULT_BASE_SELLERS
+    # What the base sellers must satisfy; the names of `filters.seller_countries` and the same `max_days`.
+    limits: OfferLimits = field(default_factory=OfferLimits)
 
     def __post_init__(self) -> None:
         if self.base_sellers < 1:
             raise ValueError(f"the scan needs at least one base seller, got {self.base_sellers}")
+        if self.limits.max_days != self.filters.max_days:
+            raise ValueError("the scan's delivery limit differs between its address filters and its limits")
+        if bool(self.limits.countries) != bool(self.filters.seller_countries):
+            raise ValueError("the scan's seller countries differ between its address filters and its limits")
 
 
 class ScanStage(Enum):
@@ -322,7 +341,8 @@ class _Scan:
                 self._offers[offer.article_id] = replace(offer, card=self._names[key])
 
     def _pass_two(self, wants_list_id: int) -> None:
-        self._base = choose_base_sellers(self._offers.values(), self._request.base_sellers)
+        eligible = apply_limits(self._offers.values(), self._request.limits)
+        self._base = choose_base_sellers(eligible.offers, self._request.base_sellers)
         self._planned = self._pages + len(self._base)
         for seller in self._base:
             html = self._load(seller_page_url(seller, wants_list_id), ScanStage.SELLERS, seller)
@@ -347,7 +367,11 @@ class _Scan:
             if seen is not None:
                 days = merged.delivery_days if merged.delivery_days is not None else seen.delivery_days
                 merged = replace(
-                    merged, seller_sales=seen.seller_sales, seller_items=seen.seller_items, delivery_days=days
+                    merged,
+                    seller_sales=seen.seller_sales,
+                    seller_items=seen.seller_items,
+                    delivery_days=days,
+                    route_days=seen.route_days,
                 )
             self._offers[offer.article_id] = merged
         if unknown:

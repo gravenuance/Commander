@@ -12,7 +12,7 @@ import threading
 from collections import Counter, defaultdict
 from collections.abc import Callable, Collection, Sequence
 from contextlib import AbstractContextManager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 from typing import Protocol
@@ -28,14 +28,15 @@ from commander.cmsession import (
     LoadTimeout,
     SignedOut,
 )
-from commander.cmshipping import CmShippingError, ShippingMethod
+from commander.cmshipping import CmShippingError, Country, ShippingMethod
 from commander.cmwants import WantsCancelled, WantsProgress, WantsSync, sync_wants
 from commander.credentials import CredentialError, SessionStore
 from commander.deckexport import dont_have_counts
 from commander.jsonshape import ShapeError
 from commander.models import Deck
 from commander.net import NetworkError
-from commander.sellersolve import Package, SolveError, SolveTimeout, WantedCard, curve
+from commander.offerlimits import Eligible, OfferLimits, apply_limits
+from commander.sellersolve import Package, SolveError, SolveTimeout, WantedCard, card_key, curve
 
 log = logging.getLogger(__name__)
 
@@ -79,6 +80,8 @@ class RouteSource(Protocol):
 
     def country_id(self, name: str) -> int | None: ...
 
+    def countries(self) -> tuple[Country, ...]: ...
+
     def methods(self, origin_id: int, destination_id: int) -> tuple[ShippingMethod, ...]: ...
 
 
@@ -117,6 +120,8 @@ class _Run:
     base_sellers: int
     key: Key
     cancel: threading.Event = field(default_factory=threading.Event)
+    # The filters' seller countries by name, known once the run has fetched Cardmarket's country list.
+    limits: OfferLimits = field(default_factory=OfferLimits)
 
 
 @dataclass(slots=True, frozen=True)
@@ -124,6 +129,8 @@ class _Outcome:
     packages: tuple[Package, ...]
     scan: ScanResult
     wants: WantsSync | None
+    # The scanned offers the packages were chosen from.
+    eligible: Eligible
 
 
 @dataclass(slots=True)
@@ -214,13 +221,26 @@ class BuyService:
         log.info("buy: deck %d %s the purchase", deck_id, "joins" if included else "leaves")
         return self.view()
 
-    def set_filters(self, language: object, condition: object, foil: object) -> Json:
+    def set_filters(
+        self, language: object, condition: object, foil: object, countries: object, delivery: object
+    ) -> Json:
         self._signed_in_user()
         self._refuse_while_running()
-        filters = parse_filters(language, condition, foil)
+        filters = parse_filters(language, condition, foil, countries, delivery)
         self._store.set_filters(filters)
         log.info("buy: filters now %s", filters.to_json())
         return self.view()
+
+    def countries(self) -> Json:
+        """Cardmarket's countries by name, for the seller-location filter."""
+        self._signed_in_user()
+        try:
+            listed = self._listed_countries()
+        except (NetworkError, ShapeError, CmShippingError) as error:
+            log.warning("buy: no country list: %s", error)
+            raise BuyError("Cardmarket's countries could not be loaded; try again.") from error
+        ordered = sorted(listed, key=lambda country: country.name.casefold())
+        return {"countries": [{"id": country.id, "name": country.name} for country in ordered]}
 
     def set_base_sellers(self, count: object) -> Json:
         self._signed_in_user()
@@ -281,7 +301,7 @@ class BuyService:
         if chosen is None:
             raise BuyError("That package is gone; scan again.")
         trends = self._trends({pick.offer.card for pick in chosen.picks})
-        return _package_json(chosen, trends)
+        return _package_json(chosen, trends, outcome.eligible if outcome else Eligible(()))
 
     def close(self) -> None:
         """The app is closing: end a running scan at its next page, which closes its windows."""
@@ -344,11 +364,43 @@ class BuyService:
         self._finish(run, phase, message, detail, outcome)
 
     def _scan_and_solve(self, run: _Run) -> _Outcome:
+        run = replace(run, limits=self._limits(run.filters))
         wants, found = self._read_cardmarket_signed_in(run)
         if found.status is not ScanStatus.COMPLETE and not found.offers:
             message, detail = _stopped_text(found)
             raise _Ended(_PHASE_OF[found.status], message, detail)
-        return _Outcome(self._solve(run, found), found, wants)
+        eligible = apply_limits(found.offers, run.limits)
+        log.info(
+            "buy: limits left out %d offers from other countries, %d that arrive too late and %d with no "
+            "delivery estimate",
+            eligible.other_countries,
+            eligible.too_slow,
+            eligible.no_estimate,
+        )
+        return _Outcome(self._solve(run, found, eligible), found, wants, eligible)
+
+    def _listed_countries(self) -> tuple[Country, ...]:
+        with self._engine.shipping() as shipping:
+            return shipping.countries()
+
+    def _limits(self, filters: BuyFilters) -> OfferLimits:
+        """What the scanned offers must satisfy: the filters' countries by the names offers spell them."""
+        if not filters.countries:
+            return OfferLimits(max_days=filters.delivery.max_days)
+        try:
+            listed = self._listed_countries()
+        except (NetworkError, ShapeError, CmShippingError) as error:
+            raise _Ended(
+                Phase.STOPPED, "Cardmarket's countries could not be loaded; scan again.", str(error)
+            ) from error
+        names = frozenset(country.name.casefold() for country in listed if country.id in filters.countries)
+        if not names:
+            raise _Ended(
+                Phase.STOPPED,
+                "Cardmarket does not list the seller countries chosen; choose again.",
+                f"no listed country has an id in {sorted(filters.countries)}",
+            )
+        return OfferLimits(names, filters.delivery.max_days)
 
     def _read_cardmarket_signed_in(self, run: _Run) -> tuple[WantsSync, ScanResult]:
         """Fill the wants list and scan, signing in first when there is no session, and once more when the
@@ -428,6 +480,7 @@ class BuyService:
             filters.scan_filters(),
             wants_list_id=wants.list_id if wants.imported else None,
             base_sellers=run.base_sellers,
+            limits=run.limits,
         )
         found = self._engine.scan(
             browser,
@@ -445,9 +498,9 @@ class BuyService:
         )
         return wants, found
 
-    def _solve(self, run: _Run, found: ScanResult) -> tuple[Package, ...]:
+    def _solve(self, run: _Run, found: ScanResult, eligible: Eligible) -> tuple[Package, ...]:
         self._progress(Phase.SOLVING, "Finding the cheapest packages")
-        if not found.offers:
+        if not eligible.offers:
             return ()
         try:
             with self._engine.shipping() as shipping:
@@ -467,7 +520,7 @@ class BuyService:
                     return shipping.methods(origin, destination)
 
                 packages = self._engine.curve(
-                    list(run.wanted), found.offers, routes, max_sellers=MAX_CURVE_SELLERS
+                    list(run.wanted), eligible.offers, routes, max_sellers=MAX_CURVE_SELLERS
                 )
         except (NetworkError, ShapeError, CmShippingError) as error:
             raise _Ended(
@@ -545,7 +598,7 @@ class BuyService:
             "pages": found.pages_read,
             "destination": found.destination,
             "notFound": list(found.not_found),
-            "noOffers": list(found.no_buyable),
+            "noOffers": [*found.no_buyable, *_left_without_offers(found, outcome.eligible)],
             "unmatched": list(wants.unmatched) if wants else [],
             "quantityMismatch": [
                 {"card": m.card, "wanted": m.wanted, "got": m.got}
@@ -579,7 +632,14 @@ def _deck_json(row: _DeckRow) -> Json:
     }
 
 
-def _package_json(package: Package, trends: dict[str, int | None]) -> Json:
+def _left_without_offers(found: ScanResult, eligible: Eligible) -> list[str]:
+    """Wanted cards that had offers but none from an allowed country or seller who arrives in time."""
+    kept = {card_key(offer.card) for offer in eligible.offers}
+    names = {card_key(offer.card): offer.card for offer in found.offers}
+    return sorted((name for key, name in names.items() if key not in kept), key=str.casefold)
+
+
+def _package_json(package: Package, trends: dict[str, int | None], eligible: Eligible) -> Json:
     picks_of: dict[str, list[Json]] = defaultdict(list)
     for pick in sorted(package.picks, key=lambda p: p.offer.card.casefold()):
         offer = pick.offer
@@ -595,6 +655,7 @@ def _package_json(package: Package, trends: dict[str, int | None]) -> Json:
                 "trendCents": trends.get(offer.card.casefold()),
             }
         )
+    estimates = [eligible.delivery.get(shipment.seller) for shipment in package.shipments]
     shipments = [
         {
             "seller": shipment.seller,
@@ -604,16 +665,22 @@ def _package_json(package: Package, trends: dict[str, int | None]) -> Json:
             "method": shipment.quote.method_name,
             "shippingCents": shipment.quote.price_cents,
             "tracked": shipment.quote.tracked,
+            "deliveryDays": estimate.days if estimate else None,
+            "deliveryBasis": estimate.basis.value if estimate else None,
             "picks": picks_of[shipment.seller],
         }
-        for shipment in package.shipments
+        for shipment, estimate in zip(package.shipments, estimates, strict=True)
     ]
+    known = [estimate.days for estimate in estimates if estimate]
     return {
         "sellers": package.seller_count,
         "totalCents": package.total_cents,
         "cardsCents": package.cards_cents,
         "shippingCents": package.shipping_cents,
         "optimal": package.optimal,
+        "slowestDays": max(known, default=None),
+        "withoutEstimate": len(estimates) - len(known),
+        "leftOutNoEstimate": eligible.no_estimate,
         "shipments": shipments,
         "missing": list(package.missing),
         "short": [{"card": s.card, "wanted": s.wanted, "available": s.available} for s in package.short],

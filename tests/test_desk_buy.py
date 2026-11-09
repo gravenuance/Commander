@@ -14,7 +14,7 @@ from commander.cmscan import ScanStatus
 from commander.desk import Desk, DeskSettings
 from commander.net import Pacer
 from conftest import REFRESH_TOKEN, FakeArchidekt, Json, MemoryTokenStore
-from test_buy import Rig, imported, scan_of, two_sellers
+from test_buy import NoCountries, Rig, imported, scan_of, two_sellers
 from test_desk import DECK, NOW, WAIT_SECONDS, fake, first_card_id, reviewed, settings
 
 if TYPE_CHECKING:
@@ -93,15 +93,34 @@ def test_unticking_a_deck_is_saved_beside_the_config_file(
 
 
 def test_the_filters_and_base_sellers_are_saved_and_a_bad_choice_is_an_error(desk: Desk) -> None:
-    saved = desk.buy_filters("any", "EX", "non-foil")
-    assert saved["filters"] == {"language": "any", "condition": "EX", "foil": "non-foil"}
+    chosen = {
+        "language": "any",
+        "condition": "EX",
+        "foil": "non-foil",
+        "countries": [7, 23],
+        "delivery": "14",
+    }
+    saved = desk.buy_filters("any", "EX", "non-foil", [23, 7], "14")
+    assert saved["filters"] == chosen
     assert desk.buy_base_sellers(8)["baseSellers"] == 8
 
-    assert desk.buy_filters("any", "EX", "shiny") == {
+    assert desk.buy_filters("any", "EX", "shiny", [], "any") == {
+        "error": "Those filters are not available; choose again."
+    }
+    assert desk.buy_filters("any", "EX", "any", [7], "3") == {
         "error": "Those filters are not available; choose again."
     }
     assert desk.buy_base_sellers(0) == {"error": "Base sellers must be 1 to 40."}
-    assert desk.buy()["filters"] == {"language": "any", "condition": "EX", "foil": "non-foil"}
+    assert desk.buy()["filters"] == chosen
+
+
+def test_the_countries_come_through_the_bridge_and_a_failure_is_an_error(desk: Desk, rig: Rig) -> None:
+    names = [c["name"] for c in cast("list[Json]", desk.buy_countries()["countries"])]
+    assert names == ["Austria", "France", "Germany", "Italy", "Netherlands", "Sweden"]
+
+    rig.routes = NoCountries()
+
+    assert desk.buy_countries() == {"error": "Cardmarket's countries could not be loaded; try again."}
 
 
 def test_without_an_account_the_screen_asks_for_one(

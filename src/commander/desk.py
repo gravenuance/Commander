@@ -1453,8 +1453,15 @@ class Desk:
         return self._buy.include(int(deck_id), bool(included))
 
     @_guarded
-    def buy_filters(self, language: str, condition: str, foil: str) -> Json:
-        return self._buy.set_filters(language, condition, foil)
+    def buy_filters(
+        self, language: str, condition: str, foil: str, countries: list[int], delivery: str
+    ) -> Json:
+        return self._buy.set_filters(language, condition, foil, countries, delivery)
+
+    @_guarded
+    def buy_countries(self) -> Json:
+        """Cardmarket's countries with their ids, for the seller-location filter."""
+        return self._buy.countries()
 
     @_guarded
     def buy_base_sellers(self, count: int) -> Json:

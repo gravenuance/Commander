@@ -108,6 +108,17 @@ the owner picks into their Cardmarket cart for them to check out by hand.
   shipping method and each card's price against its trend price (the cheapest printing's EUR price in the card
   data). The choices, the base sellers (15) and the decks left out per account are kept in `buy.json` beside
   the config file.
+- **Seller location and delivery time.** Two more offer filters, both blank (any) by default. The owner ticks
+  seller countries (Cardmarket's own ids, the shipping help API's too), which go in the card page address as
+  `sellerCountry[<id>]` and also drop other countries' offers, since the wants-filtered stock pages are not
+  filtered by country. The delivery time is at most 5 days, 1 week, 10 days or 2 weeks, judged on the
+  seller's own estimate to the buyer: Cardmarket's form offers 2 to 6 days only, so `maxShippingTime` goes in
+  the address for 5 days and every longer limit is applied after the offers are read, to the base sellers'
+  choice and to the solver's offers alike. A seller that shows "-" for want of deliveries is judged by its
+  country instead: the median of the other sellers' estimates from that country in the same scan (of an even
+  count, the mean of the middle two rounded up), else Cardmarket's average for the route that every card-page
+  row carries; only an offer with neither is left out, and the package says how many were. The package shows
+  each seller's days (marked as an estimate when they come from its country) and when the slowest arrives.
 - **The cart.** After the owner confirms a package (sellers, cards, prices, total), the app clicks each
   offer's own cart button, paced like the scan, then reads the cart: an offer that is gone is listed and can
   be solved again among the sellers already in the cart, and a seller whose shipping differs from the estimate

@@ -8,11 +8,13 @@ defaults used, so a later save never overwrites what the user had.
 
 import json
 import logging
+import shutil
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
+from typing import cast
 
 from commander.cmpages import Condition
 from commander.cmscan import DEFAULT_BASE_SELLERS, ENGLISH, Foil, ScanFilters
@@ -22,9 +24,15 @@ from commander.jsonshape import ShapeError, as_list, as_object, req_int
 log = logging.getLogger(__name__)
 
 BUY_FILE = "buy.json"
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
+# The format that added the seller countries and the delivery time to the filters.
+COUNTRIES_FORMAT = 2
 MIN_BASE_SELLERS = 1
 MAX_BASE_SELLERS = 40
+# Cardmarket lists 35 countries; the bounds only keep nonsense out of the address.
+MAX_COUNTRIES = 100
+MAX_COUNTRY_ID = 9999
+NOT_AVAILABLE = "Those filters are not available; choose again."
 # Condition choices in the file and on the page: a condition's code, or this for any.
 ANY = "any"
 
@@ -44,32 +52,78 @@ class LanguageChoice(Enum):
         return ENGLISH if self is LanguageChoice.ENGLISH else None
 
 
+class DeliveryChoice(Enum):
+    """The longest a seller may take to deliver, as the page offers it. The values are the days."""
+
+    ANY = "any"
+    FIVE_DAYS = "5"
+    WEEK = "7"
+    TEN_DAYS = "10"
+    TWO_WEEKS = "14"
+
+    @property
+    def max_days(self) -> int | None:
+        return None if self is DeliveryChoice.ANY else int(self.value)
+
+
 @dataclass(slots=True, frozen=True)
 class BuyFilters:
-    """What a copy to buy must be. English, Near Mint or better and any finish suit the owner's decks: a blank
-    field is a catch-all, so foil stays open unless chosen."""
+    """What a copy to buy must be. English, Near Mint or better, any finish, any seller country and any
+    delivery time suit the owner's decks: a blank field is a catch-all, so only a choice narrows."""
 
     language: LanguageChoice = LanguageChoice.ENGLISH
     min_condition: Condition | None = Condition.NM
     foil: Foil = Foil.ANY
+    # Cardmarket's country ids; empty means sellers from anywhere.
+    countries: frozenset[int] = frozenset()
+    delivery: DeliveryChoice = DeliveryChoice.ANY
 
     def scan_filters(self) -> ScanFilters:
-        return ScanFilters(self.language.cardmarket_id, self.min_condition, self.foil)
+        return ScanFilters(
+            self.language.cardmarket_id, self.min_condition, self.foil, self.countries, self.delivery.max_days
+        )
 
-    def to_json(self) -> dict[str, str]:
+    def to_json(self) -> dict[str, object]:
         condition = self.min_condition.value if self.min_condition is not None else ANY
-        return {"language": self.language.value, "condition": condition, "foil": self.foil.value}
+        return {
+            "language": self.language.value,
+            "condition": condition,
+            "foil": self.foil.value,
+            "countries": sorted(self.countries),
+            "delivery": self.delivery.value,
+        }
 
 
-def parse_filters(language: object, condition: object, foil: object) -> BuyFilters:
+def _check_countries(countries: object) -> frozenset[int]:
+    """The country ids the page sent; anything but a short list of ids is refused."""
+    if not isinstance(countries, list | tuple):
+        raise BuyError(NOT_AVAILABLE)
+    items = cast("Sequence[object]", countries)
+    ids = [_country_id(item) for item in items]
+    if len(items) > MAX_COUNTRIES or None in ids:
+        raise BuyError(NOT_AVAILABLE)
+    return frozenset(i for i in ids if i is not None)
+
+
+def _country_id(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= MAX_COUNTRY_ID:
+        return None
+    return value
+
+
+def parse_filters(
+    language: object, condition: object, foil: object, countries: object, delivery: object
+) -> BuyFilters:
     """The filters the page sent; a value that is none of the choices is refused, not guessed."""
     try:
         chosen_language = LanguageChoice(language)
         chosen_condition = None if condition == ANY else Condition(condition)
         chosen_foil = Foil(foil)
+        chosen_countries = _check_countries(countries)
+        chosen_delivery = DeliveryChoice(delivery)
     except ValueError:
-        raise BuyError("Those filters are not available; choose again.") from None
-    return BuyFilters(chosen_language, chosen_condition, chosen_foil)
+        raise BuyError(NOT_AVAILABLE) from None
+    return BuyFilters(chosen_language, chosen_condition, chosen_foil, chosen_countries, chosen_delivery)
 
 
 def check_base_sellers(count: object) -> int:
@@ -149,7 +203,7 @@ class BuyStore:
             log.warning("could not read the Buy settings in %s: %s; using the defaults", self._path, error)
             return BuySettings()
         try:
-            return _parse(text)
+            settings, migrated_from = _parse(text)
         except (json.JSONDecodeError, ShapeError) as error:
             backup = self._path.with_name(self._path.name + ".bak")
             log.warning(
@@ -163,22 +217,49 @@ class BuyStore:
             except OSError as move_error:
                 log.warning("could not move %s aside: %s", self._path, move_error)
             return BuySettings()
+        if migrated_from is not None:
+            self._back_up(migrated_from)
+        return settings
+
+    def _back_up(self, version: int) -> None:
+        """Keep the file as it was before its migration, and only the latest such copy."""
+        backup = self._path.with_name(f"{self._path.name}.v{version}.bak")
+        try:
+            for old in self._path.parent.glob(f"{self._path.name}.v*.bak"):
+                if old != backup:
+                    old.unlink()
+            shutil.copy2(self._path, backup)
+        except OSError as error:
+            log.warning("could not keep %s as %s: %s", self._path, backup.name, error)
+            return
+        log.info("the Buy settings were format %d; kept as %s", version, backup.name)
 
 
 def _account(user: str) -> str:
     return user.casefold()
 
 
-def _migrate(raw: Mapping[str, object]) -> Mapping[str, object]:
-    """Bring an older file to the current format; a standing seam, as only format 1 exists."""
+def _migrate(raw: Mapping[str, object]) -> tuple[Mapping[str, object], int]:
+    """Bring an older file to the current format, and say which format it was."""
     version = req_int(raw, "version", BUY_FILE)
-    if version != FORMAT_VERSION:
-        raise ShapeError(f"{BUY_FILE}: format version {version}, this build reads {FORMAT_VERSION}")
-    return raw
+    if not 1 <= version <= FORMAT_VERSION:
+        raise ShapeError(f"{BUY_FILE}: format version {version}, this build reads 1 to {FORMAT_VERSION}")
+    migrated = dict(raw)
+    if version < COUNTRIES_FORMAT:
+        filters = raw.get("filters")
+        if filters is not None:
+            migrated["filters"] = {**as_object(filters, "filters"), "countries": [], "delivery": "any"}
+    migrated["version"] = FORMAT_VERSION
+    return migrated, version
 
 
-def _parse(text: str) -> BuySettings:
-    raw = _migrate(as_object(json.loads(text), BUY_FILE))
+def _parse(text: str) -> tuple[BuySettings, int | None]:
+    """The settings, and the format the file was in when that was older than this build's."""
+    raw, version = _migrate(as_object(json.loads(text), BUY_FILE))
+    return _bind(raw), None if version == FORMAT_VERSION else version
+
+
+def _bind(raw: Mapping[str, object]) -> BuySettings:
     defaults = BuySettings()
     filters = _filters(raw.get("filters"), defaults.filters)
     base = raw.get("baseSellers", defaults.base_sellers)
@@ -198,7 +279,21 @@ def _filters(raw: object, defaults: BuyFilters) -> BuyFilters:
         _choice(LanguageChoice, fields, "language", defaults.language),
         _condition(fields.get("condition"), defaults.min_condition),
         _choice(Foil, fields, "foil", defaults.foil),
+        _countries(fields.get("countries")),
+        _choice(DeliveryChoice, fields, "delivery", defaults.delivery),
     )
+
+
+def _countries(raw: object) -> frozenset[int]:
+    if raw is None:
+        return frozenset()
+    if not isinstance(raw, list):
+        log.warning("%s: filters.countries %r is no list; using any country", BUY_FILE, raw)
+        return frozenset()
+    ids = [_country_id(item) for item in cast("list[object]", raw)[:MAX_COUNTRIES]]
+    if None in ids:
+        log.warning("%s: filters.countries holds values that are no country id; they are dropped", BUY_FILE)
+    return frozenset(i for i in ids if i is not None)
 
 
 def _choice[E: Enum](kind: type[E], fields: Mapping[str, object], key: str, default: E) -> E:

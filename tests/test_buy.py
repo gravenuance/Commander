@@ -1,12 +1,13 @@
 """The Buy screen's engine, from the cards to buy to a package of sellers, with Cardmarket and its windows
 replaced by fakes (the real readers have their own tests); the solver and the card data are real."""
 
+import json
 import logging
 import re
 import threading
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -20,11 +21,12 @@ from commander.buywindows import production_engine
 from commander.cmpages import Condition, Offer, Want
 from commander.cmscan import Foil, ScanProgress, ScanRequest, ScanResult, ScanStage, ScanStatus
 from commander.cmsession import ChallengeError, FormBrowser, LoadTimeout, SignedOut
-from commander.cmshipping import CardmarketShipping, ShippingMethod
+from commander.cmshipping import CardmarketShipping, Country, ShippingMethod
 from commander.cmwants import QuantityMismatch, WantsCancelled, WantsProgress, WantsStep, WantsSync
 from commander.credentials import CardmarketSessionStore, SessionCookie
 from commander.models import Deck, DeckCard
 from commander.net import NetworkError
+from commander.offerlimits import OfferLimits
 from commander.sellersolve import WantedCard
 from test_sellersolve import LETTER, offer
 
@@ -35,6 +37,13 @@ SECRET = "SECRET-COOKIE-VALUE"
 MAX_WORDS = 12
 COOKIE = SessionCookie("PHPSESSID", SECRET, "www.cardmarket.com", "/")
 Json = dict[str, Any]
+DEFAULT_FILTERS: Json = {
+    "language": "english",
+    "condition": "NM",
+    "foil": "any",
+    "countries": [],
+    "delivery": "any",
+}
 
 
 def card(name: str, quantity: int, label: str | None, *categories: str, in_deck: bool = True) -> DeckCard:
@@ -98,8 +107,20 @@ class Routes:
     def __init__(self) -> None:
         self.asked: list[tuple[int, int]] = []
 
+    COUNTRIES = (
+        Country(1, "Austria"),
+        Country(7, "Germany"),
+        Country(12, "France"),
+        Country(17, "Italy"),
+        Country(23, "Netherlands"),
+        Country(28, "Sweden"),
+    )
+
     def country_id(self, name: str) -> int | None:
-        return {"Sweden": 28, "France": 12}.get(name)
+        return {country.name: country.id for country in self.COUNTRIES}.get(name)
+
+    def countries(self) -> tuple[Country, ...]:
+        return self.COUNTRIES
 
     def methods(self, origin_id: int, destination_id: int) -> tuple[ShippingMethod, ...]:
         self.asked.append((origin_id, destination_id))
@@ -368,22 +389,28 @@ class TestTheFilters:
     ) -> None:
         view = rig.service.view()
 
-        assert view["filters"] == {"language": "english", "condition": "NM", "foil": "any"}
+        assert view["filters"] == DEFAULT_FILTERS
         assert view["baseSellers"] == 15
 
     def test_chosen_filters_are_saved_and_found_again_by_a_new_service(
         self, rig: Rig, tmp_path: Path
     ) -> None:
-        rig.service.set_filters("any", "any", "non-foil")
+        rig.service.set_filters("any", "any", "non-foil", [23, 7], "10")
         rig.service.set_base_sellers(20)
 
         view = Rig(tmp_path, rig.card_db).service.view()
 
-        assert view["filters"] == {"language": "any", "condition": "any", "foil": "non-foil"}
+        assert view["filters"] == {
+            "language": "any",
+            "condition": "any",
+            "foil": "non-foil",
+            "countries": [7, 23],
+            "delivery": "10",
+        }
         assert view["baseSellers"] == 20
 
     def test_the_scan_gets_the_filters_chosen(self, rig: Rig) -> None:
-        rig.service.set_filters("english", "EX", "foil")
+        rig.service.set_filters("english", "EX", "foil", [], "any")
         rig.service.set_base_sellers(9)
 
         rig.service.start()
@@ -399,7 +426,7 @@ class TestTheFilters:
         assert request.base_sellers == 9
 
     def test_any_language_and_condition_reach_the_scan_as_no_filter(self, rig: Rig) -> None:
-        rig.service.set_filters("any", "any", "any")
+        rig.service.set_filters("any", "any", "any", [], "any")
 
         rig.service.start()
 
@@ -407,16 +434,38 @@ class TestTheFilters:
         assert (call.language, call.min_condition, call.foil) == (None, None, Foil.ANY)
 
     @pytest.mark.parametrize(
-        ("language", "condition", "foil"),
-        [("french", "NM", "any"), ("english", "XX", "any"), ("english", "NM", "shiny"), (1, "NM", "any")],
+        "choices",
+        [
+            ("french", "NM", "any", [], "any"),
+            ("english", "XX", "any", [], "any"),
+            ("english", "NM", "shiny", [], "any"),
+            (1, "NM", "any", [], "any"),
+            ("english", "NM", "any", [], "3"),
+            ("english", "NM", "any", [], 7),
+            ("english", "NM", "any", [], None),
+            ("english", "NM", "any", "7", "any"),
+            ("english", "NM", "any", None, "any"),
+            ("english", "NM", "any", [0], "any"),
+            ("english", "NM", "any", [-3], "any"),
+            ("english", "NM", "any", ["7"], "any"),
+            ("english", "NM", "any", [True], "any"),
+            ("english", "NM", "any", [7.0], "any"),
+            ("english", "NM", "any", [10_000], "any"),
+            ("english", "NM", "any", list(range(1, 102)), "any"),
+        ],
     )
     def test_a_choice_that_is_not_offered_is_refused_and_nothing_is_saved(
-        self, rig: Rig, language: object, condition: object, foil: object
+        self, rig: Rig, choices: tuple[object, object, object, object, object]
     ) -> None:
         with pytest.raises(BuyError, match="not available"):
-            rig.service.set_filters(language, condition, foil)
+            rig.service.set_filters(*choices)
 
         assert not rig.settings_path.exists()
+
+    def test_a_country_chosen_twice_counts_once(self, rig: Rig) -> None:
+        view = rig.service.set_filters("english", "NM", "any", [23, 7, 23], "any")
+
+        assert cast("Json", view["filters"])["countries"] == [7, 23]
 
     @pytest.mark.parametrize("count", [0, 41, -3, "9", None, True, 2.5])
     def test_base_sellers_outside_one_to_forty_are_refused(self, rig: Rig, count: object) -> None:
@@ -432,18 +481,100 @@ class TestTheFilters:
         with caplog.at_level(logging.WARNING):
             view = rig.build().view()
 
-        assert view["filters"] == {"language": "english", "condition": "NM", "foil": "any"}
+        assert view["filters"] == DEFAULT_FILTERS
         assert rig.settings_path.with_name("buy.json.bak").read_text(encoding="utf-8") == "{not json"
         assert "unusable" in caplog.text
 
     def test_a_file_of_a_newer_format_is_kept_aside_too(self, rig: Rig) -> None:
         rig.settings_path.parent.mkdir(parents=True)
-        rig.settings_path.write_text('{"version": 2, "baseSellers": 30}', encoding="utf-8")
+        rig.settings_path.write_text('{"version": 3, "baseSellers": 30}', encoding="utf-8")
 
         view = rig.build().view()
 
         assert view["baseSellers"] == 15
         assert rig.settings_path.with_name("buy.json.bak").exists()
+
+    def test_a_format_one_file_is_read_with_any_country_and_any_delivery_and_kept_as_it_was(
+        self, rig: Rig
+    ) -> None:
+        old = (
+            '{"version": 1, "filters": {"language": "any", "condition": "EX", "foil": "foil"},'
+            ' "baseSellers": 30, "leftOut": {"makkis": [2]}}'
+        )
+        rig.settings_path.parent.mkdir(parents=True)
+        rig.settings_path.write_text(old, encoding="utf-8")
+
+        view = rig.build().view()
+
+        assert view["filters"] == {
+            "language": "any",
+            "condition": "EX",
+            "foil": "foil",
+            "countries": [],
+            "delivery": "any",
+        }
+        assert view["baseSellers"] == 30
+        assert [d["included"] for d in cast("list[Json]", view["decks"])] == [True, False]
+        assert rig.settings_path.with_name("buy.json.v1.bak").read_text(encoding="utf-8") == old
+        assert not rig.settings_path.with_name("buy.json.bak").exists()
+
+    def test_a_format_one_file_is_written_back_as_format_two_by_the_next_change(self, rig: Rig) -> None:
+        rig.settings_path.parent.mkdir(parents=True)
+        rig.settings_path.write_text('{"version": 1, "baseSellers": 30}', encoding="utf-8")
+        service = rig.build()
+
+        service.set_filters("english", "NM", "any", [28], "14")
+
+        saved = json.loads(rig.settings_path.read_text(encoding="utf-8"))
+        assert saved["version"] == 2
+        assert saved["filters"]["countries"] == [28]
+        assert saved["baseSellers"] == 30
+
+    def test_only_the_latest_migration_backup_is_kept(self, rig: Rig) -> None:
+        rig.settings_path.parent.mkdir(parents=True)
+        stale = rig.settings_path.with_name("buy.json.v0.bak")
+        stale.write_text("old", encoding="utf-8")
+        rig.settings_path.write_text('{"version": 1}', encoding="utf-8")
+
+        rig.build().view()
+
+        assert not stale.exists()
+        assert rig.settings_path.with_name("buy.json.v1.bak").exists()
+
+    def test_a_format_two_file_makes_no_backup(self, rig: Rig) -> None:
+        rig.service.set_filters("english", "NM", "any", [7], "any")
+
+        rig.build().view()
+
+        assert list(rig.settings_path.parent.glob("*.bak")) == []
+
+    def test_wrong_countries_and_delivery_in_the_file_fall_back_and_the_rest_stays(
+        self, rig: Rig, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        rig.settings_path.parent.mkdir(parents=True)
+        rig.settings_path.write_text(
+            '{"version": 2, "filters": {"countries": [7, "x", 0, true, 23], "delivery": "3"}}',
+            encoding="utf-8",
+        )
+
+        with caplog.at_level(logging.WARNING):
+            view = rig.build().view()
+
+        assert cast("Json", view["filters"])["countries"] == [7, 23]
+        assert cast("Json", view["filters"])["delivery"] == "any"
+        assert "no country id" in caplog.text
+        assert "'3'" in caplog.text
+
+    def test_countries_that_are_no_list_fall_back_to_any_country(self, rig: Rig) -> None:
+        rig.settings_path.parent.mkdir(parents=True)
+        rig.settings_path.write_text(
+            '{"version": 2, "filters": {"countries": 7, "foil": "foil"}}', encoding="utf-8"
+        )
+
+        view = rig.build().view()
+
+        assert cast("Json", view["filters"])["countries"] == []
+        assert cast("Json", view["filters"])["foil"] == "foil"
 
     def test_a_wrong_field_falls_back_to_its_default_and_the_rest_stays(
         self, rig: Rig, caplog: pytest.LogCaptureFixture
@@ -458,7 +589,7 @@ class TestTheFilters:
         with caplog.at_level(logging.WARNING):
             view = rig.build().view()
 
-        assert view["filters"] == {"language": "english", "condition": "EX", "foil": "foil"}
+        assert view["filters"] == {**DEFAULT_FILTERS, "condition": "EX", "foil": "foil"}
         assert view["baseSellers"] == 15
         assert [(d["id"], d["included"]) for d in cast("list[Json]", view["decks"])] == [
             (1, True),
@@ -570,6 +701,8 @@ class TestTheScan:
             "method": "Letter",
             "shippingCents": 200,
             "tracked": False,
+            "deliveryDays": None,
+            "deliveryBasis": None,
             "picks": [
                 {
                     "card": "Arcane Signet",
@@ -653,14 +786,18 @@ class TestTheScan:
 
         assert (dropped["phase"], dropped["results"]) == ("idle", None)
 
-    @pytest.mark.parametrize("change", ["deck", "filters", "base"])
+    @pytest.mark.parametrize("change", ["deck", "filters", "countries", "delivery", "base"])
     def test_changing_a_choice_forgets_the_results(self, rig: Rig, change: str) -> None:
         scanned(rig)
 
         if change == "deck":
             rig.service.include(1, included=False)
         elif change == "filters":
-            rig.service.set_filters("english", "NM", "foil")
+            rig.service.set_filters("english", "NM", "foil", [], "any")
+        elif change == "countries":
+            rig.service.set_filters("english", "NM", "any", [7], "any")
+        elif change == "delivery":
+            rig.service.set_filters("english", "NM", "any", [], "10")
         else:
             rig.service.set_base_sellers(10)
 
@@ -672,7 +809,7 @@ class TestTheScan:
     def test_the_same_choices_again_keep_the_results(self, rig: Rig) -> None:
         scanned(rig)
 
-        rig.service.set_filters("english", "NM", "any")
+        rig.service.set_filters("english", "NM", "any", [], "any")
         rig.service.set_base_sellers(15)
 
         assert rig.service.status()["results"] is not None
@@ -911,7 +1048,7 @@ class TestWhileItRuns:
         def change(_: threading.Event) -> None:
             for attempt in (
                 lambda: rig.service.include(1, included=False),
-                lambda: rig.service.set_filters("any", "any", "any"),
+                lambda: rig.service.set_filters("any", "any", "any", [], "any"),
                 lambda: rig.service.set_base_sellers(3),
                 rig.service.start,
             ):
@@ -988,3 +1125,287 @@ class TestWhileItRuns:
 
         [shipment] = cast("list[Json]", package["shipments"])
         assert cast("list[Json]", shipment["picks"])[0]["trendCents"] is None
+
+
+def timed(base: Offer, days: int | None, route: int | None = None, *, country: str | None = None) -> Offer:
+    return replace(base, delivery_days=days, route_days=route, seller_country=country or base.seller_country)
+
+
+class NoCountries(Routes):
+    def countries(self) -> tuple[Country, ...]:
+        raise NetworkError("offline")
+
+
+class TestSellerLocationAndDelivery:
+    """One Arcane Signet is wanted from sellers whose offers differ in price, country and days; a package
+    costs the card plus a 2 € letter, so the cheapest card wins among the sellers that are allowed."""
+
+    @pytest.fixture
+    def one_card(self, rig: Rig) -> Rig:
+        rig.decks = [make_deck(1, "Ellivere", want("Arcane Signet"))]
+        return rig
+
+    @staticmethod
+    def sellers_of(rig: Rig) -> list[str]:
+        shipments = cast("list[Json]", rig.service.package(1)["shipments"])
+        return [str(shipment["seller"]) for shipment in shipments]
+
+    @staticmethod
+    def shipment(rig: Rig) -> Json:
+        [shipment] = cast("list[Json]", rig.service.package(1)["shipments"])
+        return shipment
+
+    def test_the_countries_come_by_name_with_their_ids(self, rig: Rig) -> None:
+        assert rig.service.countries() == {
+            "countries": [
+                {"id": 1, "name": "Austria"},
+                {"id": 12, "name": "France"},
+                {"id": 7, "name": "Germany"},
+                {"id": 17, "name": "Italy"},
+                {"id": 23, "name": "Netherlands"},
+                {"id": 28, "name": "Sweden"},
+            ]
+        }
+
+    def test_countries_that_cannot_be_fetched_are_told_in_a_short_message(self, rig: Rig) -> None:
+        rig.routes = NoCountries()
+
+        with pytest.raises(BuyError, match="could not be loaded") as error:
+            rig.service.countries()
+
+        assert_short(str(error.value))
+
+    def test_the_scan_is_given_the_countries_by_id_for_the_address_and_by_name_for_the_offers(
+        self, rig: Rig
+    ) -> None:
+        rig.service.set_filters("english", "NM", "any", [23, 7], "7")
+
+        rig.service.start()
+
+        [request] = rig.scan_requests
+        assert request.filters.seller_countries == frozenset({7, 23})
+        assert request.filters.max_days == 7
+        assert request.limits == OfferLimits(frozenset({"germany", "netherlands"}), 7)
+        assert rig.events[:2] == ["shipping", "browser opened"]
+
+    def test_with_no_country_and_no_limit_the_scan_asks_for_nothing_extra(self, rig: Rig) -> None:
+        rig.service.start()
+
+        [request] = rig.scan_requests
+        assert request.limits == OfferLimits()
+        assert (request.filters.seller_countries, request.filters.max_days) == (frozenset(), None)
+        assert rig.events[0] == "browser opened"
+
+    def test_a_country_cardmarket_does_not_list_stops_the_scan_before_any_window(self, rig: Rig) -> None:
+        rig.service.set_filters("english", "NM", "any", [99], "any")
+
+        rig.service.start()
+        status = rig.service.status()
+
+        assert status["phase"] == "stopped"
+        assert_short(status["message"])
+        assert "[99]" in str(status["detail"])
+        assert "browser opened" not in rig.events
+
+    def test_a_country_list_that_cannot_be_fetched_stops_the_scan_before_any_window(self, rig: Rig) -> None:
+        rig.routes = NoCountries()
+        rig.service.set_filters("english", "NM", "any", [7], "any")
+
+        rig.service.start()
+        status = rig.service.status()
+
+        assert (status["phase"], status["message"], status["detail"]) == (
+            "stopped",
+            "Cardmarket's countries could not be loaded; scan again.",
+            "offline",
+        )
+        assert "browser opened" not in rig.events
+
+    def test_the_filters_chosen_are_logged_when_the_scan_starts(
+        self, rig: Rig, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        rig.service.set_filters("english", "NM", "any", [7, 23], "10")
+
+        with caplog.at_level(logging.INFO):
+            rig.service.start()
+
+        started = [r.getMessage() for r in caplog.records if r.getMessage().startswith("buy: scan started")]
+        assert len(started) == 1
+        assert "'countries': [7, 23]" in started[0]
+        assert "'delivery': '10'" in started[0]
+
+    def test_the_solver_gets_only_offers_from_the_countries_chosen(self, one_card: Rig) -> None:
+        one_card.service.set_filters("english", "NM", "any", [7], "any")
+        cheap_but_austrian = offer("Arcane Signet", "B", 30, country="Austria")
+        one_card.scan_result = scan_of(
+            [offer("Arcane Signet", "A", 100, country="Germany"), cheap_but_austrian]
+        )
+
+        one_card.service.start()
+
+        assert self.sellers_of(one_card) == ["A"]
+        assert set(one_card.routes.asked) == {(7, 28)}
+
+    def test_without_a_country_choice_the_cheapest_seller_wins_wherever_it_is(self, one_card: Rig) -> None:
+        one_card.scan_result = scan_of(
+            [
+                offer("Arcane Signet", "A", 100, country="Germany"),
+                offer("Arcane Signet", "B", 30, country="Austria"),
+            ]
+        )
+
+        one_card.service.start()
+
+        assert self.sellers_of(one_card) == ["B"]
+
+    def test_the_solver_gets_only_sellers_arriving_within_the_limit(self, one_card: Rig) -> None:
+        one_card.service.set_filters("english", "NM", "any", [], "7")
+        slow = timed(offer("Arcane Signet", "B", 30, country="Germany"), 18)
+        quick = timed(offer("Arcane Signet", "A", 100, country="Germany"), 6)
+        one_card.scan_result = scan_of([slow, quick])
+
+        one_card.service.start()
+
+        shipment = self.shipment(one_card)
+        assert (shipment["seller"], shipment["deliveryDays"], shipment["deliveryBasis"]) == ("A", 6, "own")
+        package = one_card.service.package(1)
+        assert (package["slowestDays"], package["withoutEstimate"], package["leftOutNoEstimate"]) == (6, 0, 0)
+
+    def test_a_seller_without_an_estimate_is_judged_by_the_median_of_its_country(self, one_card: Rig) -> None:
+        one_card.service.set_filters("english", "NM", "any", [], "14")
+        one_card.scan_result = scan_of(
+            [
+                timed(offer("Arcane Signet", "A", 100, country="Germany"), 6),
+                timed(offer("Arcane Signet", "B", 20, country="Germany"), 18),
+                timed(offer("Arcane Signet", "C", 30, country="Germany"), None),
+            ]
+        )
+
+        one_card.service.start()
+
+        # B is the cheapest but 18 days; C has no estimate and is judged at 12, the mean of 6 and 18.
+        shipment = self.shipment(one_card)
+        assert (shipment["seller"], shipment["deliveryDays"], shipment["deliveryBasis"]) == (
+            "C",
+            12,
+            "country",
+        )
+        package = one_card.service.package(1)
+        assert (package["slowestDays"], package["leftOutNoEstimate"]) == (12, 0)
+
+    def test_a_seller_without_an_estimate_or_peers_is_judged_by_the_route_average(
+        self, one_card: Rig
+    ) -> None:
+        one_card.service.set_filters("english", "NM", "any", [], "14")
+        one_card.scan_result = scan_of(
+            [
+                timed(offer("Arcane Signet", "A", 100, country="Germany"), 6, 7),
+                timed(offer("Arcane Signet", "C", 30, country="Italy"), None, 14),
+            ]
+        )
+
+        one_card.service.start()
+
+        shipment = self.shipment(one_card)
+        assert (shipment["seller"], shipment["deliveryDays"], shipment["deliveryBasis"]) == ("C", 14, "route")
+
+    def test_a_route_average_over_the_limit_leaves_that_seller_out(self, one_card: Rig) -> None:
+        one_card.service.set_filters("english", "NM", "any", [], "10")
+        one_card.scan_result = scan_of(
+            [
+                timed(offer("Arcane Signet", "A", 100, country="Germany"), 6, 7),
+                timed(offer("Arcane Signet", "C", 30, country="Italy"), None, 14),
+            ]
+        )
+
+        one_card.service.start()
+
+        assert self.sellers_of(one_card) == ["A"]
+
+    def test_a_seller_with_no_estimate_at_all_is_left_out_and_the_package_counts_the_offers(
+        self, one_card: Rig
+    ) -> None:
+        one_card.service.set_filters("english", "NM", "any", [], "14")
+        one_card.scan_result = scan_of(
+            [
+                timed(offer("Arcane Signet", "A", 100, country="Germany"), 6, 7),
+                timed(offer("Arcane Signet", "C", 30, country="Italy"), None, None),
+                timed(offer("Arcane Signet", "C", 40, country="Italy"), None, None),
+            ]
+        )
+
+        one_card.service.start()
+
+        assert self.sellers_of(one_card) == ["A"]
+        assert one_card.service.package(1)["leftOutNoEstimate"] == 2
+
+    def test_without_a_limit_a_seller_with_no_estimate_stays_and_the_package_says_so(
+        self, one_card: Rig
+    ) -> None:
+        one_card.scan_result = scan_of(
+            [
+                timed(offer("Arcane Signet", "A", 100, country="Germany"), 6),
+                timed(offer("Arcane Signet", "C", 30, country="Italy"), None, None),
+            ]
+        )
+
+        one_card.service.start()
+
+        shipment = self.shipment(one_card)
+        assert (shipment["seller"], shipment["deliveryDays"], shipment["deliveryBasis"]) == ("C", None, None)
+        package = one_card.service.package(1)
+        assert (package["slowestDays"], package["withoutEstimate"], package["leftOutNoEstimate"]) == (
+            None,
+            1,
+            0,
+        )
+
+    def test_the_package_arrives_with_its_slowest_seller(self, rig: Rig) -> None:
+        rig.decks = [make_deck(1, "Ellivere", want("Arcane Signet"), want("Mind Stone"))]
+        days = {"A": 9, "B": 4}
+        rig.scan_result = scan_of([timed(o, days[o.seller]) for o in two_sellers()])
+
+        rig.service.start()
+
+        package = rig.service.package(2)
+        by_seller = {s["seller"]: s["deliveryDays"] for s in cast("list[Json]", package["shipments"])}
+        assert by_seller == {"A": 9, "B": 4}
+        assert package["slowestDays"] == 9
+
+    def test_a_card_whose_offers_are_all_left_out_is_listed_with_those_without_offers(self, rig: Rig) -> None:
+        rig.decks = [make_deck(1, "Ellivere", want("Arcane Signet"), want("Mind Stone"))]
+        rig.service.set_filters("english", "NM", "any", [], "7")
+        rig.scan_result = scan_of(
+            [
+                timed(offer("Arcane Signet", "A", 30), 6),
+                timed(offer("Mind Stone", "B", 60), 18),
+            ],
+            no_buyable=("Sol Ring",),
+        )
+
+        rig.service.start()
+        results = cast("Json", rig.service.status()["results"])
+
+        assert results["noOffers"] == ["Sol Ring", "Mind Stone"]
+        assert rig.service.package(1)["missing"] == ["Mind Stone"]
+
+    def test_the_offers_left_out_are_logged_by_reason(
+        self, one_card: Rig, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        one_card.service.set_filters("english", "NM", "any", [7], "10")
+        one_card.scan_result = scan_of(
+            [
+                timed(offer("Arcane Signet", "A", 100, country="Germany"), 6),
+                timed(offer("Arcane Signet", "B", 30, country="Germany"), 18),
+                timed(offer("Arcane Signet", "D", 30, country="Austria"), 6),
+                timed(offer("Arcane Signet", "E", 30, country="Germany"), None),
+            ]
+        )
+
+        with caplog.at_level(logging.INFO):
+            one_card.service.start()
+
+        assert (
+            "buy: limits left out 1 offers from other countries, 2 that arrive too late and 0 with no "
+            "delivery estimate"
+        ) in caplog.text
