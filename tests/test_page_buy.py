@@ -2301,8 +2301,10 @@ class TestTheCartReport:
             "items": [
                 "2 × Mind Stone (SellerA): Your cart is full.",
                 "Sol Ring (SellerA): Cardmarket refused it.",
-                "Arcane Signet (SellerB): Cardmarket accepted it but your cart does not show it;"
-                " check your cart",
+                (
+                    "Arcane Signet (SellerB): Cardmarket accepted it but your cart does not show it;"
+                    " check your cart"
+                ),
             ],
         }
 
