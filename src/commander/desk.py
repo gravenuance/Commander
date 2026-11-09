@@ -1504,9 +1504,10 @@ class Desk:
         return self._buy.package(check_whole_number(sellers))
 
     @_guarded
-    def buy_add_to_cart(self, sellers: object) -> Json:
-        """Put the package of this many sellers in the owner's Cardmarket cart; buy_status follows it."""
-        return self._buy.add_to_cart(check_whole_number(sellers))
+    def buy_add_to_cart(self, sellers: object, confirmed: object) -> Json:
+        """Put the package of this many sellers in the owner's Cardmarket cart; buy_status follows it. The
+        package must be the one `confirmed` describes (the `check` the page was given with it)."""
+        return self._buy.add_to_cart(check_whole_number(sellers), confirmed)
 
     @_guarded
     def search(self, deck_id: int, text: str) -> Json:

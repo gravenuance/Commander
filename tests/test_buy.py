@@ -2100,6 +2100,15 @@ def cap_the_price(service: BuyService) -> object:
     return service.set_filters("english", "NM", "any", [], "any", max_price="4")
 
 
+# A confirmation no package matches, for a call that is refused before the package is compared.
+NO_CHECK: Json = {"totalCents": 0, "picks": []}
+
+
+def add(service: BuyService, sellers: int) -> Json:
+    """What the page does: put in the cart the package it was shown, sending the check it came with."""
+    return service.add_to_cart(sellers, service.package(sellers)["check"])
+
+
 class TestAddingToTheCart:
     """Two cards are wanted, so there are packages of one and of two sellers; the cart is a fake."""
 
@@ -2124,7 +2133,7 @@ class TestAddingToTheCart:
         seen: list[Json] = []
         rig.cart_effect = lambda _cancel: seen.append(rig.service.status())
 
-        status = rig.service.add_to_cart(2)
+        status = add(rig.service, 2)
 
         assert rig.events == ["browser opened", "cart", "browser closed"]
         [package] = rig.cart_calls
@@ -2151,9 +2160,9 @@ class TestAddingToTheCart:
         }
 
     def test_the_package_can_be_chosen_again_after_a_run(self, two_packages: Rig) -> None:
-        two_packages.service.add_to_cart(1)
+        add(two_packages.service, 1)
 
-        two_packages.service.add_to_cart(2)
+        add(two_packages.service, 2)
 
         assert [p.seller_count for p in two_packages.cart_calls] == [1, 2]
         assert two_packages.service.package(1)["sellers"] == 1
@@ -2163,7 +2172,7 @@ class TestAddingToTheCart:
     ) -> None:
         two_packages.cart_result = mixed_cart
 
-        two_packages.service.add_to_cart(2)
+        add(two_packages.service, 2)
         cart = self.cart_of(two_packages)
 
         gone, short = two_packages.cart_calls[0].picks
@@ -2201,14 +2210,14 @@ class TestAddingToTheCart:
         self, rig: Rig
     ) -> None:
         with pytest.raises(BuyError, match=r"That package is gone; scan again\."):
-            rig.service.add_to_cart(1)
+            rig.service.add_to_cart(1, NO_CHECK)
         rig.decks = [make_deck(1, "Ellivere", want("Arcane Signet"), want("Mind Stone"))]
         rig.scan_result = scan_of(two_sellers())
         rig.service.start()
         rig.events.clear()
 
         with pytest.raises(BuyError, match=r"That package is gone; scan again\."):
-            rig.service.add_to_cart(3)
+            rig.service.add_to_cart(3, NO_CHECK)
 
         assert rig.events == []
 
@@ -2218,13 +2227,13 @@ class TestAddingToTheCart:
 
         def try_again(_: threading.Event) -> None:
             with pytest.raises(BuyError) as error:
-                rig.service.add_to_cart(1)
+                rig.service.add_to_cart(1, NO_CHECK)
             refused.append(str(error.value))
 
         rig.sync_effect = try_again
         rig.cart_effect = try_again
         rig.service.start()
-        rig.service.add_to_cart(2)
+        add(rig.service, 2)
 
         assert refused == ["Wait for the scan, or cancel it."] * 2
         assert [p.seller_count for p in rig.cart_calls] == [2]
@@ -2245,7 +2254,7 @@ class TestAddingToTheCart:
 
         rig.cart_effect = change
 
-        rig.service.add_to_cart(2)
+        add(rig.service, 2)
 
         assert refused == [
             "Wait for the scan, or cancel it.",
@@ -2269,7 +2278,7 @@ class TestAddingToTheCart:
         rig.cart_effect = cancel
         rig.cart_result = cancelled
 
-        status = rig.service.add_to_cart(2)
+        status = add(rig.service, 2)
 
         assert seen == [False, True, True]
         assert (status["phase"], status["cancelling"]) == ("carted", False)
@@ -2291,7 +2300,7 @@ class TestAddingToTheCart:
 
         rig.cart_effect = hand_over
 
-        rig.service.add_to_cart(2)
+        add(rig.service, 2)
 
         assert seen == [(need.value, True), ("cart", "Adding Arcane Signet · 1 of 2")]
 
@@ -2329,7 +2338,7 @@ class TestAddingToTheCart:
 
         rig.cart_effect = fail
 
-        after = rig.service.add_to_cart(2)
+        after = add(rig.service, 2)
 
         assert rig.events == ["browser opened", "cart", "browser closed"]
         assert after["phase"] == "carted"
@@ -2349,7 +2358,7 @@ class TestAddingToTheCart:
         two_packages.cart_effect = fail
 
         with caplog.at_level(logging.ERROR):
-            two_packages.service.add_to_cart(2)
+            add(two_packages.service, 2)
 
         traces = [r.exc_info[1] for r in caplog.records if r.exc_info]
         assert [(type(error), str(error)) for error in traces] == [(RuntimeError, "boom")]
@@ -2360,7 +2369,7 @@ class TestAddingToTheCart:
         two_packages.cart_result = mixed_cart
 
         with caplog.at_level(logging.INFO):
-            two_packages.service.add_to_cart(2)
+            add(two_packages.service, 2)
 
         assert "buy: putting the package of 2 sellers (2 cards) in the cart" in caplog.text
         assert "buy: the cart run complete: 0 cards added, 0 already there, 1 gone, 1 short" in caplog.text
@@ -2368,7 +2377,7 @@ class TestAddingToTheCart:
     def test_a_new_scan_drops_the_report_from_its_start(self, two_packages: Rig) -> None:
         rig = two_packages
         during: list[object] = []
-        rig.service.add_to_cart(2)
+        add(rig.service, 2)
         rig.sync_effect = lambda _cancel: during.append(rig.service.status()["cart"])
 
         rig.service.start()
@@ -2380,7 +2389,7 @@ class TestAddingToTheCart:
     def test_changed_filters_or_ticks_drop_the_report_with_the_results(
         self, two_packages: Rig, change: Callable[[BuyService], object]
     ) -> None:
-        two_packages.service.add_to_cart(2)
+        add(two_packages.service, 2)
         assert two_packages.service.status()["cart"] is not None
 
         change(two_packages.service)
@@ -2393,10 +2402,68 @@ class TestAddingToTheCart:
         rig.service.start()
         assert cast("Json", rig.service.status()["results"])["partial"] is True
 
-        status = rig.service.add_to_cart(2)
+        status = add(rig.service, 2)
 
         assert (status["phase"], cast("Json", status["results"])["partial"]) == ("carted", True)
         rig.scan_result = scan_of(two_sellers())
         rig.service.start()
         assert cast("Json", rig.service.status()["results"])["partial"] is False
         assert status["message"] == "Scan cancelled after 5 pages; results are partial."
+
+    @pytest.mark.parametrize(
+        "change",
+        [
+            lambda check: {**check, "totalCents": check["totalCents"] + 1},
+            lambda check: {**check, "picks": check["picks"][:1]},
+            lambda check: {**check, "picks": [[check["picks"][0][0], 2], *check["picks"][1:]]},
+            lambda check: {**check, "picks": [[0, 1], *check["picks"][1:]]},
+            lambda _check: NO_CHECK,
+            lambda _check: None,
+        ],
+        ids=["total", "fewer picks", "copies", "article", "nothing like it", "no check"],
+    )
+    def test_a_package_that_differs_from_the_one_confirmed_is_refused_and_nothing_is_sent(
+        self, two_packages: Rig, change: Callable[[Json], object]
+    ) -> None:
+        rig = two_packages
+        shown = cast("Json", rig.service.package(2)["check"])
+
+        with pytest.raises(BuyError, match=r"That package changed; look at it again before adding\."):
+            rig.service.add_to_cart(2, change(shown))
+
+        assert rig.events == []
+        assert rig.cart_calls == []
+        assert cast("Json", rig.service.status())["phase"] == "results"
+
+    def test_a_rescan_that_changed_the_package_of_that_many_sellers_refuses_the_old_confirmation(
+        self, two_packages: Rig
+    ) -> None:
+        rig = two_packages
+        shown = rig.service.package(2)["check"]
+        # Seller B's Signet is now 0,10 dearer (a new article), so the two-seller package costs more.
+        rig.scan_result = scan_of(
+            [
+                offer("Arcane Signet", "A", 500, quantity=2),
+                offer("Mind Stone", "A", 60),
+                offer("Arcane Signet", "B", 40, quantity=3),
+                offer("Mind Stone", "B", 900),
+            ]
+        )
+        rig.service.start()
+        assert rig.service.package(2)["totalCents"] == 500
+
+        with pytest.raises(BuyError, match=r"That package changed"):
+            rig.service.add_to_cart(2, shown)
+
+        assert rig.cart_calls == []
+
+    def test_the_confirmation_is_the_total_and_the_sorted_article_ids_with_their_copies(
+        self, two_packages: Rig
+    ) -> None:
+        offers = two_packages.scan_result.offers
+        # The two-seller package takes B's cheap Signet and A's Stone, one copy each.
+        bought = sorted([[offers[2].article_id, 1], [offers[1].article_id, 1]])
+
+        check = two_packages.service.package(2)["check"]
+
+        assert check == {"totalCents": 490, "picks": bought}

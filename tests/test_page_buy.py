@@ -49,6 +49,7 @@ const RESULTS = { rows: [row(1, 760, 2, 200, null, false), row(2, 490, 2, 400, 2
   quantityMismatch: [] };
 const done = (results = RESULTS, extra = {}) => idle({ phase: "results", results, ...extra });
 const PACKAGE = { sellers: 2, totalCents: 490, cardsCents: 90, shippingCents: 400, optimal: true,
+  check: { totalCents: 490, picks: [[101, 2], [102, 1]] },
   slowestDays: 12, withoutEstimate: 0, leftOutNoEstimate: 0,
   shipments: [
     { seller: "SellerB", country: "France", cards: 1, valueCents: 30, method: "Lettre Internationale",
@@ -62,6 +63,9 @@ const PACKAGE = { sellers: 2, totalCents: 490, cardsCents: 90, shippingCents: 40
         condition: "EX",
         language: "English", foil: true, priceCents: 60, trendCents: null }] },
   ], missing: ["Lotus Petal"], short: [{ card: "Mind Stone", wanted: 3, available: 1 }] };
+// The same two sellers after a new scan, 30 cents dearer.
+const DEARER = { ...PACKAGE, totalCents: 520, check: { totalCents: 520, picks: [[103, 2], [102, 1]] } };
+const DEARER_RESULTS = { ...RESULTS, rows: [RESULTS.rows[0], row(2, 520, 2, 400, 240, true)] };
 const leaves = (node) => walk(node)
   .filter((n) => n.childNodes.length === 1 && n.childNodes[0].data !== undefined)
   .map((n) => n.textContent);
@@ -822,6 +826,26 @@ class TestThePackages:
         return { shown: !$("buy-package").hidden, picked: buyState.picked };
         """)
         assert seen == {"shown": False, "picked": None}
+
+    def test_new_results_that_keep_the_picked_count_draw_its_package_again(self) -> None:
+        seen = run("""
+        await open(view({ status: done() }));
+        stub.buy_package = async () => PACKAGE;
+        await fire($("buy-curve").children[1], "click");
+        stub.buy_package = async () => DEARER;
+        paintBuyStatus(done(DEARER_RESULTS));
+        await settle();
+        return { title: $("buy-package-title").textContent, shown: !$("buy-package").hidden,
+          pressed: $("buy-curve").children[1].getAttribute("aria-pressed"),
+          detail: buyState.detail.check, asked: calls.filter((c) => c[0] === "buy_package").length };
+        """)
+        assert seen == {
+            "title": "2 sellers · €5.20",
+            "shown": True,
+            "pressed": "true",
+            "detail": {"totalCents": 520, "picks": [[103, 2], [102, 1]]},
+            "asked": 2,
+        }
 
     def test_what_the_scan_could_not_place_is_listed_in_plain_words(self) -> None:
         seen = run("""
@@ -1903,13 +1927,34 @@ class TestTheCartButtonAndDialog:
           off: $("buy-cart").disabled, focus: document.activeElement.id, timers: timers.length };
         """)
         assert seen == {
-            "call": ["buy_add_to_cart", 2],
+            "call": ["buy_add_to_cart", 2, {"totalCents": 490, "picks": [[101, 2], [102, 1]]}],
             "open": False,
             "line": "Adding Arcane Signet · 1 of 3",
             "cancel": [False, "Cancel adding"],
             "off": True,
             "focus": "buy-cancel",
             "timers": 1,
+        }
+
+    def test_new_results_close_the_dialog_and_the_next_confirmation_is_of_the_new_package(self) -> None:
+        seen = run_cart("""
+        await open(view({ status: done() }));
+        await pickPackage();
+        await fire($("buy-cart"), "click");
+        stub.buy_package = async () => DEARER;
+        paintBuyStatus(done(DEARER_RESULTS));
+        await settle();
+        const closed = $("buy-cart-dialog").open;
+        await fire($("buy-cart"), "click");
+        const total = $("buy-cart-dialog-total").textContent;
+        stub.buy_add_to_cart = async () => idle({ phase: "cart", running: true, results: RESULTS });
+        await fire($("buy-cart-confirm"), "click");
+        return { closed, total, call: calls.find((c) => c[0] === "buy_add_to_cart") };
+        """)
+        assert seen == {
+            "closed": False,
+            "total": "Total €5.20 · cards €0.90 · shipping €4.00",
+            "call": ["buy_add_to_cart", 2, {"totalCents": 520, "picks": [[103, 2], [102, 1]]}],
         }
 
     def test_keep_looking_calls_nothing_and_closing_the_dialog_any_way_returns_to_the_button(self) -> None:

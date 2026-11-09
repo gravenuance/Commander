@@ -16,7 +16,7 @@ from commander.cmscan import ScanStatus
 from commander.desk import Desk, DeskSettings
 from commander.net import Pacer
 from conftest import REFRESH_TOKEN, FakeArchidekt, Json, MemoryTokenStore
-from test_buy import NoCountries, Rig, imported, scan_of, two_sellers
+from test_buy import NO_CHECK, NoCountries, Rig, imported, scan_of, two_sellers
 from test_desk import DECK, NOW, WAIT_SECONDS, fake, first_card_id, reviewed, settings
 
 if TYPE_CHECKING:
@@ -227,7 +227,7 @@ def test_a_package_is_put_in_the_cart_through_the_bridge_and_the_status_carries_
     rig.sync_result = imported(names=("Arcane Signet",))
     desk.buy_scan()
 
-    status = desk.buy_add_to_cart(1)
+    status = desk.buy_add_to_cart(1, desk.buy_package(1)["check"])
 
     assert [p.seller_count for p in rig.cart_calls] == [1]
     assert (status["phase"], cast("Json", status["cart"])["added"]) == ("carted", 1)
@@ -235,7 +235,21 @@ def test_a_package_is_put_in_the_cart_through_the_bridge_and_the_status_carries_
 
 
 def test_a_package_that_is_not_there_cannot_be_put_in_the_cart(desk: Desk, rig: Rig) -> None:
-    assert desk.buy_add_to_cart(3) == {"error": "That package is gone; scan again."}
+    assert desk.buy_add_to_cart(3, NO_CHECK) == {"error": "That package is gone; scan again."}
+    assert rig.cart_calls == []
+
+
+def test_a_package_that_is_not_the_one_confirmed_comes_back_as_an_error_and_is_not_added(
+    desk: Desk, rig: Rig
+) -> None:
+    want_arcane_signet(desk)
+    rig.scan_result = scan_of(two_sellers())
+    rig.sync_result = imported(names=("Arcane Signet",))
+    desk.buy_scan()
+
+    answer = desk.buy_add_to_cart(1, {"totalCents": 1, "picks": []})
+
+    assert answer == {"error": "That package changed; look at it again before adding."}
     assert rig.cart_calls == []
 
 
@@ -282,7 +296,7 @@ def test_a_seller_count_that_is_no_whole_number_is_refused(desk: Desk, rig: Rig,
     count: Any = bad
 
     assert desk.buy_package(count) == NOT_VALID
-    assert desk.buy_add_to_cart(count) == NOT_VALID
+    assert desk.buy_add_to_cart(count, NO_CHECK) == NOT_VALID
     assert rig.cart_calls == []
 
 

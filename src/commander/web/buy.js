@@ -603,7 +603,7 @@ function renderBuyResults(status) {
   $("buy-partial").title = status.message;
   $("buy-curve").replaceChildren(...results.rows.map(buildBuyRow));
   $("buy-notes").replaceChildren(...buyResultNotes(results));
-  if (results.rows.some((row) => row.sellers === buyState.picked)) markBuyRows();
+  if (results.rows.some((row) => row.sellers === buyState.picked)) refreshBuyPackage();
   else clearBuyPackage();
   if (!results.rows.length) $("buy-curve").append(el("p", { class: "empty", text: "No package covers these cards." }));
 }
@@ -641,6 +641,15 @@ function markBuyRows() {
   for (const row of $("buy-curve").children) {
     row.setAttribute("aria-pressed", String(row.dataset.sellers === String(buyState.picked)));
   }
+}
+
+// New results may have changed the package of the count on show, so it is asked for again, and a
+// confirmation of the old one is withdrawn.
+function refreshBuyPackage() {
+  markBuyRows();
+  const dialog = $("buy-cart-dialog");
+  if (dialog.open) dialog.close();
+  void pickBuyRow(buyState.picked);
 }
 
 async function pickBuyRow(sellers) {
@@ -763,7 +772,7 @@ async function confirmBuyCart() {
   buyState.requested = true;
   buyState.adding = true;
   try {
-    const status = await api("buy_add_to_cart", detail.sellers);
+    const status = await api("buy_add_to_cart", detail.sellers, detail.check);
     paintBuyStatus(status);
     watchBuy();
   } catch (error) {

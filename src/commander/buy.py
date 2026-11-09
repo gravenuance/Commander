@@ -375,7 +375,7 @@ class BuyService:
         self._background(lambda: self._run(run, lambda: self._scan_and_solve(run)))
         return self.status()
 
-    def add_to_cart(self, sellers: int) -> Json:
+    def add_to_cart(self, sellers: int, confirmed: object) -> Json:
         """Put the package of this many sellers in the owner's Cardmarket cart; it runs in the background and
         `status` follows it. The scan's results stay, and the cart's report joins them."""
         self._signed_in_user()
@@ -387,6 +387,8 @@ class BuyService:
             chosen = next((p for p in kept.packages if p.seller_count == sellers), None) if kept else None
             if kept is None or chosen is None:
                 raise BuyError("That package is gone; scan again.")
+            if confirmed != package_check(chosen):
+                raise BuyError("That package changed; look at it again before adding.")
             run = replace(kept.run, cancel=threading.Event())
             self._state = _State(
                 Phase.CART, "Opening the Cardmarket window", state.message, state.detail, kept, run, state.key
@@ -875,6 +877,13 @@ def _over_price(eligible: Eligible) -> list[Json]:
     return [{"card": name, "cheapestCents": cents} for name, cents in ordered]
 
 
+def package_check(package: Package) -> Json:
+    """What identifies a package: its total and its offers with their copies, in a fixed order. The page
+    sends it back with the package it confirms, so a package that changed meanwhile is not the one added."""
+    picks = sorted([pick.offer.article_id, pick.copies] for pick in package.picks)
+    return {"totalCents": package.total_cents, "picks": picks}
+
+
 def _package_json(package: Package, trends: dict[str, int | None], eligible: Eligible) -> Json:
     picks_of: dict[str, list[Json]] = defaultdict(list)
     for pick in sorted(package.picks, key=lambda p: p.offer.card.casefold()):
@@ -914,6 +923,7 @@ def _package_json(package: Package, trends: dict[str, int | None], eligible: Eli
         "cardsCents": package.cards_cents,
         "shippingCents": package.shipping_cents,
         "optimal": package.optimal,
+        "check": package_check(package),
         "slowestDays": max(known, default=None),
         "withoutEstimate": len(estimates) - len(known),
         "leftOutNoEstimate": eligible.no_estimate,
