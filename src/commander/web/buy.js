@@ -29,6 +29,8 @@ const buyState = {
   packageRequest: 0,
   // True from a click on Scan until the bridge answers.
   requested: false,
+  // The price text on its way to the bridge, so Enter followed by the field's change sends it once.
+  pricePending: null,
   polling: false,
   // Cardmarket's countries: null until fetched, then their names by id and the checkbox built for each.
   countries: null,
@@ -50,6 +52,12 @@ function setupBuy() {
   const condition = $("buy-condition");
   condition.replaceChildren(...BUY_CONDITIONS.map(([value, label]) => el("option", { value, text: label })));
   condition.addEventListener("change", () => changeBuyFilters({ condition: condition.value }));
+  const price = $("buy-max-price");
+  price.addEventListener("change", commitBuyPrice);
+  price.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") commitBuyPrice();
+    else if (event.key === "Escape") price.value = buyPriceText(buyState.view?.filters.maxPriceCents ?? null);
+  });
   $("buy-base-sellers").addEventListener("change", changeBuyBaseSellers);
   $("buy-curve").addEventListener("keydown", moveBetweenBuyRows);
 }
@@ -155,6 +163,7 @@ function renderBuyDecks(decks, running) {
 }
 
 function buildBuyDeck(deck) {
+  // One box for the deck: ticked for all its cards, unticked for none, mixed for some.
   const box = el("input", { type: "checkbox", id: `buy-tick-${deck.id}` });
   box.addEventListener("change", () => setBuyDeck(deck.id, box.checked));
   const name = el("span", { class: "buy-deck-name" });
@@ -171,23 +180,49 @@ function buildBuyDeck(deck) {
   const tick = el("label", { class: "buy-tick", for: box.id }, box, name);
   const item = el("li", { class: "buy-deck", "data-id": String(deck.id) },
     el("div", { class: "buy-deck-head" }, tick, fold), list);
-  return { item, box, name, count, fold, list, known: deck.known, key: null };
+  return { item, box, name, count, fold, list, known: deck.known, key: null, cards: [] };
+}
+
+function buyDeckCount(deck) {
+  if (!deck.known) return "Labels unknown; sync";
+  const all = plural(deck.copies, "card", "cards");
+  return deck.tick === "some" ? `${deck.tickedCopies} of ${all}` : all;
 }
 
 function paintBuyDeck(entry, deck, running) {
   entry.known = deck.known;
-  entry.box.checked = deck.included;
+  entry.box.checked = deck.tick === "all";
+  entry.box.indeterminate = deck.tick === "some";
+  if (deck.tick === "some") entry.box.setAttribute("aria-checked", "mixed");
+  else entry.box.removeAttribute("aria-checked");
   entry.box.disabled = running || !deck.known;
   entry.box.setAttribute("aria-label", `Include ${deck.short}`);
   entry.name.textContent = deck.short;
   entry.name.title = deck.name;
-  entry.count.textContent = deck.known ? plural(deck.copies, "card", "cards") : "Labels unknown; sync";
+  entry.count.textContent = buyDeckCount(deck);
   entry.fold.disabled = !deck.known;
   entry.fold.setAttribute("aria-label", `${deck.short} cards to buy`);
-  const key = JSON.stringify(deck.cards);
-  if (entry.key === key) return;
-  entry.key = key;
-  entry.list.replaceChildren(...deck.cards.map((card) => el("li", { text: times(card.quantity, card.name) })));
+  // The card boxes are rebuilt only when the cards change, so a tick keeps the focus it was made with.
+  const key = JSON.stringify(deck.cards.map((card) => [card.name, card.quantity]));
+  if (entry.key !== key) {
+    entry.key = key;
+    entry.cards = deck.cards.map((card, index) => buildBuyCard(deck, card, index));
+    entry.list.replaceChildren(...entry.cards.map((built) => built.item));
+  }
+  for (const [index, card] of deck.cards.entries()) {
+    const built = entry.cards[index];
+    built.box.checked = card.included;
+    built.box.disabled = running;
+    built.box.setAttribute("aria-label", `Include ${card.name} from ${deck.short}`);
+  }
+}
+
+function buildBuyCard(deck, card, index) {
+  const box = el("input", { type: "checkbox", id: `buy-card-${deck.id}-${index}` });
+  box.addEventListener("change", () => setBuyCard(deck.id, card.name, box.checked));
+  const item = el("li", {}, el("label", { class: "buy-card-tick", for: box.id },
+    box, el("span", { text: times(card.quantity, card.name) })));
+  return { item, box };
 }
 
 function paintBuyFilters() {
@@ -202,6 +237,9 @@ function paintBuyFilters() {
   const condition = $("buy-condition");
   condition.value = view.filters.condition;
   condition.disabled = running;
+  const price = $("buy-max-price");
+  price.value = buyPriceText(view.filters.maxPriceCents);
+  price.disabled = running;
   paintBuyCountries(view.filters.countries, running);
   const base = $("buy-base-sellers");
   base.value = String(view.baseSellers);
@@ -231,7 +269,10 @@ function paintBuyStatus(status) {
   error.textContent = stopped ? status.message : "";
   error.title = stopped ? status.detail : "";
   $("buy-progress").textContent = progressLine(status);
-  for (const entry of buyState.deckItems.values()) entry.box.disabled = running || !entry.known;
+  for (const entry of buyState.deckItems.values()) {
+    entry.box.disabled = running || !entry.known;
+    for (const built of entry.cards) built.box.disabled = running;
+  }
   renderBuyResults(status);
 }
 
@@ -297,15 +338,44 @@ async function setBuyDeck(id, included) {
   }
 }
 
+async function setBuyCard(deckId, card, included) {
+  try {
+    acceptBuyView(await api("buy_include_card", deckId, card, included));
+  } catch (error) {
+    noteFailure(error);
+    paintBuy();
+  }
+}
+
 async function changeBuyFilters(change) {
-  const filters = { ...buyState.view.filters, ...change };
+  const filters = { maxPrice: buyPriceText(buyState.view.filters.maxPriceCents), ...buyState.view.filters, ...change };
   try {
     acceptBuyView(await api(
       "buy_filters", filters.language, filters.condition, filters.foil, filters.countries, filters.delivery,
+      filters.maxPrice,
     ));
   } catch (error) {
     noteFailure(error);
     paintBuyFilters();
+  }
+}
+
+// The cap as the field shows it: whole euros plain, otherwise with both decimals; blank for any price.
+function buyPriceText(cents) {
+  if (cents === null || cents === undefined) return "";
+  return cents % 100 === 0 ? String(cents / 100) : (cents / 100).toFixed(2);
+}
+
+// Enter and leaving the field both land here; the bridge judges the text, and a refusal puts the saved cap back.
+async function commitBuyPrice() {
+  const text = $("buy-max-price").value.trim();
+  if (text === buyState.pricePending || !buyState.view) return;
+  if (text === buyPriceText(buyState.view.filters.maxPriceCents)) return;
+  buyState.pricePending = text;
+  try {
+    await changeBuyFilters({ maxPrice: text });
+  } finally {
+    buyState.pricePending = null;
   }
 }
 
@@ -486,6 +556,7 @@ function buyResultNotes(results) {
   const notes = [
     ["Not found on Cardmarket:", results.notFound],
     ["No offers for these filters:", results.noOffers],
+    ["Over your max price:", results.overPrice.map((c) => `${c.card} (cheapest ${euro(c.cheapestCents)})`)],
     ["Left out of Cardmarket's wants list:", results.unmatched],
     ["Another quantity on Cardmarket's wants list:",
       results.quantityMismatch.map((m) => `${m.card} (${m.wanted} wanted, ${m.got} listed)`)],

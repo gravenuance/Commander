@@ -1,6 +1,7 @@
 """The seller-location and delivery-time limits on scanned offers (ADR 0067)."""
 
 import itertools
+from dataclasses import replace
 
 import pytest
 
@@ -25,6 +26,7 @@ def offer(
     route: int | None = None,
     card: str = "Sol Ring",
     buyable: bool = True,
+    price: int = 100,
 ) -> Offer:
     return Offer(
         article_id=next(_ids),
@@ -36,7 +38,7 @@ def offer(
         language="English",
         foil=False,
         buyable=buyable,
-        price_cents=100,
+        price_cents=price,
         quantity=1,
         delivery_days=days,
         route_days=route,
@@ -230,3 +232,65 @@ class TestApplyingTheLimits:
         # D's country median is the mean of 6 and 15 rounded up, 11 days.
         assert sellers(eligible.offers) == {"A"}
         assert (eligible.other_countries, eligible.too_slow, eligible.no_estimate) == (1, 2, 0)
+
+
+class TestThePriceCap:
+    def test_an_offer_priced_at_exactly_the_cap_stays_and_one_cent_more_goes(self) -> None:
+        offers = [
+            offer("A", "Germany", 6, price=500),
+            offer("B", "Germany", 6, price=501),
+            offer("C", "Germany", 6, price=499),
+        ]
+
+        eligible = apply_limits(offers, OfferLimits(max_price_cents=500))
+
+        assert sellers(eligible.offers) == {"A", "C"}
+        assert [o.seller for o in eligible.over_price] == ["B"]
+
+    def test_without_a_cap_nothing_is_over_the_price(self) -> None:
+        eligible = apply_limits([offer("A", "Germany", 6, price=99_999)], OfferLimits())
+
+        assert sellers(eligible.offers) == {"A"}
+        assert eligible.over_price == ()
+
+    def test_the_price_is_judged_per_copy_whatever_the_stock(self) -> None:
+        stocked = replace(offer("A", "Germany", 6, price=300), quantity=40)
+
+        eligible = apply_limits([stocked], OfferLimits(max_price_cents=300))
+
+        assert sellers(eligible.offers) == {"A"}
+
+    def test_an_offer_left_out_for_its_country_or_speed_is_not_counted_as_over_the_price(self) -> None:
+        offers = [
+            offer("A", "Austria", 6, price=900),
+            offer("B", "Germany", 18, price=900),
+            offer("C", "Germany", 6, price=900),
+            offer("D", "Germany", 6, price=100),
+        ]
+
+        eligible = apply_limits(offers, OfferLimits(frozenset({"germany"}), 10, 500))
+
+        assert sellers(eligible.offers) == {"D"}
+        assert [o.seller for o in eligible.over_price] == ["C"]
+        assert (eligible.other_countries, eligible.too_slow, eligible.no_estimate) == (1, 1, 0)
+
+    def test_a_seller_that_is_too_dear_still_counts_toward_its_countrys_delivery_median(self) -> None:
+        offers = [
+            offer("A", "Germany", 6, price=900),
+            offer("B", "Germany", 18, price=900),
+            offer("C", "Germany", None, price=100),
+        ]
+
+        eligible = apply_limits(offers, OfferLimits(max_days=12, max_price_cents=500))
+
+        # C is judged at 12 days, the mean of A's 6 and B's 18, though both of them cost too much.
+        assert sellers(eligible.offers) == {"C"}
+        assert eligible.delivery["C"].days == 12
+
+    def test_an_offer_that_cannot_be_bought_is_not_over_the_price(self) -> None:
+        eligible = apply_limits(
+            [offer("A", "Germany", 6, price=900, buyable=False)], OfferLimits(max_price_cents=1)
+        )
+
+        assert eligible.offers == ()
+        assert eligible.over_price == ()

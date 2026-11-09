@@ -72,6 +72,8 @@
   --space-4: 16px;
   --space-5: 24px;
   --space-6: 32px;
+  /* The height of a field, a dropdown or a pill track set beside them. */
+  --control-h: 34px;
   --text-2xs: 0.6875rem;
   --text-xs: 0.75rem;
   --text-s: 0.8125rem;
@@ -1238,17 +1240,28 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .buy-deck-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .buy-fold:disabled { opacity: 1; cursor: default; color: var(--muted); }
 .buy-cards { padding: var(--space-2) var(--space-4) var(--space-1); font-size: var(--text-s); }
-.buy-filters { display: flex; flex-wrap: wrap; gap: var(--space-4) var(--space-5); align-items: flex-end; }
+.buy-card-tick { display: flex; align-items: center; gap: var(--space-3); min-height: 24px; cursor: pointer; }
+.buy-card-tick input { flex: none; width: 16px; height: 16px; margin: 0; accent-color: var(--primary); }
+.buy-card-tick input:disabled { cursor: not-allowed; }
+/* Labels share one line across the row and so do the controls: every control is one height, from the top. */
+.buy-filters { display: flex; flex-wrap: wrap; gap: var(--space-4) var(--space-5); align-items: flex-start; }
 .buy-filter { display: grid; gap: var(--space-1); justify-items: start; font-size: var(--text-s); color: var(--muted); }
-.buy-select {
-  min-height: 34px;
-  padding: 0 calc(var(--space-3) + 18px) 0 var(--space-3);
+.buy-filter .segmented { box-sizing: border-box; min-height: var(--control-h); }
+.buy-select, .buy-input {
+  box-sizing: border-box;
+  min-height: var(--control-h);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-s);
+  background-color: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-s);
+}
+.buy-select {
+  padding: 0 calc(var(--space-3) + 18px) 0 var(--space-3);
   /* The native arrow hugs the right edge and can't be moved, so draw our own chevron in the text colour,
      inset like the text is on the left. */
   appearance: none;
-  background-color: var(--surface);
   background-image:
     linear-gradient(45deg, transparent 50%, currentColor 50%),
     linear-gradient(135deg, currentColor 50%, transparent 50%);
@@ -1257,16 +1270,18 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
     calc(100% - var(--space-3)) 55%;
   background-size: 5px 5px;
   background-repeat: no-repeat;
-  color: var(--text);
-  font: inherit;
-  font-size: var(--text-s);
 }
 /* A label over a segmented control starts where its first option's text does, not at the pill's curve. */
 .buy-filter > span:first-child { padding-left: calc(3px + var(--space-2)); }
-.buy-select:disabled, .buy-base input:disabled { opacity: 0.5; cursor: not-allowed; }
+.buy-select:disabled, .buy-input:disabled, .buy-base input:disabled { opacity: 0.5; cursor: not-allowed; }
+/* The price field is a text box with the euro sign inside its right edge. */
+.buy-money { position: relative; }
+.buy-input { display: block; width: 7rem; padding: 0 calc(var(--space-3) * 2) 0 var(--space-3); }
+.buy-input::placeholder { color: var(--muted); opacity: 1; }
+.buy-money-unit { position: absolute; top: 50%; right: var(--space-3); transform: translateY(-50%); color: var(--muted); pointer-events: none; }
 /* The seller-location button looks like the select beside it and opens the same menu as the grid's labels. */
 .buy-picker { position: relative; }
-.buy-picker-button { max-width: 16rem; text-align: left; cursor: pointer; }
+.buy-picker-button { display: block; max-width: 16rem; text-align: left; cursor: pointer; }
 .buy-picker-button span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .buy-menu { position: absolute; top: calc(100% + 4px); left: 0; min-width: max(100%, 14rem); max-height: 18rem; }
 .buy-menu .menu-item:has(:focus-visible) { background: var(--surface-2); }

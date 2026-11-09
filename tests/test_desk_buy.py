@@ -1,6 +1,7 @@
 """The app's Buy screen through the bridge: the cards of the real decks, the saved choices beside the config
 file, and a scan with Cardmarket replaced by fakes."""
 
+import json
 import threading
 from collections.abc import Callable
 from dataclasses import replace
@@ -74,7 +75,8 @@ def test_the_decks_dont_have_cards_are_listed_by_deck_with_a_tick(desk: Desk) ->
     [magda] = decks_of(desk.buy())
 
     assert (magda["id"], magda["short"], magda["included"], magda["copies"]) == (DECK, "Magda", True, 1)
-    assert magda["cards"] == [{"name": "Arcane Signet", "quantity": 1}]
+    assert (magda["tick"], magda["tickedCopies"]) == ("all", 1)
+    assert magda["cards"] == [{"name": "Arcane Signet", "quantity": 1, "included": True}]
 
 
 def test_unticking_a_deck_is_saved_beside_the_config_file(
@@ -99,8 +101,9 @@ def test_the_filters_and_base_sellers_are_saved_and_a_bad_choice_is_an_error(des
         "foil": "non-foil",
         "countries": [7, 23],
         "delivery": "14",
+        "maxPriceCents": 250,
     }
-    saved = desk.buy_filters("any", "EX", "non-foil", [23, 7], "14")
+    saved = desk.buy_filters("any", "EX", "non-foil", [23, 7], "14", "2,50")
     assert saved["filters"] == chosen
     assert desk.buy_base_sellers(8)["baseSellers"] == 8
 
@@ -110,8 +113,62 @@ def test_the_filters_and_base_sellers_are_saved_and_a_bad_choice_is_an_error(des
     assert desk.buy_filters("any", "EX", "any", [7], "3") == {
         "error": "Those filters are not available; choose again."
     }
+    assert desk.buy_filters("any", "EX", "any", [7], "any", "free") == {
+        "error": "Max price: 0.01 to 10000 euros, at most two decimals."
+    }
     assert desk.buy_base_sellers(0) == {"error": "Base sellers must be 1 to 40."}
     assert desk.buy()["filters"] == chosen
+
+
+def test_the_price_cap_is_optional_and_blank_means_any_price(desk: Desk) -> None:
+    assert desk.buy_filters("english", "NM", "any", [], "any")["filters"] == {
+        "language": "english",
+        "condition": "NM",
+        "foil": "any",
+        "countries": [],
+        "delivery": "any",
+        "maxPriceCents": None,
+    }
+    capped = desk.buy_filters("english", "NM", "any", [], "any", "5")
+    assert cast("Json", capped["filters"])["maxPriceCents"] == 500
+    assert (
+        cast("Json", desk.buy_filters("english", "NM", "any", [], "any", "")["filters"])["maxPriceCents"]
+        is None
+    )
+
+
+def test_a_card_of_a_deck_is_ticked_through_the_bridge_and_saved_beside_the_config_file(
+    settings: DeskSettings, fake: FakeArchidekt, rig: Rig, tmp_path: Path
+) -> None:
+    configured = replace(settings, config=tmp_path / "appdata" / "config.toml")
+    desk = make_desk(configured, fake, rig)
+    want_arcane_signet(desk)
+
+    view = desk.buy_include_card(DECK, "Arcane Signet", False)  # noqa: FBT003 - the page passes the tick positionally
+
+    [magda] = decks_of(view)
+    assert (magda["tick"], magda["included"], view["copies"]) == ("none", False, 0)
+    saved = json.loads((tmp_path / "appdata" / "buy.json").read_text(encoding="utf-8"))
+    assert saved["leftOut"] == {"tester": [DECK]}
+    assert desk.buy_include_card(DECK, "Lotus Petal", True) == {  # noqa: FBT003
+        "error": "That card has nothing to buy."
+    }
+    assert decks_of(desk.buy_include_card(DECK, "Arcane Signet", True))[0]["tick"] == "all"  # noqa: FBT003
+
+
+def test_a_new_price_cap_is_solved_again_over_the_scan_already_read(desk: Desk, rig: Rig) -> None:
+    want_arcane_signet(desk)
+    rig.scan_result = scan_of([o for o in two_sellers() if o.card == "Arcane Signet"])
+    rig.sync_result = imported(names=("Arcane Signet",))
+    desk.buy_scan()
+
+    # Seller B's copy is 0,30 €; a cap of 0,20 € leaves nothing, and no new scan is made.
+    view = desk.buy_filters("english", "NM", "any", [], "any", "0,20")
+
+    results = cast("Json", cast("Json", view["status"])["results"])
+    assert results["rows"] == []
+    assert results["overPrice"] == [{"card": "Arcane Signet", "cheapestCents": 30}]
+    assert len(rig.scan_requests) == 1
 
 
 def test_the_countries_come_through_the_bridge_and_a_failure_is_an_error(desk: Desk, rig: Rig) -> None:

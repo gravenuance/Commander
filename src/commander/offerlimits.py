@@ -1,8 +1,8 @@
-"""Which scanned offers the owner's seller-location and delivery-time filters allow (ADR 0067).
+"""Which scanned offers the owner's seller-location, delivery-time and max-price filters allow (ADR 0067).
 
 Cardmarket's own filters cannot say everything the owner wants: a delivery limit of 10 or 14 days has no
-choice in its form, and a seller's country is not checked on the wants-filtered stock pages. So the scan and
-the solver both judge the offers it read with `apply_limits`.
+choice in its form, a seller's country is not checked on the wants-filtered stock pages, and the form has no
+price limit. So the scan and the solver both judge the offers it read with `apply_limits`.
 
 A seller shows "-" instead of an estimate when it has too few deliveries. Under a delivery limit such a seller
 is judged by its country: the median of the other sellers' estimates from that country in the same scan, else
@@ -35,10 +35,13 @@ class DeliveryEstimate:
 
 @dataclass(slots=True, frozen=True)
 class OfferLimits:
-    """Empty `countries` and no `max_days` allow everything. Country names are case-folded."""
+    """Empty `countries`, no `max_days` and no `max_price_cents` allow everything. Country names are
+    case-folded."""
 
     countries: frozenset[str] = frozenset()
     max_days: int | None = None
+    # The most one copy may cost; an offer priced at exactly this stays.
+    max_price_cents: int | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -51,6 +54,8 @@ class Eligible:
     other_countries: int = 0
     too_slow: int = 0
     no_estimate: int = 0
+    # The offers that passed every other limit but cost more than the price cap.
+    over_price: tuple[Offer, ...] = ()
 
 
 def middle_days(days: Iterable[int]) -> int:
@@ -94,23 +99,29 @@ def estimate_deliveries(offers: Iterable[Offer]) -> dict[str, DeliveryEstimate]:
 
 
 def apply_limits(offers: Iterable[Offer], limits: OfferLimits) -> Eligible:
-    """The buyable offers from the allowed countries whose seller arrives within `limits.max_days`."""
+    """The buyable offers from the allowed countries whose seller arrives within `limits.max_days` and whose
+    price is within `limits.max_price_cents`. The delivery estimates ignore the price cap."""
     buyable = [o for o in offers if o.buyable]
     in_country = buyable
     if limits.countries:
         in_country = [o for o in buyable if o.seller_country.casefold() in limits.countries]
     other_countries = len(buyable) - len(in_country)
     delivery = estimate_deliveries(in_country)
-    if limits.max_days is None:
-        return Eligible(tuple(in_country), delivery, other_countries)
-    kept: list[Offer] = []
+    in_time: list[Offer] = in_country
     too_slow = no_estimate = 0
-    for offer in in_country:
-        estimate = delivery.get(offer.seller)
-        if estimate is None:
-            no_estimate += 1
-        elif estimate.days > limits.max_days:
-            too_slow += 1
-        else:
-            kept.append(offer)
-    return Eligible(tuple(kept), delivery, other_countries, too_slow, no_estimate)
+    if limits.max_days is not None:
+        in_time = []
+        for offer in in_country:
+            estimate = delivery.get(offer.seller)
+            if estimate is None:
+                no_estimate += 1
+            elif estimate.days > limits.max_days:
+                too_slow += 1
+            else:
+                in_time.append(offer)
+    cap = limits.max_price_cents
+    if cap is None:
+        return Eligible(tuple(in_time), delivery, other_countries, too_slow, no_estimate)
+    affordable = [o for o in in_time if o.price_cents <= cap]
+    over_price = tuple(o for o in in_time if o.price_cents > cap)
+    return Eligible(tuple(affordable), delivery, other_countries, too_slow, no_estimate, over_price)

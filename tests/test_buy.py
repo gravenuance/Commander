@@ -43,6 +43,7 @@ DEFAULT_FILTERS: Json = {
     "foil": "any",
     "countries": [],
     "delivery": "any",
+    "maxPriceCents": None,
 }
 
 
@@ -313,8 +314,13 @@ class TestTheCardsToBuy:
                 "name": "Ellivere of the Wild Court deck",
                 "known": True,
                 "included": True,
+                "tick": "all",
                 "copies": 2,
-                "cards": [{"name": "Arcane Signet", "quantity": 1}, {"name": "Lotus Petal", "quantity": 1}],
+                "tickedCopies": 2,
+                "cards": [
+                    {"name": "Arcane Signet", "quantity": 1, "included": True},
+                    {"name": "Lotus Petal", "quantity": 1, "included": True},
+                ],
             },
             {
                 "id": 2,
@@ -322,8 +328,13 @@ class TestTheCardsToBuy:
                 "name": "Pantlaza, Sun-Favored deck",
                 "known": True,
                 "included": True,
+                "tick": "all",
                 "copies": 3,
-                "cards": [{"name": "Arcane Signet", "quantity": 2}, {"name": "Mind Stone", "quantity": 1}],
+                "tickedCopies": 3,
+                "cards": [
+                    {"name": "Arcane Signet", "quantity": 2, "included": True},
+                    {"name": "Mind Stone", "quantity": 1, "included": True},
+                ],
             },
         ]
         assert view["copies"] == 5
@@ -333,7 +344,13 @@ class TestTheCardsToBuy:
 
         old = next(d for d in cast("list[Json]", rig.service.view()["decks"]) if d["id"] == 4)
 
-        assert (old["known"], old["included"], old["copies"], old["cards"]) == (False, False, 0, [])
+        assert (old["known"], old["included"], old["tick"], old["copies"], old["cards"]) == (
+            False,
+            False,
+            "none",
+            0,
+            [],
+        )
 
     def test_unticking_a_deck_leaves_its_cards_out_and_is_remembered(self, rig: Rig, tmp_path: Path) -> None:
         view = rig.service.include(2, included=False)
@@ -354,7 +371,8 @@ class TestTheCardsToBuy:
         view = rig.service.include(2, included=True)
 
         assert [d["included"] for d in cast("list[Json]", view["decks"])] == [True, True]
-        assert "leftOut" not in rig.settings_path.read_text(encoding="utf-8").replace('"leftOut": {}', "")
+        saved = json.loads(rig.settings_path.read_text(encoding="utf-8"))
+        assert (saved["leftOut"], saved["leftOutCards"]) == ({}, {})
 
     def test_a_deck_with_nothing_to_buy_cannot_be_ticked(self, rig: Rig) -> None:
         with pytest.raises(BuyError, match="nothing to buy"):
@@ -406,6 +424,7 @@ class TestTheFilters:
             "foil": "non-foil",
             "countries": [7, 23],
             "delivery": "10",
+            "maxPriceCents": None,
         }
         assert view["baseSellers"] == 20
 
@@ -487,7 +506,7 @@ class TestTheFilters:
 
     def test_a_file_of_a_newer_format_is_kept_aside_too(self, rig: Rig) -> None:
         rig.settings_path.parent.mkdir(parents=True)
-        rig.settings_path.write_text('{"version": 3, "baseSellers": 30}', encoding="utf-8")
+        rig.settings_path.write_text('{"version": 4, "baseSellers": 30}', encoding="utf-8")
 
         view = rig.build().view()
 
@@ -512,13 +531,14 @@ class TestTheFilters:
             "foil": "foil",
             "countries": [],
             "delivery": "any",
+            "maxPriceCents": None,
         }
         assert view["baseSellers"] == 30
         assert [d["included"] for d in cast("list[Json]", view["decks"])] == [True, False]
         assert rig.settings_path.with_name("buy.json.v1.bak").read_text(encoding="utf-8") == old
         assert not rig.settings_path.with_name("buy.json.bak").exists()
 
-    def test_a_format_one_file_is_written_back_as_format_two_by_the_next_change(self, rig: Rig) -> None:
+    def test_a_format_one_file_is_written_back_as_format_three_by_the_next_change(self, rig: Rig) -> None:
         rig.settings_path.parent.mkdir(parents=True)
         rig.settings_path.write_text('{"version": 1, "baseSellers": 30}', encoding="utf-8")
         service = rig.build()
@@ -526,9 +546,92 @@ class TestTheFilters:
         service.set_filters("english", "NM", "any", [28], "14")
 
         saved = json.loads(rig.settings_path.read_text(encoding="utf-8"))
-        assert saved["version"] == 2
+        assert saved["version"] == 3
         assert saved["filters"]["countries"] == [28]
+        assert saved["filters"]["maxPriceCents"] is None
         assert saved["baseSellers"] == 30
+
+    def test_a_format_two_file_is_read_with_no_price_cap_and_no_cards_left_out_and_kept_as_it_was(
+        self, rig: Rig
+    ) -> None:
+        old = (
+            '{"version": 2, "filters": {"language": "english", "condition": "NM", "foil": "any",'
+            ' "countries": [7], "delivery": "10"}, "baseSellers": 20, "leftOut": {"makkis": [2]}}'
+        )
+        rig.settings_path.parent.mkdir(parents=True)
+        rig.settings_path.write_text(old, encoding="utf-8")
+
+        view = rig.build().view()
+
+        assert view["filters"] == {**DEFAULT_FILTERS, "countries": [7], "delivery": "10"}
+        assert view["baseSellers"] == 20
+        decks = cast("list[Json]", view["decks"])
+        assert [(d["id"], d["tick"]) for d in decks] == [(1, "all"), (2, "none")]
+        assert rig.settings_path.with_name("buy.json.v2.bak").read_text(encoding="utf-8") == old
+
+    def test_a_price_cap_and_the_cards_left_out_are_found_again_by_a_new_service(
+        self, rig: Rig, tmp_path: Path
+    ) -> None:
+        rig.service.set_filters("english", "NM", "any", [], "any", max_price="2,50")
+        rig.service.include_card(2, "Mind Stone", included=False)
+
+        view = Rig(tmp_path, rig.card_db).service.view()
+
+        assert cast("Json", view["filters"])["maxPriceCents"] == 250
+        decks = cast("list[Json]", view["decks"])
+        assert [(d["id"], d["tick"]) for d in decks] == [(1, "all"), (2, "some")]
+        saved = json.loads(rig.settings_path.read_text(encoding="utf-8"))
+        assert saved["leftOutCards"] == {"makkis": {"2": ["Mind Stone"]}}
+
+    @pytest.mark.parametrize("cents", [0, -5, 1_000_001, "5", 2.5, True, [500]])
+    def test_a_price_cap_in_the_file_that_is_no_price_falls_back_to_any_price(
+        self, rig: Rig, cents: object, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        rig.settings_path.parent.mkdir(parents=True)
+        document = {"version": 3, "filters": {"foil": "foil", "maxPriceCents": cents}}
+        rig.settings_path.write_text(json.dumps(document), encoding="utf-8")
+
+        with caplog.at_level(logging.WARNING):
+            view = rig.build().view()
+
+        assert cast("Json", view["filters"])["maxPriceCents"] is None
+        assert cast("Json", view["filters"])["foil"] == "foil"
+        assert "maxPriceCents" in caplog.text
+
+    @pytest.mark.parametrize(("text", "cents"), [("5", 500), ("2,50", 250), ("2.5", 250), ("0.01", 1)])
+    def test_a_price_is_taken_in_euros_with_a_comma_or_a_dot(self, rig: Rig, text: str, cents: int) -> None:
+        view = rig.service.set_filters("english", "NM", "any", [], "any", max_price=text)
+
+        assert cast("Json", view["filters"])["maxPriceCents"] == cents
+
+    @pytest.mark.parametrize("text", [None, "", "  ", "€"])
+    def test_a_blank_price_is_any_price(self, rig: Rig, text: str | None) -> None:
+        rig.service.set_filters("english", "NM", "any", [], "any", max_price="3")
+
+        view = rig.service.set_filters("english", "NM", "any", [], "any", max_price=text)
+
+        assert cast("Json", view["filters"])["maxPriceCents"] is None
+
+    def test_the_boundaries_of_a_price_are_one_cent_and_ten_thousand_euros(self, rig: Rig) -> None:
+        low = rig.service.set_filters("english", "NM", "any", [], "any", max_price="0,01")
+        high = rig.service.set_filters("english", "NM", "any", [], "any", max_price="10000")
+
+        assert cast("Json", low["filters"])["maxPriceCents"] == 1
+        assert cast("Json", high["filters"])["maxPriceCents"] == 1_000_000
+
+    @pytest.mark.parametrize(
+        "text",
+        ["0", "0,00", "-1", "10000.01", "10001", "2,555", "1,", ",5", "5 euros", "1e2", "٣", "1 000", 5],
+    )
+    def test_a_price_that_is_not_one_to_ten_thousand_euros_in_two_decimals_is_refused_and_not_saved(
+        self, rig: Rig, text: object
+    ) -> None:
+        said = re.escape("Max price: 0.01 to 10000 euros, at most two decimals.")
+        with pytest.raises(BuyError, match=said) as error:
+            rig.service.set_filters("english", "NM", "any", [], "any", max_price=text)
+
+        assert_short(str(error.value))
+        assert not rig.settings_path.exists()
 
     def test_only_the_latest_migration_backup_is_kept(self, rig: Rig) -> None:
         rig.settings_path.parent.mkdir(parents=True)
@@ -541,7 +644,7 @@ class TestTheFilters:
         assert not stale.exists()
         assert rig.settings_path.with_name("buy.json.v1.bak").exists()
 
-    def test_a_format_two_file_makes_no_backup(self, rig: Rig) -> None:
+    def test_a_current_format_file_makes_no_backup(self, rig: Rig) -> None:
         rig.service.set_filters("english", "NM", "any", [7], "any")
 
         rig.build().view()
@@ -1048,6 +1151,7 @@ class TestWhileItRuns:
         def change(_: threading.Event) -> None:
             for attempt in (
                 lambda: rig.service.include(1, included=False),
+                lambda: rig.service.include_card(1, "Lotus Petal", included=False),
                 lambda: rig.service.set_filters("any", "any", "any", [], "any"),
                 lambda: rig.service.set_base_sellers(3),
                 rig.service.start,
@@ -1062,6 +1166,7 @@ class TestWhileItRuns:
         rig.service.start()
 
         assert refused == [
+            "Wait for the scan, or cancel it.",
             "Wait for the scan, or cancel it.",
             "Wait for the scan, or cancel it.",
             "Wait for the scan, or cancel it.",
@@ -1406,6 +1511,434 @@ class TestSellerLocationAndDelivery:
             one_card.service.start()
 
         assert (
-            "buy: limits left out 1 offers from other countries, 2 that arrive too late and 0 with no "
-            "delivery estimate"
+            "buy: limits left out 1 offers from other countries, 2 that arrive too late, 0 with no "
+            "delivery estimate and 0 above the max price"
         ) in caplog.text
+
+
+def deck_of(view: Json, deck_id: int) -> Json:
+    return next(d for d in cast("list[Json]", view["decks"]) if d["id"] == deck_id)
+
+
+def ticks_of(view: Json, deck_id: int) -> dict[str, bool]:
+    return {c["name"]: c["included"] for c in cast("list[Json]", deck_of(view, deck_id)["cards"])}
+
+
+class TestTheCardsOfADeck:
+    """Pantlaza (2) wants 1 Mind Stone and 2 Arcane Signet; Ellivere (1) wants 1 Arcane Signet and 1 Lotus
+    Petal."""
+
+    def test_unticking_a_card_leaves_the_deck_ticked_in_part_and_the_card_out_of_the_purchase(
+        self, rig: Rig
+    ) -> None:
+        view = rig.service.include_card(2, "Mind Stone", included=False)
+
+        pantlaza = deck_of(view, 2)
+        assert ticks_of(view, 2) == {"Arcane Signet": True, "Mind Stone": False}
+        assert (pantlaza["tick"], pantlaza["included"]) == ("some", True)
+        assert (pantlaza["copies"], pantlaza["tickedCopies"]) == (3, 2)
+        assert deck_of(view, 1)["tick"] == "all"
+        assert view["copies"] == 4
+
+    def test_the_cards_left_out_are_not_scanned_and_the_ticked_ones_are_summed_across_decks(
+        self, rig: Rig
+    ) -> None:
+        rig.service.include_card(2, "Arcane Signet", included=False)
+
+        rig.service.start()
+
+        [call] = rig.sync_calls
+        assert call.wanted == [
+            WantedCard("Arcane Signet", 1),
+            WantedCard("Lotus Petal", 1),
+            WantedCard("Mind Stone", 1),
+        ]
+
+    def test_a_card_in_two_decks_is_ticked_in_each_on_its_own(self, rig: Rig) -> None:
+        view = rig.service.include_card(1, "Arcane Signet", included=False)
+
+        assert ticks_of(view, 1)["Arcane Signet"] is False
+        assert ticks_of(view, 2)["Arcane Signet"] is True
+        rig.service.start()
+        assert WantedCard("Arcane Signet", 2) in rig.sync_calls[0].wanted
+
+    def test_unticking_every_card_one_by_one_leaves_the_deck_unticked(self, rig: Rig) -> None:
+        rig.service.include_card(1, "Arcane Signet", included=False)
+
+        view = rig.service.include_card(1, "Lotus Petal", included=False)
+
+        assert (deck_of(view, 1)["tick"], deck_of(view, 1)["included"]) == ("none", False)
+        saved = json.loads(rig.settings_path.read_text(encoding="utf-8"))
+        assert saved["leftOut"] == {"makkis": [1]}
+        assert saved["leftOutCards"] == {}
+
+    def test_ticking_the_deck_when_only_some_cards_are_ticked_ticks_them_all(self, rig: Rig) -> None:
+        rig.service.include_card(2, "Mind Stone", included=False)
+
+        view = rig.service.include(2, included=True)
+
+        assert deck_of(view, 2)["tick"] == "all"
+        assert ticks_of(view, 2) == {"Arcane Signet": True, "Mind Stone": True}
+        assert json.loads(rig.settings_path.read_text(encoding="utf-8"))["leftOutCards"] == {}
+
+    def test_unticking_the_deck_when_only_some_cards_are_ticked_unticks_them_all(self, rig: Rig) -> None:
+        rig.service.include_card(2, "Mind Stone", included=False)
+
+        view = rig.service.include(2, included=False)
+
+        assert deck_of(view, 2)["tick"] == "none"
+        assert ticks_of(view, 2) == {"Arcane Signet": False, "Mind Stone": False}
+        assert json.loads(rig.settings_path.read_text(encoding="utf-8"))["leftOutCards"] == {}
+
+    def test_ticking_one_card_of_an_unticked_deck_ticks_that_card_alone(self, rig: Rig) -> None:
+        rig.service.include(2, included=False)
+
+        view = rig.service.include_card(2, "Mind Stone", included=True)
+
+        assert ticks_of(view, 2) == {"Arcane Signet": False, "Mind Stone": True}
+        assert deck_of(view, 2)["tick"] == "some"
+        assert view["copies"] == 3
+
+    def test_ticking_the_only_card_of_an_unticked_deck_ticks_the_deck(self, rig: Rig) -> None:
+        rig.decks = [make_deck(1, "Ellivere", want("Lotus Petal"))]
+        rig.service.include(1, included=False)
+
+        view = rig.service.include_card(1, "Lotus Petal", included=True)
+
+        assert deck_of(view, 1)["tick"] == "all"
+
+    def test_unticking_a_card_of_an_unticked_deck_changes_nothing(self, rig: Rig) -> None:
+        rig.service.include(2, included=False)
+
+        view = rig.service.include_card(2, "Mind Stone", included=False)
+
+        assert deck_of(view, 2)["tick"] == "none"
+        assert json.loads(rig.settings_path.read_text(encoding="utf-8"))["leftOutCards"] == {}
+
+    def test_the_cards_left_out_are_remembered_and_belong_to_the_account(
+        self, rig: Rig, tmp_path: Path
+    ) -> None:
+        rig.service.include_card(2, "Mind Stone", included=False)
+        again = Rig(tmp_path, rig.card_db)
+        other = BuyService(
+            store=BuyStore(rig.settings_path),
+            decks=lambda: rig.decks,
+            user=lambda: "SOMEONE",
+            engine=rig.engine,
+            card_db=rig.card_db,
+            background=lambda work: work(),
+        )
+
+        assert ticks_of(again.service.view(), 2) == {"Arcane Signet": True, "Mind Stone": False}
+        assert ticks_of(other.view(), 2) == {"Arcane Signet": True, "Mind Stone": True}
+
+    def test_a_card_that_is_no_longer_dont_have_is_forgotten_and_comes_back_ticked(self, rig: Rig) -> None:
+        rig.service.include_card(2, "Mind Stone", included=False)
+        rig.service.include_card(1, "Lotus Petal", included=False)
+        rig.decks[0] = make_deck(2, "Pantlaza, Sun-Favored", want("Arcane Signet", 2))
+
+        view = rig.service.view()
+
+        assert (deck_of(view, 2)["tick"], ticks_of(view, 2)) == ("all", {"Arcane Signet": True})
+        saved = json.loads(rig.settings_path.read_text(encoding="utf-8"))
+        assert saved["leftOutCards"] == {"makkis": {"1": ["Lotus Petal"]}}
+        rig.decks[0] = make_deck(2, "Pantlaza, Sun-Favored", want("Arcane Signet", 2), want("Mind Stone"))
+        assert ticks_of(rig.service.view(), 2) == {"Arcane Signet": True, "Mind Stone": True}
+
+    def test_when_the_remaining_cards_are_all_unticked_the_deck_counts_as_unticked(self, rig: Rig) -> None:
+        rig.service.include_card(2, "Mind Stone", included=False)
+        rig.decks[0] = make_deck(2, "Pantlaza, Sun-Favored", want("Mind Stone"))
+
+        view = rig.service.view()
+
+        assert deck_of(view, 2)["tick"] == "none"
+        saved = json.loads(rig.settings_path.read_text(encoding="utf-8"))
+        assert saved["leftOut"] == {"makkis": [2]}
+        assert saved["leftOutCards"] == {}
+
+    def test_a_deck_with_nothing_left_to_buy_forgets_its_cards(self, rig: Rig) -> None:
+        rig.service.include_card(1, "Lotus Petal", included=False)
+        rig.decks[1] = make_deck(1, "Ellivere of the Wild Court", card("Lotus Petal", 1, ""))
+
+        rig.service.view()
+
+        saved = json.loads(rig.settings_path.read_text(encoding="utf-8"))
+        assert saved["leftOutCards"] == {}
+
+    def test_cards_of_a_deck_whose_labels_are_unknown_are_not_forgotten(self, rig: Rig) -> None:
+        rig.service.include_card(2, "Mind Stone", included=False)
+        rig.decks[0] = make_deck(2, "Pantlaza, Sun-Favored", card("Mind Stone", 1, None))
+
+        rig.service.view()
+
+        saved = json.loads(rig.settings_path.read_text(encoding="utf-8"))
+        assert saved["leftOutCards"] == {"makkis": {"2": ["Mind Stone"]}}
+
+    def test_a_card_the_deck_does_not_want_is_refused(self, rig: Rig) -> None:
+        with pytest.raises(BuyError, match="nothing to buy"):
+            rig.service.include_card(2, "Lotus Petal", included=False)
+        with pytest.raises(BuyError, match="nothing to buy"):
+            rig.service.include_card(9, "Mind Stone", included=False)
+        with pytest.raises(BuyError, match="nothing to buy"):
+            rig.service.include_card(2, 7, included=False)
+
+    def test_with_every_card_unticked_there_is_nothing_to_scan(self, rig: Rig) -> None:
+        for deck_id, name in [
+            (1, "Arcane Signet"),
+            (1, "Lotus Petal"),
+            (2, "Arcane Signet"),
+            (2, "Mind Stone"),
+        ]:
+            rig.service.include_card(deck_id, name, included=False)
+
+        view = rig.service.view()
+
+        assert view["copies"] == 0
+        with pytest.raises(BuyError, match=re.escape("No cards to buy; tick a deck first.")):
+            rig.service.start()
+
+    def test_ticking_a_card_forgets_the_results(self, rig: Rig) -> None:
+        scanned(rig)
+
+        rig.service.include_card(1, "Lotus Petal", included=False)
+
+        status = rig.service.status()
+        assert (status["phase"], status["results"]) == ("idle", None)
+
+    def test_a_settings_file_with_damaged_cards_left_out_keeps_the_good_ones(
+        self, rig: Rig, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        rig.settings_path.parent.mkdir(parents=True)
+        document = {
+            "version": 3,
+            "leftOutCards": {"makkis": {"2": ["Mind Stone", 5, ""], "x": ["Sol Ring"]}},
+        }
+        rig.settings_path.write_text(json.dumps(document), encoding="utf-8")
+
+        with caplog.at_level(logging.WARNING):
+            view = rig.build().view()
+
+        assert ticks_of(view, 2) == {"Arcane Signet": True, "Mind Stone": False}
+        assert "no card name" in caplog.text
+        assert "no deck id" in caplog.text
+
+
+class TestTheMaxPrice:
+    """One Arcane Signet is wanted; a package costs the card plus a 2 € letter."""
+
+    @pytest.fixture
+    def one_card(self, rig: Rig) -> Rig:
+        rig.decks = [make_deck(1, "Ellivere", want("Arcane Signet"))]
+        return rig
+
+    @staticmethod
+    def results(rig: Rig) -> Json:
+        return cast("Json", rig.service.status()["results"])
+
+    @staticmethod
+    def sellers_of(rig: Rig) -> list[str]:
+        return [str(s["seller"]) for s in cast("list[Json]", rig.service.package(1)["shipments"])]
+
+    def test_the_cap_reaches_the_solver_and_an_offer_at_exactly_the_cap_stays(self, one_card: Rig) -> None:
+        one_card.service.set_filters("english", "NM", "any", [], "any", max_price="3")
+        one_card.scan_result = scan_of(
+            [
+                offer("Arcane Signet", "A", 300),
+                offer("Arcane Signet", "B", 301),
+                offer("Arcane Signet", "C", 20),
+            ]
+        )
+
+        one_card.service.start()
+
+        assert self.sellers_of(one_card) == ["C"]
+        [request] = one_card.scan_requests
+        assert request.limits == OfferLimits(max_price_cents=300)
+        # Cardmarket's own form has no price limit, so none goes in the address.
+        assert "rice" not in request.filters.query()
+
+    def test_a_card_whose_cheapest_offer_is_over_the_cap_is_listed_with_that_price_apart_from_the_rest(
+        self, rig: Rig
+    ) -> None:
+        rig.decks = [make_deck(1, "Ellivere", want("Arcane Signet"), want("Mind Stone"), want("Sol Ring"))]
+        rig.service.set_filters("english", "NM", "any", [], "any", max_price="5")
+        rig.scan_result = scan_of(
+            [
+                offer("Arcane Signet", "A", 900),
+                offer("Arcane Signet", "B", 650),
+                offer("Mind Stone", "A", 100),
+            ],
+            no_buyable=("Sol Ring",),
+        )
+
+        rig.service.start()
+        results = self.results(rig)
+
+        assert results["overPrice"] == [{"card": "Arcane Signet", "cheapestCents": 650}]
+        assert results["noOffers"] == ["Sol Ring"]
+        assert rig.service.package(1)["missing"] == ["Arcane Signet", "Sol Ring"]
+
+    def test_a_card_with_an_offer_within_the_cap_is_not_listed_as_over_it(self, one_card: Rig) -> None:
+        one_card.service.set_filters("english", "NM", "any", [], "any", max_price="5")
+        one_card.scan_result = scan_of([offer("Arcane Signet", "A", 900), offer("Arcane Signet", "B", 500)])
+
+        one_card.service.start()
+
+        assert self.results(one_card)["overPrice"] == []
+        assert self.sellers_of(one_card) == ["B"]
+
+    def test_a_card_left_only_by_its_country_is_without_offers_and_one_left_by_the_cap_is_over_price(
+        self, rig: Rig
+    ) -> None:
+        rig.decks = [make_deck(1, "Ellivere", want("Arcane Signet"), want("Mind Stone"))]
+        rig.service.set_filters("english", "NM", "any", [7], "any", max_price="5")
+        rig.scan_result = scan_of(
+            [
+                offer("Arcane Signet", "A", 800, country="Germany"),
+                offer("Arcane Signet", "B", 100, country="Austria"),
+                offer("Mind Stone", "C", 100, country="Austria"),
+            ]
+        )
+
+        rig.service.start()
+        results = self.results(rig)
+
+        assert results["overPrice"] == [{"card": "Arcane Signet", "cheapestCents": 800}]
+        assert results["noOffers"] == ["Mind Stone"]
+
+    def test_with_every_offer_over_the_cap_nothing_is_solved_and_shipping_is_not_asked(
+        self, one_card: Rig
+    ) -> None:
+        one_card.service.set_filters("english", "NM", "any", [], "any", max_price="2.99")
+        one_card.scan_result = scan_of([offer("Arcane Signet", "A", 300)])
+
+        one_card.service.start()
+        results = self.results(one_card)
+
+        assert results["rows"] == []
+        assert results["overPrice"] == [{"card": "Arcane Signet", "cheapestCents": 300}]
+        assert "shipping" not in one_card.events
+
+    def test_a_new_cap_judges_and_solves_the_scan_already_read_without_a_new_one(self, one_card: Rig) -> None:
+        one_card.scan_result = scan_of([offer("Arcane Signet", "A", 300), offer("Arcane Signet", "B", 500)])
+        one_card.service.start()
+        assert [r["totalCents"] for r in self.results(one_card)["rows"]] == [500]
+
+        capped = one_card.service.set_filters("english", "NM", "any", [], "any", max_price="2")
+
+        status = cast("Json", capped["status"])
+        assert status["phase"] == "results"
+        assert cast("Json", status["results"])["rows"] == []
+        assert cast("Json", status["results"])["overPrice"] == [
+            {"card": "Arcane Signet", "cheapestCents": 300}
+        ]
+        loosened = one_card.service.set_filters("english", "NM", "any", [], "any", max_price="4")
+        rows = cast("list[Json]", cast("Json", cast("Json", loosened["status"])["results"])["rows"])
+        assert [r["totalCents"] for r in rows] == [500]
+        assert self.sellers_of(one_card) == ["A"]
+        # Cardmarket was asked once, and the wants list was filled once.
+        assert len(one_card.scan_requests) == 1
+        assert len(one_card.sync_calls) == 1
+        assert one_card.events.count("browser opened") == 1
+
+    def test_removing_the_cap_brings_back_the_cards_it_left_out(self, one_card: Rig) -> None:
+        one_card.service.set_filters("english", "NM", "any", [], "any", max_price="1")
+        one_card.scan_result = scan_of([offer("Arcane Signet", "A", 300)])
+        one_card.service.start()
+        assert self.results(one_card)["rows"] == []
+
+        view = one_card.service.set_filters("english", "NM", "any", [], "any", max_price="")
+
+        results = cast("Json", cast("Json", view["status"])["results"])
+        assert [r["totalCents"] for r in cast("list[Json]", results["rows"])] == [500]
+        assert results["overPrice"] == []
+        assert len(one_card.scan_requests) == 1
+
+    def test_the_solved_again_results_keep_the_state_of_the_scan_they_came_from(self, one_card: Rig) -> None:
+        one_card.scan_result = scan_of(
+            [offer("Arcane Signet", "A", 300)], status=ScanStatus.CANCELLED, pages=9
+        )
+        one_card.service.start()
+
+        view = one_card.service.set_filters("english", "NM", "any", [], "any", max_price="4")
+
+        status = cast("Json", view["status"])
+        assert status["phase"] == "cancelled"
+        assert status["message"] == "Scan cancelled after 9 pages; results are partial."
+        assert cast("Json", status["results"])["pages"] == 9
+
+    def test_while_it_is_solved_again_the_screen_shows_the_work_and_no_old_results(
+        self, one_card: Rig
+    ) -> None:
+        waiting: list[Callable[[], None]] = []
+        service = BuyService(
+            store=BuyStore(one_card.settings_path),
+            decks=lambda: one_card.decks,
+            user=lambda: "MAKKIS",
+            engine=one_card.engine,
+            card_db=one_card.card_db,
+            background=waiting.append,
+        )
+        one_card.scan_result = scan_of([offer("Arcane Signet", "A", 300)])
+        service.start()
+        waiting.pop()()
+
+        view = service.set_filters("english", "NM", "any", [], "any", max_price="4")
+
+        status = cast("Json", view["status"])
+        assert (status["phase"], status["running"], status["results"]) == ("solving", True, None)
+        assert status["progress"] == "Finding the cheapest packages"
+        with pytest.raises(BuyError, match=re.escape("Wait for the scan, or cancel it.")):
+            service.include(1, included=False)
+        [solve] = waiting
+        solve()
+        done = cast("Json", service.status())
+        assert done["phase"] == "results"
+        assert len(cast("Json", done["results"])["rows"]) == 1
+
+    def test_another_filter_still_needs_a_new_scan(self, one_card: Rig) -> None:
+        one_card.scan_result = scan_of([offer("Arcane Signet", "A", 300)])
+        one_card.service.start()
+
+        one_card.service.set_filters("english", "NM", "foil", [], "any", max_price="4")
+
+        status = one_card.service.status()
+        assert (status["phase"], status["results"]) == ("idle", None)
+
+    def test_a_change_of_the_cap_before_any_scan_only_saves_it(self, one_card: Rig) -> None:
+        view = one_card.service.set_filters("english", "NM", "any", [], "any", max_price="4")
+
+        assert cast("Json", view["status"])["phase"] == "idle"
+        assert one_card.events == []
+
+    def test_a_shipping_table_that_fails_while_solving_again_stops_with_its_message(
+        self, one_card: Rig
+    ) -> None:
+        one_card.scan_result = scan_of([offer("Arcane Signet", "A", 300)])
+        one_card.service.start()
+
+        class Failing(Routes):
+            def methods(self, origin_id: int, destination_id: int) -> tuple[ShippingMethod, ...]:  # noqa: ARG002
+                raise NetworkError("offline")
+
+        one_card.routes = Failing()
+
+        view = one_card.service.set_filters("english", "NM", "any", [], "any", max_price="4")
+
+        status = cast("Json", view["status"])
+        assert (status["phase"], status["message"]) == (
+            "stopped",
+            "Shipping prices could not be fetched; scan again.",
+        )
+
+    def test_a_cap_is_logged_with_the_filters_and_the_offers_it_left_out(
+        self, one_card: Rig, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        one_card.service.set_filters("english", "NM", "any", [], "any", max_price="1")
+        one_card.scan_result = scan_of([offer("Arcane Signet", "A", 300), offer("Arcane Signet", "B", 400)])
+
+        with caplog.at_level(logging.INFO):
+            one_card.service.start()
+
+        assert "'maxPriceCents': 100" in caplog.text
+        assert "2 above the max price" in caplog.text

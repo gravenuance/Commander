@@ -822,3 +822,22 @@ class TestBaseSellersUnderLimits:
         result, _ = self.run_one(pages, ScanFilters(max_days=7), OfferLimits(max_days=7))
 
         assert ids_of(result) >= BUYABLE_FIXTURE_IDS
+
+    def test_a_seller_priced_at_exactly_the_cap_can_be_a_base_seller(self) -> None:
+        # Seller01's copy is 4,50 €, the cheapest of the page.
+        pages = {SYLVAN_URL: fixture(CARD_PAGE), SELLER01_URL: fixture(SELLER_PAGE)}
+
+        result, _ = self.run_one(pages, ScanFilters(), OfferLimits(max_price_cents=450))
+
+        assert result.base_sellers == ("Seller01",)
+
+    def test_when_every_copy_is_over_the_cap_there_is_no_base_seller_and_every_offer_is_still_kept(
+        self,
+    ) -> None:
+        pages = {SYLVAN_URL: fixture(CARD_PAGE)}
+
+        result, browser = self.run_one(pages, ScanFilters(), OfferLimits(max_price_cents=449))
+
+        assert result.base_sellers == ()
+        assert browser.loaded == [SYLVAN_URL]
+        assert ids_of(result) >= BUYABLE_FIXTURE_IDS

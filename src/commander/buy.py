@@ -3,14 +3,15 @@
 `BuyService` lists the cards to buy by deck, keeps the filters, and runs one scan at a time on a background
 thread: sign in to Cardmarket if the session has ended, fill the app's wants list, read the offers, then work
 out the cheapest package for each number of sellers. The page polls `status` while it runs and asks `package`
-for the detail of a row. Everything that touches Cardmarket or a window goes through `BuyEngine`, so tests
-run the whole flow without either.
+for the detail of a row. A changed price cap needs no new scan: the offers already read are judged again and
+solved again. Everything that touches Cardmarket or a window goes through `BuyEngine`, so tests run the whole
+flow without either.
 """
 
 import logging
 import threading
 from collections import Counter, defaultdict
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Collection, MutableMapping, MutableSet, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field, replace
 from enum import Enum
@@ -101,16 +102,35 @@ class BuyEngine:
     curve: Curve = curve
 
 
+class Tick(Enum):
+    """How much of a deck is ticked for the purchase."""
+
+    ALL = "all"
+    SOME = "some"
+    NONE = "none"
+
+
 @dataclass(slots=True, frozen=True)
 class _DeckRow:
     deck: Deck
+    # Every Don't Have card of the deck, and the part of it that is ticked.
     counts: Counter[str]
     known: bool
-    included: bool
+    ticked: Counter[str]
 
     @property
     def copies(self) -> int:
         return self.counts.total()
+
+    @property
+    def included(self) -> bool:
+        return bool(self.ticked)
+
+    @property
+    def tick(self) -> Tick:
+        if not self.ticked:
+            return Tick.NONE
+        return Tick.ALL if len(self.ticked) == len(self.counts) else Tick.SOME
 
 
 @dataclass(slots=True, frozen=True)
@@ -131,6 +151,8 @@ class _Outcome:
     wants: WantsSync | None
     # The scanned offers the packages were chosen from.
     eligible: Eligible
+    # What the scan was for, with its limits resolved; a new price cap is judged against this scan.
+    run: _Run
 
 
 @dataclass(slots=True)
@@ -201,34 +223,73 @@ class BuyService:
                 self._state = state = _State()
         return {
             "decks": [_deck_json(row) for row in rows],
-            "copies": sum(row.copies for row in rows if row.included),
+            "copies": sum(row.ticked.total() for row in rows),
             "filters": self._store.filters().to_json(),
             "baseSellers": self._store.base_sellers(),
             "status": self.status(),
         }
 
     def include(self, deck_id: int, included: bool) -> Json:  # noqa: FBT001 — the page's bridge passes positionals
+        """Tick all of a deck's cards, or untick all of them."""
         user = self._signed_in_user()
         self._refuse_while_running()
         if not any(row.deck.id == deck_id for row in self._rows(user)):
             raise BuyError("That deck has nothing to buy.")
-        left = set(self._store.left_out(user))
+        left, skipped = self._ticks(user)
         if included:
             left.discard(deck_id)
         else:
             left.add(deck_id)
-        self._store.set_left_out(user, frozenset(left))
+        skipped.pop(deck_id, None)
+        self._store.set_left_out(user, frozenset(left), skipped)
         log.info("buy: deck %d %s the purchase", deck_id, "joins" if included else "leaves")
         return self.view()
 
-    def set_filters(
-        self, language: object, condition: object, foil: object, countries: object, delivery: object
-    ) -> Json:
-        self._signed_in_user()
+    def include_card(self, deck_id: int, card: object, included: bool) -> Json:  # noqa: FBT001 — as `include`
+        """Tick one of a deck's cards, or untick it; a card in two decks is ticked in each on its own."""
+        user = self._signed_in_user()
         self._refuse_while_running()
-        filters = parse_filters(language, condition, foil, countries, delivery)
+        row = next((row for row in self._rows(user) if row.deck.id == deck_id), None)
+        if row is None or not isinstance(card, str) or card not in row.counts:
+            raise BuyError("That card has nothing to buy.")
+        left, skipped = self._ticks(user)
+        if deck_id in left:
+            # Ticking one card of an unticked deck ticks that card alone.
+            if included:
+                left.discard(deck_id)
+                skipped[deck_id] = frozenset(name for name in row.counts if name != card)
+        else:
+            names = set(skipped.get(deck_id, frozenset()))
+            if included:
+                names.discard(card)
+            else:
+                names.add(card)
+            skipped[deck_id] = frozenset(names)
+        _tidy(deck_id, row.counts, left, skipped)
+        self._store.set_left_out(user, frozenset(left), skipped)
+        log.info("buy: card %r of deck %d %s the purchase", card, deck_id, "joins" if included else "leaves")
+        return self.view()
+
+    def set_filters(
+        self,
+        language: object,
+        condition: object,
+        foil: object,
+        countries: object,
+        delivery: object,
+        *,
+        max_price: object = None,
+    ) -> Json:
+        user = self._signed_in_user()
+        self._refuse_while_running()
+        filters = parse_filters(language, condition, foil, countries, delivery, max_price=max_price)
+        old = self._store.filters()
+        wanted = self._wanted(self._rows(user))
+        before = self._key(user, wanted)
         self._store.set_filters(filters)
         log.info("buy: filters now %s", filters.to_json())
+        if filters != old:
+            self._rejudge_kept_scan(user, wanted, before, old, filters)
         return self.view()
 
     def countries(self) -> Json:
@@ -268,7 +329,7 @@ class BuyService:
             filters.to_json(),
             base,
         )
-        self._background(lambda: self._run(run))
+        self._background(lambda: self._run(run, lambda: self._scan_and_solve(run)))
         return self.status()
 
     def cancel(self) -> Json:
@@ -315,23 +376,40 @@ class BuyService:
             raise BuyError("Sign in to Archidekt first.")
         return user
 
+    def _ticks(self, user: str) -> tuple[set[int], dict[int, frozenset[str]]]:
+        """The account's unticked decks and, by deck, unticked cards, as copies to change."""
+        return set(self._store.left_out(user)), dict(self._store.left_out_cards(user))
+
     def _rows(self, user: str) -> list[_DeckRow]:
-        left = self._store.left_out(user)
+        """The decks with something to buy. A card that is no longer Don't Have is forgotten from the
+        unticked cards here, so the file never keeps what the decks no longer show."""
+        stored_left, stored_skipped = self._store.left_out(user), self._store.left_out_cards(user)
+        left, skipped = self._ticks(user)
         rows: list[_DeckRow] = []
         for deck in self._decks():
             known = deck.labels_known
             counts = dont_have_counts(deck) if known else Counter[str]()
+            if known:
+                _tidy(deck.id, counts, left, skipped)
             if known and not counts:
                 continue
-            rows.append(_DeckRow(deck, counts, known, known and deck.id not in left))
+            ticked = Counter[str]() if deck.id in left or not known else _ticked(counts, skipped.get(deck.id))
+            rows.append(_DeckRow(deck, counts, known, ticked))
+        if frozenset(left) != stored_left or skipped != dict(stored_skipped):
+            self._remember(user, left, skipped)
         return sorted(rows, key=lambda row: row.deck.short_name.casefold())
+
+    def _remember(self, user: str, left: set[int], skipped: dict[int, frozenset[str]]) -> None:
+        try:
+            self._store.set_left_out(user, frozenset(left), skipped)
+        except BuyError as error:
+            log.warning("buy: the ticks could not be tidied: %s", error)
 
     @staticmethod
     def _wanted(rows: Sequence[_DeckRow]) -> list[WantedCard]:
         total: Counter[str] = Counter()
         for row in rows:
-            if row.included:
-                total.update(row.counts)
+            total.update(row.ticked)
         return [WantedCard(name, total[name]) for name in sorted(total, key=lambda n: (n.casefold(), n))]
 
     def _key(self, user: str, wanted: Sequence[WantedCard]) -> Key:
@@ -350,9 +428,28 @@ class BuyService:
 
     # --- the run --------------------------------------------------------------------------------------
 
-    def _run(self, run: _Run) -> None:
+    def _rejudge_kept_scan(
+        self, user: str, wanted: Sequence[WantedCard], before: Key, old: BuyFilters, new: BuyFilters
+    ) -> None:
+        """A new price cap is the one filter Cardmarket is not asked about, so the offers already read are
+        judged and solved again instead of scanned again. The base sellers stay those chosen under the old
+        cap. A change to any other filter leaves the results to be dropped."""
+        if replace(old, max_price_cents=new.max_price_cents) != new:
+            return
+        with self._lock:
+            kept = self._state.outcome
+            if self._state.phase in RUNNING or kept is None or self._state.key != before:
+                return
+            limits = replace(kept.run.limits, max_price_cents=new.max_price_cents)
+            key = self._key(user, wanted)
+            run = replace(kept.run, filters=new, limits=limits, key=key, cancel=threading.Event())
+            self._state = _State(Phase.SOLVING, "Finding the cheapest packages", run=run)
+        log.info("buy: the price cap changed; the offers already read are solved again")
+        self._background(lambda: self._run(run, lambda: self._judge_and_solve(run, kept.scan, kept.wants)))
+
+    def _run(self, run: _Run, work: Callable[[], _Outcome]) -> None:
         try:
-            outcome = self._scan_and_solve(run)
+            outcome = work()
         except _Ended as ended:
             self._finish(run, ended.phase, ended.message, ended.detail, None)
             return
@@ -369,15 +466,19 @@ class BuyService:
         if found.status is not ScanStatus.COMPLETE and not found.offers:
             message, detail = _stopped_text(found)
             raise _Ended(_PHASE_OF[found.status], message, detail)
+        return self._judge_and_solve(run, found, wants)
+
+    def _judge_and_solve(self, run: _Run, found: ScanResult, wants: WantsSync | None) -> _Outcome:
         eligible = apply_limits(found.offers, run.limits)
         log.info(
-            "buy: limits left out %d offers from other countries, %d that arrive too late and %d with no "
-            "delivery estimate",
+            "buy: limits left out %d offers from other countries, %d that arrive too late, %d with no "
+            "delivery estimate and %d above the max price",
             eligible.other_countries,
             eligible.too_slow,
             eligible.no_estimate,
+            len(eligible.over_price),
         )
-        return _Outcome(self._solve(run, found, eligible), found, wants, eligible)
+        return _Outcome(self._solve(run, found, eligible), found, wants, eligible, run)
 
     def _listed_countries(self) -> tuple[Country, ...]:
         with self._engine.shipping() as shipping:
@@ -386,7 +487,7 @@ class BuyService:
     def _limits(self, filters: BuyFilters) -> OfferLimits:
         """What the scanned offers must satisfy: the filters' countries by the names offers spell them."""
         if not filters.countries:
-            return OfferLimits(max_days=filters.delivery.max_days)
+            return OfferLimits(max_days=filters.delivery.max_days, max_price_cents=filters.max_price_cents)
         try:
             listed = self._listed_countries()
         except (NetworkError, ShapeError, CmShippingError) as error:
@@ -400,7 +501,7 @@ class BuyService:
                 "Cardmarket does not list the seller countries chosen; choose again.",
                 f"no listed country has an id in {sorted(filters.countries)}",
             )
-        return OfferLimits(names, filters.delivery.max_days)
+        return OfferLimits(names, filters.delivery.max_days, filters.max_price_cents)
 
     def _read_cardmarket_signed_in(self, run: _Run) -> tuple[WantsSync, ScanResult]:
         """Fill the wants list and scan, signing in first when there is no session, and once more when the
@@ -599,6 +700,7 @@ class BuyService:
             "destination": found.destination,
             "notFound": list(found.not_found),
             "noOffers": [*found.no_buyable, *_left_without_offers(found, outcome.eligible)],
+            "overPrice": _over_price(outcome.eligible),
             "unmatched": list(wants.unmatched) if wants else [],
             "quantityMismatch": [
                 {"card": m.card, "wanted": m.wanted, "got": m.got}
@@ -618,25 +720,66 @@ class BuyService:
         return {name: info.cheapest_cents for name, info in found.items()}
 
 
+def _ticked(counts: Counter[str], skipped: frozenset[str] | None) -> Counter[str]:
+    """The cards of a deck that are bought: all but the ones left out."""
+    return Counter({name: quantity for name, quantity in counts.items() if name not in (skipped or ())})
+
+
+def _tidy(
+    deck_id: int,
+    counts: Counter[str],
+    left: MutableSet[int],
+    skipped: MutableMapping[int, frozenset[str]],
+) -> None:
+    """Keep a deck's unticked cards to the ones still Don't Have, and say 'the deck is unticked' rather than
+    'every card is unticked', so there is one way to leave a whole deck out."""
+    kept = frozenset(name for name in skipped.get(deck_id, ()) if name in counts)
+    if counts and len(kept) == len(counts):
+        left.add(deck_id)
+    if deck_id in left or not kept:
+        skipped.pop(deck_id, None)
+    else:
+        skipped[deck_id] = kept
+
+
 def _deck_json(row: _DeckRow) -> Json:
     deck = row.deck
-    cards = [{"name": name, "quantity": row.counts[name]} for name in sorted(row.counts, key=str.casefold)]
+    cards = [
+        {"name": name, "quantity": row.counts[name], "included": name in row.ticked}
+        for name in sorted(row.counts, key=str.casefold)
+    ]
     return {
         "id": deck.id,
         "short": deck.short_name,
         "name": deck.name,
         "known": row.known,
         "included": row.included,
+        "tick": row.tick.value,
         "copies": row.copies,
+        "tickedCopies": row.ticked.total(),
         "cards": cards,
     }
 
 
 def _left_without_offers(found: ScanResult, eligible: Eligible) -> list[str]:
-    """Wanted cards that had offers but none from an allowed country or seller who arrives in time."""
-    kept = {card_key(offer.card) for offer in eligible.offers}
+    """Wanted cards that had offers but none from an allowed country or seller who arrives in time. A card
+    left only by the price cap is not one of them."""
+    kept = {card_key(offer.card) for offer in (*eligible.offers, *eligible.over_price)}
     names = {card_key(offer.card): offer.card for offer in found.offers}
     return sorted((name for key, name in names.items() if key not in kept), key=str.casefold)
+
+
+def _over_price(eligible: Eligible) -> list[Json]:
+    """The wanted cards whose every otherwise allowed offer costs more than the price cap, each with the
+    cheapest price found; pass 1 reads a card's cheapest offers, so that is the card's lowest price."""
+    kept = {card_key(offer.card) for offer in eligible.offers}
+    cheapest: dict[str, tuple[str, int]] = {}
+    for offer in eligible.over_price:
+        key = card_key(offer.card)
+        if key not in kept and (key not in cheapest or offer.price_cents < cheapest[key][1]):
+            cheapest[key] = (offer.card, offer.price_cents)
+    ordered = sorted(cheapest.values(), key=lambda found: (found[0].casefold(), found[0]))
+    return [{"card": name, "cheapestCents": cents} for name, cents in ordered]
 
 
 def _package_json(package: Package, trends: dict[str, int | None], eligible: Eligible) -> Json:

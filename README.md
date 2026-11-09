@@ -776,8 +776,10 @@ and logged in the deck's activity. In the app, the flag on each grid card sets t
 `toget --cardmarket` and the app's "Copy cards to buy" button give every deck's Don't Have cards, summed,
 as a Cardmarket wants list to paste into its "Add Decklist" field; cards already Getting are left out.
 The app's "Buy cards" button goes further: it scans Cardmarket for the ticked decks' Don't Have cards and shows
-the cheapest package of sellers for each number of sellers, shipping included. Its offer filters include the
-sellers' countries and the longest delivery time you accept, for cards that must arrive before an event
+the cheapest package of sellers for each number of sellers, shipping included. You can untick single cards
+of a deck, and its offer filters include the sellers' countries, the longest delivery time you accept, for
+cards that must arrive before an event, and the most you will pay for one copy; a new price limit is applied
+to the last scan without scanning again
 ([ADR 0067](docs/adr/0067-cardmarket-seller-optimiser.md)).
 `--cardmarket` takes no deck, card, `--json`, `--ordered` or `--arrived`.
 

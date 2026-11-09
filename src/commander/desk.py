@@ -1453,10 +1453,22 @@ class Desk:
         return self._buy.include(int(deck_id), bool(included))
 
     @_guarded
-    def buy_filters(
-        self, language: str, condition: str, foil: str, countries: list[int], delivery: str
+    def buy_include_card(self, deck_id: int, card: str, included: bool) -> Json:  # noqa: FBT001 — as buy_include
+        """Take one of a deck's cards into the purchase, or leave it out; remembered for the account."""
+        return self._buy.include_card(int(deck_id), card, bool(included))
+
+    @_guarded
+    def buy_filters(  # noqa: PLR0917 — the page's bridge passes positionals
+        self,
+        language: str,
+        condition: str,
+        foil: str,
+        countries: list[int],
+        delivery: str,
+        max_price: str = "",
     ) -> Json:
-        return self._buy.set_filters(language, condition, foil, countries, delivery)
+        """The offer filters; the price cap is the euros as typed, blank for any price."""
+        return self._buy.set_filters(language, condition, foil, countries, delivery, max_price=max_price)
 
     @_guarded
     def buy_countries(self) -> Json:

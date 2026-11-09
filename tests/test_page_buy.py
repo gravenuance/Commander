@@ -15,15 +15,22 @@ SETUP = """
 setupBuy();
 accountState.active = true;
 accountState.epoch = 1;
-const deck = (id, short, cards, extra = {}) => ({
-  id, short, name: `${short} deck`, known: true, included: true,
-  copies: cards.reduce((n, c) => n + c.quantity, 0), cards, ...extra });
-const PANTLAZA = deck(2, "Pantlaza", [{ name: "Arcane Signet", quantity: 2 }, { name: "Mind Stone",
-  quantity: 1 }]);
-const ELLIVERE = deck(1, "Ellivere", [{ name: "Lotus Petal", quantity: 1 }]);
+const card = (name, quantity, included = true) => ({ name, quantity, included });
+const copies = (cards) => cards.reduce((n, c) => n + c.quantity, 0);
+const deck = (id, short, cards, extra = {}) => {
+  const ticked = cards.filter((c) => c.included);
+  const tick = ticked.length === 0 ? "none" : ticked.length === cards.length ? "all" : "some";
+  return { id, short, name: `${short} deck`, known: true, included: ticked.length > 0, tick,
+    copies: copies(cards), tickedCopies: copies(ticked), cards, ...extra };
+};
+const unticked = (d) => deck(d.id, d.short, d.cards.map((c) => ({ ...c, included: false })));
+const PANTLAZA = deck(2, "Pantlaza", [card("Arcane Signet", 2), card("Mind Stone", 1)]);
+const countOf = (index) => $("buy-decks").children[index].querySelector(".count").textContent;
+const ELLIVERE = deck(1, "Ellivere", [card("Lotus Petal", 1)]);
 const idle = (extra = {}) => ({ phase: "idle", running: false, cancelling: false, progress: "", message: "",
   detail: "", results: null, ...extra });
-const FILTERS = { language: "english", condition: "NM", foil: "any", countries: [], delivery: "any" };
+const FILTERS = { language: "english", condition: "NM", foil: "any", countries: [], delivery: "any",
+  maxPriceCents: null };
 const view = (extra = {}) => ({ decks: [ELLIVERE, PANTLAZA], copies: 4,
   filters: FILTERS, baseSellers: 15, status: idle(), ...extra });
 const withFilters = (change, extra = {}) => view({ filters: { ...FILTERS, ...change }, ...extra });
@@ -35,7 +42,7 @@ const row = (sellers, total, cards, shipping, saving, cheapest) => ({ sellers, t
   cardsCents: total - shipping,
   shippingCents: shipping, cards, savingCents: saving, cheapest, optimal: true });
 const RESULTS = { rows: [row(1, 760, 2, 200, null, false), row(2, 490, 2, 400, 270, true)], pages: 5,
-  destination: "Sweden", notFound: [], noOffers: [], unmatched: [], quantityMismatch: [] };
+  destination: "Sweden", notFound: [], noOffers: [], overPrice: [], unmatched: [], quantityMismatch: [] };
 const done = (results = RESULTS, extra = {}) => idle({ phase: "results", results, ...extra });
 const PACKAGE = { sellers: 2, totalCents: 490, cardsCents: 90, shippingCents: 400, optimal: true,
   slowestDays: 12, withoutEstimate: 0, leftOutNoEstimate: 0,
@@ -192,7 +199,7 @@ class TestNothingToBuy:
 
     def test_with_every_deck_unticked_the_decks_stay_to_be_ticked_again(self) -> None:
         seen = run("""
-        const off = (d) => ({ ...d, included: false });
+        const off = (d) => ({ ...d, included: false, tick: "none", tickedCopies: 0 });
         await open(view({ decks: [off(ELLIVERE), off(PANTLAZA)], copies: 0 }));
         return { text: $("buy-empty-text").textContent, cards: $("buy-cards-block").hidden,
           scanOff: $("buy-scan").disabled };
@@ -204,8 +211,7 @@ class TestChoices:
     def test_unticking_a_deck_sends_it_and_draws_the_answer(self) -> None:
         seen = run("""
         await open();
-        stub.buy_include = async () => view({ decks: [ELLIVERE, { ...PANTLAZA, included: false }],
-          copies: 1 });
+        stub.buy_include = async () => view({ decks: [ELLIVERE, unticked(PANTLAZA)], copies: 1 });
         const box = walk($("buy-decks").children[1]).find((n) => n.tagName === "INPUT");
         box.checked = false;
         await fire(box, "change");
@@ -237,7 +243,7 @@ class TestChoices:
         return { call: calls.find((c) => c[0] === "buy_filters"), pressed, results: $("buy-results").hidden,
           curve: $("buy-curve").children.length };
         """)
-        assert seen["call"] == ["buy_filters", "english", "NM", "non-foil", [], "any"]
+        assert seen["call"] == ["buy_filters", "english", "NM", "non-foil", [], "any", ""]
         assert seen["pressed"] == ["Non-foil"]
         assert seen["results"] is True
         assert seen["curve"] == 0
@@ -254,8 +260,8 @@ class TestChoices:
         return calls.filter((c) => c[0] === "buy_filters");
         """)
         assert seen == [
-            ["buy_filters", "english", "any", "any", [], "any"],
-            ["buy_filters", "any", "any", "any", [], "any"],
+            ["buy_filters", "english", "any", "any", [], "any", ""],
+            ["buy_filters", "any", "any", "any", [], "any", ""],
         ]
 
     def test_every_condition_is_offered_with_any_first(self) -> None:
@@ -709,6 +715,365 @@ class TestKeyboard:
         }
 
 
+class TestTheCardsOfADeck:
+    def test_each_card_has_its_own_tick_in_the_fold_and_starts_ticked(self) -> None:
+        seen = run("""
+        await open();
+        const list = $("buy-cards-2");
+        const boxes = walk(list).filter((n) => n.tagName === "INPUT");
+        return {
+          types: boxes.map((b) => b.getAttribute("type")),
+          checked: boxes.map((b) => b.checked),
+          names: boxes.map((b) => b.getAttribute("aria-label")),
+          labelled: boxes.every((b) => b.closest("label") !== null),
+          text: leaves(list),
+          ids: new Set(walk($("buy-decks")).filter((n) => n.tagName === "INPUT").map((b) => b.id)).size,
+        };
+        """)
+        assert seen["types"] == ["checkbox", "checkbox"]
+        assert seen["checked"] == [True, True]
+        assert seen["names"] == ["Include Arcane Signet from Pantlaza", "Include Mind Stone from Pantlaza"]
+        assert seen["labelled"] is True
+        assert seen["text"] == ["2 × Arcane Signet", "Mind Stone"]
+        assert seen["ids"] == 5
+
+    def test_unticking_a_card_sends_the_deck_and_the_card_and_draws_the_answer(self) -> None:
+        seen = run("""
+        await open();
+        const pantlaza = deck(2, "Pantlaza", [card("Arcane Signet", 2), card("Mind Stone", 1, false)]);
+        stub.buy_include_card = async () => view({ decks: [ELLIVERE, pantlaza], copies: 3 });
+        const [signet, stone] = walk($("buy-cards-2")).filter((n) => n.tagName === "INPUT");
+        stone.checked = false;
+        await fire(stone, "change");
+        const head = walk($("buy-decks").children[1]).find((n) => n.tagName === "INPUT");
+        return { call: calls.find((c) => c[0] === "buy_include_card"), stone: stone.checked,
+          signet: signet.checked, summary: $("buy-summary").textContent, counts: countOf(1),
+          head: [head.checked, head.indeterminate, head.getAttribute("aria-checked")] };
+        """)
+        assert seen["call"] == ["buy_include_card", 2, "Mind Stone", False]
+        assert (seen["stone"], seen["signet"]) == (False, True)
+        assert seen["summary"] == "3 cards from 2 decks"
+        assert seen["counts"] == "2 of 3 cards"
+        assert seen["head"] == [False, True, "mixed"]
+
+    def test_a_tick_keeps_the_boxes_and_the_focus_it_was_made_with(self) -> None:
+        seen = run("""
+        await open();
+        const [signet, stone] = walk($("buy-cards-2")).filter((n) => n.tagName === "INPUT");
+        stone.focus();
+        const pantlaza = deck(2, "Pantlaza", [card("Arcane Signet", 2), card("Mind Stone", 1, false)]);
+        stub.buy_include_card = async () => view({ decks: [ELLIVERE, pantlaza], copies: 3 });
+        stone.checked = false;
+        await fire(stone, "change");
+        const again = walk($("buy-cards-2")).filter((n) => n.tagName === "INPUT");
+        return { same: again[0] === signet && again[1] === stone, focus: document.activeElement === stone };
+        """)
+        assert seen == {"same": True, "focus": True}
+
+    def test_a_refused_card_tick_puts_the_box_back_and_says_why(self) -> None:
+        seen = run("""
+        await open();
+        stub.buy_include_card = async () => ({ error: "Wait for the scan, or cancel it." });
+        const stone = walk($("buy-cards-2")).filter((n) => n.tagName === "INPUT")[1];
+        stone.checked = false;
+        await fire(stone, "change");
+        return { checked: stone.checked, toast: $("status-text").textContent };
+        """)
+        assert seen == {"checked": True, "toast": "Wait for the scan, or cancel it."}
+
+    def test_the_deck_box_is_ticked_for_all_unticked_for_none_and_mixed_for_some(self) -> None:
+        seen = run("""
+        const states = {
+          all: PANTLAZA,
+          none: deck(2, "Pantlaza", PANTLAZA.cards.map((c) => ({ ...c, included: false }))),
+          some: deck(2, "Pantlaza", [card("Arcane Signet", 2), card("Mind Stone", 1, false)]),
+        };
+        const out = {};
+        for (const [name, pantlaza] of Object.entries(states)) {
+          await open(view({ decks: [ELLIVERE, pantlaza], copies: 4 }));
+          const box = walk($("buy-decks").children[1]).find((n) => n.tagName === "INPUT");
+          out[name] = [box.checked, box.indeterminate, box.getAttribute("aria-checked"),
+            countOf(1)];
+        }
+        return out;
+        """)
+        assert seen == {
+            "all": [True, False, None, "3 cards"],
+            "none": [False, False, None, "3 cards"],
+            "some": [False, True, "mixed", "2 of 3 cards"],
+        }
+
+    def test_clicking_the_mixed_deck_box_ticks_every_card_and_clicking_it_again_unticks_them(self) -> None:
+        seen = run("""
+        const some = deck(2, "Pantlaza", [card("Arcane Signet", 2), card("Mind Stone", 1, false)]);
+        await open(view({ decks: [ELLIVERE, some], copies: 3 }));
+        const box = walk($("buy-decks").children[1]).find((n) => n.tagName === "INPUT");
+        stub.buy_include = async (id, included) => view({ decks: [ELLIVERE,
+          included ? PANTLAZA : unticked(PANTLAZA)] });
+        // A click on a mixed box leaves it ticked, as in the browser.
+        box.indeterminate = false;
+        box.checked = true;
+        await fire(box, "change");
+        const ticked = { checked: box.checked, mixed: box.indeterminate,
+          cards: walk($("buy-cards-2")).filter((n) => n.tagName === "INPUT").map((b) => b.checked) };
+        box.checked = false;
+        await fire(box, "change");
+        const cleared = { checked: box.checked, cards: walk($("buy-cards-2"))
+          .filter((n) => n.tagName === "INPUT").map((b) => b.checked) };
+        return { ticked, unticked: cleared, calls: calls.filter((c) => c[0] === "buy_include") };
+        """)
+        assert seen["ticked"] == {"checked": True, "mixed": False, "cards": [True, True]}
+        assert seen["unticked"] == {"checked": False, "cards": [False, False]}
+        assert seen["calls"] == [["buy_include", 2, True], ["buy_include", 2, False]]
+
+    def test_the_scan_stays_on_while_some_cards_are_ticked_and_goes_off_with_none(self) -> None:
+        seen = run("""
+        const some = deck(2, "Pantlaza", [card("Arcane Signet", 2, false), card("Mind Stone", 1)]);
+        await open(view({ decks: [some], copies: 1 }));
+        const on = { summary: $("buy-summary").textContent, off: $("buy-scan").disabled };
+        const none = deck(2, "Pantlaza", PANTLAZA.cards.map((c) => ({ ...c, included: false })));
+        stub.buy_include_card = async () => view({ decks: [none], copies: 0 });
+        const stone = walk($("buy-cards-2")).filter((n) => n.tagName === "INPUT")[1];
+        stone.checked = false;
+        await fire(stone, "change");
+        return { on, off: { summary: $("buy-summary").textContent, off: $("buy-scan").disabled,
+          text: $("buy-empty-text").textContent } };
+        """)
+        assert seen["on"] == {"summary": "1 card from 1 deck", "off": False}
+        assert seen["off"] == {"summary": "", "off": True, "text": "Tick a deck to scan."}
+
+    def test_the_card_boxes_are_locked_while_a_scan_runs(self) -> None:
+        seen = run("""
+        await open();
+        stub.buy_scan = async () => idle({ phase: "wants", running: true, progress: "Starting" });
+        await fire($("buy-scan"), "click");
+        return walk($("buy-decks")).filter((n) => n.tagName === "INPUT").map((b) => b.disabled);
+        """)
+        assert seen == [True, True, True, True, True]
+
+    def test_the_card_boxes_are_rebuilt_when_the_cards_change(self) -> None:
+        seen = run("""
+        await open();
+        const before = walk($("buy-cards-2")).filter((n) => n.tagName === "INPUT");
+        const fewer = deck(2, "Pantlaza", [card("Mind Stone", 1)]);
+        stub.buy = async () => view({ decks: [ELLIVERE, fewer], copies: 2 });
+        await refreshBuy();
+        const after = walk($("buy-cards-2")).filter((n) => n.tagName === "INPUT");
+        return { before: before.length, after: after.length, text: leaves($("buy-cards-2")) };
+        """)
+        assert seen == {"before": 2, "after": 1, "text": ["Mind Stone"]}
+
+
+class TestTheMaxPrice:
+    def test_the_field_starts_blank_for_any_price_and_has_a_name_and_a_euro_sign(self) -> None:
+        seen = run("""
+        await open();
+        const input = $("buy-max-price");
+        const label = walk($("buy").querySelector(".buy-filters")).find((n) => n.tagName === "LABEL"
+          && n.getAttribute("for") === "buy-max-price");
+        return { value: input.value, placeholder: input.getAttribute("placeholder"),
+          mode: input.getAttribute("inputmode"), label: label?.textContent,
+          name: input.getAttribute("aria-label"), off: input.disabled,
+          unit: $("buy").querySelector(".buy-money-unit").textContent };
+        """)
+        assert seen == {
+            "value": "",
+            "placeholder": "Any",
+            "mode": "decimal",
+            "label": "Max price per card",
+            "name": "Max price per card in euros",
+            "off": False,
+            "unit": "€",
+        }
+
+    @pytest.mark.parametrize(
+        ("cents", "shown"), [(500, "5"), (250, "2.50"), (5, "0.05"), (1_000_000, "10000")]
+    )
+    def test_the_saved_cap_shows_in_whole_euros_or_with_cents(self, cents: int, shown: str) -> None:
+        seen = run(f"""
+        await open(withFilters({{ maxPriceCents: {cents} }}));
+        return $("buy-max-price").value;
+        """)
+        assert seen == shown
+
+    def test_a_typed_price_is_sent_as_typed_with_the_other_filters_and_resets_what_was_shown(self) -> None:
+        seen = run("""
+        await open(view({ status: done() }));
+        stub.buy_filters = async () => withFilters({ maxPriceCents: 250 });
+        $("buy-max-price").value = " 2,50 ";
+        await fire($("buy-max-price"), "change");
+        return { call: calls.find((c) => c[0] === "buy_filters"), shown: $("buy-max-price").value,
+          results: $("buy-results").hidden };
+        """)
+        assert seen["call"] == ["buy_filters", "english", "NM", "any", [], "any", "2,50"]
+        assert seen["shown"] == "2.50"
+        assert seen["results"] is True
+
+    def test_enter_sends_the_price_and_the_change_that_follows_does_not_send_it_again(self) -> None:
+        seen = run("""
+        await open();
+        stub.buy_filters = async () => withFilters({ maxPriceCents: 500 });
+        $("buy-max-price").value = "5";
+        const enter = await fire($("buy-max-price"), "keydown", { key: "Enter" });
+        await fire($("buy-max-price"), "change");
+        return { sent: calls.filter((c) => c[0] === "buy_filters").map((c) => c.at(-1)),
+          shown: $("buy-max-price").value };
+        """)
+        assert seen == {"sent": ["5"], "shown": "5"}
+
+    def test_a_price_left_as_it_was_sends_nothing(self) -> None:
+        seen = run("""
+        await open(withFilters({ maxPriceCents: 250 }));
+        $("buy-max-price").value = "2.50";
+        await fire($("buy-max-price"), "change");
+        await fire($("buy-max-price"), "keydown", { key: "Enter" });
+        return calls.filter((c) => c[0] === "buy_filters").length;
+        """)
+        assert seen == 0
+
+    def test_clearing_the_field_asks_for_any_price(self) -> None:
+        seen = run("""
+        await open(withFilters({ maxPriceCents: 250 }));
+        stub.buy_filters = async () => view();
+        $("buy-max-price").value = "";
+        await fire($("buy-max-price"), "change");
+        return [calls.find((c) => c[0] === "buy_filters").at(-1), $("buy-max-price").value];
+        """)
+        assert seen == ["", ""]
+
+    def test_escape_puts_the_saved_price_back_without_sending(self) -> None:
+        seen = run("""
+        await open(withFilters({ maxPriceCents: 250 }));
+        $("buy-max-price").value = "9";
+        await fire($("buy-max-price"), "keydown", { key: "Escape" });
+        return [$("buy-max-price").value, calls.filter((c) => c[0] === "buy_filters").length];
+        """)
+        assert seen == ["2.50", 0]
+
+    def test_a_refused_price_goes_back_to_the_saved_one_and_says_why(self) -> None:
+        seen = run("""
+        await open(withFilters({ maxPriceCents: 250 }));
+        stub.buy_filters = async () => ({ error: "Max price: 0.01 to 10000 euros, at most two decimals." });
+        $("buy-max-price").value = "free";
+        await fire($("buy-max-price"), "change");
+        return [$("buy-max-price").value, $("status-text").textContent];
+        """)
+        assert seen == ["2.50", "Max price: 0.01 to 10000 euros, at most two decimals."]
+
+    def test_another_filter_sends_the_saved_price_with_it(self) -> None:
+        seen = run("""
+        await open(withFilters({ maxPriceCents: 250 }));
+        stub.buy_filters = async () => withFilters({ maxPriceCents: 250, foil: "foil" });
+        const foil = [...$("buy-foil").children].find((b) => b.textContent === "Foil");
+        await fire(foil, "click");
+        return calls.find((c) => c[0] === "buy_filters");
+        """)
+        assert seen == ["buy_filters", "english", "NM", "foil", [], "any", "2.50"]
+
+    def test_the_field_is_locked_while_a_scan_runs(self) -> None:
+        seen = run("""
+        await open();
+        stub.buy_scan = async () => idle({ phase: "wants", running: true, progress: "Starting" });
+        await fire($("buy-scan"), "click");
+        return $("buy-max-price").disabled;
+        """)
+        assert seen is True
+
+    def test_a_new_cap_that_is_solved_again_shows_the_work_and_then_the_packages(self) -> None:
+        seen = run("""
+        await open(view({ status: done() }));
+        stub.buy_filters = async () => withFilters({ maxPriceCents: 400 }, { status: idle({
+          phase: "solving", running: true, progress: "Finding the cheapest packages" }) });
+        $("buy-max-price").value = "4";
+        await fire($("buy-max-price"), "change");
+        const during = { line: $("buy-progress").textContent, results: $("buy-results").hidden,
+          timers: timers.length, input: $("buy-max-price").disabled };
+        stub.buy_status = async () => done();
+        await pollBuy();
+        return { during, after: { line: $("buy-progress").textContent, rows: $("buy-curve").children.length,
+          input: $("buy-max-price").disabled }, scans: calls.filter((c) => c[0] === "buy_scan").length };
+        """)
+        assert seen["during"] == {
+            "line": "Finding the cheapest packages",
+            "results": True,
+            "timers": 1,
+            "input": True,
+        }
+        assert seen["after"] == {"line": "Found 2 packages.", "rows": 2, "input": False}
+        assert seen["scans"] == 0
+
+    def test_cards_over_the_cap_are_listed_apart_with_their_cheapest_price(self) -> None:
+        seen = run("""
+        const results = { ...RESULTS, noOffers: ["Sol Ring"],
+          overPrice: [{ card: "Arcane Signet", cheapestCents: 650 },
+            { card: "Mind Stone", cheapestCents: 1200 }] };
+        await open(view({ status: done(results) }));
+        return [...$("buy-notes").children].map((li) => [li.children[0].textContent, li.textContent]);
+        """)
+        assert seen == [
+            ["No offers for these filters: ", "No offers for these filters: Sol Ring"],
+            [
+                "Over your max price: ",
+                "Over your max price: Arcane Signet (cheapest €6.50), Mind Stone (cheapest €12.00)",
+            ],
+        ]
+
+    def test_without_cards_over_the_cap_there_is_no_such_line(self) -> None:
+        seen = run("""
+        await open(view({ status: done() }));
+        return $("buy-notes").children.length;
+        """)
+        assert seen == 0
+
+
+class TestTheFilterRow:
+    """The rows' labels share one line and so do their controls; the page tests cannot measure a layout, so
+    these check the rules that make it so."""
+
+    @staticmethod
+    def rule(css: str, selector: str) -> str:
+        found = re.search(rf"(?:^|\n){re.escape(selector)}\s*\{{([^}}]*)\}}", css)
+        assert found is not None, selector
+        return found.group(1)
+
+    def test_the_row_starts_every_item_at_the_top_so_the_labels_share_one_line(self) -> None:
+        css = (WEB / "app.css").read_text(encoding="utf-8")
+
+        assert "align-items: flex-start" in self.rule(css, ".buy-filters")
+        assert "align-items: flex-end" not in self.rule(css, ".buy-filters")
+
+    def test_the_pills_the_dropdowns_the_field_and_the_location_button_are_one_height(self) -> None:
+        css = (WEB / "app.css").read_text(encoding="utf-8")
+
+        assert re.search(r"--control-h:\s*\d+px", css)
+        assert "min-height: var(--control-h)" in self.rule(css, ".buy-filter .segmented")
+        assert "min-height: var(--control-h)" in self.rule(css, ".buy-select, .buy-input")
+        assert "box-sizing: border-box" in self.rule(css, ".buy-filter .segmented")
+        assert "box-sizing: border-box" in self.rule(css, ".buy-select, .buy-input")
+        picker = re.search(r'id="buy-countries" class="([^"]*)"', (WEB / "index.html").read_text("utf-8"))
+        assert picker is not None
+        assert "buy-select" in picker.group(1).split()
+
+    def test_the_pill_labels_keep_their_inset_and_the_select_keeps_its_chevron(self) -> None:
+        css = (WEB / "app.css").read_text(encoding="utf-8")
+
+        assert "padding-left: calc(3px + var(--space-2))" in self.rule(css, ".buy-filter > span:first-child")
+        select = self.rule(css, ".buy-select")
+        assert "linear-gradient(45deg" in select
+        assert "calc(100% - var(--space-3)" in select
+        assert "appearance: none" in select
+
+    def test_every_filter_in_the_row_has_a_label_over_its_control(self) -> None:
+        page = (WEB / "index.html").read_text(encoding="utf-8")
+        row = page.split('<div class="buy-filters">', 1)[1].split("</section>", 1)[0]
+
+        filters = row.split('<div class="buy-filter">')[1:]
+        assert len(filters) == 6
+        for one in filters:
+            first = one.strip().split("\n", 1)[0].strip()
+            assert first.startswith(("<span id=", "<label for=")), first
+
+
 def test_the_screens_styles_use_the_design_tokens_and_no_colours_of_their_own() -> None:
     css = (WEB / "app.css").read_text(encoding="utf-8")
     buy = css.split("/* Buy cards", 1)[1]
@@ -900,8 +1265,8 @@ class TestSellerLocation:
           focus: document.activeElement.id };
         """)
         assert seen["sent"] == [
-            ["english", "NM", "any", [23], "any"],
-            ["english", "NM", "any", [7, 23], "any"],
+            ["english", "NM", "any", [23], "any", ""],
+            ["english", "NM", "any", [7, 23], "any", ""],
         ]
         assert seen["checked"] == [False, True, True, False]
         assert seen["text"] == "Germany, Netherlands"
@@ -919,7 +1284,7 @@ class TestSellerLocation:
         await fire(box, "change");
         return [calls.at(-1).slice(1), $("buy-countries-text").textContent];
         """)
-        assert seen == [["english", "NM", "any", [], "any"], "Any country"]
+        assert seen == [["english", "NM", "any", [], "any", ""], "Any country"]
 
     def test_clear_countries_unticks_all_and_is_off_when_none_are_ticked(self) -> None:
         seen = run("""
@@ -937,7 +1302,7 @@ class TestSellerLocation:
         assert seen == {
             "before": True,
             "during": False,
-            "sent": ["english", "NM", "any", [], "any"],
+            "sent": ["english", "NM", "any", [], "any", ""],
             "text": "Any country",
             "after": True,
         }
@@ -1157,7 +1522,7 @@ class TestDeliveryTime:
           curve: $("buy-curve").children.length };
         """)
         assert seen == {
-            "call": ["buy_filters", "english", "NM", "foil", [7], "7"],
+            "call": ["buy_filters", "english", "NM", "foil", [7], "7", ""],
             "pressed": ["1 week"],
             "results": True,
             "curve": 0,

@@ -106,8 +106,8 @@ the owner picks into their Cardmarket cart for them to check out by hand.
   background with a progress line and a Cancel button. A cancelled or stopped scan keeps what it read and
   solves it, marked partial. The curve shows one row per seller count; picking a row shows each seller's
   shipping method and each card's price against its trend price (the cheapest printing's EUR price in the card
-  data). The choices, the base sellers (15) and the decks left out per account are kept in `buy.json` beside
-  the config file.
+  data). The choices, the base sellers (15) and the decks and cards left out per account are kept in
+  `buy.json` beside the config file (format 3).
 - **Seller location and delivery time.** Two more offer filters, both blank (any) by default. The owner ticks
   seller countries (Cardmarket's own ids, the shipping help API's too), which go in the card page address as
   `sellerCountry[<id>]` and also drop other countries' offers, since the wants-filtered stock pages are not
@@ -119,6 +119,20 @@ the owner picks into their Cardmarket cart for them to check out by hand.
   count, the mean of the middle two rounded up), else Cardmarket's average for the route that every card-page
   row carries; only an offer with neither is left out, and the package says how many were. The package shows
   each seller's days (marked as an estimate when they come from its country) and when the slowest arrives.
+- **Max price per card.** A fourth offer filter, blank (any) by default: the most one copy may cost, typed in
+  euros (a dot or a comma, at most two decimals, 0,01 to 10 000 €). Cardmarket's form has no such limit, so it
+  never goes in the address; `apply_limits` leaves out an offer priced above it (one priced at exactly the cap
+  stays), for the base sellers' choice and the solver alike. A wanted card whose every otherwise allowed offer
+  is dearer is not bought; the results list it under "Over your max price" with its cheapest price, apart from
+  the cards with no offers at all. Pass 1 reads each card's cheapest offers, so that price is the card's
+  lowest. Because the cap only judges offers already read, changing it re-judges and re-solves the last scan
+  in the background instead of asking for a new one; the base sellers stay those chosen under the old cap, so a
+  scan under the new cap can find a cheaper package. Any other filter still drops the results.
+- **Cards ticked one by one.** Each deck's fold gives every Don't Have card its own tick, on by default, and
+  the deck's tick is mixed when only some are on; ticking or unticking the deck sets all of its cards. A card
+  in two decks is ticked per deck, and the quantity to buy is the sum of the ticked ones. The unticked cards
+  are kept per account and deck beside the left-out decks, and a card that is no longer Don't Have is
+  forgotten. A deck whose cards are all unticked is kept as a left-out deck.
 - **The cart.** After the owner confirms a package (sellers, cards, prices, total), the app clicks each
   offer's own cart button, paced like the scan, then reads the cart: an offer that is gone is listed and can
   be solved again among the sellers already in the cart, and a seller whose shipping differs from the estimate

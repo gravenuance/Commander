@@ -1,5 +1,5 @@
-"""What the Buy screen remembers: the offer filters, the scan's base sellers, and the decks left out of a
-purchase per account (ADR 0067).
+"""What the Buy screen remembers: the offer filters, the scan's base sellers, and the decks and cards left out
+of a purchase per account (ADR 0067).
 
 One small versioned JSON file in the app's settings folder. A field that is missing or wrong falls back to its
 default with a logged warning; a file that cannot be read at all is moved aside to `<name>.bak` and the
@@ -8,6 +8,7 @@ defaults used, so a later save never overwrites what the user had.
 
 import json
 import logging
+import re
 import shutil
 import threading
 from collections.abc import Callable, Mapping, Sequence
@@ -24,15 +25,21 @@ from commander.jsonshape import ShapeError, as_list, as_object, req_int
 log = logging.getLogger(__name__)
 
 BUY_FILE = "buy.json"
-FORMAT_VERSION = 2
+FORMAT_VERSION = 3
 # The format that added the seller countries and the delivery time to the filters.
 COUNTRIES_FORMAT = 2
+# The format that added the price cap to the filters and the cards left out per deck.
+PRICE_FORMAT = 3
 MIN_BASE_SELLERS = 1
 MAX_BASE_SELLERS = 40
 # Cardmarket lists 35 countries; the bounds only keep nonsense out of the address.
 MAX_COUNTRIES = 100
 MAX_COUNTRY_ID = 9999
+MAX_PRICE_CENTS = 1_000_000
 NOT_AVAILABLE = "Those filters are not available; choose again."
+BAD_PRICE = "Max price: 0.01 to 10000 euros, at most two decimals."
+# A price as typed: whole euros, or euros and one or two decimals after a dot or a comma.
+_PRICE_TEXT = re.compile(r"(\d{1,7})(?:[.,](\d{1,2}))?", re.ASCII)
 # Condition choices in the file and on the page: a condition's code, or this for any.
 ANY = "any"
 
@@ -77,6 +84,8 @@ class BuyFilters:
     # Cardmarket's country ids; empty means sellers from anywhere.
     countries: frozenset[int] = frozenset()
     delivery: DeliveryChoice = DeliveryChoice.ANY
+    # The most one copy may cost, in cents; None for any price. Judged on the offers read, not by Cardmarket.
+    max_price_cents: int | None = None
 
     def scan_filters(self) -> ScanFilters:
         return ScanFilters(
@@ -91,6 +100,7 @@ class BuyFilters:
             "foil": self.foil.value,
             "countries": sorted(self.countries),
             "delivery": self.delivery.value,
+            "maxPriceCents": self.max_price_cents,
         }
 
 
@@ -111,10 +121,40 @@ def _country_id(value: object) -> int | None:
     return value
 
 
+def parse_max_price(text: object) -> int | None:
+    """A price typed in euros ("5", "2,50", "2.5", "€ 5") as cents; blank means any price. Anything that is
+    not 0,01 to 10 000 € in at most two decimals is refused."""
+    if text is None:
+        return None
+    if not isinstance(text, str):
+        raise BuyError(BAD_PRICE)
+    typed = text.replace("€", "").strip()
+    if not typed:
+        return None
+    found = _PRICE_TEXT.fullmatch(typed)
+    if found is None:
+        raise BuyError(BAD_PRICE)
+    euros, decimals = found.group(1), found.group(2) or ""
+    return check_max_price_cents(int(euros) * 100 + int(decimals.ljust(2, "0")))
+
+
+def check_max_price_cents(cents: int) -> int:
+    if not 1 <= cents <= MAX_PRICE_CENTS:
+        raise BuyError(BAD_PRICE)
+    return cents
+
+
 def parse_filters(
-    language: object, condition: object, foil: object, countries: object, delivery: object
+    language: object,
+    condition: object,
+    foil: object,
+    countries: object,
+    delivery: object,
+    *,
+    max_price: object = None,
 ) -> BuyFilters:
-    """The filters the page sent; a value that is none of the choices is refused, not guessed."""
+    """The filters the page sent; a value that is none of the choices is refused, not guessed. The price cap
+    comes as the text typed in euros."""
     try:
         chosen_language = LanguageChoice(language)
         chosen_condition = None if condition == ANY else Condition(condition)
@@ -123,7 +163,14 @@ def parse_filters(
         chosen_delivery = DeliveryChoice(delivery)
     except ValueError:
         raise BuyError(NOT_AVAILABLE) from None
-    return BuyFilters(chosen_language, chosen_condition, chosen_foil, chosen_countries, chosen_delivery)
+    return BuyFilters(
+        chosen_language,
+        chosen_condition,
+        chosen_foil,
+        chosen_countries,
+        chosen_delivery,
+        parse_max_price(max_price),
+    )
 
 
 def check_base_sellers(count: object) -> int:
@@ -138,8 +185,12 @@ def check_base_sellers(count: object) -> int:
 class BuySettings:
     filters: BuyFilters = field(default_factory=BuyFilters)
     base_sellers: int = DEFAULT_BASE_SELLERS
-    # Deck ids left out of the purchase, by account (casefolded user name).
+    # Deck ids left out of the purchase whole, by account (casefolded user name).
     left_out: Mapping[str, frozenset[int]] = field(default_factory=dict[str, frozenset[int]])
+    # The cards left out of a deck that is otherwise bought, by account and then deck id.
+    left_out_cards: Mapping[str, Mapping[int, frozenset[str]]] = field(
+        default_factory=dict[str, Mapping[int, frozenset[str]]]
+    )
 
 
 class BuyStore:
@@ -159,18 +210,28 @@ class BuyStore:
     def left_out(self, user: str) -> frozenset[int]:
         return self._current().left_out.get(_account(user), frozenset())
 
+    def left_out_cards(self, user: str) -> Mapping[int, frozenset[str]]:
+        return self._current().left_out_cards.get(_account(user), {})
+
     def set_filters(self, filters: BuyFilters) -> None:
         self._change(lambda settings: replace(settings, filters=filters))
 
     def set_base_sellers(self, count: int) -> None:
         self._change(lambda settings: replace(settings, base_sellers=check_base_sellers(count)))
 
-    def set_left_out(self, user: str, deck_ids: frozenset[int]) -> None:
+    def set_left_out(self, user: str, deck_ids: frozenset[int], cards: Mapping[int, frozenset[str]]) -> None:
+        """Replace the account's left-out decks and, by deck, its left-out cards; empty sets are dropped."""
+        account = _account(user)
+
         def change(settings: BuySettings) -> BuySettings:
-            left = {name: ids for name, ids in settings.left_out.items() if name != _account(user)}
+            left = {name: ids for name, ids in settings.left_out.items() if name != account}
             if deck_ids:
-                left[_account(user)] = deck_ids
-            return replace(settings, left_out=left)
+                left[account] = deck_ids
+            kept = {deck: names for deck, names in cards.items() if names}
+            left_cards = {n: by_deck for n, by_deck in settings.left_out_cards.items() if n != account}
+            if kept:
+                left_cards[account] = kept
+            return replace(settings, left_out=left, left_out_cards=left_cards)
 
         self._change(change)
 
@@ -249,6 +310,11 @@ def _migrate(raw: Mapping[str, object]) -> tuple[Mapping[str, object], int]:
         filters = raw.get("filters")
         if filters is not None:
             migrated["filters"] = {**as_object(filters, "filters"), "countries": [], "delivery": "any"}
+    if version < PRICE_FORMAT:
+        filters = migrated.get("filters")
+        if filters is not None:
+            migrated["filters"] = {**as_object(filters, "filters"), "maxPriceCents": None}
+        migrated["leftOutCards"] = {}
     migrated["version"] = FORMAT_VERSION
     return migrated, version
 
@@ -268,7 +334,9 @@ def _bind(raw: Mapping[str, object]) -> BuySettings:
     except BuyError:
         log.warning("%s: base sellers %r is out of range; using %d", BUY_FILE, base, defaults.base_sellers)
         base_sellers = defaults.base_sellers
-    return BuySettings(filters, base_sellers, _left_out(raw.get("leftOut")))
+    return BuySettings(
+        filters, base_sellers, _left_out(raw.get("leftOut")), _left_out_cards(raw.get("leftOutCards"))
+    )
 
 
 def _filters(raw: object, defaults: BuyFilters) -> BuyFilters:
@@ -281,7 +349,17 @@ def _filters(raw: object, defaults: BuyFilters) -> BuyFilters:
         _choice(Foil, fields, "foil", defaults.foil),
         _countries(fields.get("countries")),
         _choice(DeliveryChoice, fields, "delivery", defaults.delivery),
+        _max_price(fields.get("maxPriceCents")),
     )
+
+
+def _max_price(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= MAX_PRICE_CENTS:
+        return value
+    log.warning("%s: filters.maxPriceCents %r is no price; using any price", BUY_FILE, value)
+    return None
 
 
 def _countries(raw: object) -> frozenset[int]:
@@ -333,11 +411,36 @@ def _left_out(raw: object) -> dict[str, frozenset[int]]:
     return left
 
 
+def _left_out_cards(raw: object) -> dict[str, Mapping[int, frozenset[str]]]:
+    if raw is None:
+        return {}
+    left: dict[str, Mapping[int, frozenset[str]]] = {}
+    for account, decks in as_object(raw, "leftOutCards").items():
+        by_deck: dict[int, frozenset[str]] = {}
+        for deck, names in as_object(decks, f"leftOutCards.{account}").items():
+            where = f"leftOutCards.{account}.{deck}"
+            cards = as_list(names, where)
+            valid = frozenset(n for n in cards if isinstance(n, str) and n)
+            if len(valid) != len(cards):
+                log.warning("%s: %s holds values that are no card name; they are dropped", BUY_FILE, where)
+            if not (deck.isascii() and deck.isdigit()):
+                log.warning("%s: %s is no deck id; it is dropped", BUY_FILE, where)
+            elif valid:
+                by_deck[int(deck)] = valid
+        if by_deck:
+            left[account] = by_deck
+    return left
+
+
 def _dump(settings: BuySettings) -> str:
     document: dict[str, object] = {
         "version": FORMAT_VERSION,
         "filters": settings.filters.to_json(),
         "baseSellers": settings.base_sellers,
         "leftOut": {name: sorted(ids) for name, ids in sorted(settings.left_out.items())},
+        "leftOutCards": {
+            account: {str(deck): sorted(names) for deck, names in sorted(by_deck.items())}
+            for account, by_deck in sorted(settings.left_out_cards.items())
+        },
     }
     return json.dumps(document, indent=1) + "\n"
