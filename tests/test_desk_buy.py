@@ -6,7 +6,7 @@ import threading
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -156,7 +156,8 @@ def test_a_card_of_a_deck_is_ticked_through_the_bridge_and_saved_beside_the_conf
     desk = make_desk(configured, fake, rig)
     want_arcane_signet(desk)
 
-    view = desk.buy_include_card(DECK, "Arcane Signet", False)  # noqa: FBT003 - the page passes the tick positionally
+    # The page passes the tick positionally.
+    view = desk.buy_include_card(DECK, "Arcane Signet", False)  # noqa: FBT003
 
     [magda] = decks_of(view)
     assert (magda["tick"], magda["included"], view["copies"]) == ("none", False, 0)
@@ -248,6 +249,41 @@ def test_the_pane_area_comes_through_the_bridge_and_a_bad_one_is_an_error(desk: 
 
 def test_a_package_that_is_not_there_is_an_error(desk: Desk) -> None:
     assert desk.buy_package(3) == {"error": "That package is gone; scan again."}
+
+
+NOT_VALID = {"error": "That request was not valid."}
+# What the page's bridge could send for a number: a bool, text, a fraction, nothing, a list.
+BAD_NUMBERS = [True, "1", 2.9, None, [1]]
+BAD_FLAGS = ["false", 0, 1, None, "yes"]
+
+
+@pytest.mark.parametrize("bad", BAD_NUMBERS)
+def test_a_deck_id_that_is_no_whole_number_is_refused_by_the_ticks(desk: Desk, bad: object) -> None:
+    want_arcane_signet(desk)
+    ticked: Any = bad
+
+    assert desk.buy_include(ticked, False) == NOT_VALID  # noqa: FBT003
+    assert desk.buy_include_card(ticked, "Arcane Signet", False) == NOT_VALID  # noqa: FBT003
+    assert decks_of(desk.buy())[0]["included"] is True
+
+
+@pytest.mark.parametrize("bad", BAD_FLAGS)
+def test_a_tick_that_is_no_boolean_is_refused_instead_of_read_as_truthy(desk: Desk, bad: object) -> None:
+    want_arcane_signet(desk)
+    ticked: Any = bad
+
+    assert desk.buy_include(DECK, ticked) == NOT_VALID
+    assert desk.buy_include_card(DECK, "Arcane Signet", ticked) == NOT_VALID
+    assert decks_of(desk.buy())[0]["included"] is True
+
+
+@pytest.mark.parametrize("bad", BAD_NUMBERS)
+def test_a_seller_count_that_is_no_whole_number_is_refused(desk: Desk, rig: Rig, bad: object) -> None:
+    count: Any = bad
+
+    assert desk.buy_package(count) == NOT_VALID
+    assert desk.buy_add_to_cart(count) == NOT_VALID
+    assert rig.cart_calls == []
 
 
 def test_a_stopped_scan_comes_back_as_a_status_not_an_error(desk: Desk, rig: Rig) -> None:

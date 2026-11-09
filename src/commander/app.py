@@ -111,7 +111,8 @@ def run_app(desk: Desk, *, storage: Path, debug: bool = False) -> None:
         raise RuntimeError("pywebview created no window")
 
     def on_closed() -> None:
-        # The Cardmarket windows belong to a scan; the loop ends only when none is left.
+        # The Cardmarket windows belong to a scan; the loop ends only when none is left. The scan is asked to
+        # cancel before they are destroyed, so a failure on a destroyed window is the cancel's.
         desk.stop_buying()
         for other in list(webview.windows):
             if other is not window:
