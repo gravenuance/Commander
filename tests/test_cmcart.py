@@ -32,7 +32,7 @@ from commander.cmcart import (
 )
 from commander.cmpages import PageError
 from commander.cmscan import MAX_GAP_S, MIN_GAP_S
-from commander.cmsession import LOAD_TIMEOUT_S, BrowserError, Cancelled, FormBrowser
+from commander.cmsession import LOAD_TIMEOUT_S, BrowserError, Cancelled, FormBrowser, LoadTimeout
 from commander.cmshipping import ShippingQuote
 from commander.cmwants import WANTS_URL
 from commander.sellersolve import Package, Pick, Shipment
@@ -47,6 +47,7 @@ GONE_XML = (FIXTURES / "cm_cart_add_gone.xml").read_text(encoding="utf-8")
 GONE_MESSAGE = "An error has occurred. The item is not available."
 NODE = shutil.which("node")
 CART_RUNNER = Path(__file__).with_name("cartrun.js")
+ALERT = '<div class="alert"><div class="alert-body"><p>1 => {}</p></div></div>'
 LETTER = ("Brief S Priority", 175)
 TOKEN = "0" * 64
 
@@ -223,6 +224,11 @@ class FakeCartPage:
         # Article ids whose request is refused as gone, never answered (not added), or never answered though
         # the article lands in the cart.
         self.refused: set[int] = set()
+        # Article ids whose request is refused with another error, by the reason the answer gives.
+        self.errors: dict[int, str] = {}
+        # Article ids whose request goes out (and lands as the other settings say) but whose script call
+        # raises a `LoadTimeout`, as when the window stops answering.
+        self.start_timeout: set[int] = set()
         self.silent: set[int] = set()
         self.late: set[int] = set()
         # Article ids whose answer says success but the cart keeps this many copies (0 for none).
@@ -256,7 +262,10 @@ class FakeCartPage:
 
     def act(self, script: str) -> str:
         if "fetch(" in script:
-            return self._send(script)
+            started = self._send(script)
+            if started == "started" and number_after(r"const id = ", script) in self.start_timeout:
+                raise LoadTimeout("the window stopped answering")
+            return started
         assert "JSON.stringify(answer" in script, script
         reply, self._reply = self._reply, None
         return "null" if reply is None else json.dumps({"status": self.status, "text": reply})
@@ -277,6 +286,8 @@ class FakeCartPage:
         self.record(f"send {article} x{copies}")
         if article in self.refused:
             self._reply = GONE_XML
+        elif article in self.errors:
+            self._reply = answer_xml("error", ALERT.format(self.errors[article]))
         elif article in self.silent:
             self._reply = None
         else:
@@ -460,16 +471,43 @@ class TestAdding:
         assert run.result.copies(CartOutcome.GONE) == 1
 
     def test_fewer_copies_in_the_cart_than_asked_are_short_with_the_number_held(self) -> None:
-        picks = [pick("Arcane Signet", "A", 3), pick("Mind Stone", "B", 2)]
+        picks = [pick("Arcane Signet", "A", 3)]
         page = FakeCartPage(picks)
-        page.kept = {picks[0].offer.article_id: 1, picks[1].offer.article_id: 0}
+        page.kept = {picks[0].offer.article_id: 1}
 
         run = run_cart(page, package(*picks))
 
-        assert [(item.outcome, item.in_cart) for item in run.result.items] == [
-            (CartOutcome.SHORT, 1),
-            (CartOutcome.SHORT, 0),
+        assert [(item.outcome, item.in_cart) for item in run.result.items] == [(CartOutcome.SHORT, 1)]
+
+    def test_an_offer_cardmarket_accepted_but_the_cart_does_not_show_is_missing_not_short(self) -> None:
+        picks = [pick("Mind Stone", "B", 2)]
+        page = FakeCartPage(picks)
+        page.kept = {picks[0].offer.article_id: 0}
+
+        run = run_cart(page, package(*picks))
+
+        assert run.result.status is CartStatus.COMPLETE
+        assert [(item.outcome, item.in_cart) for item in run.result.items] == [(CartOutcome.MISSING, 0)]
+        assert run.result.copies(CartOutcome.MISSING) == 2
+
+    def test_an_article_in_the_cart_with_fewer_copies_than_picked_is_short_and_nothing_is_sent_for_it(
+        self,
+    ) -> None:
+        picks = [pick("Lotus Petal", "A", 3), pick("Mind Stone", "B", 2)]
+        page = FakeCartPage(picks)
+        page.cart = [
+            CartSeller("A", 5, [CartRow(picks[0].offer.article_id, "Lotus Petal", 2)]),
+            CartSeller("B", 6, [CartRow(picks[1].offer.article_id, "Mind Stone", 2)]),
         ]
+
+        run = run_cart(page, package(*picks))
+
+        assert sent_to(run) == []
+        assert [(item.outcome, item.in_cart) for item in run.result.items] == [
+            (CartOutcome.SHORT, 2),
+            (CartOutcome.ALREADY, 2),
+        ]
+        assert page.cart[0].rows == [CartRow(picks[0].offer.article_id, "Lotus Petal", 2)]
 
     def test_the_sellers_of_other_items_in_the_cart_are_left_alone_and_not_reported(self) -> None:
         picks = [pick("Mind Stone", "B")]
@@ -488,6 +526,82 @@ class TestAdding:
         picks = [pick("Mind Stone", "B")]
 
         assert run_cart(FakeCartPage(picks), package(*picks)).result.status is CartStatus.COMPLETE
+
+
+class WaitRecorder(threading.Event):
+    """A cancel event whose waits are recorded instead of slept."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.waits: list[float] = []
+
+    def wait(self, timeout: float | None = None) -> bool:
+        assert timeout is not None
+        self.waits.append(timeout)
+        return self.is_set()
+
+
+class TestRefusals:
+    def test_an_error_that_is_not_the_item_being_gone_stops_the_run_with_cardmarkets_reason(self) -> None:
+        picks = [pick("Arcane Signet", "A"), pick("Lotus Petal", "B"), pick("Mind Stone", "C")]
+        page = FakeCartPage(picks)
+        page.errors = {picks[1].offer.article_id: "Your cart is full."}
+
+        run = run_cart(page, package(*picks))
+
+        assert run.result.status is CartStatus.STOPPED
+        assert run.result.reason == "Cardmarket refused a request (Your cart is full.); adding stopped."
+        assert run.result.items[1] == ItemResult(picks[1], CartOutcome.REFUSED, 0, "Your cart is full.")
+        assert outcomes(run) == [
+            ("Arcane Signet", CartOutcome.ADDED),
+            ("Lotus Petal", CartOutcome.REFUSED),
+            ("Mind Stone", CartOutcome.NOT_SENT),
+        ]
+        assert len(sent_to(run)) == 2
+        assert page.events[-1] == "load"
+
+    def test_an_error_without_a_reason_also_stops_the_run(self) -> None:
+        picks = [pick("Arcane Signet", "A"), pick("Mind Stone", "B")]
+        page = FakeCartPage(picks)
+        page.errors = {picks[0].offer.article_id: ""}
+
+        run = run_cart(page, package(*picks))
+
+        assert run.result.status is CartStatus.STOPPED
+        assert outcomes(run) == [("Arcane Signet", CartOutcome.REFUSED), ("Mind Stone", CartOutcome.NOT_SENT)]
+        assert len(sent_to(run)) == 1
+
+    def test_three_refusals_in_a_row_stop_the_run_and_the_rest_are_not_sent(self) -> None:
+        picks = [pick(f"Card {n}", f"S{n}") for n in range(1, 6)]
+        page = FakeCartPage(picks)
+        page.refused = {p.offer.article_id for p in picks[:3]}
+
+        run = run_cart(page, package(*picks))
+
+        assert run.result.status is CartStatus.STOPPED
+        assert run.result.reason == "Cardmarket refused 3 requests in a row; adding stopped."
+        assert [i.outcome for i in run.result.items] == [CartOutcome.GONE] * 3 + [CartOutcome.NOT_SENT] * 2
+        assert len(sent_to(run)) == 3
+
+    def test_refusals_with_an_add_between_them_do_not_add_up(self) -> None:
+        picks = [pick(f"Card {n}", f"S{n}") for n in range(1, 6)]
+        page = FakeCartPage(picks)
+        page.refused = {picks[i].offer.article_id for i in (0, 1, 3, 4)}
+
+        run = run_cart(page, package(*picks))
+
+        assert run.result.status is CartStatus.COMPLETE
+        assert len(sent_to(run)) == 5
+
+    def test_a_run_whose_last_offers_are_refused_but_none_is_left_unsent_is_complete(self) -> None:
+        picks = [pick(f"Card {n}", f"S{n}") for n in range(1, 4)]
+        page = FakeCartPage(picks)
+        page.refused = {p.offer.article_id for p in picks}
+
+        run = run_cart(page, package(*picks))
+
+        assert run.result.status is CartStatus.COMPLETE
+        assert [i.outcome for i in run.result.items] == [CartOutcome.GONE] * 3
 
 
 class TestShipping:
@@ -600,6 +714,57 @@ class TestStopping:
 
         assert [(i.outcome, i.in_cart) for i in run.result.items] == [(CartOutcome.NO_ANSWER, 0)]
 
+    @pytest.mark.parametrize(
+        ("silent", "outcome", "in_cart"),
+        [(False, CartOutcome.ADDED, 1), (True, CartOutcome.NO_ANSWER, 0)],
+        ids=["the cart holds it", "the cart does not"],
+    )
+    def test_a_timeout_starting_a_request_is_no_answer_and_the_cart_decides(
+        self, *, silent: bool, outcome: CartOutcome, in_cart: int
+    ) -> None:
+        picks = [pick("Arcane Signet", "A"), pick("Mind Stone", "B")]
+        page = FakeCartPage(picks)
+        first = picks[0].offer.article_id
+        page.start_timeout = {first}
+        if silent:
+            page.silent = {first}
+
+        run = run_cart(page, package(*picks))
+
+        assert run.result.status is CartStatus.STOPPED
+        assert run.result.reason == "Cardmarket did not answer; adding stopped."
+        assert [(i.outcome, i.in_cart) for i in run.result.items] == [
+            (outcome, in_cart),
+            (CartOutcome.NOT_SENT, 0),
+        ]
+        assert len(sent_to(run)) == 1
+
+    def test_cancelling_while_an_answer_is_awaited_stops_polling_at_once(self) -> None:
+        picks = [pick("Arcane Signet", "A"), pick("Mind Stone", "B")]
+        page = FakeCartPage(picks)
+        page.silent = {picks[0].offer.article_id}
+        cancel = threading.Event()
+        page.on_event = lambda event: cancel.set() if event == f"sleep {ANSWER_POLL_S}" else None
+
+        run = run_cart(page, package(*picks), cancel)
+
+        assert run.result.status is CartStatus.CANCELLED
+        assert [i.outcome for i in run.result.items] == [CartOutcome.NO_ANSWER, CartOutcome.NOT_SENT]
+        assert run.gaps.waits.count(ANSWER_POLL_S) == 1
+        assert len(sent_to(run)) == 1
+
+    def test_the_default_pacing_waits_on_the_cancel_event_so_a_cancel_ends_every_wait(self) -> None:
+        picks = [pick("Mind Stone", "B")]
+        page = FakeCartPage(picks)
+        cancel = WaitRecorder()
+
+        browser = cast("FormBrowser", page)
+
+        result = add_to_cart(browser, package(*picks), cancel=cancel, uniform=Gaps(page).uniform)
+
+        assert result.status is CartStatus.COMPLETE
+        assert cancel.waits == [4.5, 4.5, 4.5]
+
     def test_a_page_without_the_token_stops_before_sending_and_still_reads_the_cart(self) -> None:
         picks = [pick("Mind Stone", "B")]
         page = FakeCartPage(picks)
@@ -637,6 +802,7 @@ class TestStopping:
         run = run_cart(page, package(*picks))
 
         assert run.result.status is CartStatus.CANCELLED
+        assert run.result.reason == "The cart was not read back; check it on Cardmarket."
         assert [(i.outcome, i.in_cart) for i in run.result.items] == [(CartOutcome.ADDED, None)]
 
     @pytest.mark.parametrize(
