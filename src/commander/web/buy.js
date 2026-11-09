@@ -296,8 +296,6 @@ function paintBuyStatus(status) {
   cancel.hidden = !running;
   cancel.disabled = status.cancelling;
   cancel.textContent = status.cancelling ? "Cancelling…" : adding ? "Cancel adding" : "Cancel scan";
-  // The run that starts from the cart button disables it, which would drop the focus.
-  if (running && document.activeElement === cart) cancel.focus();
 
   const stopped = status.phase === "stopped";
   const error = $("buy-error");
@@ -311,7 +309,22 @@ function paintBuyStatus(status) {
   }
   renderBuyResults(status);
   renderBuyCart(status.cart ?? null);
+  keepBuyFocus(status);
   paintBuyPane();
+}
+
+// A button that has the focus and is disabled or hidden by this paint hands it on, so the keyboard is not
+// dropped on the page: Scan and Add to cart to Cancel, Cancel to the heading while it cancels, and at the end
+// of the run to the cart report's title or Scan.
+function keepBuyFocus(status) {
+  const focused = document.activeElement;
+  const cancel = $("buy-cancel");
+  if (status.running) {
+    if (status.cancelling && focused === cancel) $("buy-title").focus();
+    else if (!status.cancelling && ($("buy-scan") === focused || $("buy-cart") === focused)) cancel.focus();
+  } else if (focused === cancel) {
+    (status.cart ? $("buy-cart-title") : $("buy-scan")).focus();
+  }
 }
 
 // While the owner signs in or passes Cloudflare's check, the pane takes the screen below the scan row.

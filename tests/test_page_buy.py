@@ -417,6 +417,47 @@ class TestScanning:
         assert seen["timers"] == 2
         assert seen["calls"] == ["buy", "buy_scan", "buy_status"]
 
+    def test_the_focus_follows_the_run_from_scan_to_cancel_and_back_to_scan_at_its_end(self) -> None:
+        seen = run("""
+        await open();
+        const focused = () => document.activeElement.id;
+        $("buy-scan").focus();
+        stub.buy_scan = async () => idle({ phase: "wants", running: true, progress: "Starting the scan" });
+        await fire($("buy-scan"), "click");
+        const started = focused();
+        stub.buy_cancel = async () => idle({ phase: "scanning", running: true, cancelling: true });
+        await fire($("buy-cancel"), "click");
+        const cancelling = focused();
+        $("buy-cancel").hidden = false;
+        $("buy-cancel").focus();
+        stub.buy_status = async () => done();
+        await pollBuy();
+        return { started, cancelling, ended: focused() };
+        """)
+        assert seen == {"started": "buy-cancel", "cancelling": "buy-title", "ended": "buy-scan"}
+
+    def test_a_run_that_ends_with_a_cart_report_moves_the_focus_to_its_title(self) -> None:
+        seen = run_cart("""
+        await open(view({ status: idle({ phase: "cart", running: true, results: RESULTS }) }));
+        $("buy-cancel").focus();
+        paintBuyStatus(carted());
+        return [document.activeElement.id, $("buy-cart-title").getAttribute("tabindex")];
+        """)
+        assert seen == ["buy-cart-title", "-1"]
+
+    def test_a_paint_leaves_the_focus_alone_when_it_is_somewhere_else(self) -> None:
+        seen = run("""
+        await open(view({ status: idle({ phase: "scanning", running: true }) }));
+        const box = walk($("buy-decks")).find((n) => n.tagName === "INPUT");
+        box.focus();
+        paintBuyStatus(done());
+        const after = document.activeElement === box;
+        $("buy-scan").focus();
+        paintBuyStatus(done());
+        return [after, document.activeElement.id];
+        """)
+        assert seen == [True, "buy-scan"]
+
     def test_a_second_click_while_the_first_is_sent_is_ignored(self) -> None:
         seen = run("""
         await open();
