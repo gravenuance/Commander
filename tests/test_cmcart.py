@@ -34,6 +34,7 @@ from commander.cmpages import PageError
 from commander.cmscan import MAX_GAP_S, MIN_GAP_S
 from commander.cmsession import LOAD_TIMEOUT_S, BrowserError, Cancelled, FormBrowser
 from commander.cmshipping import ShippingQuote
+from commander.cmwants import WANTS_URL
 from commander.sellersolve import Package, Pick, Shipment
 from conftest import FIXTURES
 from test_sellersolve import offer
@@ -233,6 +234,7 @@ class FakeCartPage:
         # Loads that fail, by their position (1 is the first load).
         self.load_failures: dict[int, Exception] = {}
         self.closed = False
+        self.page: str | None = None
         self._loads = 0
         self._reply: str | None = None
 
@@ -244,12 +246,13 @@ class FakeCartPage:
         self.closed = True
 
     def load(self, url: str) -> str:
-        assert url == CART_URL
+        assert url in (CART_URL, WANTS_URL)
         self._loads += 1
-        self.record("load")
+        self.page = url
+        self.record("load" if url == CART_URL else "load wants")
         if self._loads in self.load_failures:
             raise self.load_failures[self._loads]
-        return cart_page(self.cart)
+        return cart_page(self.cart) if url == CART_URL else "<main>wants lists</main>"
 
     def act(self, script: str) -> str:
         if "fetch(" in script:
@@ -262,7 +265,10 @@ class FakeCartPage:
         raise AssertionError(f"the cart never submits a form: {script}")
 
     def _send(self, script: str) -> str:
-        if self.no_token:
+        # As live: only the cart's own item forms carry the token there, so an empty cart page has none; the
+        # wants lists page always has one (its create-list form).
+        token = self.page == WANTS_URL or (self.page == CART_URL and bool(self.cart))
+        if self.no_token or not token:
             return 'no element matches input[name="__cmtkn"]'
         article, copies = (
             number_after(r"const id = ", script),
@@ -373,6 +379,8 @@ class TestAdding:
         assert page.events == [
             "load",
             "sleep 4.5",
+            "load wants",
+            "sleep 4.5",
             f"send {a_signet} x2",
             "sleep 4.5",
             f"send {a_petal} x1",
@@ -395,8 +403,24 @@ class TestAdding:
 
         run = run_cart(page, package(p))
 
-        assert run.gaps.bounds == [(MIN_GAP_S, MAX_GAP_S)] * 2
+        assert run.gaps.bounds == [(MIN_GAP_S, MAX_GAP_S)] * 3
         assert page.events[0] == "load"
+
+    def test_the_requests_go_out_from_the_wants_lists_page_as_an_empty_cart_page_has_no_token(self) -> None:
+        page = FakeCartPage([p := pick("Mind Stone", "B")])
+
+        run = run_cart(page, package(p))
+
+        assert page.events[:3] == ["load", "sleep 4.5", "load wants"]
+        assert outcomes(run) == [("Mind Stone", CartOutcome.ADDED)]
+
+    def test_nothing_to_send_loads_no_wants_page(self) -> None:
+        page = FakeCartPage([p := pick("Mind Stone", "B")])
+        page.cart = [CartSeller("B", 5, [CartRow(p.offer.article_id, "Mind Stone", 1)])]
+
+        run_cart(page, package(p))
+
+        assert page.events == ["load", "sleep 4.5", "load"]
 
     def test_the_progress_names_each_card_sent_and_counts_only_those_sent(self) -> None:
         picks = [pick("Mind Stone", "B"), pick("Lotus Petal", "A"), pick("Arcane Signet", "A")]
@@ -505,7 +529,15 @@ class TestStopping:
             ("Mind Stone", CartOutcome.NOT_SENT),
         ]
         first = picks[0].offer.article_id
-        assert page.events == ["load", "sleep 4.5", f"send {first} x1", "sleep 4.5", "load"]
+        assert page.events == [
+            "load",
+            "sleep 4.5",
+            "load wants",
+            "sleep 4.5",
+            f"send {first} x1",
+            "sleep 4.5",
+            "load",
+        ]
         assert run.result.copies(CartOutcome.ADDED) == 1
         assert run.result.copies(CartOutcome.NOT_SENT) == 2
 
@@ -578,13 +610,14 @@ class TestStopping:
         assert run.result.status is CartStatus.STOPPED
         assert run.result.reason == "Cardmarket's page was not as expected; adding stopped."
         assert outcomes(run) == [("Mind Stone", CartOutcome.NOT_SENT)]
-        assert page.events == ["load", "sleep 4.5", "sleep 4.5", "load"]
+        assert page.events == ["load", "sleep 4.5", "load wants", "sleep 4.5", "sleep 4.5", "load"]
 
     def test_a_cart_that_cannot_be_read_back_leaves_the_answers_unchecked(self) -> None:
         picks = [pick("Arcane Signet", "A"), pick("Mind Stone", "B")]
         page = FakeCartPage(picks)
         page.refused = {picks[1].offer.article_id}
-        page.load_failures = {2: BrowserError("the window failed")}
+        # Loads: the cart, the wants lists page, then the cart read back.
+        page.load_failures = {3: BrowserError("the window failed")}
 
         run = run_cart(page, package(*picks))
 
@@ -599,7 +632,7 @@ class TestStopping:
     def test_cancelling_while_the_cart_is_read_back_is_a_cancelled_run(self) -> None:
         picks = [pick("Mind Stone", "B")]
         page = FakeCartPage(picks)
-        page.load_failures = {2: Cancelled("cancelled while the cart waited for the owner")}
+        page.load_failures = {3: Cancelled("cancelled while the cart waited for the owner")}
 
         run = run_cart(page, package(*picks))
 

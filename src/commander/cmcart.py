@@ -1,12 +1,13 @@
 """Puts a confirmed package in the Cardmarket cart and reads the cart back (ADR 0067).
 
 `add_to_cart` loads the cart page, then sends one add request per offer, the request the offer's own cart
-button sends: an ajax post from the signed-in page with that page's token, which the page script makes with
-`fetch`, so it carries the session and the headers Cardmarket's own script sends. Requests are paced like the
-scan's. It only ever adds what it was given: an article already in the cart is left as it is, and nothing is
-removed, cleared or checked out. When a request gets no answer the state of the cart is unknown, so adding
-stops and the cart page is read to say what is there. The cart is read once more at the end and compared with
-the package: each offer's copies, and each of the package's sellers' shipping against the estimate.
+button sends: an ajax post with the session's token from the wants lists page, which the page script makes
+with `fetch`, so it carries the session and the headers Cardmarket's own script sends. Requests are paced
+like the scan's. It only ever adds what it was given: an article already in the cart is left as it is, and
+nothing is removed, cleared or checked out. When a request gets no answer the state of the cart is unknown,
+so adding stops and the cart page is read to say what is there. The cart is read once more at the end and
+compared with the package: each offer's copies, and each of the package's sellers' shipping against the
+estimate.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from typing import TYPE_CHECKING, cast
 from commander.cmpages import CartShipment, PageError, read_cart
 from commander.cmscan import MAX_GAP_S, MIN_GAP_S
 from commander.cmsession import LOAD_TIMEOUT_S, BrowserError, Cancelled, LoadTimeout
+from commander.cmwants import WANTS_URL
 from commander.htmltree import parse_html, with_class
 from commander.sellersolve import Package, Pick, card_key
 
@@ -241,6 +243,8 @@ class _Adder:
         before = self._read_cart()
         in_cart_before = _copies_by_article(before)
         todo = [pick for pick in picks if pick.offer.article_id not in in_cart_before]
+        if todo:
+            self._open_sending_page()
         sent, status, reason = self._send(todo)
         try:
             after = self._read_cart()
@@ -266,6 +270,13 @@ class _Adder:
         self._pace()
         log.debug("loading %s", CART_URL)
         return read_cart(self._browser.load(CART_URL))
+
+    def _open_sending_page(self) -> None:
+        """The requests go out from the wants lists page: its create-list form always carries the session's
+        token, while the cart page has one only in its items' forms, so an empty cart has none."""
+        self._pace()
+        log.debug("loading %s", WANTS_URL)
+        self._browser.load(WANTS_URL)
 
     # --- the requests ---------------------------------------------------------------------------------
 
