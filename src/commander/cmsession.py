@@ -297,10 +297,13 @@ class WebviewDriver:
     def navigate(self, url: str, timeout_s: float) -> bool:
         loaded = self._window.events.loaded
         loaded.clear()
+        # pywebview's load_url sets the control's Source, which WebView2 ignores when it already holds that
+        # address: reloading the wants list after a form posted back to it never loaded (live, 2026-11-09).
+        # CoreWebView2.Navigate always loads.
         try:
-            _within(CALL_TIMEOUT_S, lambda: self._window.load_url(url))
-        except TimeoutError:
-            log.warning("load_url did not return for %s", url)
+            self._on_ui_thread(lambda core: core.Navigate(url))
+        except LoadTimeout:
+            log.warning("the window did not start loading %s", url)
             return False
         return loaded.wait(timeout_s)
 
