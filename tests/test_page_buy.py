@@ -660,6 +660,33 @@ class TestTheCardmarketPane:
         """)
         assert seen == {"pane": True, "panes": [[24, 120, 800, 420, 1], [0, 0, 0, 0, 1]]}
 
+    def test_an_area_that_changes_while_a_report_is_out_is_reported_after_it_in_order(self) -> None:
+        seen = run("""
+        placePane({ left: 24, top: 120, width: 800, height: 420 });
+        const status = idle({ phase: "signin", running: true, progress: "x" });
+        let release;
+        stub.buy_pane = (...area) => new Promise((resolve) => {
+          panes.push(area);
+          if (panes.length === 1) release = () => resolve({}); else resolve({});
+        });
+        const opening = open(view({ status }));
+        await settle();
+        const during = panes.length;
+        placePane({ left: 24, top: 120, width: 700, height: 380 });
+        await fire(window, "resize");
+        const stillOne = panes.length;
+        release();
+        await opening;
+        await settle();
+        return { during, stillOne, panes, sending: buyState.paneSending };
+        """)
+        assert seen == {
+            "during": 1,
+            "stillOne": 1,
+            "panes": [[24, 120, 800, 420, 1], [24, 120, 700, 380, 1]],
+            "sending": False,
+        }
+
     def test_a_report_the_bridge_refused_is_sent_again_with_the_next_paint(self) -> None:
         seen = run("""
         placePane({ left: 24, top: 120, width: 800, height: 420 });
@@ -2354,6 +2381,17 @@ class TestTheCartReport:
         return $("buy-cart-items").children[0] === items;
         """)
         assert seen is True
+
+    def test_forgetting_the_account_closes_an_open_confirmation(self) -> None:
+        seen = run_cart("""
+        await open(view({ status: done() }));
+        await pickPackage();
+        await fire($("buy-cart"), "click");
+        const before = $("buy-cart-dialog").open;
+        buyForget();
+        return [before, $("buy-cart-dialog").open, $("buy-cart-dialog-sellers").children.length];
+        """)
+        assert seen == [True, False, 2]
 
     def test_forgetting_the_account_clears_the_report_and_the_package(self) -> None:
         seen = run_cart("""
