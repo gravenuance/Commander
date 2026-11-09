@@ -9,6 +9,7 @@ shipping methods of a seller's country come from a caller-supplied function.
 
 import logging
 import re
+import unicodedata
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
@@ -25,6 +26,8 @@ SOLVE_TIME_LIMIT_S = 20.0
 _VERSION_SUFFIX = re.compile(r"\s*\(V\.\d+\)$", re.IGNORECASE)
 # Wants are exported as "Front // Back", Cardmarket shows "Front / Back".
 _FACE_SEPARATOR = re.compile(r"\s*/{1,2}\s*")
+# Cardmarket's own letters for what NFKD does not split into letter and mark.
+_LIGATURES = {"Æ": "Ae", "æ": "ae", "Œ": "Oe", "œ": "oe", "ß": "ss"}
 
 Routes = Callable[[str], tuple[ShippingMethod, ...]]
 
@@ -94,10 +97,17 @@ class Package:
         return len(self.shipments)
 
 
+def fold_marks(name: str) -> str:
+    """The name with its accents dropped as Cardmarket drops them ("Fíli" is "Fili", "Æther" "Aether")."""
+    for ligature, letters in _LIGATURES.items():
+        name = name.replace(ligature, letters)
+    return "".join(c for c in unicodedata.normalize("NFKD", name) if not unicodedata.combining(c))
+
+
 def card_key(name: str) -> str:
-    """The key wants and offers are matched by: case-folded, without a "(V.1)" suffix, and with " // " and
-    " / " alike between the faces of a card."""
-    unversioned = _VERSION_SUFFIX.sub("", " ".join(name.split()))
+    """The key wants and offers are matched by: case-folded, without accents or a "(V.1)" suffix, and with
+    " // " and " / " alike between the faces of a card."""
+    unversioned = _VERSION_SUFFIX.sub("", " ".join(fold_marks(name).split()))
     return " // ".join(_FACE_SEPARATOR.split(unversioned)).casefold()
 
 
@@ -177,7 +187,8 @@ def _tiers(methods: Iterable[ShippingMethod], *, tracked_only: bool, most_cards:
     return tuple(kept)
 
 
-def _merged_wants(wants: Iterable[WantedCard]) -> dict[str, WantedCard]:
+def merged_wants(wants: Iterable[WantedCard]) -> dict[str, WantedCard]:
+    """The wants by `card_key`, a card wanted twice as one want of the summed quantity (first name kept)."""
     merged: dict[str, WantedCard] = {}
     for want in wants:
         key = card_key(want.name)
@@ -187,7 +198,7 @@ def _merged_wants(wants: Iterable[WantedCard]) -> dict[str, WantedCard]:
 
 
 def _build_market(wants: Iterable[WantedCard], offers: Iterable[Offer], routes: Routes) -> _Market:
-    wanted = _merged_wants(wants)
+    wanted = merged_wants(wants)
     most_cards = sum(w.quantity for w in wanted.values())
     stocked = sorted(
         (o for o in offers if o.buyable and o.quantity > 0 and card_key(o.card) in wanted),

@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, replace
 from enum import Enum
+from urllib.parse import urlsplit
 
 from commander.htmltree import Node, Predicate, parse_html, tagged, with_class
 
@@ -133,7 +134,16 @@ class WantsList:
     wants: tuple[Want, ...]
 
 
+@dataclass(slots=True, frozen=True)
+class WantsListEntry:
+    """One of the buyer's wants lists, as the lists page names it."""
+
+    list_id: int
+    name: str
+
+
 _CARD_PAGE = "card page"
+_WANTS_LISTS_PAGE = "wants lists page"
 _SELLER_PAGE = "seller offers page"
 _CART_PAGE = "shopping cart"
 _WANTS_PAGE = "wants list page"
@@ -145,6 +155,8 @@ _PAGE_OF = re.compile(r"Page\s+\d+\s+of\s+(?P<pages>\d+)")
 _SHIPPING_PRICE_SUFFIX = re.compile(r"\s*\(\d[\d.,]*\s*€\)\s*$")
 _USER_PATH = re.compile(r"/en/Magic/Users/[^/?#]+")
 _WANTS_ADD_CARDS = re.compile(r"/en/Magic/Wants/(?P<id>\d+)/AddCards")
+_WANTS_LIST_PATH = re.compile(r"/en/Magic/Wants/(?P<id>\d+)/?")
+_CREATE_WANTS_LIST = "WantsList_CreateWantsList"
 _LOCATION_PREFIX = "Item location: "
 _PRODUCT_PATH = "/en/Magic/Products/"
 _FOIL = "Foil"
@@ -478,3 +490,29 @@ def read_wants_list(html: str) -> WantsList:
         if checkbox is not None:
             wants.append(_want(checkbox, row))
     return WantsList(list_id=list_id, name=name, wants=tuple(wants))
+
+
+def read_wants_lists(html: str) -> tuple[WantsListEntry, ...]:
+    """The buyer's wants lists from the lists page, in page order.
+
+    A list's name is the last text before its first link to `/en/Magic/Wants/<id>` (found so on the live
+    page, not confirmed against a saved one). The page must hold the form that creates a list, which also
+    makes an empty page a page with no lists rather than a page of another kind.
+    """
+    root = _open_page(html, _WANTS_LISTS_PAGE)
+    if root.find(lambda n: n.tag == "form" and (n.get("action") or "").endswith(_CREATE_WANTS_LIST)) is None:
+        raise PageError(f"{_WANTS_LISTS_PAGE}: no form to create a list")
+    lists: dict[int, WantsListEntry] = {}
+    last_text = ""
+    for item in root.walk():
+        if isinstance(item, str):
+            last_text = item.strip() or last_text
+            continue
+        match = _WANTS_LIST_PATH.fullmatch(urlsplit(item.get("href") or "").path) if item.tag == "a" else None
+        if match is None or int(match["id"]) in lists:
+            continue
+        list_id = int(match["id"])
+        if not last_text:
+            raise PageError(f"{_WANTS_LISTS_PAGE}: list {list_id} has no name before its link")
+        lists[list_id] = WantsListEntry(list_id, last_text)
+    return tuple(lists.values())

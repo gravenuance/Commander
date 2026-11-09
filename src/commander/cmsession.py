@@ -55,6 +55,8 @@ CALL_TIMEOUT_S = 10.0
 READY_TIMEOUT_S = 45.0
 BLANK_PAGE = "<p style='font-family:sans-serif'>Starting…</p>"
 _OUTER_HTML = "document.documentElement.outerHTML"
+# What a script that clicked a submit button answers.
+SUBMITTED = "submitted"
 
 
 class BrowserError(Exception):
@@ -81,6 +83,19 @@ class Browser(Protocol):
     def close(self) -> None: ...
 
 
+class FormBrowser(Browser, Protocol):
+    """A `Browser` that also fills in and submits the forms of the page it holds (the wants list)."""
+
+    def act(self, script: str) -> str:
+        """Run `script` on the current page and return the string it answers. The script must not navigate."""
+        ...
+
+    def submit(self, script: str) -> str:
+        """Run `script`, which clicks a submit button and answers `SUBMITTED`, wait for the page that loads
+        in answer and return its HTML, checked like `load`'s."""
+        ...
+
+
 class PageDriver(Protocol):
     """One window, as narrowly as `SessionBrowser` needs it."""
 
@@ -90,6 +105,18 @@ class PageDriver(Protocol):
 
     def read_html(self, timeout_s: float) -> str | None:
         """The current page's HTML; None when the window did not answer within `timeout_s`."""
+        ...
+
+    def run_script(self, script: str, timeout_s: float) -> str | None:
+        """Run `script` in the page; the string it answers, or None when it answered no string in time."""
+        ...
+
+    def begin_navigation(self) -> None:
+        """Forget any load already seen, so `wait_loaded` waits for the next one. Call before the click."""
+        ...
+
+    def wait_loaded(self, timeout_s: float) -> bool:
+        """True once a page has loaded since `begin_navigation` (or `navigate`)."""
         ...
 
     def read_session_cookie(self) -> SessionCookie | None: ...
@@ -166,10 +193,33 @@ class SessionBrowser:
             raise ValueError(f"not a Cardmarket address: {url}")
         if not self._driver.navigate(url, LOAD_TIMEOUT_S):
             raise LoadTimeout(f"{url} did not finish loading within {LOAD_TIMEOUT_S:.0f} s")
-        html = self._wait_out_challenge(url)
+        return self._settled_page(url)
+
+    def act(self, script: str) -> str:
+        answer = self._driver.run_script(script, CALL_TIMEOUT_S)
+        if answer is None:
+            raise LoadTimeout("the window did not answer the script")
+        return answer
+
+    def submit(self, script: str) -> str:
+        # The load event is cleared before the click: a click leaves a stale one set, and the page that
+        # follows would then be read before it exists.
+        self._driver.begin_navigation()
+        answer = self._driver.run_script(script, CALL_TIMEOUT_S)
+        if answer is not None and answer != SUBMITTED:
+            raise BrowserError(f"the page did not take the step: {answer}")
+        if answer is None:
+            log.warning("the window gave no answer to a submit script; waiting for the page anyway")
+        if not self._driver.wait_loaded(LOAD_TIMEOUT_S):
+            raise LoadTimeout(f"no page loaded within {LOAD_TIMEOUT_S:.0f} s of the submit")
+        return self._settled_page("the page after the submit")
+
+    def _settled_page(self, where: str) -> str:
+        """The loaded page's HTML once any challenge has passed; refuses a sign-in page."""
+        html = self._wait_out_challenge(where)
         state = page_state(html)
         if state is PageState.SIGNED_OUT:
-            raise SignedOut(f"{url} asks to sign in; the Cardmarket session has ended")
+            raise SignedOut(f"{where} asks to sign in; the Cardmarket session has ended")
         if state is PageState.SIGNED_IN:
             self._keeper.save()
         return html
@@ -246,7 +296,6 @@ class WebviewDriver:
 
     def navigate(self, url: str, timeout_s: float) -> bool:
         loaded = self._window.events.loaded
-        # Only load_url clears the event; a click that navigates leaves it set, so the scan never clicks.
         loaded.clear()
         try:
             _within(CALL_TIMEOUT_S, lambda: self._window.load_url(url))
@@ -261,6 +310,20 @@ class WebviewDriver:
         except TimeoutError:
             return None
         return html if isinstance(html, str) else None
+
+    def run_script(self, script: str, timeout_s: float) -> str | None:
+        try:
+            answer = _within(timeout_s, lambda: self._window.evaluate_js(script))
+        except TimeoutError:
+            return None
+        return answer if isinstance(answer, str) else None
+
+    def begin_navigation(self) -> None:
+        # Only load_url or this clears the event; a click that navigates leaves it set.
+        self._window.events.loaded.clear()
+
+    def wait_loaded(self, timeout_s: float) -> bool:
+        return self._window.events.loaded.wait(timeout_s)
 
     def read_session_cookie(self) -> SessionCookie | None:
         try:

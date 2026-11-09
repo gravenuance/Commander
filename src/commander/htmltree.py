@@ -39,6 +39,13 @@ class Node:
                 yield child
                 yield from child.elements()
 
+    def walk(self) -> Iterator[Node | str]:
+        """Every descendant element and text, in document order (an element before its content)."""
+        for child in self.children:
+            yield child
+            if isinstance(child, Node):
+                yield from child.walk()
+
     def find_all(self, predicate: Predicate) -> list[Node]:
         return [node for node in self.elements() if predicate(node)]
 

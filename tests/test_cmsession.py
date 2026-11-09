@@ -3,6 +3,8 @@ import logging
 import pytest
 
 from commander.cmsession import (
+    SUBMITTED,
+    BrowserError,
     ChallengeError,
     LoadTimeout,
     SessionBrowser,
@@ -36,6 +38,22 @@ class FakeDriver:
         self.cookie: SessionCookie | None = None
         self.added: list[SessionCookie] = []
         self.closed = False
+        # What run_script answers, and the order of the calls the submit makes.
+        self.script_answer: str | None = SUBMITTED
+        self.scripts: list[str] = []
+        self.calls: list[str] = []
+
+    def run_script(self, script: str, timeout_s: float) -> str | None:  # noqa: ARG002 - the protocol's name
+        self.scripts.append(script)
+        self.calls.append("script")
+        return self.script_answer
+
+    def begin_navigation(self) -> None:
+        self.calls.append("begin")
+
+    def wait_loaded(self, timeout_s: float) -> bool:  # noqa: ARG002 - the protocol's parameter name
+        self.calls.append("wait")
+        return self.loads
 
     def navigate(self, url: str, timeout_s: float) -> bool:  # noqa: ARG002 - the protocol's parameter name
         self.navigated.append(url)
@@ -149,6 +167,82 @@ class TestLoad:
         browser_of(driver).close()
 
         assert driver.closed is True
+
+
+class TestAct:
+    def test_it_returns_what_the_script_answers(self) -> None:
+        driver = FakeDriver([NEUTRAL])
+        driver.script_answer = "ok"
+
+        assert browser_of(driver).act("1 + 1") == "ok"
+        assert driver.scripts == ["1 + 1"]
+        assert driver.navigated == []
+
+    def test_a_window_that_does_not_answer_is_a_timeout(self) -> None:
+        driver = FakeDriver([NEUTRAL])
+        driver.script_answer = None
+
+        with pytest.raises(LoadTimeout, match="did not answer the script"):
+            browser_of(driver).act("1 + 1")
+
+
+class TestSubmit:
+    def test_the_load_event_is_cleared_before_the_script_and_waited_for_after(self) -> None:
+        driver = FakeDriver([SIGNED_IN])
+
+        page = browser_of(driver).submit("click()")
+
+        assert page == SIGNED_IN
+        assert driver.calls == ["begin", "script", "wait"]
+        assert driver.scripts == ["click()"]
+
+    def test_a_script_that_did_not_click_fails_with_its_reason_and_waits_for_nothing(self) -> None:
+        driver = FakeDriver([NEUTRAL])
+        driver.script_answer = "no element matches"
+
+        with pytest.raises(BrowserError, match="did not take the step: no element matches"):
+            browser_of(driver).submit("click()")
+
+        assert driver.calls == ["begin", "script"]
+
+    def test_a_page_that_never_loads_is_a_timeout(self) -> None:
+        driver = FakeDriver([NEUTRAL], loads=False)
+
+        with pytest.raises(LoadTimeout, match="no page loaded within 45 s"):
+            browser_of(driver).submit("click()")
+
+    def test_a_window_silent_about_the_script_still_gets_the_page_that_loads(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        driver = FakeDriver([NEUTRAL])
+        driver.script_answer = None
+
+        with caplog.at_level(logging.WARNING):
+            assert browser_of(driver).submit("click()") == NEUTRAL
+
+        assert "no answer to a submit script" in caplog.text
+
+    def test_the_page_that_loads_is_waited_out_of_a_challenge(self) -> None:
+        clock = FakeClock()
+        driver = FakeDriver([CHALLENGE, NEUTRAL])
+
+        assert browser_of(driver, clock=clock).submit("click()") == NEUTRAL
+        assert clock.sleeps == [1.0]
+
+    def test_a_page_that_asks_to_sign_in_is_signed_out(self) -> None:
+        driver = FakeDriver([SIGN_IN])
+
+        with pytest.raises(SignedOut, match="session has ended"):
+            browser_of(driver).submit("click()")
+
+    def test_a_signed_in_page_saves_the_session_cookie(self) -> None:
+        store = FakeStore()
+        driver = FakeDriver([SIGNED_IN])
+        driver.cookie = FIRST
+
+        browser_of(driver, store).submit("click()")
+
+        assert store.puts == [FIRST]
 
 
 class TestChallenge:

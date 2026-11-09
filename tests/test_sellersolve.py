@@ -1,8 +1,10 @@
 import itertools
+import re
 
 import pytest
 
 from commander.cmpages import Condition, Offer
+from commander.cmscan import card_slug
 from commander.cmshipping import ShippingMethod
 from commander.sellersolve import (
     Package,
@@ -437,10 +439,21 @@ def test_the_curve_is_empty_when_nothing_can_be_bought() -> None:
         ("Front // Back (V.2)", "front // back"),
         ("K'Vort-Class Raider", "k'vort-class raider"),
         ("Jace, the Mind Sculptor", "jace, the mind sculptor"),
+        ("Fíli and Kíli, Joyous", "fili and kili, joyous"),
+        ("Lim-Dûl's Vault", "lim-dul's vault"),
+        ("Æther Vial", "aether vial"),
+        ("Jötun Grunt", "jotun grunt"),
     ],
 )
 def test_card_key(name: str, key: str) -> None:
     assert card_key(name) == key
+
+
+@pytest.mark.parametrize(
+    "name", ["Fíli and Kíli, Joyous", "Lim-Dûl's Vault", "Æther Vial", "Jötun Grunt", "Fire // Ice"]
+)
+def test_card_key_and_card_slug_fold_a_name_alike(name: str) -> None:
+    assert card_slug(name).lower() == re.sub(r"[^a-z0-9]+", "-", card_key(name).replace("'", "")).strip("-")
 
 
 def test_card_key_leaves_a_parenthesis_inside_the_name_alone() -> None:

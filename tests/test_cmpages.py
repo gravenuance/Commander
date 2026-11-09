@@ -14,12 +14,14 @@ from commander.cmpages import (
     SellerOffers,
     Want,
     WantsList,
+    WantsListEntry,
     page_state,
     parse_price_cents,
     read_card_offers,
     read_cart,
     read_seller_offers,
     read_wants_list,
+    read_wants_lists,
 )
 from conftest import FIXTURES
 
@@ -369,6 +371,73 @@ class TestWantsList:
         read = read_wants_list(emptied)
 
         assert (read.list_id, read.name, read.wants) == (26107608, "CMDR PROBE", ())
+
+
+CREATE_FORM = (
+    '<form method="POST" action="/en/Magic/PostGetAction/WantsList_CreateWantsList">'
+    '<input name="wlName" id="SWWantsListName"><button type="submit">Create</button></form>'
+)
+
+
+def lists_page(*rows: str, form: str = CREATE_FORM) -> str:
+    """A wants lists page built from the live page's description (no saved copy exists): each list's name
+    in an element just before its link."""
+    body = f"<main><h1>Wants</h1>{form}<div class='lists'>{''.join(rows)}</div></main>"
+    return f"<html><body>{body}</body></html>"
+
+
+def list_row(list_id: int, name: str, link_text: str = "Open") -> str:
+    link = f'<a href="/en/Magic/Wants/{list_id}">{link_text}</a>'
+    return f'<div class="row"><span class="name">{name}</span>{link}</div>'
+
+
+class TestWantsLists:
+    def test_each_list_has_the_name_just_before_its_link(self) -> None:
+        html = lists_page(list_row(18999612, "MONTHLY WANTS"), list_row(26107608, "Commander"))
+
+        assert read_wants_lists(html) == (
+            WantsListEntry(18999612, "MONTHLY WANTS"),
+            WantsListEntry(26107608, "Commander"),
+        )
+
+    def test_a_list_linked_twice_is_read_once_with_the_name_before_its_first_link(self) -> None:
+        row = list_row(5, "Deck money") + '<a href="/en/Magic/Wants/5/">Edit</a>'
+
+        assert read_wants_lists(lists_page(row)) == (WantsListEntry(5, "Deck money"),)
+
+    def test_other_wants_links_are_not_lists(self) -> None:
+        links = (
+            '<a href="/en/Magic/Wants">Wants</a>'
+            '<a href="/en/Magic/Wants/ShoppingWizard?idWantsList=5">Wizard</a>'
+            '<a href="/en/Magic/Wants/5/AddCards">Add</a>'
+        )
+
+        assert read_wants_lists(lists_page(links, list_row(7, "Seven"))) == (WantsListEntry(7, "Seven"),)
+
+    def test_a_name_is_trimmed_and_unescaped(self) -> None:
+        row = list_row(9, "  Foo &amp; Bar \n")
+
+        assert read_wants_lists(lists_page(row)) == (WantsListEntry(9, "Foo & Bar"),)
+
+    def test_a_page_with_the_create_form_and_no_lists_has_none(self) -> None:
+        assert read_wants_lists(lists_page()) == ()
+
+    def test_a_page_without_the_create_form_is_not_the_lists_page(self) -> None:
+        with pytest.raises(PageError, match="wants lists page: no form to create a list"):
+            read_wants_lists(lists_page(list_row(1, "A"), form=""))
+
+    def test_a_link_with_no_text_before_it_has_no_name(self) -> None:
+        form = '<form action="/en/Magic/PostGetAction/WantsList_CreateWantsList"></form>'
+        html = f'<html><body>{form}<a href="/en/Magic/Wants/3"></a></body></html>'
+
+        with pytest.raises(PageError, match="list 3 has no name"):
+            read_wants_lists(html)
+
+    def test_a_challenge_and_a_sign_in_page_are_refused(self) -> None:
+        with pytest.raises(PageError, match="Cloudflare"):
+            read_wants_lists(CHALLENGE)
+        with pytest.raises(PageError, match="sign in"):
+            read_wants_lists(LOGIN)
 
 
 class TestWrongPages:

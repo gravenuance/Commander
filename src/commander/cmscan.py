@@ -14,7 +14,6 @@ import logging
 import random
 import re
 import threading
-import unicodedata
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field, replace
@@ -33,7 +32,7 @@ from commander.cmpages import (
     read_seller_offers,
 )
 from commander.cmsession import Browser, BrowserError
-from commander.sellersolve import WantedCard, card_key
+from commander.sellersolve import WantedCard, card_key, fold_marks
 
 log = logging.getLogger(__name__)
 
@@ -45,19 +44,15 @@ DEFAULT_BASE_SELLERS = 15
 MIN_GAP_S = 4.0
 MAX_GAP_S = 6.0
 
-# Cardmarket's own letters for what NFKD does not split into letter and mark.
-_LIGATURES = {"Æ": "Ae", "æ": "ae", "Œ": "Oe", "œ": "oe", "ß": "ss"}
 _APOSTROPHES = "'\N{RIGHT SINGLE QUOTATION MARK}\N{LEFT SINGLE QUOTATION MARK}`"
 _NOT_SLUG = re.compile(r"[^A-Za-z0-9]+")
 
 
 def card_slug(name: str) -> str:
     """The card's address segment: "Lim-Dûl's Vault" is `Lim-Duls-Vault`, "Fire // Ice" `Fire-Ice`. Marks
-    fold into their letters, apostrophes drop, and every other run of punctuation and spaces is a hyphen."""
-    for ligature, letters in _LIGATURES.items():
-        name = name.replace(ligature, letters)
-    folded = unicodedata.normalize("NFKD", name)
-    letters_only = "".join(c for c in folded if not unicodedata.combining(c) and c not in _APOSTROPHES)
+    fold into their letters (as `card_key` folds them), apostrophes drop, and every other run of punctuation
+    and spaces is a hyphen."""
+    letters_only = "".join(c for c in fold_marks(name) if c not in _APOSTROPHES)
     return _NOT_SLUG.sub("-", letters_only).strip("-")
 
 
