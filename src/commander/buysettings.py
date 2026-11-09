@@ -37,6 +37,7 @@ MAX_COUNTRIES = 100
 MAX_COUNTRY_ID = 9999
 MAX_PRICE_CENTS = 1_000_000
 NOT_AVAILABLE = "Those filters are not available; choose again."
+BAD_REQUEST = "That request was not valid."
 BAD_PRICE = "Max price: 0.01 to 10000 euros, at most two decimals."
 # A price as typed: whole euros, or euros and one or two decimals after a dot or a comma.
 _PRICE_TEXT = re.compile(r"(\d{1,7})(?:[.,](\d{1,2}))?", re.ASCII)
@@ -195,6 +196,20 @@ def check_base_sellers(count: object) -> int:
     if not MIN_BASE_SELLERS <= count <= MAX_BASE_SELLERS:
         raise BuyError(f"Base sellers must be {MIN_BASE_SELLERS} to {MAX_BASE_SELLERS}.")
     return count
+
+
+def check_whole_number(value: object) -> int:
+    """A number the page sent as an id or a count: a bool, a fraction or text is refused, not converted."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise BuyError(BAD_REQUEST)
+    return value
+
+
+def check_flag(value: object) -> bool:
+    """A tick the page sent: only true or false, since text such as "false" would read as true."""
+    if not isinstance(value, bool):
+        raise BuyError(BAD_REQUEST)
+    return value
 
 
 @dataclass(slots=True, frozen=True)

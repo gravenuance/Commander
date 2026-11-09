@@ -61,7 +61,7 @@ from commander.bracketcheck import check_bracket, check_json
 from commander.bracketpreview import preview_json, spellbook_preview
 from commander.budget import resolved_budget
 from commander.buy import BuyEngine, BuyService
-from commander.buysettings import BUY_FILE, BuyError, BuyStore
+from commander.buysettings import BUY_FILE, BuyError, BuyStore, check_flag, check_whole_number
 from commander.buywindows import production_engine
 from commander.carddb import CardDataError, CardDb, CardInfo, CardText, ResolvedCard, Role
 from commander.changetext import change_mark, change_text
@@ -1448,14 +1448,14 @@ class Desk:
         return self._buy.view()
 
     @_guarded
-    def buy_include(self, deck_id: int, included: bool) -> Json:  # noqa: FBT001 — the page's bridge passes positionals
+    def buy_include(self, deck_id: object, included: object) -> Json:
         """Take a deck's cards into the purchase, or leave them out; remembered for the account."""
-        return self._buy.include(int(deck_id), bool(included))
+        return self._buy.include(check_whole_number(deck_id), check_flag(included))
 
     @_guarded
-    def buy_include_card(self, deck_id: int, card: str, included: bool) -> Json:  # noqa: FBT001 — as buy_include
+    def buy_include_card(self, deck_id: object, card: object, included: object) -> Json:
         """Take one of a deck's cards into the purchase, or leave it out; remembered for the account."""
-        return self._buy.include_card(int(deck_id), card, bool(included))
+        return self._buy.include_card(check_whole_number(deck_id), card, check_flag(included))
 
     @_guarded
     def buy_filters(  # noqa: PLR0917 — the page's bridge passes positionals
@@ -1499,13 +1499,13 @@ class Desk:
         return self._buy.set_pane(left, top, width, height, scale)
 
     @_guarded
-    def buy_package(self, sellers: int) -> Json:
-        return self._buy.package(int(sellers))
+    def buy_package(self, sellers: object) -> Json:
+        return self._buy.package(check_whole_number(sellers))
 
     @_guarded
-    def buy_add_to_cart(self, sellers: int) -> Json:
+    def buy_add_to_cart(self, sellers: object) -> Json:
         """Put the package of this many sellers in the owner's Cardmarket cart; buy_status follows it."""
-        return self._buy.add_to_cart(int(sellers))
+        return self._buy.add_to_cart(check_whole_number(sellers))
 
     @_guarded
     def search(self, deck_id: int, text: str) -> Json:
