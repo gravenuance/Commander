@@ -9,6 +9,7 @@ window white.
 from __future__ import annotations
 
 import ctypes
+import importlib
 import logging
 import threading
 import weakref
@@ -220,25 +221,25 @@ class Win32Ops:
         self._handles: weakref.WeakKeyDictionary[Window, int] = weakref.WeakKeyDictionary()
 
     def prepare(self, window: Window, main: Window) -> None:
-        user32 = self._user32
+        hwnd = self._handle(window)
 
         def apply() -> None:
             native: _Native = window.native
             native.Owner = cast("_Native", main.native)
-            hwnd = self._handle(window)
-            style = user32.GetWindowLongPtrW(hwnd, _GWL_EXSTYLE)
-            user32.SetWindowLongPtrW(hwnd, _GWL_EXSTYLE, style & ~_WS_EX_APPWINDOW)
+            self._clear_taskbar_style(hwnd)
 
         _on_ui_thread(main, apply)
 
     def place(self, window: Window, main: Window, area: PaneArea) -> None:
         origin = wintypes.POINT(0, 0)
         if not self._user32.ClientToScreen(self._handle(main), ctypes.byref(origin)):
-            raise BrowserError("the app's window position could not be read")
+            raise _windows_error("the app's window position could not be read")
         x, y, width, height = screen_rect((origin.x, origin.y), area)
-        self._user32.SetWindowPos(
+        placed = self._user32.SetWindowPos(
             self._handle(window), None, x, y, width, height, _SWP_NOZORDER | _SWP_NOACTIVATE
         )
+        if not placed:
+            raise _windows_error("the Cardmarket window could not be placed")
 
     def show(self, window: Window) -> None:
         window.show()
@@ -258,6 +259,19 @@ class Win32Ops:
     def unwatch_moves(self, main: Window, on_moved: Callable[..., None]) -> None:
         main.events.moved -= on_moved
 
+    def _clear_taskbar_style(self, hwnd: int) -> None:
+        """Take the window off the taskbar. Both calls return 0 for a real zero too, so only a 0 with an error
+        set after clearing the last error is a failure; it is read on the thread that made the call."""
+        user32 = self._user32
+        ctypes.set_last_error(0)
+        style = user32.GetWindowLongPtrW(hwnd, _GWL_EXSTYLE)
+        if style == 0 and ctypes.get_last_error() != 0:
+            raise _windows_error("the Cardmarket window's style could not be read")
+        ctypes.set_last_error(0)
+        previous = user32.SetWindowLongPtrW(hwnd, _GWL_EXSTYLE, style & ~_WS_EX_APPWINDOW)
+        if previous == 0 and ctypes.get_last_error() != 0:
+            raise _windows_error("the Cardmarket window's style could not be set")
+
     def _handle(self, window: Window) -> int:
         """The window's hwnd, read on the UI thread once and kept."""
         known = self._handles.get(window)
@@ -274,17 +288,37 @@ class Win32Ops:
         return found[0]
 
 
+def _windows_error(what: str) -> BrowserError:
+    """`what` failed in the Win32 call that just returned; the code is the calling thread's last error."""
+    code = ctypes.get_last_error()
+    return BrowserError(f"{what} (Windows error {code}: {ctypes.FormatError(code).strip()})")
+
+
 def _on_ui_thread(window: Window, work: Callable[[], None]) -> None:
     """Run `work` on the UI thread all pywebview windows share; a UI thread that does not answer fails the
-    page instead of hanging the scan beyond the owner's Cancel."""
-    # pythonnet's .NET objects are untyped; pywebview has loaded the CLR by the time a window exists.
-    from System import Action  # noqa: PLC0415  # pyright: ignore[reportMissingImports, reportUnknownVariableType]
-
+    page instead of hanging the scan beyond the owner's Cancel. On the UI thread itself `work` runs inline,
+    because a marshal made there waits for the very thread it blocks; `work` must not call this for another
+    window from there either. What `work` raises is raised here, as .NET would wrap it."""
     native: Any = window.native
+    if not native.InvokeRequired:
+        work()
+        return
+    failure: list[Exception] = []
+
+    def guarded() -> None:
+        try:
+            work()
+        except Exception as error:  # noqa: BLE001 - handed to the calling thread below
+            failure.append(error)
+
+    # pythonnet's System module exists only once pywebview has loaded the CLR, which a window implies.
+    action: Any = importlib.import_module("System").Action
     try:
-        within(CALL_TIMEOUT_S, lambda: native.Invoke(Action(work)))
+        within(CALL_TIMEOUT_S, lambda: native.Invoke(action(guarded)))
     except TimeoutError as error:
         raise LoadTimeout("the app's UI thread did not answer") from error
+    if failure:
+        raise failure[0]
 
 
 def _load_user32() -> _Native:

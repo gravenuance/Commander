@@ -1017,7 +1017,8 @@ class Desk:
         self._warmed.wait(WARM_CLOSE_SECONDS)
 
     def stop_buying(self) -> None:
-        """The app's window is closing: end a running Cardmarket scan at its next page."""
+        """The app's window is closing: ask a running Cardmarket scan to cancel. The app destroys the
+        Cardmarket windows itself right after, so the scan ends at its next call on one."""
         self._buy.close()
 
     def _warm_decks(self) -> None:
