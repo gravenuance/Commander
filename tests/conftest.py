@@ -373,6 +373,54 @@ class FakeSpellbook:
         return httpx.Response(200, json=answer) if status == HTTP_OK else httpx.Response(status)
 
 
+# Origin and destination ids of the saved real answers: France, Italy and Japan to Sweden.
+CM_SWEDEN = 28
+CM_SHIPPING_FIXTURES = {
+    (12, CM_SWEDEN): "cm_shipping_france_sweden.json",
+    (17, CM_SWEDEN): "cm_shipping_italy_sweden.json",
+    (36, CM_SWEDEN): "cm_shipping_japan_sweden.json",
+}
+
+
+class FakeCardmarketHelp:
+    """Answers Cardmarket's help-site countries and shipping endpoints from the saved real answers.
+
+    `per_page` caps the countries in one answer, as a server may ignore the requested limit; a route without
+    a saved answer is an empty list. Each request's path and query is recorded in `requests`.
+    """
+
+    def __init__(self, per_page: int = 50) -> None:
+        self.per_page = per_page
+        self.countries: list[Json] = load_fixture("cm_countries.json")["items"]
+        self.routes: dict[tuple[int, int], Any] = {
+            route: json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+            for route, name in CM_SHIPPING_FIXTURES.items()
+        }
+        # Set to make the countries answer claim more than it holds.
+        self.total: int | None = None
+        self.status = HTTP_OK
+        self.requests: list[tuple[str, dict[str, str]]] = []
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        params = dict(request.url.params)
+        self.requests.append((request.url.path, params))
+        if request.method != "GET" or self.status != HTTP_OK:
+            return httpx.Response(405 if request.method != "GET" else self.status)
+        if request.url.path == "/api/countries":
+            page = int(params["page"])
+            start = (page - 1) * self.per_page
+            items = self.countries[start : start + self.per_page]
+            total = len(self.countries) if self.total is None else self.total
+            return httpx.Response(200, json={"total": total, "items": items})
+        if request.url.path == "/api/shippingCosts":
+            route = (int(params["fromCountry"]), int(params["toCountry"]))
+            return httpx.Response(200, json=self.routes.get(route, []))
+        return httpx.Response(404)
+
+    def client(self) -> httpx.Client:
+        return httpx.Client(transport=httpx.MockTransport(self.handler))
+
+
 TOPDECK_API = "https://topdeck.gg/api/v2/tournaments"
 # The key the memory keyring holds for every test, and the one the fake TopDeck accepts.
 TOPDECK_KEY = "test-topdeck-key"
