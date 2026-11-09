@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -47,7 +48,9 @@ def run_with(fake: FakeCardmarketHelp, folder: Path, clock: Clock) -> Cardmarket
 def method(
     name: str, price: int, *, tracked: bool = False, weight: int = 100, value: int = 2500
 ) -> ShippingMethod:
-    return ShippingMethod(name, tracked, False, value, weight, price)  # noqa: FBT003 — positional like the model
+    return ShippingMethod(
+        name, tracked=tracked, letter=False, max_value_cents=value, max_weight_g=weight, price_cents=price
+    )
 
 
 def france_methods(tmp_path: Path) -> tuple[ShippingMethod, ...]:
@@ -105,8 +108,22 @@ def test_virtual_delivery_is_not_a_shipment(tmp_path: Path) -> None:
 def test_japan_prices_are_read_in_euros_not_the_yen_stamp_price(tmp_path: Path) -> None:
     methods = run_with(FakeCardmarketHelp(), tmp_path, Clock()).methods(JAPAN, CM_SWEDEN)
     assert len(methods) == 9
-    assert methods[0] == ShippingMethod(JAPAN_PARCEL, True, False, 250_000, 20_000, 3816)  # noqa: FBT003
-    assert methods[-1] == ShippingMethod(JAPAN_PARCEL, True, False, 100_000_000, 20_000, 1_515_508)  # noqa: FBT003
+    assert methods[0] == ShippingMethod(
+        JAPAN_PARCEL,
+        tracked=True,
+        letter=False,
+        max_value_cents=250_000,
+        max_weight_g=20_000,
+        price_cents=3816,
+    )
+    assert methods[-1] == ShippingMethod(
+        JAPAN_PARCEL,
+        tracked=True,
+        letter=False,
+        max_value_cents=100_000_000,
+        max_weight_g=20_000,
+        price_cents=1_515_508,
+    )
 
 
 MISSING = object()
@@ -184,13 +201,13 @@ def test_over_25_euros_the_cheapest_tracked_method_is_chosen(tmp_path: Path) -> 
 
 def test_a_heavy_valuable_order_goes_by_parcel(tmp_path: Path) -> None:
     # 30 cards are 100 g: too heavy for the 50 g tracked letter, so the 500 g parcel at 15,99 €.
-    assert cheapest(france_methods(tmp_path), 30, 3000) == ShippingQuote(COLISSIMO, 1599, True)  # noqa: FBT003
+    assert cheapest(france_methods(tmp_path), 30, 3000) == ShippingQuote(COLISSIMO, 1599, tracked=True)
 
 
 def test_italy_has_no_20_g_letter_so_one_card_takes_the_50_g_one(tmp_path: Path) -> None:
     methods = run_with(FakeCardmarketHelp(), tmp_path, Clock()).methods(ITALY, CM_SWEDEN)
     quote = cheapest(methods, 1, 500)
-    assert quote == ShippingQuote("Postapriority Internazionale - Ufficio Postale", 488, False)  # noqa: FBT003
+    assert quote == ShippingQuote("Postapriority Internazionale - Ufficio Postale", 488, tracked=False)
 
 
 def test_japan_has_no_untracked_letter_so_its_cheapest_fitting_tracked_method_is_chosen(
@@ -326,11 +343,29 @@ def test_each_route_has_its_own_cache(tmp_path: Path) -> None:
     assert len(fake.requests) == 3
 
 
-def test_a_route_cardmarket_does_not_serve_has_no_methods_and_is_remembered(tmp_path: Path) -> None:
+def test_a_route_cardmarket_does_not_serve_has_no_methods_and_is_asked_for_again_with_a_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     fake, clock = FakeCardmarketHelp(), Clock()
     shipping = run_with(fake, tmp_path, clock)
-    assert shipping.methods(JAPAN, FRANCE) == ()
-    assert shipping.methods(JAPAN, FRANCE) == ()
+    with caplog.at_level(logging.WARNING, logger="commander.cmshipping"):
+        assert shipping.methods(JAPAN, FRANCE) == ()
+        assert shipping.methods(JAPAN, FRANCE) == ()
+    # An empty answer may be a hiccup of the help site, so it is not kept for a week.
+    assert len(fake.requests) == 2
+    assert list(tmp_path.glob("*.json")) == []
+    assert [r.getMessage() for r in caplog.records] == [
+        "Cardmarket serves no shipping methods from country 36 to 12",
+        "Cardmarket serves no shipping methods from country 36 to 12",
+    ]
+
+
+def test_an_empty_route_found_in_the_cache_is_asked_for_again(tmp_path: Path) -> None:
+    fake, clock = FakeCardmarketHelp(), Clock()
+    stored: Json = {"format": 1, "fetched_at": clock().isoformat(), "answer": []}
+    (tmp_path / f"cm-shipping-{FRANCE}-{CM_SWEDEN}.json").write_text(json.dumps(stored), encoding="utf-8")
+
+    assert len(run_with(fake, tmp_path, clock).methods(FRANCE, CM_SWEDEN)) == 38
     assert len(fake.requests) == 1
 
 

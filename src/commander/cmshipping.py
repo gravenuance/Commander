@@ -40,7 +40,8 @@ INVALID_COUNTRY_ID = 0
 _WEIGHT_STEPS = ((4, 20), (17, 50), (40, 100))
 _HEAVY_BASE_CARDS = 40
 _HEAVY_BASE_GRAMS = 100
-# Per card beyond the 40, in tenths of a gram: 2.5 g.
+# Per card beyond the 40, in tenths of a gram: 2.5 g. This figure is an assumption (a sleeved card weighs
+# about that); Cardmarket states no rule past 40 cards, so the weight of a big order is an estimate.
 _HEAVY_TENTHS_PER_CARD = 25
 # "1.000.000,00 €": dots between thousands, a comma before two decimals, the euro sign after.
 _EUROS = re.compile(r"(\d{1,3}(?:\.\d{3})+|\d+),(\d{2})\s*€")
@@ -77,7 +78,8 @@ class ShippingQuote:
 
 def order_weight_g(cards: int) -> int:
     """The weight in grams Cardmarket's rule of thumb gives an order of `cards` cards: up to 4 cards fit a
-    20 g letter, 17 a 50 g letter and 40 a 100 g letter; each card beyond 40 adds 2.5 g, rounded up."""
+    20 g letter, 17 a 50 g letter and 40 a 100 g letter; each card beyond 40 adds 2.5 g (our assumption, not
+    Cardmarket's), rounded up."""
     if cards < 1:
         raise ValueError("an order holds at least one card")
     for most_cards, grams in _WEIGHT_STEPS:
@@ -164,14 +166,21 @@ class CardmarketShipping:
     def methods(self, origin_id: int, destination_id: int) -> tuple[ShippingMethod, ...]:
         """The methods from one country to another; empty when Cardmarket serves no such route."""
         path = self._cache_dir / f"cm-shipping-{origin_id}-{destination_id}.json"
-        return self._cached(
+        # An empty answer may be a hiccup of the help site, so it is neither kept nor believed from the cache.
+        methods = self._cached(
             path,
             METHODS_FRESH_FOR,
             lambda: self._fetcher.get_json(
                 SHIPPING_URL, {"locale": LOCALE, "fromCountry": origin_id, "toCountry": destination_id}
             ),
             parse_methods,
+            usable=bool,
         )
+        if not methods:
+            log.warning(
+                "Cardmarket serves no shipping methods from country %d to %d", origin_id, destination_id
+            )
+        return methods
 
     def country_id(self, name: str) -> int | None:
         """The id of the country with this name, ignoring case; None for a name Cardmarket does not list."""
@@ -205,8 +214,11 @@ class CardmarketShipping:
         fresh_for: timedelta,
         fetch: Callable[[], object],
         parse: Callable[[object], T],
+        *,
+        usable: Callable[[T], bool] = lambda _: True,
     ) -> T:
-        stored = self._read(path, fresh_for, parse)
+        """The parsed answer, from the cache while it is fresh. An answer `usable` rejects is never kept."""
+        stored = self._read(path, fresh_for, parse, usable)
         if stored is not None:
             return stored
         try:
@@ -214,11 +226,14 @@ class CardmarketShipping:
             parsed = parse(raw)
         except ShapeError as error:
             raise CmShippingError(f"unexpected answer from Cardmarket's help site: {error}") from error
-        self._write(path, raw)
+        if usable(parsed):
+            self._write(path, raw)
         return parsed
 
-    def _read[T](self, path: Path, fresh_for: timedelta, parse: Callable[[object], T]) -> T | None:
-        """The stored answer when it is current and sound; otherwise None, and it will be fetched again."""
+    def _read[T](
+        self, path: Path, fresh_for: timedelta, parse: Callable[[object], T], usable: Callable[[T], bool]
+    ) -> T | None:
+        """The stored answer when current, sound and usable; otherwise None, and it will be fetched again."""
         try:
             document = as_object(json.loads(path.read_text(encoding="utf-8")), str(path))
             if req_int(document, "format", "cache") != CACHE_FORMAT:
@@ -226,7 +241,8 @@ class CardmarketShipping:
             age = self._now() - datetime.fromisoformat(req_str(document, "fetched_at", "cache"))
             if not timedelta(0) <= age < fresh_for:
                 return None
-            return parse(document.get("answer"))
+            parsed = parse(document.get("answer"))
+            return parsed if usable(parsed) else None
         except FileNotFoundError:
             return None
         except (OSError, ValueError, TypeError) as error:  # unreadable, not JSON, a wrong shape, a naive time
