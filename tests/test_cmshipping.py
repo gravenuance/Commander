@@ -242,8 +242,8 @@ def test_countries_are_read_across_pages_without_the_placeholder(tmp_path: Path)
     assert countries[0] == Country(1, "Austria")
     assert countries[-1] == Country(13, "United Kingdom")
     assert all(c.id != 0 and c.name != "INVALID_ID" for c in countries)
-    # 35 entries in pages of 10 take four requests, each asking for the English names.
-    assert [params["page"] for _, params in fake.requests] == ["1", "2", "3", "4"]
+    # 35 entries in pages of 10 take four requests, counted from page 0, each asking for the English names.
+    assert [params["page"] for _, params in fake.requests] == ["0", "1", "2", "3"]
     assert {(path, params["limit"], params["locale"]) for path, params in fake.requests} == {
         ("/api/countries", "50", "en")
     }
@@ -255,6 +255,25 @@ def test_a_server_that_stops_short_of_the_total_is_an_error(tmp_path: Path) -> N
     fake.total = 35
     with pytest.raises(CmShippingError, match="read 5 of 35"):
         run_with(fake, tmp_path, Clock()).countries()
+
+
+def test_an_empty_country_list_is_refused_and_not_kept(tmp_path: Path) -> None:
+    # Asking for page 1 first answered {"total": 0, "items": []} live and left the app with no countries.
+    fake = FakeCardmarketHelp()
+    fake.countries = []
+    with pytest.raises(CmShippingError, match="no countries"):
+        run_with(fake, tmp_path, Clock()).countries()
+    assert not list(tmp_path.glob("cm-countries*.json"))
+
+
+def test_a_kept_empty_country_list_is_fetched_again(tmp_path: Path) -> None:
+    clock = Clock()
+    stale: Json = {"format": 1, "fetched_at": clock().isoformat(), "answer": {"total": 0, "items": []}}
+    (tmp_path / "cm-countries.json").write_text(json.dumps(stale), encoding="utf-8")
+    fake = FakeCardmarketHelp()
+
+    assert len(run_with(fake, tmp_path, clock).countries()) == 34
+    assert len(fake.requests) == 1
 
 
 def test_country_ids_are_found_by_name_ignoring_case(tmp_path: Path) -> None:

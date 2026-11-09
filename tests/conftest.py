@@ -407,9 +407,12 @@ class FakeCardmarketHelp:
         if request.method != "GET" or self.status != HTTP_OK:
             return httpx.Response(405 if request.method != "GET" else self.status)
         if request.url.path == "/api/countries":
+            # Pages count from 0; a page past the end answers {"total": 0, "items": []} (live, 2026-11-09).
             page = int(params["page"])
-            start = (page - 1) * self.per_page
+            start = page * self.per_page
             items = self.countries[start : start + self.per_page]
+            if not items:
+                return httpx.Response(200, json={"total": 0, "items": []})
             total = len(self.countries) if self.total is None else self.total
             return httpx.Response(200, json={"total": total, "items": items})
         if request.url.path == "/api/shippingCosts":

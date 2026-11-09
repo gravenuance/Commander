@@ -118,6 +118,9 @@ def parse_countries(raw: object) -> tuple[Country, ...]:
         name = req_str(entry, "name", where)
         if country_id != INVALID_COUNTRY_ID and name:
             countries.append(Country(country_id, name))
+    if not countries:
+        # Cardmarket serves dozens; an empty list is a wrong answer, never kept as the truth.
+        raise ShapeError("answer: no countries")
     return tuple(countries)
 
 
@@ -178,18 +181,22 @@ class CardmarketShipping:
     def _fetch_countries(self) -> object:
         items: list[object] = []
         total = 0
-        for page in range(1, MAX_COUNTRY_PAGES + 1):
+        # Pages count from 0, as the help page's own script asks; page 1 of a 35-country list is empty.
+        for page in range(MAX_COUNTRY_PAGES):
             answer = as_object(
                 self._fetcher.get_json(COUNTRIES_URL, {"page": page, "limit": PAGE_SIZE, "locale": LOCALE}),
                 "answer",
             )
-            total = req_int(answer, "total", "answer")
             fresh = req_list(answer, "items", "answer")
+            if not fresh:
+                # A page past the end answers a total of 0, so it says nothing about the list's size.
+                break
+            total = req_int(answer, "total", "answer")
             items.extend(fresh)
             if len(items) >= total:
                 return {"total": total, "items": items}
-            if not fresh:
-                break
+        if not items:
+            raise ShapeError("answer: no countries")
         raise ShapeError(f"answer: read {len(items)} of {total} countries")
 
     def _cached[T](
