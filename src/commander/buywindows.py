@@ -18,7 +18,16 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from commander.buy import BuyEngine, RouteSource
 from commander.buypane import PaneArea, screen_rect
-from commander.cmsession import BLANK_PAGE, BrowserError, Handover, Need, WebviewBrowser
+from commander.cmsession import (
+    BLANK_PAGE,
+    CALL_TIMEOUT_S,
+    BrowserError,
+    Handover,
+    LoadTimeout,
+    Need,
+    WebviewBrowser,
+    within,
+)
 from commander.cmshipping import CardmarketShipping
 from commander.credentials import CardmarketSessionStore, SessionStore
 from commander.net import Fetcher
@@ -254,12 +263,16 @@ class Win32Ops:
 
 
 def _on_ui_thread(window: Window, work: Callable[[], None]) -> None:
-    """Run `work` on the UI thread all pywebview windows share."""
+    """Run `work` on the UI thread all pywebview windows share; a UI thread that does not answer fails the
+    page instead of hanging the scan beyond the owner's Cancel."""
     # pythonnet's .NET objects are untyped; pywebview has loaded the CLR by the time a window exists.
     from System import Action  # noqa: PLC0415  # pyright: ignore[reportMissingImports, reportUnknownVariableType]
 
     native: Any = window.native
-    native.Invoke(Action(work))
+    try:
+        within(CALL_TIMEOUT_S, lambda: native.Invoke(Action(work)))
+    except TimeoutError as error:
+        raise LoadTimeout("the app's UI thread did not answer") from error
 
 
 def _load_user32() -> _Native:

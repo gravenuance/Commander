@@ -79,20 +79,38 @@ one page every 4 seconds:
 The app gets a **Buy** screen that turns the Don't Have cards into packages of sellers, and puts the package
 the owner picks into their Cardmarket cart for them to check out by hand.
 
-- **Signing in is the owner's.** The app opens Cardmarket in its own window and the owner signs in there. The
-  app never sees or stores the password (WebView2 may save it, as Edge does, in its encrypted profile). While
-  signed in, it saves the session cookie to Credential Manager (service `Commander (cmdr) Cardmarket`) and
-  adds it back at start. The Cardmarket windows share the app's WebView2 profile, as pywebview keeps one per
-  process.
+- **Signing in is the owner's.** The owner signs in on Cardmarket's own page; the app never sees or stores
+  the password (WebView2 may save it, as Edge does, in its encrypted profile). While signed in, it saves the
+  session cookie to Credential Manager (service `Commander (cmdr) Cardmarket`) and adds it back at start. The
+  Cardmarket window shares the app's WebView2 profile, as pywebview keeps one per process.
+- **Handing the window over.** Cardmarket cannot be framed (`X-Frame-Options: SAMEORIGIN`, its challenge page
+  too), so when a page the scan loads is signed out, or Cloudflare's check has not passed by itself after 8 s,
+  the hidden scan window itself is shown, frameless, exactly over an empty pane of the Buy screen, and the
+  progress line says what is needed. The scan waits, with no time limit, until a signed-in page loads (the
+  session is then saved) or the owner presses Cancel; the window is hidden again and the page it wanted loads
+  once more, in the same window and session. A form step the handover interrupted is redone from the start
+  of the wants list sync, once. Probed live on 2026-11-09 (27 window checks, three runs):
+  - The window is created `frameless`, `hidden`, without shadow, and owned by the app's window (WinForms
+    `Owner`, set on the shared UI thread): it stays above the app only, hides when the app is minimised and
+    comes back on restore.
+  - pywebview's `move` and `resize` show a hidden window, so placing goes through `SetWindowPos` without
+    activation, in physical pixels (pywebview makes the process DPI-aware): the app window's client origin
+    plus the pane's CSS rectangle times `devicePixelRatio`. The page reports the rectangle when it shows the pane,
+    on resize and on each status paint; the window follows the app's `moved` event.
+  - Setting `ShowInTaskbar` makes WinForms recreate the window's handle; the taskbar button is removed by
+    clearing `WS_EX_APPWINDOW` on the handle while hidden instead.
+  - `show()` from the scan's thread activates the window, but its page had the keyboard focus only four runs
+    in five, so the WebView2 control is given the focus after each show.
+  - Only 100% display scaling on one monitor was tried.
 - **The wants list.** The app creates or refills a list named for the purpose, imports the Don't Have text,
   then sets the owner's language and minimum condition through the bulk form, one quantity group at a time so
   quantities survive. It only ever changes that list.
 - **The scan reads pages, one at a time, in a hidden window,** at least 4 seconds apart, never in parallel and
   never on a schedule. Pass 1 opens each wanted card's page with the owner's filters in the address and reads
   its cheapest offers (50, a setting). Pass 2 opens the wants-filtered stock page of the base sellers: those
-  who carry the rarest cards (the fewest offers in pass 1), or the most of the wanted cards. A challenge, a
-  sign-in page or a page that does not read as expected stops the scan and says so; it is never retried in a
-  loop or worked around.
+  who carry the rarest cards (the fewest offers in pass 1), or the most of the wanted cards. A sign-in page or
+  a challenge that does not pass by itself is handed to the owner (above); a page that does not read as
+  expected stops the scan and says so. Neither is retried in a loop or worked around.
 - **Shipping comes from Cardmarket's own tables,** fetched with `net.Fetcher`, shape-checked by `jsonshape`
   and cached for a week per origin country: the cheapest method from the seller's country whose weight and
   value limits fit the package, tracked over 25 €.
@@ -103,8 +121,8 @@ the owner picks into their Cardmarket cart for them to check out by hand.
 - **The Buy screen.** A main view opened from the sidebar lists every deck's Don't Have cards with a tick per
   deck, takes the offer filters (language English, Japanese, both or any, minimum condition Near Mint or
   any, foil any, non-foil or foil; a blank Cardmarket field is a catch-all, so foil defaults to any) and
-  scans in the background with a progress line and a Cancel button. A cancelled or stopped scan keeps what it read and
-  solves it, marked partial. The curve shows one row per seller count; picking a row shows each seller's
+  scans in the background with a progress line and a Cancel button, which also ends a wait for the owner.
+  A cancelled or stopped scan keeps what it read and solves it, marked partial. The curve shows one row per seller count; picking a row shows each seller's
   shipping method and each card's price against its trend price (the cheapest printing's EUR price in the card
   data). The choices, the base sellers (15) and the decks and cards left out per account are kept in
   `buy.json` beside the config file (format 3).

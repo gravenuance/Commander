@@ -323,7 +323,7 @@ class SessionBrowser:
         self._driver.close()
 
 
-def _within[T](timeout_s: float, call: Callable[[], T]) -> T:
+def within[T](timeout_s: float, call: Callable[[], T]) -> T:
     """Run `call` on a worker thread; TimeoutError when it has not finished within `timeout_s`. A call that
     hangs for good is left behind on its daemon thread."""
     outcome: list[T] = []
@@ -390,14 +390,14 @@ class WebviewDriver:
 
     def read_html(self, timeout_s: float) -> str | None:
         try:
-            html = _within(timeout_s, lambda: self._window.evaluate_js(_OUTER_HTML))
+            html = within(timeout_s, lambda: self._window.evaluate_js(_OUTER_HTML))
         except TimeoutError:
             return None
         return html if isinstance(html, str) else None
 
     def run_script(self, script: str, timeout_s: float) -> str | None:
         try:
-            answer = _within(timeout_s, lambda: self._window.evaluate_js(script))
+            answer = within(timeout_s, lambda: self._window.evaluate_js(script))
         except TimeoutError:
             return None
         return answer if isinstance(answer, str) else None
@@ -414,7 +414,7 @@ class WebviewDriver:
             # pywebview leaves get_cookies untyped; on WebView2 it returns one SimpleCookie per cookie.
             jars = cast(
                 "list[SimpleCookie]",
-                _within(CALL_TIMEOUT_S, self._window.get_cookies),  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+                within(CALL_TIMEOUT_S, self._window.get_cookies),  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
             )
         except TimeoutError:
             log.warning("the window did not give its cookies")
@@ -447,7 +447,7 @@ class WebviewDriver:
             work(core)
 
         try:
-            _within(CALL_TIMEOUT_S, lambda: native.Invoke(Action(on_ui_thread)))
+            within(CALL_TIMEOUT_S, lambda: native.Invoke(Action(on_ui_thread)))
         except TimeoutError as error:
             raise LoadTimeout("the window's UI thread did not answer") from error
 
