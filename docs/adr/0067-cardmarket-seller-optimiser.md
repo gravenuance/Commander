@@ -42,7 +42,8 @@ one page every 4 seconds:
   with its name, `isTracked`, `maxValue`, `maxWeight` and `price` (fee included); `/api/countries` gives the 35
   country ids (Sweden is 28). France to Sweden, "Lettre Internationale" up to 20 g, 2,55 €, matched the cart to
   the cent. Cardmarket's own rule of thumb gives the weight: up to 4 cards 20 g, 17 cards 50 g, 40 cards 100 g.
-  Tracked shipping is mandatory over 25 €, and for some sellers lower (new sellers over 10 €, too many
+  Past 40 cards the code adds 2.5 g a card, which is our assumption (Cardmarket states no rule there), so the
+  weight of a very big parcel is an estimate. Tracked shipping is mandatory over 25 €, and for some sellers lower (new sellers over 10 €, too many
   shipments on the way, a loss rate over 2 %), which only the cart shows.
 - **Cart.** Clicking an offer's cart button added it (its request is under the decision's cart); the cart
   page (`/en/Magic/ShoppingCart`) shows each seller's items, article value, shipping method and cost, total
@@ -114,11 +115,18 @@ the owner picks into their Cardmarket cart for them to check out by hand.
   expected stops the scan and says so. Neither is retried in a loop or worked around.
 - **Shipping comes from Cardmarket's own tables,** fetched with `net.Fetcher`, shape-checked by `jsonshape`
   and cached for a week per origin country: the cheapest method from the seller's country whose weight and
-  value limits fit the package, tracked over 25 €.
+  value limits fit the package, tracked over 25 €. A route that answers with no methods is logged as a
+  warning and not cached, so a hiccup of the help site does not make a country unusable for a week.
 - **The solver** chooses offers to cover every wanted card at the least total of prices plus each chosen
   seller's shipping, exactly, and repeats for at most 1, 2, 3, … sellers, so the screen shows how the best
-  total falls as sellers are added. Each pick shows its price against the card's Cardmarket trend price,
-  which the card database already has.
+  total falls as sellers are added. The counts share one time budget (120 s, at most 20 s a solve): each solve
+  gets an equal part of what is left, and runs upward from one seller, bounded from above by the best package
+  of fewer sellers (it fits a higher cap too) and from below by the proven uncapped optimum. A solve that
+  stops short of a proof gives a package marked unproven; one that finds nothing, or leaves a count unproven
+  that no row shows, is reported as timed out ("not found in time"), never silently dropped. Cancel is polled
+  between solves. Small seller counts are the hard part: choosing which few sellers cover 60 cards is a set
+  cover, which no formulation here makes quick. Each pick shows its price against the card's Cardmarket trend
+  price, which the card database already has.
 - **The Buy screen.** A main view opened from the sidebar lists every deck's Don't Have cards with a tick per
   deck, takes the offer filters (language English, Japanese, both or any, minimum condition Near Mint or
   any, foil any, non-foil or foil; a blank Cardmarket field is a catch-all, so foil defaults to any) and

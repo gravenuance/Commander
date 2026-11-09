@@ -1,5 +1,8 @@
+import importlib
 import itertools
 import re
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -7,14 +10,22 @@ from commander.cmpages import Condition, Offer
 from commander.cmscan import card_slug
 from commander.cmshipping import ShippingMethod
 from commander.sellersolve import (
+    CurveResult,
     Package,
     Routes,
     Shortfall,
+    SolveCancelled,
+    SolveError,
+    SolveTimeout,
     WantedCard,
     card_key,
     curve,
     solve,
+    solve_curve,
 )
+
+# scipy ships no type stubs; the module object keeps its attributes untyped.
+_optimize: Any = importlib.import_module("scipy.optimize")
 
 LETTER = ShippingMethod(
     "Letter", tracked=False, letter=True, max_value_cents=2500, max_weight_g=20, price_cents=200
@@ -372,7 +383,9 @@ def test_the_curve_shows_the_total_falling_as_sellers_are_added() -> None:
     assert [(p.seller_count, p.total_cents) for p in steps] == [(1, 1100), (2, 700)]
 
 
-def test_the_curve_leaves_out_a_count_that_saves_nothing_but_shows_a_later_one() -> None:
+def far_market() -> tuple[list[WantedCard], list[Offer], Routes]:
+    """X, Y, Z. Far alone is 3,00 + 10,00. With two sellers the best is still that (Far's two cards, 2,00 +
+    10,00, plus one 0,50 card and its 2,00 letter is 14,50). Three letters cost 1,50 + 6,00."""
     offers = [
         offer("X", "Far", 100, country="Japan"),
         offer("Y", "Far", 100, country="Japan"),
@@ -388,10 +401,14 @@ def test_the_curve_leaves_out_a_count_that_saves_nothing_but_shows_a_later_one()
     def routes(country: str) -> tuple[ShippingMethod, ...]:
         return (parcel,) if country == "Japan" else (LETTER,)
 
-    steps = curve(wants("X", "Y", "Z"), offers, routes, max_sellers=5)
+    return wants("X", "Y", "Z"), offers, routes
 
-    # Far alone is 3,00 + 10,00. With two sellers the best is still that (Far's two cards, 2,00 + 10,00, plus
-    # one 0,50 card and its 2,00 letter is 14,50). Three letters cost 1,50 + 6,00.
+
+def test_the_curve_leaves_out_a_count_that_saves_nothing_but_shows_a_later_one() -> None:
+    wanted, offers, routes = far_market()
+
+    steps = curve(wanted, offers, routes, max_sellers=5)
+
     assert [(p.seller_count, p.total_cents) for p in steps] == [(1, 1300), (3, 750)]
 
 
@@ -424,6 +441,237 @@ def test_the_curve_is_empty_when_the_cap_is_below_what_the_wants_need() -> None:
 
 def test_the_curve_is_empty_when_nothing_can_be_bought() -> None:
     assert curve(wants("X"), [], everywhere(LETTER), max_sellers=3) == ()
+
+
+# --- the solver's other answers ---------------------------------------------------------------------------
+
+OUT_OF_TIME = SimpleNamespace(status=1, x=None, message="time limit reached")
+
+
+class MilpSpy:
+    """Stands in for scipy's milp: runs the real one and notes each call. A test can spoil chosen calls
+    (numbered from 1) the way HiGHS answers when it runs out of time, fails or stops short of a proof."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._real = _optimize.milp
+        self.calls: list[dict[str, Any]] = []
+        # Calls answered with this instead of a solve.
+        self.answers: dict[int, SimpleNamespace] = {}
+        # Calls solved for real but reported as stopped by the time limit with a package in hand.
+        self.unproven: set[int] = set()
+        self.seconds_per_call = 0.0
+        self.now = 0.0
+        monkeypatch.setattr(_optimize, "milp", self)
+
+    def __call__(self, **arguments: Any) -> Any:  # noqa: ANN401 - stands in for an untyped scipy function
+        self.calls.append(arguments)
+        self.now += self.seconds_per_call
+        call = len(self.calls)
+        if call in self.answers:
+            return self.answers[call]
+        answer = self._real(**arguments)
+        if call in self.unproven:
+            return SimpleNamespace(status=1, x=answer.x, message="time limit reached")
+        return answer
+
+
+def test_a_package_the_time_limit_stopped_short_of_a_proof_is_flagged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    MilpSpy(monkeypatch).unproven = {1}
+    offers = [offer("X", "A", 100), offer("Y", "A", 100)]
+
+    package = solved(wants("X", "Y"), offers)
+
+    assert not package.optimal
+    assert package.total_cents == 400
+
+
+def test_no_package_within_the_time_limit_raises_a_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    MilpSpy(monkeypatch).answers = {1: OUT_OF_TIME}
+
+    with pytest.raises(SolveTimeout, match="no package found within 20 s"):
+        solve(wants("X"), [offer("X", "A", 100)], everywhere(LETTER), max_sellers=None)
+
+
+def test_a_solver_status_other_than_solved_stopped_or_infeasible_raises_an_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    MilpSpy(monkeypatch).answers = {1: SimpleNamespace(status=4, x=None, message="numerical difficulties")}
+
+    with pytest.raises(SolveError, match="status 4: numerical difficulties"):
+        solve(wants("X"), [offer("X", "A", 100)], everywhere(LETTER), max_sellers=None)
+
+
+def test_a_solution_whose_parcel_has_no_method_at_the_modelled_price_raises_an_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The variables are the one copy, "A used", then the Letter and the Tracked parcel, dearest last. An
+    # answer that sends 30,00 of cards by Letter (limit 25,00) is one the model could never have produced.
+    spy = MilpSpy(monkeypatch)
+    spy.answers = {1: SimpleNamespace(status=0, x=[1.0, 1.0, 1.0, 0.0], message="")}
+
+    with pytest.raises(SolveError, match=r"A: 1 cards worth 3000 cents have no method at the 200 cents"):
+        solve(wants("X"), [offer("X", "A", 3000)], everywhere(LETTER, TRACKED), max_sellers=None)
+
+
+def test_the_curve_still_counts_sellers_when_the_uncapped_solve_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    MilpSpy(monkeypatch).answers = {1: OUT_OF_TIME}
+    wanted, offers, routes = far_market()
+
+    steps = curve(wanted, offers, routes, max_sellers=3)
+
+    assert [(p.seller_count, p.total_cents) for p in steps] == [(1, 1300), (3, 750)]
+
+
+# --- the curve's time budget, bounds and timed-out counts ---------------------------------------------------
+# On the far market the solves run in this order: the uncapped one (call 1), one seller (2), two (3); three
+# sellers are the uncapped package again.
+
+
+def shown(result: CurveResult) -> list[tuple[int, int]]:
+    return [(p.seller_count, p.total_cents) for p in result.packages]
+
+
+def test_a_count_whose_solve_times_out_is_reported_and_the_others_are_still_solved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    MilpSpy(monkeypatch).answers = {3: OUT_OF_TIME}
+    wanted, offers, routes = far_market()
+
+    result = solve_curve(wanted, offers, routes, max_sellers=5)
+
+    assert shown(result) == [(1, 1300), (3, 750)]
+    assert result.timed_out == (2,)
+
+
+def test_a_timed_out_count_a_later_package_has_the_seller_count_of_is_not_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # One seller timed out, but the two-seller solve found a package of one seller, which settles the count.
+    MilpSpy(monkeypatch).answers = {2: OUT_OF_TIME}
+    wanted, offers, routes = far_market()
+
+    result = solve_curve(wanted, offers, routes, max_sellers=5)
+
+    assert shown(result) == [(1, 1300), (3, 750)]
+    assert result.timed_out == ()
+
+
+def test_an_unproven_package_that_is_left_out_as_no_better_counts_as_timed_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    MilpSpy(monkeypatch).unproven = {3}
+    wanted, offers, routes = far_market()
+
+    result = solve_curve(wanted, offers, routes, max_sellers=5)
+
+    assert shown(result) == [(1, 1300), (3, 750)]
+    assert result.timed_out == (2,)
+
+
+def test_an_unproven_package_that_is_shown_says_so(monkeypatch: pytest.MonkeyPatch) -> None:
+    MilpSpy(monkeypatch).unproven = {2}
+    wanted, offers, routes = far_market()
+
+    result = solve_curve(wanted, offers, routes, max_sellers=5)
+
+    assert [p.optimal for p in result.packages] == [False, True]
+    assert result.timed_out == ()
+
+
+def test_the_counts_share_what_is_left_of_the_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    spy = MilpSpy(monkeypatch)
+    spy.seconds_per_call = 4.0
+    wanted, offers, routes = far_market()
+
+    result = solve_curve(wanted, offers, routes, max_sellers=5, budget_s=12.0, clock=lambda: spy.now)
+
+    # The uncapped solve may take half of 12 s; of the 8 s left, each of the two counts gets 4.
+    assert [call["options"]["time_limit"] for call in spy.calls] == [6.0, 4.0, 4.0]
+    assert result.timed_out == ()
+
+
+def test_a_share_never_exceeds_the_time_limit_of_one_solve(monkeypatch: pytest.MonkeyPatch) -> None:
+    spy = MilpSpy(monkeypatch)
+    wanted, offers, routes = far_market()
+
+    solve_curve(wanted, offers, routes, max_sellers=5, time_limit_s=3.0, budget_s=1000.0)
+
+    assert [call["options"]["time_limit"] for call in spy.calls] == [3.0, 3.0, 3.0]
+
+
+def test_counts_left_when_the_budget_is_spent_are_reported_unsolved(monkeypatch: pytest.MonkeyPatch) -> None:
+    spy = MilpSpy(monkeypatch)
+    spy.seconds_per_call = 4.0
+    wanted, offers, routes = far_market()
+
+    result = solve_curve(wanted, offers, routes, max_sellers=5, budget_s=5.0, clock=lambda: spy.now)
+
+    # 2,5 s for the uncapped solve, then 0,5 s for one seller, which spends the budget before two sellers.
+    assert [call["options"]["time_limit"] for call in spy.calls] == [2.5, 0.5]
+    assert shown(result) == [(1, 1300), (3, 750)]
+    assert result.timed_out == (2,)
+
+
+def test_a_cancel_between_counts_stops_the_curve(monkeypatch: pytest.MonkeyPatch) -> None:
+    spy = MilpSpy(monkeypatch)
+    wanted, offers, routes = far_market()
+
+    with pytest.raises(SolveCancelled):
+        solve_curve(wanted, offers, routes, max_sellers=5, cancelled=lambda: len(spy.calls) >= 2)
+
+    assert len(spy.calls) == 2
+
+
+def test_a_cancel_before_the_first_solve_runs_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    spy = MilpSpy(monkeypatch)
+    wanted, offers, routes = far_market()
+
+    with pytest.raises(SolveCancelled):
+        solve_curve(wanted, offers, routes, max_sellers=5, cancelled=lambda: True)
+
+    assert spy.calls == []
+
+
+def test_a_capped_count_is_bounded_by_the_uncapped_total_below_and_the_count_before_above(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spy = MilpSpy(monkeypatch)
+    wanted, offers, routes = far_market()
+
+    solve_curve(wanted, offers, routes, max_sellers=5)
+
+    # The model counts each cent as 5 (four sellers plus one) and each used seller as 1, minus or plus half a
+    # unit of slack. The uncapped package: 7,50 from three sellers is 3753. One seller: 13,00 is 6501.
+    lows = [list(call["constraints"].lb) for call in spy.calls]
+    highs = [list(call["constraints"].ub) for call in spy.calls]
+    assert 3752.5 not in lows[0]
+    assert 3752.5 in lows[1]
+    assert 6501.5 not in highs[1]
+    assert 3752.5 in lows[2]
+    assert 6501.5 in highs[2]
+
+
+def test_an_uncapped_package_not_proven_cheapest_is_no_lower_bound(monkeypatch: pytest.MonkeyPatch) -> None:
+    spy = MilpSpy(monkeypatch)
+    spy.unproven = {1}
+    wanted, offers, routes = far_market()
+
+    solve_curve(wanted, offers, routes, max_sellers=5)
+
+    assert all(3752.5 not in list(call["constraints"].lb) for call in spy.calls)
+
+
+def test_the_curve_function_returns_the_packages_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    MilpSpy(monkeypatch).answers = {3: OUT_OF_TIME}
+    wanted, offers, routes = far_market()
+
+    steps = curve(wanted, offers, routes, max_sellers=5)
+
+    assert [(p.seller_count, p.total_cents) for p in steps] == [(1, 1300), (3, 750)]
 
 
 @pytest.mark.parametrize(

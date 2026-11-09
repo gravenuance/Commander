@@ -7,12 +7,15 @@ saving (50 cents more on a card can beat 3 € of shipping). The solver never to
 shipping methods of a seller's country come from a caller-supplied function.
 """
 
+import importlib
 import logging
 import re
+import time
 import unicodedata
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 
 from commander.cmpages import Offer
 from commander.cmshipping import ShippingMethod, ShippingQuote, cheapest, order_weight_g
@@ -21,6 +24,13 @@ log = logging.getLogger(__name__)
 
 # One solve; past it the best package found so far is returned, flagged as not proven optimal.
 SOLVE_TIME_LIMIT_S = 20.0
+# All the solves of one curve together; each count gets an equal share of what is left, up to the limit above.
+CURVE_BUDGET_S = 120.0
+
+# HiGHS's status codes as scipy's milp reports them.
+_HIGHS_OPTIMAL = 0
+_HIGHS_LIMIT = 1
+_HIGHS_INFEASIBLE = 2
 
 # Cardmarket names a second printing "Captain James T. Kirk (V.1)"; the wants list does not.
 _VERSION_SUFFIX = re.compile(r"\s*\(V\.\d+\)$", re.IGNORECASE)
@@ -38,6 +48,10 @@ class SolveTimeout(Exception):  # noqa: N818 - a condition the caller reports, n
 
 class SolveError(Exception):
     """The solver's answer is inconsistent with the model, or HiGHS failed."""
+
+
+class SolveCancelled(Exception):  # noqa: N818 - the caller's own cancel, not a failure
+    """The caller's cancel check asked the curve to stop."""
 
 
 @dataclass(slots=True, frozen=True)
@@ -291,38 +305,38 @@ class _LpResult:
     values: tuple[float, ...]
 
 
-# scipy ships no complete type stubs: every call into it stays in this one function.
+# scipy ships no complete type stubs: every call into it stays in this function, through modules typed Any.
 def _run_milp(lp: _Lp, time_limit_s: float) -> _LpResult:
-    import numpy as np  # noqa: PLC0415 - deferred so the app starts without loading scipy
-    from scipy.optimize import Bounds, LinearConstraint, milp  # noqa: PLC0415  # pyright: ignore[reportMissingTypeStubs, reportUnknownVariableType] # no scipy stubs
-    from scipy.sparse import coo_array  # noqa: PLC0415  # pyright: ignore[reportMissingTypeStubs] # no scipy stubs
+    # Imported here so the app starts without loading scipy.
+    np: Any = importlib.import_module("numpy")
+    optimize: Any = importlib.import_module("scipy.optimize")
+    sparse: Any = importlib.import_module("scipy.sparse")
 
     row_index = [r for r, row in enumerate(lp.rows) for _ in row.terms]
     column_index = [column for row in lp.rows for column, _ in row.terms]
     coefficients = [value for row in lp.rows for _, value in row.terms]
-    matrix = coo_array((coefficients, (row_index, column_index)), shape=(len(lp.rows), len(lp.cost)))  # pyright: ignore[reportUnknownVariableType] # untyped scipy.sparse
-    answer = milp(  # pyright: ignore[reportUnknownVariableType] # untyped scipy.optimize
+    matrix = sparse.coo_array((coefficients, (row_index, column_index)), shape=(len(lp.rows), len(lp.cost)))
+    answer = optimize.milp(
         c=np.array(lp.cost),
         integrality=np.ones(len(lp.cost)),
-        bounds=Bounds(0, np.array(lp.upper)),  # pyright: ignore[reportArgumentType] # takes arrays, typed float
-        constraints=LinearConstraint(  # pyright: ignore[reportUnknownArgumentType] # untyped scipy.sparse
+        bounds=optimize.Bounds(0, np.array(lp.upper)),
+        constraints=optimize.LinearConstraint(
             matrix,
-            np.array([row.low for row in lp.rows]),  # pyright: ignore[reportArgumentType] # takes arrays
-            np.array([row.high for row in lp.rows]),  # pyright: ignore[reportArgumentType] # takes arrays
+            np.array([row.low for row in lp.rows]),
+            np.array([row.high for row in lp.rows]),
         ),
         # A relative gap above 0 would accept packages a few cents short of the cheapest.
         options={"time_limit": time_limit_s, "mip_rel_gap": 0.0},
     )
-    status = int(answer.status)  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType] # untyped result
-    solution = answer.x  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType] # untyped result
-    if status == 2:  # noqa: PLR2004 - HiGHS's code for infeasible
+    status = int(answer.status)
+    if status == _HIGHS_INFEASIBLE:
         return _LpResult(_Status.INFEASIBLE, ())
-    if status not in {0, 1}:
-        raise SolveError(f"HiGHS failed with status {status}: {answer.message}")  # pyright: ignore[reportUnknownMemberType] # untyped result
-    if solution is None:
+    if status not in {_HIGHS_OPTIMAL, _HIGHS_LIMIT}:
+        raise SolveError(f"HiGHS failed with status {status}: {answer.message}")
+    if answer.x is None:
         return _LpResult(_Status.UNFINISHED, ())
-    values = tuple(float(v) for v in solution)  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType] # untyped result
-    return _LpResult(_Status.OPTIMAL if status == 0 else _Status.FEASIBLE, values)
+    values = tuple(float(v) for v in answer.x)
+    return _LpResult(_Status.OPTIMAL if status == _HIGHS_OPTIMAL else _Status.FEASIBLE, values)
 
 
 @dataclass(slots=True, frozen=True)
@@ -356,11 +370,48 @@ def _seller_rows(market: _Market, j: int, layout: _Layout) -> list[_Row]:
     return rows
 
 
-def _model(market: _Market, max_sellers: int | None) -> tuple[_Lp, _Layout]:
-    """The programme for a market. Costs are scaled so that the one-unit tie-break on each used seller is
-    worth less than a cent: of two packages that cost the same, the one with fewer parcels wins."""
+@dataclass(slots=True, frozen=True)
+class _Bounds:
+    """Limits the model's objective is known to lie within, which lets the solver prune against them."""
+
+    low: float = _NO_LOWER_LIMIT
+    high: float = float("inf")
+
+
+_NO_BOUNDS = _Bounds()
+# Objectives are whole numbers; half a unit of slack keeps a bound from cutting off the package it came from.
+_BOUND_SLACK = 0.5
+
+
+def _cost_scale(market: _Market) -> int:
+    """What a cent costs in the model's objective, which adds one unit per used seller as a tie-break; the
+    scale keeps all of those units together below a cent, so fewer parcels win only between equal totals."""
+    return len(market.sellers) + 1
+
+
+def _objective(market: _Market, package: Package) -> float:
+    """The model's objective for a package: the value of the solution the package was read from."""
+    return float(package.total_cents * _cost_scale(market) + package.seller_count)
+
+
+def _bounds(market: _Market, *, floor: Package | None, ceiling: Package | None) -> _Bounds:
+    """Bounds from packages already found for the same market. The best package over every seller count
+    (`floor`, when proven the cheapest) lies at or below any capped optimum, as a cap only removes packages.
+    A package from fewer sellers (`ceiling`) is also a package for a higher cap, so the capped optimum lies at
+    or below it."""
+    low = _NO_LOWER_LIMIT
+    if floor is not None and floor.optimal:
+        low = _objective(market, floor) - _BOUND_SLACK
+    high = float("inf") if ceiling is None else _objective(market, ceiling) + _BOUND_SLACK
+    return _Bounds(low, high)
+
+
+def _model(market: _Market, max_sellers: int | None, bounds: _Bounds = _NO_BOUNDS) -> tuple[_Lp, _Layout]:
+    """The programme for a market, with the objective held within `bounds`. Costs are scaled so that the
+    one-unit tie-break on each used seller is worth less than a cent: of two packages that cost the same, the
+    one with fewer parcels wins."""
     candidates, sellers = market.candidates, market.sellers
-    scale = len(sellers) + 1
+    scale = _cost_scale(market)
     cost: list[float] = [c.offer.price_cents * scale for c in candidates]
     upper: list[float] = [c.most for c in candidates]
     used_at = len(cost)
@@ -381,6 +432,8 @@ def _model(market: _Market, max_sellers: int | None) -> tuple[_Lp, _Layout]:
         rows.extend(_seller_rows(market, j, layout))
     if max_sellers is not None:
         rows.append(_Row(tuple((used_at + j, 1.0) for j in range(len(sellers))), 0, max_sellers))
+    if bounds != _NO_BOUNDS:
+        rows.append(_Row(tuple((v, c) for v, c in enumerate(cost) if c), bounds.low, bounds.high))
     return _Lp(tuple(cost), tuple(upper), tuple(rows)), layout
 
 
@@ -419,10 +472,12 @@ def _package(market: _Market, layout: _Layout, values: Sequence[float], *, optim
     )
 
 
-def _solve_market(market: _Market, max_sellers: int | None, time_limit_s: float) -> Package | None:
+def _solve_market(
+    market: _Market, max_sellers: int | None, time_limit_s: float, bounds: _Bounds = _NO_BOUNDS
+) -> Package | None:
     if not market.needs:
         return Package((), (), market.missing, market.short, 0, 0)
-    lp, layout = _model(market, max_sellers)
+    lp, layout = _model(market, max_sellers, bounds)
     result = _run_milp(lp, time_limit_s)
     match result.status:
         case _Status.INFEASIBLE:
@@ -454,6 +509,120 @@ def solve(
     return _solve_market(_build_market(wants, offers, routes), max_sellers, time_limit_s)
 
 
+@dataclass(slots=True, frozen=True)
+class CurveResult:
+    packages: tuple[Package, ...]
+    # Seller counts whose best package was not found within the time left and that no package settles:
+    # nothing was found for them, or what was found is no better than the count before and not proven the
+    # cheapest. A count between those shown may hold a better package than the rows suggest.
+    timed_out: tuple[int, ...]
+
+
+@dataclass(slots=True, frozen=True)
+class _Budget:
+    """The time all the solves of one curve share."""
+
+    deadline_s: float
+    per_solve_s: float
+    clock: Callable[[], float]
+
+    def share(self, solves_left: int) -> float:
+        """The seconds for the next of `solves_left` solves: an equal part of the time left, so that time a
+        quick solve leaves over goes to the later ones, and never more than one solve may take. 0 when the
+        budget is spent."""
+        left = self.deadline_s - self.clock()
+        return min(self.per_solve_s, left / solves_left) if left > 0 else 0.0
+
+
+def _solve_within(
+    market: _Market, max_sellers: int | None, budget: _Budget, solves_left: int, bounds: _Bounds
+) -> Package | None:
+    share = budget.share(solves_left)
+    if share <= 0:
+        raise SolveTimeout("the curve's time budget is spent")
+    return _solve_market(market, max_sellers, share, bounds)
+
+
+def _poll(cancelled: Callable[[], bool] | None) -> None:
+    if cancelled is not None and cancelled():
+        raise SolveCancelled("the solving was cancelled")
+
+
+def _solve_uncapped(market: _Market, budget: _Budget) -> Package | None:
+    """The package for any number of sellers: empty when none covers the wants, None when it times out. It may
+    take up to half the budget, as nothing can be shown without it and it bounds the counts."""
+    try:
+        return _solve_within(market, None, budget, 2, _NO_BOUNDS) or _empty_package(market)
+    except SolveTimeout as error:
+        log.warning("No package found for any number of sellers: %s", error)
+        return None
+
+
+def _empty_package(market: _Market) -> Package:
+    return Package((), (), market.missing, market.short, 0, 0)
+
+
+def solve_curve(
+    wants: Iterable[WantedCard],
+    offers: Iterable[Offer],
+    routes: Routes,
+    *,
+    max_sellers: int,
+    time_limit_s: float = SOLVE_TIME_LIMIT_S,
+    budget_s: float = CURVE_BUDGET_S,
+    cancelled: Callable[[], bool] | None = None,
+    clock: Callable[[], float] = time.monotonic,
+) -> CurveResult:
+    """The best package for each seller count from the smallest that can cover the wants up to `max_sellers`,
+    leaving out a count whose total is no lower than the one before it. No packages when nothing can be
+    bought or the wants need more sellers than `max_sellers`.
+
+    The solves share `budget_s`, each taking an equal part of what is left and at most `time_limit_s`. A solve
+    that finds nothing in its time is logged and its count reported in `timed_out`; the other counts still
+    run. That holds for the uncapped solve too, and without its package the curve runs every count up to
+    `max_sellers`. `cancelled` is polled before each solve and raises SolveCancelled; a solve already running
+    is not interrupted, so cancelling takes up to one share. Raises SolveError when HiGHS fails.
+
+    Each solve is bounded by the ones before it. Any package of fewer sellers also fits a higher cap, so the
+    best package so far caps the total of the next count from above; and the uncapped optimum, when proven,
+    bounds every capped total from below. Counts therefore run upward, and a count that cannot beat the one
+    before ends as soon as the solver proves it."""
+    _check_cap(max_sellers)
+    market = _build_market(wants, offers, routes)
+    budget = _Budget(clock() + budget_s, time_limit_s, clock)
+    _poll(cancelled)
+    free = _solve_uncapped(market, budget)
+    if free is not None and free.seller_count == 0:
+        return CurveResult((), ())
+    top = max_sellers if free is None else min(max_sellers, free.seller_count)
+    to_solve = [count for count in range(1, top + 1) if free is None or count != free.seller_count]
+    steps: list[Package] = []
+    timed_out: list[int] = []
+    for count in range(1, top + 1):
+        _poll(cancelled)
+        if free is not None and count == free.seller_count:
+            package = free
+        else:
+            bounds = _bounds(market, floor=free, ceiling=steps[-1] if steps else None)
+            try:
+                package = _solve_within(market, count, budget, len(to_solve) - to_solve.index(count), bounds)
+            except SolveTimeout as error:
+                log.warning("No package found for %d sellers: %s", count, error)
+                timed_out.append(count)
+                continue
+        if package is None:
+            continue
+        if steps and package.total_cents >= steps[-1].total_cents:
+            if not package.optimal:
+                timed_out.append(count)
+            continue
+        steps.append(package)
+        if free is not None and package.total_cents <= free.total_cents:
+            break
+    shown = {p.seller_count for p in steps}
+    return CurveResult(tuple(steps), tuple(count for count in timed_out if count not in shown))
+
+
 def curve(
     wants: Iterable[WantedCard],
     offers: Iterable[Offer],
@@ -462,24 +631,5 @@ def curve(
     max_sellers: int,
     time_limit_s: float = SOLVE_TIME_LIMIT_S,
 ) -> tuple[Package, ...]:
-    """The best package for each seller count from the smallest that can cover the wants up to `max_sellers`,
-    leaving out a count whose total is no lower than the one before it. Empty when nothing can be bought or
-    the wants need more sellers than `max_sellers`. A count whose solve times out is left out."""
-    _check_cap(max_sellers)
-    market = _build_market(wants, offers, routes)
-    free = _solve_market(market, None, time_limit_s)
-    if free is None or free.seller_count == 0:
-        return ()
-    steps: list[Package] = []
-    for count in range(1, min(max_sellers, free.seller_count) + 1):
-        try:
-            package = free if count == free.seller_count else _solve_market(market, count, time_limit_s)
-        except SolveTimeout:
-            log.warning("No package found for %d sellers within %g s", count, time_limit_s)
-            continue
-        if package is None or (steps and package.total_cents >= steps[-1].total_cents):
-            continue
-        steps.append(package)
-        if package.total_cents <= free.total_cents:
-            break
-    return tuple(steps)
+    """The packages of `solve_curve` without its timed-out counts."""
+    return solve_curve(wants, offers, routes, max_sellers=max_sellers, time_limit_s=time_limit_s).packages
