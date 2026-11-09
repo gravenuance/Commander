@@ -66,7 +66,14 @@ from commander.buywindows import production_engine
 from commander.carddb import CardDataError, CardDb, CardInfo, CardText, ResolvedCard, Role
 from commander.changetext import change_mark, change_text
 from commander.config import ConfigError, MetaSettings, forget_account, switch_account, validate_user
-from commander.credentials import CredentialError, KeyringKeyStore, KeyStore, TokenStore, check_api_key
+from commander.credentials import (
+    CardmarketSessionStore,
+    CredentialError,
+    KeyringKeyStore,
+    KeyStore,
+    TokenStore,
+    check_api_key,
+)
 from commander.deckcache import NOT_FETCHED, AnswerSource, DeckCache, FilesRead, logging_reads
 from commander.deckexport import cardmarket_wants_text, topdeck_text
 from commander.deckgrid import image_url
@@ -472,7 +479,8 @@ class Desk:
 
     @_guarded
     def sign_out(self) -> Json:
-        """Remove the saved login and forget the account; its deck folder stays for the next sign-in."""
+        """Remove the saved logins (Archidekt's and the Cardmarket session, ADR 0067) and forget the account;
+        its deck folder stays for the next sign-in."""
         config = self._config()
         with self._writing("sign-out", "sign out") as busy:
             if busy:
@@ -481,6 +489,11 @@ class Desk:
             if user:
                 self._token_store.delete(user)
             forget_account(config)
+            try:
+                CardmarketSessionStore().delete()
+            except CredentialError as error:
+                # The account is signed out already; the session ends on Cardmarket's side by itself.
+                log.warning("sign-out: %s", error)
             self._settings = replace(self._settings, user=None)
             with self._sync_lock:
                 # With no account there is nothing to sync them for.

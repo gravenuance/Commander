@@ -216,7 +216,8 @@ stays as the way to the Wizard.
   trimmed real pages and stops the scan when a page does not match, so a redesign costs the scan, never the
   rest of the app.
 - A live Cardmarket session is stored in Credential Manager: anyone with the owner's Windows account can use
-  it until the server ends it. Signing out in the app removes it.
+  it until the server ends it. Signing out in the app removes it (a store failure there is logged, and the
+  sign-out still completes).
 - The estimate can miss shipping rules that only the cart knows (a seller that must ship tracked), which the
   cart check points out after adding.
 - Revisit if Cardmarket reopens its API to private users, publishes terms that cover this, or changes the

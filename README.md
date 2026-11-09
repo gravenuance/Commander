@@ -788,7 +788,7 @@ The scan needs you signed in to Cardmarket. When it reaches a page that asks for
 Cloudflare's check, the scan window appears over the Buy screen and the progress line says which; do it
 there, as in a browser, and the scan carries on. The app never sees your password. It keeps Cardmarket's
 session cookie in Windows Credential Manager (under `Commander (cmdr) Cardmarket`), so the next scan usually
-needs no sign-in; delete that entry to make the app forget the session.
+needs no sign-in; signing out of the app removes it.
 
 Pick a package and press "Add to cart" to put it in your Cardmarket cart. A confirmation lists every card,
 seller and price first, and nothing is sent before you confirm it. The app then adds the cards one offer at a
