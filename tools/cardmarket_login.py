@@ -190,7 +190,7 @@ def report(window: "Window", store: SessionStore, saver: PageSaver | None) -> No
         print(f"probe failed: {error!r}", file=sys.stderr, flush=True)
 
 
-def prepare(window: "Window", store: SessionStore, visits: list[str]) -> None:
+def prepare(window: "Window", store: SessionStore, visits: list[str], close: bool) -> None:  # noqa: FBT001 - pywebview passes arguments by position
     """Once WebView2 is up: turn on password autofill, restore the saved session, open Cardmarket, then visit
     each of `visits` in turn, PACE_SECONDS apart."""
     window.events.loaded.wait()
@@ -229,6 +229,11 @@ def prepare(window: "Window", store: SessionStore, visits: list[str]) -> None:
         window.load_url(step)
     window.events.loaded.wait(LOAD_TIMEOUT_SECONDS)
     print("\nall steps done", flush=True)
+    if close:
+        # Closing the window ends WebView2 cleanly; killing the script instead leaves its browser process
+        # holding the profile, and the next run hangs on a blank page.
+        time.sleep(PACE_SECONDS)
+        window.destroy()
 
 
 def fill_script(selector: str, text: str) -> str:
@@ -261,6 +266,7 @@ def click_script(selector: str) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument("--forget", action="store_true", help="delete the profile and the saved session")
+    parser.add_argument("--close", action="store_true", help="close the window once every step is done")
     parser.add_argument("--save-pages", type=Path, metavar="DIR", help="write every page that loads to DIR")
     parser.add_argument(
         "--visit",
@@ -296,7 +302,7 @@ def main() -> int:
         print("pywebview created no window", file=sys.stderr)
         return 1
     window.events.loaded += lambda: report(window, store, saver)
-    webview.start(prepare, (window, store, visits), private_mode=False, storage_path=str(profile))
+    webview.start(prepare, (window, store, visits, args.close), private_mode=False, storage_path=str(profile))
     return 0
 
 
