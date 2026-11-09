@@ -1242,14 +1242,27 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .buy-filter { display: grid; gap: var(--space-1); justify-items: start; font-size: var(--text-s); color: var(--muted); }
 .buy-select {
   min-height: 34px;
-  padding: 0 var(--space-3);
+  padding: 0 calc(var(--space-3) + 18px) 0 var(--space-3);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-s);
-  background: var(--surface);
+  /* The native arrow hugs the right edge and can't be moved, so draw our own chevron in the text colour,
+     inset like the text is on the left. */
+  appearance: none;
+  background-color: var(--surface);
+  background-image:
+    linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position:
+    calc(100% - var(--space-3) - 5px) 55%,
+    calc(100% - var(--space-3)) 55%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
   color: var(--text);
   font: inherit;
   font-size: var(--text-s);
 }
+/* A label over a segmented control starts where its first option's text does, not at the pill's curve. */
+.buy-filter > span:first-child { padding-left: calc(3px + var(--space-2)); }
 .buy-select:disabled, .buy-base input:disabled { opacity: 0.5; cursor: not-allowed; }
 .buy-base { max-width: 12rem; }
 .buy-empty { margin: 0; }
