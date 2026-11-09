@@ -322,14 +322,12 @@ def _migrate(raw: Mapping[str, object]) -> tuple[Mapping[str, object], int]:
     if not 1 <= version <= FORMAT_VERSION:
         raise ShapeError(f"{BUY_FILE}: format version {version}, this build reads 1 to {FORMAT_VERSION}")
     migrated = dict(raw)
-    if version < COUNTRIES_FORMAT:
-        filters = raw.get("filters")
-        if filters is not None:
-            migrated["filters"] = {**as_object(filters, "filters"), "countries": [], "delivery": "any"}
+    # A filters value that is no object is left as it is; `_filters` warns about it and uses the defaults.
+    if version < COUNTRIES_FORMAT and isinstance(filters := raw.get("filters"), dict):
+        migrated["filters"] = {**cast("dict[str, object]", filters), "countries": [], "delivery": "any"}
     if version < PRICE_FORMAT:
-        filters = migrated.get("filters")
-        if filters is not None:
-            migrated["filters"] = {**as_object(filters, "filters"), "maxPriceCents": None}
+        if isinstance(filters := migrated.get("filters"), dict):
+            migrated["filters"] = {**cast("dict[str, object]", filters), "maxPriceCents": None}
         migrated["leftOutCards"] = {}
     migrated["version"] = FORMAT_VERSION
     return migrated, version
@@ -356,9 +354,9 @@ def _bind(raw: Mapping[str, object]) -> BuySettings:
 
 
 def _filters(raw: object, defaults: BuyFilters) -> BuyFilters:
-    if raw is None:
+    fields = _object_field(raw, "filters")
+    if fields is None:
         return defaults
-    fields = as_object(raw, "filters")
     return BuyFilters(
         _choice(LanguageChoice, fields, "language", defaults.language),
         _condition(fields.get("condition"), defaults.min_condition),
@@ -367,6 +365,26 @@ def _filters(raw: object, defaults: BuyFilters) -> BuyFilters:
         _choice(DeliveryChoice, fields, "delivery", defaults.delivery),
         _max_price(fields.get("maxPriceCents")),
     )
+
+
+def _object_field(raw: object, where: str) -> Mapping[str, object] | None:
+    """The object at `where`; None, with a warning, when it is missing or misshaped."""
+    if raw is None:
+        return None
+    try:
+        return as_object(raw, where)
+    except ShapeError as error:
+        log.warning("%s: %s; it is dropped", BUY_FILE, error)
+        return None
+
+
+def _list_field(raw: object, where: str) -> Sequence[object] | None:
+    """The list at `where`; None, with a warning, when it is misshaped."""
+    try:
+        return as_list(raw, where)
+    except ShapeError as error:
+        log.warning("%s: %s; it is dropped", BUY_FILE, error)
+        return None
 
 
 def _max_price(value: object) -> int | None:
@@ -414,11 +432,12 @@ def _condition(value: object, default: Condition | None) -> Condition | None:
 
 
 def _left_out(raw: object) -> dict[str, frozenset[int]]:
-    if raw is None:
-        return {}
+    accounts = _object_field(raw, "leftOut")
     left: dict[str, frozenset[int]] = {}
-    for name, ids in as_object(raw, "leftOut").items():
-        numbers = as_list(ids, f"leftOut.{name}")
+    for name, ids in (accounts or {}).items():
+        numbers = _list_field(ids, f"leftOut.{name}")
+        if numbers is None:
+            continue
         valid = [n for n in numbers if isinstance(n, int) and not isinstance(n, bool)]
         if len(valid) != len(numbers):
             log.warning("%s: leftOut.%s holds values that are no deck id; they are dropped", BUY_FILE, name)
@@ -428,14 +447,15 @@ def _left_out(raw: object) -> dict[str, frozenset[int]]:
 
 
 def _left_out_cards(raw: object) -> dict[str, Mapping[int, frozenset[str]]]:
-    if raw is None:
-        return {}
+    accounts = _object_field(raw, "leftOutCards")
     left: dict[str, Mapping[int, frozenset[str]]] = {}
-    for account, decks in as_object(raw, "leftOutCards").items():
+    for account, decks in (accounts or {}).items():
         by_deck: dict[int, frozenset[str]] = {}
-        for deck, names in as_object(decks, f"leftOutCards.{account}").items():
+        for deck, names in (_object_field(decks, f"leftOutCards.{account}") or {}).items():
             where = f"leftOutCards.{account}.{deck}"
-            cards = as_list(names, where)
+            cards = _list_field(names, where)
+            if cards is None:
+                continue
             valid = frozenset(n for n in cards if isinstance(n, str) and n)
             if len(valid) != len(cards):
                 log.warning("%s: %s holds values that are no card name; they are dropped", BUY_FILE, where)
