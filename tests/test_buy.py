@@ -206,7 +206,7 @@ class Rig:
         # The `cancelled` callables the solver was given, and the counts it reports as timed out.
         self.curve_cancels: list[Callable[[], bool]] = []
         self.curve_timed_out: tuple[int, ...] = ()
-        self.curve_effect: Callable[[], None] = lambda: None
+        self.curve_effect: Callable[[], object] = lambda: None
         self.cart_calls: list[Package] = []
         self.cart_effect: Callable[[threading.Event], None] = lambda _cancel: None
         self.cart_result: Callable[[Package], CartRun] = carted_everything
@@ -2542,25 +2542,25 @@ class TestAddingToTheCart:
         assert status["message"] == "Scan cancelled after 5 pages; results are partial."
 
     @pytest.mark.parametrize(
-        "change",
-        [
-            lambda check: {**check, "totalCents": check["totalCents"] + 1},
-            lambda check: {**check, "picks": check["picks"][:1]},
-            lambda check: {**check, "picks": [[check["picks"][0][0], 2], *check["picks"][1:]]},
-            lambda check: {**check, "picks": [[0, 1], *check["picks"][1:]]},
-            lambda _check: NO_CHECK,
-            lambda _check: None,
-        ],
-        ids=["total", "fewer picks", "copies", "article", "nothing like it", "no check"],
+        "kind", ["total", "fewer picks", "copies", "article", "nothing like it", "no check"]
     )
     def test_a_package_that_differs_from_the_one_confirmed_is_refused_and_nothing_is_sent(
-        self, two_packages: Rig, change: Callable[[Json], object]
+        self, two_packages: Rig, kind: str
     ) -> None:
         rig = two_packages
         shown = cast("Json", rig.service.package(2)["check"])
+        picks = cast("list[list[int]]", shown["picks"])
+        wrong: dict[str, object] = {
+            "total": {**shown, "totalCents": 491},
+            "fewer picks": {**shown, "picks": picks[:1]},
+            "copies": {**shown, "picks": [[picks[0][0], 2], *picks[1:]]},
+            "article": {**shown, "picks": [[0, 1], *picks[1:]]},
+            "nothing like it": NO_CHECK,
+            "no check": None,
+        }
 
         with pytest.raises(BuyError, match=r"That package changed; look at it again before adding\."):
-            rig.service.add_to_cart(2, change(shown))
+            rig.service.add_to_cart(2, wrong[kind])
 
         assert rig.events == []
         assert rig.cart_calls == []

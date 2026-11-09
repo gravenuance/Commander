@@ -304,13 +304,18 @@ class FakeNative:
         action()
 
 
+def passthrough(work: Callable[[], None]) -> Callable[[], None]:
+    """System.Action(work): the fake native takes the callable itself."""
+    return work
+
+
 class TestOnTheUiThread:
     @staticmethod
     def driver(native: FakeNative, monkeypatch: pytest.MonkeyPatch) -> WebviewDriver:
         window = FakeWindow()
         vars(window)["native"] = native
         dotnet = types.ModuleType("System")
-        vars(dotnet)["Action"] = lambda work: work
+        vars(dotnet)["Action"] = passthrough
         monkeypatch.setitem(sys.modules, "System", dotnet)
         return WebviewDriver(cast("Window", window))
 
