@@ -291,7 +291,7 @@ class TestCart:
         assert shipments == (
             CartShipment(
                 seller="Seller01",
-                seller_id=1810936,
+                seller_id=3141592,
                 seller_country="Austria",
                 items=(
                     CartItem(
@@ -310,7 +310,7 @@ class TestCart:
             ),
             CartShipment(
                 seller="Seller03",
-                seller_id=992259476,
+                seller_id=765432109,
                 seller_country="France",
                 items=(
                     CartItem(
@@ -334,7 +334,7 @@ class TestCart:
 
         shipments = read_cart(f"<main>{body}{body}</main>")
 
-        assert [s.seller_id for s in shipments] == [1810936, 992259476]
+        assert [s.seller_id for s in shipments] == [3141592, 765432109]
         assert [len(s.items) for s in shipments] == [1, 1]
 
     def test_an_empty_cart_has_no_shipments(self) -> None:
@@ -343,7 +343,7 @@ class TestCart:
     def test_a_block_without_its_total_names_the_seller(self) -> None:
         broken = changed(page(CART_PAGE), '<span class="strong total">5,69 €</span>', "")
 
-        with pytest.raises(PageError, match=r"seller 992259476.*total"):
+        with pytest.raises(PageError, match=r"seller 765432109.*total"):
             read_cart(broken)
 
     def test_an_item_without_its_price_names_the_article(self) -> None:
@@ -358,7 +358,7 @@ class TestCart:
 class TestWantsList:
     def test_the_probe_list(self) -> None:
         assert read_wants_list(page(WANTS_PAGE)) == WantsList(
-            list_id=26107608,
+            list_id=34567890,
             name="CMDR PROBE",
             wants=(
                 Want(
@@ -418,7 +418,7 @@ class TestWantsList:
 
         read = read_wants_list(emptied)
 
-        assert (read.list_id, read.name, read.wants) == (26107608, "CMDR PROBE", ())
+        assert (read.list_id, read.name, read.wants) == (34567890, "CMDR PROBE", ())
 
 
 CREATE_FORM = (
@@ -441,11 +441,11 @@ def list_row(list_id: int, name: str, link_text: str = "Open") -> str:
 
 class TestWantsLists:
     def test_each_list_has_the_name_just_before_its_link(self) -> None:
-        html = lists_page(list_row(18999612, "MONTHLY WANTS"), list_row(26107608, "Commander"))
+        html = lists_page(list_row(12345678, "MONTHLY WANTS"), list_row(34567890, "Commander"))
 
         assert read_wants_lists(html) == (
-            WantsListEntry(18999612, "MONTHLY WANTS"),
-            WantsListEntry(26107608, "Commander"),
+            WantsListEntry(12345678, "MONTHLY WANTS"),
+            WantsListEntry(34567890, "Commander"),
         )
 
     def test_a_list_linked_twice_is_read_once_with_the_name_before_its_first_link(self) -> None:
