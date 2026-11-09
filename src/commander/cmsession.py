@@ -521,11 +521,8 @@ class WebviewDriver:
         self._window.destroy()
 
     def _on_ui_thread(self, work: Callable[[_DotNet], None]) -> None:
-        # pythonnet's .NET objects are untyped; pywebview has loaded the CLR by the time a window exists.
-        from System import (  # noqa: PLC0415  # pyright: ignore[reportMissingImports]
-            Action,  # pyright: ignore[reportUnknownVariableType]
-        )
-
+        """Run `work` on the window's UI thread, or inline when already there, where a marshalled call would
+        wait for the thread it blocks."""
         native: Any = cast("Any", self._window.native)
 
         def on_ui_thread() -> None:
@@ -533,6 +530,14 @@ class WebviewDriver:
             if core is None:
                 raise BrowserError("WebView2 is not ready")
             work(core)
+
+        if not native.InvokeRequired:
+            on_ui_thread()
+            return
+        # pythonnet's .NET objects are untyped; pywebview has loaded the CLR by the time a window exists.
+        from System import (  # noqa: PLC0415  # pyright: ignore[reportMissingImports]
+            Action,  # pyright: ignore[reportUnknownVariableType]
+        )
 
         try:
             _within_window(CALL_TIMEOUT_S, lambda: native.Invoke(Action(on_ui_thread)), "the UI thread call")

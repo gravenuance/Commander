@@ -1,7 +1,9 @@
 """`within` and `WebviewDriver` against a fake pywebview window (its UI-thread call, which needs .NET, is
 overridden)."""
 
+import sys
 import threading
+import types
 from collections.abc import Callable
 from http.cookies import SimpleCookie
 from typing import TYPE_CHECKING, Any, cast
@@ -270,6 +272,77 @@ class TestReadSessionCookie:
 
         assert UiLessDriver(window).read_session_cookie() is None
         assert "could not give its cookies" in caplog.text
+
+
+class FakeCore:
+    """WebView2's core, as far as the driver reaches it."""
+
+    def __init__(self) -> None:
+        self.Settings = types.SimpleNamespace(IsPasswordAutosaveEnabled=False, IsGeneralAutofillEnabled=False)
+        self.navigated: list[str] = []
+
+    def Navigate(self, url: str) -> None:  # noqa: N802 - .NET's name
+        self.navigated.append(url)
+
+
+class FakeNative:
+    """The window's form: `on_ui` says whether the caller already is on the UI thread; `Invoke` records the
+    marshalled calls and runs them where it is called, as the UI thread would."""
+
+    def __init__(self, *, on_ui: bool, ready: bool = True) -> None:
+        self.on_ui = on_ui
+        self.invokes = 0
+        self.core = FakeCore()
+        self.webview = types.SimpleNamespace(CoreWebView2=self.core if ready else None)
+
+    @property
+    def InvokeRequired(self) -> bool:  # noqa: N802 - .NET's name
+        return not self.on_ui
+
+    def Invoke(self, action: Callable[[], None]) -> None:  # noqa: N802 - .NET's name
+        self.invokes += 1
+        action()
+
+
+class TestOnTheUiThread:
+    @staticmethod
+    def driver(native: FakeNative, monkeypatch: pytest.MonkeyPatch) -> WebviewDriver:
+        window = FakeWindow()
+        vars(window)["native"] = native
+        dotnet = types.ModuleType("System")
+        vars(dotnet)["Action"] = lambda work: work
+        monkeypatch.setitem(sys.modules, "System", dotnet)
+        return WebviewDriver(cast("Window", window))
+
+    def test_a_call_made_from_the_ui_thread_runs_there_instead_of_waiting_on_itself(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        native = FakeNative(on_ui=True)
+
+        self.driver(native, monkeypatch).configure()
+
+        assert native.invokes == 0
+        assert native.core.Settings.IsPasswordAutosaveEnabled is True
+        assert native.core.Settings.IsGeneralAutofillEnabled is True
+
+    def test_a_call_made_from_another_thread_is_marshalled_to_the_ui_thread(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        native = FakeNative(on_ui=False)
+
+        assert self.driver(native, monkeypatch).navigate("https://www.cardmarket.com/en/Magic") is True
+
+        assert native.invokes == 1
+        assert native.core.navigated == ["https://www.cardmarket.com/en/Magic"]
+
+    def test_a_window_whose_webview_is_not_ready_fails_the_call_on_either_thread(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        for on_ui in (True, False):
+            native = FakeNative(on_ui=on_ui, ready=False)
+
+            with pytest.raises(BrowserError, match="WebView2 is not ready"):
+                self.driver(native, monkeypatch).configure()
 
 
 class NoStore:
