@@ -51,6 +51,8 @@ class Offer:
     buyable: bool
     price_cents: int
     quantity: int
+    # The seller must ship this buyer tracked ("Only tracked shipping to Sweden"), whatever the order's value.
+    tracked_only: bool = False
     seller_sales: int | None = None
     seller_items: int | None = None
     delivery_days: int | None = None
@@ -130,6 +132,7 @@ _WANTS_ADD_CARDS = re.compile(r"/en/Magic/Wants/(?P<id>\d+)/AddCards")
 _LOCATION_PREFIX = "Item location: "
 _PRODUCT_PATH = "/en/Magic/Products/"
 _FOIL = "Foil"
+_TRACKED_ONLY = "tracked shipping"
 
 
 def parse_price_cents(text: str, where: str = "price") -> int:
@@ -236,9 +239,10 @@ def _read_offer(
         for child in attributes.children
         if isinstance(child, Node) and child.tag == "span" and (label := child.get("aria-label"))
     ]
-    price = _text_of(
-        _need(row.find(with_class("price-container")), where, "price"), with_class("color-primary")
-    )
+    price_box = _need(row.find(with_class("price-container")), where, "price")
+    # The price is the bold figure; an icon before it can carry the same colour class.
+    price = _text_of(price_box, with_class("fw-bold"))
+    tracked_only = price_box.find(lambda n: _TRACKED_ONLY in (n.get("aria-label") or "")) is not None
     return Offer(
         article_id=article_id,
         card=card,
@@ -250,6 +254,7 @@ def _read_offer(
         foil=_FOIL in icons,
         buyable=row.find(_adds_to_cart) is not None,
         price_cents=parse_price_cents(_need(price, where, "price"), f"{where} price"),
+        tracked_only=tracked_only,
         quantity=_number(
             _need(_text_of(row, with_class("item-count")), where, "quantity"), where, "quantity"
         ),
@@ -281,7 +286,8 @@ def _card_row_offer(row: Node, card: str) -> tuple[Offer, str | None]:
         offer,
         seller_sales=None if sales is None else _number(sales["sales"], where, "seller sales"),
         seller_items=None if sales is None else _number(sales["items"], where, "seller items"),
-        delivery_days=None if days is None else _number(days, where, "delivery days"),
+        # A seller without enough deliveries for an estimate shows "-".
+        delivery_days=None if days is None or days.strip() == "-" else _number(days, where, "delivery days"),
     )
     return full, None if tooltip is None else tooltip["destination"].strip()
 

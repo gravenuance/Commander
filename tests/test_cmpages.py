@@ -156,6 +156,31 @@ class TestCardOffers:
         with pytest.raises(PageError, match=r"article 2051305106.*price"):
             read_card_offers(broken)
 
+    def test_a_seller_that_ships_only_tracked_is_read_past_its_icon(self) -> None:
+        # A real row (2026-11-09) puts this icon before the price, in both layouts.
+        price = '<span class="color-primary small text-end text-nowrap fw-bold ">4,50 €</span>'
+        icon = (
+            '<span data-bs-toggle="tooltip" class="fonticon-check-circle extra-small color-primary me-2"'
+            ' aria-label="Only &lt;strong&gt;tracked shipping&lt;/strong&gt; to Sweden."></span>'
+        )
+        tracked = changed(page(CARD_PAGE), price, icon + price)
+
+        offers = read_card_offers(tracked).offers
+
+        first = offers[0]
+        assert (first.article_id, first.price_cents, first.tracked_only) == (2051305106, 450, True)
+        assert not any(offer.tracked_only for offer in offers[1:])
+
+    def test_a_seller_without_a_delivery_estimate_has_no_days(self) -> None:
+        # A real row (2026-11-09) shows "-" for a seller with too few deliveries to estimate.
+        unknown = changed(
+            page(CARD_PAGE),
+            '<span class="shippingTime-info">16</span>',
+            '<span class="shippingTime-info">-</span>',
+        )
+
+        assert read_card_offers(unknown).offers[0].delivery_days is None
+
     def test_a_row_with_an_unknown_condition_names_the_article(self) -> None:
         broken = changed(
             page(CARD_PAGE),
