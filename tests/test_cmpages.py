@@ -413,6 +413,13 @@ class TestWantsList:
         with pytest.raises(PageError, match=r"want 6af1ca6e24ba6375060988f1.*condition"):
             read_wants_list(broken)
 
+    def test_a_want_without_its_id_is_a_page_error(self) -> None:
+        row_box = 'name="checkWantsRow[]" id="checkWantsRow[]-6af1caa548236"'
+        no_id = changed(page(WANTS_PAGE), f'{row_box} data-id-want="6af1ca6e24ba6375060988f1"', row_box)
+
+        with pytest.raises(PageError, match=r"a want: no want id"):
+            read_wants_list(no_id)
+
     def test_a_list_without_wants_is_empty(self) -> None:
         emptied = re.sub(r'(?s)<tr role="row"><td class="select.*?</tr>', "", page(WANTS_PAGE))
 
