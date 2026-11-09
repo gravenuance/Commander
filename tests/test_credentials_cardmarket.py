@@ -1,4 +1,5 @@
 import json
+import logging
 
 import keyring
 import keyring.errors
@@ -78,6 +79,30 @@ class TestSessionCookie:
 
         assert CardmarketSessionStore().get() is None
 
+    def test_a_saved_secret_that_is_not_a_cardmarket_session_is_warned_about_without_its_value(
+        self, memory_keyring: MemoryKeyring, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        memory_keyring.secrets[(SERVICE, USER)] = "not json, topsecretvalue"
+
+        with caplog.at_level(logging.WARNING, logger="commander.credentials"):
+            assert CardmarketSessionStore().get() is None
+
+        assert [r.levelno for r in caplog.records] == [logging.WARNING]
+        assert "Cardmarket session" in caplog.text
+        assert "topsecretvalue" not in caplog.text
+
+    def test_nothing_saved_logs_no_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING, logger="commander.credentials"):
+            assert CardmarketSessionStore().get() is None
+
+        assert caplog.records == []
+
+    def test_the_cookie_value_is_not_in_its_repr(self) -> None:
+        cookie = SessionCookie("PHPSESSID", "topsecretvalue", "www.cardmarket.com", "/")
+
+        assert "topsecretvalue" not in repr(cookie)
+        assert "PHPSESSID" in repr(cookie)
+
     def test_a_cookie_too_long_for_credential_manager_is_refused(self) -> None:
         long = SessionCookie("PHPSESSID", "x" * 1300, "www.cardmarket.com", "/")
 
@@ -96,3 +121,12 @@ class TestSessionCookie:
             store.get()
         with pytest.raises(CredentialError, match="could not save"):
             store.put(COOKIE)
+
+    def test_a_store_failure_on_delete_is_a_credential_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def refuse(*_: object) -> None:
+            raise keyring.errors.KeyringError("locked")
+
+        monkeypatch.setattr(keyring, "delete_password", refuse)
+
+        with pytest.raises(CredentialError, match="could not remove"):
+            CardmarketSessionStore().delete()

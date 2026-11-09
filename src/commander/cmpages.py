@@ -468,7 +468,7 @@ def _wants_list_id(root: Node) -> int | None:
 
 
 def _want(checkbox: Node, row: Node) -> Want:
-    want_id = checkbox.get("data-id-want") or ""
+    want_id = _need(checkbox.get("data-id-want") or None, f"{_WANTS_PAGE}: a want", "want id")
     where = f"{_WANTS_PAGE}: want {want_id}"
     amount = _need(_text_of(row, tagged("td", cls="amount")), where, "quantity")
     languages = _need(row.find(tagged("td", cls="languages")), where, "languages cell")

@@ -41,6 +41,7 @@ def select_options_script(selector: str, values: Sequence[str]) -> str:
     return f"""(() => {{
   const el = document.querySelector({json.dumps(selector)});
   if (!el) return 'no element matches ' + {json.dumps(selector)};
+  if (el.tagName !== 'SELECT') return 'the field ' + {json.dumps(selector)} + ' is not a select';
   const wanted = {json.dumps(sorted(values))};
   for (const option of Array.from(el.options)) option.selected = wanted.includes(option.value);
   el.dispatchEvent(new Event('input', {{bubbles: true}}));

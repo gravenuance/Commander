@@ -467,7 +467,7 @@ class TestRefusals:
         site.pages_once[f"{LISTS_URL}/7"] = [probe.replace("CMDR PROBE", APP_LIST_NAME)]
 
         with pytest.raises(
-            WantsError, match="refusing to change wants list 26107608 'Commander': expected list 7"
+            WantsError, match="refusing to change wants list 34567890 'Commander': expected list 7"
         ):
             sync(site, cards(("Sol Ring", 1)))
 

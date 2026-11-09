@@ -42,7 +42,8 @@ const made = elements.map(spec => {
     };
   });
   return {
-    spec, options, checked: !!spec.checked, disabled: !!spec.disabled, clicks: 0,
+    spec, options, tagName: spec.kind === 'select' ? 'SELECT' : 'INPUT',
+    checked: !!spec.checked, disabled: !!spec.disabled, clicks: 0,
     get value() { return value; },
     set value(v) { value = (spec.allowed && !spec.allowed.includes(v)) ? '' : v; },
     dispatchEvent(e) { events.push([spec.selector, e.type]); },
@@ -221,6 +222,12 @@ class TestSelectOptions:
         answer = run(select_options_script(LANGUAGES, ["1"])).answer
 
         assert answer == f"no element matches {LANGUAGES}"
+
+    def test_a_field_that_is_not_a_select_is_named_and_the_script_does_not_throw(self) -> None:
+        out = run(select_options_script(LANGUAGES, ["1"]), Element(LANGUAGES))
+
+        assert out.answer == f"the field {LANGUAGES} is not a select"
+        assert out.events == []
 
     def test_a_value_that_could_be_code_is_only_a_value(self) -> None:
         out = run(select_options_script(LANGUAGES, ['1"]); throw 1; (["']), languages_select())
