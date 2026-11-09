@@ -50,6 +50,8 @@ BLANK_PAGE = "<p style='font-family:sans-serif'>Starting…</p>"
 PACE_SECONDS = 4.0
 LOAD_TIMEOUT_SECONDS = 30.0
 CLICK_PREFIX = "click:"
+FILL_PREFIX = "fill:"
+FILL_SEPARATOR = "=>"
 
 # Signs of a signed-in page, read from the DOM because the session cookies are HttpOnly anyway. Cardmarket's
 # markup is undocumented, so the prototype reports each sign on its own rather than trusting one.
@@ -219,10 +221,27 @@ def prepare(window: "Window", store: SessionStore, visits: list[str]) -> None:
             selector = step.removeprefix(CLICK_PREFIX)
             print(f"\nclicking {selector}: {window.evaluate_js(click_script(selector))}", flush=True)
             continue
+        if step.startswith(FILL_PREFIX):
+            selector, _, text = step.removeprefix(FILL_PREFIX).partition(FILL_SEPARATOR)
+            print(f"\nfilling {selector}: {window.evaluate_js(fill_script(selector, text))}", flush=True)
+            continue
         print(f"\nvisiting {step}", flush=True)
         window.load_url(step)
     window.events.loaded.wait(LOAD_TIMEOUT_SECONDS)
     print("\nall steps done", flush=True)
+
+
+def fill_script(selector: str, text: str) -> str:
+    """JS that types `text` into the first field matching `selector` and fires the events a person's typing
+    would, so the page's own scripts see the change."""
+    return f"""(() => {{
+  const el = document.querySelector({json.dumps(selector)});
+  if (!el) return 'no element matches';
+  el.value = {json.dumps(text)};
+  el.dispatchEvent(new Event('input', {{bubbles: true}}));
+  el.dispatchEvent(new Event('change', {{bubbles: true}}));
+  return 'filled ' + el.tagName + ' with ' + el.value.length + ' characters';
+}})()"""
 
 
 def click_script(selector: str) -> str:
@@ -248,11 +267,13 @@ def main() -> int:
         nargs="+",
         default=[],
         metavar="STEP",
-        help=f"Cardmarket pages to open in turn; a step '{CLICK_PREFIX}<css selector>' clicks on the page",
+        help=f"Cardmarket pages to open in turn; a step '{CLICK_PREFIX}<css selector>' clicks on the page,"
+        f" '{FILL_PREFIX}<css selector>{FILL_SEPARATOR}<text>' types into a field",
     )
     args = parser.parse_args()
     visits: list[str] = args.visit
-    if bad := [url for url in visits if not url.startswith(CLICK_PREFIX) and not on_cardmarket(url)]:
+    actions = (CLICK_PREFIX, FILL_PREFIX)
+    if bad := [url for url in visits if not url.startswith(actions) and not on_cardmarket(url)]:
         parser.error(f"not a Cardmarket page: {bad[0]}")
     saver: PageSaver | None = None
     if args.save_pages is not None:
