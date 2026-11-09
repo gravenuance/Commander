@@ -450,7 +450,8 @@ class BuyService:
         return _package_json(chosen, trends, outcome.eligible if outcome else Eligible(()))
 
     def close(self) -> None:
-        """The app is closing: end a running scan at its next page, which closes its windows."""
+        """The app is closing: end a running scan or cart run at its next step. The app destroys the windows
+        right after, so a step that fails on a destroyed window ends the run as cancelled."""
         self.cancel()
 
     # --- the cards ------------------------------------------------------------------------------------
@@ -539,7 +540,11 @@ class BuyService:
             self._finish(run, ended.phase, ended.message, ended.detail, None)
             return
         except Exception as error:  # noqa: BLE001 - nothing may escape a background thread unlogged
-            self._finish_with_error(run, error)
+            if run.cancel.is_set():
+                log.info("buy: the run failed after a cancel, which ends it: %r", error)
+                self._finish(run, Phase.CANCELLED, "Scan cancelled.", "", None)
+            else:
+                self._finish_with_error(run, error)
             return
         phase = _PHASE_OF[outcome.scan.status]
         message, detail = _stopped_text(outcome.scan)
@@ -747,7 +752,11 @@ class BuyService:
             log.info("buy: cancelled before anything was added")
             report = not_sent(package, CartStatus.CANCELLED, "")
         except Exception as error:  # noqa: BLE001 - nothing may escape a background thread unlogged
-            report = not_sent(package, CartStatus.STOPPED, _cart_failure(error))
+            if run.cancel.is_set():
+                log.info("buy: the cart run failed after a cancel, which ends it: %r", error)
+                report = not_sent(package, CartStatus.CANCELLED, _CART_CANCELLED_MIDWAY)
+            else:
+                report = not_sent(package, CartStatus.STOPPED, _cart_failure(error))
         log.log(
             logging.INFO if report.status is CartStatus.COMPLETE else logging.WARNING,
             "buy: the cart run %s: %d cards added, %d already there, %d gone, %d short",
@@ -995,6 +1004,9 @@ def _cart_json(report: CartRun) -> Json:
             for row in report.shipping
         ],
     }
+
+
+_CART_CANCELLED_MIDWAY = "Cancelled while a card was being added; check your cart."
 
 
 def _cart_failure(error: Exception) -> str:

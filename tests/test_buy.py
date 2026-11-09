@@ -1286,6 +1286,29 @@ class TestCancellingAndStopping:
         assert "browser closed" in rig.events
         assert str(error) in caplog.text
 
+    @pytest.mark.parametrize("error", [BrowserError("the window is gone"), RuntimeError("boom")])
+    def test_a_failure_after_a_cancel_ends_the_scan_as_cancelled_without_an_error(
+        self, rig: Rig, error: Exception, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        def close_mid_run(cancel: threading.Event) -> None:
+            cancel.set()
+            raise error
+
+        rig.scan_effect = close_mid_run
+
+        with caplog.at_level(logging.INFO):
+            rig.service.start()
+        status = rig.service.status()
+
+        assert (status["phase"], status["message"], status["results"]) == (
+            "cancelled",
+            "Scan cancelled.",
+            None,
+        )
+        assert "browser closed" in rig.events
+        assert [r.levelno for r in caplog.records if r.levelno >= logging.WARNING] == []
+        assert "unexpectedly" not in caplog.text
+
     def test_a_shipping_table_that_cannot_be_fetched_stops_the_scan(self, rig: Rig) -> None:
         rig.scan_result = scan_of(two_sellers())
 
@@ -2407,6 +2430,26 @@ class TestAddingToTheCart:
         assert [item["outcome"] for item in cast("list[Json]", cart["items"])] == ["not-sent"] * 2
         if reason:
             assert_short(reason)
+
+    @pytest.mark.parametrize("error", [BrowserError("the window is gone"), RuntimeError("boom")])
+    def test_a_failure_after_a_cancel_ends_the_run_as_cancelled_and_says_to_check_the_cart(
+        self, two_packages: Rig, error: Exception, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        def close_mid_run(cancel: threading.Event) -> None:
+            cancel.set()
+            raise error
+
+        two_packages.cart_effect = close_mid_run
+
+        with caplog.at_level(logging.INFO):
+            status = add(two_packages.service, 2)
+
+        cart = cast("Json", status["cart"])
+        assert (cart["status"], cart["notSent"]) == ("cancelled", 2)
+        assert cart["reason"] == "Cancelled while a card was being added; check your cart."
+        assert_short(cart["reason"])
+        assert "browser closed" in two_packages.events
+        assert [r.levelno for r in caplog.records if r.levelno >= logging.ERROR] == []
 
     def test_an_unexpected_failure_is_logged_with_its_trace(
         self, two_packages: Rig, caplog: pytest.LogCaptureFixture
