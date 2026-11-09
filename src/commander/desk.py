@@ -1503,6 +1503,11 @@ class Desk:
         return self._buy.package(int(sellers))
 
     @_guarded
+    def buy_add_to_cart(self, sellers: int) -> Json:
+        """Put the package of this many sellers in the owner's Cardmarket cart; buy_status follows it."""
+        return self._buy.add_to_cart(int(sellers))
+
+    @_guarded
     def search(self, deck_id: int, text: str) -> Json:
         stored = self._stored(deck_id)
         held = {c.name.casefold() for c in stored.deck.main_cards}

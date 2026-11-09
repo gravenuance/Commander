@@ -19,15 +19,17 @@ from commander.buy import BuyEngine, BuyService, RouteSource
 from commander.buypane import PaneArea
 from commander.buysettings import BuyError, BuyStore
 from commander.buywindows import CardmarketPane, production_engine
-from commander.cmpages import Condition, Offer, Want
+from commander.cmcart import CartOutcome, CartProgress, CartRun, CartStatus, ItemResult, ShippingResult
+from commander.cmpages import Condition, Offer, PageError, Want
 from commander.cmscan import Foil, ScanProgress, ScanRequest, ScanResult, ScanStage, ScanStatus
 from commander.cmsession import BrowserError, Cancelled, FormBrowser, Handover, Interrupted, LoadTimeout, Need
 from commander.cmshipping import CardmarketShipping, Country, ShippingMethod
 from commander.cmwants import QuantityMismatch, WantsCancelled, WantsProgress, WantsStep, WantsSync
+from commander.credentials import CredentialError
 from commander.models import Deck, DeckCard
 from commander.net import NetworkError
 from commander.offerlimits import OfferLimits
-from commander.sellersolve import WantedCard
+from commander.sellersolve import Package, WantedCard
 from test_sellersolve import LETTER, offer
 
 NOW = datetime(2026, 11, 9, 12, 0, tzinfo=UTC)
@@ -194,6 +196,9 @@ class Rig:
         self.scan_result = scan_of([])
         self.sync_effect: Callable[[threading.Event], None] = lambda _cancel: None
         self.scan_effect: Callable[[threading.Event], None] = lambda _cancel: None
+        self.cart_calls: list[Package] = []
+        self.cart_effect: Callable[[threading.Event], None] = lambda _cancel: None
+        self.cart_result: Callable[[Package], CartRun] = carted_everything
         self.service = self.build()
 
     def build(self) -> BuyService:
@@ -203,6 +208,7 @@ class Rig:
             shipping=self._shipping,
             sync_wants=self._sync_wants,
             scan=self._scan,
+            add_to_cart=self._add_to_cart,
         )
         return BuyService(
             store=BuyStore(self.settings_path),
@@ -259,6 +265,27 @@ class Rig:
         self.progress.append(str(self.service.status()["progress"]))
         self.scan_effect(cancel)
         return self.scan_result
+
+    def _add_to_cart(
+        self,
+        _browser: object,
+        package: Package,
+        *,
+        cancel: threading.Event,
+        on_progress: Callable[[CartProgress], None],
+    ) -> CartRun:
+        self.events.append("cart")
+        self.cart_calls.append(package)
+        on_progress(CartProgress("Arcane Signet", 0, 2))
+        self.progress.append(str(self.service.status()["progress"]))
+        self.cart_effect(cancel)
+        return self.cart_result(package)
+
+
+def carted_everything(package: Package) -> CartRun:
+    """The cart run of a package whose every offer went in."""
+    items = tuple(ItemResult(pick, CartOutcome.ADDED, pick.copies) for pick in package.picks)
+    return CartRun(CartStatus.COMPLETE, "", items, ())
 
 
 @pytest.fixture
@@ -2045,3 +2072,331 @@ class TestTheMaxPrice:
 
         assert "'maxPriceCents': 100" in caplog.text
         assert "2 above the max price" in caplog.text
+
+
+def mixed_cart(package: Package) -> CartRun:
+    """The first offer refused and the second short of its copies, with one seller's shipping dearer."""
+    gone, short = package.picks
+    return CartRun(
+        CartStatus.COMPLETE,
+        "",
+        (
+            ItemResult(gone, CartOutcome.GONE, 0, "The item is not available."),
+            ItemResult(short, CartOutcome.SHORT, 0),
+        ),
+        (ShippingResult("B", "Letter", 200, "Brief S Priority", 255),),
+    )
+
+
+def any_language(service: BuyService) -> object:
+    return service.set_filters("any", "NM", "any", [], "any")
+
+
+def leave_out_the_stone(service: BuyService) -> object:
+    return service.include_card(1, "Mind Stone", included=False)
+
+
+def cap_the_price(service: BuyService) -> object:
+    return service.set_filters("english", "NM", "any", [], "any", max_price="4")
+
+
+class TestAddingToTheCart:
+    """Two cards are wanted, so there are packages of one and of two sellers; the cart is a fake."""
+
+    @pytest.fixture
+    def two_packages(self, rig: Rig) -> Rig:
+        rig.decks = [make_deck(1, "Ellivere", want("Arcane Signet"), want("Mind Stone"))]
+        rig.scan_result = scan_of(two_sellers())
+        rig.service.start()
+        rig.events.clear()
+        rig.progress.clear()
+        return rig
+
+    @staticmethod
+    def cart_of(rig: Rig) -> Json:
+        return cast("Json", rig.service.status()["cart"])
+
+    def test_the_chosen_package_is_added_in_the_scan_window_and_the_report_joins_the_results(
+        self, two_packages: Rig
+    ) -> None:
+        rig = two_packages
+        results = rig.service.status()["results"]
+        seen: list[Json] = []
+        rig.cart_effect = lambda _cancel: seen.append(rig.service.status())
+
+        status = rig.service.add_to_cart(2)
+
+        assert rig.events == ["browser opened", "cart", "browser closed"]
+        [package] = rig.cart_calls
+        assert sorted((p.offer.seller, p.offer.card) for p in package.picks) == [
+            ("A", "Mind Stone"),
+            ("B", "Arcane Signet"),
+        ]
+        [during] = seen
+        assert (during["phase"], during["running"], during["cart"]) == ("cart", True, None)
+        assert during["progress"] == "Adding Arcane Signet · 1 of 2"
+        assert (status["phase"], status["running"], status["progress"]) == ("carted", False, "")
+        assert status["results"] == results
+        assert status["cart"] == {
+            "status": "complete",
+            "reason": "",
+            "added": 2,
+            "already": 0,
+            "gone": 0,
+            "short": 0,
+            "noAnswer": 0,
+            "notSent": 0,
+            "items": [],
+            "shipping": [],
+        }
+
+    def test_the_package_can_be_chosen_again_after_a_run(self, two_packages: Rig) -> None:
+        two_packages.service.add_to_cart(1)
+
+        two_packages.service.add_to_cart(2)
+
+        assert [p.seller_count for p in two_packages.cart_calls] == [1, 2]
+        assert two_packages.service.package(1)["sellers"] == 1
+
+    def test_what_did_not_simply_go_in_is_listed_with_cardmarkets_reason_and_the_shipping_beside_the_estimate(
+        self, two_packages: Rig
+    ) -> None:
+        two_packages.cart_result = mixed_cart
+
+        two_packages.service.add_to_cart(2)
+        cart = self.cart_of(two_packages)
+
+        gone, short = two_packages.cart_calls[0].picks
+        assert (cart["added"], cart["gone"], cart["short"]) == (0, 1, 1)
+        assert cart["items"] == [
+            {
+                "seller": gone.offer.seller,
+                "card": gone.offer.card,
+                "copies": 1,
+                "outcome": "gone",
+                "inCart": 0,
+                "message": "The item is not available.",
+            },
+            {
+                "seller": short.offer.seller,
+                "card": short.offer.card,
+                "copies": 1,
+                "outcome": "short",
+                "inCart": 0,
+                "message": "",
+            },
+        ]
+        assert cart["shipping"] == [
+            {
+                "seller": "B",
+                "estimateMethod": "Letter",
+                "estimateCents": 200,
+                "cartMethod": "Brief S Priority",
+                "cartCents": 255,
+                "differs": True,
+            }
+        ]
+
+    def test_without_a_scan_or_for_a_package_that_is_not_there_it_is_refused_and_no_window_opens(
+        self, rig: Rig
+    ) -> None:
+        with pytest.raises(BuyError, match=r"That package is gone; scan again\."):
+            rig.service.add_to_cart(1)
+        rig.decks = [make_deck(1, "Ellivere", want("Arcane Signet"), want("Mind Stone"))]
+        rig.scan_result = scan_of(two_sellers())
+        rig.service.start()
+        rig.events.clear()
+
+        with pytest.raises(BuyError, match=r"That package is gone; scan again\."):
+            rig.service.add_to_cart(3)
+
+        assert rig.events == []
+
+    def test_it_is_refused_while_a_scan_or_another_cart_run_is_going(self, two_packages: Rig) -> None:
+        rig = two_packages
+        refused: list[str] = []
+
+        def try_again(_: threading.Event) -> None:
+            with pytest.raises(BuyError) as error:
+                rig.service.add_to_cart(1)
+            refused.append(str(error.value))
+
+        rig.sync_effect = try_again
+        rig.cart_effect = try_again
+        rig.service.start()
+        rig.service.add_to_cart(2)
+
+        assert refused == ["Wait for the scan, or cancel it."] * 2
+        assert [p.seller_count for p in rig.cart_calls] == [2]
+
+    def test_the_choices_cannot_change_while_the_cart_is_being_filled(self, two_packages: Rig) -> None:
+        rig = two_packages
+        refused: list[str] = []
+
+        def change(_: threading.Event) -> None:
+            for attempt in (
+                lambda: rig.service.include(1, included=False),
+                lambda: rig.service.set_filters("any", "any", "any", [], "any"),
+                rig.service.start,
+            ):
+                with pytest.raises(BuyError) as error:
+                    attempt()
+                refused.append(str(error.value))
+
+        rig.cart_effect = change
+
+        rig.service.add_to_cart(2)
+
+        assert refused == [
+            "Wait for the scan, or cancel it.",
+            "Wait for the scan, or cancel it.",
+            "A scan is running already.",
+        ]
+
+    def test_cancel_reaches_the_run_and_a_cancelled_report_ends_it(self, two_packages: Rig) -> None:
+        rig = two_packages
+        seen: list[object] = []
+
+        def cancel(event: threading.Event) -> None:
+            seen.append(event.is_set())
+            seen.append(rig.service.cancel()["cancelling"])
+            seen.append(event.is_set())
+
+        def cancelled(package: Package) -> CartRun:
+            items = tuple(ItemResult(pick, CartOutcome.NOT_SENT, None) for pick in package.picks)
+            return CartRun(CartStatus.CANCELLED, "", items, ())
+
+        rig.cart_effect = cancel
+        rig.cart_result = cancelled
+
+        status = rig.service.add_to_cart(2)
+
+        assert seen == [False, True, True]
+        assert (status["phase"], status["cancelling"]) == ("carted", False)
+        assert (self.cart_of(rig)["status"], self.cart_of(rig)["notSent"]) == ("cancelled", 2)
+
+    @pytest.mark.parametrize("need", [Need.SIGN_IN, Need.CHECK])
+    def test_the_screen_gives_the_window_to_the_owner_in_the_cart_run_and_takes_it_back(
+        self, two_packages: Rig, need: Need
+    ) -> None:
+        rig = two_packages
+        seen: list[tuple[object, object]] = []
+
+        def hand_over(_: threading.Event) -> None:
+            assert rig.handover is not None
+            rig.handover.show(need)
+            seen.append((rig.service.status()["phase"], rig.service.status()["running"]))
+            rig.handover.hide()
+            seen.append((rig.service.status()["phase"], rig.service.status()["progress"]))
+
+        rig.cart_effect = hand_over
+
+        rig.service.add_to_cart(2)
+
+        assert seen == [(need.value, True), ("cart", "Adding Arcane Signet · 1 of 2")]
+
+    @pytest.mark.parametrize(
+        ("failure", "status", "reason"),
+        [
+            (
+                LoadTimeout("slow"),
+                "stopped",
+                "Cardmarket did not answer; check your connection and try again.",
+            ),
+            (BrowserError("gone"), "stopped", "The Cardmarket window failed; the details are in the log."),
+            (
+                PageError("not a cart"),
+                "stopped",
+                "Cardmarket's page was not as expected; the details are in the log.",
+            ),
+            (
+                CredentialError("locked"),
+                "stopped",
+                "The saved Cardmarket sign-in could not be read; see the log.",
+            ),
+            (Cancelled("cancelled in the handover"), "cancelled", ""),
+            (RuntimeError("boom"), "stopped", "Something went wrong; check your cart on Cardmarket."),
+        ],
+    )
+    def test_a_run_that_fails_before_sending_is_a_report_of_nothing_sent_and_the_window_is_closed(
+        self, two_packages: Rig, failure: Exception, status: str, reason: str
+    ) -> None:
+        rig = two_packages
+        results = rig.service.status()["results"]
+
+        def fail(_: threading.Event) -> None:
+            raise failure
+
+        rig.cart_effect = fail
+
+        after = rig.service.add_to_cart(2)
+
+        assert rig.events == ["browser opened", "cart", "browser closed"]
+        assert after["phase"] == "carted"
+        assert after["results"] == results
+        cart = self.cart_of(rig)
+        assert (cart["status"], cart["reason"], cart["added"], cart["notSent"]) == (status, reason, 0, 2)
+        assert [item["outcome"] for item in cast("list[Json]", cart["items"])] == ["not-sent"] * 2
+        if reason:
+            assert_short(reason)
+
+    def test_an_unexpected_failure_is_logged_with_its_trace(
+        self, two_packages: Rig, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        def fail(_: threading.Event) -> None:
+            raise RuntimeError("boom")
+
+        two_packages.cart_effect = fail
+
+        with caplog.at_level(logging.ERROR):
+            two_packages.service.add_to_cart(2)
+
+        traces = [r.exc_info[1] for r in caplog.records if r.exc_info]
+        assert [(type(error), str(error)) for error in traces] == [(RuntimeError, "boom")]
+
+    def test_the_run_is_logged_with_its_counts(
+        self, two_packages: Rig, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        two_packages.cart_result = mixed_cart
+
+        with caplog.at_level(logging.INFO):
+            two_packages.service.add_to_cart(2)
+
+        assert "buy: putting the package of 2 sellers (2 cards) in the cart" in caplog.text
+        assert "buy: the cart run complete: 0 cards added, 0 already there, 1 gone, 1 short" in caplog.text
+
+    def test_a_new_scan_drops_the_report_from_its_start(self, two_packages: Rig) -> None:
+        rig = two_packages
+        during: list[object] = []
+        rig.service.add_to_cart(2)
+        rig.sync_effect = lambda _cancel: during.append(rig.service.status()["cart"])
+
+        rig.service.start()
+
+        assert during == [None]
+        assert rig.service.status()["cart"] is None
+
+    @pytest.mark.parametrize("change", [any_language, leave_out_the_stone, cap_the_price])
+    def test_changed_filters_or_ticks_drop_the_report_with_the_results(
+        self, two_packages: Rig, change: Callable[[BuyService], object]
+    ) -> None:
+        two_packages.service.add_to_cart(2)
+        assert two_packages.service.status()["cart"] is not None
+
+        change(two_packages.service)
+
+        assert cast("Json", two_packages.service.view()["status"])["cart"] is None
+
+    def test_the_results_say_whether_the_scan_was_partial_through_the_cart_run_too(self, rig: Rig) -> None:
+        rig.decks = [make_deck(1, "Ellivere", want("Arcane Signet"), want("Mind Stone"))]
+        rig.scan_result = scan_of(two_sellers(), status=ScanStatus.CANCELLED)
+        rig.service.start()
+        assert cast("Json", rig.service.status()["results"])["partial"] is True
+
+        status = rig.service.add_to_cart(2)
+
+        assert (status["phase"], cast("Json", status["results"])["partial"]) == ("carted", True)
+        rig.scan_result = scan_of(two_sellers())
+        rig.service.start()
+        assert cast("Json", rig.service.status()["results"])["partial"] is False
+        assert status["message"] == "Scan cancelled after 5 pages; results are partial."

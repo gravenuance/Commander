@@ -5,8 +5,9 @@ thread: fill the app's wants list, read the offers, then work out the cheapest p
 sellers. When Cardmarket needs the owner (a sign-in, Cloudflare's check) the scan window is shown over the
 screen's pane and the phase says which. The page polls `status` while it runs and asks `package` for the
 detail of a row. A changed price cap needs no new scan: the offers already read are judged again and solved
-again. Everything that touches Cardmarket or a window goes through `BuyEngine`, so tests run the whole flow
-without either.
+again. The owner puts a chosen package in their Cardmarket cart in the same kind of run, which keeps the
+scan's results and adds a report of what the cart holds. Everything that touches Cardmarket or a window goes
+through `BuyEngine`, so tests run the whole flow without either.
 """
 
 import logging
@@ -22,6 +23,7 @@ from typing import Protocol
 from commander.buypane import PaneAreaSink, parse_pane_area
 from commander.buysettings import BuyError, BuyFilters, BuyStore, check_base_sellers, parse_filters
 from commander.carddb import CardDataError, CardDb
+from commander.cmcart import CartOutcome, CartProgress, CartRun, CartStatus, add_to_cart, not_sent
 from commander.cmpages import PageError
 from commander.cmscan import ScanProgress, ScanRequest, ScanResult, ScanStage, ScanStatus, scan
 from commander.cmsession import (
@@ -53,6 +55,7 @@ type Key = tuple[object, ...]
 type SyncWants = Callable[..., WantsSync]
 type Scan = Callable[..., ScanResult]
 type Curve = Callable[..., tuple[Package, ...]]
+type AddToCart = Callable[..., CartRun]
 
 
 class Phase(Enum):
@@ -66,9 +69,12 @@ class Phase(Enum):
     RESULTS = "results"
     CANCELLED = "cancelled"
     STOPPED = "stopped"
+    # A package is being put in the cart, and the run that did it has ended; the scan's results stay.
+    CART = "cart"
+    CARTED = "carted"
 
 
-RUNNING = frozenset({Phase.SIGN_IN, Phase.CHECK, Phase.WANTS, Phase.SCANNING, Phase.SOLVING})
+RUNNING = frozenset({Phase.SIGN_IN, Phase.CHECK, Phase.WANTS, Phase.SCANNING, Phase.SOLVING, Phase.CART})
 # How a finished scan ends the run; a scan that did not complete still shows what it read.
 _PHASE_OF = {
     ScanStatus.COMPLETE: Phase.RESULTS,
@@ -100,6 +106,7 @@ class BuyEngine:
     sync_wants: SyncWants = sync_wants
     scan: Scan = scan
     curve: Curve = curve
+    add_to_cart: AddToCart = add_to_cart
 
 
 class Tick(Enum):
@@ -166,6 +173,8 @@ class _State:
     run: _Run | None = None
     # The cards and choices a finished run was for; what it shows is dropped once they change.
     key: Key | None = None
+    # What the last package put in the cart came to; it goes with the results it was chosen from.
+    cart: CartRun | None = None
 
 
 class _Ended(Exception):  # noqa: N818 - control flow inside one run, never leaves it
@@ -216,6 +225,10 @@ def scan_line(progress: ScanProgress) -> str:
     if progress.stage is ScanStage.CARDS:
         return f"Reading {progress.current} · {progress.done + 1} of {progress.planned}"
     return f"Checking {progress.current}'s stock · {progress.done + 1} of {progress.planned}"
+
+
+def cart_line(progress: CartProgress) -> str:
+    return f"Adding {progress.card} · {progress.done + 1} of {progress.planned}"
 
 
 class BuyService:
@@ -362,8 +375,32 @@ class BuyService:
         self._background(lambda: self._run(run, lambda: self._scan_and_solve(run)))
         return self.status()
 
+    def add_to_cart(self, sellers: int) -> Json:
+        """Put the package of this many sellers in the owner's Cardmarket cart; it runs in the background and
+        `status` follows it. The scan's results stay, and the cart's report joins them."""
+        self._signed_in_user()
+        with self._lock:
+            state = self._state
+            if state.phase in RUNNING:
+                raise BuyError("Wait for the scan, or cancel it.")
+            kept = state.outcome
+            chosen = next((p for p in kept.packages if p.seller_count == sellers), None) if kept else None
+            if kept is None or chosen is None:
+                raise BuyError("That package is gone; scan again.")
+            run = replace(kept.run, cancel=threading.Event())
+            self._state = _State(
+                Phase.CART, "Opening the Cardmarket window", state.message, state.detail, kept, run, state.key
+            )
+        log.info(
+            "buy: putting the package of %d sellers (%d cards) in the cart",
+            sellers,
+            sum(pick.copies for pick in chosen.picks),
+        )
+        self._background(lambda: self._run_cart(run, chosen))
+        return self.status()
+
     def cancel(self) -> Json:
-        """Stop after the current page; what was read so far is kept."""
+        """Stop after the current page or card; what was read or added so far is kept."""
         with self._lock:
             run = self._state.run if self._state.phase in RUNNING else None
         if run is not None and not run.cancel.is_set():
@@ -382,6 +419,7 @@ class BuyService:
                 "message": state.message,
                 "detail": state.detail,
                 "results": self._results_json(state.outcome),
+                "cart": None if state.cart is None else _cart_json(state.cart),
             }
 
     def set_pane(self, left: object, top: object, width: object, height: object, scale: object) -> Json:
@@ -672,6 +710,42 @@ class BuyService:
         with self._lock:
             self._state = _State(phase, "", message, detail, outcome, key=run.key)
 
+    def _run_cart(self, run: _Run, package: Package) -> None:
+        """Add the package in the scan window and end the run with a report, whatever happened: a failure
+        before anything was sent is a report of nothing sent."""
+        self._progress(Phase.CART, "Opening the Cardmarket window")
+        try:
+            report = self._add_in_window(run, package)
+        except Cancelled:
+            log.info("buy: cancelled before anything was added")
+            report = not_sent(package, CartStatus.CANCELLED, "")
+        except Exception as error:  # noqa: BLE001 - nothing may escape a background thread unlogged
+            report = not_sent(package, CartStatus.STOPPED, _cart_failure(error))
+        log.log(
+            logging.INFO if report.status is CartStatus.COMPLETE else logging.WARNING,
+            "buy: the cart run %s: %d cards added, %d already there, %d gone, %d short",
+            report.status.value,
+            report.copies(CartOutcome.ADDED),
+            report.copies(CartOutcome.ALREADY),
+            report.copies(CartOutcome.GONE),
+            report.copies(CartOutcome.SHORT),
+        )
+        with self._lock:
+            state = self._state
+            self._state = _State(
+                Phase.CARTED, "", state.message, state.detail, state.outcome, key=state.key, cart=report
+            )
+
+    def _add_in_window(self, run: _Run, package: Package) -> CartRun:
+        def cart_progress(progress: CartProgress) -> None:
+            self._progress(Phase.CART, cart_line(progress))
+
+        browser = self._engine.open_browser(_ScreenHandover(self._swap_progress, run.cancel))
+        try:
+            return self._engine.add_to_cart(browser, package, cancel=run.cancel, on_progress=cart_progress)
+        finally:
+            _close(browser, "cart")
+
     def _finish_with_error(self, run: _Run, error: Exception) -> None:
         if isinstance(error, LoadTimeout):
             text = "Cardmarket did not answer; check your connection, then scan again."
@@ -714,6 +788,7 @@ class BuyService:
             previous = package.total_cents
         return {
             "rows": rows,
+            "partial": found.status is not ScanStatus.COMPLETE,
             "pages": found.pages_read,
             "destination": found.destination,
             "notFound": list(found.not_found),
@@ -846,6 +921,58 @@ def _package_json(package: Package, trends: dict[str, int | None], eligible: Eli
         "missing": list(package.missing),
         "short": [{"card": s.card, "wanted": s.wanted, "available": s.available} for s in package.short],
     }
+
+
+def _cart_json(report: CartRun) -> Json:
+    """What the cart run did: card counts by outcome, each offer that did not simply go in with Cardmarket's
+    reason, and each package seller's shipping in the cart against the estimate."""
+    return {
+        "status": report.status.value,
+        "reason": report.reason,
+        "added": report.copies(CartOutcome.ADDED),
+        "already": report.copies(CartOutcome.ALREADY),
+        "gone": report.copies(CartOutcome.GONE),
+        "short": report.copies(CartOutcome.SHORT),
+        "noAnswer": report.copies(CartOutcome.NO_ANSWER),
+        "notSent": report.copies(CartOutcome.NOT_SENT),
+        "items": [
+            {
+                "seller": item.pick.offer.seller,
+                "card": item.pick.offer.card,
+                "copies": item.pick.copies,
+                "outcome": item.outcome.value,
+                "inCart": item.in_cart,
+                "message": item.message,
+            }
+            for item in report.items
+            if item.outcome is not CartOutcome.ADDED
+        ],
+        "shipping": [
+            {
+                "seller": row.seller,
+                "estimateMethod": row.estimate_method,
+                "estimateCents": row.estimate_cents,
+                "cartMethod": row.cart_method,
+                "cartCents": row.cart_cents,
+                "differs": row.differs,
+            }
+            for row in report.shipping
+        ],
+    }
+
+
+def _cart_failure(error: Exception) -> str:
+    """The line for a cart run that failed before anything was sent."""
+    if isinstance(error, LoadTimeout):
+        return "Cardmarket did not answer; check your connection and try again."
+    if isinstance(error, BrowserError):
+        return "The Cardmarket window failed; the details are in the log."
+    if isinstance(error, PageError):
+        return "Cardmarket's page was not as expected; the details are in the log."
+    if isinstance(error, CredentialError):
+        return "The saved Cardmarket sign-in could not be read; see the log."
+    log.error("buy: the cart run failed unexpectedly", exc_info=error)
+    return "Something went wrong; check your cart on Cardmarket."
 
 
 def _stopped_text(found: ScanResult) -> tuple[str, str]:

@@ -218,6 +218,26 @@ def test_a_scan_runs_to_a_package_with_its_detail(desk: Desk, rig: Rig) -> None:
     assert cast("list[Json]", shipment["picks"])[0]["trendCents"] == 30
 
 
+def test_a_package_is_put_in_the_cart_through_the_bridge_and_the_status_carries_the_report(
+    desk: Desk, rig: Rig
+) -> None:
+    want_arcane_signet(desk)
+    rig.scan_result = scan_of(two_sellers())
+    rig.sync_result = imported(names=("Arcane Signet",))
+    desk.buy_scan()
+
+    status = desk.buy_add_to_cart(1)
+
+    assert [p.seller_count for p in rig.cart_calls] == [1]
+    assert (status["phase"], cast("Json", status["cart"])["added"]) == ("carted", 1)
+    assert desk.buy_status()["cart"] == status["cart"]
+
+
+def test_a_package_that_is_not_there_cannot_be_put_in_the_cart(desk: Desk, rig: Rig) -> None:
+    assert desk.buy_add_to_cart(3) == {"error": "That package is gone; scan again."}
+    assert rig.cart_calls == []
+
+
 def test_the_pane_area_comes_through_the_bridge_and_a_bad_one_is_an_error(desk: Desk, rig: Rig) -> None:
     assert desk.buy_pane(24, 120, 800, 420, 1.25) == {}
     assert desk.buy_pane(0, 0, 0, 0, 1.25) == {}
