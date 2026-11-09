@@ -444,10 +444,10 @@ class BuyService:
         with self._lock:
             outcome = self._state.outcome
         chosen = next((p for p in outcome.packages if p.seller_count == sellers), None) if outcome else None
-        if chosen is None:
+        if outcome is None or chosen is None:
             raise BuyError("That package is gone; scan again.")
         trends = self._trends({pick.offer.card for pick in chosen.picks})
-        return _package_json(chosen, trends, outcome.eligible if outcome else Eligible(()))
+        return _package_json(chosen, trends, outcome.eligible)
 
     def close(self) -> None:
         """The app is closing: end a running scan or cart run at its next step. The app destroys the windows
