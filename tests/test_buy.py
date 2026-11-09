@@ -29,7 +29,7 @@ from commander.credentials import CredentialError
 from commander.models import Deck, DeckCard
 from commander.net import NetworkError
 from commander.offerlimits import OfferLimits
-from commander.sellersolve import Package, WantedCard
+from commander.sellersolve import CurveResult, Package, WantedCard, solve_curve
 from test_sellersolve import LETTER, offer
 
 NOW = datetime(2026, 11, 9, 12, 0, tzinfo=UTC)
@@ -196,6 +196,10 @@ class Rig:
         self.scan_result = scan_of([])
         self.sync_effect: Callable[[threading.Event], None] = lambda _cancel: None
         self.scan_effect: Callable[[threading.Event], None] = lambda _cancel: None
+        # The `cancelled` callables the solver was given, and the counts it reports as timed out.
+        self.curve_cancels: list[Callable[[], bool]] = []
+        self.curve_timed_out: tuple[int, ...] = ()
+        self.curve_effect: Callable[[], None] = lambda: None
         self.cart_calls: list[Package] = []
         self.cart_effect: Callable[[threading.Event], None] = lambda _cancel: None
         self.cart_result: Callable[[Package], CartRun] = carted_everything
@@ -208,6 +212,7 @@ class Rig:
             shipping=self._shipping,
             sync_wants=self._sync_wants,
             scan=self._scan,
+            solve_curve=self._solve_curve,
             add_to_cart=self._add_to_cart,
         )
         return BuyService(
@@ -265,6 +270,21 @@ class Rig:
         self.progress.append(str(self.service.status()["progress"]))
         self.scan_effect(cancel)
         return self.scan_result
+
+    def _solve_curve(
+        self,
+        wants: Sequence[WantedCard],
+        offers: Sequence[Offer],
+        routes: Callable[[str], tuple[ShippingMethod, ...]],
+        *,
+        max_sellers: int,
+        cancelled: Callable[[], bool],
+    ) -> CurveResult:
+        """The real solver, with the counts a test wants reported as timed out."""
+        self.curve_cancels.append(cancelled)
+        self.curve_effect()
+        found = solve_curve(wants, offers, routes, max_sellers=max_sellers, cancelled=cancelled)
+        return replace(found, timed_out=self.curve_timed_out)
 
     def _add_to_cart(
         self,
@@ -861,6 +881,20 @@ class TestTheScan:
         ]
         assert results["destination"] == "Sweden"
         assert results["pages"] == 5
+        assert results["timedOut"] == []
+
+    def test_the_seller_counts_the_solver_found_nothing_for_in_time_are_reported_beside_the_rows(
+        self, rig: Rig
+    ) -> None:
+        rig.decks = [make_deck(1, "Ellivere", want("Arcane Signet"), want("Mind Stone"))]
+        rig.scan_result = scan_of(two_sellers())
+        rig.curve_timed_out = (3, 4)
+
+        rig.service.start()
+        results = cast("Json", rig.service.status()["results"])
+
+        assert [row["sellers"] for row in results["rows"]] == [1, 2]
+        assert results["timedOut"] == [3, 4]
 
     def test_a_package_shows_each_seller_with_shipping_and_each_card_against_its_trend_price(
         self, rig: Rig
@@ -1170,6 +1204,31 @@ class TestCancellingAndStopping:
         assert status["message"] == "Scan cancelled after 9 pages; results are partial."
         assert_short(status["message"])
         assert [r["sellers"] for r in cast("Json", status["results"])["rows"]] == [1, 2]
+
+    def test_a_cancel_pressed_during_the_scan_still_solves_what_it_read(self, rig: Rig) -> None:
+        rig.decks = [make_deck(1, "Ellivere", want("Arcane Signet"), want("Mind Stone"))]
+        rig.scan_result = scan_of(two_sellers(), status=ScanStatus.CANCELLED, pages=9)
+        rig.scan_effect = lambda cancel: cancel.set()
+
+        rig.service.start()
+        status = rig.service.status()
+
+        assert status["phase"] == "cancelled"
+        assert [r["sellers"] for r in cast("Json", status["results"])["rows"]] == [1, 2]
+        assert [cancelled() for cancelled in rig.curve_cancels] == [False]
+
+    def test_a_cancel_pressed_while_the_packages_are_found_ends_the_run_as_cancelled(self, rig: Rig) -> None:
+        rig.decks = [make_deck(1, "Ellivere", want("Arcane Signet"), want("Mind Stone"))]
+        rig.scan_result = scan_of(two_sellers())
+        rig.curve_effect = rig.service.cancel
+
+        rig.service.start()
+        status = rig.service.status()
+
+        assert (status["phase"], status["running"], status["results"]) == ("cancelled", False, None)
+        assert status["message"] == "Cancelled while finding packages; scan again."
+        assert_short(status["message"])
+        assert [cancelled() for cancelled in rig.curve_cancels] == [True]
 
     def test_a_scan_cancelled_before_it_read_an_offer_has_no_results(self, rig: Rig) -> None:
         rig.scan_result = scan_of([], status=ScanStatus.CANCELLED, pages=1)

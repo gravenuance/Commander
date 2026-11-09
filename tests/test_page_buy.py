@@ -44,7 +44,8 @@ const placePane = (rect) => { $("buy-pane").getBoundingClientRect = () => ({ ...
 const row = (sellers, total, cards, shipping, saving, cheapest) => ({ sellers, totalCents: total,
   cardsCents: total - shipping,
   shippingCents: shipping, cards, savingCents: saving, cheapest, optimal: true });
-const RESULTS = { rows: [row(1, 760, 2, 200, null, false), row(2, 490, 2, 400, 270, true)], partial: false,
+const RESULTS = { rows: [row(1, 760, 2, 200, null, false), row(2, 490, 2, 400, 270, true)], timedOut: [],
+  partial: false,
   pages: 5, destination: "Sweden", notFound: [], noOffers: [], overPrice: [], unmatched: [],
   quantityMismatch: [] };
 const done = (results = RESULTS, extra = {}) => idle({ phase: "results", results, ...extra });
@@ -765,13 +766,64 @@ class TestThePackages:
         assert seen["tags"] == [["BUTTON", "button", "false"]] * 2
         assert seen["group"] == ["group", "Packages by number of sellers"]
 
-    def test_a_row_that_is_only_an_estimate_says_so(self) -> None:
+    def test_a_row_the_solver_did_not_prove_cheapest_says_so_instead_of_cheapest(self) -> None:
         seen = run("""
         const rough = { ...RESULTS, rows: [{ ...row(1, 760, 2, 200, null, true), optimal: false }] };
         await open(view({ status: done(rough) }));
-        return leaves($("buy-curve").children[0]);
+        const badge = walk($("buy-curve")).find((n) => n.className === "badge status gc");
+        return [leaves($("buy-curve").children[0]), badge.title];
         """)
-        assert seen[-2:] == ["Cheapest", "Estimate"]
+        assert seen == [
+            ["1 seller", "€7.60", "2", "€2.00", "May not be cheapest"],
+            "The solver ran out of time; a cheaper package may exist.",
+        ]
+
+    def test_a_package_the_solver_did_not_prove_cheapest_says_so_in_its_notes(self) -> None:
+        seen = run("""
+        await open(view({ status: done() }));
+        stub.buy_package = async () => ({ ...PACKAGE, optimal: false, missing: [], short: [] });
+        await fire($("buy-curve").children[1], "click");
+        return [...$("buy-package-notes").children].map((n) => n.textContent);
+        """)
+        assert seen == ["May not be the cheapest: the solver ran out of time."]
+
+    def test_the_seller_counts_with_no_package_found_in_time_are_rows_that_say_so_in_order(self) -> None:
+        seen = run("""
+        const late = { ...RESULTS, timedOut: [4, 3] };
+        await open(view({ status: done(late) }));
+        const rows = [...$("buy-curve").children];
+        return { texts: rows.map((r) => leaves(r)), tags: rows.map((r) => r.tagName),
+          sellers: rows.map((r) => r.dataset.sellers) };
+        """)
+        assert seen["texts"] == [
+            ["1 seller", "€7.60", "2", "€2.00"],
+            ["2 sellers", "€4.90", "2", "€4.00", "Saves €2.70", "Cheapest"],
+            ["3 sellers", "Not found in time"],
+            ["4 sellers", "Not found in time"],
+        ]
+        assert seen["tags"] == ["BUTTON", "BUTTON", "DIV", "DIV"]
+        assert seen["sellers"] == ["1", "2", None, None]
+
+    def test_a_count_between_the_rows_is_listed_between_them_and_cannot_be_picked(self) -> None:
+        seen = run("""
+        const gap = { ...RESULTS, rows: [RESULTS.rows[0], row(3, 400, 2, 300, 360, true)], timedOut: [2] };
+        await open(view({ status: done(gap) }));
+        stub.buy_package = async (sellers) => ({ ...PACKAGE, sellers });
+        const rows = [...$("buy-curve").children];
+        await fire(rows[1], "click");
+        await fire($("buy-curve"), "keydown", { key: "ArrowDown" });
+        return { order: rows.map((r) => leaves(r)[0]), asked: calls.filter((c) => c[0] === "buy_package") };
+        """)
+        assert seen == {"order": ["1 seller", "2 sellers", "3 sellers"], "asked": []}
+
+    def test_with_no_package_and_no_count_timed_out_the_curve_says_none_covers_the_cards(self) -> None:
+        seen = run("""
+        await open(view({ status: done({ ...RESULTS, rows: [] }) }));
+        const none = $("buy-curve").children[0].textContent;
+        paintBuyStatus(done({ ...RESULTS, rows: [], timedOut: [1] }));
+        return [none, [...$("buy-curve").children].map((r) => r.textContent)];
+        """)
+        assert seen == ["No package covers these cards.", ["1 sellerNot found in time"]]
 
     def test_picking_a_row_shows_its_sellers_with_shipping_cards_prices_and_trend(self) -> None:
         seen = run("""

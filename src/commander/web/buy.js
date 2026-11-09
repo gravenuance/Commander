@@ -15,6 +15,7 @@ const BUY_CONDITIONS = [
   ["GD", "Good"], ["LP", "Light Played"], ["PL", "Played"], ["PO", "Poor"],
 ];
 const BUY_TREND_TIP = "Cardmarket's trend price of the card's cheapest printing";
+const BUY_ROUGH_TIP = "The solver ran out of time; a cheaper package may exist.";
 const BUY_CURVE_KEYS = ["ArrowDown", "ArrowUp", "Home", "End"];
 // The phases in which the Cardmarket window is the owner's, shown over the pane.
 const BUY_PANE_PHASES = ["signin", "check"];
@@ -619,11 +620,28 @@ function renderBuyResults(status) {
   }
   $("buy-partial").hidden = !results.partial;
   $("buy-partial").title = status.message;
-  $("buy-curve").replaceChildren(...results.rows.map(buildBuyRow));
+  $("buy-curve").replaceChildren(...buyCurveRows(results));
   $("buy-notes").replaceChildren(...buyResultNotes(results));
   if (results.rows.some((row) => row.sellers === buyState.picked)) refreshBuyPackage();
   else clearBuyPackage();
-  if (!results.rows.length) $("buy-curve").append(el("p", { class: "empty", text: "No package covers these cards." }));
+  if (!results.rows.length && !results.timedOut.length) {
+    $("buy-curve").append(el("p", { class: "empty", text: "No package covers these cards." }));
+  }
+}
+
+// The packages by seller count, with a row for each count the solver found nothing for in its time.
+function buyCurveRows(results) {
+  const rows = [
+    ...results.rows.map((row) => ({ sellers: row.sellers, node: buildBuyRow(row) })),
+    ...results.timedOut.map((sellers) => ({ sellers, node: buildMissedBuyRow(sellers) })),
+  ];
+  return rows.sort((a, b) => a.sellers - b.sellers).map((row) => row.node);
+}
+
+function buildMissedBuyRow(sellers) {
+  return el("div", { class: "curve-row curve-missed" },
+    el("span", { class: "curve-sellers", text: plural(sellers, "seller", "sellers") }),
+    el("span", { class: "curve-note", text: "Not found in time" }));
 }
 
 function buildBuyRow(row) {
@@ -637,8 +655,9 @@ function buildBuyRow(row) {
   el("span", { class: "num", text: String(row.cards) }),
   el("span", { class: "num", text: euro(row.shippingCents) }),
   el("span", { class: "num", text: saving }),
-  el("span", { class: "curve-badge" }, row.cheapest ? el("span", { class: "badge status", text: "Cheapest" }) : null,
-    row.optimal ? null : el("span", { class: "badge status gc", title: "The solver ran out of time", text: "Estimate" })));
+  el("span", { class: "curve-badge" },
+    row.cheapest && row.optimal ? el("span", { class: "badge status", text: "Cheapest" }) : null,
+    row.optimal ? null : el("span", { class: "badge status gc", title: BUY_ROUGH_TIP, text: "May not be cheapest" })));
 }
 
 // What the scan could not place, each in plain words.
@@ -706,6 +725,9 @@ function renderBuyPackage(detail) {
   arrival.textContent = detail.slowestDays === null ? "" : `Arrives in about ${plural(detail.slowestDays, "day", "days")}${unknown}`;
   $("buy-sellers").replaceChildren(...detail.shipments.map(buildBuySeller));
   const notes = [];
+  if (!detail.optimal) {
+    notes.push(el("li", {}, el("strong", { text: "May not be the cheapest: " }), "the solver ran out of time."));
+  }
   if (detail.leftOutNoEstimate) {
     notes.push(el("li", {}, el("strong", { text: "Left out, no delivery estimate: " }),
       plural(detail.leftOutNoEstimate, "offer", "offers")));

@@ -43,7 +43,15 @@ from commander.jsonshape import ShapeError
 from commander.models import Deck
 from commander.net import NetworkError
 from commander.offerlimits import Eligible, OfferLimits, apply_limits
-from commander.sellersolve import Package, SolveError, SolveTimeout, WantedCard, card_key, curve
+from commander.sellersolve import (
+    CurveResult,
+    Package,
+    SolveCancelled,
+    SolveError,
+    WantedCard,
+    card_key,
+    solve_curve,
+)
 
 log = logging.getLogger(__name__)
 
@@ -54,7 +62,7 @@ type Json = dict[str, object]
 type Key = tuple[object, ...]
 type SyncWants = Callable[..., WantsSync]
 type Scan = Callable[..., ScanResult]
-type Curve = Callable[..., tuple[Package, ...]]
+type Curve = Callable[..., CurveResult]
 type AddToCart = Callable[..., CartRun]
 
 
@@ -105,7 +113,7 @@ class BuyEngine:
     shipping: Callable[[], AbstractContextManager[RouteSource]]
     sync_wants: SyncWants = sync_wants
     scan: Scan = scan
-    curve: Curve = curve
+    solve_curve: Curve = solve_curve
     add_to_cart: AddToCart = add_to_cart
 
 
@@ -160,6 +168,8 @@ class _Outcome:
     eligible: Eligible
     # What the scan was for, with its limits resolved; a new price cap is judged against this scan.
     run: _Run
+    # The seller counts the solver found no package for in its time.
+    timed_out: tuple[int, ...] = ()
 
 
 @dataclass(slots=True)
@@ -553,7 +563,8 @@ class BuyService:
             eligible.no_estimate,
             len(eligible.over_price),
         )
-        return _Outcome(self._solve(run, found, eligible), found, wants, eligible, run)
+        curve = self._solve(run, found, eligible)
+        return _Outcome(curve.packages, found, wants, eligible, run, curve.timed_out)
 
     def _listed_countries(self) -> tuple[Country, ...]:
         with self._engine.shipping() as shipping:
@@ -650,10 +661,13 @@ class BuyService:
         )
         return wants, found
 
-    def _solve(self, run: _Run, found: ScanResult, eligible: Eligible) -> tuple[Package, ...]:
+    def _solve(self, run: _Run, found: ScanResult, eligible: Eligible) -> CurveResult:
         self._progress(Phase.SOLVING, "Finding the cheapest packages")
         if not eligible.offers:
-            return ()
+            return CurveResult((), ())
+        # A cancel pressed during the scan has already ended it with what it read, which is solved; only one
+        # pressed from here on ends the solving.
+        before = run.cancel.is_set()
         try:
             with self._engine.shipping() as shipping:
                 destination = shipping.country_id(found.destination) if found.destination else None
@@ -671,19 +685,30 @@ class BuyService:
                         return ()
                     return shipping.methods(origin, destination)
 
-                packages = self._engine.curve(
-                    list(run.wanted), eligible.offers, routes, max_sellers=MAX_CURVE_SELLERS
+                curve = self._engine.solve_curve(
+                    list(run.wanted),
+                    eligible.offers,
+                    routes,
+                    max_sellers=MAX_CURVE_SELLERS,
+                    cancelled=lambda: not before and run.cancel.is_set(),
                 )
+        except SolveCancelled as error:
+            raise _Ended(Phase.CANCELLED, "Cancelled while finding packages; scan again.") from error
         except (NetworkError, ShapeError, CmShippingError) as error:
             raise _Ended(
                 Phase.STOPPED, "Shipping prices could not be fetched; scan again.", str(error)
             ) from error
-        except (SolveError, SolveTimeout) as error:
+        except SolveError as error:
             raise _Ended(
                 Phase.STOPPED, "The solver failed; the details are in the log.", str(error)
             ) from error
-        log.info("buy: %d packages, from %d to %d sellers", len(packages), *_seller_range(packages))
-        return packages
+        log.info(
+            "buy: %d packages, from %d to %d sellers; no package found in time for %d counts",
+            len(curve.packages),
+            *_seller_range(curve.packages),
+            len(curve.timed_out),
+        )
+        return curve
 
     # --- state ----------------------------------------------------------------------------------------
 
@@ -790,6 +815,7 @@ class BuyService:
             previous = package.total_cents
         return {
             "rows": rows,
+            "timedOut": list(outcome.timed_out),
             "partial": found.status is not ScanStatus.COMPLETE,
             "pages": found.pages_read,
             "destination": found.destination,

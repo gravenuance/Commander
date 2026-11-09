@@ -1321,6 +1321,10 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .curve-row:hover { background: var(--surface-3); }
 .curve-row[aria-pressed="true"] { border-color: var(--primary); background: var(--selected); }
 .curve-sellers { font-weight: 600; }
+/* A count the solver found no package for in its time: a plain row, not a button. */
+.curve-missed { cursor: default; color: var(--muted); }
+.curve-missed:hover { background: var(--surface-2); }
+.curve-note { grid-column: 2 / -1; }
 .curve-badge { display: flex; flex-wrap: wrap; gap: var(--space-1); justify-content: flex-end; }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
 .buy-notes li { font-size: var(--text-s); }
