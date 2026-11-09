@@ -44,10 +44,11 @@ one page every 4 seconds:
   the cent. Cardmarket's own rule of thumb gives the weight: up to 4 cards 20 g, 17 cards 50 g, 40 cards 100 g.
   Tracked shipping is mandatory over 25 €, and for some sellers lower (new sellers over 10 €, too many
   shipments on the way, a loss rate over 2 %), which only the cart shows.
-- **Cart.** Clicking an offer's cart button added it; the cart page (`/en/Magic/ShoppingCart`) shows each
-  seller's items, article value, shipping method and cost, total and estimated arrival. "Remove articles from
-  this seller" (`ShoppingCart_RemoveSeller`) and per-article remove (`ShoppingCart_RemoveArticle`) took it out
-  again. The cart already held an item the owner had put there, which stayed untouched.
+- **Cart.** Clicking an offer's cart button added it (its request is under the decision's cart); the cart
+  page (`/en/Magic/ShoppingCart`) shows each seller's items, article value, shipping method and cost, total
+  and estimated arrival. "Remove articles from this seller" (`ShoppingCart_RemoveSeller`) and per-article
+  remove (`ShoppingCart_RemoveArticle`) took it out again. The cart already held an item the owner had put
+  there, which stayed untouched.
 - **Wants lists.** `/en/Magic/Wants` creates a list (`wlName`, letters, digits, spaces and hyphens, 30 at most);
   `/en/Magic/Wants/<id>/AddDeckList` takes the text `cmdr toget --cardmarket` prints. Apostrophes and
   "Front // Back" names matched. Imported wants start at any printing, any language, minimum condition Poor.
@@ -95,8 +96,8 @@ the owner picks into their Cardmarket cart for them to check out by hand.
     comes back on restore.
   - pywebview's `move` and `resize` show a hidden window, so placing goes through `SetWindowPos` without
     activation, in physical pixels (pywebview makes the process DPI-aware): the app window's client origin
-    plus the pane's CSS rectangle times `devicePixelRatio`. The page reports the rectangle when it shows the pane,
-    on resize and on each status paint; the window follows the app's `moved` event.
+    plus the pane's CSS rectangle times `devicePixelRatio`. The page reports the rectangle when it shows the
+    pane, on resize and on each status paint; the window follows the app's `moved` event.
   - Setting `ShowInTaskbar` makes WinForms recreate the window's handle; the taskbar button is removed by
     clearing `WS_EX_APPWINDOW` on the handle while hidden instead.
   - `show()` from the scan's thread activates the window, but its page had the keyboard focus only four runs
@@ -122,10 +123,10 @@ the owner picks into their Cardmarket cart for them to check out by hand.
   deck, takes the offer filters (language English, Japanese, both or any, minimum condition Near Mint or
   any, foil any, non-foil or foil; a blank Cardmarket field is a catch-all, so foil defaults to any) and
   scans in the background with a progress line and a Cancel button, which also ends a wait for the owner.
-  A cancelled or stopped scan keeps what it read and solves it, marked partial. The curve shows one row per seller count; picking a row shows each seller's
-  shipping method and each card's price against its trend price (the cheapest printing's EUR price in the card
-  data). The choices, the base sellers (15) and the decks and cards left out per account are kept in
-  `buy.json` beside the config file (format 3).
+  A cancelled or stopped scan keeps what it read and solves it, marked partial. The curve shows one row per
+  seller count; picking a row shows each seller's shipping method and each card's price against its trend
+  price (the cheapest printing's EUR price in the card data). The choices, the base sellers (15) and the
+  decks and cards left out per account are kept in `buy.json` beside the config file (format 3).
 - **Language.** English is the default. Japanese is the second choice because the European market sells it
   cheaply; Both takes English and Japanese; Any (last, to save the most) asks Cardmarket nothing. The card page
   takes one bracketed field per language, `language[1]=1&language[7]=7`, as Cardmarket's own form sends it
@@ -157,11 +158,24 @@ the owner picks into their Cardmarket cart for them to check out by hand.
   in two decks is ticked per deck, and the quantity to buy is the sum of the ticked ones. The unticked cards
   are kept per account and deck beside the left-out decks, and a card that is no longer Don't Have is
   forgotten. A deck whose cards are all unticked is kept as a left-out deck.
-- **The cart.** After the owner confirms a package (sellers, cards, prices, total), the app clicks each
-  offer's own cart button, paced like the scan, then reads the cart: an offer that is gone is listed and can
-  be solved again among the sellers already in the cart, and a seller whose shipping differs from the estimate
-  is pointed out. It then shows the cart page for checkout. The app adds only what the owner confirmed and
-  removes only what it added; it never clears the cart or checks out.
+- **The cart.** After the owner confirms a package (sellers, cards, prices, total), the app sends, for each
+  offer, the request its own cart button sends, paced like the scan, then reads the cart back. It lists what
+  was added, the offers that were gone (with Cardmarket's reason), cards the cart holds fewer copies of, and
+  each package seller whose cart shipping differs from the estimate; a link opens the cart page in the owner's
+  own browser for checkout. A gone offer is replaced by scanning again. The app adds only what the owner
+  confirmed, skips an article already in the cart, and never removes anything, clears the cart or checks out.
+  Probed live on 2026-11-09 with the owner's OK (one 0,04 € card added and removed again):
+  - The button is a form whose submit Cardmarket's script turns into an ajax `POST` to
+    `/en/Magic/AjaxAction/ShoppingCart_Add_AddArticlesFromMetacardPage` with `__cmtkn` (the session's token),
+    `idArticle[<id>]` and `amount[<id>]`. The app sends that with `fetch` from a Cardmarket page; a form
+    cloned into a page skips Cardmarket's handler and posts as a plain form. The cart page carries the token
+    only in its items' forms, so the requests go out from the wants lists page, whose create-list form
+    always has it.
+  - The answer is HTTP 200 and an `<ajaxResponse>` XML of base64 fields: `resultType` success or error and a
+    `systemMessage` alert. An article that does not exist answers error, "The item is not available.", and
+    leaves the cart unchanged.
+  - One request per offer, the owner's choice: each refusal gets its own answer, and nothing unprobed (several
+    articles in one request) is sent.
 
 The deciding reason is the owner's: their own method beats the Wizard, and only an optimiser that weighs
 shipping against price can do that across 60 cards.
