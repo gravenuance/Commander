@@ -16,6 +16,8 @@ const BUY_CONDITIONS = [
 ];
 const BUY_TREND_TIP = "Cardmarket's trend price of the card's cheapest printing";
 const BUY_CURVE_KEYS = ["ArrowDown", "ArrowUp", "Home", "End"];
+// The phases in which the Cardmarket window is the owner's, shown over the pane.
+const BUY_PANE_PHASES = ["signin", "check"];
 
 // What the screen keeps between visits: the last answer, the elements built from it and the keys that say
 // when an answer is the one already drawn, so coming back redraws nothing that has not changed.
@@ -37,6 +39,9 @@ const buyState = {
   countryNames: new Map(),
   countryBoxes: new Map(),
   loadingCountries: null,
+  // What the bridge was last told about the pane, as text ("null" for no pane), and whether a report is out.
+  paneSent: "null",
+  paneSending: false,
 };
 
 const plural = (count, one, many) => `${count} ${count === 1 ? one : many}`;
@@ -60,6 +65,9 @@ function setupBuy() {
   });
   $("buy-base-sellers").addEventListener("change", changeBuyBaseSellers);
   $("buy-curve").addEventListener("keydown", moveBetweenBuyRows);
+  // The Cardmarket window covers the pane by screen position, so it follows the pane when it moves.
+  window.addEventListener("resize", reportBuyPane);
+  $("buy-body").addEventListener("scroll", reportBuyPane);
 }
 
 // A row of buttons of which one is pressed, as the card size choice is.
@@ -93,6 +101,7 @@ function closeBuy() {
   buyState.open = false;
   $("buy").hidden = true;
   $("buy-open").removeAttribute("aria-current");
+  paintBuyPane();
 }
 
 // Drops everything built for an account that is gone.
@@ -274,6 +283,46 @@ function paintBuyStatus(status) {
     for (const built of entry.cards) built.box.disabled = running;
   }
   renderBuyResults(status);
+  paintBuyPane();
+}
+
+// While the owner signs in or passes Cloudflare's check, the pane takes the screen below the scan row.
+function paintBuyPane() {
+  const phase = buyState.view?.status.phase;
+  const covered = buyState.open && BUY_PANE_PHASES.includes(phase);
+  $("buy-pane").hidden = !covered;
+  $("buy-body").classList.toggle("covered", covered);
+  reportBuyPane();
+}
+
+// The pane's rectangle in CSS pixels with the device pixel ratio, or null while no pane shows.
+function buyPaneArea() {
+  const pane = $("buy-pane");
+  if (pane.hidden) return null;
+  const rect = pane.getBoundingClientRect();
+  return [rect.left, rect.top, rect.width, rect.height, window.devicePixelRatio || 1];
+}
+
+// Tells the bridge where the pane is when that changed, one report at a time so they arrive in order. The
+// bridge reads a zero-sized area as no pane.
+async function reportBuyPane() {
+  if (buyState.paneSending) return;
+  buyState.paneSending = true;
+  try {
+    for (let area = buyPaneArea(); JSON.stringify(area) !== buyState.paneSent; area = buyPaneArea()) {
+      buyState.paneSent = JSON.stringify(area);
+      try {
+        await api("buy_pane", ...(area ?? [0, 0, 0, 0, 1]));
+      } catch (error) {
+        // Forgotten, so that the next paint sends it again.
+        buyState.paneSent = "";
+        noteFailure(error);
+        return;
+      }
+    }
+  } finally {
+    buyState.paneSending = false;
+  }
 }
 
 function progressLine(status) {

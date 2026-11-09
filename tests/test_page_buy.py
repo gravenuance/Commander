@@ -38,6 +38,9 @@ const COUNTRIES = [{ id: 1, name: "Austria" }, { id: 7, name: "Germany" }, { id:
   { id: 28, name: "Sweden" }];
 const COUNTRY_ERROR = { error: "Cardmarket's countries could not be loaded; try again." };
 stub.buy_countries = async () => ({ countries: COUNTRIES });
+const panes = [];
+stub.buy_pane = async (...area) => { panes.push(area); return {}; };
+const placePane = (rect) => { $("buy-pane").getBoundingClientRect = () => ({ ...rect }); };
 const row = (sellers, total, cards, shipping, saving, cheapest) => ({ sellers, totalCents: total,
   cardsCents: total - shipping,
   shippingCents: shipping, cards, savingCents: saving, cheapest, optimal: true });
@@ -494,14 +497,144 @@ class TestScanning:
         assert seen == {"calls": ["buy", "buy"], "rows": 2}
 
 
+class TestTheCardmarketPane:
+    def test_the_pane_is_hidden_and_reports_nothing_while_idle_scanning_or_done(self) -> None:
+        seen = run("""
+        const states = [idle(), idle({ phase: "wants", running: true, progress: "Preparing wants list" }),
+          idle({ phase: "scanning", running: true, progress: "Reading Sol Ring" }),
+          idle({ phase: "solving", running: true, progress: "Finding" }), done(),
+          idle({ phase: "cancelled", message: "Scan cancelled." }),
+          idle({ phase: "stopped", message: "Scan stopped." })];
+        const shown = [];
+        for (const status of states) {
+          await open(view({ status }));
+          shown.push([status.phase, $("buy-pane").hidden, $("buy-body").classList.contains("covered")]);
+        }
+        return { shown, panes };
+        """)
+        assert seen["shown"] == [
+            [phase, True, False]
+            for phase in ("idle", "wants", "scanning", "solving", "results", "cancelled", "stopped")
+        ]
+        assert seen["panes"] == []
+
+    @pytest.mark.parametrize(
+        ("phase", "line"),
+        [("signin", "Sign in to Cardmarket below"), ("check", "Finish Cardmarket's check below")],
+    )
+    def test_the_owners_turn_shows_the_pane_under_the_scan_row_covers_the_rest_and_keeps_cancel(
+        self, phase: str, line: str
+    ) -> None:
+        seen = run(f"""
+        placePane({{ left: 24, top: 120, width: 800, height: 420 }});
+        window.devicePixelRatio = 1.25;
+        await open(view({{ status: idle({{ phase: "{phase}", running: true, progress: "{line}" }}) }}));
+        const body = $("buy-body").childNodes.filter((n) => n.tagName);
+        const pane = $("buy-pane");
+        return {{
+          pane: !pane.hidden, covered: $("buy-body").classList.contains("covered"),
+          ariaHidden: pane.getAttribute("aria-hidden"), text: pane.textContent,
+          line: $("buy-progress").textContent, cancel: [!$("buy-cancel").hidden, $("buy-cancel").disabled],
+          scanOff: $("buy-scan").disabled, language: [...$("buy-language").children].every((b) => b.disabled),
+          afterScanRow: body.indexOf(pane) > body.indexOf($("buy-scan").parentNode),
+          panes,
+        }};
+        """)
+        assert seen["pane"] is True
+        assert seen["covered"] is True
+        assert (seen["ariaHidden"], seen["text"]) == ("true", "")
+        assert seen["line"] == line
+        assert seen["cancel"] == [True, False]
+        assert seen["scanOff"] is True
+        assert seen["language"] is True
+        assert seen["afterScanRow"] is True
+        assert seen["panes"] == [[24, 120, 800, 420, 1.25]]
+
+    def test_the_pane_without_a_device_pixel_ratio_reports_a_scale_of_one(self) -> None:
+        seen = run("""
+        placePane({ left: 0, top: 80, width: 640, height: 400 });
+        await open(view({ status: idle({ phase: "signin", running: true, progress: "x" }) }));
+        return panes;
+        """)
+        assert seen == [[0, 80, 640, 400, 1]]
+
+    def test_the_same_area_is_reported_once_and_a_new_one_when_the_window_resizes(self) -> None:
+        seen = run("""
+        placePane({ left: 24, top: 120, width: 800, height: 420 });
+        const status = idle({ phase: "signin", running: true, progress: "x" });
+        await open(view({ status }));
+        paintBuyStatus(status);
+        paintBuyStatus(status);
+        await fire(window, "resize");
+        const once = panes.length;
+        placePane({ left: 24, top: 120, width: 700, height: 380 });
+        await fire(window, "resize");
+        return { once, panes };
+        """)
+        assert seen["once"] == 1
+        assert seen["panes"] == [[24, 120, 800, 420, 1], [24, 120, 700, 380, 1]]
+
+    def test_the_pane_goes_when_the_phase_leaves_and_no_area_is_reported_once(self) -> None:
+        seen = run("""
+        placePane({ left: 24, top: 120, width: 800, height: 420 });
+        await open(view({ status: idle({ phase: "signin", running: true, progress: "x" }) }));
+        stub.buy_status = async () => idle({ phase: "scanning", running: true, progress: "Reading it" });
+        await pollBuy();
+        const after = { pane: $("buy-pane").hidden, covered: $("buy-body").classList.contains("covered"),
+          line: $("buy-progress").textContent };
+        await pollBuy();
+        return { after, panes };
+        """)
+        assert seen["after"] == {"pane": True, "covered": False, "line": "Reading it"}
+        assert seen["panes"] == [[24, 120, 800, 420, 1], [0, 0, 0, 0, 1]]
+
+    def test_the_pane_is_released_when_the_screen_closes_and_found_again_when_it_opens(self) -> None:
+        seen = run("""
+        placePane({ left: 24, top: 120, width: 800, height: 420 });
+        const status = idle({ phase: "check", running: true, progress: "x" });
+        await open(view({ status }));
+        closeBuy();
+        await settle();
+        const closed = { pane: $("buy-pane").hidden, panes: panes.length };
+        await open(view({ status }));
+        return { closed, pane: $("buy-pane").hidden, panes };
+        """)
+        assert seen["closed"] == {"pane": True, "panes": 2}
+        assert seen["pane"] is False
+        assert seen["panes"] == [[24, 120, 800, 420, 1], [0, 0, 0, 0, 1], [24, 120, 800, 420, 1]]
+
+    def test_an_account_that_goes_releases_the_pane(self) -> None:
+        seen = run("""
+        placePane({ left: 24, top: 120, width: 800, height: 420 });
+        await open(view({ status: idle({ phase: "signin", running: true, progress: "x" }) }));
+        buyForget();
+        await settle();
+        return { pane: $("buy-pane").hidden, panes };
+        """)
+        assert seen == {"pane": True, "panes": [[24, 120, 800, 420, 1], [0, 0, 0, 0, 1]]}
+
+    def test_a_report_the_bridge_refused_is_sent_again_with_the_next_paint(self) -> None:
+        seen = run("""
+        placePane({ left: 24, top: 120, width: 800, height: 420 });
+        const status = idle({ phase: "signin", running: true, progress: "x" });
+        stub.buy_pane = async () => ({ error: "The sign-in area was not valid." });
+        await open(view({ status }));
+        stub.buy_pane = async (...area) => { panes.push(area); return {}; };
+        paintBuyStatus(status);
+        await settle();
+        return panes;
+        """)
+        assert seen == [[24, 120, 800, 420, 1]]
+
+
 class TestEndings:
-    def test_a_scan_waiting_for_the_sign_in_says_where(self) -> None:
+    def test_a_scan_waiting_for_the_owner_says_what_to_do_and_can_still_be_cancelled(self) -> None:
         seen = run("""
         await open(view({ status: idle({ phase: "signin", running: true,
-          progress: "Sign in to Cardmarket in the window that opened" }) }));
+          progress: "Sign in to Cardmarket below" }) }));
         return [$("buy-progress").textContent, !$("buy-cancel").hidden];
         """)
-        assert seen == ["Sign in to Cardmarket in the window that opened", True]
+        assert seen == ["Sign in to Cardmarket below", True]
 
     def test_a_cancelled_scan_says_so_and_offers_to_scan_again(self) -> None:
         seen = run("""
