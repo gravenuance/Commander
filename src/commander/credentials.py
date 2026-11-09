@@ -5,9 +5,12 @@ from __future__ import annotations
 
 import importlib
 import json
-from dataclasses import dataclass
+import logging
+from dataclasses import dataclass, field
 from functools import cache
 from typing import Protocol, cast
+
+log = logging.getLogger(__name__)
 
 # keyring is imported inside the functions that use it: it and the Windows backend behind it take 100 ms to
 # load, which the app should not wait for before it has a window.
@@ -90,7 +93,7 @@ class SessionCookie:
     """Cardmarket's session cookie, as the browser holds it."""
 
     name: str
-    value: str
+    value: str = field(repr=False)
     domain: str
     path: str
 
@@ -146,7 +149,12 @@ class CardmarketSessionStore:
             text = keyring.get_password(CARDMARKET_SERVICE, CARDMARKET_USER)
         except _store_errors() as error:
             raise CredentialError(f"could not read the saved Cardmarket session: {error}") from error
-        return SessionCookie.from_json(text) if text else None
+        if not text:
+            return None
+        cookie = SessionCookie.from_json(text)
+        if cookie is None:
+            log.warning("the saved Cardmarket session is not a cookie this store wrote; ignoring it")
+        return cookie
 
     def put(self, cookie: SessionCookie) -> None:
         text = cookie.to_json()
