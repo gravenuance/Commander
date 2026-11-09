@@ -19,6 +19,22 @@ class PageError(ValueError):
     """A page was not the Cardmarket page the reader expected, or a row on it could not be read."""
 
 
+class PageNotFound(PageError):  # noqa: N818 - a kind of PageError, named for the page Cardmarket shows
+    """Cardmarket's 404 page: the address names no card."""
+
+
+class PageState(Enum):
+    """What kind of page a browser holds, before any reader looks at it."""
+
+    # Cloudflare's "Just a moment..." check, which passes by itself in a few seconds.
+    CHALLENGE = "challenge"
+    # A sign-in form and no logout link: the session has ended.
+    SIGNED_OUT = "signed out"
+    SIGNED_IN = "signed in"
+    # Neither sign-in form nor logout link, as on a trimmed page.
+    UNKNOWN = "unknown"
+
+
 class Condition(Enum):
     """Card conditions, best first, as Cardmarket's condition badge writes them."""
 
@@ -143,17 +159,30 @@ def parse_price_cents(text: str, where: str = "price") -> int:
     return int(match["whole"].replace(".", "")) * 100 + int(match["cents"])
 
 
-def _open_page(html: str, page: str) -> Node:
-    """Parse the page, refusing a challenge or a sign-in form."""
-    root = parse_html(html)
+def _page_state(root: Node) -> PageState:
     title = root.find(tagged("title"))
     if title is not None and "just a moment" in title.text().lower():
-        raise PageError(f"{page}: Cloudflare showed its check instead of the page")
+        return PageState.CHALLENGE
     form = root.find(
         lambda n: n.tag == "input" and (n.get("type") == "password" or n.get("name") == "username")
     )
     logout = root.find(lambda n: n.tag == "a" and "Logout" in (n.get("href") or ""))
-    if form is not None and logout is None:
+    if logout is not None:
+        return PageState.SIGNED_IN
+    return PageState.SIGNED_OUT if form is not None else PageState.UNKNOWN
+
+
+def page_state(html: str) -> PageState:
+    return _page_state(parse_html(html))
+
+
+def _open_page(html: str, page: str) -> Node:
+    """Parse the page, refusing a challenge or a sign-in form."""
+    root = parse_html(html)
+    state = _page_state(root)
+    if state is PageState.CHALLENGE:
+        raise PageError(f"{page}: Cloudflare showed its check instead of the page")
+    if state is PageState.SIGNED_OUT:
         raise PageError(f"{page}: Cardmarket asks to sign in; the session has ended")
     return root
 
@@ -294,6 +323,9 @@ def _card_row_offer(row: Node, card: str) -> tuple[Offer, str | None]:
 
 def read_card_offers(html: str) -> CardOffers:
     root = _open_page(html, _CARD_PAGE)
+    not_found = root.find(tagged("h1", cls="display-1"))
+    if not_found is not None and "404" in not_found.text():
+        raise PageNotFound(f"{_CARD_PAGE}: Cardmarket has no card at this address")
     rows = root.find_all(_is_row("articleRow"))
     _require_offer_table(root, rows, _CARD_PAGE)
     card = _heading(root, _CARD_PAGE).own_text().strip()

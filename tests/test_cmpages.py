@@ -9,9 +9,12 @@ from commander.cmpages import (
     Condition,
     Offer,
     PageError,
+    PageNotFound,
+    PageState,
     SellerOffers,
     Want,
     WantsList,
+    page_state,
     parse_price_cents,
     read_card_offers,
     read_cart,
@@ -410,6 +413,42 @@ class TestWrongPages:
     def test_a_seller_page_is_not_a_cart(self) -> None:
         with pytest.raises(PageError):
             read_cart(page(SELLER_PAGE))
+
+
+NOT_FOUND = (
+    "<html><head><title>%metacardName% - MTG Cards | Cardmarket</title></head><body><main>"
+    '<h1 class="display-1"><span>404</span><span class="visually-hidden">Page not found</span></h1>'
+    "</main></body></html>"
+)
+
+
+class TestNotFound:
+    def test_the_404_page_is_a_card_that_was_not_found(self) -> None:
+        with pytest.raises(PageNotFound, match="no card at this address"):
+            read_card_offers(NOT_FOUND)
+
+    def test_it_is_a_page_error_too(self) -> None:
+        with pytest.raises(PageError):
+            read_card_offers(NOT_FOUND)
+
+    def test_a_card_whose_name_holds_404_is_still_a_card(self) -> None:
+        none = '<main><h1>Area 404</h1><p class="noResults">No offers</p></main>'
+
+        assert read_card_offers(none).offers == ()
+
+
+class TestPageState:
+    @pytest.mark.parametrize(
+        ("html", "state"),
+        [
+            (CHALLENGE, PageState.CHALLENGE),
+            (LOGIN, PageState.SIGNED_OUT),
+            (SIGNED_IN_UNRELATED, PageState.SIGNED_IN),
+            (UNRELATED, PageState.UNKNOWN),
+        ],
+    )
+    def test_each_kind_of_page(self, html: str, state: PageState) -> None:
+        assert page_state(html) is state
 
 
 class TestPrices:
