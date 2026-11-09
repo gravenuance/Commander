@@ -61,6 +61,30 @@ class FakeOps:
         self.moved = None
 
 
+class FailingOps(FakeOps):
+    """Raises from the named call (after recording it) until `failing` is cleared."""
+
+    def __init__(self, failing: str, *, also_hide: bool = False) -> None:
+        super().__init__()
+        self.failing: str | None = failing
+        self.also_hide = also_hide
+
+    def place(self, window: "Window", main: "Window", area: PaneArea) -> None:
+        super().place(window, main, area)
+        if self.failing == "place":
+            raise BrowserError("place failed")
+
+    def show(self, window: "Window") -> None:
+        super().show(window)
+        if self.failing == "show":
+            raise BrowserError("show failed")
+
+    def hide(self, window: "Window") -> None:
+        super().hide(window)
+        if self.also_hide:
+            raise BrowserError("hide failed")
+
+
 def pane_of(ops: FakeOps, main: "Window | None" = MAIN) -> CardmarketPane:
     return CardmarketPane(ops, lambda: main)
 
@@ -207,6 +231,39 @@ class TestCardmarketPane:
             pane_of(ops, main=None).cover(SCAN)
 
         assert ops.calls == []
+
+    @pytest.mark.parametrize("failing", ["place", "show"])
+    def test_a_cover_that_fails_is_undone_so_the_retry_watches_the_main_window_once(
+        self, failing: str
+    ) -> None:
+        ops = FailingOps(failing)
+        pane = pane_of(ops)
+        pane.set_area(AREA)
+
+        with pytest.raises(BrowserError, match=f"{failing} failed"):
+            pane.cover(SCAN)
+
+        assert ops.calls[-2:] == [("unwatch", MAIN), ("hide", SCAN)]
+        assert ops.moved is None
+        ops.calls.clear()
+        pane.set_area(MOVED_AREA)
+        assert ops.calls == []
+
+        ops.failing = None
+        pane.cover(SCAN)
+
+        assert ops.calls == [("watch", MAIN), ("place", SCAN, MAIN, MOVED_AREA), ("show", SCAN)]
+        assert ops.moved is not None
+
+    def test_a_cover_that_fails_and_cannot_hide_the_window_still_raises_the_first_failure(self) -> None:
+        ops = FailingOps("show", also_hide=True)
+        pane = pane_of(ops)
+        pane.set_area(AREA)
+
+        with pytest.raises(BrowserError, match="show failed"):
+            pane.cover(SCAN)
+
+        assert ops.moved is None
 
 
 class FakeScreen:

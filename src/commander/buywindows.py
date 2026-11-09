@@ -107,7 +107,19 @@ class CardmarketPane:
             self._ops.watch_moves(main, self._on_moved)
             self._covered = window
             self._shown = False
-            self._apply()
+            try:
+                self._apply()
+            except Exception:
+                self._undo_cover(window)
+                raise
+
+    def _undo_cover(self, window: Window) -> None:
+        """A cover that failed halfway leaves nothing subscribed or marked shown, so a retry starts clean."""
+        try:
+            self.uncover(window)
+        except Exception:
+            # The failure being handled is the one to report.
+            log.warning("could not take the Cardmarket window back after a failed cover", exc_info=True)
 
     def uncover(self, window: Window) -> None:
         with self._lock:
