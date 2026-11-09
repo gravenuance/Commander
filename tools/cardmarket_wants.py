@@ -1,16 +1,21 @@
 """Live test of the wants-list sync (ADR 0067): fills the app's Cardmarket wants list with the named cards.
 
 Opens a small visible status window and a hidden Cardmarket window on the same WebView2 profile, restores the
-session saved by `tools/cardmarket_login.py` (or the app) from Credential Manager, then finds or creates the
-list named `Commander`, empties it, imports the cards, sets the language and minimum condition and reads the
-list back. It changes that one list and no other. Every window is closed with `destroy()` at the end, also
-after an error: killing the process leaves WebView2 holding the profile and the next start shows a white page.
+session the app saved in Credential Manager, then finds or creates the list named `Commander`, empties it,
+imports the cards, sets the language and minimum condition and reads the list back. It changes that one list
+and no other. Every window is closed with `destroy()` at the end, also after an error: killing the process
+leaves WebView2 holding the profile and the next start shows a white page.
 
     uv run python -X utf8 tools/cardmarket_wants.py --profile <folder> "Sol Ring" "Arcane Signet=2"
     uv run python -X utf8 tools/cardmarket_wants.py --profile <folder> --file wants.txt --condition NM
 
 A card is `NAME` or `NAME=QUANTITY`; `--file` takes lines as `cmdr toget --cardmarket` prints them
-(`<quantity> <name>`). The profile folder should be the one the sign-in used.
+(`<quantity> <name>`).
+
+Sign in through the app's Buy screen first: this tool has no sign-in handover, so a signed-out session
+fails with `SignedOut`. `--profile` must be the app's Cardmarket storage folder
+(`%LOCALAPPDATA%/Commander/webview`), and the app must be closed, as it holds that folder. To save the pages
+it loads for test fixtures, use `tools/cardmarket_scan.py --save-pages`.
 """
 
 from __future__ import annotations
@@ -84,7 +89,9 @@ def run_sync(status: Window, args: argparse.Namespace, cancel: threading.Event) 
     sync_window: Window | None = None
     try:
         # pywebview types its url parameter with an untyped callable.
-        sync_window = webview.create_window("Cardmarket wants", html=STATUS_PAGE, hidden=True)  # pyright: ignore[reportUnknownMemberType]
+        sync_window = webview.create_window(  # pyright: ignore[reportUnknownMemberType]
+            "Cardmarket wants", html=STATUS_PAGE, hidden=True
+        )
         if sync_window is None:
             print("pywebview created no window", file=sys.stderr)
             return
@@ -115,7 +122,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument("cards", nargs="*", metavar="CARD", help="NAME or NAME=QUANTITY")
     parser.add_argument("--file", type=Path, help="lines of '<quantity> <name>' (toget --cardmarket output)")
-    parser.add_argument("--profile", type=Path, required=True, help="the WebView2 profile folder to share")
+    parser.add_argument(
+        "--profile",
+        type=Path,
+        required=True,
+        help="the app's Cardmarket storage folder, %%LOCALAPPDATA%%/Commander/webview",
+    )
     parser.add_argument(
         "--language",
         type=int,
@@ -146,7 +158,9 @@ def main() -> int:
     copies = sum(w.quantity for w in wanted)
     print(f"list: {APP_LIST_NAME}; {copies} cards in {len(wanted)} lines", flush=True)
     # pywebview types its url parameter with an untyped callable.
-    status = webview.create_window("Cardmarket wants", html=STATUS_PAGE, width=480, height=200)  # pyright: ignore[reportUnknownMemberType]
+    status = webview.create_window(  # pyright: ignore[reportUnknownMemberType]
+        "Cardmarket wants", html=STATUS_PAGE, width=480, height=200
+    )
     if status is None:
         print("pywebview created no window", file=sys.stderr)
         return 1

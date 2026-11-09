@@ -274,7 +274,8 @@ class TestUrls:
         filters = ScanFilters((1,), Condition.NM, Foil.FOIL, frozenset({28}), 5)
 
         assert card_page_url("Sol Ring", filters) == (
-            f"{CARDS}/Sol-Ring?language%5B1%5D=1&minCondition=2&isFoil=Y&sellerCountry%5B28%5D=28&maxShippingTime=5"
+            f"{CARDS}/Sol-Ring?language%5B1%5D=1&minCondition=2&isFoil=Y"
+            "&sellerCountry%5B28%5D=28&maxShippingTime=5"
         )
 
     @pytest.mark.parametrize(
