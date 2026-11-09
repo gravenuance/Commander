@@ -1327,6 +1327,13 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .buy-seller { display: grid; gap: var(--space-1); padding: var(--space-3) var(--space-4); border-radius: var(--radius-s); background: var(--surface-2); }
 .buy-seller-name { margin: 0; font-size: var(--text-m); }
 .buy-seller p { margin: 0; }
+.buy-package-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; }
+.buy-cart-link { display: inline-flex; align-items: center; text-decoration: none; }
+/* The confirmation lists what goes in the cart; the sellers scroll inside it when there are many. */
+#buy-cart-dialog .buy-sellers { max-height: 50vh; overflow-y: auto; }
+.buy-cart-picks { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-1); font-size: var(--text-s); }
+.buy-cart-picks li { display: flex; justify-content: space-between; gap: var(--space-4); }
+.buy-cart-total { margin: var(--space-3) 0 0; font-weight: 600; font-variant-numeric: tabular-nums; }
 .buy-table { overflow-x: auto; }
 .buy-table table { width: 100%; border-collapse: collapse; font-size: var(--text-s); }
 .buy-table th, .buy-table td { padding: var(--space-1) var(--space-3); border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }

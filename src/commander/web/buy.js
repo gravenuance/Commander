@@ -29,8 +29,14 @@ const buyState = {
   packages: new Map(),
   picked: null,
   packageRequest: 0,
-  // True from a click on Scan until the bridge answers.
+  // The detail of the package shown, which "Add to cart" confirms.
+  detail: null,
+  // True from a click on Scan or on the cart dialog's confirm until the bridge answers.
   requested: false,
+  // True from the confirm until the run it started has ended, so the screen says "adding" through a handover.
+  adding: false,
+  // The cart report as drawn, as text, so an unchanged one is not drawn again.
+  cartKey: "",
   // The price text on its way to the bridge, so Enter followed by the field's change sends it once.
   pricePending: null,
   polling: false,
@@ -50,6 +56,7 @@ function setupBuy() {
   $("buy-open").addEventListener("click", openBuy);
   $("buy-scan").addEventListener("click", startBuyScan);
   $("buy-cancel").addEventListener("click", cancelBuyScan);
+  setupBuyCart();
   setupBuyChoice($("buy-language"), BUY_LANGUAGES, "language");
   setupBuyChoice($("buy-foil"), BUY_FOILS, "foil");
   setupBuyChoice($("buy-delivery"), BUY_DELIVERIES, "delivery");
@@ -112,6 +119,8 @@ function buyForget() {
   buyState.resultsKey = null;
   buyState.packages.clear();
   buyState.picked = null;
+  buyState.detail = null;
+  buyState.adding = false;
   buyState.packageRequest++;
   $("buy-decks").replaceChildren();
   $("buy-curve").replaceChildren();
@@ -121,6 +130,8 @@ function buyForget() {
   $("buy-package-arrival").textContent = "";
   $("buy-results").hidden = true;
   $("buy-package").hidden = true;
+  $("buy-cart-dialog").close();
+  renderBuyCart(null);
 }
 
 async function refreshBuy() {
@@ -267,10 +278,18 @@ function paintBuyStatus(status) {
   else scan.removeAttribute("aria-busy");
   scan.querySelector(".spinner").hidden = !running;
   $("buy-scan-label").textContent = status.phase === "idle" ? "Scan Cardmarket" : "Scan Cardmarket again";
+  if (!running) buyState.adding = false;
+  const adding = status.phase === "cart" || buyState.adding;
+  const cart = $("buy-cart");
+  cart.disabled = running || buyState.requested;
+  if (running) cart.setAttribute("aria-busy", "true");
+  else cart.removeAttribute("aria-busy");
   const cancel = $("buy-cancel");
   cancel.hidden = !running;
   cancel.disabled = status.cancelling;
-  cancel.textContent = status.cancelling ? "Cancelling…" : "Cancel scan";
+  cancel.textContent = status.cancelling ? "Cancelling…" : adding ? "Cancel adding" : "Cancel scan";
+  // The run that starts from the cart button disables it, which would drop the focus.
+  if (running && document.activeElement === cart) cancel.focus();
 
   const stopped = status.phase === "stopped";
   const error = $("buy-error");
@@ -283,6 +302,7 @@ function paintBuyStatus(status) {
     for (const built of entry.cards) built.box.disabled = running;
   }
   renderBuyResults(status);
+  renderBuyCart(status.cart ?? null);
   paintBuyPane();
 }
 
@@ -326,9 +346,12 @@ async function reportBuyPane() {
 }
 
 function progressLine(status) {
-  if (status.running) return status.cancelling ? "Stopping after this page…" : status.progress;
+  if (status.running) {
+    const unit = status.phase === "cart" || buyState.adding ? "card" : "page";
+    return status.cancelling ? `Stopping after this ${unit}…` : status.progress;
+  }
   if (status.phase === "cancelled") return status.message;
-  if (status.phase === "results") {
+  if (status.phase === "results" || status.phase === "carted") {
     const rows = status.results.rows.length;
     return rows ? `Found ${plural(rows, "package", "packages")}.` : "Nothing to buy: no offers found.";
   }
@@ -565,7 +588,7 @@ function moveInBuyCountries(event) {
 
 function renderBuyResults(status) {
   const results = status.results;
-  const key = results ? JSON.stringify([results, status.phase]) : "";
+  const key = results ? JSON.stringify([results, status.message]) : "";
   if (key === buyState.resultsKey) return;
   buyState.resultsKey = key;
   buyState.packages.clear();
@@ -576,7 +599,7 @@ function renderBuyResults(status) {
     clearBuyPackage();
     return;
   }
-  $("buy-partial").hidden = status.phase === "results";
+  $("buy-partial").hidden = !results.partial;
   $("buy-partial").title = status.message;
   $("buy-curve").replaceChildren(...results.rows.map(buildBuyRow));
   $("buy-notes").replaceChildren(...buyResultNotes(results));
@@ -636,6 +659,7 @@ async function pickBuyRow(sellers) {
 
 function clearBuyPackage() {
   buyState.picked = null;
+  buyState.detail = null;
   buyState.packageRequest++;
   markBuyRows();
   $("buy-package").hidden = true;
@@ -645,6 +669,7 @@ function clearBuyPackage() {
 }
 
 function renderBuyPackage(detail) {
+  buyState.detail = detail;
   $("buy-package").hidden = false;
   $("buy-package-title").textContent = `${plural(detail.sellers, "seller", "sellers")} · ${euro(detail.totalCents)}`;
   $("buy-package-sub").textContent = `Cards ${euro(detail.cardsCents)} · shipping ${euro(detail.shippingCents)}`;
@@ -692,6 +717,114 @@ function buildBuySeller(shipment) {
     el("h3", { class: "buy-seller-name", text: shipment.seller }),
     el("p", { class: "muted small", text: `${shipment.country} · ${how} · ${buyDeliveryText(shipment)}` }),
     el("div", { class: "buy-table" }, el("table", {}, el("thead", {}, head), el("tbody", {}, ...rows))));
+}
+
+/* The cart: a confirmation that names what goes in, then a report of what Cardmarket's cart holds */
+
+function setupBuyCart() {
+  const dialog = $("buy-cart-dialog");
+  $("buy-cart").addEventListener("click", openBuyCart);
+  $("buy-cart-cancel").addEventListener("click", () => dialog.close());
+  $("buy-cart-confirm").addEventListener("click", confirmBuyCart);
+  // Escape closes the dialog natively; any way of closing it returns to the button that opened it.
+  dialog.addEventListener("close", () => $("buy-cart").focus());
+}
+
+const buyCartCards = (detail) => detail.shipments
+  .reduce((all, shipment) => all + shipment.picks.reduce((some, pick) => some + pick.copies, 0), 0);
+
+function buildBuyCartSeller(shipment) {
+  const picks = shipment.picks.map((pick) => el("li", {},
+    el("span", { text: times(pick.copies, pick.card) }),
+    el("span", { class: "num", text: euro(pick.priceCents) })));
+  return el("section", { class: "buy-seller", "aria-label": `Seller ${shipment.seller}` },
+    el("h3", { class: "buy-seller-name", text: shipment.seller }),
+    el("ul", { class: "buy-cart-picks" }, ...picks),
+    el("p", { class: "muted small", text: `Shipping ${euro(shipment.shippingCents)}` }));
+}
+
+function openBuyCart() {
+  const detail = buyState.detail;
+  if (!detail || $("buy-cart").disabled) return;
+  const cards = plural(buyCartCards(detail), "card", "cards");
+  $("buy-cart-dialog-title").textContent = `Add ${cards} to your Cardmarket cart?`;
+  $("buy-cart-confirm").textContent = `Add ${cards} to cart`;
+  $("buy-cart-dialog-sellers").replaceChildren(...detail.shipments.map(buildBuyCartSeller));
+  $("buy-cart-dialog-total").textContent = `Total ${euro(detail.totalCents)} · cards ${euro(detail.cardsCents)}`
+    + ` · shipping ${euro(detail.shippingCents)}`;
+  $("buy-cart-dialog").showModal();
+  $("buy-cart-cancel").focus();
+}
+
+async function confirmBuyCart() {
+  const detail = buyState.detail;
+  $("buy-cart-dialog").close();
+  if (!detail || buyState.requested) return;
+  buyState.requested = true;
+  buyState.adding = true;
+  try {
+    const status = await api("buy_add_to_cart", detail.sellers);
+    paintBuyStatus(status);
+    watchBuy();
+  } catch (error) {
+    buyState.adding = false;
+    noteFailure(error);
+  } finally {
+    buyState.requested = false;
+    if (buyState.view) paintBuyStatus(buyState.view.status);
+  }
+}
+
+function buyCartTitle(cart) {
+  const added = plural(cart.added, "card", "cards");
+  if (cart.status === "cancelled") return `Cancelled: ${added} added to your cart`;
+  if (cart.status === "stopped") return `Stopped: ${added} added to your cart`;
+  return cart.added ? `Added ${added} to your cart` : "Nothing was added to your cart";
+}
+
+const BUY_CART_COUNTS = [
+  ["already", "already in your cart"], ["gone", "gone"], ["short", "short of the copies asked"],
+  ["noAnswer", "without an answer"], ["notSent", "not added"],
+];
+
+function buyCartItemText(item) {
+  switch (item.outcome) {
+    case "gone": return item.message || "No longer available.";
+    case "short": return `${item.inCart ?? 0} of ${item.copies} in the cart`;
+    case "already": return "Already in your cart";
+    case "no-answer": return "No answer from Cardmarket; check your cart";
+    default: return "Not added";
+  }
+}
+
+function buildBuyCartItem(item) {
+  return el("li", {}, el("strong", { text: `${times(item.copies, item.card)} ` }),
+    `(${item.seller}): ${buyCartItemText(item)}`);
+}
+
+// A seller whose cart shipping costs another price than the package's estimate; both are shown.
+function buildBuyCartShipping(row) {
+  return el("li", {}, el("strong", { text: `${row.seller} ` }),
+    `Shipping: estimate ${euro(row.estimateCents)} ${row.estimateMethod} → cart ${euro(row.cartCents)} ${row.cartMethod}`);
+}
+
+function renderBuyCart(cart) {
+  const key = cart ? JSON.stringify(cart) : "";
+  if (key === buyState.cartKey) return;
+  buyState.cartKey = key;
+  $("buy-cart-report").hidden = !cart;
+  if (!cart) {
+    $("buy-cart-items").replaceChildren();
+    $("buy-cart-shipping").replaceChildren();
+    return;
+  }
+  $("buy-cart-title").textContent = buyCartTitle(cart);
+  $("buy-cart-reason").hidden = !cart.reason;
+  $("buy-cart-reason").textContent = cart.reason;
+  $("buy-cart-counts").textContent = BUY_CART_COUNTS.filter(([field]) => cart[field] > 0)
+    .map(([field, label]) => `${cart[field]} ${label}`).join(" · ");
+  $("buy-cart-items").replaceChildren(...cart.items.map(buildBuyCartItem));
+  $("buy-cart-shipping").replaceChildren(...cart.shipping.filter((row) => row.differs).map(buildBuyCartShipping));
 }
 
 // Up and down move between the packages; Enter and Space press the one in focus, as for any button.

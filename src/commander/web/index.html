@@ -148,6 +148,20 @@
           <p id="buy-package-arrival" class="buy-line"></p>
           <div id="buy-sellers" class="buy-sellers"></div>
           <ul id="buy-package-notes" class="buy-notes"></ul>
+          <div class="buy-package-actions">
+            <button id="buy-cart" class="button primary" type="button" aria-haspopup="dialog">Add to cart</button>
+          </div>
+        </section>
+
+        <section id="buy-cart-report" class="buy-block" aria-labelledby="buy-cart-title" hidden>
+          <h2 id="buy-cart-title" class="buy-block-title"></h2>
+          <p id="buy-cart-reason" class="field-error buy-line" role="alert" hidden></p>
+          <p id="buy-cart-counts" class="muted buy-line"></p>
+          <ul id="buy-cart-items" class="buy-notes"></ul>
+          <ul id="buy-cart-shipping" class="buy-notes"></ul>
+          <div class="buy-package-actions">
+            <a id="buy-cart-link" class="button buy-cart-link" href="https://www.cardmarket.com/en/Magic/ShoppingCart" target="_blank" rel="noopener">Open your cart on Cardmarket</a>
+          </div>
         </section>
       </div>
     </section>
@@ -300,6 +314,16 @@
       <button id="signin-submit" class="button primary" type="submit">Sign in</button>
     </div>
   </form>
+</dialog>
+
+<dialog id="buy-cart-dialog" class="dialog" aria-labelledby="buy-cart-dialog-title">
+  <h2 id="buy-cart-dialog-title"></h2>
+  <div id="buy-cart-dialog-sellers" class="buy-sellers"></div>
+  <p id="buy-cart-dialog-total" class="buy-cart-total"></p>
+  <div class="dialog-actions">
+    <button id="buy-cart-cancel" class="button" type="button">Keep looking</button>
+    <button id="buy-cart-confirm" class="button primary" type="button"></button>
+  </div>
 </dialog>
 
 <dialog id="topdeck-dialog" class="dialog signin" aria-labelledby="topdeck-title">

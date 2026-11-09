@@ -44,8 +44,9 @@ const placePane = (rect) => { $("buy-pane").getBoundingClientRect = () => ({ ...
 const row = (sellers, total, cards, shipping, saving, cheapest) => ({ sellers, totalCents: total,
   cardsCents: total - shipping,
   shippingCents: shipping, cards, savingCents: saving, cheapest, optimal: true });
-const RESULTS = { rows: [row(1, 760, 2, 200, null, false), row(2, 490, 2, 400, 270, true)], pages: 5,
-  destination: "Sweden", notFound: [], noOffers: [], overPrice: [], unmatched: [], quantityMismatch: [] };
+const RESULTS = { rows: [row(1, 760, 2, 200, null, false), row(2, 490, 2, 400, 270, true)], partial: false,
+  pages: 5, destination: "Sweden", notFound: [], noOffers: [], overPrice: [], unmatched: [],
+  quantityMismatch: [] };
 const done = (results = RESULTS, extra = {}) => idle({ phase: "results", results, ...extra });
 const PACKAGE = { sellers: 2, totalCents: 490, cardsCents: 90, shippingCents: 400, optimal: true,
   slowestDays: 12, withoutEstimate: 0, leftOutNoEstimate: 0,
@@ -674,7 +675,7 @@ class TestEndings:
         seen = run("""
         await open(view({ status: idle({ phase: "stopped",
           message: "Scan stopped after 14 pages; results are partial.",
-          results: RESULTS }) }));
+          results: { ...RESULTS, partial: true } }) }));
         return { partial: !$("buy-partial").hidden, tip: $("buy-partial").title,
           rows: $("buy-curve").children.length };
         """)
@@ -1801,3 +1802,302 @@ class TestArrival:
         return [$("buy-package").hidden, $("buy-package-arrival").textContent];
         """)
         assert seen == [True, ""]
+
+
+CART_SETUP = """
+const GONE = { seller: "SellerB", card: "Arcane Signet", copies: 2, outcome: "gone", inCart: 0,
+  message: "An error has occurred. The item is not available." };
+const SHORT = { seller: "SellerA", card: "Mind Stone", copies: 3, outcome: "short", inCart: 1, message: "" };
+const ALREADY = { seller: "SellerA", card: "Sol Ring", copies: 1, outcome: "already", inCart: 1,
+  message: "" };
+const SHIPPING = [
+  { seller: "SellerB", estimateMethod: "Letter", estimateCents: 200, cartMethod: "Brief S Priority",
+    cartCents: 255, differs: true },
+  { seller: "SellerA", estimateMethod: "Tracked Parcel", estimateCents: 345, cartMethod: "Tracked Parcel",
+    cartCents: 345, differs: false }];
+const CART = { status: "complete", reason: "", added: 1, already: 1, gone: 2, short: 3, noAnswer: 0,
+  notSent: 0, items: [GONE, SHORT, ALREADY], shipping: SHIPPING };
+const carted = (cart = CART) => done(RESULTS, { phase: "carted", cart });
+const pickPackage = async () => {
+  stub.buy_package = async () => PACKAGE;
+  await fire($("buy-curve").children[1], "click");
+};
+"""
+
+
+def run_cart(program: str) -> Answer:
+    return run(CART_SETUP + program)
+
+
+class TestTheCartButtonAndDialog:
+    def test_the_package_has_a_primary_add_to_cart_button_that_waits_while_a_run_is_going(self) -> None:
+        seen = run_cart("""
+        await open(view({ status: done() }));
+        const before = $("buy-cart").disabled;
+        await pickPackage();
+        const shown = [$("buy-cart").textContent, $("buy-cart").className, $("buy-cart").disabled];
+        paintBuyStatus(idle({ phase: "cart", running: true, progress: "Adding Mind Stone · 1 of 3",
+          results: RESULTS }));
+        const running = [$("buy-cart").disabled, $("buy-cart").getAttribute("aria-busy")];
+        paintBuyStatus(carted());
+        return { before, shown, running, after: $("buy-cart").disabled };
+        """)
+        assert seen == {
+            "before": False,
+            "shown": ["Add to cart", "button primary", False],
+            "running": [True, "true"],
+            "after": False,
+        }
+
+    def test_the_dialog_names_the_cards_the_sellers_their_prices_and_the_total(self) -> None:
+        seen = run_cart("""
+        await open(view({ status: done() }));
+        await pickPackage();
+        await fire($("buy-cart"), "click");
+        const dialog = $("buy-cart-dialog");
+        return { open: dialog.open, title: $("buy-cart-dialog-title").textContent,
+          confirm: $("buy-cart-confirm").textContent, keep: $("buy-cart-cancel").textContent,
+          sellers: leaves($("buy-cart-dialog-sellers")), total: $("buy-cart-dialog-total").textContent,
+          focus: document.activeElement.id, asked: calls.filter((c) => c[0] === "buy_add_to_cart") };
+        """)
+        assert seen == {
+            "open": True,
+            "title": "Add 3 cards to your Cardmarket cart?",
+            "confirm": "Add 3 cards to cart",
+            "keep": "Keep looking",
+            "sellers": [
+                "SellerB",
+                "2 × Arcane Signet",
+                "€0.30",
+                "Shipping €2.55",
+                "SellerA",
+                "Mind Stone",
+                "€0.60",
+                "Shipping €3.45",
+            ],
+            "total": "Total €4.90 · cards €0.90 · shipping €4.00",
+            "focus": "buy-cart-cancel",
+            "asked": [],
+        }
+
+    def test_one_card_is_not_pluralised(self) -> None:
+        seen = run_cart("""
+        await open(view({ status: done() }));
+        stub.buy_package = async () => ({ ...PACKAGE, shipments: [PACKAGE.shipments[1]] });
+        await fire($("buy-curve").children[1], "click");
+        await fire($("buy-cart"), "click");
+        return [$("buy-cart-dialog-title").textContent, $("buy-cart-confirm").textContent];
+        """)
+        assert seen == ["Add 1 card to your Cardmarket cart?", "Add 1 card to cart"]
+
+    def test_confirming_sends_the_seller_count_and_shows_the_run_with_a_cancel_that_says_adding(self) -> None:
+        seen = run_cart("""
+        await open(view({ status: done() }));
+        await pickPackage();
+        await fire($("buy-cart"), "click");
+        stub.buy_add_to_cart = async () => idle({ phase: "cart", running: true, results: RESULTS,
+          progress: "Adding Arcane Signet · 1 of 3" });
+        await fire($("buy-cart-confirm"), "click");
+        return { call: calls.find((c) => c[0] === "buy_add_to_cart"), open: $("buy-cart-dialog").open,
+          line: $("buy-progress").textContent, cancel: [$("buy-cancel").hidden, $("buy-cancel").textContent],
+          off: $("buy-cart").disabled, focus: document.activeElement.id, timers: timers.length };
+        """)
+        assert seen == {
+            "call": ["buy_add_to_cart", 2],
+            "open": False,
+            "line": "Adding Arcane Signet · 1 of 3",
+            "cancel": [False, "Cancel adding"],
+            "off": True,
+            "focus": "buy-cancel",
+            "timers": 1,
+        }
+
+    def test_keep_looking_calls_nothing_and_closing_the_dialog_any_way_returns_to_the_button(self) -> None:
+        seen = run_cart("""
+        await open(view({ status: done() }));
+        await pickPackage();
+        const focus = [];
+        await fire($("buy-cart"), "click");
+        await fire($("buy-cart-cancel"), "click");
+        focus.push(document.activeElement.id);
+        await fire($("buy-cart"), "click");
+        $("buy-cart-dialog").close();
+        focus.push(document.activeElement.id);
+        return { focus, open: $("buy-cart-dialog").open,
+          asked: calls.filter((c) => c[0] === "buy_add_to_cart") };
+        """)
+        assert seen == {"focus": ["buy-cart", "buy-cart"], "open": False, "asked": []}
+
+    def test_a_refusal_is_shown_and_the_button_comes_back(self) -> None:
+        seen = run_cart("""
+        await open(view({ status: done() }));
+        await pickPackage();
+        await fire($("buy-cart"), "click");
+        stub.buy_add_to_cart = async () => ({ error: "That package is gone; scan again." });
+        await fire($("buy-cart-confirm"), "click");
+        return { toast: $("status-text").textContent, off: $("buy-cart").disabled,
+          cancel: $("buy-cancel").hidden };
+        """)
+        assert seen == {"toast": "That package is gone; scan again.", "off": False, "cancel": True}
+
+    def test_cancelling_the_run_says_it_stops_after_the_card_even_while_the_window_is_the_owners(
+        self,
+    ) -> None:
+        seen = run_cart("""
+        await open(view({ status: done() }));
+        await pickPackage();
+        await fire($("buy-cart"), "click");
+        stub.buy_add_to_cart = async () => idle({ phase: "signin", running: true, results: RESULTS,
+          progress: "Sign in to Cardmarket below" });
+        await fire($("buy-cart-confirm"), "click");
+        const label = $("buy-cancel").textContent;
+        stub.buy_cancel = async () => idle({ phase: "signin", running: true, cancelling: true,
+          results: RESULTS });
+        await fire($("buy-cancel"), "click");
+        return { label, line: $("buy-progress").textContent, pane: !$("buy-pane").hidden };
+        """)
+        assert seen == {"label": "Cancel adding", "line": "Stopping after this card…", "pane": True}
+
+
+class TestTheCartReport:
+    def test_no_report_shows_no_block(self) -> None:
+        seen = run_cart("""
+        await open(view({ status: done() }));
+        return $("buy-cart-report").hidden;
+        """)
+        assert seen is True
+
+    def test_the_report_counts_lists_what_did_not_simply_go_in_and_the_shipping_that_differs(self) -> None:
+        seen = run_cart("""
+        await open(view({ status: carted() }));
+        const items = [...$("buy-cart-items").children].map((li) => li.textContent);
+        return { shown: !$("buy-cart-report").hidden, title: $("buy-cart-title").textContent,
+          counts: $("buy-cart-counts").textContent, items,
+          shipping: [...$("buy-cart-shipping").children].map((li) => li.textContent),
+          reason: $("buy-cart-reason").hidden };
+        """)
+        assert seen == {
+            "shown": True,
+            "title": "Added 1 card to your cart",
+            "counts": "1 already in your cart · 2 gone · 3 short of the copies asked",
+            "items": [
+                "2 × Arcane Signet (SellerB): An error has occurred. The item is not available.",
+                "3 × Mind Stone (SellerA): 1 of 3 in the cart",
+                "Sol Ring (SellerA): Already in your cart",
+            ],
+            "shipping": ["SellerB Shipping: estimate €2.00 Letter → cart €2.55 Brief S Priority"],
+            "reason": True,
+        }
+
+    def test_the_link_opens_the_cart_page_on_cardmarket_in_the_default_browser(self) -> None:
+        seen = run_cart("""
+        await open(view({ status: carted() }));
+        const link = $("buy-cart-link");
+        return [link.tagName, link.getAttribute("href"), link.getAttribute("target"),
+          link.getAttribute("rel"), link.textContent];
+        """)
+        assert seen == [
+            "A",
+            "https://www.cardmarket.com/en/Magic/ShoppingCart",
+            "_blank",
+            "noopener",
+            "Open your cart on Cardmarket",
+        ]
+
+    @pytest.mark.parametrize(
+        ("cart", "title"),
+        [
+            ("{ ...CART, status: 'cancelled', added: 2 }", "Cancelled: 2 cards added to your cart"),
+            ("{ ...CART, status: 'stopped', added: 0, reason: 'x' }", "Stopped: 0 cards added to your cart"),
+            ("{ ...CART, added: 0 }", "Nothing was added to your cart"),
+            ("{ ...CART, added: 5 }", "Added 5 cards to your cart"),
+        ],
+    )
+    def test_the_title_says_how_many_cards_went_in_and_whether_the_run_ended_early(
+        self, cart: str, title: str
+    ) -> None:
+        seen = run_cart(f"""
+        await open(view({{ status: carted({cart}) }}));
+        return $("buy-cart-title").textContent;
+        """)
+        assert seen == title
+
+    def test_a_stopped_run_gives_its_reason_as_an_alert_and_counts_what_was_not_added(self) -> None:
+        seen = run_cart("""
+        const stopped = { ...CART, status: "stopped", reason: "Cardmarket did not answer; adding stopped.",
+          added: 1, already: 0, gone: 0, short: 0, noAnswer: 1, notSent: 2, shipping: [],
+          items: [{ seller: "SellerA", card: "Mind Stone", copies: 1, outcome: "no-answer", inCart: 0,
+            message: "" }, { seller: "SellerB", card: "Sol Ring", copies: 2, outcome: "not-sent",
+            inCart: null, message: "" }] };
+        await open(view({ status: carted(stopped) }));
+        return { reason: [$("buy-cart-reason").hidden, $("buy-cart-reason").textContent,
+            $("buy-cart-reason").getAttribute("role")],
+          counts: $("buy-cart-counts").textContent,
+          items: [...$("buy-cart-items").children].map((li) => li.textContent),
+          shipping: $("buy-cart-shipping").children.length };
+        """)
+        assert seen == {
+            "reason": [False, "Cardmarket did not answer; adding stopped.", "alert"],
+            "counts": "1 without an answer · 2 not added",
+            "items": [
+                "Mind Stone (SellerA): No answer from Cardmarket; check your cart",
+                "2 × Sol Ring (SellerB): Not added",
+            ],
+            "shipping": 0,
+        }
+
+    def test_the_scan_results_and_the_package_shown_stay_while_the_cart_runs_and_after(self) -> None:
+        seen = run_cart("""
+        await open(view({ status: done() }));
+        await pickPackage();
+        const curve = $("buy-curve").children[1];
+        paintBuyStatus(idle({ phase: "cart", running: true, results: RESULTS,
+          progress: "Adding Mind Stone" }));
+        const during = [$("buy-curve").children[1] === curve, $("buy-package").hidden];
+        paintBuyStatus(carted());
+        return { during, after: [$("buy-curve").children[1] === curve, $("buy-package").hidden,
+          $("buy-package-title").textContent, $("buy-partial").hidden,
+          $("buy-curve").children[1].getAttribute("aria-pressed")],
+          line: $("buy-progress").textContent };
+        """)
+        assert seen == {
+            "during": [True, False],
+            "after": [True, False, "2 sellers · €4.90", True, "true"],
+            "line": "Found 2 packages.",
+        }
+
+    def test_a_partial_scan_stays_marked_through_the_cart(self) -> None:
+        seen = run_cart("""
+        const partial = { ...RESULTS, partial: true };
+        await open(view({ status: done(partial, { phase: "carted", cart: CART,
+          message: "Scan cancelled after 14 pages; results are partial." }) }));
+        return [$("buy-partial").hidden, $("buy-partial").title];
+        """)
+        assert seen == [False, "Scan cancelled after 14 pages; results are partial."]
+
+    def test_a_status_without_a_report_takes_the_block_away_again(self) -> None:
+        seen = run_cart("""
+        await open(view({ status: carted() }));
+        paintBuyStatus(done());
+        return [$("buy-cart-report").hidden, $("buy-cart-items").children.length,
+          $("buy-cart-shipping").children.length];
+        """)
+        assert seen == [True, 0, 0]
+
+    def test_an_unchanged_report_is_not_drawn_again(self) -> None:
+        seen = run_cart("""
+        await open(view({ status: carted() }));
+        const items = $("buy-cart-items").children[0];
+        paintBuyStatus(carted({ ...CART }));
+        return $("buy-cart-items").children[0] === items;
+        """)
+        assert seen is True
+
+    def test_forgetting_the_account_clears_the_report_and_the_package(self) -> None:
+        seen = run_cart("""
+        await open(view({ status: carted() }));
+        await pickPackage();
+        buyForget();
+        return [$("buy-cart-report").hidden, $("buy-cart-items").children.length, buyState.detail];
+        """)
+        assert seen == [True, 0, None]
