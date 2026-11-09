@@ -134,6 +134,14 @@ function buyForget() {
   renderBuyCart(null);
 }
 
+// A bridge call whose answer, refusal included, is dropped (undefined) when the account was left or the
+// screen forgotten while it was out.
+async function buyApi(name, ...args) {
+  const epoch = accountState.epoch;
+  const answer = await window.pywebview.api[name](...args);
+  return pageUserGone(epoch) || !buyState.view ? undefined : checkAnswer(answer);
+}
+
 async function refreshBuy() {
   const epoch = accountState.epoch;
   const view = await api("buy");
@@ -364,9 +372,11 @@ async function startBuyScan() {
   if (buyState.requested) return;
   buyState.requested = true;
   try {
-    const status = await api("buy_scan");
-    paintBuyStatus(status);
-    watchBuy();
+    const status = await buyApi("buy_scan");
+    if (status) {
+      paintBuyStatus(status);
+      watchBuy();
+    }
   } catch (error) { noteFailure(error); } finally {
     buyState.requested = false;
     if (buyState.view) paintBuyStatus(buyState.view.status);
@@ -375,7 +385,8 @@ async function startBuyScan() {
 
 async function cancelBuyScan() {
   try {
-    paintBuyStatus(await api("buy_cancel"));
+    const status = await buyApi("buy_cancel");
+    if (status) paintBuyStatus(status);
   } catch (error) { noteFailure(error); }
 }
 
@@ -391,7 +402,9 @@ async function pollBuy() {
   buyState.polling = false;
   if (!buyState.open || !buyState.view) return;
   try {
-    paintBuyStatus(await api("buy_status"));
+    const status = await buyApi("buy_status");
+    if (!status) return;
+    paintBuyStatus(status);
   } catch (error) {
     noteFailure(error);
     return;
@@ -402,33 +415,30 @@ async function pollBuy() {
 /* Choices */
 
 async function setBuyDeck(id, included) {
-  try {
-    acceptBuyView(await api("buy_include", id, included));
-  } catch (error) {
-    noteFailure(error);
-    paintBuy();
-  }
+  await changeBuyView(() => buyApi("buy_include", id, included), paintBuy);
 }
 
 async function setBuyCard(deckId, card, included) {
-  try {
-    acceptBuyView(await api("buy_include_card", deckId, card, included));
-  } catch (error) {
-    noteFailure(error);
-    paintBuy();
-  }
+  await changeBuyView(() => buyApi("buy_include_card", deckId, card, included), paintBuy);
 }
 
 async function changeBuyFilters(change) {
   const filters = { maxPrice: buyPriceText(buyState.view.filters.maxPriceCents), ...buyState.view.filters, ...change };
+  await changeBuyView(() => buyApi(
+    "buy_filters", filters.language, filters.condition, filters.foil, filters.countries, filters.delivery,
+    filters.maxPrice,
+  ), paintBuyFilters);
+}
+
+// A choice the bridge answers with the new view: drawn if the screen is still the account's, and on a
+// refusal `undo` puts the saved state back.
+async function changeBuyView(ask, undo) {
   try {
-    acceptBuyView(await api(
-      "buy_filters", filters.language, filters.condition, filters.foil, filters.countries, filters.delivery,
-      filters.maxPrice,
-    ));
+    const view = await ask();
+    if (view) acceptBuyView(view);
   } catch (error) {
     noteFailure(error);
-    paintBuyFilters();
+    if (buyState.view) undo();
   }
 }
 
@@ -452,12 +462,7 @@ async function commitBuyPrice() {
 }
 
 async function changeBuyBaseSellers() {
-  try {
-    acceptBuyView(await api("buy_base_sellers", Number($("buy-base-sellers").value)));
-  } catch (error) {
-    noteFailure(error);
-    paintBuyFilters();
-  }
+  await changeBuyView(() => buyApi("buy_base_sellers", Number($("buy-base-sellers").value)), paintBuyFilters);
 }
 
 /* Seller location: a button that opens a list of checkboxes, one per Cardmarket country; none ticked is any */
@@ -659,7 +664,8 @@ async function pickBuyRow(sellers) {
   try {
     let detail = buyState.packages.get(sellers);
     if (!detail) {
-      detail = await api("buy_package", sellers);
+      detail = await buyApi("buy_package", sellers);
+      if (!detail) return;
       buyState.packages.set(sellers, detail);
     }
     if (sent === buyState.packageRequest) renderBuyPackage(detail);
@@ -772,9 +778,11 @@ async function confirmBuyCart() {
   buyState.requested = true;
   buyState.adding = true;
   try {
-    const status = await api("buy_add_to_cart", detail.sellers, detail.check);
-    paintBuyStatus(status);
-    watchBuy();
+    const status = await buyApi("buy_add_to_cart", detail.sellers, detail.check);
+    if (status) {
+      paintBuyStatus(status);
+      watchBuy();
+    } else buyState.adding = false;
   } catch (error) {
     buyState.adding = false;
     noteFailure(error);

@@ -1340,6 +1340,52 @@ class TestAccount:
         """)
         assert seen == {"decks": 0, "view": None}
 
+    @pytest.mark.parametrize(
+        ("name", "call", "answer"),
+        [
+            ("buy_status", "pollBuy()", 'idle({ phase: "scanning", running: true })'),
+            ("buy_include", "setBuyDeck(1, false)", "view()"),
+            ("buy_include_card", 'setBuyCard(2, "Mind Stone", false)', "view()"),
+            ("buy_filters", 'changeBuyFilters({ foil: "foil" })', "view()"),
+            ("buy_base_sellers", "changeBuyBaseSellers()", "view()"),
+            ("buy_scan", "startBuyScan()", 'idle({ phase: "wants", running: true })'),
+            ("buy_cancel", "cancelBuyScan()", 'idle({ phase: "scanning", running: true })'),
+            ("buy_package", "pickBuyRow(1)", "PACKAGE"),
+            ("buy_add_to_cart", "confirmBuyCart()", 'idle({ phase: "cart", running: true })'),
+        ],
+    )
+    def test_an_answer_that_arrives_after_signing_out_is_dropped(
+        self, name: str, call: str, answer: str
+    ) -> None:
+        seen = run_cart(f"""
+        await open(view({{ status: done() }}));
+        await pickPackage();
+        const errors = [];
+        stub.log_page_error = async (message) => {{ errors.push(message); }};
+        let release;
+        stub.{name} = () => new Promise((resolve) => {{ release = () => resolve({answer}); }});
+        const held = {call};
+        showSignedOut();
+        release();
+        await held;
+        await settle();
+        return {{ view: buyState.view, decks: $("buy-decks").children.length,
+          rows: $("buy-curve").children.length, timers: timers.length, adding: buyState.adding,
+          requested: buyState.requested, picked: buyState.picked, errors,
+          toast: $("status-text").textContent }};
+        """)
+        assert seen == {
+            "view": None,
+            "decks": 0,
+            "rows": 0,
+            "timers": 0,
+            "adding": False,
+            "requested": False,
+            "picked": None,
+            "errors": [],
+            "toast": "",
+        }
+
     def test_a_change_the_poll_finds_in_the_decks_reaches_the_open_screen(self) -> None:
         seen = run("""
         await open();
