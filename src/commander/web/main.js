@@ -39,7 +39,9 @@ async function poll() {
       state.stamps = state.current === null ? stamps : { ...stamps, [open]: state.stamps[open] };
       decksStale = decks.status === "rejected";
       // The cards to buy follow the decks: a sync or a label change reaches the open screen too.
-      if (changed && buyState.open) await refreshBuy();
+      if (changed && buyState.open) {
+        try { await refreshBuy(); } catch (error) { noteFailure(error); }
+      }
       if (reloadDeck) failedDeck = deck.status === "rejected" ? { key, stamp: stamps[key], skipped: 0 } : null;
       // A failed load is the bridge's to show; the rest of the poll still runs, and a script error is logged.
       for (const load of [decks, deck]) if (load.status === "rejected") noteFailure(load.reason);

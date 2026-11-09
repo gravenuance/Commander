@@ -1479,6 +1479,27 @@ class TestAccount:
             "toast": "",
         }
 
+    def test_a_refresh_of_the_screen_that_fails_does_not_cut_the_rest_of_the_poll_short(self) -> None:
+        seen = run("""
+        await open();
+        const errors = [];
+        stub.log_page_error = async (message) => { errors.push(message); };
+        stub.decks = async () => ({ decks: [{ id: 1, short: "A", name: "A", queued: 0 }] });
+        stub.buy = async () => { throw new Error("the bridge fell over"); };
+        state.stamps = { "1": "old" };
+        state.metaStamp = "m";
+        state.previewsStamp = "p1";
+        stub.stamps = async () => ({ stamps: { "1": "new" }, meta: "m", previews: "p2" });
+        await poll();
+        return { previews: state.previewsStamp, stamps: state.stamps, errors, timers: timers.length };
+        """)
+        assert seen == {
+            "previews": "p2",
+            "stamps": {"1": "new"},
+            "errors": ["the bridge fell over"],
+            "timers": 1,
+        }
+
     def test_a_change_the_poll_finds_in_the_decks_reaches_the_open_screen(self) -> None:
         seen = run("""
         await open();
