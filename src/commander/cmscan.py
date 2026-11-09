@@ -56,6 +56,23 @@ def card_slug(name: str) -> str:
     return _NOT_SLUG.sub("-", letters_only).strip("-")
 
 
+class Foil(Enum):
+    """Whether the offers must be foil. Any asks nothing of Cardmarket: its form and address leave the field
+    blank, which matches both."""
+
+    ANY = "any"
+    NON_FOIL = "non-foil"
+    FOIL = "foil"
+
+    @property
+    def code(self) -> str:
+        """The value of Cardmarket's `isFoil` field and address parameter; blank for any."""
+        return _FOIL_CODES.get(self, "")
+
+
+_FOIL_CODES = {Foil.NON_FOIL: "N", Foil.FOIL: "Y"}
+
+
 @dataclass(slots=True, frozen=True)
 class ScanFilters:
     """What the offers must be, as the card page's own filters take it in the address.
@@ -67,14 +84,17 @@ class ScanFilters:
     # Cardmarket's language id (1 is English); None for any.
     language: int | None = ENGLISH
     min_condition: Condition | None = None
+    foil: Foil = Foil.ANY
 
     def query(self) -> str:
-        params: dict[str, int] = {}
+        params: dict[str, int | str] = {}
         if self.language is not None:
             params["language"] = self.language
         if self.min_condition is not None:
             # Cardmarket numbers the conditions from 1 (Mint) to 7 (Poor).
             params["minCondition"] = list(Condition).index(self.min_condition) + 1
+        if self.foil is not Foil.ANY:
+            params["isFoil"] = self.foil.code
         return urlencode(params)
 
 

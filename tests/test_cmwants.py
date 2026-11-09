@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from commander.cmpages import Condition, PageError, Want
-from commander.cmscan import ENGLISH
+from commander.cmscan import ENGLISH, Foil
 from commander.cmsession import SUBMITTED, BrowserError, SignedOut
 from commander.cmwants import (
     APP_LIST_NAME,
@@ -38,6 +38,7 @@ FIELDS = {
     "#amount": "amount",
     'select[name="idLanguages[]"]': "language",
     "#minCondition": "condition",
+    "#isFoil": "foil",
 }
 
 
@@ -120,6 +121,8 @@ class FakeSite:
     events: list[str] = field(default_factory=list[str])
     loaded: list[str] = field(default_factory=list[str])
     scripts: list[str] = field(default_factory=list[str])
+    # The foil value each edited want got, one entry per want, "" when the form's foil field was not set.
+    foil_set: list[str] = field(default_factory=list[str])
     on_event: Callable[[str], None] = lambda _: None
     fields: dict[str, str] = field(default_factory=dict[str, str])
     closed: bool = False
@@ -252,6 +255,8 @@ class FakeSite:
         self.fields.pop("amount", None)
         self.fields.pop("language", None)
         self.fields.pop("condition", None)
+        foil = self.fields.pop("foil", "")
+        self.foil_set.extend(foil for _ in self._ticked)
 
 
 class Gaps:
@@ -285,6 +290,7 @@ def sync(
     *,
     language: int | None = None,
     min_condition: Condition | None = None,
+    foil: Foil = Foil.ANY,
     cancel: threading.Event | None = None,
 ) -> Run:
     gaps = Gaps(site)
@@ -294,6 +300,7 @@ def sync(
         wanted,
         language=language,
         min_condition=min_condition,
+        foil=foil,
         cancel=cancel,
         on_progress=progress.append,
         sleep=gaps.sleep,
@@ -679,6 +686,42 @@ class TestFilters:
 
         assert "fill condition" not in site.events
         assert [(w.languages, w.min_condition) for w in run.result.imported] == [(("English",), Condition.PO)]
+
+    @pytest.mark.parametrize(("foil", "code"), [(Foil.NON_FOIL, "N"), (Foil.FOIL, "Y")])
+    def test_a_foil_choice_is_set_on_every_want_in_the_bulk_edit(self, foil: Foil, code: str) -> None:
+        site = app_site()
+
+        sync(site, cards(("A", 1), ("B", 1), ("C", 2)), foil=foil)
+
+        assert [value_set_by(s) for s in site.scripts if '"#isFoil"' in s] == [code, code]
+        assert site.foil_set == [code, code, code]
+        # A foil choice alone is a filter: the language and condition fields stay as the import left them.
+        assert "fill language" not in site.events
+        assert "fill condition" not in site.events
+
+    def test_any_foil_leaves_the_blank_field_alone(self) -> None:
+        site = app_site()
+
+        sync(site, cards(("A", 1)), language=ENGLISH, min_condition=Condition.NM, foil=Foil.ANY)
+
+        assert "fill foil" not in site.events
+        assert site.foil_set == [""]
+
+    def test_any_foil_alone_edits_nothing(self) -> None:
+        site = app_site()
+
+        sync(site, cards(("A", 1)), foil=Foil.ANY)
+
+        assert not any(e.startswith(("tick", "submit edit")) for e in site.events)
+
+    def test_a_page_without_the_foil_field_stops_before_the_submit(self) -> None:
+        site = app_site()
+        site.missing = {"#isFoil"}
+
+        with pytest.raises(WantsError, match="editing the 1 wants of quantity 1: no element matches #isFoil"):
+            sync(site, cards(("A", 1)), foil=Foil.NON_FOIL)
+
+        assert "submit edit 1" not in site.events
 
     def test_wants_that_did_not_take_the_filters_are_an_error(self) -> None:
         site = app_site()

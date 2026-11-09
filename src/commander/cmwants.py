@@ -36,7 +36,7 @@ from commander.cmpages import (
     read_wants_list,
     read_wants_lists,
 )
-from commander.cmscan import ENGLISH, MAX_GAP_S, MIN_GAP_S
+from commander.cmscan import ENGLISH, MAX_GAP_S, MIN_GAP_S, Foil
 from commander.cmsession import SUBMITTED
 from commander.sellersolve import card_key, merged_wants
 
@@ -62,6 +62,7 @@ _DELETE_SELECTED = "#deleteSelected"
 _EDIT_AMOUNT = "#amount"
 _EDIT_LANGUAGE = 'select[name="idLanguages[]"]'
 _EDIT_CONDITION = "#minCondition"
+_EDIT_FOIL = "#isFoil"
 _EDIT_SUBMIT = 'input[type="submit"][form="ModifyForm"]'
 _LANGUAGE_LABELS = {ENGLISH: "English"}
 # How many wants a failure message names.
@@ -128,6 +129,7 @@ class _Sync:
         *,
         language: int | None,
         min_condition: Condition | None,
+        foil: Foil,
         cancel: threading.Event,
         on_progress: Callable[[WantsProgress], None],
         sleep: Callable[[float], object],
@@ -137,6 +139,7 @@ class _Sync:
         self._wanted = merged_wants(wanted)
         self._language = language
         self._min_condition = min_condition
+        self._foil = foil
         self._cancel = cancel
         self._on_progress = on_progress
         self._sleep = sleep
@@ -152,7 +155,7 @@ class _Sync:
         if not self._wanted:
             return WantsSync(list_id, (), (), ())
         current = self._import(list_id)
-        if self._language is not None or self._min_condition is not None:
+        if self._language is not None or self._min_condition is not None or self._foil is not Foil.ANY:
             current = self._edit(current)
             self._check_filters(current)
         return self._report(current)
@@ -282,12 +285,15 @@ class _Sync:
                 self._act(set_field_script(_EDIT_LANGUAGE, str(self._language)), what)
             if self._min_condition is not None:
                 self._act(set_field_script(_EDIT_CONDITION, str(_condition_id(self._min_condition))), what)
+            if self._foil is not Foil.ANY:
+                self._act(set_field_script(_EDIT_FOIL, self._foil.code), what)
             self._submit(submit_script(_EDIT_SUBMIT), WantsStep.EDIT, f"quantity {quantity}")
         return self._open_list(list_id, WantsStep.VERIFY)
 
     def _check_filters(self, current: WantsList) -> None:
         """Every want must carry the language and condition asked for; a list that does not would hide the
-        sellers' stock from the scan."""
+        sellers' stock from the scan. The foil choice is not read back: the list shows it in cells whose
+        markup is not confirmed; setting the field checks that it kept the value."""
         wrong = [want for want in current.wants if not self._has_filters(want)]
         if wrong:
             names = ", ".join(want.card for want in wrong[:_NAMED])
@@ -331,13 +337,15 @@ def sync_wants(
     *,
     language: int | None,
     min_condition: Condition | None,
+    foil: Foil = Foil.ANY,
     cancel: threading.Event | None = None,
     on_progress: Callable[[WantsProgress], None] | None = None,
     sleep: Callable[[float], object] | None = None,
     uniform: Callable[[float, float], float] = random.uniform,
 ) -> WantsSync:
-    """Make the app's wants list hold exactly `wanted`, at `language` (Cardmarket's id, None for any) and
-    `min_condition` (None for the import's Poor) when either is given, and read it back.
+    """Make the app's wants list hold exactly `wanted`, at `language` (Cardmarket's id, None for any),
+    `min_condition` (None for the import's Poor) and `foil` (any leaves the import's blank field), when any
+    is given, and read it back.
 
     Raises `WantsCancelled` when `cancel` is set between two steps, `WantsError` (a `PageError`) when the list
     or a page is not as expected, and the browser's own errors. `sleep` waits out the gap between requests;
@@ -349,6 +357,7 @@ def sync_wants(
         wanted,
         language=language,
         min_condition=min_condition,
+        foil=foil,
         cancel=stop,
         on_progress=on_progress if on_progress is not None else _ignore,
         sleep=sleep if sleep is not None else stop.wait,

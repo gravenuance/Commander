@@ -5,6 +5,7 @@ import pytest
 
 from commander.cmpages import Condition, Offer
 from commander.cmscan import (
+    Foil,
     ScanFilters,
     ScanProgress,
     ScanRequest,
@@ -209,6 +210,23 @@ class TestUrls:
 
     def test_no_filters_leave_the_address_bare(self) -> None:
         assert card_page_url("Sol Ring", ScanFilters(language=None)) == f"{CARDS}/Sol-Ring"
+
+    @pytest.mark.parametrize(
+        ("foil", "suffix"),
+        [(Foil.ANY, ""), (Foil.NON_FOIL, "?isFoil=N"), (Foil.FOIL, "?isFoil=Y")],
+    )
+    def test_the_foil_choice_goes_in_the_query_and_any_leaves_it_out(self, foil: Foil, suffix: str) -> None:
+        url = card_page_url("Sol Ring", ScanFilters(language=None, foil=foil))
+
+        assert url == f"{CARDS}/Sol-Ring{suffix}"
+
+    def test_foil_follows_the_other_filters(self) -> None:
+        filters = ScanFilters(language=1, min_condition=Condition.NM, foil=Foil.FOIL)
+
+        assert card_page_url("Sol Ring", filters) == f"{CARDS}/Sol-Ring?language=1&minCondition=2&isFoil=Y"
+
+    def test_foil_defaults_to_any(self) -> None:
+        assert ScanFilters().foil is Foil.ANY
 
     def test_the_seller_page_is_filtered_by_the_wants_list(self) -> None:
         assert seller_page_url("Seller01", 999) == f"{USERS}/Seller01/Offers/Singles?idWantslist=999"
