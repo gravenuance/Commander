@@ -93,6 +93,7 @@ source = { editable = "." }
 dependencies = [
     { name = "httpx" },
     { name = "keyring" },
+    { name = "numpy" },
     { name = "pywebview" },
     { name = "scipy" },
     { name = "tomlkit" },
@@ -111,6 +112,7 @@ dev = [
 requires-dist = [
     { name = "httpx", specifier = "==0.28.1" },
     { name = "keyring", specifier = "==25.7.0" },
+    { name = "numpy", specifier = "==2.5.4" },
     { name = "pywebview", specifier = "==6.2.1" },
     { name = "scipy", specifier = "==1.18.1" },
     { name = "tomlkit", specifier = "==0.15.2" },
