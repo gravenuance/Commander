@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from commander.background import in_background
+from commander.buypane import PaneArea
 from commander.cmscan import ScanStatus
 from commander.desk import Desk, DeskSettings
 from commander.net import Pacer
@@ -215,6 +216,14 @@ def test_a_scan_runs_to_a_package_with_its_detail(desk: Desk, rig: Rig) -> None:
     [shipment] = cast("list[Json]", package["shipments"])
     assert (shipment["seller"], shipment["shippingCents"]) == ("B", 200)
     assert cast("list[Json]", shipment["picks"])[0]["trendCents"] == 30
+
+
+def test_the_pane_area_comes_through_the_bridge_and_a_bad_one_is_an_error(desk: Desk, rig: Rig) -> None:
+    assert desk.buy_pane(24, 120, 800, 420, 1.25) == {}
+    assert desk.buy_pane(0, 0, 0, 0, 1.25) == {}
+    assert desk.buy_pane(24, 120, float("nan"), 420, 1.25) == {"error": "The sign-in area was not valid."}
+
+    assert rig.pane.areas == [PaneArea(24.0, 120.0, 800.0, 420.0, 1.25), None]
 
 
 def test_a_package_that_is_not_there_is_an_error(desk: Desk) -> None:

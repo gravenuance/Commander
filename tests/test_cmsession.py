@@ -1,12 +1,16 @@
 import logging
+from collections.abc import Sequence
 
 import pytest
 
 from commander.cmsession import (
     SUBMITTED,
     BrowserError,
+    Cancelled,
     ChallengeError,
+    Interrupted,
     LoadTimeout,
+    Need,
     SessionBrowser,
     SignedOut,
     on_cardmarket,
@@ -30,7 +34,7 @@ SECOND = SessionCookie("PHPSESSID", "second", "www.cardmarket.com", "/")
 class FakeDriver:
     """Answers `read_html` from a script (the last answer repeats) and holds one session cookie."""
 
-    def __init__(self, answers: list[str | None], *, loads: bool = True) -> None:
+    def __init__(self, answers: Sequence[str | None], *, loads: bool = True) -> None:
         self.answers = answers
         self.loads = loads
         self.navigated: list[str] = []
@@ -286,6 +290,137 @@ class TestChallenge:
 
         with pytest.raises(SignedOut):
             browser_of(driver).load(URL)
+
+
+class FakeHandover:
+    """Records what the browser tells the screen; `cancel_at` is the first poll (1-based) to be cancelled."""
+
+    def __init__(self, cancel_at: int | None = None) -> None:
+        self.events: list[str] = []
+        self.polls = 0
+        self.cancel_at = cancel_at
+
+    def show(self, need: Need) -> None:
+        self.events.append(f"show:{need.value}")
+
+    def hide(self) -> None:
+        self.events.append("hide")
+
+    def cancelled(self) -> bool:
+        self.polls += 1
+        return self.cancel_at is not None and self.polls >= self.cancel_at
+
+
+def handed_browser(
+    driver: FakeDriver, handover: FakeHandover, store: FakeStore | None = None, clock: FakeClock | None = None
+) -> SessionBrowser:
+    clock = clock or FakeClock()
+    return SessionBrowser(driver, store or FakeStore(), clock=clock, sleep=clock.sleep, handover=handover)
+
+
+class TestHandover:
+    def test_a_signed_out_page_is_handed_over_until_signed_in_then_loaded_again(self) -> None:
+        clock, handover, store = FakeClock(), FakeHandover(), FakeStore()
+        driver = FakeDriver([SIGN_IN, SIGN_IN, SIGNED_IN])
+        driver.cookie = FIRST
+
+        html = handed_browser(driver, handover, store, clock).load(URL)
+
+        assert html == SIGNED_IN
+        assert handover.events == ["show:signin", "hide"]
+        assert driver.navigated == [URL, URL]
+        assert clock.sleeps == [1.0, 1.0]
+        assert store.puts == [FIRST]
+
+    def test_a_challenge_that_outlasts_8_seconds_is_handed_over_as_a_check(self) -> None:
+        clock, handover = FakeClock(), FakeHandover()
+        driver = FakeDriver([CHALLENGE] * 10 + [SIGNED_IN])
+
+        html = handed_browser(driver, handover, clock=clock).load(URL)
+
+        assert html == SIGNED_IN
+        assert handover.events == ["show:check", "hide"]
+        assert clock.sleeps == [1.0] * 10
+        assert driver.navigated == [URL, URL]
+
+    def test_a_challenge_that_passes_within_8_seconds_is_not_handed_over(self) -> None:
+        clock, handover = FakeClock(), FakeHandover()
+        driver = FakeDriver([CHALLENGE] * 7 + [NEUTRAL])
+
+        assert handed_browser(driver, handover, clock=clock).load(URL) == NEUTRAL
+        assert handover.events == []
+        assert clock.sleeps == [1.0] * 7
+
+    def test_the_need_follows_the_page_the_owner_is_on(self) -> None:
+        handover = FakeHandover()
+        driver = FakeDriver([CHALLENGE] * 9 + [SIGN_IN, SIGNED_IN])
+
+        handed_browser(driver, handover).load(URL)
+
+        assert handover.events == ["show:check", "show:signin", "hide"]
+
+    def test_pages_in_between_are_waited_out_without_a_new_show(self) -> None:
+        clock, handover = FakeClock(), FakeHandover()
+        driver = FakeDriver([SIGN_IN, NEUTRAL, None, SIGNED_IN])
+
+        handed_browser(driver, handover, clock=clock).load(URL)
+
+        assert handover.events == ["show:signin", "hide"]
+        assert clock.sleeps == [1.0, 1.0, 1.0]
+
+    def test_a_second_sign_in_on_the_reloaded_page_is_handed_over_again(self) -> None:
+        handover = FakeHandover()
+        driver = FakeDriver([SIGN_IN, SIGNED_IN, SIGN_IN, SIGNED_IN])
+
+        assert handed_browser(driver, handover).load(URL) == SIGNED_IN
+        assert handover.events == ["show:signin", "hide", "show:signin", "hide"]
+        assert driver.navigated == [URL, URL, URL]
+
+    def test_cancelling_during_the_handover_raises_and_hides_the_window(self) -> None:
+        clock, handover = FakeClock(), FakeHandover(cancel_at=2)
+        driver = FakeDriver([SIGN_IN])
+
+        with pytest.raises(Cancelled):
+            handed_browser(driver, handover, clock=clock).load(URL)
+
+        assert handover.events == ["show:signin", "hide"]
+        assert clock.sleeps == [1.0, 1.0]
+        assert driver.navigated == [URL]
+
+    def test_a_step_that_ends_in_a_handover_is_interrupted_and_not_loaded_again(self) -> None:
+        handover = FakeHandover()
+        driver = FakeDriver([SIGN_IN, SIGNED_IN])
+
+        with pytest.raises(Interrupted):
+            handed_browser(driver, handover).submit("click()")
+
+        assert handover.events == ["show:signin", "hide"]
+        assert driver.navigated == []
+
+    def test_a_step_that_needs_no_handover_returns_its_page(self) -> None:
+        handover = FakeHandover()
+
+        assert handed_browser(FakeDriver([SIGNED_IN]), handover).submit("click()") == SIGNED_IN
+        assert handover.events == []
+
+    def test_a_window_that_never_answers_is_still_a_timeout_after_30_seconds(self) -> None:
+        clock, handover = FakeClock(), FakeHandover()
+
+        with pytest.raises(LoadTimeout, match="stopped answering"):
+            handed_browser(FakeDriver([None]), handover, clock=clock).load(URL)
+
+        assert clock.sleeps == [1.0] * 30
+        assert handover.events == []
+
+    def test_without_a_handover_a_challenge_fails_after_30_seconds_and_a_sign_in_is_refused(self) -> None:
+        clock = FakeClock()
+
+        with pytest.raises(ChallengeError):
+            browser_of(FakeDriver([CHALLENGE]), clock=clock).load(URL)
+        with pytest.raises(SignedOut):
+            browser_of(FakeDriver([SIGN_IN])).load(URL)
+
+        assert clock.sleeps == [1.0] * 30
 
 
 class TestSessionCookie:

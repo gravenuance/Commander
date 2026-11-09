@@ -18,7 +18,7 @@ from commander.cmscan import (
     scan,
     seller_page_url,
 )
-from commander.cmsession import BrowserError, ChallengeError, LoadTimeout, SignedOut
+from commander.cmsession import BrowserError, Cancelled, ChallengeError, LoadTimeout, SignedOut
 from commander.offerlimits import OfferLimits
 from commander.sellersolve import WantedCard
 from conftest import FIXTURES
@@ -440,6 +440,26 @@ class TestPassOne:
 
         assert result.status is ScanStatus.STOPPED
         assert result.stop_reason == f"Card B: {error}"
+        assert result.pages_read == 1
+        assert ids_of(result) == BUYABLE_FIXTURE_IDS
+        assert CARD_C_URL not in browser.loaded
+
+    def test_a_browser_failure_while_cancelled_is_a_cancel_and_keeps_what_was_read(self) -> None:
+        cancel = threading.Event()
+        pages: dict[str, str | Exception] = {
+            SYLVAN_URL: fixture(CARD_PAGE),
+            CARD_B_URL: Cancelled("owner left"),
+        }
+
+        result, browser, _, _ = run(
+            pages,
+            [SYLVAN, "Card B", "Card C"],
+            cancel=cancel,
+            on_load=lambda url: cancel.set() if url == CARD_B_URL else None,
+        )
+
+        assert result.status is ScanStatus.CANCELLED
+        assert result.stop_reason is None
         assert result.pages_read == 1
         assert ids_of(result) == BUYABLE_FIXTURE_IDS
         assert CARD_C_URL not in browser.loaded

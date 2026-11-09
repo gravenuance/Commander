@@ -1,11 +1,12 @@
 """The Buy screen's engine: from the decks' Don't Have cards to a package of Cardmarket sellers (ADR 0067).
 
 `BuyService` lists the cards to buy by deck, keeps the filters, and runs one scan at a time on a background
-thread: sign in to Cardmarket if the session has ended, fill the app's wants list, read the offers, then work
-out the cheapest package for each number of sellers. The page polls `status` while it runs and asks `package`
-for the detail of a row. A changed price cap needs no new scan: the offers already read are judged again and
-solved again. Everything that touches Cardmarket or a window goes through `BuyEngine`, so tests run the whole
-flow without either.
+thread: fill the app's wants list, read the offers, then work out the cheapest package for each number of
+sellers. When Cardmarket needs the owner (a sign-in, Cloudflare's check) the scan window is shown over the
+screen's pane and the phase says which. The page polls `status` while it runs and asks `package` for the
+detail of a row. A changed price cap needs no new scan: the offers already read are judged again and solved
+again. Everything that touches Cardmarket or a window goes through `BuyEngine`, so tests run the whole flow
+without either.
 """
 
 import logging
@@ -18,20 +19,23 @@ from enum import Enum
 from pathlib import Path
 from typing import Protocol
 
+from commander.buypane import PaneAreaSink, parse_pane_area
 from commander.buysettings import BuyError, BuyFilters, BuyStore, check_base_sellers, parse_filters
 from commander.carddb import CardDataError, CardDb
 from commander.cmpages import PageError
 from commander.cmscan import ScanProgress, ScanRequest, ScanResult, ScanStage, ScanStatus, scan
 from commander.cmsession import (
     BrowserError,
-    ChallengeError,
+    Cancelled,
     FormBrowser,
+    Handover,
+    Interrupted,
     LoadTimeout,
-    SignedOut,
+    Need,
 )
 from commander.cmshipping import CmShippingError, Country, ShippingMethod
 from commander.cmwants import WantsCancelled, WantsProgress, WantsSync, sync_wants
-from commander.credentials import CredentialError, SessionStore
+from commander.credentials import CredentialError
 from commander.deckexport import dont_have_counts
 from commander.jsonshape import ShapeError
 from commander.models import Deck
@@ -43,7 +47,6 @@ log = logging.getLogger(__name__)
 
 # The most sellers the curve shows: each count is one exact solve, and a package of more is not one to post.
 MAX_CURVE_SELLERS = 12
-SIGN_IN_POLL_S = 0.25
 
 type Json = dict[str, object]
 type Key = tuple[object, ...]
@@ -54,7 +57,9 @@ type Curve = Callable[..., tuple[Package, ...]]
 
 class Phase(Enum):
     IDLE = "idle"
+    # The owner is signing in to, or passing Cloudflare's check in, the scan window shown over the screen.
     SIGN_IN = "signin"
+    CHECK = "check"
     WANTS = "wants"
     SCANNING = "scanning"
     SOLVING = "solving"
@@ -63,17 +68,13 @@ class Phase(Enum):
     STOPPED = "stopped"
 
 
-RUNNING = frozenset({Phase.SIGN_IN, Phase.WANTS, Phase.SCANNING, Phase.SOLVING})
+RUNNING = frozenset({Phase.SIGN_IN, Phase.CHECK, Phase.WANTS, Phase.SCANNING, Phase.SOLVING})
 # How a finished scan ends the run; a scan that did not complete still shows what it read.
 _PHASE_OF = {
     ScanStatus.COMPLETE: Phase.RESULTS,
     ScanStatus.CANCELLED: Phase.CANCELLED,
     ScanStatus.STOPPED: Phase.STOPPED,
 }
-
-
-class Closable(Protocol):
-    def close(self) -> None: ...
 
 
 class RouteSource(Protocol):
@@ -88,14 +89,13 @@ class RouteSource(Protocol):
 
 @dataclass(slots=True, frozen=True)
 class BuyEngine:
-    """Everything the flow reaches outside the process for. The defaults are the real readers; the first four
-    have none because they need the app's windows and credentials."""
+    """Everything the flow reaches outside the process for. The defaults are the real readers; the first three
+    have none because they need the app's windows."""
 
-    open_browser: Callable[[], FormBrowser]
-    # Opens the visible sign-in window; its callbacks fire when a signed-in page loads and when the window is
-    # closed by the user.
-    open_sign_in: Callable[[Callable[[], None], Callable[[], None]], Closable]
-    sessions: SessionStore
+    # Opens the hidden scan window; it is shown through the handover when a page needs the owner.
+    open_browser: Callable[[Handover], FormBrowser]
+    # Where the page's report of the area for that window goes.
+    pane: PaneAreaSink
     shipping: Callable[[], AbstractContextManager[RouteSource]]
     sync_wants: SyncWants = sync_wants
     scan: Scan = scan
@@ -176,6 +176,36 @@ class _Ended(Exception):  # noqa: N818 - control flow inside one run, never leav
         self.phase = phase
         self.message = message
         self.detail = detail or message
+
+
+# What the screen says, and the phase it is in, while the scan window is the owner's.
+_HANDOVER_SCREEN = {
+    Need.SIGN_IN: (Phase.SIGN_IN, "Sign in to Cardmarket below"),
+    Need.CHECK: (Phase.CHECK, "Finish Cardmarket's check below"),
+}
+
+
+class _ScreenHandover:
+    """The `Handover` of one run: the screen's phase and line say what the owner must do, and return to
+    what they were when the window goes back."""
+
+    def __init__(self, swap: Callable[[Phase, str], tuple[Phase, str]], cancel: threading.Event) -> None:
+        self._swap = swap
+        self._cancel = cancel
+        self._resume: tuple[Phase, str] | None = None
+
+    def show(self, need: Need) -> None:
+        before = self._swap(*_HANDOVER_SCREEN[need])
+        if self._resume is None:
+            self._resume = before
+
+    def hide(self) -> None:
+        if self._resume is not None:
+            self._swap(*self._resume)
+            self._resume = None
+
+    def cancelled(self) -> bool:
+        return self._cancel.is_set()
 
 
 def wants_line(progress: WantsProgress) -> str:
@@ -354,6 +384,11 @@ class BuyService:
                 "results": self._results_json(state.outcome),
             }
 
+    def set_pane(self, left: object, top: object, width: object, height: object, scale: object) -> Json:
+        """The page's report of the area its pane covers, in CSS pixels; an empty one if it shows none."""
+        self._engine.pane.set_area(parse_pane_area(left, top, width, height, scale))
+        return {}
+
     def package(self, sellers: int) -> Json:
         """The detail of the package of this many sellers, with each card's trend price."""
         with self._lock:
@@ -462,7 +497,7 @@ class BuyService:
 
     def _scan_and_solve(self, run: _Run) -> _Outcome:
         run = replace(run, limits=self._limits(run.filters))
-        wants, found = self._read_cardmarket_signed_in(run)
+        wants, found = self._read_cardmarket(run)
         if found.status is not ScanStatus.COMPLETE and not found.offers:
             message, detail = _stopped_text(found)
             raise _Ended(_PHASE_OF[found.status], message, detail)
@@ -503,46 +538,22 @@ class BuyService:
             )
         return OfferLimits(names, filters.delivery.max_days, filters.max_price_cents)
 
-    def _read_cardmarket_signed_in(self, run: _Run) -> tuple[WantsSync, ScanResult]:
-        """Fill the wants list and scan, signing in first when there is no session, and once more when the
-        saved one turns out to have ended."""
-        needs_sign_in = self._engine.sessions.get() is None
-        signed_in_here = False
-        while True:
-            if needs_sign_in:
-                self._sign_in(run)
-                signed_in_here = True
-            try:
-                return self._read_cardmarket(run)
-            except SignedOut as error:
-                if signed_in_here:
-                    raise _Ended(
-                        Phase.STOPPED, "Cardmarket still asks you to sign in; scan again.", str(error)
-                    ) from error
-                log.info("buy: the saved Cardmarket session has ended")
-                needs_sign_in = True
-
-    def _sign_in(self, run: _Run) -> None:
-        self._progress(Phase.SIGN_IN, "Sign in to Cardmarket in the window that opened")
-        signed_in, dismissed = threading.Event(), threading.Event()
-        window = self._engine.open_sign_in(signed_in.set, dismissed.set)
-        log.info("buy: waiting for the sign-in to Cardmarket")
-        try:
-            while not signed_in.is_set():
-                if run.cancel.is_set():
-                    raise _Ended(Phase.CANCELLED, "Sign-in cancelled.")
-                if dismissed.is_set():
-                    raise _Ended(Phase.CANCELLED, "Sign-in window closed; scan to sign in again.")
-                signed_in.wait(SIGN_IN_POLL_S)
-        finally:
-            _close(window, "sign-in")
-        log.info("buy: signed in to Cardmarket")
-
     def _read_cardmarket(self, run: _Run) -> tuple[WantsSync, ScanResult]:
+        """Fill the wants list and scan in one window. A sign-in or check that comes in the middle of a wants
+        step is done by the owner in that window; the step is then done again, once."""
         self._progress(Phase.WANTS, "Opening the Cardmarket window")
-        browser = self._engine.open_browser()
+        browser = self._engine.open_browser(_ScreenHandover(self._swap_progress, run.cancel))
         try:
-            return self._sync_and_scan(browser, run)
+            try:
+                return self._sync_and_scan(browser, run)
+            except Interrupted as error:
+                log.info("buy: a sign-in or check interrupted the wants list; filling it again: %s", error)
+            try:
+                return self._sync_and_scan(browser, run)
+            except Interrupted as error:
+                raise _Ended(
+                    Phase.STOPPED, "Cardmarket interrupted the wants list again; scan again.", str(error)
+                ) from error
         finally:
             _close(browser, "scan")
 
@@ -566,7 +577,7 @@ class BuyService:
                 cancel=run.cancel,
                 on_progress=wants_progress,
             )
-        except WantsCancelled as error:
+        except (WantsCancelled, Cancelled) as error:
             raise _Ended(Phase.CANCELLED, "Scan cancelled.") from error
         log.info(
             "buy: wants list %d holds %d wants; %d unmatched, %d quantity mismatches",
@@ -642,6 +653,15 @@ class BuyService:
             self._state.progress = line
         log.debug("buy: %s", line)
 
+    def _swap_progress(self, phase: Phase, line: str) -> tuple[Phase, str]:
+        """Set the phase and line, and return the ones they replace."""
+        with self._lock:
+            before = (self._state.phase, self._state.progress)
+            self._state.phase = phase
+            self._state.progress = line
+        log.debug("buy: %s", line)
+        return before
+
     def _finish(self, run: _Run, phase: Phase, message: str, detail: str, outcome: _Outcome | None) -> None:
         log.log(
             logging.INFO if phase in (Phase.RESULTS, Phase.CANCELLED) else logging.WARNING,
@@ -653,9 +673,7 @@ class BuyService:
             self._state = _State(phase, "", message, detail, outcome, key=run.key)
 
     def _finish_with_error(self, run: _Run, error: Exception) -> None:
-        if isinstance(error, ChallengeError):
-            text = "Cardmarket is checking your browser; wait a minute, then scan again."
-        elif isinstance(error, LoadTimeout):
+        if isinstance(error, LoadTimeout):
             text = "Cardmarket did not answer; check your connection, then scan again."
         elif isinstance(error, BrowserError):
             text = "The Cardmarket window failed; the details are in the log."
@@ -845,9 +863,9 @@ def _seller_range(packages: Sequence[Package]) -> tuple[int, int]:
     return (min(counts), max(counts)) if counts else (0, 0)
 
 
-def _close(closable: Closable, what: str) -> None:
+def _close(browser: FormBrowser, what: str) -> None:
     """Close a window; one that will not close must not hide why the run ended."""
     try:
-        closable.close()
+        browser.close()
     except Exception:
         log.exception("buy: could not close the %s window", what)

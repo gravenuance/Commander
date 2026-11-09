@@ -16,14 +16,14 @@ import httpx
 import pytest
 
 from commander.buy import BuyEngine, BuyService, RouteSource
+from commander.buypane import PaneArea
 from commander.buysettings import BuyError, BuyStore
-from commander.buywindows import production_engine
+from commander.buywindows import CardmarketPane, production_engine
 from commander.cmpages import Condition, Offer, Want
 from commander.cmscan import Foil, ScanProgress, ScanRequest, ScanResult, ScanStage, ScanStatus
-from commander.cmsession import ChallengeError, FormBrowser, LoadTimeout, SignedOut
+from commander.cmsession import BrowserError, Cancelled, FormBrowser, Handover, Interrupted, LoadTimeout, Need
 from commander.cmshipping import CardmarketShipping, Country, ShippingMethod
 from commander.cmwants import QuantityMismatch, WantsCancelled, WantsProgress, WantsStep, WantsSync
-from commander.credentials import CardmarketSessionStore, SessionCookie
 from commander.models import Deck, DeckCard
 from commander.net import NetworkError
 from commander.offerlimits import OfferLimits
@@ -33,9 +33,7 @@ from test_sellersolve import LETTER, offer
 NOW = datetime(2026, 11, 9, 12, 0, tzinfo=UTC)
 
 DONT_HAVE = "Don't Have"
-SECRET = "SECRET-COOKIE-VALUE"
 MAX_WORDS = 12
-COOKIE = SessionCookie("PHPSESSID", SECRET, "www.cardmarket.com", "/")
 Json = dict[str, Any]
 DEFAULT_FILTERS: Json = {
     "language": "english",
@@ -165,15 +163,27 @@ class SyncCall:
     foil: Foil
 
 
+class FakePane:
+    """Records the areas the page reports for the Cardmarket window."""
+
+    def __init__(self) -> None:
+        self.areas: list[PaneArea | None] = []
+
+    def set_area(self, area: PaneArea | None) -> None:
+        self.areas.append(area)
+
+
 class Rig:
     """A service whose Cardmarket is a set of fakes, and a record of what it was asked."""
 
-    def __init__(self, tmp_path: Path, card_db: Path, *, session: bool = True) -> None:
+    def __init__(self, tmp_path: Path, card_db: Path) -> None:
         self.decks = fresh_decks()
         self.events: list[str] = []
         self.browser_closed = threading.Event()
         self.progress: list[str] = []
-        self.session: SessionCookie | None = COOKIE if session else None
+        # The handover the engine gave the scan window; a fake step calls it as the real window would.
+        self.handover: Handover | None = None
+        self.pane = FakePane()
         self.sync_calls: list[SyncCall] = []
         self.scan_requests: list[ScanRequest] = []
         self.routes = Routes()
@@ -184,16 +194,12 @@ class Rig:
         self.scan_result = scan_of([])
         self.sync_effect: Callable[[threading.Event], None] = lambda _cancel: None
         self.scan_effect: Callable[[threading.Event], None] = lambda _cancel: None
-        self.sign_in_effect: Callable[[Callable[[], None], Callable[[], None]], None] = lambda ok, _closed: (
-            ok()
-        )
         self.service = self.build()
 
     def build(self) -> BuyService:
         self.engine = BuyEngine(
             open_browser=self._open_browser,
-            open_sign_in=self._open_sign_in,
-            sessions=self,
+            pane=self.pane,
             shipping=self._shipping,
             sync_wants=self._sync_wants,
             scan=self._scan,
@@ -207,25 +213,10 @@ class Rig:
             background=lambda work: work(),
         )
 
-    # The session store the engine reads.
-    def get(self) -> SessionCookie | None:
-        return self.session
-
-    def put(self, cookie: SessionCookie) -> None:
-        self.session = cookie
-
-    def delete(self) -> bool:
-        self.session, had = None, self.session is not None
-        return had
-
-    def _open_browser(self) -> FormBrowser:
+    def _open_browser(self, handover: Handover) -> FormBrowser:
         self.events.append("browser opened")
+        self.handover = handover
         return cast("FormBrowser", Closer(self.events, "browser", self.browser_closed))
-
-    def _open_sign_in(self, signed_in: Callable[[], None], closed: Callable[[], None]) -> Closer:
-        self.events.append("sign-in opened")
-        self.sign_in_effect(signed_in, closed)
-        return Closer(self.events, "sign-in")
 
     @contextmanager
     def _shipping(self) -> Generator[RouteSource]:
@@ -291,12 +282,12 @@ def scanned(rig: Rig) -> Json:
     return rig.service.status()
 
 
-def test_the_production_engine_reads_shipping_through_the_cache_and_keeps_the_session_in_the_credential_store(
+def test_the_production_engine_reads_shipping_through_the_cache_and_reports_the_pane_to_the_window_cover(
     tmp_path: Path,
 ) -> None:
     engine = production_engine(httpx.Client, tmp_path, lambda: NOW)
 
-    assert isinstance(engine.sessions, CardmarketSessionStore)
+    assert isinstance(engine.pane, CardmarketPane)
     with engine.shipping() as shipping:
         assert isinstance(shipping, CardmarketShipping)
 
@@ -978,93 +969,148 @@ class TestTheScan:
         assert rig.service.status()["results"] is not None
 
 
-class TestSigningIn:
-    def test_without_a_saved_session_the_sign_in_window_opens_first_and_closes_when_signed_in(
-        self, tmp_path: Path, card_db_file: Path
+class TestHandingTheWindowToTheOwner:
+    @staticmethod
+    def seen(rig: Rig) -> list[tuple[object, object, object]]:
+        status = rig.service.status()
+        return [(status["phase"], status["progress"], status["running"])]
+
+    @pytest.mark.parametrize(
+        ("need", "phase", "line"),
+        [
+            (Need.SIGN_IN, "signin", "Sign in to Cardmarket below"),
+            (Need.CHECK, "check", "Finish Cardmarket's check below"),
+        ],
+    )
+    def test_the_screen_says_what_the_owner_must_do_and_goes_back_to_where_it_was(
+        self, rig: Rig, need: Need, phase: str, line: str
     ) -> None:
-        rig = Rig(tmp_path, card_db_file, session=False)
+        seen: list[tuple[object, object, object]] = []
+
+        def hand_over(_: threading.Event) -> None:
+            assert rig.handover is not None
+            seen.extend(self.seen(rig))
+            rig.handover.show(need)
+            seen.extend(self.seen(rig))
+            rig.handover.hide()
+            seen.extend(self.seen(rig))
+
+        rig.sync_effect = hand_over
 
         rig.service.start()
 
-        assert rig.events[:4] == ["sign-in opened", "sign-in closed", "browser opened", "sync"]
+        before = ("wants", "Preparing wants list · 3 cards", True)
+        assert seen == [before, (phase, line, True), before]
         assert rig.service.status()["phase"] == "results"
+        assert_short(line)
 
-    def test_a_saved_session_that_has_ended_opens_the_sign_in_and_then_scans_in_a_new_window(
+    def test_a_changed_need_follows_the_page_and_the_screen_returns_to_what_it_showed_before_the_first(
         self, rig: Rig
     ) -> None:
-        sync_attempts: list[int] = []
+        seen: list[tuple[object, object, object]] = []
 
-        def ended(_: threading.Event) -> None:
-            sync_attempts.append(1)
-            if len(sync_attempts) == 1:
-                raise SignedOut("the wants page asks to sign in")
+        def hand_over(_: threading.Event) -> None:
+            assert rig.handover is not None
+            rig.handover.show(Need.CHECK)
+            rig.handover.show(Need.SIGN_IN)
+            seen.extend(self.seen(rig))
+            rig.handover.hide()
+            seen.extend(self.seen(rig))
 
-        rig.sync_effect = ended
+        rig.sync_effect = hand_over
 
         rig.service.start()
 
-        assert rig.events == [
-            "browser opened",
-            "sync",
-            "browser closed",
-            "sign-in opened",
-            "sign-in closed",
-            "browser opened",
-            "sync",
-            "scan",
-            "browser closed",
+        assert seen == [
+            ("signin", "Sign in to Cardmarket below", True),
+            ("wants", "Preparing wants list · 3 cards", True),
         ]
-        assert rig.service.status()["phase"] == "results"
 
-    def test_a_session_that_ends_again_right_after_signing_in_stops_the_scan(self, rig: Rig) -> None:
-        def ended(_: threading.Event) -> None:
-            raise SignedOut("asks to sign in")
+    def test_the_handover_is_cancelled_exactly_when_the_scan_is(self, rig: Rig) -> None:
+        asked: list[bool] = []
 
-        rig.sync_effect = ended
-
-        rig.service.start()
-        status = rig.service.status()
-
-        assert (status["phase"], status["message"]) == (
-            "stopped",
-            "Cardmarket still asks you to sign in; scan again.",
-        )
-        assert rig.events.count("sign-in opened") == 1
-        assert rig.events.count("browser closed") == 2
-        assert_short(status["message"])
-
-    def test_closing_the_sign_in_window_cancels_and_scanning_again_asks_again(
-        self, tmp_path: Path, card_db_file: Path
-    ) -> None:
-        rig = Rig(tmp_path, card_db_file, session=False)
-        rig.sign_in_effect = lambda _ok, closed: closed()
-
-        rig.service.start()
-        status = rig.service.status()
-
-        assert (status["phase"], status["message"]) == (
-            "cancelled",
-            "Sign-in window closed; scan to sign in again.",
-        )
-        assert_short(status["message"])
-        assert rig.events == ["sign-in opened", "sign-in closed"]
-        assert status["results"] is None
-
-    def test_cancel_while_waiting_for_the_sign_in_closes_the_window(
-        self, tmp_path: Path, card_db_file: Path
-    ) -> None:
-        rig = Rig(tmp_path, card_db_file, session=False)
-
-        def cancel_it(_ok: Callable[[], None], _closed: Callable[[], None]) -> None:
+        def ask(_: threading.Event) -> None:
+            assert rig.handover is not None
+            asked.append(rig.handover.cancelled())
             rig.service.cancel()
+            asked.append(rig.handover.cancelled())
 
-        rig.sign_in_effect = cancel_it
+        rig.sync_effect = ask
+
+        rig.service.start()
+
+        assert asked == [False, True]
+
+    def test_cancelling_while_the_window_is_the_owners_ends_the_scan_as_cancelled(self, rig: Rig) -> None:
+        def cancel_in_handover(_: threading.Event) -> None:
+            assert rig.handover is not None
+            rig.handover.show(Need.SIGN_IN)
+            rig.service.cancel()
+            assert rig.service.status()["cancelling"] is True
+            rig.handover.hide()
+            raise Cancelled("cancelled while the wants page waited for the owner")
+
+        rig.sync_effect = cancel_in_handover
 
         rig.service.start()
         status = rig.service.status()
 
-        assert (status["phase"], status["message"]) == ("cancelled", "Sign-in cancelled.")
-        assert rig.events == ["sign-in opened", "sign-in closed"]
+        assert (status["phase"], status["message"], status["results"]) == (
+            "cancelled",
+            "Scan cancelled.",
+            None,
+        )
+        assert_short(status["message"])
+        assert rig.events == ["browser opened", "sync", "browser closed"]
+
+    def test_a_wants_step_interrupted_by_a_sign_in_is_done_again_in_the_same_window(
+        self, rig: Rig, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        attempts: list[int] = []
+
+        def interrupted_once(_: threading.Event) -> None:
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise Interrupted("a sign-in came after the submit")
+
+        rig.sync_effect = interrupted_once
+
+        with caplog.at_level(logging.INFO):
+            rig.service.start()
+
+        assert rig.events == ["browser opened", "sync", "sync", "scan", "browser closed"]
+        assert len(rig.sync_calls) == 2
+        assert rig.service.status()["phase"] == "results"
+        assert "a sign-in or check interrupted the wants list" in caplog.text
+
+    def test_a_wants_step_interrupted_twice_stops_the_scan_and_closes_the_window(self, rig: Rig) -> None:
+        def interrupted(_: threading.Event) -> None:
+            raise Interrupted("a check came after the submit")
+
+        rig.sync_effect = interrupted
+
+        rig.service.start()
+        status = rig.service.status()
+
+        assert (status["phase"], status["message"], status["detail"]) == (
+            "stopped",
+            "Cardmarket interrupted the wants list again; scan again.",
+            "a check came after the submit",
+        )
+        assert_short(status["message"])
+        assert rig.events == ["browser opened", "sync", "sync", "browser closed"]
+
+    def test_the_page_reports_the_pane_area_and_that_there_is_none(self, rig: Rig) -> None:
+        assert rig.service.set_pane(10, 20.5, 300, 200, 1.5) == {}
+        assert rig.service.set_pane(0, 0, 0, 0, 1) == {}
+
+        assert rig.pane.areas == [PaneArea(10.0, 20.5, 300.0, 200.0, 1.5), None]
+
+    def test_a_report_that_is_not_numbers_is_refused_and_not_passed_on(self, rig: Rig) -> None:
+        with pytest.raises(BuyError, match="not valid"):
+            rig.service.set_pane("10", 20, 300, 200, 1)
+
+        assert rig.pane.areas == []
 
 
 class TestCancellingAndStopping:
@@ -1132,7 +1178,7 @@ class TestCancellingAndStopping:
     @pytest.mark.parametrize(
         ("error", "message"),
         [
-            (ChallengeError("check"), "Cardmarket is checking your browser; wait a minute, then scan again."),
+            (BrowserError("gone"), "The Cardmarket window failed; the details are in the log."),
             (LoadTimeout("slow"), "Cardmarket did not answer; check your connection, then scan again."),
             (ValueError("boom"), "Something went wrong; the details are in the log."),
         ],
@@ -1194,7 +1240,7 @@ class TestCancellingAndStopping:
         assert len(rig.sync_calls) == 2
 
     def test_no_message_runs_past_twelve_words(self, rig: Rig) -> None:
-        for effect in (SignedOut("x"), ChallengeError("x"), LoadTimeout("x"), RuntimeError("x")):
+        for effect in (BrowserError("x"), LoadTimeout("x"), RuntimeError("x")):
 
             def fail(_: threading.Event, effect: Exception = effect) -> None:
                 raise effect
@@ -1249,15 +1295,12 @@ class TestWhileItRuns:
     def test_cancel_with_no_scan_running_changes_nothing(self, rig: Rig) -> None:
         assert rig.service.cancel()["phase"] == "idle"
 
-    def test_a_scan_is_logged_by_stage_and_never_logs_the_session_cookie(
-        self, rig: Rig, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_a_scan_is_logged_by_stage(self, rig: Rig, caplog: pytest.LogCaptureFixture) -> None:
         rig.scan_result = scan_of(two_sellers())
 
         with caplog.at_level(logging.DEBUG):
             rig.service.start()
 
-        assert SECRET not in caplog.text
         info = [
             r.getMessage() for r in caplog.records if r.levelno == logging.INFO and r.name == "commander.buy"
         ]

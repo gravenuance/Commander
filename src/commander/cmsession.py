@@ -5,9 +5,10 @@ window needs around that: wait for the load event, wait out Cloudflare's check, 
 sign in, and keep the session cookie in the secret store while signed in. It drives a `PageDriver`; the one
 implementation, `WebviewDriver`, holds every pywebview and .NET call so the rest runs without a window.
 
-The owner signs in by hand in `sign_in_window`; the app never sees the password. The session is the
-`PHPSESSID` cookie, which WebView2 drops on close, so it is saved to Credential Manager while signed in and
-added back before the first page loads.
+When a page is signed out or Cloudflare's check does not pass by itself, the browser asks its `Handover` to
+show the window to the owner, waits until they have signed in or the check has passed, and loads the page
+again; the app never sees the password. The session is the `PHPSESSID` cookie, which WebView2 drops on close,
+so it is saved to Credential Manager while signed in and added back before the first page loads.
 
 A page-load or script call can hang for good while Cloudflare swaps its check for the page, so every call into
 the window has a time limit, and a window is always closed with `destroy()`: killing the process leaves
@@ -19,7 +20,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from dataclasses import dataclass
+from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, cast
 from urllib.parse import urlsplit
 
@@ -43,13 +44,14 @@ type _DotNet = Any
 
 log = logging.getLogger(__name__)
 
-START_URL = "https://www.cardmarket.com/en/Magic"
 DEFAULT_COOKIE_DOMAIN = "www.cardmarket.com"
 # The load event may never come; the scan fails the page rather than wait on.
 LOAD_TIMEOUT_S = 45.0
-# Cloudflare's check passes by itself in about 5 s.
+# Cloudflare's check passes by itself in about 5 s; without a handover the wait is the longer one.
 CHALLENGE_WAIT_S = 30.0
+CHALLENGE_SELF_S = 8.0
 CHALLENGE_POLL_S = 1.0
+HANDOVER_POLL_S = 1.0
 # One script call or UI-thread call; a longer wait is a window that has stopped answering.
 CALL_TIMEOUT_S = 10.0
 READY_TIMEOUT_S = 45.0
@@ -73,6 +75,35 @@ class LoadTimeout(BrowserError):  # noqa: N818 - a condition the scan reports, n
 
 class SignedOut(BrowserError):  # noqa: N818 - a condition the scan reports, not an error in the usual sense
     """The page asks to sign in: the session has ended."""
+
+
+class Cancelled(BrowserError):  # noqa: N818 - a condition the scan reports, not an error in the usual sense
+    """The owner cancelled while the window was handed over to them."""
+
+
+class Interrupted(BrowserError):  # noqa: N818 - a condition the scan reports, not an error in the usual sense
+    """A sign-in or check came in the middle of a form step, so the step must be done again."""
+
+
+class Need(Enum):
+    """What the owner must do in the window the browser hands over."""
+
+    SIGN_IN = "signin"
+    CHECK = "check"
+
+
+class Handover(Protocol):
+    """Hands the window to the owner when a page needs them (the Buy screen shows it over its own area)."""
+
+    def show(self, need: Need) -> None:
+        """Show the window; called again when the need changes while it is shown."""
+        ...
+
+    def hide(self) -> None: ...
+
+    def cancelled(self) -> bool:
+        """True once the owner has asked to stop."""
+        ...
 
 
 class Browser(Protocol):
@@ -170,7 +201,11 @@ class SessionKeeper:
 
 
 class SessionBrowser:
-    """A `Browser` over a `PageDriver`, signed in with the owner's saved session."""
+    """A `Browser` over a `PageDriver`, signed in with the owner's saved session.
+
+    With a `handover`, a signed-out page or a check that does not pass by itself is left to the owner; without
+    one it is an error.
+    """
 
     def __init__(
         self,
@@ -179,11 +214,13 @@ class SessionBrowser:
         *,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], object] = time.sleep,
+        handover: Handover | None = None,
     ) -> None:
         self._driver = driver
         self._keeper = SessionKeeper(driver, store)
         self._clock = clock
         self._sleep = sleep
+        self._handover = handover
 
     def restore_session(self) -> bool:
         return self._keeper.restore()
@@ -191,9 +228,12 @@ class SessionBrowser:
     def load(self, url: str) -> str:
         if not on_cardmarket(url):
             raise ValueError(f"not a Cardmarket address: {url}")
-        if not self._driver.navigate(url, LOAD_TIMEOUT_S):
-            raise LoadTimeout(f"{url} did not finish loading within {LOAD_TIMEOUT_S:.0f} s")
-        return self._settled_page(url)
+        while True:
+            if not self._driver.navigate(url, LOAD_TIMEOUT_S):
+                raise LoadTimeout(f"{url} did not finish loading within {LOAD_TIMEOUT_S:.0f} s")
+            html = self._settled_page(url)
+            if html is not None:
+                return html
 
     def act(self, script: str) -> str:
         answer = self._driver.run_script(script, CALL_TIMEOUT_S)
@@ -212,31 +252,72 @@ class SessionBrowser:
             log.warning("the window gave no answer to a submit script; waiting for the page anyway")
         if not self._driver.wait_loaded(LOAD_TIMEOUT_S):
             raise LoadTimeout(f"no page loaded within {LOAD_TIMEOUT_S:.0f} s of the submit")
-        return self._settled_page("the page after the submit")
+        page = self._settled_page("the page after the submit")
+        if page is None:
+            raise Interrupted("a sign-in or check came after the submit; the step must be done again")
+        return page
 
-    def _settled_page(self, where: str) -> str:
-        """The loaded page's HTML once any challenge has passed; refuses a sign-in page."""
+    def _settled_page(self, where: str) -> str | None:
+        """The loaded page's HTML once any challenge has passed; None after the owner was handed the window
+        (the page is then another one). Without a handover a sign-in page raises."""
         html = self._wait_out_challenge(where)
         state = page_state(html)
-        if state is PageState.SIGNED_OUT:
-            raise SignedOut(f"{where} asks to sign in; the Cardmarket session has ended")
         if state is PageState.SIGNED_IN:
             self._keeper.save()
+        if state is PageState.CHALLENGE:
+            self._hand_over(Need.CHECK, where)
+            return None
+        if state is PageState.SIGNED_OUT:
+            if self._handover is None:
+                raise SignedOut(f"{where} asks to sign in; the Cardmarket session has ended")
+            self._hand_over(Need.SIGN_IN, where)
+            return None
         return html
 
     def _wait_out_challenge(self, url: str) -> str:
-        """The page's HTML once it is not Cloudflare's check, polling each second for up to 30 s."""
-        deadline = self._clock() + CHALLENGE_WAIT_S
+        """The page's HTML once it is not Cloudflare's check, polling each second. A check still up after the
+        wait is returned for the handover, or fails the page when there is none."""
+        self_wait = CHALLENGE_WAIT_S if self._handover is None else CHALLENGE_SELF_S
+        start = self._clock()
         html = self._driver.read_html(CALL_TIMEOUT_S)
         while html is None or page_state(html) is PageState.CHALLENGE:
-            if self._clock() >= deadline:
-                if html is None:
-                    raise LoadTimeout(f"{url}: the window stopped answering")
-                raise ChallengeError(f"{url}: Cloudflare's check was still up after {CHALLENGE_WAIT_S:.0f} s")
+            waited = self._clock() - start
+            if html is None and waited >= CHALLENGE_WAIT_S:
+                raise LoadTimeout(f"{url}: the window stopped answering")
+            if html is not None and waited >= self_wait:
+                if self._handover is None:
+                    raise ChallengeError(f"{url}: Cloudflare's check was still up after {self_wait:.0f} s")
+                return html
             log.info("waiting for %s: %s", url, "no answer yet" if html is None else "Cloudflare's check")
             self._sleep(CHALLENGE_POLL_S)
             html = self._driver.read_html(CALL_TIMEOUT_S)
         return html
+
+    def _hand_over(self, need: Need, where: str) -> None:
+        """Show the window to the owner until the page is signed in; they end it with the screen's Cancel."""
+        handover = self._handover
+        if handover is None:
+            raise ValueError("no handover to show the window with")
+        log.info("%s needs the owner: %s", where, need.value)
+        handover.show(need)
+        try:
+            while True:
+                self._sleep(HANDOVER_POLL_S)
+                if handover.cancelled():
+                    raise Cancelled(f"cancelled while {where} waited for the owner")
+                html = self._driver.read_html(CALL_TIMEOUT_S)
+                if html is None:
+                    continue
+                state = page_state(html)
+                if state is PageState.SIGNED_IN:
+                    self._keeper.save()
+                    return
+                shown = {PageState.CHALLENGE: Need.CHECK, PageState.SIGNED_OUT: Need.SIGN_IN}.get(state, need)
+                if shown is not need:
+                    need = shown
+                    handover.show(need)
+        finally:
+            handover.hide()
 
     def close(self) -> None:
         self._driver.close()
@@ -350,9 +431,6 @@ class WebviewDriver:
                 log.warning("not keeping the session cookie: %s", error)
         return None
 
-    def current_url(self) -> str | None:
-        return self._window.get_current_url()
-
     def close(self) -> None:
         self._window.destroy()
 
@@ -384,68 +462,11 @@ class WebviewBrowser(SessionBrowser):
         *,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], object] = time.sleep,
+        handover: Handover | None = None,
     ) -> None:
         driver = WebviewDriver(window)
-        super().__init__(driver, store, clock=clock, sleep=sleep)
+        super().__init__(driver, store, clock=clock, sleep=sleep, handover=handover)
         if not driver.wait_ready():
             raise LoadTimeout("the Cardmarket window did not start")
         driver.configure()
         self.restore_session()
-
-
-@dataclass(slots=True)
-class SignInWindow:
-    window: Window
-
-    def close(self) -> None:
-        self.window.destroy()
-
-
-def sign_in_window(
-    store: SessionStore,
-    on_signed_in: Callable[[], None],
-    *,
-    title: str = "Sign in to Cardmarket",
-) -> SignInWindow:
-    """Open a visible window on Cardmarket for the owner to sign in by hand (password, 2FA, any check).
-
-    `on_signed_in` runs on a pywebview thread each time a page that loads shows a signed-in session (a
-    logout link), after the session cookie has been saved. Call from the thread pywebview started, not
-    from the GUI loop itself; close the result with `close()`.
-    """
-    import webview  # noqa: PLC0415 - loads .NET, so only when a window is wanted
-
-    # pywebview types its url parameter with an untyped callable.
-    window = webview.create_window(title, html=BLANK_PAGE, width=1100, height=850)  # pyright: ignore[reportUnknownMemberType]
-    if window is None:
-        raise BrowserError("pywebview created no window")
-    driver = WebviewDriver(window)
-    keeper = SessionKeeper(driver, store)
-
-    def on_loaded() -> None:
-        if not on_cardmarket(driver.current_url()):
-            return
-        html = driver.read_html(CALL_TIMEOUT_S)
-        if html is not None and page_state(html) is PageState.SIGNED_IN:
-            keeper.save()
-            on_signed_in()
-
-    try:
-        _open_start_page(window, driver, keeper, on_loaded)
-    except BaseException:
-        window.destroy()
-        raise
-    return SignInWindow(window)
-
-
-def _open_start_page(
-    window: Window, driver: WebviewDriver, keeper: SessionKeeper, on_loaded: Callable[[], None]
-) -> None:
-    """Once WebView2 is up: password autofill on, the saved session in, then Cardmarket's front page."""
-    if not driver.wait_ready():
-        raise LoadTimeout("the sign-in window did not start")
-    driver.configure()
-    keeper.restore()
-    window.events.loaded += on_loaded
-    if not driver.navigate(START_URL, LOAD_TIMEOUT_S):
-        raise LoadTimeout("Cardmarket did not load in the sign-in window")

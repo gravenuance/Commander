@@ -307,6 +307,9 @@ class _Scan:
         try:
             return self._browser.load(url)
         except BrowserError as error:
+            # A cancel during a handover ends the page's load with an error; it is still a cancel.
+            if self._cancel.is_set():
+                raise _Stop(ScanStatus.CANCELLED, None) from error
             raise _Stop(ScanStatus.STOPPED, f"{current}: {error}") from error
 
     def _check_cancel(self) -> None:

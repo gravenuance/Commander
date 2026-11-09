@@ -1493,6 +1493,12 @@ class Desk:
         return self._buy.status()
 
     @_guarded
+    def buy_pane(self, left: float, top: float, width: float, height: float, scale: float) -> Json:
+        """Where the pane is that the Cardmarket window covers while the owner signs in: CSS pixels and the
+        device pixel ratio; a zero width or height when no pane is shown."""
+        return self._buy.set_pane(left, top, width, height, scale)
+
+    @_guarded
     def buy_package(self, sellers: int) -> Json:
         return self._buy.package(int(sellers))
 
