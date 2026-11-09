@@ -74,6 +74,26 @@
   --space-6: 32px;
   /* The height of a field, a dropdown or a pill track set beside them. */
   --control-h: 34px;
+  /* The Buy screen: how wide its content grows, a tick row, a package row and a card's tick, a checkbox, */
+  /* the room a select's chevron takes and its size, a field, the menus and the confirmation's seller list. */
+  --content-w: 1100px;
+  --tick-row-h: 36px;
+  --list-row-h: 44px;
+  --target-min: 24px;
+  --check-size: 16px;
+  --check-size-l: 18px;
+  --chevron-room: 18px;
+  --chevron-size: 5px;
+  --field-w-s: 7rem;
+  --field-w-m: 12rem;
+  --field-w-l: 16rem;
+  --menu-w: 14rem;
+  --menu-h: 18rem;
+  --curve-name-w: 6rem;
+  --curve-figure-w: 4.5rem;
+  --dialog-list-h: 50vh;
+  /* The pill track's padding around its buttons. */
+  --segmented-inset: 3px;
   --text-2xs: 0.6875rem;
   --text-xs: 0.75rem;
   --text-s: 0.8125rem;
@@ -529,7 +549,7 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .stat dd.changed { color: var(--queued); }
 .outside-badge { font-weight: 500; }
 /* A pill track of options with the chosen one raised on a thumb. */
-.segmented { display: inline-flex; gap: 2px; padding: 3px; border-radius: var(--radius-pill); background: var(--surface-2); }
+.segmented { display: inline-flex; gap: 2px; padding: var(--segmented-inset); border-radius: var(--radius-pill); background: var(--surface-2); }
 .segmented button {
   min-width: 28px;
   min-height: 24px;
@@ -1228,7 +1248,7 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   display: grid;
   align-content: start;
   gap: var(--space-4);
-  max-width: 1100px;
+  max-width: var(--content-w);
   padding-bottom: var(--space-5);
 }
 /* While Cardmarket needs the owner, the scan window covers the pane below the scan row; nothing else shifts it. */
@@ -1238,14 +1258,14 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .buy-block { display: grid; gap: var(--space-3); padding: var(--space-4); border-radius: var(--radius); background: var(--surface); }
 .buy-block-title { display: flex; align-items: center; gap: var(--space-2); margin: 0; font-size: var(--text-m); }
 .buy-decks, .buy-cards, .buy-notes { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
-.buy-deck-head { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 14rem); gap: var(--space-3); align-items: center; }
-.buy-tick { display: flex; align-items: center; gap: var(--space-3); min-height: 36px; font-weight: 600; }
-.buy-tick input { flex: none; width: 18px; height: 18px; accent-color: var(--primary); }
+.buy-deck-head { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, var(--menu-w)); gap: var(--space-3); align-items: center; }
+.buy-tick { display: flex; align-items: center; gap: var(--space-3); min-height: var(--tick-row-h); font-weight: 600; }
+.buy-tick input { flex: none; width: var(--check-size-l); height: var(--check-size-l); accent-color: var(--primary); }
 .buy-deck-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .buy-fold:disabled { opacity: 1; cursor: default; color: var(--muted); }
 .buy-cards { padding: var(--space-2) var(--space-4) var(--space-1); font-size: var(--text-s); }
-.buy-card-tick { display: flex; align-items: center; gap: var(--space-3); min-height: 24px; cursor: pointer; }
-.buy-card-tick input { flex: none; width: 16px; height: 16px; margin: 0; accent-color: var(--primary); }
+.buy-card-tick { display: flex; align-items: center; gap: var(--space-3); min-height: var(--target-min); cursor: pointer; }
+.buy-card-tick input { flex: none; width: var(--check-size); height: var(--check-size); margin: 0; accent-color: var(--primary); }
 .buy-card-tick input:disabled { cursor: not-allowed; }
 /* Labels share one line across the row and so do the controls: every control is one height, from the top. */
 .buy-filters { display: flex; flex-wrap: wrap; gap: var(--space-4) var(--space-5); align-items: flex-start; }
@@ -1262,7 +1282,7 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
   font-size: var(--text-s);
 }
 .buy-select {
-  padding: 0 calc(var(--space-3) + 18px) 0 var(--space-3);
+  padding: 0 calc(var(--space-3) + var(--chevron-room)) 0 var(--space-3);
   /* The native arrow hugs the right edge and can't be moved, so draw our own chevron in the text colour,
      inset like the text is on the left. */
   appearance: none;
@@ -1270,44 +1290,45 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
     linear-gradient(45deg, transparent 50%, currentColor 50%),
     linear-gradient(135deg, currentColor 50%, transparent 50%);
   background-position:
-    calc(100% - var(--space-3) - 5px) 55%,
+    calc(100% - var(--space-3) - var(--chevron-size)) 55%,
     calc(100% - var(--space-3)) 55%;
-  background-size: 5px 5px;
+  background-size: var(--chevron-size) var(--chevron-size);
   background-repeat: no-repeat;
 }
 /* A label over a segmented control starts where its first option's text does, not at the pill's curve. */
-.buy-filter > span:first-child { padding-left: calc(3px + var(--space-2)); }
+.buy-filter > span:first-child { padding-left: calc(var(--segmented-inset) + var(--space-2)); }
 .buy-select:disabled, .buy-input:disabled, .buy-base input:disabled { opacity: 0.5; cursor: not-allowed; }
 /* The price field is a text box with the euro sign inside its right edge. */
 .buy-money { position: relative; }
-.buy-input { display: block; width: 7rem; padding: 0 calc(var(--space-3) * 2) 0 var(--space-3); }
+.buy-input { display: block; width: var(--field-w-s); padding: 0 calc(var(--space-3) * 2) 0 var(--space-3); }
 .buy-input::placeholder { color: var(--muted); opacity: 1; }
 .buy-money-unit { position: absolute; top: 50%; right: var(--space-3); transform: translateY(-50%); color: var(--muted); pointer-events: none; }
 /* The seller-location button looks like the select beside it and opens the same menu as the grid's labels. */
 .buy-picker { position: relative; }
-.buy-picker-button { display: block; max-width: 16rem; text-align: left; cursor: pointer; }
+.buy-picker-button { display: block; max-width: var(--field-w-l); text-align: left; cursor: pointer; }
 .buy-picker-button span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.buy-menu { position: absolute; top: calc(100% + 4px); left: 0; min-width: max(100%, 14rem); max-height: 18rem; }
+.buy-menu { position: absolute; top: calc(100% + var(--space-1)); left: 0; min-width: max(100%, var(--menu-w)); max-height: var(--menu-h); }
 .buy-menu .menu-item:has(:focus-visible) { background: var(--surface-2); }
-.buy-menu .menu-item input { flex: none; width: 16px; height: 16px; margin: 0; accent-color: var(--primary); }
+.buy-menu .menu-item input { flex: none; width: var(--check-size); height: var(--check-size); margin: 0; accent-color: var(--primary); }
 .buy-menu .menu-item:disabled { opacity: 0.5; cursor: not-allowed; }
-.buy-base { max-width: 12rem; }
+.buy-base { max-width: var(--field-w-m); }
 .buy-empty { margin: 0; }
-.buy-empty .state-icon { font-size: 1.5rem; }
+.buy-empty .state-icon { font-size: var(--text-xl); }
 .buy-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; }
 .buy-line { margin: 0; overflow-wrap: anywhere; }
 .buy-line:empty { display: none; }
 .curve, .buy-sellers { display: grid; gap: var(--space-2); }
 .curve-head, .curve-row {
   display: grid;
-  grid-template-columns: minmax(6rem, 1.2fr) repeat(4, minmax(4.5rem, 1fr)) minmax(6rem, auto);
+  grid-template-columns:
+    minmax(var(--curve-name-w), 1.2fr) repeat(4, minmax(var(--curve-figure-w), 1fr)) minmax(var(--curve-name-w), auto);
   gap: var(--space-3);
   align-items: center;
   padding: var(--space-2) var(--space-4);
 }
 .curve-head { padding-block: 0; font-size: var(--text-s); font-weight: 600; color: var(--muted); }
 .curve-row {
-  min-height: 44px;
+  min-height: var(--list-row-h);
   border: 1px solid var(--border);
   border-radius: var(--radius-s);
   background: var(--surface-2);
@@ -1334,7 +1355,7 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .buy-package-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; }
 .buy-cart-link { display: inline-flex; align-items: center; text-decoration: none; }
 /* The confirmation lists what goes in the cart; the sellers scroll inside it when there are many. */
-#buy-cart-dialog .buy-sellers { max-height: 50vh; overflow-y: auto; }
+#buy-cart-dialog .buy-sellers { max-height: var(--dialog-list-h); overflow-y: auto; }
 .buy-cart-picks { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-1); font-size: var(--text-s); }
 .buy-cart-picks li { display: flex; justify-content: space-between; gap: var(--space-4); }
 .buy-cart-total { margin: var(--space-3) 0 0; font-weight: 600; font-variant-numeric: tabular-nums; }

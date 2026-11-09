@@ -766,7 +766,7 @@ class TestThePackages:
         assert seen["tags"] == [["BUTTON", "button", "false"]] * 2
         assert seen["group"] == ["group", "Packages by number of sellers"]
 
-    def test_each_row_names_its_figures_for_a_screen_reader_and_the_header_stays_hidden(self) -> None:
+    def test_each_row_names_its_figures_for_a_screen_reader(self) -> None:
         seen = run("""
         const rough = { ...RESULTS, rows: [RESULTS.rows[0], { ...RESULTS.rows[1], optimal: false }] };
         await open(view({ status: done() }));
@@ -1388,7 +1388,9 @@ class TestTheFilterRow:
     def test_the_pill_labels_keep_their_inset_and_the_select_keeps_its_chevron(self) -> None:
         css = (WEB / "app.css").read_text(encoding="utf-8")
 
-        assert "padding-left: calc(3px + var(--space-2))" in self.rule(css, ".buy-filter > span:first-child")
+        label = self.rule(css, ".buy-filter > span:first-child")
+        assert "padding-left: calc(var(--segmented-inset) + var(--space-2))" in label
+        assert "padding: var(--segmented-inset)" in self.rule(css, ".segmented")
         select = self.rule(css, ".buy-select")
         assert "linear-gradient(45deg" in select
         assert "calc(100% - var(--space-3)" in select
@@ -1412,6 +1414,17 @@ def test_the_screens_styles_use_the_design_tokens_and_no_colours_of_their_own() 
     assert re.findall(r"#[0-9a-fA-F]{3,8}\b|rgb\(|rgba\(|hsl\(", buy) == []
     assert "var(--primary)" in buy
     assert "var(--surface)" in buy
+
+
+def test_the_screens_sizes_are_tokens_apart_from_hairline_borders() -> None:
+    css = (WEB / "app.css").read_text(encoding="utf-8")
+    buy = css.split("/* Buy cards", 1)[1]
+    without_tokens = re.sub(r"--[\w-]+:[^;]+;", "", buy)
+
+    sizes = re.findall(r"(?<![\w.-])(?:\d+\.\d+|\d+)(?:px|rem|em|vh|vw|ch)\b", without_tokens)
+    assert [size for size in sizes if size != "1px"] == []
+    for token in ("--content-w", "--control-h", "--list-row-h", "--check-size", "--menu-w", "--menu-h"):
+        assert re.search(rf"\n  {token}:\s*[\d.]+(?:px|rem|vh)", css), token
 
 
 class TestAccount:
