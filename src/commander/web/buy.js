@@ -835,13 +835,16 @@ function buyCartTitle(cart) {
 }
 
 const BUY_CART_COUNTS = [
-  ["already", "already in your cart"], ["gone", "gone"], ["short", "short of the copies asked"],
+  ["already", "already in your cart"], ["gone", "gone"], ["refused", "refused by Cardmarket"],
+  ["short", "short of the copies asked"], ["missing", "missing from your cart"],
   ["noAnswer", "without an answer"], ["notSent", "not added"],
 ];
 
 function buyCartItemText(item) {
   switch (item.outcome) {
     case "gone": return item.message || "No longer available.";
+    case "refused": return item.message || "Cardmarket refused it.";
+    case "missing": return "Cardmarket accepted it but your cart does not show it; check your cart";
     case "short": return `${item.inCart ?? 0} of ${item.copies} in the cart`;
     case "already": return "Already in your cart";
     case "no-answer": return "No answer from Cardmarket; check your cart";

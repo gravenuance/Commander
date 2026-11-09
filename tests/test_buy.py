@@ -2234,7 +2234,9 @@ class TestAddingToTheCart:
             "added": 2,
             "already": 0,
             "gone": 0,
+            "refused": 0,
             "short": 0,
+            "missing": 0,
             "noAnswer": 0,
             "notSent": 0,
             "items": [],
@@ -2287,6 +2289,35 @@ class TestAddingToTheCart:
                 "differs": True,
             }
         ]
+
+    def test_an_offer_cardmarket_refused_or_did_not_keep_is_counted_and_listed_with_its_reason(
+        self, two_packages: Rig, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        def refused_and_missing(package: Package) -> CartRun:
+            refused, missing = package.picks
+            return CartRun(
+                CartStatus.STOPPED,
+                "Cardmarket refused a card; adding stopped.",
+                (
+                    ItemResult(refused, CartOutcome.REFUSED, 0, "Your cart is full."),
+                    ItemResult(missing, CartOutcome.MISSING, 0),
+                ),
+                (),
+            )
+
+        two_packages.cart_result = refused_and_missing
+
+        with caplog.at_level(logging.INFO):
+            add(two_packages.service, 2)
+        cart = self.cart_of(two_packages)
+
+        refused, missing = two_packages.cart_calls[0].picks
+        assert (cart["added"], cart["refused"], cart["missing"]) == (0, 1, 1)
+        assert [(i["seller"], i["outcome"], i["message"]) for i in cart["items"]] == [
+            (refused.offer.seller, "refused", "Your cart is full."),
+            (missing.offer.seller, "missing", ""),
+        ]
+        assert "0 cards added, 0 already there, 0 gone, 1 refused, 0 short, 1 missing" in caplog.text
 
     def test_without_a_scan_or_for_a_package_that_is_not_there_it_is_refused_and_no_window_opens(
         self, rig: Rig
@@ -2474,7 +2505,8 @@ class TestAddingToTheCart:
             add(two_packages.service, 2)
 
         assert "buy: putting the package of 2 sellers (2 cards) in the cart" in caplog.text
-        assert "buy: the cart run complete: 0 cards added, 0 already there, 1 gone, 1 short" in caplog.text
+        counts = "0 cards added, 0 already there, 1 gone, 0 refused, 1 short, 0 missing"
+        assert f"buy: the cart run complete: {counts}" in caplog.text
 
     def test_a_new_scan_drops_the_report_from_its_start(self, two_packages: Rig) -> None:
         rig = two_packages

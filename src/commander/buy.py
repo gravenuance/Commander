@@ -759,12 +759,15 @@ class BuyService:
                 report = not_sent(package, CartStatus.STOPPED, _cart_failure(error))
         log.log(
             logging.INFO if report.status is CartStatus.COMPLETE else logging.WARNING,
-            "buy: the cart run %s: %d cards added, %d already there, %d gone, %d short",
+            "buy: the cart run %s: %d cards added, %d already there, %d gone, %d refused, %d short, "
+            "%d missing",
             report.status.value,
             report.copies(CartOutcome.ADDED),
             report.copies(CartOutcome.ALREADY),
             report.copies(CartOutcome.GONE),
+            report.copies(CartOutcome.REFUSED),
             report.copies(CartOutcome.SHORT),
+            report.copies(CartOutcome.MISSING),
         )
         with self._lock:
             state = self._state
@@ -977,7 +980,9 @@ def _cart_json(report: CartRun) -> Json:
         "added": report.copies(CartOutcome.ADDED),
         "already": report.copies(CartOutcome.ALREADY),
         "gone": report.copies(CartOutcome.GONE),
+        "refused": report.copies(CartOutcome.REFUSED),
         "short": report.copies(CartOutcome.SHORT),
+        "missing": report.copies(CartOutcome.MISSING),
         "noAnswer": report.copies(CartOutcome.NO_ANSWER),
         "notSent": report.copies(CartOutcome.NOT_SENT),
         "items": [

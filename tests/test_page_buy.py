@@ -1978,8 +1978,8 @@ const SHIPPING = [
     cartCents: 255, differs: true },
   { seller: "SellerA", estimateMethod: "Tracked Parcel", estimateCents: 345, cartMethod: "Tracked Parcel",
     cartCents: 345, differs: false }];
-const CART = { status: "complete", reason: "", added: 1, already: 1, gone: 2, short: 3, noAnswer: 0,
-  notSent: 0, items: [GONE, SHORT, ALREADY], shipping: SHIPPING };
+const CART = { status: "complete", reason: "", added: 1, already: 1, gone: 2, refused: 0, short: 3,
+  missing: 0, noAnswer: 0, notSent: 0, items: [GONE, SHORT, ALREADY], shipping: SHIPPING };
 const carted = (cart = CART) => done(RESULTS, { phase: "carted", cart });
 const pickPackage = async () => {
   stub.buy_package = async () => PACKAGE;
@@ -2228,6 +2228,28 @@ class TestTheCartReport:
                 "2 × Sol Ring (SellerB): Not added",
             ],
             "shipping": 0,
+        }
+
+    def test_an_offer_cardmarket_refused_or_did_not_keep_is_counted_and_told_in_words(self) -> None:
+        seen = run_cart("""
+        const odd = { ...CART, added: 0, already: 0, gone: 0, short: 0, refused: 2, missing: 1,
+          items: [{ seller: "SellerA", card: "Mind Stone", copies: 2, outcome: "refused", inCart: 0,
+            message: "Your cart is full." },
+          { seller: "SellerA", card: "Sol Ring", copies: 1, outcome: "refused", inCart: 0, message: "" },
+          { seller: "SellerB", card: "Arcane Signet", copies: 1, outcome: "missing", inCart: 0,
+            message: "" }], shipping: [] };
+        await open(view({ status: carted(odd) }));
+        return { counts: $("buy-cart-counts").textContent,
+          items: [...$("buy-cart-items").children].map((li) => li.textContent) };
+        """)
+        assert seen == {
+            "counts": "2 refused by Cardmarket · 1 missing from your cart",
+            "items": [
+                "2 × Mind Stone (SellerA): Your cart is full.",
+                "Sol Ring (SellerA): Cardmarket refused it.",
+                "Arcane Signet (SellerB): Cardmarket accepted it but your cart does not show it;"
+                " check your cart",
+            ],
         }
 
     def test_the_scan_results_and_the_package_shown_stay_while_the_cart_runs_and_after(self) -> None:
