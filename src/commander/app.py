@@ -97,7 +97,7 @@ def run_app(desk: Desk, *, storage: Path, debug: bool = False) -> None:
     import webview  # noqa: PLC0415
 
     # pywebview types its url parameter with an untyped callable.
-    webview.create_window(  # pyright: ignore[reportUnknownMemberType]
+    window = webview.create_window(  # pyright: ignore[reportUnknownMemberType]
         WINDOW_TITLE,
         html=page_html(),
         js_api=desk,
@@ -106,6 +106,18 @@ def run_app(desk: Desk, *, storage: Path, debug: bool = False) -> None:
         min_size=(900, 600),
         text_select=True,
     )
+
+    if window is None:
+        raise RuntimeError("pywebview created no window")
+
+    def on_closed() -> None:
+        # The Cardmarket windows belong to a scan; the loop ends only when none is left.
+        desk.stop_buying()
+        for other in list(webview.windows):
+            if other is not window:
+                other.destroy()
+
+    window.events.closed += on_closed
     log.info("window opened")
     # A packed exe unpacks its data to a folder, so the icon has a real path for WinForms to load.
     with resources.as_file(resources.files("commander") / "web" / "commander.ico") as icon:

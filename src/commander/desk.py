@@ -60,6 +60,9 @@ from commander.bracket import (
 from commander.bracketcheck import check_bracket, check_json
 from commander.bracketpreview import preview_json, spellbook_preview
 from commander.budget import resolved_budget
+from commander.buy import BuyEngine, BuyService
+from commander.buysettings import BUY_FILE, BuyError, BuyStore
+from commander.buywindows import production_engine
 from commander.carddb import CardDataError, CardDb, CardInfo, CardText, ResolvedCard, Role
 from commander.changetext import change_mark, change_text
 from commander.config import ConfigError, MetaSettings, forget_account, switch_account, validate_user
@@ -141,6 +144,7 @@ _EXPECTED = (
     TopdeckError,
     AuthError,
     CredentialError,
+    BuyError,
     SaveError,
     NotYourDeckError,
     WorkspaceError,
@@ -238,6 +242,10 @@ def _sync_thread(work: Callable[[], None]) -> object:
 
 def warm_thread(work: Callable[[], None]) -> object:
     return in_background(work, name="app-warm")
+
+
+def _buy_thread(work: Callable[[], None]) -> object:
+    return in_background(work, name="app-buy")
 
 
 class CardDataDownloadingError(CardDataError):
@@ -353,6 +361,7 @@ class Desk:
         updater: Updater | None = None,
         quit_app: Callable[[], None] = lambda: None,
         warm_up: Callable[[Callable[[], None]], object] | None = None,
+        buy_engine: BuyEngine | None = None,
     ) -> None:
         self._settings = settings
         # New versions from GitHub (ADR 0059), and how the app closes after it starts one.
@@ -418,6 +427,16 @@ class Desk:
         self._warmed.set()
         # Whether a deck view has asked for the warm-up yet; the first one does.
         self._viewed = False
+        # The Buy screen's choices live beside the config file; its scan runs off the window's thread.
+        settings_folder = settings.config.parent if settings.config else settings.cache
+        self._buy = BuyService(
+            store=BuyStore(settings_folder / BUY_FILE),
+            decks=lambda: [stored.deck for stored in self._workspace.load_all()],
+            user=lambda: self._settings.user,
+            engine=buy_engine or production_engine(client_factory, settings.cache, now),
+            card_db=settings.card_db,
+            background=background or _buy_thread,
+        )
 
     @_guarded
     def account(self) -> Json:
@@ -994,7 +1013,12 @@ class Desk:
     def close(self) -> None:
         """Stop the warm-up and wait briefly for it to let go; the app calls this as its window closes."""
         self._stop_warming.set()
+        self._buy.close()
         self._warmed.wait(WARM_CLOSE_SECONDS)
+
+    def stop_buying(self) -> None:
+        """The app's window is closing: end a running Cardmarket scan at its next page."""
+        self._buy.close()
 
     def _warm_decks(self) -> None:
         """Ask for the decks' kept cut rules and previews to be worked out in the background, as a deck view
@@ -1417,6 +1441,41 @@ class Desk:
         """Every deck's Don't Have cards as Cardmarket wants-list text, for the clipboard."""
         wants = cardmarket_wants_text(stored.deck for stored in self._workspace.load_all())
         return {"text": wants.text, "cards": wants.cards, "skipped": list(wants.skipped)}
+
+    @_guarded
+    def buy(self) -> Json:
+        """The Buy screen: the cards to buy by deck, the filters and where the scan stands (ADR 0067)."""
+        return self._buy.view()
+
+    @_guarded
+    def buy_include(self, deck_id: int, included: bool) -> Json:  # noqa: FBT001 — the page's bridge passes positionals
+        """Take a deck's cards into the purchase, or leave them out; remembered for the account."""
+        return self._buy.include(int(deck_id), bool(included))
+
+    @_guarded
+    def buy_filters(self, language: str, condition: str, foil: str) -> Json:
+        return self._buy.set_filters(language, condition, foil)
+
+    @_guarded
+    def buy_base_sellers(self, count: int) -> Json:
+        return self._buy.set_base_sellers(count)
+
+    @_guarded
+    def buy_scan(self) -> Json:
+        """Start the scan of Cardmarket in the background; buy_status follows it."""
+        return self._buy.start()
+
+    @_guarded
+    def buy_cancel(self) -> Json:
+        return self._buy.cancel()
+
+    @_guarded
+    def buy_status(self) -> Json:
+        return self._buy.status()
+
+    @_guarded
+    def buy_package(self, sellers: int) -> Json:
+        return self._buy.package(int(sellers))
 
     @_guarded
     def search(self, deck_id: int, text: str) -> Json:

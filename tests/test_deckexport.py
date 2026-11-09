@@ -1,6 +1,6 @@
 """The deck as TopDeck.gg decklist text, and the decks as a Cardmarket wants list."""
 
-from commander.deckexport import WantsList, cardmarket_wants_text, topdeck_text
+from commander.deckexport import WantsList, cardmarket_wants_text, dont_have_counts, topdeck_text
 from commander.models import Deck, DeckCard
 
 
@@ -92,6 +92,19 @@ def test_wants_skip_decks_without_known_labels_and_name_them_in_order() -> None:
     other = make_deck("alpha", card("Dark Ritual", label=None), deck_id=3)
 
     assert cardmarket_wants_text([known, unknown, other]) == WantsList("1 Sol Ring\n", 1, ("alpha", "Zeta"))
+
+
+def test_one_decks_dont_have_copies_sum_a_card_filed_as_several_entries() -> None:
+    deck = make_deck(
+        "test",
+        dont_have("Sol Ring"),
+        dont_have("Sol Ring", 2),
+        dont_have("Brainstorm"),
+        card("Island", 6, "Land"),
+        card("Chrome Mox", 1, "Maybeboard", in_deck=False, label="Don't Have"),
+    )
+
+    assert dont_have_counts(deck) == {"Sol Ring": 3, "Brainstorm": 1}
 
 
 def test_wants_are_empty_when_nothing_is_to_buy() -> None:
