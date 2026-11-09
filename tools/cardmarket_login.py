@@ -52,6 +52,7 @@ LOAD_TIMEOUT_SECONDS = 30.0
 CLICK_PREFIX = "click:"
 FILL_PREFIX = "fill:"
 FILL_SEPARATOR = "=>"
+COUNT_PREFIX = "count:"
 
 # Signs of a signed-in page, read from the DOM because the session cookies are HttpOnly anyway. Cardmarket's
 # markup is undocumented, so the prototype reports each sign on its own rather than trusting one.
@@ -225,6 +226,11 @@ def prepare(window: "Window", store: SessionStore, visits: list[str], close: boo
             selector, _, text = step.removeprefix(FILL_PREFIX).partition(FILL_SEPARATOR)
             print(f"\nfilling {selector}: {window.evaluate_js(fill_script(selector, text))}", flush=True)
             continue
+        if step.startswith(COUNT_PREFIX):
+            selector = step.removeprefix(COUNT_PREFIX)
+            count = window.evaluate_js(f"document.querySelectorAll({json.dumps(selector)}).length")
+            print(f"\ncounting {selector}: {count}", flush=True)
+            continue
         print(f"\nvisiting {step}", flush=True)
         window.load_url(step)
     window.events.loaded.wait(LOAD_TIMEOUT_SECONDS)
@@ -278,7 +284,7 @@ def main() -> int:
     )
     args = parser.parse_args()
     visits: list[str] = args.visit
-    actions = (CLICK_PREFIX, FILL_PREFIX)
+    actions = (CLICK_PREFIX, FILL_PREFIX, COUNT_PREFIX)
     if bad := [url for url in visits if not url.startswith(actions) and not on_cardmarket(url)]:
         parser.error(f"not a Cardmarket page: {bad[0]}")
     saver: PageSaver | None = None
