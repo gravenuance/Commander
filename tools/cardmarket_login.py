@@ -20,10 +20,13 @@ their expiry; cookie values are never printed.
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
+import time
 from dataclasses import dataclass
 from http.cookies import SimpleCookie
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlsplit
 
@@ -43,6 +46,9 @@ KEYRING_USER = "session-cookie"
 # Windows Credential Manager holds at most 1280 characters per secret; a PHP session id is far shorter.
 MAX_SECRET_LENGTH = 1280
 BLANK_PAGE = "<p style='font-family:sans-serif'>Starting…</p>"
+# Gentle pacing between scripted page loads, as a person clicking through would.
+PACE_SECONDS = 4.0
+LOAD_TIMEOUT_SECONDS = 30.0
 
 # Signs of a signed-in page, read from the DOM because the session cookies are HttpOnly anyway. Cardmarket's
 # markup is undocumented, so the prototype reports each sign on its own rather than trusting one.
@@ -143,11 +149,30 @@ class SessionStore:
             return
 
 
-def report(window: "Window", store: SessionStore) -> None:
+@dataclass(slots=True)
+class PageSaver:
+    """Writes each Cardmarket page that loads to `folder` as numbered HTML, for studying its structure."""
+
+    folder: Path
+    count: int = 0
+
+    def save(self, window: "Window", url: str) -> None:
+        self.count += 1
+        slug = re.sub(r"[^A-Za-z0-9]+", "-", urlsplit(url).path).strip("-")[:80] or "page"
+        target = self.folder / f"{self.count:02d}-{slug}.html"
+        html = window.evaluate_js("document.documentElement.outerHTML")
+        target.write_text(html if isinstance(html, str) else "", encoding="utf-8")
+        print(f"saved {target}", flush=True)
+
+
+def report(window: "Window", store: SessionStore, saver: PageSaver | None) -> None:
     """Print the sign-in probe and cookies for the page that just loaded; save the session if signed in."""
-    if not on_cardmarket(window.get_current_url()):
+    url = window.get_current_url()
+    if url is None or not on_cardmarket(url):
         return
     try:
+        if saver is not None:
+            saver.save(window, url)
         probe = cast("dict[str, object]", json.loads(window.evaluate_js(SIGNED_IN_PROBE)))
         print(f"\npage: {json.dumps(probe)}")
         # pywebview leaves get_cookies untyped; on WebView2 it returns one SimpleCookie per cookie.
@@ -162,8 +187,9 @@ def report(window: "Window", store: SessionStore) -> None:
         print(f"probe failed: {error!r}", file=sys.stderr, flush=True)
 
 
-def prepare(window: "Window", store: SessionStore) -> None:
-    """Once WebView2 is up: turn on password autofill, restore the saved session, then open Cardmarket."""
+def prepare(window: "Window", store: SessionStore, visits: list[str]) -> None:
+    """Once WebView2 is up: turn on password autofill, restore the saved session, open Cardmarket, then visit
+    each of `visits` in turn, PACE_SECONDS apart."""
     window.events.loaded.wait()
     saved = store.load()
     # pythonnet's .NET objects are untyped; pywebview has loaded the CLR by now.
@@ -185,12 +211,28 @@ def prepare(window: "Window", store: SessionStore) -> None:
     native.Invoke(Action(on_ui_thread))
     print("restored the saved session cookie" if saved else "no saved session cookie", flush=True)
     window.load_url(START_URL)
+    for url in visits:
+        window.events.loaded.wait(LOAD_TIMEOUT_SECONDS)
+        time.sleep(PACE_SECONDS)
+        print(f"\nvisiting {url}", flush=True)
+        window.load_url(url)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument("--forget", action="store_true", help="delete the profile and the saved session")
+    parser.add_argument("--save-pages", type=Path, metavar="DIR", help="write every page that loads to DIR")
+    parser.add_argument(
+        "--visit", nargs="+", default=[], metavar="URL", help="Cardmarket pages to open in turn"
+    )
     args = parser.parse_args()
+    visits: list[str] = args.visit
+    if bad := [url for url in visits if not on_cardmarket(url)]:
+        parser.error(f"not a Cardmarket page: {bad[0]}")
+    saver: PageSaver | None = None
+    if args.save_pages is not None:
+        saver = PageSaver(Path(args.save_pages))
+        saver.folder.mkdir(parents=True, exist_ok=True)
     profile = cache_dir(os.environ) / PROFILE_FOLDER
     store = SessionStore()
     if args.forget:
@@ -207,8 +249,8 @@ def main() -> int:
     if window is None:
         print("pywebview created no window", file=sys.stderr)
         return 1
-    window.events.loaded += lambda: report(window, store)
-    webview.start(prepare, (window, store), private_mode=False, storage_path=str(profile))
+    window.events.loaded += lambda: report(window, store, saver)
+    webview.start(prepare, (window, store, visits), private_mode=False, storage_path=str(profile))
     return 0
 
 
