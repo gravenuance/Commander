@@ -90,7 +90,11 @@ the owner picks into their Cardmarket cart for them to check out by hand.
   progress line says what is needed. The scan waits, with no time limit, until a signed-in page loads (the
   session is then saved) or the owner presses Cancel; the window is hidden again and the page it wanted loads
   once more, in the same window and session. A form step the handover interrupted is redone from the start
-  of the wants list sync, once. Probed live on 2026-11-09 (27 window checks, three runs):
+  of the wants list sync, once. Cancel is also heard while a page loads (the load event is waited for a second
+  at a time) and while a check is waited out, not only during a handover; a window that leaves five reads in
+  a row unanswered during a handover is given up as a timeout, since each silent read leaves a thread behind.
+  A failure inside the window (a script that throws, a .NET exception) is a browser error like any other, so
+  a scan that meets one stops with what it has read. Probed live on 2026-11-09 (27 window checks, three runs):
   - The window is created `frameless`, `hidden`, without shadow, and owned by the app's window (WinForms
     `Owner`, set on the shared UI thread): it stays above the app only, hides when the app is minimised and
     comes back on restore.
@@ -111,7 +115,9 @@ the owner picks into their Cardmarket cart for them to check out by hand.
   its cheapest offers (50, a setting). Pass 2 opens the wants-filtered stock page of the base sellers: those
   who carry the rarest cards (the fewest offers in pass 1), or the most of the wanted cards. A sign-in page or
   a challenge that does not pass by itself is handed to the owner (above); a page that does not read as
-  expected stops the scan and says so. Neither is retried in a loop or worked around.
+  expected stops the scan and says so. Neither is retried in a loop or worked around. The gap is counted from
+  the end of the browser's last request, whichever step made it: the wants list sync and the scan share one
+  clock on the browser, so the scan's first page waits out the gap after the sync's last request.
 - **Shipping comes from Cardmarket's own tables,** fetched with `net.Fetcher`, shape-checked by `jsonshape`
   and cached for a week per origin country: the cheapest method from the seller's country whose weight and
   value limits fit the package, tracked over 25 €.

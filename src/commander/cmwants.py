@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import random
 import threading
+import time
 from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum
@@ -38,13 +39,13 @@ from commander.cmpages import (
     read_wants_lists,
 )
 from commander.cmscan import ENGLISH, JAPANESE, MAX_GAP_S, MIN_GAP_S, Foil
-from commander.cmsession import SUBMITTED
+from commander.cmsession import SUBMITTED, pacer_for
 from commander.sellersolve import card_key, merged_wants
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from commander.cmsession import FormBrowser
+    from commander.cmsession import FormBrowser, RequestPacer
     from commander.sellersolve import WantedCard
 
 log = logging.getLogger(__name__)
@@ -136,6 +137,7 @@ class _Sync:
         on_progress: Callable[[WantsProgress], None],
         sleep: Callable[[float], object],
         uniform: Callable[[float, float], float],
+        pacer: RequestPacer,
     ) -> None:
         unknown = [language for language in languages if language not in _LANGUAGE_LABELS]
         if unknown or len(set(languages)) != len(languages):
@@ -149,8 +151,8 @@ class _Sync:
         self._on_progress = on_progress
         self._sleep = sleep
         self._uniform = uniform
-        # Requests begun (page loads and submits): all but the first wait out the gap.
-        self._requests = 0
+        # The last request's end, shared with the scan that follows on the same browser.
+        self._pacer = pacer
 
     def run(self) -> WantsSync:
         list_id = self._find_or_create_list()
@@ -174,21 +176,25 @@ class _Sync:
     def _begin_request(self, step: WantsStep, detail: str) -> None:
         """Before every request: stop on cancel, wait out the gap since the last request, tell the caller."""
         self._check_cancel()
-        if self._requests > 0:
-            self._sleep(self._uniform(MIN_GAP_S, MAX_GAP_S))
-            self._check_cancel()
-        self._requests += 1
+        self._pacer.wait(lambda: self._uniform(MIN_GAP_S, MAX_GAP_S), self._sleep)
+        self._check_cancel()
         self._on_progress(WantsProgress(step, detail))
 
     def _load(self, url: str, step: WantsStep, detail: str) -> str:
         self._begin_request(step, detail)
         log.debug("loading %s", url)
-        return self._browser.load(url)
+        try:
+            return self._browser.load(url)
+        finally:
+            self._pacer.mark()
 
     def _submit(self, script: str, step: WantsStep, detail: str) -> None:
         """Click a submit that loads a page; the page it answers is not read, the next step loads its own."""
         self._begin_request(step, detail)
-        self._browser.submit(script)
+        try:
+            self._browser.submit(script)
+        finally:
+            self._pacer.mark()
 
     def _act(self, script: str, what: str) -> None:
         """A script on the current page that changes a field and sends nothing; it must answer `OK`."""
@@ -253,7 +259,10 @@ class _Sync:
         self._load(f"{_list_url(list_id)}/AddDeckList", WantsStep.IMPORT, "import form")
         self._act(set_field_script(_IMPORT_TEXT, wants_text(list(self._wanted.values()))), "the import text")
         self._begin_request(WantsStep.IMPORT, f"{len(self._wanted)} cards")
-        answer = self._browser.act(submit_script(_IMPORT_SUBMIT))
+        try:
+            answer = self._browser.act(submit_script(_IMPORT_SUBMIT))
+        finally:
+            self._pacer.mark()
         if answer != SUBMITTED:
             raise WantsError(f"importing the cards: {answer}")
         return self._read_imported(list_id)
@@ -347,6 +356,7 @@ def sync_wants(
     on_progress: Callable[[WantsProgress], None] | None = None,
     sleep: Callable[[float], object] | None = None,
     uniform: Callable[[float, float], float] = random.uniform,
+    clock: Callable[[], float] = time.monotonic,
 ) -> WantsSync:
     """Make the app's wants list hold exactly `wanted`, at `languages` (Cardmarket's ids, none for any),
     `min_condition` (None for the import's Poor) and `foil` (any leaves the import's blank field), when any
@@ -354,7 +364,9 @@ def sync_wants(
 
     Raises `WantsCancelled` when `cancel` is set between two steps, `WantsError` (a `PageError`) when the list
     or a page is not as expected, and the browser's own errors. `sleep` waits out the gap between requests;
-    the default waits on `cancel`, so a cancel ends the wait too.
+    the default waits on `cancel`, so a cancel ends the wait too. The gap is counted from the browser's last
+    request, whichever step made it (a scan before the sync); `clock` is used only for a browser that keeps
+    none.
     """
     stop = cancel if cancel is not None else threading.Event()
     return _Sync(
@@ -367,6 +379,7 @@ def sync_wants(
         on_progress=on_progress if on_progress is not None else _ignore,
         sleep=sleep if sleep is not None else stop.wait,
         uniform=uniform,
+        pacer=pacer_for(browser, clock),
     ).run()
 
 

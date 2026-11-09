@@ -325,6 +325,7 @@ def sync(
         on_progress=progress.append,
         sleep=gaps.sleep,
         uniform=gaps.uniform,
+        clock=lambda: 0.0,
     )
     return Run(result, site, gaps, progress)
 

@@ -15,6 +15,7 @@ import logging
 import random
 import re
 import threading
+import time
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field, replace
@@ -32,7 +33,7 @@ from commander.cmpages import (
     read_card_offers,
     read_seller_offers,
 )
-from commander.cmsession import Browser, BrowserError
+from commander.cmsession import Browser, BrowserError, RequestPacer, pacer_for
 from commander.offerlimits import OfferLimits, apply_limits
 from commander.sellersolve import WantedCard, card_key, fold_marks
 
@@ -233,6 +234,7 @@ class _Scan:
         on_progress: Callable[[ScanProgress], None],
         sleep: Callable[[float], object],
         uniform: Callable[[float, float], float],
+        pacer: RequestPacer,
     ) -> None:
         self._browser = browser
         self._request = request
@@ -250,9 +252,9 @@ class _Scan:
         self._cards_with_more: list[str] = []
         self._sellers_with_more: list[str] = []
         self._base: tuple[str, ...] = ()
-        # Pages read, and loads begun (a load that failed counts toward the gap, not the pages).
+        self._pacer = pacer
+        # Pages read.
         self._pages = 0
-        self._loads = 0
         self._planned = len(self._names)
 
     def run(self) -> ScanResult:
@@ -298,10 +300,8 @@ class _Scan:
         """The page's HTML: waits out the gap since the last page, and stops the scan on cancel or on a
         browser failure."""
         self._check_cancel()
-        if self._loads > 0:
-            self._sleep(self._uniform(MIN_GAP_S, MAX_GAP_S))
-            self._check_cancel()
-        self._loads += 1
+        self._pacer.wait(lambda: self._uniform(MIN_GAP_S, MAX_GAP_S), self._sleep)
+        self._check_cancel()
         self._on_progress(ScanProgress(stage, self._pages, self._planned, current))
         log.debug("loading %s", url)
         try:
@@ -311,6 +311,8 @@ class _Scan:
             if self._cancel.is_set():
                 raise _Stop(ScanStatus.CANCELLED, None) from error
             raise _Stop(ScanStatus.STOPPED, f"{current}: {error}") from error
+        finally:
+            self._pacer.mark()
 
     def _check_cancel(self) -> None:
         if self._cancel.is_set():
@@ -390,11 +392,13 @@ def scan(
     on_progress: Callable[[ScanProgress], None] | None = None,
     sleep: Callable[[float], object] | None = None,
     uniform: Callable[[float, float], float] = random.uniform,
+    clock: Callable[[], float] = time.monotonic,
 ) -> ScanResult:
     """Run the scan and return what it read, whether it finished, was cancelled or stopped.
 
     `cancel` ends it before the next page. `sleep` waits out the gap between pages; the default waits on
-    `cancel`, so a cancel ends the wait too.
+    `cancel`, so a cancel ends the wait too. The gap is counted from the browser's last request, whichever
+    step made it (the wants sync before the scan); `clock` is used only for a browser that keeps none.
     """
     stop = cancel if cancel is not None else threading.Event()
     return _Scan(
@@ -404,6 +408,7 @@ def scan(
         on_progress=on_progress if on_progress is not None else _ignore,
         sleep=sleep if sleep is not None else stop.wait,
         uniform=uniform,
+        pacer=pacer_for(browser, clock),
     ).run()
 
 
