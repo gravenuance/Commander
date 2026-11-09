@@ -128,6 +128,13 @@ class Routes:
         return (LETTER,)
 
 
+class OfflineRoutes(Routes):
+    """Shipping tables that cannot be fetched."""
+
+    def methods(self, origin_id: int, destination_id: int) -> tuple[ShippingMethod, ...]:  # noqa: ARG002
+        raise NetworkError("offline")
+
+
 def scan_of(
     offers: Sequence[Offer],
     *,
@@ -1311,12 +1318,7 @@ class TestCancellingAndStopping:
 
     def test_a_shipping_table_that_cannot_be_fetched_stops_the_scan(self, rig: Rig) -> None:
         rig.scan_result = scan_of(two_sellers())
-
-        class Failing(Routes):
-            def methods(self, origin_id: int, destination_id: int) -> tuple[ShippingMethod, ...]:  # noqa: ARG002
-                raise NetworkError("offline")
-
-        rig.routes = Failing()
+        rig.routes = OfflineRoutes()
 
         rig.service.start()
         status = rig.service.status()
@@ -2128,12 +2130,7 @@ class TestTheMaxPrice:
     ) -> None:
         one_card.scan_result = scan_of([offer("Arcane Signet", "A", 300)])
         one_card.service.start()
-
-        class Failing(Routes):
-            def methods(self, origin_id: int, destination_id: int) -> tuple[ShippingMethod, ...]:  # noqa: ARG002
-                raise NetworkError("offline")
-
-        one_card.routes = Failing()
+        one_card.routes = OfflineRoutes()
 
         view = one_card.service.set_filters("english", "NM", "any", [], "any", max_price="4")
 

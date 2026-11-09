@@ -282,7 +282,8 @@ class BuyService:
             "status": self.status(),
         }
 
-    def include(self, deck_id: int, included: bool) -> Json:  # noqa: FBT001 — the page's bridge passes positionals
+    # The page's bridge passes the flag positionally, so it is not keyword-only.
+    def include(self, deck_id: int, included: bool) -> Json:  # noqa: FBT001
         """Tick all of a deck's cards, or untick all of them."""
         user = self._signed_in_user()
         self._refuse_while_running()
@@ -298,7 +299,8 @@ class BuyService:
         log.info("buy: deck %d %s the purchase", deck_id, "joins" if included else "leaves")
         return self.view()
 
-    def include_card(self, deck_id: int, card: object, included: bool) -> Json:  # noqa: FBT001 — as `include`
+    # Positional for the same reason as in `include`.
+    def include_card(self, deck_id: int, card: object, included: bool) -> Json:  # noqa: FBT001
         """Tick one of a deck's cards, or untick it; a card in two decks is ticked in each on its own."""
         user = self._signed_in_user()
         self._refuse_while_running()
