@@ -52,6 +52,10 @@ CHALLENGE_WAIT_S = 30.0
 CHALLENGE_SELF_S = 8.0
 CHALLENGE_POLL_S = 1.0
 HANDOVER_POLL_S = 1.0
+# A wait for the load event is made in slices this long, so that a cancel is heard between them.
+LOAD_POLL_S = 1.0
+# Reads in a row that a window may leave unanswered during a handover; each leaves a thread behind.
+SILENT_READS_MAX = 5
 # One script call or UI-thread call; a longer wait is a window that has stopped answering.
 CALL_TIMEOUT_S = 10.0
 READY_TIMEOUT_S = 45.0
@@ -130,8 +134,9 @@ class FormBrowser(Browser, Protocol):
 class PageDriver(Protocol):
     """One window, as narrowly as `SessionBrowser` needs it."""
 
-    def navigate(self, url: str, timeout_s: float) -> bool:
-        """Start loading `url`; False when the load event did not come within `timeout_s`."""
+    def navigate(self, url: str) -> bool:
+        """Forget any load already seen and start loading `url`; False when the window did not start it. The
+        load event is then waited for with `wait_loaded`."""
         ...
 
     def read_html(self, timeout_s: float) -> str | None:
@@ -147,7 +152,7 @@ class PageDriver(Protocol):
         ...
 
     def wait_loaded(self, timeout_s: float) -> bool:
-        """True once a page has loaded since `begin_navigation` (or `navigate`)."""
+        """True once a page has loaded since `begin_navigation` (or `navigate`), waiting up to `timeout_s`."""
         ...
 
     def read_session_cookie(self) -> SessionCookie | None: ...
@@ -161,6 +166,28 @@ def on_cardmarket(url: str | None) -> bool:
     """True for an https page on Cardmarket itself, matched on the parsed host name."""
     parts = urlsplit(url or "")
     return parts.scheme == "https" and (parts.hostname or "").rstrip(".") in CARDMARKET_HOSTS
+
+
+class RequestPacer:
+    """When the last request to Cardmarket ended, so that the gap between two requests holds whichever step
+    makes them. A `SessionBrowser` owns one, and the wants sync and the scan both pace against it."""
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
+        self._last: float | None = None
+
+    def mark(self) -> None:
+        """Call when a request has ended."""
+        self._last = self._clock()
+
+    def wait(self, draw_gap: Callable[[], float], sleep: Callable[[float], object]) -> None:
+        """Before a request: `sleep` what is left of the gap `draw_gap` gives (drawn anew each time) since the
+        last request ended; nothing, and no draw, before the first request."""
+        if self._last is None:
+            return
+        left = draw_gap() - (self._clock() - self._last)
+        if left > 0:
+            sleep(left)
 
 
 class SessionKeeper:
@@ -204,7 +231,9 @@ class SessionBrowser:
     """A `Browser` over a `PageDriver`, signed in with the owner's saved session.
 
     With a `handover`, a signed-out page or a check that does not pass by itself is left to the owner; without
-    one it is an error.
+    one it is an error. `cancel` answers True once the owner has asked to stop (the handover's own answer
+    counts too): it is heard while a page loads and while a check is waited out, and ends them with
+    `Cancelled`. `pacer` keeps the time of the last request for every step that loads through this browser.
     """
 
     def __init__(
@@ -215,12 +244,15 @@ class SessionBrowser:
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], object] = time.sleep,
         handover: Handover | None = None,
+        cancel: Callable[[], bool] | None = None,
     ) -> None:
         self._driver = driver
         self._keeper = SessionKeeper(driver, store)
         self._clock = clock
         self._sleep = sleep
         self._handover = handover
+        self._cancel = cancel
+        self.pacer = RequestPacer(clock)
 
     def restore_session(self) -> bool:
         return self._keeper.restore()
@@ -229,11 +261,33 @@ class SessionBrowser:
         if not on_cardmarket(url):
             raise ValueError(f"not a Cardmarket address: {url}")
         while True:
-            if not self._driver.navigate(url, LOAD_TIMEOUT_S):
+            if not self._driver.navigate(url):
+                raise LoadTimeout(f"the window did not start loading {url}")
+            if not self._wait_loaded(LOAD_TIMEOUT_S, url):
                 raise LoadTimeout(f"{url} did not finish loading within {LOAD_TIMEOUT_S:.0f} s")
             html = self._settled_page(url)
             if html is not None:
                 return html
+
+    def _cancelled(self) -> bool:
+        if self._cancel is not None and self._cancel():
+            return True
+        return self._handover is not None and self._handover.cancelled()
+
+    def _check_cancel(self, where: str) -> None:
+        if self._cancelled():
+            raise Cancelled(f"cancelled while {where} was loading")
+
+    def _wait_loaded(self, timeout_s: float, where: str) -> bool:
+        """True once the page has loaded. Waits in slices, hearing a cancel between them."""
+        waited = 0.0
+        while waited < timeout_s:
+            slice_s = min(LOAD_POLL_S, timeout_s - waited)
+            if self._driver.wait_loaded(slice_s):
+                return True
+            waited += slice_s
+            self._check_cancel(where)
+        return False
 
     def act(self, script: str) -> str:
         answer = self._driver.run_script(script, CALL_TIMEOUT_S)
@@ -250,7 +304,7 @@ class SessionBrowser:
             raise BrowserError(f"the page did not take the step: {answer}")
         if answer is None:
             log.warning("the window gave no answer to a submit script; waiting for the page anyway")
-        if not self._driver.wait_loaded(LOAD_TIMEOUT_S):
+        if not self._wait_loaded(LOAD_TIMEOUT_S, "the page after the submit"):
             raise LoadTimeout(f"no page loaded within {LOAD_TIMEOUT_S:.0f} s of the submit")
         page = self._settled_page("the page after the submit")
         if page is None:
@@ -290,6 +344,7 @@ class SessionBrowser:
                 return html
             log.info("waiting for %s: %s", url, "no answer yet" if html is None else "Cloudflare's check")
             self._sleep(CHALLENGE_POLL_S)
+            self._check_cancel(url)
             html = self._driver.read_html(CALL_TIMEOUT_S)
         return html
 
@@ -300,14 +355,20 @@ class SessionBrowser:
             raise ValueError("no handover to show the window with")
         log.info("%s needs the owner: %s", where, need.value)
         handover.show(need)
+        silent = 0
         try:
             while True:
                 self._sleep(HANDOVER_POLL_S)
-                if handover.cancelled():
+                if self._cancelled():
                     raise Cancelled(f"cancelled while {where} waited for the owner")
                 html = self._driver.read_html(CALL_TIMEOUT_S)
                 if html is None:
+                    # Each unanswered read leaves its thread behind, so a window that has gone is given up.
+                    silent += 1
+                    if silent >= SILENT_READS_MAX:
+                        raise LoadTimeout(f"{where}: the window stopped answering during the handover")
                     continue
+                silent = 0
                 state = page_state(html)
                 if state is PageState.SIGNED_IN:
                     self._keeper.save()
@@ -323,16 +384,23 @@ class SessionBrowser:
         self._driver.close()
 
 
+def pacer_for(browser: Browser, clock: Callable[[], float] = time.monotonic) -> RequestPacer:
+    """The pacer the steps using `browser` share: a `SessionBrowser`'s own, or for any other browser (a test's
+    fake) a new one on `clock`."""
+    return browser.pacer if isinstance(browser, SessionBrowser) else RequestPacer(clock)
+
+
 def within[T](timeout_s: float, call: Callable[[], T]) -> T:
-    """Run `call` on a worker thread; TimeoutError when it has not finished within `timeout_s`. A call that
-    hangs for good is left behind on its daemon thread."""
+    """Run `call` on a worker thread; TimeoutError when it has not finished within `timeout_s`. Whatever the
+    call raises, a SystemExit included, is raised again to the caller. A call that hangs for good is left
+    behind on its daemon thread."""
     outcome: list[T] = []
-    failure: list[Exception] = []
+    failure: list[BaseException] = []
 
     def work() -> None:
         try:
             outcome.append(call())
-        except Exception as error:  # noqa: BLE001 - handed to the caller below
+        except BaseException as error:  # noqa: BLE001 - raised again in the caller's thread below
             failure.append(error)
 
     worker = threading.Thread(target=work, daemon=True)
@@ -343,6 +411,18 @@ def within[T](timeout_s: float, call: Callable[[], T]) -> T:
     if failure:
         raise failure[0]
     return outcome[0]
+
+
+def _within_window[T](timeout_s: float, call: Callable[[], T], what: str) -> T:
+    """`within` for a call into the window: what the call throws (pywebview's `JavascriptException` and
+    `WebViewException`, a .NET exception) is a `BrowserError` that keeps it as its cause, so the scan can
+    stop with what it has read. `TimeoutError` passes for the caller to map."""
+    try:
+        return within(timeout_s, call)
+    except (TimeoutError, BrowserError):
+        raise
+    except Exception as error:
+        raise BrowserError(f"{what} failed: {error}") from error
 
 
 class WebviewDriver:
@@ -375,9 +455,10 @@ class WebviewDriver:
 
         self._on_ui_thread(apply)
 
-    def navigate(self, url: str, timeout_s: float) -> bool:
-        loaded = self._window.events.loaded
-        loaded.clear()
+    def navigate(self, url: str) -> bool:
+        # Cleared before the navigation starts: a load event left over from the last page would otherwise be
+        # taken for this one.
+        self._window.events.loaded.clear()
         # pywebview's load_url sets the control's Source, which WebView2 ignores when it already holds that
         # address: reloading the wants list after a form posted back to it never loaded (live, 2026-11-09).
         # CoreWebView2.Navigate always loads.
@@ -386,18 +467,18 @@ class WebviewDriver:
         except LoadTimeout:
             log.warning("the window did not start loading %s", url)
             return False
-        return loaded.wait(timeout_s)
+        return True
 
     def read_html(self, timeout_s: float) -> str | None:
         try:
-            html = within(timeout_s, lambda: self._window.evaluate_js(_OUTER_HTML))
+            html = _within_window(timeout_s, lambda: self._window.evaluate_js(_OUTER_HTML), "the page read")
         except TimeoutError:
             return None
         return html if isinstance(html, str) else None
 
     def run_script(self, script: str, timeout_s: float) -> str | None:
         try:
-            answer = within(timeout_s, lambda: self._window.evaluate_js(script))
+            answer = _within_window(timeout_s, lambda: self._window.evaluate_js(script), "the script")
         except TimeoutError:
             return None
         return answer if isinstance(answer, str) else None
@@ -410,14 +491,19 @@ class WebviewDriver:
         return self._window.events.loaded.wait(timeout_s)
 
     def read_session_cookie(self) -> SessionCookie | None:
+        # pywebview leaves get_cookies untyped; on WebView2 it returns one SimpleCookie per cookie.
+        get_cookies = cast(
+            "Callable[[], list[SimpleCookie]]",
+            self._window.get_cookies,  # pyright: ignore[reportUnknownMemberType]
+        )
         try:
-            # pywebview leaves get_cookies untyped; on WebView2 it returns one SimpleCookie per cookie.
-            jars = cast(
-                "list[SimpleCookie]",
-                within(CALL_TIMEOUT_S, self._window.get_cookies),  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
-            )
+            jars = _within_window(CALL_TIMEOUT_S, get_cookies, "reading the cookies")
         except TimeoutError:
             log.warning("the window did not give its cookies")
+            return None
+        except BrowserError as error:
+            # The stored copy of the session is not needed by the page being read.
+            log.warning("the window could not give its cookies: %s", error)
             return None
         for jar in jars:
             morsel = jar.get(CARDMARKET_SESSION_COOKIE)
@@ -436,7 +522,9 @@ class WebviewDriver:
 
     def _on_ui_thread(self, work: Callable[[_DotNet], None]) -> None:
         # pythonnet's .NET objects are untyped; pywebview has loaded the CLR by the time a window exists.
-        from System import Action  # noqa: PLC0415  # pyright: ignore[reportMissingImports, reportUnknownVariableType]
+        from System import (  # noqa: PLC0415  # pyright: ignore[reportMissingImports]
+            Action,  # pyright: ignore[reportUnknownVariableType]
+        )
 
         native: Any = cast("Any", self._window.native)
 
@@ -447,7 +535,7 @@ class WebviewDriver:
             work(core)
 
         try:
-            within(CALL_TIMEOUT_S, lambda: native.Invoke(Action(on_ui_thread)))
+            _within_window(CALL_TIMEOUT_S, lambda: native.Invoke(Action(on_ui_thread)), "the UI thread call")
         except TimeoutError as error:
             raise LoadTimeout("the window's UI thread did not answer") from error
 
@@ -463,9 +551,10 @@ class WebviewBrowser(SessionBrowser):
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], object] = time.sleep,
         handover: Handover | None = None,
+        cancel: Callable[[], bool] | None = None,
     ) -> None:
         driver = WebviewDriver(window)
-        super().__init__(driver, store, clock=clock, sleep=sleep, handover=handover)
+        super().__init__(driver, store, clock=clock, sleep=sleep, handover=handover, cancel=cancel)
         if not driver.wait_ready():
             raise LoadTimeout("the Cardmarket window did not start")
         driver.configure()

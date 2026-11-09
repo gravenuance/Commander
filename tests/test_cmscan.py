@@ -155,6 +155,7 @@ def run(
         on_progress=progress.append,
         sleep=sleep or gaps.sleep,
         uniform=gaps.uniform,
+        clock=lambda: 0.0,
     )
     return result, browser, gaps, progress
 

@@ -1,5 +1,5 @@
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 import pytest
 
@@ -46,6 +46,9 @@ class FakeDriver:
         self.script_answer: str | None = SUBMITTED
         self.scripts: list[str] = []
         self.calls: list[str] = []
+        # The timeout of each wait for the load event, and a hook that runs at each.
+        self.loaded_waits: list[float] = []
+        self.on_wait: Callable[[], None] = lambda: None
 
     def run_script(self, script: str, timeout_s: float) -> str | None:  # noqa: ARG002 - the protocol's name
         self.scripts.append(script)
@@ -55,13 +58,15 @@ class FakeDriver:
     def begin_navigation(self) -> None:
         self.calls.append("begin")
 
-    def wait_loaded(self, timeout_s: float) -> bool:  # noqa: ARG002 - the protocol's parameter name
+    def wait_loaded(self, timeout_s: float) -> bool:
         self.calls.append("wait")
+        self.loaded_waits.append(timeout_s)
+        self.on_wait()
         return self.loads
 
-    def navigate(self, url: str, timeout_s: float) -> bool:  # noqa: ARG002 - the protocol's parameter name
+    def navigate(self, url: str) -> bool:
         self.navigated.append(url)
-        return self.loads
+        return True
 
     def read_html(self, timeout_s: float) -> str | None:  # noqa: ARG002 - the protocol's parameter name
         answer = self.answers[min(self.reads, len(self.answers) - 1)]
@@ -421,6 +426,90 @@ class TestHandover:
             browser_of(FakeDriver([SIGN_IN])).load(URL)
 
         assert clock.sleeps == [1.0] * 30
+
+    def test_a_window_silent_five_reads_in_a_row_during_the_handover_is_a_timeout(self) -> None:
+        clock, handover = FakeClock(), FakeHandover(cancel_at=50)
+
+        with pytest.raises(LoadTimeout, match="stopped answering"):
+            handed_browser(FakeDriver([SIGN_IN, None]), handover, clock=clock).load(URL)
+
+        assert clock.sleeps == [1.0] * 5
+        assert handover.events == ["show:signin", "hide"]
+
+    def test_silent_reads_apart_do_not_add_up_during_the_handover(self) -> None:
+        clock, handover = FakeClock(), FakeHandover()
+        answers = [SIGN_IN, *[None] * 4, NEUTRAL, *[None] * 4, SIGNED_IN]
+
+        assert handed_browser(FakeDriver(answers), handover, clock=clock).load(URL) == SIGNED_IN
+        assert clock.sleeps == [1.0] * 10
+
+
+class TestCancel:
+    """A cancel is heard while a page loads and while a check is waited out, not only in a handover."""
+
+    def test_the_handovers_cancel_ends_the_wait_for_the_load_event(self) -> None:
+        handover = FakeHandover(cancel_at=3)
+        driver = FakeDriver([NEUTRAL], loads=False)
+
+        with pytest.raises(Cancelled, match="cancelled while"):
+            handed_browser(driver, handover).load(URL)
+
+        assert driver.loaded_waits == [1.0, 1.0, 1.0]
+
+    def test_the_browsers_own_cancel_ends_the_wait_for_the_load_event(self) -> None:
+        driver = FakeDriver([NEUTRAL], loads=False)
+        cancelled = False
+
+        def wait_seen() -> None:
+            nonlocal cancelled
+            cancelled = len(driver.loaded_waits) == 2
+
+        driver.on_wait = wait_seen
+        browser = SessionBrowser(driver, FakeStore(), cancel=lambda: cancelled)
+
+        with pytest.raises(Cancelled):
+            browser.load(URL)
+
+        assert driver.loaded_waits == [1.0, 1.0]
+
+    def test_a_load_that_takes_all_45_seconds_waits_in_one_second_slices(self) -> None:
+        driver = FakeDriver([NEUTRAL], loads=False)
+
+        with pytest.raises(LoadTimeout):
+            browser_of(driver).load(URL)
+
+        assert driver.loaded_waits == [1.0] * 45
+
+    def test_the_wait_for_the_page_after_a_submit_hears_a_cancel_too(self) -> None:
+        driver = FakeDriver([NEUTRAL], loads=False)
+
+        with pytest.raises(Cancelled):
+            handed_browser(driver, FakeHandover(cancel_at=2)).submit("click()")
+
+        assert driver.loaded_waits == [1.0, 1.0]
+
+    def test_a_cancel_ends_the_wait_out_of_a_challenge(self) -> None:
+        clock = FakeClock()
+        driver = FakeDriver([CHALLENGE])
+
+        with pytest.raises(Cancelled, match="cancelled while"):
+            handed_browser(driver, FakeHandover(cancel_at=3), clock=clock).load(URL)
+
+        assert clock.sleeps == [1.0, 1.0, 1.0]
+
+    def test_a_cancel_ends_the_wait_for_a_window_that_does_not_answer(self) -> None:
+        clock = FakeClock()
+        browser = SessionBrowser(
+            FakeDriver([None]), FakeStore(), clock=clock, sleep=clock.sleep, cancel=lambda: clock.now > 102
+        )
+
+        with pytest.raises(Cancelled):
+            browser.load(URL)
+
+        assert clock.sleeps == [1.0, 1.0, 1.0]
+
+    def test_without_a_cancel_nothing_is_cancelled(self) -> None:
+        assert browser_of(FakeDriver([CHALLENGE, NEUTRAL])).load(URL) == NEUTRAL
 
 
 class TestSessionCookie:
