@@ -644,11 +644,21 @@ function buildMissedBuyRow(sellers) {
     el("span", { class: "curve-note", text: "Not found in time" }));
 }
 
+// What the columns say, in a sentence: the header over them is hidden from a screen reader.
+function buyRowLabel(row) {
+  const parts = [plural(row.sellers, "seller", "sellers"), `total ${euro(row.totalCents)}`,
+    plural(row.cards, "card", "cards"), `shipping ${euro(row.shippingCents)}`];
+  if (row.savingCents > 0) parts.push(`saves ${euro(row.savingCents)}`);
+  if (!row.optimal) parts.push("may not be the cheapest");
+  else if (row.cheapest) parts.push("cheapest");
+  return parts.join(", ");
+}
+
 function buildBuyRow(row) {
   const saving = row.savingCents > 0 ? `Saves ${euro(row.savingCents)}` : "";
   return el("button", {
     class: "curve-row", type: "button", "aria-pressed": "false", "data-sellers": String(row.sellers),
-    onclick: () => pickBuyRow(row.sellers),
+    "aria-label": buyRowLabel(row), onclick: () => pickBuyRow(row.sellers),
   },
   el("span", { class: "curve-sellers", text: plural(row.sellers, "seller", "sellers") }),
   el("span", { class: "num", text: euro(row.totalCents) }),

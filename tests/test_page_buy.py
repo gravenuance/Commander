@@ -766,6 +766,26 @@ class TestThePackages:
         assert seen["tags"] == [["BUTTON", "button", "false"]] * 2
         assert seen["group"] == ["group", "Packages by number of sellers"]
 
+    def test_each_row_names_its_figures_for_a_screen_reader_and_the_header_stays_hidden(self) -> None:
+        seen = run("""
+        const rough = { ...RESULTS, rows: [RESULTS.rows[0], { ...RESULTS.rows[1], optimal: false }] };
+        await open(view({ status: done() }));
+        const labels = () => [...$("buy-curve").children].map((r) => r.getAttribute("aria-label"));
+        const proven = labels();
+        paintBuyStatus(done(rough));
+        return [proven, labels()];
+        """)
+        assert seen == [
+            [
+                "1 seller, total €7.60, 2 cards, shipping €2.00",
+                "2 sellers, total €4.90, 2 cards, shipping €4.00, saves €2.70, cheapest",
+            ],
+            [
+                "1 seller, total €7.60, 2 cards, shipping €2.00",
+                "2 sellers, total €4.90, 2 cards, shipping €4.00, saves €2.70, may not be the cheapest",
+            ],
+        ]
+
     def test_a_row_the_solver_did_not_prove_cheapest_says_so_instead_of_cheapest(self) -> None:
         seen = run("""
         const rough = { ...RESULTS, rows: [{ ...row(1, 760, 2, 200, null, true), optimal: false }] };
