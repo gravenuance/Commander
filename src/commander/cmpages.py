@@ -161,6 +161,7 @@ _USER_PATH = re.compile(r"/en/Magic/Users/[^/?#]+")
 _WANTS_ADD_CARDS = re.compile(r"/en/Magic/Wants/(?P<id>\d+)/AddCards")
 _WANTS_LIST_PATH = re.compile(r"/en/Magic/Wants/(?P<id>\d+)/?")
 _CREATE_WANTS_LIST = "WantsList_CreateWantsList"
+_TWO_FACTOR_ACTION = "VerifyCode"
 _LOCATION_PREFIX = "Item location: "
 _PRODUCT_PATH = "/en/Magic/Products/"
 _FOIL = "Foil"
@@ -179,6 +180,10 @@ def _page_state(root: Node) -> PageState:
     title = root.find(tagged("title"))
     if title is not None and "just a moment" in title.text().lower():
         return PageState.CHALLENGE
+    # The two-factor code page after the password already shows the Logout link, but the session is not
+    # usable until the code is in: it is still the owner's sign-in.
+    if root.find(lambda n: n.tag == "form" and _TWO_FACTOR_ACTION in (n.get("data-ajax-action") or "")):
+        return PageState.SIGNED_OUT
     form = root.find(
         lambda n: n.tag == "input" and (n.get("type") == "password" or n.get("name") == "username")
     )

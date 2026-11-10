@@ -27,6 +27,13 @@ SIGNED_IN = (
     "<html><body><a href='/en/Magic/PostGetAction/User_Logout'>Log out</a><main>Sol Ring</main></body></html>"
 )
 NEUTRAL = "<html><body><main>Sol Ring</main></body></html>"
+# After the password, Cardmarket's code page already shows the Logout link (trimmed from the real page).
+TWO_FACTOR = (
+    "<html><head><title>Two-Factor Authentication | Cardmarket</title></head><body>"
+    "<a href='/en/Magic/PostGetAction/User_Logout'>Log out</a><main><h1>Two-Factor Authentication</h1>"
+    "<form method='POST' data-ajax-action='GoogleAuthenticator_VerifyCode' class='tfaForm'>"
+    "<input type='text' name='code' maxlength='6'></form></main></body></html>"
+)
 FIRST = SessionCookie("PHPSESSID", "first", "www.cardmarket.com", "/")
 SECOND = SessionCookie("PHPSESSID", "second", "www.cardmarket.com", "/")
 
@@ -335,6 +342,18 @@ class TestHandover:
         assert handover.events == ["show:signin", "hide"]
         assert driver.navigated == [URL, URL]
         assert clock.sleeps == [1.0, 1.0]
+        assert store.puts == [FIRST]
+
+    def test_the_two_factor_code_page_keeps_the_window_with_the_owner_until_signed_in(self) -> None:
+        clock, handover, store = FakeClock(), FakeHandover(), FakeStore()
+        driver = FakeDriver([SIGN_IN, SIGN_IN, TWO_FACTOR, TWO_FACTOR, SIGNED_IN])
+        driver.cookie = FIRST
+
+        html = handed_browser(driver, handover, store, clock).load(URL)
+
+        assert html == SIGNED_IN
+        assert handover.events == ["show:signin", "hide"]
+        assert clock.sleeps == [1.0, 1.0, 1.0, 1.0]
         assert store.puts == [FIRST]
 
     def test_a_challenge_that_outlasts_8_seconds_is_handed_over_as_a_check(self) -> None:
