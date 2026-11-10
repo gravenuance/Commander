@@ -79,7 +79,8 @@ def list_page(list_id: int, name: str, wants: list[SiteWant]) -> str:
         '<td class="condition"><a class="article-condition">'
         f'<span class="badge">{w.condition}</span></a></td>'
         f'<td class="expansion"><span class="visually-hidden">{w.expansion}</span></td>'
-        + f'<td class="ternary-header"><span class="visually-hidden">{w.yes_no}</span></td>' * 3
+        + f'<td class="ternary-header"><span class="visually-hidden">{w.yes_no}</span></td>'
+        * 3
         + f'<td data-text="0" class="buyPrice">{w.price}</td>'
         "</tr>"
         for w in wants
@@ -468,9 +469,7 @@ class TestEmptying:
             "foil asked",
         ],
     )
-    def test_a_list_that_differs_in_anything_is_made_again(
-        self, held: SiteWant, foil: Foil
-    ) -> None:
+    def test_a_list_that_differs_in_anything_is_made_again(self, held: SiteWant, foil: Foil) -> None:
         site = app_site(held)
 
         sync(site, cards(("Sol Ring", 1)), languages=(ENGLISH,), min_condition=Condition.NM, foil=foil)
