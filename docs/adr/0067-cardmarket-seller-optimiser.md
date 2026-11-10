@@ -126,7 +126,11 @@ the owner picks into their Cardmarket cart for them to check out by hand.
   its cheapest offers (50, a setting). Pass 2 opens the wants-filtered stock page of the base sellers: those
   who carry the rarest cards (the fewest offers in pass 1), or the most of the wanted cards. It is skipped
   when it cannot add an offer: for a single wanted card (its base sellers were all found through it), or when
-  every card page showed all its offers (the owner's first live run spent 15 pages on one card). A sign-in
+  every card page showed all its offers (the owner's first live run spent 15 pages on one card). Within it, a
+  seller is opened only if it can add an offer: some card whose page had more offers than it showed must have
+  fewer copies from that seller in pass 1 (summed over its allowed offers) than are wanted. The other sellers
+  still count for the scarcity and coverage of the rest, but get no place, so the 15 places go to sellers worth
+  a page (the owner's two-card scan spent 15 seller pages, 95 s of its 2 min 20 s). A sign-in
   page or a challenge that does not pass by itself is handed to the owner (above); a page that does not read as
   expected stops the scan and says so. Neither is retried in a loop or worked around. The gap is counted from
   the end of the browser's last request, whichever step made it: the wants list sync and the scan share one
