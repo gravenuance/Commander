@@ -170,6 +170,8 @@ class SyncCall:
     languages: tuple[int, ...]
     min_condition: Condition | None
     foil: Foil
+    # The wants list id the service remembered from an earlier sync.
+    list_id: int | None = None
 
 
 class FakePane:
@@ -195,6 +197,8 @@ class Rig:
         self.pane = FakePane()
         self.sync_calls: list[SyncCall] = []
         self.scan_requests: list[ScanRequest] = []
+        # The Archidekt account that is signed in.
+        self.user = "MAKKIS"
         self.routes = Routes()
         self.settings_path = tmp_path / "settings" / "buy.json"
         self.card_db = card_db
@@ -225,7 +229,7 @@ class Rig:
         return BuyService(
             store=BuyStore(self.settings_path),
             decks=lambda: self.decks,
-            user=lambda: "MAKKIS",
+            user=lambda: self.user,
             engine=self.engine,
             card_db=self.card_db,
             background=lambda work: work(),
@@ -249,11 +253,12 @@ class Rig:
         languages: tuple[int, ...],
         min_condition: Condition | None,
         foil: Foil,
+        list_id: int | None,
         cancel: threading.Event,
         on_progress: Callable[[WantsProgress], None],
     ) -> WantsSync:
         self.events.append("sync")
-        self.sync_calls.append(SyncCall(wanted, languages, min_condition, foil))
+        self.sync_calls.append(SyncCall(wanted, languages, min_condition, foil, list_id))
         on_progress(WantsProgress(WantsStep.IMPORT, "3 cards"))
         self.progress.append(str(self.service.status()["progress"]))
         self.sync_effect(cancel)
@@ -827,6 +832,57 @@ class TestTheFilters:
             rig.service.set_base_sellers(9)
 
         assert rig.service.view()["baseSellers"] == 15
+
+
+class TestTheWantsListId:
+    def test_the_first_scan_of_an_account_has_no_id_and_the_next_one_is_given_the_last_scan_s(
+        self, rig: Rig
+    ) -> None:
+        rig.sync_result = imported(list_id=12)
+        scanned(rig)
+        scanned(rig)
+        rig.sync_result = imported(list_id=13)
+        scanned(rig)
+        scanned(rig)
+
+        assert [call.list_id for call in rig.sync_calls] == [None, 12, 12, 13]
+
+    def test_an_id_is_not_carried_to_another_account_nor_back_again(self, rig: Rig) -> None:
+        rig.sync_result = imported(list_id=12)
+        scanned(rig)
+        rig.user = "SOMEONE"
+        rig.sync_result = imported(list_id=21)
+        scanned(rig)
+        scanned(rig)
+        rig.user = "MAKKIS"
+        scanned(rig)
+
+        assert [call.list_id for call in rig.sync_calls] == [None, None, 21, None]
+
+    def test_an_account_is_the_same_whatever_the_case_of_its_name(self, rig: Rig) -> None:
+        rig.sync_result = imported(list_id=12)
+        scanned(rig)
+        rig.user = "makkis"
+        scanned(rig)
+
+        assert [call.list_id for call in rig.sync_calls] == [None, 12]
+
+    def test_a_forgotten_id_is_not_given(self, rig: Rig) -> None:
+        scanned(rig)
+        rig.service.forget_wants_list()
+        scanned(rig)
+
+        assert [call.list_id for call in rig.sync_calls] == [None, None]
+
+    def test_a_sync_that_was_cancelled_leaves_the_id_as_it_was(self, rig: Rig) -> None:
+        rig.sync_result = imported(list_id=12)
+        scanned(rig)
+        rig.sync_effect = lambda cancel: cancel.set()
+        scanned(rig)
+        rig.sync_effect = lambda _cancel: None
+        scanned(rig)
+
+        assert [call.list_id for call in rig.sync_calls] == [None, 12, 12]
 
 
 class TestTheScan:

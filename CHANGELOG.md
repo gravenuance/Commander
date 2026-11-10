@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Added
+- The app's Buy screen finds the cheapest way to buy the Don't Have cards on Cardmarket, shipping included:
+  it keeps a wants list named "Commander" on your Cardmarket account in step with the cards to buy, reads the
+  offers one page at a time (4 to 6 s apart), and shows the best total for each number of sellers, with
+  filters for language, condition, foil, seller countries, delivery time and a price cap. You sign in to
+  Cardmarket in a window over the Buy screen (two-factor code and Cloudflare's check included); the session
+  is kept in Windows Credential Manager until you sign out. "Add to cart" puts a confirmed package in your
+  Cardmarket cart and reports what went in; the app never removes anything from the cart or checks out
+  (ADR 0067).
+
 ### Fixed
 - `cmdr meta` and the app's meta answers credit a lock that names several card types with all of them:
   Doorkeeper Thrull now stops creatures' enter triggers such as Thassa's Oracle's, and Clarion Conqueror

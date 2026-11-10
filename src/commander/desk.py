@@ -495,6 +495,7 @@ class Desk:
                 # The account is signed out already; the session ends on Cardmarket's side by itself.
                 log.warning("sign-out: %s", error)
             self._settings = replace(self._settings, user=None)
+            self._buy.forget_wants_list()
             with self._sync_lock:
                 # With no account there is nothing to sync them for.
                 self._resync.clear()
@@ -613,6 +614,8 @@ class Desk:
 
     def _use_account(self, user: str, folder: Path) -> None:
         self._settings = replace(self._settings, user=user, workspace=folder)
+        # The Cardmarket account may differ too, so its wants list is looked up again.
+        self._buy.forget_wants_list()
         self._workspace = Workspace(folder)
         self._rows.clear()
         for memo in self._deck_memos():

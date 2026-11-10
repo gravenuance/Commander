@@ -32,6 +32,8 @@ CONDITION_OF_ID = {"1": "MT", "2": "NM", "3": "EX", "4": "GD", "5": "LP", "6": "
 LANGUAGE_OF_ID = {"1": "English", "7": "Japanese"}
 LANGUAGE_SELECT = 'select[name="idLanguages[]"]'
 NEW_LIST_ID = 100
+# What Cardmarket answers for a list address that is no list of the buyer's.
+NO_SUCH_LIST = "<html><head><title>Cardmarket</title></head><body><main><h1>Gone</h1></main></body></html>"
 # The fields the sync fills in, by selector, and the name the fake keeps each under.
 FIELDS = {
     "#SWWantsListName": "new name",
@@ -175,6 +177,8 @@ class FakeSite:
         match = re.fullmatch(re.escape(LISTS_URL) + r"/(\d+)(/AddDeckList)?", url)
         assert match is not None, f"the sync loaded {url}"
         list_id = int(match[1])
+        if list_id not in self.lists:
+            return NO_SUCH_LIST
         if match[2]:
             return "<html><body><form id='AddDecklistForm'></form></body></html>"
         self._current = list_id
@@ -320,6 +324,7 @@ def sync(
     min_condition: Condition | None = None,
     foil: Foil = Foil.ANY,
     cancel: threading.Event | None = None,
+    list_id: int | None = None,
 ) -> Run:
     gaps = Gaps(site)
     progress: list[WantsProgress] = []
@@ -329,6 +334,7 @@ def sync(
         languages=languages,
         min_condition=min_condition,
         foil=foil,
+        list_id=list_id,
         cancel=cancel,
         on_progress=progress.append,
         sleep=gaps.sleep,
@@ -410,6 +416,99 @@ class TestTheList:
             sync(site, cards(("Sol Ring", 1)))
 
 
+class TestListHint:
+    def test_a_list_id_that_is_the_apps_list_is_opened_without_the_lists_page(self) -> None:
+        site = app_site(SiteWant("old", "Old Card", 1))
+
+        run = sync(site, cards(("Sol Ring", 1)), list_id=7)
+
+        assert LISTS_URL not in site.loaded
+        assert site.loaded[0] == f"{LISTS_URL}/7"
+        assert run.result.list_id == 7
+        assert [w.card for w in site.wants[7]] == ["Sol Ring"]
+
+    def test_a_list_that_is_already_right_takes_one_request_with_the_hint_and_two_without(self) -> None:
+        wanted = cards(("Sol Ring", 1))
+        hinted = app_site(SiteWant("w1", "Sol Ring", 1))
+        plain = app_site(SiteWant("w1", "Sol Ring", 1))
+
+        sync(hinted, wanted, list_id=7)
+        sync(plain, wanted)
+
+        assert requests_of(hinted) == ["load /7"]
+        assert requests_of(plain) == ["load ", "load /7"]
+
+    def test_a_list_id_of_another_list_falls_back_to_the_lists_page_and_changes_nothing_there(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        site = app_site(SiteWant("old", "Old Card", 1))
+
+        with caplog.at_level(logging.INFO, logger="commander.cmwants"):
+            run = sync(site, cards(("Sol Ring", 1)), list_id=1)
+
+        assert site.loaded[:3] == [f"{LISTS_URL}/1", LISTS_URL, f"{LISTS_URL}/7"]
+        assert site.events[:3] == ["load /1", "sleep", "load "]
+        assert not any(url.startswith(f"{LISTS_URL}/1/") for url in site.loaded)
+        assert [w.card for w in site.wants[1]] == ["Keep Me"]
+        assert run.result.list_id == 7
+        assert [w.card for w in site.wants[7]] == ["Sol Ring"]
+        assert "list 1" in caplog.text
+
+    def test_a_list_id_whose_page_shows_another_id_under_the_apps_name_falls_back(self) -> None:
+        site = app_site(SiteWant("old", "Old Card", 1))
+        site.pages_once[f"{LISTS_URL}/7"] = [list_page(8, APP_LIST_NAME, [SiteWant("x", "Other", 1)])]
+
+        run = sync(site, cards(("Sol Ring", 1)), list_id=7)
+
+        assert site.loaded[:3] == [f"{LISTS_URL}/7", LISTS_URL, f"{LISTS_URL}/7"]
+        assert run.result.list_id == 7
+        assert [w.card for w in site.wants[7]] == ["Sol Ring"]
+
+    def test_a_list_id_that_is_no_list_falls_back_to_the_list_named_for_the_app(self) -> None:
+        site = app_site()
+
+        run = sync(site, cards(("Sol Ring", 1)), list_id=99)
+
+        assert site.loaded[:3] == [f"{LISTS_URL}/99", LISTS_URL, f"{LISTS_URL}/7"]
+        assert run.result.list_id == 7
+
+    def test_a_list_id_that_is_no_list_falls_back_to_creating_the_list_when_there_is_none(self) -> None:
+        site = FakeSite(lists={1: "MONTHLY WANTS"}, wants={1: [SiteWant("keep", "Keep Me", 4)]})
+
+        run = sync(site, cards(("Sol Ring", 1)), list_id=99)
+
+        assert site.lists == {1: "MONTHLY WANTS", 100: "Commander"}
+        assert run.result.list_id == 100
+
+    def test_a_page_that_is_not_a_list_page_at_all_falls_back(self) -> None:
+        site = app_site()
+        site.pages_once[f"{LISTS_URL}/7"] = ["<html><body><main><h1>Help</h1></main></body></html>"]
+
+        run = sync(site, cards(("Sol Ring", 1)), list_id=7)
+
+        assert site.loaded[:2] == [f"{LISTS_URL}/7", LISTS_URL]
+        assert run.result.list_id == 7
+
+    def test_a_browser_error_on_the_hinted_page_ends_the_sync_instead_of_falling_back(self) -> None:
+        site = app_site()
+        site.failures[f"{LISTS_URL}/7"] = SignedOut("the session has ended")
+
+        with pytest.raises(SignedOut):
+            sync(site, cards(("Sol Ring", 1)), list_id=7)
+
+        assert site.loaded == [f"{LISTS_URL}/7"]
+
+    def test_a_cancel_before_the_hinted_page_loads_nothing(self) -> None:
+        site = app_site()
+        cancel = threading.Event()
+        cancel.set()
+
+        with pytest.raises(WantsCancelled):
+            sync(site, cards(("Sol Ring", 1)), list_id=7, cancel=cancel)
+
+        assert site.loaded == []
+
+
 class TestEmptying:
     def test_a_list_with_wants_is_emptied_before_the_import(self) -> None:
         site = app_site(SiteWant("old1", "Old One", 1), SiteWant("old2", "Old Two", 2))
@@ -417,7 +516,7 @@ class TestEmptying:
         run = sync(site, cards(("Sol Ring", 1)))
 
         assert [e for e in site.events if not e.startswith(("sleep", "load"))] == [
-            "tick all",
+            "tick old1,old2",
             "submit delete 2",
             "fill import",
             "click import",
@@ -507,7 +606,9 @@ class TestEmptying:
         site = app_site(SiteWant("a", "A", 1), SiteWant("b", "B", 1))
         site.unticked_rows = {"b"}
 
-        with pytest.raises(WantsError, match="emptying the list: expected 2 ticked, found 1 rows, 1 ticked"):
+        with pytest.raises(
+            WantsError, match="deleting the wants that differ: expected 2 ticked, found 1 rows, 1 ticked"
+        ):
             sync(site, cards(("Sol Ring", 1)))
 
     def test_an_empty_wanted_list_only_empties_the_list(self) -> None:
@@ -518,6 +619,203 @@ class TestEmptying:
         assert run.result == WantsSync(7, (), (), ())
         assert "fill import" not in site.events
         assert site.wants[7] == []
+
+
+def held(want_id: str, card: str, quantity: int = 1) -> SiteWant:
+    """A want exactly as the sync makes it for English, Near Mint."""
+    return SiteWant(want_id, card, quantity, ("English",), "NM")
+
+
+def sync_asked(site: FakeSite, wanted: list[WantedCard]) -> Run:
+    return sync(site, wanted, languages=(ENGLISH,), min_condition=Condition.NM)
+
+
+def ticks_and_deletes(site: FakeSite) -> list[str]:
+    return [e for e in site.events if e.startswith(("tick", "submit delete"))]
+
+
+class TestChangingOnlyWhatDiffers:
+    def test_a_card_added_to_a_one_card_list_is_imported_and_edited_alone(self) -> None:
+        site = app_site(held("k1", "Sol Ring"))
+
+        run = sync_asked(site, cards(("Sol Ring", 1), ("Arcane Signet", 1)))
+
+        assert not any(e.startswith(("tick all", "submit delete")) for e in site.events)
+        assert site.fields["import"] == "1 Arcane Signet\n"
+        assert [e for e in site.events if e.startswith("tick")] == ["tick w1"]
+        assert requests_of(site) == [
+            "load ",
+            "load /7",
+            "load /7/AddDeckList",
+            "click import",
+            "load /7",
+            "submit edit 1",
+            "load /7",
+        ]
+        assert [(w.want_id, w.card, w.languages, w.min_condition) for w in run.result.imported] == [
+            ("k1", "Sol Ring", ("English",), Condition.NM),
+            ("w1", "Arcane Signet", ("English",), Condition.NM),
+        ]
+        assert (run.result.unmatched, run.result.quantity_mismatch) == ((), ())
+
+    def test_a_card_no_longer_wanted_is_deleted_alone_and_nothing_is_imported(self) -> None:
+        site = app_site(held("k1", "Sol Ring"), held("old", "Old One"))
+
+        run = sync_asked(site, cards(("Sol Ring", 1)))
+
+        assert ticks_and_deletes(site) == ["tick old", "submit delete 1"]
+        assert "click import" not in site.events
+        assert requests_of(site) == ["load ", "load /7", "submit delete 1", "load /7"]
+        assert summary(run) == [("Sol Ring", 1)]
+
+    def test_a_kept_card_whose_quantity_changed_is_deleted_and_imported_again(self) -> None:
+        site = app_site(held("k1", "Sol Ring"), held("k2", "Arcane Signet", 2))
+
+        run = sync_asked(site, cards(("Sol Ring", 3), ("Arcane Signet", 2)))
+
+        assert ticks_and_deletes(site) == ["tick k1", "submit delete 1", "tick w1"]
+        assert site.fields["import"] == "3 Sol Ring\n"
+        assert [(w.card, w.quantity) for w in site.wants[7]] == [("Arcane Signet", 2), ("Sol Ring", 3)]
+        assert run.result.quantity_mismatch == ()
+
+    def test_a_card_wanted_at_a_quantity_split_over_two_wants_is_kept(self) -> None:
+        site = app_site(held("k1", "Sol Ring"), held("k2", "Sol Ring"), held("k3", "Arcane Signet"))
+
+        sync_asked(site, cards(("Sol Ring", 2), ("Arcane Signet", 1)))
+
+        assert requests_of(site) == ["load ", "load /7"]
+
+    def test_wants_with_the_wrong_condition_language_or_expansion_are_made_again(self) -> None:
+        site = app_site(
+            held("a", "Card A"),
+            SiteWant("b", "Card B", 1, ("English",), "EX"),
+            SiteWant("c", "Card C", 1, ("English", "Japanese"), "NM"),
+            SiteWant("d", "Card D", 1, ("English",), "NM", expansion="Alpha"),
+        )
+
+        run = sync_asked(site, cards(("Card A", 1), ("Card B", 1), ("Card C", 1), ("Card D", 1)))
+
+        assert ticks_and_deletes(site)[:2] == ["tick b,c,d", "submit delete 3"]
+        assert site.fields["import"] == "1 Card B\n1 Card C\n1 Card D\n"
+        assert [e for e in site.events if e.startswith("tick")] == ["tick b,c,d", "tick w1,w2,w3"]
+        assert [(w.want_id, w.card) for w in run.result.imported] == [
+            ("a", "Card A"),
+            ("w1", "Card B"),
+            ("w2", "Card C"),
+            ("w3", "Card D"),
+        ]
+        assert all(
+            w.languages == ("English",) and w.min_condition is Condition.NM for w in run.result.imported
+        )
+
+    def test_new_wants_of_different_quantities_are_edited_by_group_and_kept_ones_not(self) -> None:
+        site = app_site(held("k1", "Sol Ring"))
+
+        sync_asked(site, cards(("Sol Ring", 1), ("Arcane Signet", 1), ("Counterspell", 2)))
+
+        assert [e for e in site.events if e.startswith(("tick", "submit edit"))] == [
+            "tick w1",
+            "submit edit 1",
+            "tick w2",
+            "submit edit 2",
+        ]
+
+    def test_with_no_filter_asked_the_new_wants_are_not_edited(self) -> None:
+        site = app_site(SiteWant("k1", "Sol Ring", 1))
+
+        run = sync(site, cards(("Sol Ring", 1), ("Arcane Signet", 1)))
+
+        assert not any(e.startswith(("tick", "submit")) for e in site.events)
+        assert summary(run) == [("Sol Ring", 1), ("Arcane Signet", 1)]
+
+    def test_a_foil_choice_keeps_nothing(self) -> None:
+        site = app_site(held("k1", "Sol Ring"))
+
+        sync(
+            site,
+            cards(("Sol Ring", 1)),
+            languages=(ENGLISH,),
+            min_condition=Condition.NM,
+            foil=Foil.NON_FOIL,
+        )
+
+        assert ticks_and_deletes(site)[:2] == ["tick k1", "submit delete 1"]
+        assert site.fields["import"] == "1 Sol Ring\n"
+
+    def test_an_import_that_shows_late_is_waited_for_with_kept_wants_on_the_list(self) -> None:
+        site = app_site(held("k1", "Sol Ring"))
+        site.import_lag = 2
+
+        run = sync_asked(site, cards(("Sol Ring", 1), ("Arcane Signet", 1)))
+
+        assert [w.card for w in run.result.imported] == ["Sol Ring", "Arcane Signet"]
+        # One read before the import form, three after it (two without the card, one with it) and the
+        # read after the edit.
+        assert site.loaded.count(f"{LISTS_URL}/7") == 5
+        assert run.result.unmatched == ()
+
+    def test_an_import_that_never_shows_is_warned_about_and_reported_unmatched(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        site = app_site(held("k1", "Sol Ring"))
+        site.import_lag = 99
+
+        with caplog.at_level(logging.WARNING):
+            run = sync_asked(site, cards(("Sol Ring", 1), ("Arcane Signet", 1)))
+
+        assert summary(run) == [("Sol Ring", 1)]
+        assert run.result.unmatched == ("Arcane Signet",)
+        assert site.loaded.count(f"{LISTS_URL}/7") == 5
+        assert "no new wants on the list 4 reads after the import" in caplog.text
+
+    def test_a_delete_that_leaves_another_want_than_the_kept_ones_is_an_error(self) -> None:
+        site = app_site(held("k1", "Sol Ring"), held("old", "Old One"))
+        both = list(site.wants[7])
+        site.pages_once[f"{LISTS_URL}/7"] = [
+            list_page(7, APP_LIST_NAME, both),
+            list_page(7, APP_LIST_NAME, both),
+        ]
+
+        with pytest.raises(WantsError, match="still holds 1 wants after deleting them"):
+            sync_asked(site, cards(("Sol Ring", 1)))
+
+        assert "click import" not in site.events
+
+    def test_a_delete_that_takes_a_kept_want_too_is_an_error(self) -> None:
+        site = app_site(held("k1", "Sol Ring"), held("old", "Old One"))
+        site.pages_once[f"{LISTS_URL}/7"] = [
+            list_page(7, APP_LIST_NAME, list(site.wants[7])),
+            list_page(7, APP_LIST_NAME, []),
+        ]
+
+        with pytest.raises(WantsError, match="1 kept wants are gone after deleting the others"):
+            sync_asked(site, cards(("Sol Ring", 1)))
+
+    def test_a_row_the_page_cannot_tick_stops_before_deleting_the_others(self) -> None:
+        site = app_site(held("k1", "Sol Ring"), held("old", "Old One"))
+        site.unticked_rows = {"old"}
+
+        with pytest.raises(WantsError, match="expected 1 ticked, found 0 rows, 0 ticked"):
+            sync_asked(site, cards(("Sol Ring", 1)))
+
+        assert not any(e.startswith("submit delete") for e in site.events)
+
+    def test_a_cancel_after_the_delete_leaves_the_import_unsent(self) -> None:
+        site = app_site(held("k1", "Sol Ring"), held("old", "Old One"))
+        stop = threading.Event()
+        site.on_event = lambda event: stop.set() if event.startswith("submit delete") else None
+
+        with pytest.raises(WantsCancelled):
+            sync(
+                site,
+                cards(("Sol Ring", 1), ("Arcane Signet", 1)),
+                languages=(ENGLISH,),
+                min_condition=Condition.NM,
+                cancel=stop,
+            )
+
+        assert "fill import" not in site.events
+        assert [w.want_id for w in site.wants[7]] == ["k1"]
 
 
 class TestRefusals:
@@ -614,7 +912,7 @@ class TestImport:
         assert run.result.imported == ()
         assert run.result.unmatched == ("Sol Ring", "Arcane Signet")
         assert site.loaded.count(f"{LISTS_URL}/7") == 5
-        assert "the list is empty 4 reads after the import" in caplog.text
+        assert "no new wants on the list 4 reads after the import" in caplog.text
 
     def test_a_script_that_does_not_click_the_import_is_an_error(self) -> None:
         site = app_site()
@@ -926,7 +1224,7 @@ class TestPacing:
             "load ",
             "sleep",
             "load /7",
-            "tick all",
+            "tick old",
             "sleep",
             "submit delete 1",
             "sleep",

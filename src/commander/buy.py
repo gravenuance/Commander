@@ -6,8 +6,9 @@ sellers. When Cardmarket needs the owner (a sign-in, Cloudflare's check) the sca
 screen's pane and the phase says which. The page polls `status` while it runs and asks `package` for the
 detail of a row. A changed price cap needs no new scan: the offers already read are judged again and solved
 again. The owner puts a chosen package in their Cardmarket cart in the same kind of run, which keeps the
-scan's results and adds a report of what the cart holds. Everything that touches Cardmarket or a window goes
-through `BuyEngine`, so tests run the whole flow without either.
+scan's results and adds a report of what the cart holds. The service remembers the wants list's id from the
+last scan, per account and in memory only, so the next one skips the lists page. Everything that touches
+Cardmarket or a window goes through `BuyEngine`, so tests run the whole flow without either.
 """
 
 import logging
@@ -154,6 +155,8 @@ class _Run:
     filters: BuyFilters
     base_sellers: int
     key: Key
+    # The Archidekt account that started the run.
+    user: str
     cancel: threading.Event = field(default_factory=threading.Event)
     # The filters' seller countries by name, known once the run has fetched Cardmarket's country list.
     limits: OfferLimits = field(default_factory=OfferLimits)
@@ -260,6 +263,8 @@ class BuyService:
         self._background = background
         self._lock = threading.Lock()
         self._state = _State()
+        # The wants list's id from the last sync, with the account it was for; kept in memory only.
+        self._wants_list: tuple[str, int] | None = None
 
     # --- what the page asks ---------------------------------------------------------------------------
 
@@ -372,7 +377,7 @@ class BuyService:
         if not wanted:
             raise BuyError("No cards to buy; tick a deck first.")
         filters, base = self._store.filters(), self._store.base_sellers()
-        run = _Run(tuple(wanted), filters, base, self._key(user, wanted))
+        run = _Run(tuple(wanted), filters, base, self._key(user, wanted), user)
         with self._lock:
             if self._state.phase in RUNNING:
                 raise BuyError("A scan is running already.")
@@ -450,6 +455,11 @@ class BuyService:
             raise BuyError("That package is gone; scan again.")
         trends = self._trends({pick.offer.card for pick in chosen.picks})
         return _package_json(chosen, trends, outcome.eligible)
+
+    def forget_wants_list(self) -> None:
+        """The account signed out or changed: the next sync looks the wants list up on the lists page."""
+        with self._lock:
+            self._wants_list = None
 
     def close(self) -> None:
         """The app is closing: end a running scan or cart run at its next step. The app destroys the windows
@@ -632,11 +642,14 @@ class BuyService:
                 languages=filters.language.cardmarket_ids,
                 min_condition=filters.min_condition,
                 foil=filters.foil,
+                list_id=self._remembered_wants_list(run.user),
                 cancel=run.cancel,
                 on_progress=wants_progress,
             )
         except (WantsCancelled, Cancelled) as error:
             raise _Ended(Phase.CANCELLED, "Scan cancelled.") from error
+        with self._lock:
+            self._wants_list = (run.user.casefold(), wants.list_id)
         log.info(
             "buy: wants list %d holds %d wants; %d unmatched, %d quantity mismatches",
             wants.list_id,
@@ -667,6 +680,11 @@ class BuyService:
             len(found.no_buyable),
         )
         return wants, found
+
+    def _remembered_wants_list(self, user: str) -> int | None:
+        with self._lock:
+            remembered = self._wants_list
+        return remembered[1] if remembered is not None and remembered[0] == user.casefold() else None
 
     def _solve(self, run: _Run, found: ScanResult, eligible: Eligible) -> CurveResult:
         self._progress(Phase.SOLVING, "Finding the cheapest packages")

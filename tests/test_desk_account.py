@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from commander import desk as desk_module
+from commander.buy import BuyService
 from commander.carddb import CARD_DB_FILE
 from commander.config import read_config
 from commander.credentials import CardmarketSessionStore, SessionCookie
@@ -133,6 +134,24 @@ def test_signing_out_removes_the_saved_cardmarket_session(env: Env) -> None:
     CardmarketSessionStore().put(SessionCookie("PHPSESSID", "xyz", ".cardmarket.com", "/"))
     desk.sign_out()
     assert CardmarketSessionStore().get() is None
+
+
+def test_signing_in_or_out_makes_the_buy_screen_forget_the_wants_list_it_remembered(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    forgot: list[str] = []
+
+    def forget(_service: BuyService) -> None:
+        forgot.append("forgot")
+
+    monkeypatch.setattr(BuyService, "forget_wants_list", forget)
+    desk = env.desk()
+
+    desk.sign_in("TESTER", PASSWORD)
+    assert forgot == ["forgot"]
+
+    desk.sign_out()
+    assert forgot == ["forgot", "forgot"]
 
 
 def test_signing_in_again_drops_the_shares_kept_for_the_last_account(

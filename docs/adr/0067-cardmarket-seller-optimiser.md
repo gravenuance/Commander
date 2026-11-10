@@ -109,19 +109,33 @@ the owner picks into their Cardmarket cart for them to check out by hand.
   - `show()` from the scan's thread activates the window, but its page had the keyboard focus only four runs
     in five, so the WebView2 control is given the focus after each show.
   - Only 100% display scaling on one monitor was tried.
-- **The wants list.** The app creates or refills a list named for the purpose, imports the Don't Have text,
-  then sets the owner's language and minimum condition through the bulk form, one quantity group at a time so
-  quantities survive. It only ever changes that list. A list that already holds exactly the wanted cards and
-  quantities, at exactly the asked language and condition and with no other limit (any expansion, "Any" in
-  the foil, signed and altered columns, no buy price), is left as it is: two requests instead of about ten,
-  after the owner's first live run spent 65 s refilling an unchanged list. A foil choice always refills it,
-  since which of those columns is foil is not read.
+- **The wants list.** The app creates or updates a list named for the purpose and changes only what differs.
+  The wants of a wanted card are kept when they are all exactly as asked (the asked language and condition,
+  and no other limit: any expansion, "Any" in the foil, signed and altered columns, no buy price) and add up
+  to the wanted quantity. Every other want is deleted (ticked by id, then the list is read again and must
+  hold exactly the kept wants), and only the wanted cards without kept wants are imported as the Don't Have
+  text. The owner's language and minimum condition are set on the imported wants alone through the bulk form,
+  one quantity group at a time so quantities survive; the import is waited for until a want that was not
+  there before shows. It only ever changes that list. A list that is already right takes two requests
+  instead of about ten (the owner's first live run spent 65 s refilling an unchanged list), and a card added
+  to it costs its own import and edit, not a refill of the whole list (the owner's second run deleted and
+  imported a kept card again). A foil choice keeps nothing, since which of those columns is foil is not read.
+  An empty wanted list empties the list. The list's id never changes, so the app remembers the last one per
+  account, in memory only, and opens that list's page directly instead of the lists page (the owner's
+  two-card scan spent 44 s on the wants list). The page must still show that id and the list's name; when
+  it does not (the list was deleted or renamed, or the account is another), the sync looks the list up on the
+  lists page as before, and never changes a list whose id or name does not match. Signing out or switching
+  account forgets the id.
 - **The scan reads pages, one at a time, in a hidden window,** at least 4 seconds apart, never in parallel and
   never on a schedule. Pass 1 opens each wanted card's page with the owner's filters in the address and reads
   its cheapest offers (50, a setting). Pass 2 opens the wants-filtered stock page of the base sellers: those
   who carry the rarest cards (the fewest offers in pass 1), or the most of the wanted cards. It is skipped
   when it cannot add an offer: for a single wanted card (its base sellers were all found through it), or when
-  every card page showed all its offers (the owner's first live run spent 15 pages on one card). A sign-in
+  every card page showed all its offers (the owner's first live run spent 15 pages on one card). Within it, a
+  seller is opened only if it can add an offer: some card whose page had more offers than it showed must have
+  fewer copies from that seller in pass 1 (summed over its allowed offers) than are wanted. The other sellers
+  still count for the scarcity and coverage of the rest, but get no place, so the 15 places go to sellers worth
+  a page (the owner's two-card scan spent 15 seller pages, 95 s of its 2 min 20 s). A sign-in
   page or a challenge that does not pass by itself is handed to the owner (above); a page that does not read as
   expected stops the scan and says so. Neither is retried in a loop or worked around. The gap is counted from
   the end of the browser's last request, whichever step made it: the wants list sync and the scan share one

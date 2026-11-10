@@ -3,7 +3,8 @@
 Pass 1 opens one card page per wanted card, with the owner's language, condition, seller countries and (up to
 6 days) delivery time in the address, and reads its cheapest offers. Pass 2, given the wants list's id, opens
 the wants-filtered stock page of the base sellers (`choose_base_sellers`, from the offers the request's
-limits allow) and merges what it shows into the offers of pass 1.
+limits allow) and merges what it shows into the offers of pass 1. Only a seller that can add an offer is
+opened: one for whom a card with more offers than its page showed has fewer copies in pass 1 than are wanted.
 
 The scan only loads pages through a `Browser`, 4 to 6 seconds apart and never in parallel. It stops at the
 first page that is not the expected one (a challenge that stays, a sign-in page, markup the readers do not
@@ -18,6 +19,7 @@ import threading
 import time
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from fractions import Fraction
@@ -35,7 +37,7 @@ from commander.cmpages import (
 )
 from commander.cmsession import Browser, BrowserError, RequestPacer, pacer_for
 from commander.offerlimits import OfferLimits, apply_limits
-from commander.sellersolve import WantedCard, card_key, fold_marks
+from commander.sellersolve import WantedCard, card_key, fold_marks, merged_wants
 
 log = logging.getLogger(__name__)
 
@@ -187,7 +189,9 @@ class ScanResult:
     sellers_with_more_pages: tuple[str, ...]
 
 
-def choose_base_sellers(offers: Iterable[Offer], count: int) -> tuple[str, ...]:
+def choose_base_sellers(
+    offers: Iterable[Offer], count: int, only: AbstractSet[str] | None = None
+) -> tuple[str, ...]:
     """The sellers pass 2 opens, from the buyable offers pass 1 read. The rule:
 
     * A seller's coverage is the number of distinct wanted cards they offer; their scarcity is the sum, over
@@ -198,7 +202,8 @@ def choose_base_sellers(offers: Iterable[Offer], count: int) -> tuple[str, ...]:
     * Remaining ties go to the name in alphabetical order, so the choice is the same on every run.
 
     The result lists the rare-card sellers first, then the wide-coverage ones; fewer sellers than `count` give
-    all of them. Offers that are not buyable do not count.
+    all of them. Offers that are not buyable do not count. With `only`, just those sellers can take a place,
+    while every seller still counts toward the scarcity and coverage of the others.
     """
     sellers_of: dict[str, set[str]] = defaultdict(set)
     for offer in offers:
@@ -210,10 +215,11 @@ def choose_base_sellers(offers: Iterable[Offer], count: int) -> tuple[str, ...]:
         for seller in sellers:
             coverage[seller] += 1
             scarcity[seller] += Fraction(1, len(sellers))
+    candidates = [s for s in coverage if only is None or s in only]
     rare_places = (count + 1) // 2
-    by_scarcity = sorted(coverage, key=lambda s: (-scarcity[s], -coverage[s], s))
+    by_scarcity = sorted(candidates, key=lambda s: (-scarcity[s], -coverage[s], s))
     rare = by_scarcity[:rare_places]
-    wide = sorted((s for s in coverage if s not in rare), key=lambda s: (-coverage[s], -scarcity[s], s))
+    wide = sorted((s for s in candidates if s not in rare), key=lambda s: (-coverage[s], -scarcity[s], s))
     return tuple(rare + wide[: count - len(rare)])
 
 
@@ -359,9 +365,26 @@ class _Scan:
             return False
         return True
 
+    def _sellers_worth_opening(self, eligible: Iterable[Offer]) -> set[str]:
+        """The sellers whose stock page can add an offer: those for whom some card with more offers than its
+        page showed has fewer copies among the eligible offers pass 1 read than are wanted."""
+        wanted = merged_wants(self._request.wanted)
+        more = {card_key(name) for name in self._cards_with_more}
+        shown: Counter[tuple[str, str]] = Counter()
+        sellers: set[str] = set()
+        for offer in eligible:
+            sellers.add(offer.seller)
+            shown[offer.seller, card_key(offer.card)] += offer.quantity
+        return {s for s in sellers if any(shown[s, key] < wanted[key].quantity for key in more)}
+
     def _pass_two(self, wants_list_id: int) -> None:
         eligible = apply_limits(self._offers.values(), self._request.limits)
-        self._base = choose_base_sellers(eligible.offers, self._request.base_sellers)
+        worth = self._sellers_worth_opening(eligible.offers)
+        seen = {o.seller for o in eligible.offers}
+        log.info(
+            "scan: passed over %d of %d sellers, whose stock pass 1 showed", len(seen - worth), len(seen)
+        )
+        self._base = choose_base_sellers(eligible.offers, self._request.base_sellers, only=worth)
         self._planned = self._pages + len(self._base)
         for seller in self._base:
             html = self._load(seller_page_url(seller, wants_list_id), ScanStage.SELLERS, seller)

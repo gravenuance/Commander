@@ -140,6 +140,7 @@ def run(
     cancel: threading.Event | None = None,
     on_load: Callable[[str], None] | None = None,
     sleep: Callable[[float], object] | None = None,
+    copies: int | Mapping[str, int] = 1,
 ) -> tuple[ScanResult, FakeBrowser, Gaps, list[ScanProgress]]:
     events: list[str] = []
     browser = FakeBrowser(pages, events)
@@ -148,7 +149,7 @@ def run(
     gaps = Gaps(events)
     progress: list[ScanProgress] = []
     request = ScanRequest(
-        [WantedCard(name, 1) for name in wanted],
+        [WantedCard(name, copies if isinstance(copies, int) else copies[name]) for name in wanted],
         filters or ScanFilters(),
         wants_list_id=wants_list_id,
         base_sellers=base_sellers,
@@ -657,10 +658,19 @@ class TestBaseSellers:
     def test_no_offers_choose_no_sellers(self) -> None:
         assert choose_base_sellers([], 5) == ()
 
+    def test_the_places_go_only_to_the_sellers_allowed_in_the_same_order(self) -> None:
+        # Without the limit: S1 S4 S2. S1 is left out, yet still makes A and B common, so S2 stays below S4.
+        assert choose_base_sellers(MARKET, 3, only={"S2", "S3", "S4"}) == ("S4", "S2", "S3")
+        assert choose_base_sellers(MARKET, 2, only={"S2", "S3"}) == ("S2", "S3")
+
+    def test_a_seller_allowed_but_without_offers_is_not_chosen(self) -> None:
+        assert choose_base_sellers(MARKET, 10, only={"S3", "Nobody"}) == ("S3",)
+
 
 class TestPassTwo:
     """Wanted: Sylvan Safekeeper (fixture sellers 01-05 and 07 can be bought from) and Kirk, whose page shares
-    only Seller01 with it. Seller01 carries both: scarcity 1/6 + 1/6, against 1/6 for every other seller."""
+    only Seller01 with it. Seller01 carries both: scarcity 1/6 + 1/6, against 1/6 for every other seller. Two
+    copies of each are wanted and every page shows one, so every seller is worth opening."""
 
     # Kirk's page: the fixture's, renamed. Seller01's article takes the id the seller's stock page lists for
     # a Kirk of its own, and the others move up by one.
@@ -681,7 +691,7 @@ class TestPassTwo:
     def run_both(
         self, pages: Mapping[str, str | Exception] | None = None
     ) -> tuple[ScanResult, FakeBrowser, Gaps, list[ScanProgress]]:
-        return run(pages or self.pages(), [SYLVAN, KIRK], wants_list_id=999, base_sellers=1)
+        return run(pages or self.pages(), [SYLVAN, KIRK], wants_list_id=999, base_sellers=1, copies=2)
 
     def test_the_base_sellers_wanted_stock_is_read_after_the_cards(self) -> None:
         result, browser, _, _ = self.run_both()
@@ -784,7 +794,13 @@ class TestPassTwo:
                 cancel.set()
 
         result, browser, _, _ = run(
-            self.pages(), [SYLVAN, KIRK], wants_list_id=999, base_sellers=1, cancel=cancel, on_load=on_load
+            self.pages(),
+            [SYLVAN, KIRK],
+            wants_list_id=999,
+            base_sellers=1,
+            cancel=cancel,
+            on_load=on_load,
+            copies=2,
         )
 
         assert result.status is ScanStatus.CANCELLED
@@ -817,13 +833,114 @@ class TestPassTwo:
         assert result.not_found == (SYLVAN,)
 
 
+def seller_url(seller: str) -> str:
+    return f"{USERS}/{seller}/Offers/Singles?idWantslist=999"
+
+
+class TestSellersWorthOpening:
+    """Pass 1 reads the fixture page for Sylvan Safekeeper (one copy a seller; Seller01-05 and 07 can be
+    bought from; "Show more results" offered) and a Kirk page. Only a seller pass 1 showed fewer copies of a
+    card with more offers than are wanted can add an offer, so only that seller's stock page is opened."""
+
+    SELLERS = ("Seller01", "Seller02", "Seller03", "Seller04", "Seller05", "Seller07")
+    # Kirk's sellers besides Seller01 that can be bought from (K06 cannot).
+    K_SELLERS = ("K02", "K03", "K04", "K05", "K07")
+
+    def kirk(self, *, renamed: bool = True, shown_all: bool = False) -> str:
+        """Kirk's page: shares only Seller01 with the Sylvan's, or (not renamed) all its sellers; may show
+        every offer."""
+        sellers = other_sellers("K") if renamed else None
+        html = card_page(KIRK, sellers=sellers, ids=shifted_ids())
+        return all_shown(html) if shown_all else html
+
+    def pages(self, kirk: str, sylvan: str | None = None) -> dict[str, str | Exception]:
+        """Both card pages, and an empty stock page for every seller a card page names."""
+        pages: dict[str, str | Exception] = {
+            SYLVAN_URL: sylvan if sylvan is not None else fixture(CARD_PAGE),
+            KIRK_URL: kirk,
+        }
+        pages.update({seller_url(s): fixture(EMPTY_SELLER_PAGE) for s in (*self.SELLERS, *self.K_SELLERS)})
+        return pages
+
+    def test_a_seller_showing_every_card_with_more_offers_at_the_wanted_copies_is_not_opened(self) -> None:
+        # Seller01 offers both cards once, as many as wanted; every other seller is missing one of them.
+        # Seller01 would lead the choice (scarcity 1/6 + 1/6, the others 1/6) if it were a candidate.
+        pages = self.pages(self.kirk())
+
+        result, browser, _, _ = run(pages, [SYLVAN, KIRK], wants_list_id=999, base_sellers=2)
+
+        assert result.base_sellers == ("K02", "K03")
+        assert browser.loaded == [SYLVAN_URL, KIRK_URL, seller_url("K02"), seller_url("K03")]
+
+    def test_every_other_seller_is_opened_in_the_existing_order_when_the_places_allow(self) -> None:
+        # Scarcity ties at 1/6 (one of six sellers of a card) and so does coverage: the names decide.
+        result, _, _, _ = run(self.pages(self.kirk()), [SYLVAN, KIRK], wants_list_id=999)
+
+        others = ("Seller02", "Seller03", "Seller04", "Seller05", "Seller07")
+        assert result.base_sellers == (*self.K_SELLERS, *others)
+
+    def test_a_seller_with_one_copy_of_a_card_wanted_twice_is_opened(self) -> None:
+        # Every seller carries both cards once; Kirk's page shows them all, Sylvan's has more.
+        pages = self.pages(self.kirk(renamed=False, shown_all=True))
+
+        result, browser, _, _ = run(
+            pages, [SYLVAN, KIRK], wants_list_id=999, base_sellers=1, copies={SYLVAN: 2, KIRK: 1}
+        )
+
+        assert result.base_sellers == ("Seller01",)
+        assert browser.loaded == [SYLVAN_URL, KIRK_URL, seller_url("Seller01")]
+
+    def test_a_seller_with_the_wanted_copy_of_each_card_is_not_opened_and_no_page_is_wasted(self) -> None:
+        pages = self.pages(self.kirk(renamed=False, shown_all=True))
+
+        result, browser, _, _ = run(pages, [SYLVAN, KIRK], wants_list_id=999, base_sellers=1)
+
+        assert result.base_sellers == ()
+        assert browser.loaded == [SYLVAN_URL, KIRK_URL]
+        assert result.status is ScanStatus.COMPLETE
+
+    def test_a_card_without_more_offers_makes_no_seller_worth_opening_for_it(self) -> None:
+        # Seller02-07 lack Kirk, whose page showed every offer, so they are not opened for it; only the Kirk
+        # sellers lack the Sylvan, which has more.
+        result, browser, _, _ = run(self.pages(self.kirk(shown_all=True)), [SYLVAN, KIRK], wants_list_id=999)
+
+        assert result.base_sellers == self.K_SELLERS
+        assert browser.loaded[2:] == [seller_url(s) for s in self.K_SELLERS]
+
+    def test_the_copies_of_one_seller_on_a_page_add_up(self) -> None:
+        # Seller02's article is Seller01's too, so Seller01 shows two Sylvans, as many as are wanted.
+        sylvan = card_page(SYLVAN, sellers={"Seller02": "Seller01"})
+        pages = self.pages(self.kirk(shown_all=True), sylvan)
+
+        result, browser, _, _ = run(
+            pages, [SYLVAN, KIRK], wants_list_id=999, base_sellers=1, copies={SYLVAN: 2, KIRK: 1}
+        )
+
+        assert result.base_sellers == ("Seller03",)
+        assert seller_url("Seller01") not in browser.loaded
+
+    def test_a_card_wanted_twice_in_the_list_counts_its_summed_copies(self) -> None:
+        # Two wants of the Sylvan make two copies wanted: Seller01 with one is opened, as for one want of two.
+        pages = self.pages(self.kirk(renamed=False, shown_all=True))
+        request = ScanRequest(
+            [WantedCard(SYLVAN, 1), WantedCard(SYLVAN, 1), WantedCard(KIRK, 1)],
+            wants_list_id=999,
+            base_sellers=1,
+        )
+
+        result = scan(FakeBrowser(pages), request, sleep=lambda _: None, clock=lambda: 0.0)
+
+        assert result.base_sellers == ("Seller01",)
+
+
 class TestBaseSellersUnderLimits:
     """One wanted card, so every seller of the fixture page ties on scarcity and coverage and the first by
     name is the base seller: Seller01 (Italy, 16 days). The others arrive in 11 (Seller02, Hungary), 16
     (Seller03, Croatia), 6 (Seller04, Sweden), 12 (Seller05, Belgium) and 9 days (Seller07, Spain); Seller06
     cannot be bought from. The page's route averages to Sweden are 14, 7, 8, 4, 7 and 7 days for Italy,
     Hungary, Croatia, Sweden, Belgium and Spain. A second wanted card, which Cardmarket has no page for, makes
-    the seller pass worth running without adding any seller."""
+    the seller pass worth running without adding any seller. Two copies are wanted of each card and the page
+    shows one of each seller's, so every seller is worth opening."""
 
     OTHER = "Card B"
 
@@ -839,7 +956,13 @@ class TestBaseSellersUnderLimits:
     ) -> tuple[ScanResult, FakeBrowser]:
         pages = {**pages, card_page_url(self.OTHER, filters): NOT_FOUND}
         result, browser, _, _ = run(
-            pages, [SYLVAN, self.OTHER], wants_list_id=999, base_sellers=1, filters=filters, limits=limits
+            pages,
+            [SYLVAN, self.OTHER],
+            wants_list_id=999,
+            base_sellers=1,
+            filters=filters,
+            limits=limits,
+            copies=2,
         )
         # The other card's page is read second; the asserts below look at the rest.
         assert browser.loaded[1] == card_page_url(self.OTHER, filters)

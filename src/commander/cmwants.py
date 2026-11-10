@@ -1,13 +1,15 @@
 """Keeps the app's own wants list on Cardmarket equal to the cards to buy (ADR 0067).
 
-`sync_wants` finds or creates the list named `APP_LIST_NAME` and, unless it already holds exactly the
-wanted cards at the asked language and condition (it is then left as it is), empties it, imports the cards
-as the text `cmdr toget --cardmarket` prints, and sets the owner's language and minimum condition on the
-imported wants one quantity group at a time, because the bulk form overwrites each ticked want's quantity
-with its one amount field. It reads the list back to check the result. It only ever acts on the list it
-found or created, and checks that list's id and name on the page before emptying it. It pages like the scan:
-one request at a time, 4 to 6 seconds apart. A page that is not the expected one stops it with a `PageError`
-or `BrowserError`.
+`sync_wants` finds or creates the list named `APP_LIST_NAME`, or opens it by the id of an earlier sync when
+its page is still that list, and changes only what differs. The wants of a wanted card are kept when they
+are all exactly as asked (the asked language and condition, no other limit) and add up to the wanted
+quantity; every other want is deleted, and only the wanted cards without kept wants are imported, as the text
+`cmdr toget --cardmarket` prints. The owner's language and minimum condition are set on the imported wants
+alone, one quantity group at a time, because the bulk form overwrites each ticked want's quantity with its
+one amount field. A list that is already right takes two requests, one with the remembered id. The list is
+read back to check the result. It only ever acts on the list it found, created or was given, and checks that
+list's id and name on the page before deleting from it. It pages like the scan: one request at a time, 4 to
+6 seconds apart. A page that is not the expected one stops it with a `PageError` or `BrowserError`.
 """
 
 from __future__ import annotations
@@ -134,6 +136,7 @@ class _Sync:
         languages: tuple[int, ...],
         min_condition: Condition | None,
         foil: Foil,
+        list_hint: int | None,
         cancel: threading.Event,
         on_progress: Callable[[WantsProgress], None],
         sleep: Callable[[float], object],
@@ -148,6 +151,7 @@ class _Sync:
         self._languages = languages
         self._min_condition = min_condition
         self._foil = foil
+        self._list_hint = list_hint
         self._cancel = cancel
         self._on_progress = on_progress
         self._sleep = sleep
@@ -156,20 +160,29 @@ class _Sync:
         self._pacer = pacer
 
     def run(self) -> WantsSync:
-        list_id = self._find_or_create_list()
-        current = self._open_list(list_id, WantsStep.LISTS)
-        if self._wanted and self._holds_exactly(current):
-            # Emptying, importing and editing again would give the same list, at about ten paced requests.
-            log.info("the wants list already holds the %d cards as asked; left as it is", len(self._wanted))
-            return self._report(current)
-        if current.wants:
-            self._empty(current)
+        current = self._open_app_list()
+        list_id = current.list_id
         if not self._wanted:
+            if current.wants:
+                self._empty(current)
             return WantsSync(list_id, (), (), ())
-        current = self._import(list_id)
-        if self._languages or self._min_condition is not None or self._foil is not Foil.ANY:
-            current = self._edit(current)
-            self._check_filters(current)
+        kept = self._kept(current)
+        kept_ids = {want.want_id for want in kept}
+        stale = [want for want in current.wants if want.want_id not in kept_ids]
+        kept_cards = {card_key(want.card) for want in kept}
+        missing = [want for key, want in self._wanted.items() if key not in kept_cards]
+        log.info(
+            "the wants list: keeping %d wants, deleting %d, importing %d cards",
+            len(kept),
+            len(stale),
+            len(missing),
+        )
+        if stale:
+            current = self._delete(current, stale, kept_ids)
+        if missing:
+            current = self._import(list_id, missing, kept_ids)
+            current = self._edit(current, kept_ids)
+        self._check_filters(current)
         return self._report(current)
 
     # --- pacing ---------------------------------------------------------------------------------------
@@ -218,6 +231,17 @@ class _Sync:
 
     # --- the list -------------------------------------------------------------------------------------
 
+    def _open_app_list(self) -> WantsList:
+        """The app's list, opened by the id remembered from an earlier sync when its page is still that list
+        (id and name), else found on the lists page, or created."""
+        hint = self._list_hint
+        if hint is not None:
+            try:
+                return self._open_list(hint, WantsStep.LISTS)
+            except PageError as error:
+                log.info("list %d is no longer the app's wants list (%s); looking it up", hint, error)
+        return self._open_list(self._find_or_create_list(), WantsStep.LISTS)
+
     def _find_or_create_list(self) -> int:
         page = self._load(WANTS_URL, WantsStep.LISTS, "wants lists")
         found = self._named_list(read_wants_lists(page))
@@ -258,18 +282,36 @@ class _Sync:
         if left:
             raise WantsError(f"the list still holds {len(left)} wants after deleting them")
 
-    def _holds_exactly(self, current: WantsList) -> bool:
-        """Whether the list is what the sync would make of it: the wanted cards at their quantities, each
-        want at exactly the language and condition asked for (the import's any and Poor when none is) and
-        with no other limit. A foil choice is never taken as kept: which yes/no column is foil is not
-        read."""
+    def _delete(self, current: WantsList, stale: Sequence[Want], kept_ids: set[str]) -> WantsList:
+        """Delete exactly the `stale` wants and read the list again; it must then hold the kept wants."""
+        ids = [want.want_id for want in stale]
+        self._tick(tick_wants_script(ids), len(ids), "deleting the wants that differ")
+        self._submit(submit_script(_DELETE_SELECTED), WantsStep.EMPTY, f"deleting {len(ids)} wants")
+        left = self._open_list(current.list_id, WantsStep.EMPTY)
+        left_ids = {want.want_id for want in left.wants}
+        if extra := left_ids - kept_ids:
+            raise WantsError(f"the list still holds {len(extra)} wants after deleting them")
+        if gone := kept_ids - left_ids:
+            raise WantsError(f"{len(gone)} kept wants are gone after deleting the others")
+        return left
+
+    def _kept(self, current: WantsList) -> tuple[Want, ...]:
+        """The wants to leave alone: those of each wanted card whose wants are all exactly as asked (the
+        language and condition asked for, the import's any and Poor when none is, and no other limit) and add
+        up to the wanted quantity. A foil choice keeps nothing: which yes/no column is foil is not read."""
         if self._foil is not Foil.ANY:
-            return False
-        got: dict[str, int] = defaultdict(int)
+            return ()
+        by_card: dict[str, list[Want]] = defaultdict(list)
         for want in current.wants:
-            got[card_key(want.card)] += want.quantity
-        wanted = {key: want.quantity for key, want in self._wanted.items()}
-        return got == wanted and all(self._exactly_as_asked(want) for want in current.wants)
+            by_card[card_key(want.card)].append(want)
+        kept_keys = {
+            key
+            for key, wants in by_card.items()
+            if key in self._wanted
+            and sum(want.quantity for want in wants) == self._wanted[key].quantity
+            and all(self._exactly_as_asked(want) for want in wants)
+        }
+        return tuple(want for want in current.wants if card_key(want.card) in kept_keys)
 
     def _exactly_as_asked(self, want: Want) -> bool:
         condition = self._min_condition if self._min_condition is not None else Condition.PO
@@ -278,37 +320,42 @@ class _Sync:
 
     # --- the import -----------------------------------------------------------------------------------
 
-    def _import(self, list_id: int) -> WantsList:
+    def _import(self, list_id: int, cards: Sequence[WantedCard], before_ids: set[str]) -> WantsList:
+        """Import `cards` into the list, which holds the wants `before_ids`, and read it back."""
         self._load(f"{_list_url(list_id)}/AddDeckList", WantsStep.IMPORT, "import form")
-        self._act(set_field_script(_IMPORT_TEXT, wants_text(list(self._wanted.values()))), "the import text")
-        self._begin_request(WantsStep.IMPORT, f"{len(self._wanted)} cards")
+        self._act(set_field_script(_IMPORT_TEXT, wants_text(cards)), "the import text")
+        self._begin_request(WantsStep.IMPORT, f"{len(cards)} cards")
         try:
             answer = self._browser.act(submit_script(_IMPORT_SUBMIT))
         finally:
             self._pacer.mark()
         if answer != SUBMITTED:
             raise WantsError(f"importing the cards: {answer}")
-        return self._read_imported(list_id)
+        return self._read_imported(list_id, before_ids)
 
-    def _read_imported(self, list_id: int) -> WantsList:
+    def _read_imported(self, list_id: int, before_ids: set[str]) -> WantsList:
         """The list once the import shows on it. The import is an ajax post with no page to wait for, so the
-        list is read again, each time a gap later, until it holds wants."""
+        list is read again, each time a gap later, until it holds a want it did not hold before."""
         current = self._open_list(list_id, WantsStep.IMPORT)
         for _ in range(IMPORT_READS - 1):
-            if current.wants:
+            if _new_wants(current, before_ids):
                 return current
             log.info("the import has not shown on the list yet")
             current = self._open_list(list_id, WantsStep.IMPORT)
-        if not current.wants:
-            log.warning("the list is empty %d reads after the import", IMPORT_READS)
+        if not _new_wants(current, before_ids):
+            log.warning("no new wants on the list %d reads after the import", IMPORT_READS)
         return current
 
     # --- the language and condition ---------------------------------------------------------------------
 
-    def _edit(self, current: WantsList) -> WantsList:
-        """Set the language and condition on every want, one quantity group a bulk edit."""
+    def _edit(self, current: WantsList, kept_ids: set[str]) -> WantsList:
+        """Set the language and condition on the wants that are not kept, one quantity group a bulk edit,
+        and read the list again. Nothing is sent when no filter is asked."""
+        fresh = _new_wants(current, kept_ids)
+        if not fresh or not self._filters_asked():
+            return current
         groups: dict[int, list[str]] = defaultdict(list)
-        for want in current.wants:
+        for want in fresh:
             groups[want.quantity].append(want.want_id)
         list_id = current.list_id
         for index, quantity in enumerate(sorted(groups)):
@@ -327,6 +374,9 @@ class _Sync:
                 self._act(set_field_script(_EDIT_FOIL, self._foil.code), what)
             self._submit(submit_script(_EDIT_SUBMIT), WantsStep.EDIT, f"quantity {quantity}")
         return self._open_list(list_id, WantsStep.VERIFY)
+
+    def _filters_asked(self) -> bool:
+        return bool(self._languages) or self._min_condition is not None or self._foil is not Foil.ANY
 
     def _check_filters(self, current: WantsList) -> None:
         """Every want must carry the language and condition asked for; a list that does not would hide the
@@ -363,6 +413,10 @@ class _Sync:
         return WantsSync(current.list_id, current.wants, tuple(unmatched), tuple(mismatched))
 
 
+def _new_wants(current: WantsList, before_ids: set[str]) -> tuple[Want, ...]:
+    return tuple(want for want in current.wants if want.want_id not in before_ids)
+
+
 def _condition_id(condition: Condition) -> int:
     """Cardmarket numbers the conditions from 1 (Mint) to 7 (Poor)."""
     return list(Condition).index(condition) + 1
@@ -375,6 +429,7 @@ def sync_wants(
     languages: tuple[int, ...],
     min_condition: Condition | None,
     foil: Foil = Foil.ANY,
+    list_id: int | None = None,
     cancel: threading.Event | None = None,
     on_progress: Callable[[WantsProgress], None] | None = None,
     sleep: Callable[[float], object] | None = None,
@@ -384,6 +439,10 @@ def sync_wants(
     """Make the app's wants list hold exactly `wanted`, at `languages` (Cardmarket's ids, none for any),
     `min_condition` (None for the import's Poor) and `foil` (any leaves the import's blank field), when any
     is given, and read it back.
+
+    `list_id` is the id this function returned before: its page is opened directly, skipping the lists page,
+    and when that page is not the app's list (another id or name, or no wants list at all) the list is looked
+    up as without the hint. The list is never changed unless its page shows that id and `APP_LIST_NAME`.
 
     Raises `WantsCancelled` when `cancel` is set between two steps, `WantsError` (a `PageError`) when the list
     or a page is not as expected, and the browser's own errors. `sleep` waits out the gap between requests;
@@ -398,6 +457,7 @@ def sync_wants(
         languages=languages,
         min_condition=min_condition,
         foil=foil,
+        list_hint=list_id,
         cancel=stop,
         on_progress=on_progress if on_progress is not None else _ignore,
         sleep=sleep if sleep is not None else stop.wait,
