@@ -198,7 +198,7 @@ class TestNothingToBuy:
           scanOff: $("buy-scan").disabled, tip: $("buy-scan").title, summary: $("buy-summary").textContent };
         """)
         assert seen == {
-            "text": "No Don't Have cards to buy.",
+            "text": "No “Don't Have” cards to buy.",
             "shown": True,
             "cards": True,
             "scanOff": True,

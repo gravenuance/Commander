@@ -174,7 +174,7 @@ function paintBuy() {
     : "";
   $("buy-cards-block").hidden = view.decks.length === 0;
   $("buy-empty").hidden = view.copies > 0;
-  $("buy-empty-text").textContent = view.decks.length ? "Tick a deck to scan." : "No Don't Have cards to buy.";
+  $("buy-empty-text").textContent = view.decks.length ? "Tick a deck to scan." : "No “Don't Have” cards to buy.";
   paintBuyStatus(view.status);
 }
 

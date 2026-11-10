@@ -283,7 +283,7 @@ async function copyCardsToBuy() {
     const answer = await api("cardmarket_wants");
     const skipped = answer.skipped.length ? `; labels unknown for ${answer.skipped.join(", ")}` : "";
     if (!answer.cards) {
-      showStatus(`No Don't Have cards to copy${skipped}`);
+      showStatus(`No “Don't Have” cards to copy${skipped}`);
       return;
     }
     await copyText(answer.text);

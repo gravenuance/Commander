@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+- The app's "nothing to buy" and "nothing to copy" messages put “Don't Have” in quotes, so it reads as the
+  label's name.
+
 ## 1.9.0 - 2026-11-10
 
 ### Added
