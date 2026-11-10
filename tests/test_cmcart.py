@@ -32,11 +32,20 @@ from commander.cmcart import (
 )
 from commander.cmpages import PageError
 from commander.cmscan import MAX_GAP_S, MIN_GAP_S
-from commander.cmsession import LOAD_TIMEOUT_S, BrowserError, Cancelled, FormBrowser, LoadTimeout
+from commander.cmsession import (
+    LOAD_TIMEOUT_S,
+    BrowserError,
+    Cancelled,
+    FormBrowser,
+    LoadTimeout,
+    SessionBrowser,
+)
 from commander.cmshipping import ShippingQuote
 from commander.cmwants import WANTS_URL
+from commander.credentials import SessionCookie
 from commander.sellersolve import Package, Pick, Shipment
 from conftest import FIXTURES
+from test_cmsession import FakeStore
 from test_sellersolve import offer
 
 if TYPE_CHECKING:
@@ -251,7 +260,7 @@ class FakeCartPage:
     def close(self) -> None:
         self.closed = True
 
-    def load(self, url: str) -> str:
+    def load(self, url: str, *, cancellable: bool = True) -> str:  # noqa: ARG002 - the protocol's parameter
         assert url in (CART_URL, WANTS_URL)
         self._loads += 1
         self.page = url
@@ -308,6 +317,43 @@ class FakeCartPage:
             seller = CartSeller(offer.seller, 100 + len(self.cart), method=method, shipping_cents=cents)
             self.cart.append(seller)
         seller.rows.append(CartRow(article, offer.card, copies))
+
+
+class SlowCartWindow:
+    """A window showing `FakeCartPage`, whose load event comes only on the second wait of a load, so a page
+    takes more than one load slice, as a real one can."""
+
+    def __init__(self, page: FakeCartPage) -> None:
+        self.page = page
+        self.html = ""
+        self.waits = 0
+
+    def navigate(self, url: str) -> bool:
+        self.html = self.page.load(url)
+        self.waits = 0
+        return True
+
+    def wait_loaded(self, timeout_s: float) -> bool:  # noqa: ARG002 - the protocol's name
+        self.waits += 1
+        return self.waits >= 2
+
+    def read_html(self, timeout_s: float) -> str | None:  # noqa: ARG002 - the protocol's name
+        return self.html
+
+    def run_script(self, script: str, timeout_s: float) -> str | None:  # noqa: ARG002 - the protocol's name
+        return self.page.act(script)
+
+    def begin_navigation(self) -> None:
+        self.waits = 0
+
+    def read_session_cookie(self) -> SessionCookie | None:
+        return None
+
+    def add_session_cookie(self, cookie: SessionCookie) -> None:
+        raise AssertionError(f"no session is restored in this test: {cookie}")
+
+    def close(self) -> None:
+        self.page.close()
 
 
 class Gaps:
@@ -764,6 +810,31 @@ class TestStopping:
 
         assert result.status is CartStatus.COMPLETE
         assert cancel.waits == [4.5, 4.5, 4.5]
+
+    def test_after_a_cancel_the_cart_is_read_back_through_a_slow_load_and_after_its_gap(self) -> None:
+        picks = [pick("Arcane Signet", "A"), pick("Mind Stone", "B")]
+        page = FakeCartPage(picks)
+        cancel = WaitRecorder()
+        page.on_event = lambda event: cancel.set() if event.startswith("send") else None
+        after_cancel: list[float] = []
+        browser = SessionBrowser(SlowCartWindow(page), FakeStore(), cancel=cancel.is_set)
+
+        result = add_to_cart(
+            browser,
+            package(*picks),
+            cancel=cancel,
+            uniform=Gaps(page).uniform,
+            after_cancel_sleep=after_cancel.append,
+        )
+
+        assert result.status is CartStatus.CANCELLED
+        assert result.reason == ""
+        assert [(item.outcome, item.in_cart) for item in result.items] == [
+            (CartOutcome.ADDED, 1),
+            (CartOutcome.NOT_SENT, 0),
+        ]
+        assert after_cancel == [4.5]
+        assert page.events[-1] == "load"
 
     def test_a_page_without_the_token_stops_before_sending_and_still_reads_the_cart(self) -> None:
         picks = [pick("Mind Stone", "B")]

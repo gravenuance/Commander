@@ -153,7 +153,7 @@ class FakeSite:
 
     # --- pages ----------------------------------------------------------------------------------------
 
-    def load(self, url: str) -> str:
+    def load(self, url: str, *, cancellable: bool = True) -> str:  # noqa: ARG002 - the protocol's parameter
         self.loaded.append(url)
         self.record(f"load {url.removeprefix(LISTS_URL)}")
         if url in self.failures:

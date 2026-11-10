@@ -111,8 +111,9 @@ class Handover(Protocol):
 
 
 class Browser(Protocol):
-    def load(self, url: str) -> str:
-        """Open `url` and return the page's HTML once it has loaded and any challenge has passed."""
+    def load(self, url: str, *, cancellable: bool = True) -> str:
+        """Open `url` and return the page's HTML once it has loaded and any challenge has passed. With
+        `cancellable` False a cancel is not heard while the page loads or a check is waited out."""
         ...
 
     def close(self) -> None: ...
@@ -257,15 +258,17 @@ class SessionBrowser:
     def restore_session(self) -> bool:
         return self._keeper.restore()
 
-    def load(self, url: str) -> str:
+    def load(self, url: str, *, cancellable: bool = True) -> str:
+        """The page at `url`. A page that is not `cancellable` is loaded and waited out as if no cancel had
+        been asked, within the same time limits; only a handover to the owner still ends on a cancel."""
         if not on_cardmarket(url):
             raise ValueError(f"not a Cardmarket address: {url}")
         while True:
             if not self._driver.navigate(url):
                 raise LoadTimeout(f"the window did not start loading {url}")
-            if not self._wait_loaded(LOAD_TIMEOUT_S, url):
+            if not self._wait_loaded(LOAD_TIMEOUT_S, url, cancellable=cancellable):
                 raise LoadTimeout(f"{url} did not finish loading within {LOAD_TIMEOUT_S:.0f} s")
-            html = self._settled_page(url)
+            html = self._settled_page(url, cancellable=cancellable)
             if html is not None:
                 return html
 
@@ -274,11 +277,11 @@ class SessionBrowser:
             return True
         return self._handover is not None and self._handover.cancelled()
 
-    def _check_cancel(self, where: str) -> None:
-        if self._cancelled():
+    def _check_cancel(self, where: str, *, cancellable: bool = True) -> None:
+        if cancellable and self._cancelled():
             raise Cancelled(f"cancelled while {where} was loading")
 
-    def _wait_loaded(self, timeout_s: float, where: str) -> bool:
+    def _wait_loaded(self, timeout_s: float, where: str, *, cancellable: bool = True) -> bool:
         """True once the page has loaded. Waits in slices, hearing a cancel between them."""
         waited = 0.0
         while waited < timeout_s:
@@ -286,7 +289,7 @@ class SessionBrowser:
             if self._driver.wait_loaded(slice_s):
                 return True
             waited += slice_s
-            self._check_cancel(where)
+            self._check_cancel(where, cancellable=cancellable)
         return False
 
     def act(self, script: str) -> str:
@@ -311,10 +314,10 @@ class SessionBrowser:
             raise Interrupted("a sign-in or check came after the submit; the step must be done again")
         return page
 
-    def _settled_page(self, where: str) -> str | None:
+    def _settled_page(self, where: str, *, cancellable: bool = True) -> str | None:
         """The loaded page's HTML once any challenge has passed; None after the owner was handed the window
         (the page is then another one). Without a handover a sign-in page raises."""
-        html = self._wait_out_challenge(where)
+        html = self._wait_out_challenge(where, cancellable=cancellable)
         state = page_state(html)
         if state is PageState.SIGNED_IN:
             self._keeper.save()
@@ -328,7 +331,7 @@ class SessionBrowser:
             return None
         return html
 
-    def _wait_out_challenge(self, url: str) -> str:
+    def _wait_out_challenge(self, url: str, *, cancellable: bool = True) -> str:
         """The page's HTML once it is not Cloudflare's check, polling each second. A check still up after the
         wait is returned for the handover, or fails the page when there is none."""
         self_wait = CHALLENGE_WAIT_S if self._handover is None else CHALLENGE_SELF_S
@@ -344,7 +347,7 @@ class SessionBrowser:
                 return html
             log.info("waiting for %s: %s", url, "no answer yet" if html is None else "Cloudflare's check")
             self._sleep(CHALLENGE_POLL_S)
-            self._check_cancel(url)
+            self._check_cancel(url, cancellable=cancellable)
             html = self._driver.read_html(CALL_TIMEOUT_S)
         return html
 

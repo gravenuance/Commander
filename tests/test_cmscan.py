@@ -93,7 +93,7 @@ class FakeBrowser:
         self.on_load: Callable[[str], None] = lambda _: None
         self.closed = False
 
-    def load(self, url: str) -> str:
+    def load(self, url: str, *, cancellable: bool = True) -> str:  # noqa: ARG002 - the protocol's parameter
         self.loaded.append(url)
         self.events.append(f"load {url}")
         self.on_load(url)

@@ -512,6 +512,45 @@ class TestCancel:
         assert browser_of(FakeDriver([CHALLENGE, NEUTRAL])).load(URL) == NEUTRAL
 
 
+class TestLoadingPastACancel:
+    """A load that is not cancellable still has its time limit, and a handover still ends on a cancel."""
+
+    def test_a_slow_load_and_a_check_finish_though_a_cancel_is_set(self) -> None:
+        clock = FakeClock()
+        driver = FakeDriver([CHALLENGE, NEUTRAL], loads=False)
+        driver.on_wait = lambda: setattr(driver, "loads", len(driver.loaded_waits) >= 3)
+        browser = SessionBrowser(driver, FakeStore(), clock=clock, sleep=clock.sleep, cancel=lambda: True)
+
+        assert browser.load(URL, cancellable=False) == NEUTRAL
+        assert driver.loaded_waits == [1.0, 1.0, 1.0]
+        assert clock.sleeps == [1.0]
+
+    def test_a_load_that_never_finishes_still_times_out(self) -> None:
+        driver = FakeDriver([NEUTRAL], loads=False)
+        browser = SessionBrowser(driver, FakeStore(), cancel=lambda: True)
+
+        with pytest.raises(LoadTimeout):
+            browser.load(URL, cancellable=False)
+
+        assert driver.loaded_waits == [1.0] * 45
+
+    def test_the_default_load_still_hears_the_cancel(self) -> None:
+        driver = FakeDriver([NEUTRAL], loads=False)
+        browser = SessionBrowser(driver, FakeStore(), cancel=lambda: True)
+
+        with pytest.raises(Cancelled):
+            browser.load(URL)
+
+    def test_a_sign_in_handover_during_it_is_still_cancelled_by_the_owner(self) -> None:
+        handover = FakeHandover(cancel_at=1)
+        driver = FakeDriver([SIGN_IN])
+
+        with pytest.raises(Cancelled, match="waited for the owner"):
+            handed_browser(driver, handover).load(URL, cancellable=False)
+
+        assert handover.events == ["show:signin", "hide"]
+
+
 class TestSessionCookie:
     def test_the_saved_cookie_is_put_into_the_window(self) -> None:
         driver = FakeDriver([NEUTRAL])

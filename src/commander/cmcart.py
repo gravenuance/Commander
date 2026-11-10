@@ -19,6 +19,7 @@ import logging
 import random
 import re
 import threading
+import time
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, cast
@@ -249,6 +250,7 @@ class _Adder:
         cancel: threading.Event,
         on_progress: Callable[[CartProgress], None],
         sleep: Callable[[float], object],
+        after_cancel_sleep: Callable[[float], object],
         uniform: Callable[[float, float], float],
     ) -> None:
         self._browser = browser
@@ -256,6 +258,7 @@ class _Adder:
         self._cancel = cancel
         self._on_progress = on_progress
         self._sleep = sleep
+        self._after_cancel_sleep = after_cancel_sleep
         self._uniform = uniform
         # Requests begun (page loads and adds): all but the first wait out the gap.
         self._requests = 0
@@ -269,7 +272,7 @@ class _Adder:
             self._open_sending_page()
         sent, status, reason = self._send(todo)
         try:
-            after = self._read_cart()
+            after = self._read_cart(past_cancel=self._cancel.is_set())
         except Cancelled:
             log.info("cart: cancelled while the cart was read back")
             unchecked = _items(picks, sent, in_cart_before, None)
@@ -283,21 +286,23 @@ class _Adder:
 
     # --- pacing ---------------------------------------------------------------------------------------
 
-    def _pace(self) -> None:
+    def _pace(self, sleep: Callable[[float], object]) -> None:
         """Before every request: all but the first wait out the gap since the one before."""
         if self._requests > 0:
-            self._sleep(self._uniform(MIN_GAP_S, MAX_GAP_S))
+            sleep(self._uniform(MIN_GAP_S, MAX_GAP_S))
         self._requests += 1
 
-    def _read_cart(self) -> tuple[CartShipment, ...]:
-        self._pace()
+    def _read_cart(self, *, past_cancel: bool = False) -> tuple[CartShipment, ...]:
+        """Load and read the cart page. After a cancel it still waits out the gap and loads to the end: the
+        owner's cancel has already stopped the adding, and what the cart holds is not known without it."""
+        self._pace(self._after_cancel_sleep if past_cancel else self._sleep)
         log.debug("loading %s", CART_URL)
-        return read_cart(self._browser.load(CART_URL))
+        return read_cart(self._browser.load(CART_URL, cancellable=not past_cancel))
 
     def _open_sending_page(self) -> None:
         """The requests go out from the wants lists page: its create-list form always carries the session's
         token, while the cart page has one only in its items' forms, so an empty cart has none."""
-        self._pace()
+        self._pace(self._sleep)
         log.debug("loading %s", WANTS_URL)
         self._browser.load(WANTS_URL)
 
@@ -310,7 +315,7 @@ class _Adder:
         for index, pick in enumerate(todo):
             if self._cancel.is_set():
                 return sent, CartStatus.CANCELLED, ""
-            self._pace()
+            self._pace(self._sleep)
             if self._cancel.is_set():
                 return sent, CartStatus.CANCELLED, ""
             offer = pick.offer
@@ -474,14 +479,18 @@ def add_to_cart(
     cancel: threading.Event | None = None,
     on_progress: Callable[[CartProgress], None] | None = None,
     sleep: Callable[[float], object] | None = None,
+    after_cancel_sleep: Callable[[float], object] | None = None,
     uniform: Callable[[float, float], float] | None = None,
 ) -> CartRun:
     """Put the package's offers in the cart, each at its picked copies, and read the cart back.
 
     Raises `PageError` or the browser's own errors, `Cancelled` among them, when the cart page cannot be read
     before anything is sent. Once sending has begun every failure is reported in the run instead. `cancel`
-    ends the adding between two requests; the cart is still read back. `sleep` waits out the gap between
-    requests and polls for the answers; the default waits on `cancel`, so a cancel ends the wait too.
+    ends the adding between two requests; the cart is still read back, past the cancel (its load is not
+    cancellable, only a sign-in handover during it still ends on the owner's cancel). `sleep` waits out the
+    gap between requests and polls for the answers; the default waits on `cancel`, so a cancel ends the wait
+    too. `after_cancel_sleep` waits out the gap before that read-back once `cancel` is set; the default is
+    `sleep` when one is given, else a real sleep, since waiting on a set `cancel` returns at once.
     """
     stop = cancel if cancel is not None else threading.Event()
     return _Adder(
@@ -490,6 +499,7 @@ def add_to_cart(
         cancel=stop,
         on_progress=on_progress if on_progress is not None else _ignore,
         sleep=sleep if sleep is not None else stop.wait,
+        after_cancel_sleep=after_cancel_sleep or sleep or time.sleep,
         uniform=uniform if uniform is not None else random.uniform,
     ).run()
 
