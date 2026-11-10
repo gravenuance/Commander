@@ -1017,7 +1017,10 @@ _CART_CANCELLED_MIDWAY = "Cancelled while a card was being added; check your car
 
 
 def _cart_failure(error: Exception) -> str:
-    """The line for a cart run that failed before anything was sent."""
+    """The line for a cart run that failed before anything was sent; the error itself goes to the log, where
+    the line points."""
+    if isinstance(error, (LoadTimeout, BrowserError, PageError, CredentialError)):
+        log.warning("buy: the cart run stopped before sending anything: %s", error)
     if isinstance(error, LoadTimeout):
         return "Cardmarket did not answer; check your connection and try again."
     if isinstance(error, BrowserError):
