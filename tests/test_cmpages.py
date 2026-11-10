@@ -348,6 +348,17 @@ class TestCart:
     def test_an_empty_cart_has_no_shipments(self) -> None:
         assert read_cart('<main><div id="shipments-col"></div></main>') == ()
 
+    def test_the_real_empty_cart_page_has_no_shipments(self) -> None:
+        # Trimmed from the live page: it has no shipments column, which stopped the owner's first cart run.
+        empty = (
+            '<main><h1 class="H1_PageTitle page-header">Shopping Cart</h1><div class="text-center">'
+            '<p class="noResults text-center h3 text-muted py-5">Your shopping cart is empty</p>'
+            '<a href="/en/Magic" role="button" class="btn btn-primary btn-lg">Return to the marketplace</a>'
+            "</div></main>"
+        )
+
+        assert read_cart(empty) == ()
+
     def test_a_block_without_its_total_names_the_seller(self) -> None:
         broken = changed(page(CART_PAGE), '<span class="strong total">5,69 €</span>', "")
 
