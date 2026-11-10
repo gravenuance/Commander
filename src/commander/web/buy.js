@@ -282,6 +282,8 @@ function paintBuyFilters() {
 }
 
 function paintBuyStatus(status) {
+  // Taken before any control is disabled or hidden, as the browser may blur it at that moment.
+  const focused = document.activeElement;
   const view = buyState.view;
   view.status = status;
   const running = status.running;
@@ -316,7 +318,7 @@ function paintBuyStatus(status) {
   }
   renderBuyResults(status);
   renderBuyCart(status.cart ?? null);
-  keepBuyFocus(status);
+  keepBuyFocus(status, focused);
   paintBuyPane();
 }
 
@@ -327,9 +329,8 @@ function paintBuyCartButton(running = buyState.view?.status.running ?? false) {
 
 // A button that has the focus and is disabled or hidden by this paint hands it on, so the keyboard is not
 // dropped on the page: Scan and Add to cart to Cancel, Cancel to the heading while it cancels, and at the end
-// of the run to the cart report's title or Scan.
-function keepBuyFocus(status) {
-  const focused = document.activeElement;
+// of the run to the cart report's title or Scan. `focused` is what had the focus before the paint began.
+function keepBuyFocus(status, focused) {
   const cancel = $("buy-cancel");
   if (status.running) {
     if (status.cancelling && focused === cancel) $("buy-title").focus();

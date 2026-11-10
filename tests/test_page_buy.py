@@ -437,6 +437,35 @@ class TestScanning:
         """)
         assert seen == {"started": "buy-cancel", "cancelling": "buy-title", "ended": "buy-scan"}
 
+    def test_the_focus_is_handed_on_even_when_the_browser_blurs_a_control_as_it_is_disabled_or_hidden(
+        self,
+    ) -> None:
+        seen = run("""
+        // Chromium drops the focus of a control the moment it is disabled or hidden.
+        for (const id of ["buy-scan", "buy-cart", "buy-cancel"]) {
+          const node = $(id);
+          for (const prop of ["disabled", "hidden"]) {
+            const own = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(node), prop);
+            Object.defineProperty(node, prop, { get() { return own.get.call(this); },
+              set(on) { own.set.call(this, on); if (on && document.activeElement === this) this.blur(); } });
+          }
+        }
+        await open();
+        const focused = () => document.activeElement.id;
+        $("buy-scan").focus();
+        stub.buy_scan = async () => idle({ phase: "wants", running: true, progress: "Starting the scan" });
+        await fire($("buy-scan"), "click");
+        const started = focused();
+        stub.buy_cancel = async () => idle({ phase: "scanning", running: true, cancelling: true });
+        await fire($("buy-cancel"), "click");
+        const cancelling = focused();
+        paintBuyStatus(idle({ phase: "scanning", running: true }));
+        $("buy-cancel").focus();
+        paintBuyStatus(done());
+        return { started, cancelling, ended: focused() };
+        """)
+        assert seen == {"started": "buy-cancel", "cancelling": "buy-title", "ended": "buy-scan"}
+
     def test_a_run_that_ends_with_a_cart_report_moves_the_focus_to_its_title(self) -> None:
         seen = run_cart("""
         await open(view({ status: idle({ phase: "cart", running: true, results: RESULTS }) }));
