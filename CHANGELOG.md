@@ -14,6 +14,10 @@
   Cardmarket cart and reports what went in; the app never removes anything from the cart or checks out
   (ADR 0067).
 
+### Changed
+- After signing in as another account, the app works out that account's other decks in the background once
+  its first deck is shown, as it already did at start-up, so moving between its decks answers sooner.
+
 ### Fixed
 - `cmdr meta` and the app's meta answers credit a lock that names several card types with all of them:
   Doorkeeper Thrull now stops creatures' enter triggers such as Thassa's Oracle's, and Clarion Conqueror
