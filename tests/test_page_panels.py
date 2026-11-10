@@ -54,9 +54,10 @@ def test_each_side_panel_title_ends_in_one_chevron_knob_that_follows_its_expande
       knobs: toggles.map((t) => t.querySelectorAll(".knob").length),
       last: toggles.map((t) => t.childNodes.at(-1).className) };
     """)
-    assert seen["ids"] == ["h-considering", "h-uncut", "h-previews", "h-meta"]
-    assert seen["knobs"] == [1, 1, 1, 1]
-    assert seen["last"] == ["knob"] * 4
+    # The Buy screen's scan settings fold is the first, as its screen comes before the deck's in the page.
+    assert seen["ids"] == ["h-buy-settings", "h-considering", "h-uncut", "h-previews", "h-meta"]
+    assert seen["knobs"] == [1, 1, 1, 1, 1]
+    assert seen["last"] == ["knob"] * 5
     assert (seen["before"], seen["open"]) == ("false", "true")
 
 

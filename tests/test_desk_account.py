@@ -12,6 +12,7 @@ import pytest
 from commander import desk as desk_module
 from commander.carddb import CARD_DB_FILE
 from commander.config import read_config
+from commander.credentials import CardmarketSessionStore, SessionCookie
 from commander.deckcache import Clock
 from commander.desk import Desk, DeskSettings, sync_summary
 from commander.metadata import MetaData
@@ -123,6 +124,15 @@ def test_signing_out_removes_the_login_and_forgets_the_account(env: Env) -> None
     assert config.user is None
     # The folder is remembered for the next sign-in.
     assert config.workspaces == {"tester": env.documents / "Commander" / "decks-TESTER"}
+
+
+def test_signing_out_removes_the_saved_cardmarket_session(env: Env) -> None:
+    # ADR 0067: the live Cardmarket session in Credential Manager goes with the sign-out.
+    desk = env.desk()
+    desk.sign_in("TESTER", PASSWORD)
+    CardmarketSessionStore().put(SessionCookie("PHPSESSID", "xyz", ".cardmarket.com", "/"))
+    desk.sign_out()
+    assert CardmarketSessionStore().get() is None
 
 
 def test_signing_in_again_drops_the_shares_kept_for_the_last_account(

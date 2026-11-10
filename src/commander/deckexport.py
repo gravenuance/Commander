@@ -48,12 +48,19 @@ def cardmarket_wants_text(decks: Iterable[Deck]) -> WantsList:
         if not deck.labels_known:
             skipped.append(deck.short_name)
             continue
-        for card in deck.main_cards:
-            if card.label == DONT_HAVE_LABEL:
-                wanted[card.name] += card.quantity
+        wanted.update(dont_have_counts(deck))
     lines = [f"{quantity} {name}" for name, quantity in sorted(wanted.items(), key=_by_name)]
     text = "".join(f"{line}\n" for line in lines)
     return WantsList(text, wanted.total(), tuple(sorted(skipped, key=str.casefold)))
+
+
+def dont_have_counts(deck: Deck) -> Counter[str]:
+    """The copies of each main-deck card labelled Don't Have, a card filed as several entries summed."""
+    counts: Counter[str] = Counter()
+    for card in deck.main_cards:
+        if card.label == DONT_HAVE_LABEL:
+            counts[card.name] += card.quantity
+    return counts
 
 
 def _by_name(item: tuple[str, int]) -> tuple[str, str]:

@@ -777,6 +777,25 @@ and logged in the deck's activity. In the app, the flag on each grid card sets t
 as a Cardmarket wants list to paste into its "Add Decklist" field; cards already Getting are left out.
 `--cardmarket` takes no deck, card, `--json`, `--ordered` or `--arrived`.
 
+The app's "Buy cards" button goes further: it scans Cardmarket for the ticked decks' Don't Have cards and
+shows the cheapest package of sellers for each number of sellers, shipping included. You can untick single
+cards of a deck. The offer filters are the language (English, Japanese, both or any), the sellers' countries, the
+longest delivery time you accept, for cards that must arrive before an event, and the most you will pay for
+one copy; a new price limit is applied to the last scan without scanning again
+([ADR 0067](docs/adr/0067-cardmarket-seller-optimiser.md)).
+
+The scan needs you signed in to Cardmarket. When it reaches a page that asks for a sign-in, or for
+Cloudflare's check, the scan window appears over the Buy screen and the progress line says which; do it
+there, as in a browser, and the scan carries on. The app never sees your password. It keeps Cardmarket's
+session cookie in Windows Credential Manager (under `Commander (cmdr) Cardmarket`), so the next scan usually
+needs no sign-in; signing out of the app removes it.
+
+Pick a package and press "Add to cart" to put it in your Cardmarket cart. A confirmation lists every card,
+seller and price first, and nothing is sent before you confirm it. The app then adds the cards one offer at a
+time, reads your cart back and reports what went in, what was gone or short, and each seller whose shipping
+in the cart differs from the estimate. It never removes anything from your cart, empties it or checks out;
+"Open your cart on Cardmarket" takes you there to pay.
+
 ```sh
 uv run cmdr toget                                          # every deck's cards still to get
 uv run cmdr toget ellivere --json                          # one deck, as JSON

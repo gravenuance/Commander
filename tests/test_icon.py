@@ -4,9 +4,10 @@ import struct
 import sys
 import types
 import zlib
+from collections.abc import Callable
 from importlib import resources
 from pathlib import Path
-from typing import Any
+from typing import Any, Self, cast
 
 import pytest
 
@@ -61,12 +62,39 @@ def test_the_card_is_opaque_and_its_corners_and_surroundings_are_clear() -> None
     assert 0 < small[0][2] < 255  # the small card's corner is half-clear
 
 
-def test_the_window_shows_the_icon(monkeypatch: pytest.MonkeyPatch) -> None:
-    started: dict[str, Any] = {}
+class Hook:
+    """A window event: `+=` adds a handler, as pywebview's events do."""
+
+    def __init__(self) -> None:
+        self.handlers: list[Callable[[], None]] = []
+
+    def __iadd__(self, handler: Callable[[], None]) -> Self:
+        self.handlers.append(handler)
+        return self
+
+
+class FakeWindow:
+    def __init__(self) -> None:
+        self.events = types.SimpleNamespace(closed=Hook())
+        self.destroyed = False
+
+    def destroy(self) -> None:
+        self.destroyed = True
+
+
+def fake_webview(monkeypatch: pytest.MonkeyPatch, started: dict[str, Any]) -> types.ModuleType:
     fake = types.ModuleType("webview")
-    fake.create_window = lambda *_args, **_kwargs: None  # type: ignore[attr-defined]
+    window = FakeWindow()
+    fake.windows = [window]  # type: ignore[attr-defined]
+    fake.create_window = lambda *_args, **_kwargs: window  # type: ignore[attr-defined]
     fake.start = lambda **kwargs: started.update(kwargs)  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "webview", fake)
+    return fake
+
+
+def test_the_window_shows_the_icon(monkeypatch: pytest.MonkeyPatch) -> None:
+    started: dict[str, Any] = {}
+    fake_webview(monkeypatch, started)
     app.run_app(Desk.__new__(Desk), storage=Path("profile"))
     assert Path(started["icon"]).name == "commander.ico"
     assert Path(started["icon"]).is_file()
@@ -76,10 +104,29 @@ def test_the_window_keeps_its_profile_so_card_images_stay_cached(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     started: dict[str, Any] = {}
-    fake = types.ModuleType("webview")
-    fake.create_window = lambda *_args, **_kwargs: None  # type: ignore[attr-defined]
-    fake.start = lambda **kwargs: started.update(kwargs)  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "webview", fake)
+    fake_webview(monkeypatch, started)
     app.run_app(Desk.__new__(Desk), storage=tmp_path / "webview")
     assert started["private_mode"] is False
     assert started["storage_path"] == str(tmp_path / "webview")
+
+
+def test_closing_the_window_stops_a_scan_and_closes_the_cardmarket_windows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = fake_webview(monkeypatch, {})
+    [main] = cast("list[FakeWindow]", fake.windows)  # type: ignore[attr-defined]
+    scan, sign_in = FakeWindow(), FakeWindow()
+    fake.windows.extend([scan, sign_in])  # type: ignore[attr-defined]
+    stopped: list[bool] = []
+
+    def stop_buying(_desk: Desk) -> None:
+        stopped.append(True)
+
+    monkeypatch.setattr(Desk, "stop_buying", stop_buying)
+    app.run_app(Desk.__new__(Desk), storage=Path("profile"))
+
+    [on_closed] = main.events.closed.handlers
+    on_closed()
+
+    assert stopped == [True]
+    assert (scan.destroyed, sign_in.destroyed, main.destroyed) == (True, True, False)

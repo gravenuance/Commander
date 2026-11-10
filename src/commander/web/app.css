@@ -72,6 +72,28 @@
   --space-4: 16px;
   --space-5: 24px;
   --space-6: 32px;
+  /* The height of a field, a dropdown or a pill track set beside them. */
+  --control-h: 34px;
+  /* The Buy screen: how wide its content grows, a tick row, a package row and a card's tick, a checkbox, */
+  /* the room a select's chevron takes and its size, a field, the menus and the confirmation's seller list. */
+  --content-w: 1100px;
+  --tick-row-h: 36px;
+  --list-row-h: 44px;
+  --target-min: 24px;
+  --check-size: 16px;
+  --check-size-l: 18px;
+  --chevron-room: 18px;
+  --chevron-size: 5px;
+  --field-w-s: 7rem;
+  --field-w-m: 12rem;
+  --field-w-l: 16rem;
+  --menu-w: 14rem;
+  --menu-h: 18rem;
+  --curve-name-w: 6rem;
+  --curve-figure-w: 4.5rem;
+  --dialog-list-h: 50vh;
+  /* The pill track's padding around its buttons. */
+  --segmented-inset: 3px;
   --text-2xs: 0.6875rem;
   --text-xs: 0.75rem;
   --text-s: 0.8125rem;
@@ -527,7 +549,7 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .stat dd.changed { color: var(--queued); }
 .outside-badge { font-weight: 500; }
 /* A pill track of options with the chosen one raised on a thumb. */
-.segmented { display: inline-flex; gap: 2px; padding: 3px; border-radius: var(--radius-pill); background: var(--surface-2); }
+.segmented { display: inline-flex; gap: 2px; padding: var(--segmented-inset); border-radius: var(--radius-pill); background: var(--surface-2); }
 .segmented button {
   min-width: 28px;
   min-height: 24px;
@@ -1213,3 +1235,132 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 0.9em; }
 .swap-add { font-weight: 600; }
 .mana-swap-group { display: grid; gap: var(--space-1); }
 .mana-group-title { font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+
+/* Buy cards: the cards by deck, the offer filters, the scan and the packages it finds */
+.buy { --buy-pane-min: 26rem; display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.buy-head { display: grid; gap: var(--space-1); margin-bottom: var(--space-4); }
+.buy-head p { margin: 0; }
+.buy-head h1:focus { outline: none; }
+.buy-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  align-content: start;
+  gap: var(--space-4);
+  max-width: var(--content-w);
+  padding-bottom: var(--space-5);
+}
+/* While Cardmarket needs the owner, the scan window covers the pane below the scan row; nothing else shifts it. */
+.buy-pane { min-height: var(--buy-pane-min); background: var(--surface); }
+.buy-body.covered { grid-template-rows: auto minmax(var(--buy-pane-min), 1fr); }
+.buy-body.covered > :not(.buy-actions, .buy-pane) { display: none; }
+.buy-block { display: grid; gap: var(--space-3); padding: var(--space-4); border-radius: var(--radius); background: var(--surface); }
+.buy-block-title { display: flex; align-items: center; gap: var(--space-2); margin: 0; font-size: var(--text-m); }
+.buy-decks, .buy-cards, .buy-notes { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.buy-deck-head { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, var(--menu-w)); gap: var(--space-3); align-items: center; }
+.buy-tick { display: flex; align-items: center; gap: var(--space-3); min-height: var(--tick-row-h); font-weight: 600; }
+.buy-tick input { flex: none; width: var(--check-size-l); height: var(--check-size-l); accent-color: var(--primary); }
+.buy-deck-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.buy-fold:disabled { opacity: 1; cursor: default; color: var(--muted); }
+.buy-cards { padding: var(--space-2) var(--space-4) var(--space-1); font-size: var(--text-s); }
+.buy-card-tick { display: flex; align-items: center; gap: var(--space-3); min-height: var(--target-min); cursor: pointer; }
+.buy-card-tick input { flex: none; width: var(--check-size); height: var(--check-size); margin: 0; accent-color: var(--primary); }
+.buy-card-tick input:disabled { cursor: not-allowed; }
+/* Labels share one line across the row and so do the controls: every control is one height, from the top. */
+.buy-filters { display: flex; flex-wrap: wrap; gap: var(--space-4) var(--space-5); align-items: flex-start; }
+.buy-filter { display: grid; gap: var(--space-1); justify-items: start; font-size: var(--text-s); color: var(--muted); }
+.buy-filter .segmented { box-sizing: border-box; min-height: var(--control-h); }
+.buy-select, .buy-input {
+  box-sizing: border-box;
+  min-height: var(--control-h);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-s);
+  background-color: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-s);
+}
+.buy-select {
+  padding: 0 calc(var(--space-3) + var(--chevron-room)) 0 var(--space-3);
+  /* The native arrow hugs the right edge and can't be moved, so draw our own chevron in the text colour,
+     inset like the text is on the left. */
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position:
+    calc(100% - var(--space-3) - var(--chevron-size)) 55%,
+    calc(100% - var(--space-3)) 55%;
+  background-size: var(--chevron-size) var(--chevron-size);
+  background-repeat: no-repeat;
+}
+/* A label over a segmented control starts where its first option's text does, not at the pill's curve. */
+.buy-filter > span:first-child { padding-left: calc(var(--segmented-inset) + var(--space-2)); }
+.buy-select:disabled, .buy-input:disabled, .buy-base input:disabled { opacity: 0.5; cursor: not-allowed; }
+/* The price field is a text box with the euro sign inside its right edge. */
+.buy-money { position: relative; }
+.buy-input { display: block; width: var(--field-w-s); padding: 0 calc(var(--space-3) * 2) 0 var(--space-3); }
+.buy-input::placeholder { color: var(--muted); opacity: 1; }
+.buy-money-unit { position: absolute; top: 50%; right: var(--space-3); transform: translateY(-50%); color: var(--muted); pointer-events: none; }
+/* The seller-location button looks like the select beside it and opens the same menu as the grid's labels. */
+.buy-picker { position: relative; }
+.buy-picker-button { display: block; max-width: var(--field-w-l); text-align: left; cursor: pointer; }
+.buy-picker-button span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.buy-menu { position: absolute; top: calc(100% + var(--space-1)); left: 0; min-width: max(100%, var(--menu-w)); max-height: var(--menu-h); }
+.buy-menu .menu-item:has(:focus-visible) { background: var(--surface-2); }
+.buy-menu .menu-item input { flex: none; width: var(--check-size); height: var(--check-size); margin: 0; accent-color: var(--primary); }
+.buy-menu .menu-item:disabled { opacity: 0.5; cursor: not-allowed; }
+.buy-base { max-width: var(--field-w-m); }
+.buy-empty { margin: 0; }
+.buy-empty .state-icon { font-size: var(--text-xl); }
+.buy-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; }
+.buy-line { margin: 0; overflow-wrap: anywhere; }
+.buy-line:empty { display: none; }
+.curve, .buy-sellers { display: grid; gap: var(--space-2); }
+.curve-head, .curve-row {
+  display: grid;
+  grid-template-columns:
+    minmax(var(--curve-name-w), 1.2fr) repeat(4, minmax(var(--curve-figure-w), 1fr)) minmax(var(--curve-name-w), auto);
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-2) var(--space-4);
+}
+.curve-head { padding-block: 0; font-size: var(--text-s); font-weight: 600; color: var(--muted); }
+.curve-row {
+  min-height: var(--list-row-h);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--fast), border-color var(--fast);
+}
+.curve-row:hover { background: var(--surface-3); }
+.curve-row[aria-pressed="true"] { border-color: var(--primary); background: var(--selected); }
+.curve-sellers { font-weight: 600; }
+/* A count the solver found no package for in its time: a plain row, not a button. */
+.curve-missed { cursor: default; color: var(--muted); }
+.curve-missed:hover { background: var(--surface-2); }
+.curve-note { grid-column: 2 / -1; }
+.curve-badge { display: flex; flex-wrap: wrap; gap: var(--space-1); justify-content: flex-end; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.buy-notes li { font-size: var(--text-s); }
+.buy-seller { display: grid; gap: var(--space-1); padding: var(--space-3) var(--space-4); border-radius: var(--radius-s); background: var(--surface-2); }
+.buy-seller-name { margin: 0; font-size: var(--text-m); }
+.buy-seller p { margin: 0; }
+.buy-package-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; }
+.buy-cart-link { display: inline-flex; align-items: center; text-decoration: none; }
+/* The confirmation lists what goes in the cart; the sellers scroll inside it when there are many. */
+#buy-cart-dialog .buy-sellers { max-height: var(--dialog-list-h); overflow-y: auto; }
+.buy-cart-picks { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-1); font-size: var(--text-s); }
+.buy-cart-picks li { display: flex; justify-content: space-between; gap: var(--space-4); }
+.buy-cart-total { margin: var(--space-3) 0 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+.buy-table { overflow-x: auto; }
+.buy-table table { width: 100%; border-collapse: collapse; font-size: var(--text-s); }
+.buy-table th, .buy-table td { padding: var(--space-1) var(--space-3); border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+.buy-table th { color: var(--muted); font-weight: 600; }
+.buy-table th.num, .buy-table td.num { text-align: right; }
