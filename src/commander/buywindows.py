@@ -298,17 +298,21 @@ def _on_ui_thread(window: Window, work: Callable[[], None]) -> None:
     """Run `work` on the UI thread all pywebview windows share; a UI thread that does not answer fails the
     page instead of hanging the scan beyond the owner's Cancel. On the UI thread itself `work` runs inline,
     because a marshal made there waits for the very thread it blocks; `work` must not call this for another
-    window from there either. What `work` raises is raised here, as .NET would wrap it."""
+    window from there either. What `work` raises is a `BrowserError` here (its own, or its cause kept), on
+    either path; a window without a handle (closed) fails at once."""
     native: Any = window.native
+    # A form without a handle reports no invoke as required, from any thread.
+    if not native.IsHandleCreated:
+        raise BrowserError("the app's window is closed")
     if not native.InvokeRequired:
-        work()
+        _as_browser_error(work)
         return
-    failure: list[Exception] = []
+    failure: list[BrowserError] = []
 
     def guarded() -> None:
         try:
-            work()
-        except Exception as error:  # noqa: BLE001 - handed to the calling thread below
+            _as_browser_error(work)
+        except BrowserError as error:
             failure.append(error)
 
     # pythonnet's System module exists only once pywebview has loaded the CLR, which a window implies.
@@ -319,6 +323,16 @@ def _on_ui_thread(window: Window, work: Callable[[], None]) -> None:
         raise LoadTimeout("the app's UI thread did not answer") from error
     if failure:
         raise failure[0]
+
+
+def _as_browser_error(work: Callable[[], None]) -> None:
+    """Run `work`; what it raises, other than a `BrowserError`, is one with it as the cause."""
+    try:
+        work()
+    except BrowserError:
+        raise
+    except Exception as error:
+        raise BrowserError(f"a window call failed: {error}") from error
 
 
 def _load_user32() -> _Native:

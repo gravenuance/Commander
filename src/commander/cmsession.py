@@ -428,6 +428,16 @@ def _within_window[T](timeout_s: float, call: Callable[[], T], what: str) -> T:
         raise BrowserError(f"{what} failed: {error}") from error
 
 
+def _as_browser_error[T](call: Callable[[], T], what: str) -> T:
+    """Run `call`; what it throws, a .NET exception among it, is a `BrowserError` keeping it as its cause."""
+    try:
+        return call()
+    except BrowserError:
+        raise
+    except Exception as error:
+        raise BrowserError(f"{what} failed: {error}") from error
+
+
 class WebviewDriver:
     """A pywebview window on Cardmarket. WebView2 only takes calls on the window's UI thread, which
     pythonnet's `Invoke` reaches; the other calls pywebview marshals itself."""
@@ -525,7 +535,7 @@ class WebviewDriver:
 
     def _on_ui_thread(self, work: Callable[[_DotNet], None]) -> None:
         """Run `work` on the window's UI thread, or inline when already there, where a marshalled call would
-        wait for the thread it blocks."""
+        wait for the thread it blocks. What it throws is a `BrowserError` on either path."""
         native: Any = cast("Any", self._window.native)
 
         def on_ui_thread() -> None:
@@ -534,8 +544,11 @@ class WebviewDriver:
                 raise BrowserError("WebView2 is not ready")
             work(core)
 
+        # A form without a handle (closed) reports no invoke as required, from any thread.
+        if not native.IsHandleCreated:
+            raise BrowserError("the Cardmarket window is closed")
         if not native.InvokeRequired:
-            on_ui_thread()
+            _as_browser_error(on_ui_thread, "the UI thread call")
             return
         # pythonnet's .NET objects are untyped; pywebview has loaded the CLR by the time a window exists.
         from System import (  # noqa: PLC0415  # pyright: ignore[reportMissingImports]

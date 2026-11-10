@@ -90,10 +90,16 @@ class FakeNative:
         self.Handle = FakeHandle(hwnd)
         self.Owner: object = None
         self.webview = FakeWebview()
+        # False once the form is closed: .NET then reports no invoke as required, whatever the thread.
+        self.handle = True
+
+    @property
+    def IsHandleCreated(self) -> bool:  # noqa: N802 - .NET's name
+        return self.handle
 
     @property
     def InvokeRequired(self) -> bool:  # noqa: N802 - .NET's name
-        return not self._ui.on_thread()
+        return self.handle and not self._ui.on_thread()
 
     def Invoke(self, action: Callable[[], None]) -> None:  # noqa: N802
         self._ui.invoke(action)
@@ -226,6 +232,36 @@ class TestUiThreadCalls:
                 rig.ops.show(as_window(rig.scan))
         finally:
             release.set()
+
+
+class TestUiThreadFailures:
+    def test_a_window_without_a_handle_fails_the_call_on_either_thread(self, rig: Rig) -> None:
+        rig.scan.native.handle = False
+
+        with pytest.raises(BrowserError, match="window is closed"):
+            rig.ops.prepare(as_window(rig.scan), as_window(rig.main))
+        with pytest.raises(BrowserError, match="window is closed"):
+            rig.ui.invoke(lambda: rig.ops.prepare(as_window(rig.scan), as_window(rig.main)))
+
+        assert rig.user32.style_writes == []
+
+    def test_what_the_window_throws_is_a_browser_error_keeping_its_cause_on_either_thread(
+        self, rig: Rig, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def broken(hwnd: int, index: int) -> int:
+            del hwnd, index
+            raise RuntimeError("COMException 0x8007139F")
+
+        monkeypatch.setattr(rig.user32, "GetWindowLongPtrW", broken)
+
+        for call in (
+            lambda: rig.ops.prepare(as_window(rig.scan), as_window(rig.main)),
+            lambda: rig.ui.invoke(lambda: rig.ops.prepare(as_window(rig.scan), as_window(rig.main))),
+        ):
+            with pytest.raises(BrowserError, match="COMException 0x8007139F") as caught:
+                call()
+
+            assert isinstance(caught.value.__cause__, RuntimeError)
 
 
 class TestWin32Failures:

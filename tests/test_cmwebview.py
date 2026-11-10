@@ -280,8 +280,12 @@ class FakeCore:
     def __init__(self) -> None:
         self.Settings = types.SimpleNamespace(IsPasswordAutosaveEnabled=False, IsGeneralAutofillEnabled=False)
         self.navigated: list[str] = []
+        # What Navigate throws, as a .NET exception would come out of WebView2.
+        self.fail: Exception | None = None
 
     def Navigate(self, url: str) -> None:  # noqa: N802 - .NET's name
+        if self.fail is not None:
+            raise self.fail
         self.navigated.append(url)
 
 
@@ -289,15 +293,21 @@ class FakeNative:
     """The window's form: `on_ui` says whether the caller already is on the UI thread; `Invoke` records the
     marshalled calls and runs them where it is called, as the UI thread would."""
 
-    def __init__(self, *, on_ui: bool, ready: bool = True) -> None:
+    def __init__(self, *, on_ui: bool, ready: bool = True, handle: bool = True) -> None:
         self.on_ui = on_ui
         self.invokes = 0
+        # False once the form is closed: .NET then reports no invoke as required, whatever the thread.
+        self.handle = handle
         self.core = FakeCore()
         self.webview = types.SimpleNamespace(CoreWebView2=self.core if ready else None)
 
     @property
+    def IsHandleCreated(self) -> bool:  # noqa: N802 - .NET's name
+        return self.handle
+
+    @property
     def InvokeRequired(self) -> bool:  # noqa: N802 - .NET's name
-        return not self.on_ui
+        return self.handle and not self.on_ui
 
     def Invoke(self, action: Callable[[], None]) -> None:  # noqa: N802 - .NET's name
         self.invokes += 1
@@ -348,6 +358,29 @@ class TestOnTheUiThread:
 
             with pytest.raises(BrowserError, match="WebView2 is not ready"):
                 self.driver(native, monkeypatch).configure()
+
+    def test_a_window_without_a_handle_fails_the_call_instead_of_running_it_on_the_wrong_thread(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        for on_ui in (True, False):
+            native = FakeNative(on_ui=on_ui, handle=False)
+
+            with pytest.raises(BrowserError, match="window is closed"):
+                self.driver(native, monkeypatch).navigate("https://www.cardmarket.com/en/Magic")
+
+            assert (native.invokes, native.core.navigated) == (0, [])
+
+    def test_what_the_window_throws_is_a_browser_error_keeping_its_cause_on_either_thread(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        for on_ui in (True, False):
+            native = FakeNative(on_ui=on_ui)
+            native.core.fail = RuntimeError("COMException 0x8007139F")
+
+            with pytest.raises(BrowserError, match="COMException 0x8007139F") as caught:
+                self.driver(native, monkeypatch).navigate("https://www.cardmarket.com/en/Magic")
+
+            assert isinstance(caught.value.__cause__, RuntimeError)
 
 
 class NoStore:
