@@ -89,7 +89,8 @@ the owner picks into their Cardmarket cart for them to check out by hand.
   too), so when a page the scan loads is signed out, or Cloudflare's check has not passed by itself after 8 s,
   the hidden scan window itself is shown, frameless, exactly over an empty pane of the Buy screen, and the
   progress line says what is needed. The scan waits, with no time limit, until a signed-in page loads (the
-  session is then saved) or the owner presses Cancel; the window is hidden again and the page it wanted loads
+  session is then saved; the two-factor code page, form action `GoogleAuthenticator_VerifyCode`, already shows
+  the Logout link but still counts as signed out, found in the owner's first live run) or the owner presses Cancel; the window is hidden again and the page it wanted loads
   once more, in the same window and session. A form step the handover interrupted is redone from the start
   of the wants list sync, once. Cancel is also heard while a page loads (the load event is waited for a second
   at a time) and while a check is waited out, not only during a handover; a window that leaves five reads in
