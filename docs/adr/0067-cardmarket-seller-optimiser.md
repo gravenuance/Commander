@@ -181,14 +181,18 @@ the owner picks into their Cardmarket cart for them to check out by hand.
   from the estimate; a link opens the cart page in the owner's own browser for checkout. A gone offer is
   replaced by scanning again. The confirmation carries a check of the package it showed (its total and its
   offers with their copies), and nothing is added when the package of that seller count is no longer that
-  one; new results redraw the open package and close an open confirmation. A run that fails after Cancel (or
-  after the app began closing) ends as cancelled, not as a failure. The app adds only what the owner confirmed, skips an article already in the cart (reported
-  short when the cart holds fewer copies than picked, with nothing sent to top it up), and never removes
-  anything, clears the cart or checks out. Adding stops early, with the reason shown, when Cardmarket answers
-  an error other than "The item is not available." (the offer is gone), after three refusals in a row, when
-  a request gets no answer or its start times out (the request may be out, so the cart read-back decides the
-  offer's result), and on Cancel, which ends the pacing waits and the answer polling at once. A cancel that
-  cannot read the cart back says so.
+  one; new results, or a package that arrives for another row, redraw the open package and close an open
+  confirmation, and the confirmation sends exactly the package it showed. Add to cart waits while the package
+  of a row just picked is being asked for. A run that fails after Cancel (or after the app began closing) ends
+  as cancelled, not as a failure. The app adds only what the owner confirmed, skips an article already in the
+  cart (reported short when the cart holds fewer copies than picked, with nothing sent to top it up), and
+  never removes anything, clears the cart or checks out. Adding stops early, with the reason shown, when
+  Cardmarket answers an error other than "The item is not available." (the offer is gone), after three
+  refusals in a row, when a request gets no answer or its start times out (the request may be out, so the cart
+  read-back decides the offer's result), and on Cancel, which ends the pacing waits and the answer polling at
+  once. After a Cancel the cart is still read back: its gap is waited out for real and its page is loaded
+  without hearing the cancel (the load time limit holds), except that a sign-in the cart page then asks for
+  ends on the owner's Cancel. A read-back that fails or ends that way says the cart was not read back.
   Probed live on 2026-11-09 with the owner's OK (one 0,04 € card added and removed again):
   - The button is a form whose submit Cardmarket's script turns into an ajax `POST` to
     `/en/Magic/AjaxAction/ShoppingCart_Add_AddArticlesFromMetacardPage` with `__cmtkn` (the session's token),
