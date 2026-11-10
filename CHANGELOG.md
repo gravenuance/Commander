@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.9.0 - 2026-11-10
+
 ### Added
 - The app's Buy screen finds the cheapest way to buy the Don't Have cards on Cardmarket, shipping included:
   it keeps a wants list named "Commander" on your Cardmarket account in step with the cards to buy, reads the
