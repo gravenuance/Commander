@@ -386,6 +386,7 @@ class TestWantsList:
                     quantity=1,
                     languages=("English",),
                     min_condition=Condition.NM,
+                    plain=True,
                 ),
                 Want(
                     want_id="6af1ca6e24ba6375060988f2",
@@ -393,9 +394,27 @@ class TestWantsList:
                     quantity=1,
                     languages=("English",),
                     min_condition=Condition.NM,
+                    plain=True,
                 ),
             ),
         )
+
+    @pytest.mark.parametrize(
+        ("pattern", "replacement"),
+        [
+            (r'(?s)(<td class="expansion[^>]*>).*?</td>', r"\1<a>Star Trek</a></td>"),
+            (r'(?s)(<td class="min-size d-none d-lg-table-cell ternary-header[^>]*>).*?</td>', r"\1Yes</td>"),
+            (r'(<td[^>]*class="buyPrice[^>]*>)(</td>)', r"\g<1>2,00 €\2"),
+            (r'(?s)<td class="expansion[^>]*>.*?</td>', ""),
+        ],
+        ids=["expansion", "yes-no column", "buy price", "no expansion cell"],
+    )
+    def test_a_want_with_another_limit_or_an_unknown_one_is_not_plain(
+        self, pattern: str, replacement: str
+    ) -> None:
+        html = re.sub(pattern, replacement, page(WANTS_PAGE), count=1)
+
+        assert [w.plain for w in read_wants_list(html).wants] == [False, True]
 
     def test_a_want_of_any_language_has_no_languages(self) -> None:
         any_language = re.sub(

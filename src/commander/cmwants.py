@@ -1,12 +1,13 @@
 """Keeps the app's own wants list on Cardmarket equal to the cards to buy (ADR 0067).
 
-`sync_wants` finds or creates the list named `APP_LIST_NAME`, empties it, imports the cards as the text
-`cmdr toget --cardmarket` prints, and sets the owner's language and minimum condition on the imported wants
-one quantity group at a time, because the bulk form overwrites each ticked want's quantity with its one
-amount field. It reads the list back to check the result. It only ever acts on the list it found or
-created, and checks that list's id and name on the page before emptying it. It pages like the scan: one
-request at a time, 4 to 6 seconds apart. A page that is not the expected one stops it with a `PageError` or
-`BrowserError`.
+`sync_wants` finds or creates the list named `APP_LIST_NAME` and, unless it already holds exactly the
+wanted cards at the asked language and condition (it is then left as it is), empties it, imports the cards
+as the text `cmdr toget --cardmarket` prints, and sets the owner's language and minimum condition on the
+imported wants one quantity group at a time, because the bulk form overwrites each ticked want's quantity
+with its one amount field. It reads the list back to check the result. It only ever acts on the list it
+found or created, and checks that list's id and name on the page before emptying it. It pages like the scan:
+one request at a time, 4 to 6 seconds apart. A page that is not the expected one stops it with a `PageError`
+or `BrowserError`.
 """
 
 from __future__ import annotations
@@ -157,6 +158,10 @@ class _Sync:
     def run(self) -> WantsSync:
         list_id = self._find_or_create_list()
         current = self._open_list(list_id, WantsStep.LISTS)
+        if self._wanted and self._holds_exactly(current):
+            # Emptying, importing and editing again would give the same list, at about ten paced requests.
+            log.info("the wants list already holds the %d cards as asked; left as it is", len(self._wanted))
+            return self._report(current)
         if current.wants:
             self._empty(current)
         if not self._wanted:
@@ -252,6 +257,24 @@ class _Sync:
         left = self._open_list(current.list_id, WantsStep.EMPTY).wants
         if left:
             raise WantsError(f"the list still holds {len(left)} wants after deleting them")
+
+    def _holds_exactly(self, current: WantsList) -> bool:
+        """Whether the list is what the sync would make of it: the wanted cards at their quantities, each
+        want at exactly the language and condition asked for (the import's any and Poor when none is) and
+        with no other limit. A foil choice is never taken as kept: which yes/no column is foil is not
+        read."""
+        if self._foil is not Foil.ANY:
+            return False
+        got: dict[str, int] = defaultdict(int)
+        for want in current.wants:
+            got[card_key(want.card)] += want.quantity
+        wanted = {key: want.quantity for key, want in self._wanted.items()}
+        return got == wanted and all(self._exactly_as_asked(want) for want in current.wants)
+
+    def _exactly_as_asked(self, want: Want) -> bool:
+        condition = self._min_condition if self._min_condition is not None else Condition.PO
+        languages = sorted(_LANGUAGE_LABELS[language] for language in self._languages)
+        return want.plain and want.min_condition is condition and sorted(want.languages) == languages
 
     # --- the import -----------------------------------------------------------------------------------
 
