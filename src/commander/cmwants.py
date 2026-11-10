@@ -1,14 +1,15 @@
 """Keeps the app's own wants list on Cardmarket equal to the cards to buy (ADR 0067).
 
-`sync_wants` finds or creates the list named `APP_LIST_NAME` and changes only what differs. The wants of a
-wanted card are kept when they are all exactly as asked (the asked language and condition, no other limit)
-and add up to the wanted quantity; every other want is deleted, and only the wanted cards without kept wants
-are imported, as the text `cmdr toget --cardmarket` prints. The owner's language and minimum condition are
-set on the imported wants alone, one quantity group at a time, because the bulk form overwrites each ticked
-want's quantity with its one amount field. A list that is already right takes two requests. The list is read
-back to check the result. It only ever acts on the list it found or created, and checks that list's id and
-name on the page before deleting from it. It pages like the scan: one request at a time, 4 to 6 seconds
-apart. A page that is not the expected one stops it with a `PageError` or `BrowserError`.
+`sync_wants` finds or creates the list named `APP_LIST_NAME`, or opens it by the id of an earlier sync when
+its page is still that list, and changes only what differs. The wants of a wanted card are kept when they
+are all exactly as asked (the asked language and condition, no other limit) and add up to the wanted
+quantity; every other want is deleted, and only the wanted cards without kept wants are imported, as the text
+`cmdr toget --cardmarket` prints. The owner's language and minimum condition are set on the imported wants
+alone, one quantity group at a time, because the bulk form overwrites each ticked want's quantity with its
+one amount field. A list that is already right takes two requests, one with the remembered id. The list is
+read back to check the result. It only ever acts on the list it found, created or was given, and checks that
+list's id and name on the page before deleting from it. It pages like the scan: one request at a time, 4 to
+6 seconds apart. A page that is not the expected one stops it with a `PageError` or `BrowserError`.
 """
 
 from __future__ import annotations
@@ -135,6 +136,7 @@ class _Sync:
         languages: tuple[int, ...],
         min_condition: Condition | None,
         foil: Foil,
+        list_hint: int | None,
         cancel: threading.Event,
         on_progress: Callable[[WantsProgress], None],
         sleep: Callable[[float], object],
@@ -149,6 +151,7 @@ class _Sync:
         self._languages = languages
         self._min_condition = min_condition
         self._foil = foil
+        self._list_hint = list_hint
         self._cancel = cancel
         self._on_progress = on_progress
         self._sleep = sleep
@@ -157,8 +160,8 @@ class _Sync:
         self._pacer = pacer
 
     def run(self) -> WantsSync:
-        list_id = self._find_or_create_list()
-        current = self._open_list(list_id, WantsStep.LISTS)
+        current = self._open_app_list()
+        list_id = current.list_id
         if not self._wanted:
             if current.wants:
                 self._empty(current)
@@ -227,6 +230,17 @@ class _Sync:
             raise WantsError(f"{what}: expected {expected} ticked, found {found} rows, {checked} ticked")
 
     # --- the list -------------------------------------------------------------------------------------
+
+    def _open_app_list(self) -> WantsList:
+        """The app's list, opened by the id remembered from an earlier sync when its page is still that list
+        (id and name), else found on the lists page, or created."""
+        hint = self._list_hint
+        if hint is not None:
+            try:
+                return self._open_list(hint, WantsStep.LISTS)
+            except PageError as error:
+                log.info("list %d is no longer the app's wants list (%s); looking it up", hint, error)
+        return self._open_list(self._find_or_create_list(), WantsStep.LISTS)
 
     def _find_or_create_list(self) -> int:
         page = self._load(WANTS_URL, WantsStep.LISTS, "wants lists")
@@ -415,6 +429,7 @@ def sync_wants(
     languages: tuple[int, ...],
     min_condition: Condition | None,
     foil: Foil = Foil.ANY,
+    list_id: int | None = None,
     cancel: threading.Event | None = None,
     on_progress: Callable[[WantsProgress], None] | None = None,
     sleep: Callable[[float], object] | None = None,
@@ -424,6 +439,10 @@ def sync_wants(
     """Make the app's wants list hold exactly `wanted`, at `languages` (Cardmarket's ids, none for any),
     `min_condition` (None for the import's Poor) and `foil` (any leaves the import's blank field), when any
     is given, and read it back.
+
+    `list_id` is the id this function returned before: its page is opened directly, skipping the lists page,
+    and when that page is not the app's list (another id or name, or no wants list at all) the list is looked
+    up as without the hint. The list is never changed unless its page shows that id and `APP_LIST_NAME`.
 
     Raises `WantsCancelled` when `cancel` is set between two steps, `WantsError` (a `PageError`) when the list
     or a page is not as expected, and the browser's own errors. `sleep` waits out the gap between requests;
@@ -438,6 +457,7 @@ def sync_wants(
         languages=languages,
         min_condition=min_condition,
         foil=foil,
+        list_hint=list_id,
         cancel=stop,
         on_progress=on_progress if on_progress is not None else _ignore,
         sleep=sleep if sleep is not None else stop.wait,

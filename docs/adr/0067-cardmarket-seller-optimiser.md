@@ -120,7 +120,12 @@ the owner picks into their Cardmarket cart for them to check out by hand.
   instead of about ten (the owner's first live run spent 65 s refilling an unchanged list), and a card added
   to it costs its own import and edit, not a refill of the whole list (the owner's second run deleted and
   imported a kept card again). A foil choice keeps nothing, since which of those columns is foil is not read.
-  An empty wanted list empties the list.
+  An empty wanted list empties the list. The list's id never changes, so the app remembers the last one per
+  account, in memory only, and opens that list's page directly instead of the lists page (the owner's
+  two-card scan spent 44 s on the wants list). The page must still show that id and the list's name; when
+  it does not (the list was deleted or renamed, or the account is another), the sync looks the list up on the
+  lists page as before, and never changes a list whose id or name does not match. Signing out or switching
+  account forgets the id.
 - **The scan reads pages, one at a time, in a hidden window,** at least 4 seconds apart, never in parallel and
   never on a schedule. Pass 1 opens each wanted card's page with the owner's filters in the address and reads
   its cheapest offers (50, a setting). Pass 2 opens the wants-filtered stock page of the base sellers: those

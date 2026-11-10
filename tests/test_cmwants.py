@@ -32,6 +32,8 @@ CONDITION_OF_ID = {"1": "MT", "2": "NM", "3": "EX", "4": "GD", "5": "LP", "6": "
 LANGUAGE_OF_ID = {"1": "English", "7": "Japanese"}
 LANGUAGE_SELECT = 'select[name="idLanguages[]"]'
 NEW_LIST_ID = 100
+# What Cardmarket answers for a list address that is no list of the buyer's.
+NO_SUCH_LIST = "<html><head><title>Cardmarket</title></head><body><main><h1>Gone</h1></main></body></html>"
 # The fields the sync fills in, by selector, and the name the fake keeps each under.
 FIELDS = {
     "#SWWantsListName": "new name",
@@ -175,6 +177,8 @@ class FakeSite:
         match = re.fullmatch(re.escape(LISTS_URL) + r"/(\d+)(/AddDeckList)?", url)
         assert match is not None, f"the sync loaded {url}"
         list_id = int(match[1])
+        if list_id not in self.lists:
+            return NO_SUCH_LIST
         if match[2]:
             return "<html><body><form id='AddDecklistForm'></form></body></html>"
         self._current = list_id
@@ -320,6 +324,7 @@ def sync(
     min_condition: Condition | None = None,
     foil: Foil = Foil.ANY,
     cancel: threading.Event | None = None,
+    list_id: int | None = None,
 ) -> Run:
     gaps = Gaps(site)
     progress: list[WantsProgress] = []
@@ -329,6 +334,7 @@ def sync(
         languages=languages,
         min_condition=min_condition,
         foil=foil,
+        list_id=list_id,
         cancel=cancel,
         on_progress=progress.append,
         sleep=gaps.sleep,
@@ -408,6 +414,99 @@ class TestTheList:
 
         with pytest.raises(PageError, match="wants lists page"):
             sync(site, cards(("Sol Ring", 1)))
+
+
+class TestListHint:
+    def test_a_list_id_that_is_the_apps_list_is_opened_without_the_lists_page(self) -> None:
+        site = app_site(SiteWant("old", "Old Card", 1))
+
+        run = sync(site, cards(("Sol Ring", 1)), list_id=7)
+
+        assert LISTS_URL not in site.loaded
+        assert site.loaded[0] == f"{LISTS_URL}/7"
+        assert run.result.list_id == 7
+        assert [w.card for w in site.wants[7]] == ["Sol Ring"]
+
+    def test_a_list_that_is_already_right_takes_one_request_with_the_hint_and_two_without(self) -> None:
+        wanted = cards(("Sol Ring", 1))
+        hinted = app_site(SiteWant("w1", "Sol Ring", 1))
+        plain = app_site(SiteWant("w1", "Sol Ring", 1))
+
+        sync(hinted, wanted, list_id=7)
+        sync(plain, wanted)
+
+        assert requests_of(hinted) == ["load /7"]
+        assert requests_of(plain) == ["load ", "load /7"]
+
+    def test_a_list_id_of_another_list_falls_back_to_the_lists_page_and_changes_nothing_there(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        site = app_site(SiteWant("old", "Old Card", 1))
+
+        with caplog.at_level(logging.INFO, logger="commander.cmwants"):
+            run = sync(site, cards(("Sol Ring", 1)), list_id=1)
+
+        assert site.loaded[:3] == [f"{LISTS_URL}/1", LISTS_URL, f"{LISTS_URL}/7"]
+        assert site.events[:3] == ["load /1", "sleep", "load "]
+        assert not any(url.startswith(f"{LISTS_URL}/1/") for url in site.loaded)
+        assert [w.card for w in site.wants[1]] == ["Keep Me"]
+        assert run.result.list_id == 7
+        assert [w.card for w in site.wants[7]] == ["Sol Ring"]
+        assert "list 1" in caplog.text
+
+    def test_a_list_id_whose_page_shows_another_id_under_the_apps_name_falls_back(self) -> None:
+        site = app_site(SiteWant("old", "Old Card", 1))
+        site.pages_once[f"{LISTS_URL}/7"] = [list_page(8, APP_LIST_NAME, [SiteWant("x", "Other", 1)])]
+
+        run = sync(site, cards(("Sol Ring", 1)), list_id=7)
+
+        assert site.loaded[:3] == [f"{LISTS_URL}/7", LISTS_URL, f"{LISTS_URL}/7"]
+        assert run.result.list_id == 7
+        assert [w.card for w in site.wants[7]] == ["Sol Ring"]
+
+    def test_a_list_id_that_is_no_list_falls_back_to_the_list_named_for_the_app(self) -> None:
+        site = app_site()
+
+        run = sync(site, cards(("Sol Ring", 1)), list_id=99)
+
+        assert site.loaded[:3] == [f"{LISTS_URL}/99", LISTS_URL, f"{LISTS_URL}/7"]
+        assert run.result.list_id == 7
+
+    def test_a_list_id_that_is_no_list_falls_back_to_creating_the_list_when_there_is_none(self) -> None:
+        site = FakeSite(lists={1: "MONTHLY WANTS"}, wants={1: [SiteWant("keep", "Keep Me", 4)]})
+
+        run = sync(site, cards(("Sol Ring", 1)), list_id=99)
+
+        assert site.lists == {1: "MONTHLY WANTS", 100: "Commander"}
+        assert run.result.list_id == 100
+
+    def test_a_page_that_is_not_a_list_page_at_all_falls_back(self) -> None:
+        site = app_site()
+        site.pages_once[f"{LISTS_URL}/7"] = ["<html><body><main><h1>Help</h1></main></body></html>"]
+
+        run = sync(site, cards(("Sol Ring", 1)), list_id=7)
+
+        assert site.loaded[:2] == [f"{LISTS_URL}/7", LISTS_URL]
+        assert run.result.list_id == 7
+
+    def test_a_browser_error_on_the_hinted_page_ends_the_sync_instead_of_falling_back(self) -> None:
+        site = app_site()
+        site.failures[f"{LISTS_URL}/7"] = SignedOut("the session has ended")
+
+        with pytest.raises(SignedOut):
+            sync(site, cards(("Sol Ring", 1)), list_id=7)
+
+        assert site.loaded == [f"{LISTS_URL}/7"]
+
+    def test_a_cancel_before_the_hinted_page_loads_nothing(self) -> None:
+        site = app_site()
+        cancel = threading.Event()
+        cancel.set()
+
+        with pytest.raises(WantsCancelled):
+            sync(site, cards(("Sol Ring", 1)), list_id=7, cancel=cancel)
+
+        assert site.loaded == []
 
 
 class TestEmptying:
