@@ -115,8 +115,10 @@ the owner picks into their Cardmarket cart for them to check out by hand.
 - **The scan reads pages, one at a time, in a hidden window,** at least 4 seconds apart, never in parallel and
   never on a schedule. Pass 1 opens each wanted card's page with the owner's filters in the address and reads
   its cheapest offers (50, a setting). Pass 2 opens the wants-filtered stock page of the base sellers: those
-  who carry the rarest cards (the fewest offers in pass 1), or the most of the wanted cards. A sign-in page or
-  a challenge that does not pass by itself is handed to the owner (above); a page that does not read as
+  who carry the rarest cards (the fewest offers in pass 1), or the most of the wanted cards. It is skipped
+  when it cannot add an offer: for a single wanted card (its base sellers were all found through it), or when
+  every card page showed all its offers (the owner's first live run spent 15 pages on one card). A sign-in
+  page or a challenge that does not pass by itself is handed to the owner (above); a page that does not read as
   expected stops the scan and says so. Neither is retried in a loop or worked around. The gap is counted from
   the end of the browser's last request, whichever step made it: the wants list sync and the scan share one
   clock on the browser, so the scan's first page waits out the gap after the sync's last request.

@@ -79,6 +79,12 @@ def other_sellers(prefix: str) -> dict[str, str]:
     return {f"Seller0{n}": f"{prefix}0{n}" for n in range(2, 8)}
 
 
+def all_shown(html: str) -> str:
+    """The page with its "Show more results" button hidden, as when the page lists every offer."""
+    button = 'id="loadMoreButton" class="btn btn-primary btn-sm"'
+    return html.replace(button, 'id="loadMoreButton" class="btn btn-primary btn-sm d-none"')
+
+
 def shifted_ids() -> dict[int, int]:
     return {article: article + 1 for article in FIXTURE_IDS.values()}
 
@@ -785,6 +791,24 @@ class TestPassTwo:
         assert SELLER01_URL not in browser.loaded
         assert result.pages_read == 2
 
+    def test_a_single_wanted_card_opens_no_seller(self) -> None:
+        # Its base sellers were all found through it, so their stock can only repeat it.
+        result, browser, _, _ = run({SYLVAN_URL: fixture(CARD_PAGE)}, [SYLVAN], wants_list_id=999)
+
+        assert browser.loaded == [SYLVAN_URL]
+        assert result.base_sellers == ()
+        assert result.status is ScanStatus.COMPLETE
+        assert ids_of(result) == BUYABLE_FIXTURE_IDS
+
+    def test_cards_whose_pages_showed_every_offer_open_no_seller(self) -> None:
+        pages = {url: all_shown(p) if isinstance(p, str) else p for url, p in self.pages().items()}
+
+        result, browser, _, _ = self.run_both(pages)
+
+        assert browser.loaded == [SYLVAN_URL, KIRK_URL]
+        assert result.base_sellers == ()
+        assert result.cards_with_more == ()
+
     def test_with_nothing_to_buy_there_are_no_sellers_to_open(self) -> None:
         result, browser, _, _ = run({SYLVAN_URL: NOT_FOUND}, [SYLVAN], wants_list_id=999)
 
@@ -798,7 +822,10 @@ class TestBaseSellersUnderLimits:
     name is the base seller: Seller01 (Italy, 16 days). The others arrive in 11 (Seller02, Hungary), 16
     (Seller03, Croatia), 6 (Seller04, Sweden), 12 (Seller05, Belgium) and 9 days (Seller07, Spain); Seller06
     cannot be bought from. The page's route averages to Sweden are 14, 7, 8, 4, 7 and 7 days for Italy,
-    Hungary, Croatia, Sweden, Belgium and Spain."""
+    Hungary, Croatia, Sweden, Belgium and Spain. A second wanted card, which Cardmarket has no page for, makes
+    the seller pass worth running without adding any seller."""
+
+    OTHER = "Card B"
 
     SELLER04_URL = f"{USERS}/Seller04/Offers/Singles?idWantslist=999"
     THREE_DAYS_URL = f"{CARDS}/Sylvan-Safekeeper?language%5B1%5D=1&maxShippingTime=3"
@@ -810,9 +837,13 @@ class TestBaseSellersUnderLimits:
     def run_one(
         self, pages: Mapping[str, str | Exception], filters: ScanFilters, limits: OfferLimits
     ) -> tuple[ScanResult, FakeBrowser]:
+        pages = {**pages, card_page_url(self.OTHER, filters): NOT_FOUND}
         result, browser, _, _ = run(
-            pages, [SYLVAN], wants_list_id=999, base_sellers=1, filters=filters, limits=limits
+            pages, [SYLVAN, self.OTHER], wants_list_id=999, base_sellers=1, filters=filters, limits=limits
         )
+        # The other card's page is read second; the asserts below look at the rest.
+        assert browser.loaded[1] == card_page_url(self.OTHER, filters)
+        del browser.loaded[1]
         return result, browser
 
     def test_without_limits_the_first_seller_by_name_is_chosen(self) -> None:
@@ -865,9 +896,9 @@ class TestBaseSellersUnderLimits:
 
         result, _ = self.run_one(pages, ScanFilters(max_days=7), OfferLimits(max_days=7))
 
-        # Seller04 is out, and the next-fastest, Seller07 (9 days), is over the limit too.
+        # Seller04 is out, and the next-fastest, Seller07 (9 days), is over the limit too: the two card pages.
         assert result.base_sellers == ()
-        assert result.pages_read == 1
+        assert result.pages_read == 2
 
     def test_the_offers_read_are_all_kept_for_the_solver_to_judge(self) -> None:
         pages = {SYLVAN_URL: fixture(CARD_PAGE), self.SELLER04_URL: fixture(SELLER_PAGE)}
