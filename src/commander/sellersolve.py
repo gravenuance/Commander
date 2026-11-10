@@ -7,7 +7,6 @@ saving (50 cents more on a card can beat 3 € of shipping). The solver never to
 shipping methods of a seller's country come from a caller-supplied function.
 """
 
-import importlib
 import logging
 import re
 import time
@@ -307,10 +306,14 @@ class _LpResult:
 
 # scipy ships no complete type stubs: every call into it stays in this function, through modules typed Any.
 def _run_milp(lp: _Lp, time_limit_s: float) -> _LpResult:
-    # Imported here so the app starts without loading scipy.
-    np: Any = importlib.import_module("numpy")
-    optimize: Any = importlib.import_module("scipy.optimize")
-    sparse: Any = importlib.import_module("scipy.sparse")
+    # Imported here so the app starts without loading scipy, and as statements, which PyInstaller follows:
+    # loaded by name, they were left out of the exe.
+    import numpy as np  # noqa: PLC0415
+    import scipy.optimize  # noqa: PLC0415  # pyright: ignore[reportMissingTypeStubs]
+    import scipy.sparse  # noqa: PLC0415  # pyright: ignore[reportMissingTypeStubs]
+
+    optimize: Any = scipy.optimize
+    sparse: Any = scipy.sparse
 
     row_index = [r for r, row in enumerate(lp.rows) for _ in row.terms]
     column_index = [column for row in lp.rows for column, _ in row.terms]

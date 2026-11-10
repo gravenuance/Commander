@@ -34,6 +34,14 @@ LOGIN = (
     "<input name='username'><input type='password' name='userPassword'></form></body></html>"
 )
 UNRELATED = "<html><head><title>Cardmarket</title></head><body><main><h1>Help</h1><p>Hello</p></main></body>"
+# The code page after the password, trimmed from the real one: it already shows the Logout link.
+TWO_FACTOR = (
+    "<html><head><title>Two-Factor Authentication | Cardmarket</title></head><body>"
+    "<a href='/en/Magic/PostGetAction/User_Logout'>Log out</a><main><h1>Two-Factor Authentication</h1>"
+    "<form method='POST' data-ajax-action='GoogleAuthenticator_VerifyCode' class='tfaForm'>"
+    "<input type='hidden' name='__cmtkn' value='0000'><input type='text' name='code' maxlength='6'>"
+    "</form></main></body></html>"
+)
 SIGNED_IN_UNRELATED = (
     "<html><body><a href='/en/Magic/PostGetAction/User_Logout'>Log out</a>"
     "<input name='username'><main><h1>Help</h1></main></body></html>"
@@ -507,6 +515,11 @@ class TestWrongPages:
             READERS[name](LOGIN)
 
     @pytest.mark.parametrize("name", list(READERS))
+    def test_the_two_factor_code_page_is_refused_by_every_reader(self, name: str) -> None:
+        with pytest.raises(PageError, match="sign in"):
+            READERS[name](TWO_FACTOR)
+
+    @pytest.mark.parametrize("name", list(READERS))
     def test_an_unrelated_page_is_refused_by_every_reader(self, name: str) -> None:
         with pytest.raises(PageError, match=r"no |heading"):
             READERS[name](UNRELATED)
@@ -567,6 +580,7 @@ class TestPageState:
         [
             (CHALLENGE, PageState.CHALLENGE),
             (LOGIN, PageState.SIGNED_OUT),
+            (TWO_FACTOR, PageState.SIGNED_OUT),
             (SIGNED_IN_UNRELATED, PageState.SIGNED_IN),
             (UNRELATED, PageState.UNKNOWN),
         ],

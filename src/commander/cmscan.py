@@ -261,7 +261,7 @@ class _Scan:
         status, reason = ScanStatus.COMPLETE, None
         try:
             self._pass_one()
-            if self._request.wants_list_id is not None:
+            if self._request.wants_list_id is not None and self._pass_two_can_add():
                 self._pass_two(self._request.wants_list_id)
         except _Stop as stop:
             status, reason = stop.status, stop.reason
@@ -345,6 +345,19 @@ class _Scan:
                 self._cards_with_more.append(name)
             for offer in page.offers:
                 self._offers[offer.article_id] = replace(offer, card=self._names[key])
+
+    def _pass_two_can_add(self) -> bool:
+        """Whether the sellers' stock can show an offer pass 1 did not: only for a card whose page had more
+        offers than it showed, and only with another wanted card to bundle it with (a single card's base
+        sellers were all found through it, so their stock repeats it)."""
+        if len(self._names) < 2 or not self._cards_with_more:  # noqa: PLR2004 - a bundle is two cards
+            log.info(
+                "scan: no seller stock to read (%d wanted cards, %d with more offers than shown)",
+                len(self._names),
+                len(self._cards_with_more),
+            )
+            return False
+        return True
 
     def _pass_two(self, wants_list_id: int) -> None:
         eligible = apply_limits(self._offers.values(), self._request.limits)
