@@ -49,6 +49,10 @@ class SiteWant:
     quantity: int
     languages: tuple[str, ...] = ()
     condition: str = "PO"
+    # What the expansion cell, the yes/no columns (foil, signed, altered) and the buy price show.
+    expansion: str = "Any"
+    yes_no: str = "Any"
+    price: str = ""
 
 
 def lists_page(lists: dict[int, str]) -> str:
@@ -74,6 +78,10 @@ def list_page(list_id: int, name: str, wants: list[SiteWant]) -> str:
         + "</td>"
         '<td class="condition"><a class="article-condition">'
         f'<span class="badge">{w.condition}</span></a></td>'
+        f'<td class="expansion"><span class="visually-hidden">{w.expansion}</span></td>'
+        + f'<td class="ternary-header"><span class="visually-hidden">{w.yes_no}</span></td>'
+        * 3
+        + f'<td data-text="0" class="buyPrice">{w.price}</td>'
         "</tr>"
         for w in wants
     )
@@ -416,6 +424,66 @@ class TestEmptying:
         ]
         assert summary(run) == [("Sol Ring", 1)]
 
+    def test_a_list_that_already_holds_the_cards_as_asked_is_left_as_it_is(self) -> None:
+        site = app_site(
+            SiteWant("w1", "Sol Ring", 1, ("English",), "NM"),
+            SiteWant("w2", "Arcane Signet", 2, ("English",), "NM"),
+        )
+
+        wanted = cards(("Sol Ring", 1), ("Arcane Signet", 2))
+
+        run = sync(site, wanted, languages=(ENGLISH,), min_condition=Condition.NM)
+
+        assert requests_of(site) == ["load ", "load /7"]
+        assert [e for e in site.events if e.startswith(("tick", "fill", "click", "submit"))] == []
+        assert summary(run) == [("Sol Ring", 1), ("Arcane Signet", 2)]
+        assert (run.result.list_id, run.result.unmatched, run.result.quantity_mismatch) == (7, (), ())
+
+    def test_a_card_wanted_twice_held_as_two_wants_is_left_as_it_is_too(self) -> None:
+        site = app_site(SiteWant("w1", "Sol Ring", 1), SiteWant("w2", "Sol Ring", 1))
+
+        sync(site, cards(("Sol Ring", 2)))
+
+        assert requests_of(site) == ["load ", "load /7"]
+
+    @pytest.mark.parametrize(
+        ("held", "foil"),
+        [
+            (SiteWant("w1", "Sol Ring", 2, ("English",), "NM"), Foil.ANY),
+            (SiteWant("w1", "Mana Crypt", 1, ("English",), "NM"), Foil.ANY),
+            (SiteWant("w1", "Sol Ring", 1, ("English",), "EX"), Foil.ANY),
+            (SiteWant("w1", "Sol Ring", 1, ("English", "Japanese"), "NM"), Foil.ANY),
+            (SiteWant("w1", "Sol Ring", 1, ("English",), "NM", expansion="Alpha"), Foil.ANY),
+            (SiteWant("w1", "Sol Ring", 1, ("English",), "NM", yes_no="Yes"), Foil.ANY),
+            (SiteWant("w1", "Sol Ring", 1, ("English",), "NM", price="2,00 €"), Foil.ANY),
+            (SiteWant("w1", "Sol Ring", 1, ("English",), "NM"), Foil.NON_FOIL),
+        ],
+        ids=[
+            "quantity",
+            "other card",
+            "condition",
+            "languages",
+            "expansion",
+            "yes-no column",
+            "buy price",
+            "foil asked",
+        ],
+    )
+    def test_a_list_that_differs_in_anything_is_made_again(self, held: SiteWant, foil: Foil) -> None:
+        site = app_site(held)
+
+        sync(site, cards(("Sol Ring", 1)), languages=(ENGLISH,), min_condition=Condition.NM, foil=foil)
+
+        assert "submit delete 1" in site.events
+        assert "click import" in site.events
+
+    def test_with_no_language_or_condition_asked_a_list_that_has_them_is_made_again(self) -> None:
+        site = app_site(SiteWant("w1", "Sol Ring", 1, ("English",), "NM"))
+
+        sync(site, cards(("Sol Ring", 1)))
+
+        assert "click import" in site.events
+
     def test_an_empty_list_is_not_emptied(self) -> None:
         site = app_site()
 
@@ -518,8 +586,8 @@ class TestImport:
         run = sync(site, cards(("Sol Ring", 1), ("Arcane Signet", 2)))
 
         assert run.result.imported == (
-            Want("w1", "Sol Ring", 1, (), Condition.PO),
-            Want("w2", "Arcane Signet", 2, (), Condition.PO),
+            Want("w1", "Sol Ring", 1, (), Condition.PO, plain=True),
+            Want("w2", "Arcane Signet", 2, (), Condition.PO, plain=True),
         )
         assert run.result.unmatched == ()
         assert run.result.quantity_mismatch == ()

@@ -111,7 +111,11 @@ the owner picks into their Cardmarket cart for them to check out by hand.
   - Only 100% display scaling on one monitor was tried.
 - **The wants list.** The app creates or refills a list named for the purpose, imports the Don't Have text,
   then sets the owner's language and minimum condition through the bulk form, one quantity group at a time so
-  quantities survive. It only ever changes that list.
+  quantities survive. It only ever changes that list. A list that already holds exactly the wanted cards and
+  quantities, at exactly the asked language and condition and with no other limit (any expansion, "Any" in
+  the foil, signed and altered columns, no buy price), is left as it is: two requests instead of about ten,
+  after the owner's first live run spent 65 s refilling an unchanged list. A foil choice always refills it,
+  since which of those columns is foil is not read.
 - **The scan reads pages, one at a time, in a hidden window,** at least 4 seconds apart, never in parallel and
   never on a schedule. Pass 1 opens each wanted card's page with the owner's filters in the address and reads
   its cheapest offers (50, a setting). Pass 2 opens the wants-filtered stock page of the base sellers: those

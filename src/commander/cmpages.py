@@ -128,6 +128,9 @@ class Want:
     # Empty means any language.
     languages: tuple[str, ...]
     min_condition: Condition
+    # No limit beyond language and condition: any expansion, "Any" in every yes/no column (foil, signed,
+    # altered) and no buy price, as an import leaves a want. False when the page does not show it so.
+    plain: bool = False
 
 
 @dataclass(slots=True, frozen=True)
@@ -163,6 +166,7 @@ _WANTS_LIST_PATH = re.compile(r"/en/Magic/Wants/(?P<id>\d+)/?")
 _CREATE_WANTS_LIST = "WantsList_CreateWantsList"
 _TWO_FACTOR_ACTION = "VerifyCode"
 _CART_EMPTY = "shopping cart is empty"
+_ANY = "Any"
 _LOCATION_PREFIX = "Item location: "
 _PRODUCT_PATH = "/en/Magic/Products/"
 _FOIL = "Foil"
@@ -492,6 +496,20 @@ def _want(checkbox: Node, row: Node) -> Want:
         min_condition=_condition(
             _need(row.find(tagged("td", cls="condition")), where, "condition cell"), where
         ),
+        plain=_plain_want(row),
+    )
+
+
+def _plain_want(row: Node) -> bool:
+    expansion = row.find(tagged("td", cls="expansion"))
+    yes_no = row.find_all(lambda n: n.tag == "td" and n.has_class("ternary-header"))
+    price = row.find(tagged("td", cls="buyPrice"))
+    if expansion is None or not yes_no or price is None:
+        return False
+    return (
+        expansion.text().strip() == _ANY
+        and all(cell.text().strip() == _ANY for cell in yes_no)
+        and not price.text().strip()
     )
 
 
