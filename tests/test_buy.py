@@ -2459,6 +2459,24 @@ class TestAddingToTheCart:
         if reason:
             assert_short(reason)
 
+    @pytest.mark.parametrize(
+        "failure",
+        [LoadTimeout("slow"), BrowserError("gone"), PageError("not a cart"), CredentialError("locked")],
+    )
+    def test_the_details_a_failed_cart_run_points_to_are_in_the_log(
+        self, two_packages: Rig, failure: Exception, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # The owner's first live cart run stopped with "the details are in the log", and they were not.
+        def fail(_: threading.Event) -> None:
+            raise failure
+
+        two_packages.cart_effect = fail
+
+        with caplog.at_level(logging.WARNING, logger="commander.buy"):
+            add(two_packages.service, 2)
+
+        assert any(str(failure) in record.getMessage() for record in caplog.records)
+
     @pytest.mark.parametrize("error", [BrowserError("the window is gone"), RuntimeError("boom")])
     def test_a_failure_after_a_cancel_ends_the_run_as_cancelled_and_says_to_check_the_cart(
         self, two_packages: Rig, error: Exception, caplog: pytest.LogCaptureFixture

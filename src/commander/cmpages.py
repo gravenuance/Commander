@@ -162,6 +162,7 @@ _WANTS_ADD_CARDS = re.compile(r"/en/Magic/Wants/(?P<id>\d+)/AddCards")
 _WANTS_LIST_PATH = re.compile(r"/en/Magic/Wants/(?P<id>\d+)/?")
 _CREATE_WANTS_LIST = "WantsList_CreateWantsList"
 _TWO_FACTOR_ACTION = "VerifyCode"
+_CART_EMPTY = "shopping cart is empty"
 _LOCATION_PREFIX = "Item location: "
 _PRODUCT_PATH = "/en/Magic/Products/"
 _FOIL = "Foil"
@@ -454,8 +455,12 @@ def _cart_shipment(block: Node) -> CartShipment:
 def read_cart(html: str) -> tuple[CartShipment, ...]:
     root = _open_page(html, _CART_PAGE)
     blocks = root.find_all(lambda n: n.tag == "section" and n.has_class("shipment-block"))
-    if not blocks and root.find(tagged("div", id="shipments-col")) is None:
-        raise PageError(f"{_CART_PAGE}: no shipment blocks and no shipments column")
+    if not blocks:
+        # An empty cart has no shipments column at all, only its "empty" notice.
+        column = root.find(tagged("div", id="shipments-col"))
+        notice = root.find(lambda n: n.tag == "p" and n.has_class("noResults") and _CART_EMPTY in n.text())
+        if column is None and notice is None:
+            raise PageError(f"{_CART_PAGE}: no shipment blocks, no shipments column and no empty notice")
     shipments: dict[int, CartShipment] = {}
     for block in blocks:
         shipment = _cart_shipment(block)
