@@ -67,8 +67,8 @@ class RecordingBrowser(WebviewBrowser):
         self._folder = folder
         self._saved = 0
 
-    def load(self, url: str) -> str:
-        html = super().load(url)
+    def load(self, url: str, *, cancellable: bool = True) -> str:
+        html = super().load(url, cancellable=cancellable)
         if self._folder is not None:
             self._saved += 1
             slug = _NOT_SLUG.sub("-", urlsplit(url).path).strip("-")[:80] or "page"
