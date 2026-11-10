@@ -1504,7 +1504,11 @@ class TestAccount:
             ("buy_scan", "startBuyScan()", 'idle({ phase: "wants", running: true })'),
             ("buy_cancel", "cancelBuyScan()", 'idle({ phase: "scanning", running: true })'),
             ("buy_package", "pickBuyRow(1)", "PACKAGE"),
-            ("buy_add_to_cart", "confirmBuyCart()", 'idle({ phase: "cart", running: true })'),
+            (
+                "buy_add_to_cart",
+                "(openBuyCart(), confirmBuyCart())",
+                'idle({ phase: "cart", running: true })',
+            ),
         ],
     )
     def test_an_answer_that_arrives_after_signing_out_is_dropped(
@@ -2176,6 +2180,53 @@ class TestTheCartButtonAndDialog:
             "total": "Total €5.20 · cards €0.90 · shipping €4.00",
             "call": ["buy_add_to_cart", 2, {"totalCents": 520, "picks": [[103, 2], [102, 1]]}],
         }
+
+    def test_an_answer_arriving_while_the_dialog_is_open_closes_it_and_sends_nothing(self) -> None:
+        seen = run_cart("""
+        await open(view({ status: done() }));
+        await pickPackage();
+        await fire($("buy-cart"), "click");
+        const shown = $("buy-cart-dialog-title").textContent;
+        let release = () => {};
+        stub.buy_package = (sellers) => new Promise((resolve) => { release = () => resolve({ ...PACKAGE,
+          sellers, totalCents: 700, check: { totalCents: 700, picks: [[101, 2], [102, 1], [104, 1]] } }); });
+        const pick = fire($("buy-curve").children[0], "click");
+        release();
+        await pick;
+        const stillOpen = $("buy-cart-dialog").open;
+        await fire($("buy-cart-confirm"), "click");
+        return { shown, stillOpen, asked: calls.filter((c) => c[0] === "buy_add_to_cart") };
+        """)
+        assert seen == {"shown": "Add 3 cards to your Cardmarket cart?", "stillOpen": False, "asked": []}
+
+    def test_add_to_cart_waits_while_a_package_is_being_asked_for(self) -> None:
+        seen = run_cart("""
+        await open(view({ status: done() }));
+        await pickPackage();
+        let release = () => {};
+        stub.buy_package = (sellers) => new Promise((resolve) => { release = () => resolve({ ...PACKAGE,
+          sellers }); });
+        const pick = fire($("buy-curve").children[0], "click");
+        const waiting = $("buy-cart").disabled;
+        await fire($("buy-cart"), "click");
+        const opened = $("buy-cart-dialog").open;
+        release();
+        await pick;
+        return { waiting, opened, after: $("buy-cart").disabled };
+        """)
+        assert seen == {"waiting": True, "opened": False, "after": False}
+
+    def test_the_confirmation_sends_the_package_the_dialog_showed(self) -> None:
+        seen = run_cart("""
+        await open(view({ status: done() }));
+        await pickPackage();
+        await fire($("buy-cart"), "click");
+        buyState.detail = { ...PACKAGE, sellers: 3, check: { totalCents: 700, picks: [[104, 1]] } };
+        stub.buy_add_to_cart = async () => idle({ phase: "cart", running: true, results: RESULTS });
+        await fire($("buy-cart-confirm"), "click");
+        return calls.find((c) => c[0] === "buy_add_to_cart");
+        """)
+        assert seen == ["buy_add_to_cart", 2, {"totalCents": 490, "picks": [[101, 2], [102, 1]]}]
 
     def test_keep_looking_calls_nothing_and_closing_the_dialog_any_way_returns_to_the_button(self) -> None:
         seen = run_cart("""

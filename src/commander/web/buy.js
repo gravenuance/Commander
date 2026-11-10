@@ -30,8 +30,12 @@ const buyState = {
   packages: new Map(),
   picked: null,
   packageRequest: 0,
-  // The detail of the package shown, which "Add to cart" confirms.
+  // The detail of the package shown, which "Add to cart" asks about.
   detail: null,
+  // The detail the open cart dialog names, which its confirm sends, whatever is shown behind it by then.
+  confirming: null,
+  // True while the package of the picked row is being fetched, when the one shown is not the one picked.
+  packagePending: false,
   // True from a click on Scan or on the cart dialog's confirm until the bridge answers.
   requested: false,
   // True from the confirm until the run it started has ended, so the screen says "adding" through a handover.
@@ -121,6 +125,8 @@ function buyForget() {
   buyState.packages.clear();
   buyState.picked = null;
   buyState.detail = null;
+  buyState.confirming = null;
+  buyState.packagePending = false;
   buyState.adding = false;
   buyState.packageRequest++;
   $("buy-decks").replaceChildren();
@@ -290,7 +296,7 @@ function paintBuyStatus(status) {
   if (!running) buyState.adding = false;
   const adding = status.phase === "cart" || buyState.adding;
   const cart = $("buy-cart");
-  cart.disabled = running || buyState.requested;
+  paintBuyCartButton(running);
   if (running) cart.setAttribute("aria-busy", "true");
   else cart.removeAttribute("aria-busy");
   const cancel = $("buy-cancel");
@@ -312,6 +318,11 @@ function paintBuyStatus(status) {
   renderBuyCart(status.cart ?? null);
   keepBuyFocus(status);
   paintBuyPane();
+}
+
+// Add to cart waits for a run, for a request of the bridge, and for the package of the row just picked.
+function paintBuyCartButton(running = buyState.view?.status.running ?? false) {
+  $("buy-cart").disabled = running || buyState.requested || buyState.packagePending;
 }
 
 // A button that has the focus and is disabled or hidden by this paint hands it on, so the keyboard is not
@@ -703,20 +714,29 @@ async function pickBuyRow(sellers) {
   buyState.picked = sellers;
   markBuyRows();
   const sent = ++buyState.packageRequest;
+  let detail = buyState.packages.get(sellers);
+  buyState.packagePending = !detail;
+  paintBuyCartButton();
   try {
-    let detail = buyState.packages.get(sellers);
     if (!detail) {
       detail = await buyApi("buy_package", sellers);
       if (!detail) return;
       buyState.packages.set(sellers, detail);
     }
     if (sent === buyState.packageRequest) renderBuyPackage(detail);
-  } catch (error) { noteFailure(error); }
+  } catch (error) { noteFailure(error); } finally {
+    // Only the newest request ends the wait; an older one finishing leaves it to the newer.
+    if (sent === buyState.packageRequest) {
+      buyState.packagePending = false;
+      if (buyState.view) paintBuyCartButton();
+    }
+  }
 }
 
 function clearBuyPackage() {
   buyState.picked = null;
   buyState.detail = null;
+  buyState.packagePending = false;
   buyState.packageRequest++;
   markBuyRows();
   $("buy-package").hidden = true;
@@ -726,6 +746,8 @@ function clearBuyPackage() {
 }
 
 function renderBuyPackage(detail) {
+  // A confirmation of another package is withdrawn.
+  if (buyState.detail !== detail && $("buy-cart-dialog").open) $("buy-cart-dialog").close();
   buyState.detail = detail;
   $("buy-package").hidden = false;
   $("buy-package-title").textContent = `${plural(detail.sellers, "seller", "sellers")} · ${euro(detail.totalCents)}`;
@@ -787,7 +809,10 @@ function setupBuyCart() {
   $("buy-cart-cancel").addEventListener("click", () => dialog.close());
   $("buy-cart-confirm").addEventListener("click", confirmBuyCart);
   // Escape closes the dialog natively; any way of closing it returns to the button that opened it.
-  dialog.addEventListener("close", () => $("buy-cart").focus());
+  dialog.addEventListener("close", () => {
+    buyState.confirming = null;
+    $("buy-cart").focus();
+  });
 }
 
 const buyCartCards = (detail) => detail.shipments
@@ -806,6 +831,7 @@ function buildBuyCartSeller(shipment) {
 function openBuyCart() {
   const detail = buyState.detail;
   if (!detail || $("buy-cart").disabled) return;
+  buyState.confirming = detail;
   const cards = plural(buyCartCards(detail), "card", "cards");
   $("buy-cart-dialog-title").textContent = `Add ${cards} to your Cardmarket cart?`;
   $("buy-cart-confirm").textContent = `Add ${cards} to cart`;
@@ -817,7 +843,8 @@ function openBuyCart() {
 }
 
 async function confirmBuyCart() {
-  const detail = buyState.detail;
+  const detail = buyState.confirming;
+  buyState.confirming = null;
   $("buy-cart-dialog").close();
   if (!detail || buyState.requested) return;
   buyState.requested = true;
