@@ -2,10 +2,11 @@
 
 import io
 import logging
+import sys
 import threading
 import time
 from collections.abc import Generator, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -76,7 +77,8 @@ class Runner:
         out = io.StringIO()
         sink = err if err is not None else io.StringIO()
         started = time.monotonic()
-        with _root_logging_kept():
+        # stdout carries the protocol: a stray print anywhere under main lands on stderr instead.
+        with _root_logging_kept(), redirect_stdout(sys.stderr):
             code = main(
                 argv,
                 env=self._services.env,

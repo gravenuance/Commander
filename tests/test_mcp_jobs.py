@@ -11,6 +11,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from commander.board import Origin, read_board
 from commander.mcp import jobs as jobs_module
+from commander.mcp import runner as runner_module
 from commander.mcp.jobs import Job, JobBoard, JobKind, JobState, JobView
 from commander.mcp.runner import Runner
 from conftest import DECK_ID, FakeArchidekt, Json, deck_page
@@ -186,6 +187,23 @@ def test_only_the_latest_progress_lines_are_shown() -> None:
     progress = board.view(job)["progress"]
 
     assert (len(progress), progress[0], progress[-1]) == (20, "step 11", "step 30")
+
+
+def test_a_job_whose_command_crashes_ends_failed_and_frees_the_server(
+    home: Path, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sync_decks(home, fake)
+    tools = Tools.over(make_session(home, fake))
+
+    def crash(_argv: list[str], **_: object) -> int:
+        raise RuntimeError("boom\x1b[0m")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(runner_module, "main", crash)
+        done = finished(tools, tools.jobs.start_sync())
+
+    assert (done["state"], done["exitCode"], done["error"]) == ("failed", None, "RuntimeError: boom[0m")
+    assert tools.read.list_decks()["warnings"] == []
 
 
 def test_finished_jobs_are_forgotten_oldest_first(

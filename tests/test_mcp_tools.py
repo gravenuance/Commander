@@ -11,6 +11,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from commander import __version__
 from commander.board import Status, read_activity, read_board
+from commander.mcp import runner as runner_module
 from commander.mcp.logfile import LOGGER_NAME, install_log
 from commander.mcp.runner import Services
 from commander.mcp.session import Session, ToolResult
@@ -155,6 +156,21 @@ def test_a_plan_with_problems_is_an_error_that_lists_them(
     assert "its colours (U) are outside the deck's (R)" in message
     assert message.endswith("(exit code 2)")
     assert deck_changes(fake) == []
+
+
+def test_a_stray_print_under_a_command_goes_to_stderr_never_to_stdout(
+    tools: Tools, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def noisy(_argv: list[str], **_: object) -> int:
+        print("stray line")
+        return 0
+
+    monkeypatch.setattr(runner_module, "main", noisy)
+
+    answer = tools.session.text_call(["board", "plan", "magda"])
+
+    shown = capsys.readouterr()
+    assert (answer["result"], shown.out, shown.err) == ("", "", "stray line\n")
 
 
 def test_names_that_cmdr_would_read_as_flags_never_reach_it(tools: Tools) -> None:

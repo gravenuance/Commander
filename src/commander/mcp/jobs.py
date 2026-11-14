@@ -137,9 +137,9 @@ class JobBoard:
             with self._runner.exclusive():
                 self._set_state(job, JobState.RUNNING)
                 outcome = self._runner.execute(job.argv, err=job.sink)
-        except Exception as error:
+        except Exception as error:  # a bug in a command: `main` handles the failures it knows
             log.exception("the %s job %s crashed", job.kind.value, job.id)
-            self._finish(job, JobState.FAILED, None, None, f"{type(error).__name__}: {error}")
+            self._finish(job, JobState.FAILED, None, None, clean_text(f"{type(error).__name__}: {error}"))
             return
         result = _parse(outcome.out)
         if outcome.code == 0:
