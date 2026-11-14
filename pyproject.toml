@@ -20,6 +20,7 @@ dependencies = [
 
 [project.scripts]
 cmdr = "commander.cli:main"
+cmdr-mcp = "commander.mcp.server:main"
 
 [project.gui-scripts]
 commander = "commander.app_main:main"
