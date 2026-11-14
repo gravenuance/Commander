@@ -3,7 +3,6 @@ import functools
 import gzip
 import json
 import shutil
-import sys
 import uuid
 from collections.abc import Callable, Iterator, Sequence
 from datetime import date, datetime
@@ -19,6 +18,7 @@ import pytest
 from commander import fsutil, net
 from commander.carddb import CARD_DB_FILE, CardDataMeta, write_card_db
 from commander.net import HTTP_OK
+from commander.osinfo import is_windows
 from commander.scryfall import SetCard, read_cards, read_tags, role_gates, role_members
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -27,9 +27,7 @@ DECK_ID = 10000001
 OUT_DAY = date(2026, 10, 20)
 
 # What the messages call the secret store that `memory_keyring` stands in for.
-SECRET_STORE = (
-    "Windows Credential Manager" if sys.platform == "win32" else "the desktop keyring (Secret Service)"
-)
+SECRET_STORE = "Windows Credential Manager" if is_windows() else "the desktop keyring (Secret Service)"
 
 type Json = dict[str, Any]
 type Handler = Callable[[httpx.Request], httpx.Response]

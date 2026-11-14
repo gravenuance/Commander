@@ -44,7 +44,7 @@ from commander.cmscan import (
     scan,
 )
 from commander.cmsession import BrowserError, WebviewBrowser, on_cardmarket
-from commander.config import environment, webview_dir
+from commander.config import environment, webview_dir_help
 from commander.credentials import CardmarketSessionStore, CredentialError
 from commander.sellersolve import WantedCard
 
@@ -153,11 +153,6 @@ def run_scan(status: Window, args: argparse.Namespace, cancel: threading.Event) 
                     print(f"could not close a window: {error!r}", file=sys.stderr)
 
 
-def _here() -> str:
-    """The app's storage folder on this machine, as argparse help text."""
-    return str(webview_dir(environment())).replace("%", "%%")
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument("cards", nargs="*", metavar="CARD", help="card names, as the wants list names them")
@@ -165,7 +160,7 @@ def main() -> int:
         "--profile",
         type=Path,
         required=True,
-        help=f"the app's Cardmarket storage folder; here {_here()}",
+        help=webview_dir_help(environment()),
     )
     parser.add_argument("--wants-list", type=int, help="the wants list id; without it there is no pass 2")
     parser.add_argument(

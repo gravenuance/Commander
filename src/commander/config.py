@@ -3,7 +3,7 @@
 import json
 import logging
 import os
-import sys
+import re
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -17,6 +17,7 @@ from tomlkit.items import Table
 from commander.analysis import ANALYZED_ROLES
 from commander.carddb import Role
 from commander.fsutil import write_text_atomic
+from commander.osinfo import is_linux, is_windows
 
 log = logging.getLogger(__name__)
 
@@ -118,22 +119,61 @@ def config_path(
     return default_config_path(env, platform=platform, home=home)
 
 
+def webview_dir_help(env: Mapping[str, str]) -> str:
+    """The window profile folder as the tools' argparse help names it (`%` doubled for argparse)."""
+    return f"the app's Cardmarket storage folder; here {webview_dir(env)}".replace("%", "%%")
+
+
 def config_location_hint(platform: str | None = None) -> str:
     """The default config file as `--help` and the tools' help name it."""
-    if _is_windows(platform):
+    if is_windows(platform):
         return "%APPDATA%\\Commander\\config.toml"
     return "$XDG_CONFIG_HOME/commander/config.toml, else ~/.config/commander/config.toml"
 
 
 def cache_location_hint(platform: str | None = None) -> str:
     """The default cache folder as `--help` and the tools' help name it."""
-    if _is_windows(platform):
+    if is_windows(platform):
         return "%LOCALAPPDATA%\\Commander"
     return "$XDG_CACHE_HOME/commander, else ~/.cache/commander"
 
 
-def _is_windows(platform: str | None) -> bool:
-    return (sys.platform if platform is None else platform) == "win32"
+_USER_DIRS_DOCUMENTS = re.compile(r'\s*XDG_DOCUMENTS_DIR\s*=\s*"([^"]*)"')
+
+
+def documents_dir(env: Mapping[str, str], *, platform: str | None = None, home: Path | None = None) -> Path:
+    """The user's Documents folder, where a new account's deck folder goes. Linux asks the desktop first:
+    $XDG_DOCUMENTS_DIR, then the one in user-dirs.dirs (xdg-user-dirs); both must be absolute. Otherwise,
+    and on other systems, `Documents` in the home folder."""
+    home = Path.home() if home is None else home
+    fallback = home / "Documents"
+    if not is_linux(platform):
+        return fallback
+    given = env.get("XDG_DOCUMENTS_DIR", "")
+    if _is_absolute(given):
+        return Path(given)
+    config_home = env.get("XDG_CONFIG_HOME", "")
+    listing = (Path(config_home) if _is_absolute(config_home) else home / ".config") / "user-dirs.dirs"
+    try:
+        text = listing.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return fallback
+    except (OSError, UnicodeDecodeError) as error:
+        log.warning("cannot read %s, so Documents is taken to be %s: %s", listing, fallback, error)
+        return fallback
+    for line in text.splitlines():
+        found = _USER_DIRS_DOCUMENTS.match(line)
+        if found:
+            folder = found[1]
+            if folder.startswith("$HOME"):
+                folder = home.as_posix() + folder.removeprefix("$HOME")
+            return Path(folder) if _is_absolute(folder) else fallback
+    return fallback
+
+
+def _is_absolute(text: str) -> bool:
+    """Whether a path from the environment or a desktop file is absolute; empty and relative ones are not."""
+    return bool(text) and (PurePosixPath(text).is_absolute() or Path(text).is_absolute())
 
 
 def _app_folder(
@@ -146,10 +186,10 @@ def _app_folder(
     home: Path | None,
 ) -> Path:
     """The app's folder under the system's base for it, falling back to a dot folder in the home folder."""
-    windows = _is_windows(platform)
+    windows = is_windows(platform)
     given = env.get(windows_var if windows else xdg_var)
     # The XDG specification has an empty or relative value ignored.
-    if given and (windows or PurePosixPath(given).is_absolute()):
+    if given and (windows or _is_absolute(given)):
         base = Path(given)
     else:
         base = (Path.home() if home is None else home) / dot_dir

@@ -4,7 +4,6 @@ replaced by fakes (the real readers have their own tests); the solver and the ca
 import json
 import logging
 import re
-import sys
 import threading
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
@@ -30,6 +29,7 @@ from commander.credentials import CredentialError
 from commander.models import Deck, DeckCard
 from commander.net import NetworkError
 from commander.offerlimits import OfferLimits
+from commander.osinfo import is_windows
 from commander.sellersolve import CurveResult, Package, WantedCard, solve_curve
 from test_sellersolve import LETTER, offer
 
@@ -342,7 +342,7 @@ def scanned(rig: Rig) -> Json:
     return rig.service.status()
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="the window cover calls user32")
+@pytest.mark.skipif(not is_windows(), reason="the window cover calls user32")
 def test_the_production_engine_reads_shipping_through_the_cache_and_reports_the_pane_to_the_window_cover(
     tmp_path: Path,
 ) -> None:
@@ -378,6 +378,8 @@ def test_a_scan_is_refused_with_the_reason_where_the_system_cannot_open_the_wind
         background=lambda work: work(),
     )
 
+    assert service.view()["unavailable"] == "Scanning Cardmarket works on Windows only."
+    assert rig.service.view()["unavailable"] is None
     with pytest.raises(BuyError, match="works on Windows only"):
         service.start()
 

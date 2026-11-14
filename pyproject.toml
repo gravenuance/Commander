@@ -10,7 +10,8 @@ dependencies = [
     "keyring==25.7.0",
     "numpy==2.5.4",
     "pywebview==6.2.1",
-    # Linux has no system web view in the wheel: Qt's brings the window, with no system packages for it.
+    # Linux: Qt and its web engine (PyQt6 wheels) draw the window; the system still supplies the libraries the
+    # engine loads (README, Requirements).
     "pywebview[qt]==6.2.1; sys_platform == 'linux'",
     "scipy==1.18.1",
     "tomlkit==0.15.2",

@@ -2,6 +2,7 @@ import importlib
 import json
 import logging
 import sys
+import types
 from collections.abc import Callable, Iterator
 
 import httpx
@@ -22,8 +23,15 @@ from commander.archidekt_edit import (
     parse_account_labels,
     parse_entry_states,
 )
-from commander.credentials import SERVICE, CredentialError, KeyringTokenStore, secret_store_name
+from commander.credentials import (
+    SERVICE,
+    CredentialError,
+    KeyringTokenStore,
+    _store_errors,  # pyright: ignore[reportPrivateUsage]
+    secret_store_name,
+)
 from commander.net import MAX_RESPONSE_BYTES, Fetcher, NetworkError
+from commander.osinfo import is_windows
 from conftest import (
     ACCESS_TOKEN,
     DECK_ID,
@@ -394,12 +402,65 @@ def test_a_missing_keyring_backend_becomes_a_credential_error(monkeypatch: pytes
         KeyringTokenStore().get("TESTER")
 
 
+@pytest.fixture
+def secret_service_modules(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """The two Linux packages whose errors keyring passes through, as made-up modules."""
+    for module_name, error_name in (
+        ("secretstorage.exceptions", "SecretStorageException"),
+        ("jeepney.wrappers", "DBusErrorResponse"),
+    ):
+        fake = types.ModuleType(module_name)
+        vars(fake)[error_name] = type(error_name, (Exception,), {})
+        monkeypatch.setitem(sys.modules, module_name, fake)
+    _store_errors.cache_clear()
+    yield
+    _store_errors.cache_clear()
+
+
+@pytest.mark.parametrize(
+    ("module_name", "error_name"),
+    [("secretstorage.exceptions", "SecretStorageException"), ("jeepney.wrappers", "DBusErrorResponse")],
+)
+def test_secret_service_errors_become_credential_errors(
+    secret_service_modules: None,  # noqa: ARG001 - the fixture is the setup
+    monkeypatch: pytest.MonkeyPatch,
+    module_name: str,
+    error_name: str,
+) -> None:
+    error_type: type[Exception] = getattr(sys.modules[module_name], error_name)
+
+    def refuse(*_: object) -> None:
+        raise error_type("Cannot get secret of a locked object")
+
+    monkeypatch.setattr("keyring.set_password", refuse)
+    monkeypatch.setattr("keyring.get_password", refuse)
+    monkeypatch.setattr("keyring.delete_password", refuse)
+
+    with pytest.raises(CredentialError, match="could not save the Archidekt login: Cannot get secret"):
+        KeyringTokenStore().put("TESTER", "token")
+    with pytest.raises(CredentialError, match="could not read the saved Archidekt login: Cannot get"):
+        KeyringTokenStore().get("TESTER")
+    with pytest.raises(CredentialError, match="could not remove the saved Archidekt login: Cannot get"):
+        KeyringTokenStore().delete("TESTER")
+
+
+def test_a_backend_package_that_is_not_installed_adds_no_error_type(monkeypatch: pytest.MonkeyPatch) -> None:
+    for module_name in ("secretstorage.exceptions", "jeepney.wrappers", "win32ctypes.pywin32.pywintypes"):
+        monkeypatch.setitem(sys.modules, module_name, None)
+    _store_errors.cache_clear()
+    try:
+        assert _store_errors() == (keyring.errors.KeyringError,)
+    finally:
+        _store_errors.cache_clear()
+
+
 def test_the_secret_store_is_named_for_the_system() -> None:
     assert secret_store_name("win32") == "Windows Credential Manager"
     assert secret_store_name("linux") == "the desktop keyring (Secret Service)"
+    assert secret_store_name("darwin") == "the system keyring"
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="the Windows backend's own error type exists only there")
+@pytest.mark.skipif(not is_windows(), reason="the Windows backend's own error type exists only there")
 def test_keyring_backend_errors_become_credential_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     windows_error = importlib.import_module("win32ctypes.pywin32.pywintypes").error
 

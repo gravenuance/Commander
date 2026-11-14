@@ -286,6 +286,8 @@ class BuyService:
             "copies": sum(row.ticked.total() for row in rows),
             "filters": self._store.filters().to_json(),
             "baseSellers": self._store.base_sellers(),
+            # Why the scan cannot run on this system, or None; the page then turns Scan off and says why.
+            "unavailable": self._engine.unavailable,
             "status": self.status(),
         }
 

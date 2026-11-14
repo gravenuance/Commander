@@ -14,6 +14,7 @@ from commander.bracket import estimate_cache, estimate_deck
 from commander.cli import main
 from commander.credentials import SERVICE
 from commander.net import Fetcher, Pacer
+from commander.osinfo import is_windows
 from commander.spellbook import SpellbookClient
 from commander.syncrun import CardState, CardStatus, SyncOutcome
 from conftest import (
@@ -94,7 +95,7 @@ def test_the_help_names_this_systems_config_cache_and_secret_store(
 ) -> None:
     assert run(["--help"], tmp_path).code == 0
     text = " ".join(capsys.readouterr().out.split())
-    if sys.platform == "win32":
+    if is_windows():
         assert r"(default %APPDATA%\Commander\config.toml)" in text
         assert r"kept in %LOCALAPPDATA%\Commander (or CMDR_CACHE_DIR)" in text
         assert "login token in Windows Credential Manager, never" in text

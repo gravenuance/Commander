@@ -206,6 +206,27 @@ class TestNothingToBuy:
             "summary": "",
         }
 
+    def test_a_system_that_cannot_scan_turns_scan_off_and_says_why_beside_it(self) -> None:
+        seen = run("""
+        await open(view({ unavailable: "Scanning Cardmarket works on Windows only." }));
+        return { scanOff: $("buy-scan").disabled, tip: $("buy-scan").title,
+          line: $("buy-progress").textContent, decks: $("buy-decks").children.length };
+        """)
+        assert seen == {
+            "scanOff": True,
+            "tip": "Scanning Cardmarket works on Windows only.",
+            "line": "Scanning Cardmarket works on Windows only.",
+            "decks": 2,
+        }
+
+    def test_a_system_that_can_scan_leaves_scan_on_with_no_reason(self) -> None:
+        seen = run("""
+        await open(view({ unavailable: null }));
+        return { scanOff: $("buy-scan").disabled, tip: $("buy-scan").title,
+          line: $("buy-progress").textContent };
+        """)
+        assert seen == {"scanOff": False, "tip": "", "line": ""}
+
     def test_with_every_deck_unticked_the_decks_stay_to_be_ticked_again(self) -> None:
         seen = run("""
         const off = (d) => ({ ...d, included: false, tick: "none", tickedCopies: 0 });

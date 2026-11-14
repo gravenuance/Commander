@@ -8,12 +8,11 @@ runs; the page calls Desk's methods directly through pywebview's bridge.
 import logging
 import platform
 import re
-import sys
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from importlib import resources
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, get_args
 
 from commander import __version__
 from commander.applog import install_file_log
@@ -22,6 +21,7 @@ from commander.config import (
     ConfigError,
     cache_dir,
     config_path,
+    documents_dir,
     read_config,
     resolve_user,
     resolve_workspace,
@@ -29,6 +29,7 @@ from commander.config import (
 )
 from commander.credentials import TokenStore
 from commander.desk import Desk, DeskSettings, warm_thread
+from commander.osinfo import is_linux
 from commander.updates import remove_old_exe, running_exe
 
 if TYPE_CHECKING:
@@ -39,21 +40,26 @@ log = logging.getLogger(__name__)
 WINDOW_TITLE = "Commander"
 _CSS_SLOT = "/*APP_CSS*/"
 _CSP_SCRIPTS = "script-src 'unsafe-inline'"
+# pywebview's own names for its window backends.
+type Backend = Literal["qt", "gtk", "cef", "mshtml", "edgechromium", "android", "cocoa"]
+_BACKENDS: tuple[Backend, ...] = get_args(Backend.__value__)
+_STRING_EVAL_BACKENDS: frozenset[Backend] = frozenset({"qt", "gtk"})
 # index.html lists the page scripts in the order they load; each tag is replaced by the file's text.
 _SCRIPT_TAG = re.compile(r'<script src="([a-z]+\.js)"></script>')
 
 
-def page_html(platform: str | None = None) -> str:
-    """The app page with its stylesheet and scripts inlined, for this system's window (`platform` is a
-    `sys.platform` value)."""
+def page_html(backend: Backend | None = None) -> str:
+    """The app page with its stylesheet and scripts inlined, for the window backend that will show it (None:
+    the system's own, WebView2 on Windows)."""
     web = resources.files("commander") / "web"
     html = (web / "index.html").read_text(encoding="utf-8")
     css = (web / "app.css").read_text(encoding="utf-8")
     if html.count(_CSP_SCRIPTS) != 1:
         raise ValueError("index.html must hold one script policy")
-    if (sys.platform if platform is None else platform) != "win32":
-        # pywebview's Qt backend builds the bridge's functions with `new Function`, which the policy refuses
-        # without this; the page loads nothing from outside (default-src 'none') and writes text nodes only.
+    if backend in _STRING_EVAL_BACKENDS:
+        # These backends' bridge builds the page's API functions with `new Function`, which the policy refuses
+        # without this (checked on Qt; WebKit evaluates the same way). The page loads nothing from outside
+        # (default-src 'none'), runs only the scripts inlined into it and writes text nodes only.
         html = html.replace(_CSP_SCRIPTS, f"{_CSP_SCRIPTS} 'unsafe-eval'")
     # Inlined text must not close its own element early.
     if "</style" in css.casefold():
@@ -79,7 +85,7 @@ def desk_settings(
     """Where the app finds the decks and card data; without an account it opens on the sign-in screen."""
     path = config_path(config, env)
     file = read_config(path)
-    documents = Path.home() / "Documents"
+    documents = documents_dir(env)
     try:
         folder = resolve_workspace(workspace, env, file)
     except ConfigError:
@@ -107,24 +113,41 @@ def setup_logging(folder: Path, env: Mapping[str, str], settings: DeskSettings) 
     return path
 
 
-def window_backend(platform: str, env: Mapping[str, str]) -> Literal["qt"] | None:
-    """The pywebview backend to ask for: None lets it pick (WinForms and WebView2 on Windows, or the one
-    PYWEBVIEW_GUI names); on Linux it is Qt, which the dependencies bring, so GTK is not tried first."""
-    if platform == "win32" or env.get("PYWEBVIEW_GUI"):
-        return None
-    return "qt"
+def window_backend(env: Mapping[str, str], *, platform: str | None = None) -> Backend | None:
+    """The pywebview backend to ask for: the one PYWEBVIEW_GUI names, else Qt on Linux (which the dependencies
+    bring, so GTK is not tried first and logged as a failure), else None to let pywebview pick: WinForms and
+    WebView2 on Windows, and whatever it finds on other systems."""
+    forced = env.get("PYWEBVIEW_GUI", "").lower()
+    for backend in _BACKENDS:
+        if forced == backend:
+            return backend
+    return "qt" if is_linux(platform) else None
 
 
-def run_app(desk: Desk, *, storage: Path, debug: bool = False, gui: Literal["qt"] | None = None) -> None:
+class WindowError(Exception):
+    """The app's window could not open; the message says what to install or check."""
+
+
+def window_failure(error: Exception, *, platform: str | None = None) -> WindowError:
+    """What to tell the user when pywebview found no usable window toolkit."""
+    text = f"The app's window could not open: {error}"
+    if is_linux(platform):
+        text += " On Linux it needs Qt's system libraries and a display; the README's Requirements list them."
+    return WindowError(text)
+
+
+def run_app(desk: Desk, *, storage: Path, debug: bool = False, gui: Backend | None = None) -> None:
     """Open the window and block until it closes; the window keeps its profile (HTTP cache, page storage) in
-    `storage`, so card images load from disk after their first view."""
+    `storage`, so card images load from disk after their first view. `gui` is the backend `window_backend`
+    chose, which also decides the page's script policy."""
     # pywebview loads .NET through pythonnet, which takes a moment; only the app pays for it.
     import webview  # noqa: PLC0415
+    from webview.errors import WebViewException  # noqa: PLC0415
 
     # pywebview types its url parameter with an untyped callable.
     window = webview.create_window(  # pyright: ignore[reportUnknownMemberType]
         WINDOW_TITLE,
-        html=page_html(),
+        html=page_html(gui),
         js_api=desk,
         width=1440,
         height=900,
@@ -147,7 +170,10 @@ def run_app(desk: Desk, *, storage: Path, debug: bool = False, gui: Literal["qt"
     log.info("window opened")
     # A packed exe unpacks its data to a folder, so the icon has a real path for the toolkit to load.
     with resources.as_file(resources.files("commander") / "web" / "commander.ico") as icon:
-        webview.start(gui=gui, debug=debug, private_mode=False, storage_path=str(storage), icon=str(icon))
+        try:
+            webview.start(gui=gui, debug=debug, private_mode=False, storage_path=str(storage), icon=str(icon))
+        except WebViewException as error:
+            raise window_failure(error) from error
     log.info("window closed")
 
 
@@ -174,7 +200,7 @@ def launch(
         warm_up=warm_thread,
     )
     try:
-        run_app(desk, storage=webview_dir(env), debug=debug, gui=window_backend(sys.platform, env))
+        run_app(desk, storage=webview_dir(env), debug=debug, gui=window_backend(env))
     finally:
         desk.close()
 

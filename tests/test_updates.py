@@ -14,6 +14,7 @@ from commander import __version__, updates
 from commander.desk import Desk, DeskSettings
 from commander.jsonshape import ShapeError
 from commander.net import Fetcher, HttpStatusError, Pacer
+from commander.osinfo import is_windows
 from commander.updates import (
     LATEST_URL,
     Release,
@@ -321,7 +322,7 @@ def test_the_restart_starts_the_exe_on_its_own_with_pyinstallers_environment_res
     assert args == [str(exe)]
     assert env["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
     # DETACHED_PROCESS (0x8) and CREATE_NEW_PROCESS_GROUP (0x200) on Windows; neither exists elsewhere.
-    assert flags == (0x208 if sys.platform == "win32" else 0)
+    assert flags == (0x208 if is_windows() else 0)
 
 
 def test_the_next_start_removes_the_replaced_exe(exe: Path) -> None:

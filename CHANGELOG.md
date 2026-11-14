@@ -9,8 +9,10 @@
   `CMDR_CACHE_DIR` still override them, and Windows keeps `%APPDATA%` and `%LOCALAPPDATA%`. The app's window
   is drawn by Qt there (PyQt6 comes with `uv sync`; the README lists the system libraries it loads), logins
   and keys go to the desktop's Secret Service, and CI runs the checks on Ubuntu too (ADR 0068).
-- On Linux the Cardmarket scan and *Update and restart* are not available; the Buy screen says the scan works
-  on Windows only, and the update notice links to the release.
+- On Linux the Cardmarket scan and *Update and restart* are not available; the Buy screen turns Scan off and
+  says the scan works on Windows only, and the update notice links to the release.
+- On Linux a new account's deck folder goes under the Documents folder the desktop names, and a window that
+  cannot open (missing Qt libraries, no display) is reported on stderr and as a notification, not silently.
 
 ### Changed
 - `cmdr --help`, `cmdr login` and `cmdr topdeck` name the config folder, cache folder and secret store of the

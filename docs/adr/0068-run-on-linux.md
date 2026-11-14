@@ -40,17 +40,27 @@ WebView2's cookie and navigation calls exists in Qt or GTK without a rewrite), o
   profile (`webview`), the logs and every cache stay inside the cache folder. `--help` and the tools print the
   locations of the system they run on.
 - The window is Qt on Linux: `pywebview[qt]` is a dependency on Linux only, and `run_app` asks pywebview for
-  `qt` there unless `PYWEBVIEW_GUI` names another backend, so it does not try GTK first and log a failure.
-  The Qt backend builds the page bridge with `new Function`, so the page's Content-Security-Policy gains
-  `'unsafe-eval'` for scripts off Windows. The page still loads nothing from outside (`default-src 'none'`),
-  runs only the scripts inlined into it and writes text nodes only (never `innerHTML`), so the risk of the
-  keyword is small and Windows keeps the stricter policy.
+  the backend `window_backend` chooses: the one `PYWEBVIEW_GUI` names, else `qt` on Linux (so GTK is not tried
+  first and logged as a failure), else pywebview's own pick (other systems are left to it). The Qt and GTK
+  backends build the page bridge with `new Function`, so the page's Content-Security-Policy gains
+  `'unsafe-eval'` for scripts when that backend is the one chosen, not by operating system (checked on Qt; GTK
+  is assumed to behave the same). The page still loads nothing from outside (`default-src 'none'`), runs only
+  the scripts inlined into it and writes text nodes only (never `innerHTML`), so the risk of the keyword is
+  small, and the Windows window keeps the stricter policy.
+- A window toolkit that will not start (missing system libraries, no display) is reported, not swallowed:
+  `WindowError` names the README's library list on Linux, and off Windows the entry point prints it and
+  sends a `notify-send` notification when that program exists.
+- A new account's deck folder goes under the Documents folder the desktop names on Linux
+  (`XDG_DOCUMENTS_DIR`, then `user-dirs.dirs`, then `~/Documents`).
+- One module, `osinfo`, answers "is this Windows or Linux" for all of the above.
 - The Cardmarket scan stays Windows-only. Off Windows the engine reports why (`BuyEngine.unavailable`) and the
   Buy screen's scan button answers with that message; shipping tables and the rest of the screen still work.
 - In-place update stays Windows-only: the release holds `Commander.exe`, and a Linux binary is not published.
   Off Windows the update notice only links to the release page.
 - Logins and keys use whatever backend `keyring` finds: Windows Credential Manager, or the Secret Service on
-  Linux. A session without one gets a `CredentialError` saying so. Messages name the store of the system.
+  Linux. A session without one, a locked one or a refused D-Bus call gets a `CredentialError` saying so (the
+  errors of `win32ctypes`, `secretstorage` and `jeepney` that keyring passes through are mapped, each imported
+  only where installed). Messages name the store of the system, "the system keyring" on other systems.
 - pyright checks as Windows (`pythonPlatform`) everywhere, because the Win32 calls have type stubs only there.
   CI runs the checks and tests on `windows-latest` and `ubuntu-latest`.
 

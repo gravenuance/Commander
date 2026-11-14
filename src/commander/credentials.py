@@ -6,38 +6,53 @@ from __future__ import annotations
 import importlib
 import json
 import logging
-import sys
 from dataclasses import dataclass, field
 from functools import cache
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
+
+from commander.osinfo import is_linux, is_windows
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 log = logging.getLogger(__name__)
 
 
 def secret_store_name(platform: str | None = None) -> str:
     """What the user's secret store is called here, for messages."""
-    if (sys.platform if platform is None else platform) == "win32":
+    if is_windows(platform):
         return "Windows Credential Manager"
-    return "the desktop keyring (Secret Service)"
+    if is_linux(platform):
+        return "the desktop keyring (Secret Service)"
+    return "the system keyring"
 
 
 # keyring is imported inside the functions that use it: it and the Windows backend behind it take 100 ms to
 # load, which the app should not wait for before it has a window.
+
+# Errors keyring passes through from its backends instead of wrapping them in KeyringError: the Windows
+# backend's, and the Secret Service backend's (a locked or missing service, a refused D-Bus call). A backend's
+# package is only there on its own system. The names are literal so that PyInstaller's scan sees them.
+_BACKEND_ERRORS: tuple[Callable[[], object], ...] = (
+    lambda: importlib.import_module("win32ctypes.pywin32.pywintypes").error,
+    lambda: importlib.import_module("secretstorage.exceptions").SecretStorageException,
+    lambda: importlib.import_module("jeepney.wrappers").DBusErrorResponse,
+)
 
 
 @cache
 def _store_errors() -> tuple[type[Exception], ...]:
     import keyring.errors  # noqa: PLC0415
 
-    # keyring passes the Windows backend's own error through rather than wrapping it in KeyringError.
-    try:
-        windows = importlib.import_module("win32ctypes.pywin32.pywintypes")
-    except ImportError:
-        return (keyring.errors.KeyringError,)
-    error: object = getattr(windows, "error", None)
-    if isinstance(error, type) and issubclass(error, Exception):
-        return (keyring.errors.KeyringError, error)
-    return (keyring.errors.KeyringError,)
+    errors: list[type[Exception]] = [keyring.errors.KeyringError]
+    for find in _BACKEND_ERRORS:
+        try:
+            error = find()
+        except (ImportError, AttributeError):
+            continue
+        if isinstance(error, type) and issubclass(error, Exception):
+            errors.append(error)
+    return tuple(errors)
 
 
 SERVICE = "Commander (cmdr) Archidekt"

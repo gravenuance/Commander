@@ -11,7 +11,6 @@ from __future__ import annotations
 import ctypes
 import importlib
 import logging
-import sys
 import threading
 import weakref
 from contextlib import contextmanager
@@ -33,6 +32,7 @@ from commander.cmsession import (
 from commander.cmshipping import CardmarketShipping
 from commander.credentials import CardmarketSessionStore, SessionStore
 from commander.net import Fetcher
+from commander.osinfo import is_windows
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
@@ -380,7 +380,7 @@ def production_engine(
         with client_factory() as http:
             yield CardmarketShipping(Fetcher(http), cache, now=now)
 
-    if (sys.platform if platform is None else platform) != "win32":
+    if not is_windows(platform):
         return BuyEngine(
             open_browser=_no_scan_window, pane=_NoPane(), shipping=shipping, unavailable=NEEDS_WINDOWS
         )

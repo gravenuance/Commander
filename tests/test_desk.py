@@ -183,14 +183,15 @@ def test_page_inlines_its_stylesheet_and_scripts() -> None:
     assert ".innerHTML" not in html
 
 
-def test_the_page_allows_string_evaluation_only_for_the_window_that_needs_it() -> None:
-    windows = page_html("win32")
-    linux = page_html("linux")
-    assert "default-src 'none'; img-src https://cards.scryfall.io; style-src 'unsafe-inline'; " in windows
-    assert "script-src 'unsafe-inline'\"" in windows
-    assert "unsafe-eval" not in windows
-    assert "script-src 'unsafe-inline' 'unsafe-eval'\"" in linux
-    assert linux.replace(" 'unsafe-eval'", "") == windows
+def test_the_page_allows_string_evaluation_only_for_the_backends_that_need_it() -> None:
+    strict = page_html()
+    qt = page_html("qt")
+    assert "default-src 'none'; img-src https://cards.scryfall.io; style-src 'unsafe-inline'; " in strict
+    assert "script-src 'unsafe-inline'\"" in strict
+    assert "unsafe-eval" not in strict
+    assert "script-src 'unsafe-inline' 'unsafe-eval'\"" in qt
+    assert qt.replace(" 'unsafe-eval'", "") == strict
+    assert page_html("edgechromium") == strict
 
 
 def test_every_script_file_is_inlined_into_the_page() -> None:

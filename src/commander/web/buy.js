@@ -289,8 +289,10 @@ function paintBuyStatus(status) {
   const running = status.running;
   paintBuyFilters();
   const scan = $("buy-scan");
-  scan.disabled = running || buyState.requested || view.copies === 0;
-  scan.title = view.copies === 0 ? "Tick a deck to scan" : "";
+  // A system that cannot scan says why, in the line the progress uses, and keeps Scan off.
+  const unavailable = view.unavailable ?? "";
+  scan.disabled = running || buyState.requested || view.copies === 0 || unavailable !== "";
+  scan.title = unavailable || (view.copies === 0 ? "Tick a deck to scan" : "");
   if (running) scan.setAttribute("aria-busy", "true");
   else scan.removeAttribute("aria-busy");
   scan.querySelector(".spinner").hidden = !running;
@@ -311,7 +313,7 @@ function paintBuyStatus(status) {
   error.hidden = !stopped;
   error.textContent = stopped ? status.message : "";
   error.title = stopped ? status.detail : "";
-  $("buy-progress").textContent = progressLine(status);
+  $("buy-progress").textContent = unavailable || progressLine(status);
   for (const entry of buyState.deckItems.values()) {
     entry.box.disabled = running || !entry.known;
     for (const built of entry.cards) built.box.disabled = running;

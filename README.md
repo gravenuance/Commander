@@ -32,7 +32,9 @@ There is no download for Linux yet: run it from source (below), or build the app
 - The desktop app on Linux needs the libraries Qt's web engine loads from the system. On Ubuntu:
   `sudo apt install libnss3 libnspr4 libasound2t64 libxkbfile1 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1
   libxcb-shape0 libxcb-xkb1 libxkbcommon-x11-0 libxcb-image0 libxcb-render-util0 libxcb-util1`. PyQt6 and its
-  web engine themselves come with `uv sync`; no GTK is needed.
+  web engine themselves come with `uv sync`; no GTK is needed. If the window cannot open (a library or the
+  display is missing), the app says so on stderr and in the log, and as a notification where `notify-send`
+  exists.
 - Logins and keys (`cmdr login`, `cmdr topdeck`) go to the system's secret store: Windows Credential Manager,
   or on Linux the desktop's Secret Service (GNOME Keyring or KWallet). A session without one (a bare SSH login
   or container) cannot save them; `cmdr` says so and the commands that need a login fail with that message.
@@ -557,7 +559,8 @@ Without one it opens on **Sign in to Archidekt**: the username and password go t
 and the login token is kept in the system secret store, as `cmdr login` keeps it. Each account has its
 own deck folder, remembered in the config's `[workspaces]` table. Your own keeps the folder `cmdr init` set,
 and a new account gets a sibling folder named `decks-<username>`, or `Documents\Commander\decks-<username>`
-when no folder was set. Signing in as a new account syncs its decks at once. The foot of the deck list shows
+when no folder was set (on Linux the Documents folder the desktop names: `XDG_DOCUMENTS_DIR`, then
+`user-dirs.dirs`, then `~/Documents`). Signing in as a new account syncs its decks at once. The foot of the deck list shows
 who is signed in, with **Sync** (the same as `cmdr sync`, card data and ideas included, with a spinner and the
 step it is on beneath), **TopDeck** (the key the tournament lists need, with its steps, **Test key** and
 **Save key**; the Meta and Considering panels credit TopDeck.gg) and **Sign out**, which removes the saved

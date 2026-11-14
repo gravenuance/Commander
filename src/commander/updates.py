@@ -22,6 +22,7 @@ from urllib.parse import urlsplit
 from commander.fsutil import new_temp_path
 from commander.jsonshape import ShapeError, as_object, req_bool, req_list, req_str
 from commander.net import Fetcher, NetworkError
+from commander.osinfo import is_windows
 
 if TYPE_CHECKING:
     import httpx
@@ -106,8 +107,7 @@ def running_exe(platform: str | None = None) -> Path | None:
     """The exe the app runs as; None when it runs from source, which updates through git instead, or off
     Windows, where the releases hold no build to swap in (the page then only links to the release)."""
     # Windows only: the release asset is Commander.exe, and a running exe is renamed aside to be replaced.
-    windows = (sys.platform if platform is None else platform) == "win32"
-    return Path(sys.executable) if windows and getattr(sys, "frozen", False) else None
+    return Path(sys.executable) if is_windows(platform) and getattr(sys, "frozen", False) else None
 
 
 def old_exe(exe: Path) -> Path:

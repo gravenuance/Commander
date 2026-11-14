@@ -14,12 +14,14 @@ from commander.config import (
     config_location_hint,
     config_path,
     default_config_path,
+    documents_dir,
     forget_account,
     read_config,
     resolve_user,
     resolve_workspace,
     switch_account,
     webview_dir,
+    webview_dir_help,
     write_config,
 )
 
@@ -130,6 +132,53 @@ def test_the_default_locations_follow_the_running_system(monkeypatch: pytest.Mon
     assert cache_dir({}) == HOME / ".cache" / "commander"
     assert default_config_path({}) == HOME / ".config" / "commander" / "config.toml"
     assert cache_location_hint() == "$XDG_CACHE_HOME/commander, else ~/.cache/commander"
+
+
+def test_documents_are_the_documents_folder_of_the_home_folder_off_linux(tmp_path: Path) -> None:
+    (tmp_path / ".config").mkdir()
+    listing = tmp_path / ".config" / "user-dirs.dirs"
+    listing.write_text('XDG_DOCUMENTS_DIR="$HOME/Papers"\n', encoding="utf-8")
+    env = {"XDG_DOCUMENTS_DIR": "/elsewhere"}
+    assert documents_dir(env, platform=WINDOWS, home=tmp_path) == tmp_path / "Documents"
+    assert documents_dir(env, platform="darwin", home=tmp_path) == tmp_path / "Documents"
+
+
+def test_linux_documents_follow_the_environment_then_user_dirs_then_the_documents_folder(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "me"
+    (home / ".config").mkdir(parents=True)
+    listing = home / ".config" / "user-dirs.dirs"
+    assert documents_dir({}, platform=LINUX, home=home) == home / "Documents"
+    listing.write_text(
+        '# comment\nXDG_DESKTOP_DIR="$HOME/Desktop"\nXDG_DOCUMENTS_DIR="$HOME/Dokument"\n', encoding="utf-8"
+    )
+    assert documents_dir({}, platform=LINUX, home=home) == home / "Dokument"
+    assert documents_dir({"XDG_DOCUMENTS_DIR": "/data/docs"}, platform=LINUX, home=home) == Path("/data/docs")
+    assert documents_dir({"XDG_DOCUMENTS_DIR": "docs"}, platform=LINUX, home=home) == home / "Dokument"
+
+
+def test_linux_documents_are_read_from_the_user_dirs_of_the_xdg_config_home(tmp_path: Path) -> None:
+    config = tmp_path / "cfg"
+    config.mkdir()
+    (config / "user-dirs.dirs").write_text('XDG_DOCUMENTS_DIR="/mnt/papers"\n', encoding="utf-8")
+    env = {"XDG_CONFIG_HOME": str(config)}
+    assert documents_dir(env, platform=LINUX, home=tmp_path / "me") == Path("/mnt/papers")
+
+
+@pytest.mark.parametrize("line", ['XDG_DOCUMENTS_DIR="Papers"', 'XDG_DOCUMENTS_DIR=""', "XDG_MUSIC_DIR=/x"])
+def test_linux_documents_ignore_a_user_dirs_entry_that_is_relative_empty_or_missing(
+    tmp_path: Path, line: str
+) -> None:
+    (tmp_path / ".config").mkdir()
+    (tmp_path / ".config" / "user-dirs.dirs").write_text(line + "\n", encoding="utf-8")
+    assert documents_dir({}, platform=LINUX, home=tmp_path) == tmp_path / "Documents"
+
+
+def test_the_tools_help_names_the_window_folder_in_use_with_percent_signs_doubled() -> None:
+    here = "the app's Cardmarket storage folder; here "
+    assert webview_dir_help({"CMDR_CACHE_DIR": "cache"}) == here + str(Path("cache/webview"))
+    assert webview_dir_help({"CMDR_CACHE_DIR": "c%d"}) == here + str(Path("c%%d/webview"))
 
 
 def test_write_then_read_round_trips(tmp_path: Path) -> None:

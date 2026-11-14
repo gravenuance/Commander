@@ -8,8 +8,13 @@ from pathlib import Path
 SOURCE = Path(__file__).resolve().parent.parent / "src" / "commander"
 
 # Names the exe gets by other means: .NET's System comes from pythonnet at run time, and keyring's own
-# imports already bundle win32ctypes.
-ALLOWED = {"System", "win32ctypes.pywin32.pywintypes"}
+# imports already bundle win32ctypes (Windows) and secretstorage and jeepney (Linux).
+ALLOWED = {
+    "System",
+    "win32ctypes.pywin32.pywintypes",
+    "secretstorage.exceptions",
+    "jeepney.wrappers",
+}
 
 
 def _dynamic_imports(path: Path) -> list[str]:

@@ -33,7 +33,7 @@ from commander.cmpages import Condition, PageError
 from commander.cmscan import ENGLISH
 from commander.cmsession import BrowserError, WebviewBrowser
 from commander.cmwants import APP_LIST_NAME, WantsCancelled, WantsProgress, WantsSync, sync_wants
-from commander.config import environment, webview_dir
+from commander.config import environment, webview_dir_help
 from commander.credentials import CardmarketSessionStore, CredentialError
 from commander.sellersolve import WantedCard
 
@@ -120,11 +120,6 @@ def run_sync(status: Window, args: argparse.Namespace, cancel: threading.Event) 
                     print(f"could not close a window: {error!r}", file=sys.stderr)
 
 
-def _here() -> str:
-    """The app's storage folder on this machine, as argparse help text."""
-    return str(webview_dir(environment())).replace("%", "%%")
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument("cards", nargs="*", metavar="CARD", help="NAME or NAME=QUANTITY")
@@ -133,7 +128,7 @@ def main() -> int:
         "--profile",
         type=Path,
         required=True,
-        help=f"the app's Cardmarket storage folder; here {_here()}",
+        help=webview_dir_help(environment()),
     )
     parser.add_argument(
         "--language",

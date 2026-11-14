@@ -2,6 +2,8 @@
 
 import ctypes
 import logging
+import shutil
+import subprocess
 import sys
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -31,7 +33,7 @@ def main() -> int:
 
 def _start(env: Mapping[str, str]) -> int:
     # Imported here, after the log is open: the app's own imports are what may fail.
-    from commander.app import launch  # noqa: PLC0415
+    from commander.app import WindowError, launch  # noqa: PLC0415
     from commander.board import BoardError  # noqa: PLC0415
     from commander.carddb import CardDataError  # noqa: PLC0415
     from commander.config import ConfigError  # noqa: PLC0415
@@ -46,7 +48,7 @@ def _start(env: Mapping[str, str]) -> int:
             now=lambda: datetime.now(UTC),
             debug="--debug" in sys.argv[1:],
         )
-    except (ConfigError, CardDataError, BoardError, OSError) as error:
+    except (ConfigError, CardDataError, BoardError, WindowError, OSError) as error:
         log.exception("Commander could not start")
         _show_error(str(error))
         return 1
@@ -54,11 +56,26 @@ def _start(env: Mapping[str, str]) -> int:
 
 
 def _show_error(message: str) -> None:
+    """A dialog on Windows. Elsewhere stderr, and a desktop notification where `notify-send` exists, since an
+    app started from a launcher has no terminal to print to."""
     windll = getattr(ctypes, "windll", None)
-    if windll is None:
-        print(f"Commander: {message}", file=sys.stderr)
+    if windll is not None:
+        windll.user32.MessageBoxW(None, message, "Commander", _MB_ICONERROR)
         return
-    windll.user32.MessageBoxW(None, message, "Commander", _MB_ICONERROR)
+    print(f"Commander: {message}", file=sys.stderr)
+    notify = shutil.which("notify-send")
+    if notify is None:
+        return
+    try:
+        # Not waited for: the notification must not hold the exit.
+        subprocess.Popen(  # noqa: S603 - the program is the one `which` found, the arguments are ours
+            [notify, "--app-name=Commander", "--urgency=critical", "Commander", message],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError as error:
+        log.warning("could not show the error with notify-send: %s", error)
 
 
 if __name__ == "__main__":

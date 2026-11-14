@@ -65,7 +65,15 @@ from commander.buysettings import BUY_FILE, BuyError, BuyStore, check_flag, chec
 from commander.buywindows import production_engine
 from commander.carddb import CardDataError, CardDb, CardInfo, CardText, ResolvedCard, Role
 from commander.changetext import change_mark, change_text
-from commander.config import ConfigError, MetaSettings, forget_account, switch_account, validate_user
+from commander.config import (
+    ConfigError,
+    MetaSettings,
+    documents_dir,
+    environment,
+    forget_account,
+    switch_account,
+    validate_user,
+)
 from commander.credentials import (
     CardmarketSessionStore,
     CredentialError,
@@ -610,7 +618,7 @@ class Desk:
         return self._settings.config
 
     def _documents(self) -> Path:
-        return self._settings.documents or Path.home() / "Documents"
+        return self._settings.documents or documents_dir(environment())
 
     def _use_account(self, user: str, folder: Path) -> None:
         self._settings = replace(self._settings, user=user, workspace=folder)
