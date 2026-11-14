@@ -69,7 +69,8 @@ def _show_error(message: str) -> None:
     try:
         # Not waited for: the notification must not hold the exit.
         subprocess.Popen(  # noqa: S603 - the program is the one `which` found, the arguments are ours
-            [notify, "--app-name=Commander", "--urgency=critical", "Commander", message],
+            # "--" so a message that starts with a dash is not read as an option.
+            [notify, "--app-name=Commander", "--urgency=critical", "--", "Commander", message],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,

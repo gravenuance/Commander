@@ -1,0 +1,2 @@
+# Scryfall card id in a test assertion, not a secret
+7f6476f03375d124444d96621d8f81b8308b57a9:tests/test_tokens.py:generic-api-key:425

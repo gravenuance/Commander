@@ -263,8 +263,27 @@ def test_where_notify_send_exists_the_error_is_also_a_notification_that_is_not_w
 
     assert capsys.readouterr().err == "Commander: no display\n"
     assert popen.argv == [
-        ["/usr/bin/notify-send", "--app-name=Commander", "--urgency=critical", "Commander", "no display"]
+        [
+            "/usr/bin/notify-send",
+            "--app-name=Commander",
+            "--urgency=critical",
+            "--",
+            "Commander",
+            "no display",
+        ]
     ]
+
+
+@pytest.mark.usefixtures("no_dialog_api")
+def test_a_message_that_starts_with_a_dash_is_not_read_as_an_option(monkeypatch: pytest.MonkeyPatch) -> None:
+    popen = RecordedPopen()
+    monkeypatch.setattr(shutil, "which", notify_send_found)
+    monkeypatch.setattr(subprocess, "Popen", popen)
+
+    _real_show_error("--version is not a window")
+
+    [argv] = popen.argv
+    assert argv[argv.index("--") + 1 :] == ["Commander", "--version is not a window"]
 
 
 @pytest.mark.usefixtures("no_dialog_api")
