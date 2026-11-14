@@ -13,7 +13,16 @@ from commander.cli import main
 from commander.credentials import SERVICE
 from commander.net import Pacer
 from commander.store import Workspace
-from conftest import DECK_ID, PASSWORD, REFRESH_TOKEN, FakeArchidekt, Json, MemoryKeyring
+from conftest import (
+    DECK_ID,
+    PASSWORD,
+    REFRESH_TOKEN,
+    SECRET_STORE,
+    FakeArchidekt,
+    Json,
+    MemoryKeyring,
+    sandbox_env,
+)
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 DECK_URL = f"https://archidekt.com/decks/{DECK_ID}"
@@ -77,8 +86,7 @@ def run(
         return password
 
     env = {
-        "APPDATA": str(home / "appdata"),
-        "LOCALAPPDATA": str(home / "localappdata"),
+        **sandbox_env(home),
         "CMDR_CACHE_DIR": str(home / "cache"),
         "CMDR_USER": "TESTER",
     }
@@ -126,7 +134,7 @@ def test_login_asks_on_the_terminal_and_keeps_only_the_token(
 
     assert result.code == 0
     assert result.prompts == ["Archidekt password for TESTER: "]
-    assert result.out == "signed in to Archidekt as TESTER; the login is kept in Windows Credential Manager\n"
+    assert result.out == f"signed in to Archidekt as TESTER; the login is kept in {SECRET_STORE}\n"
     assert memory_keyring.held(SERVICE) == {(SERVICE, "tester"): REFRESH_TOKEN}
     assert PASSWORD not in result.out + result.err
 

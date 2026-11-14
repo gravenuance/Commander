@@ -2,7 +2,19 @@
 
 ## Unreleased
 
+### Added
+- Commander runs on Linux (developed on Ubuntu): the command line and the app. Settings go to
+  `$XDG_CONFIG_HOME/commander/config.toml` and everything else (card data, answers, logs, the window's
+  profile) to `$XDG_CACHE_HOME/commander`, each falling back to `~/.config` and `~/.cache`; `CMDR_CONFIG` and
+  `CMDR_CACHE_DIR` still override them, and Windows keeps `%APPDATA%` and `%LOCALAPPDATA%`. The app's window
+  is drawn by Qt there (PyQt6 comes with `uv sync`; the README lists the system libraries it loads), logins
+  and keys go to the desktop's Secret Service, and CI runs the checks on Ubuntu too (ADR 0068).
+- On Linux the Cardmarket scan and *Update and restart* are not available; the Buy screen says the scan works
+  on Windows only, and the update notice links to the release.
+
 ### Changed
+- `cmdr --help`, `cmdr login` and `cmdr topdeck` name the config folder, cache folder and secret store of the
+  system they run on.
 - The app's "nothing to buy" and "nothing to copy" messages put “Don't Have” in quotes, so it reads as the
   label's name.
 

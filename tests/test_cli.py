@@ -16,7 +16,16 @@ from commander.credentials import SERVICE
 from commander.net import Fetcher, Pacer
 from commander.spellbook import SpellbookClient
 from commander.syncrun import CardState, CardStatus, SyncOutcome
-from conftest import CARDS_URL, REFRESH_TOKEN, FakeArchidekt, FakeSpellbook, Json, MemoryKeyring, card_entry
+from conftest import (
+    CARDS_URL,
+    REFRESH_TOKEN,
+    FakeArchidekt,
+    FakeSpellbook,
+    Json,
+    MemoryKeyring,
+    card_entry,
+    sandbox_env,
+)
 
 NO_CARDS = "card data: skipped, --no-cards\n"
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
@@ -46,7 +55,7 @@ def run(
     now: datetime = NOW,
 ) -> Run:
     out, err = io.StringIO(), io.StringIO()
-    env = {"APPDATA": str(tmp_path / "appdata"), "LOCALAPPDATA": str(tmp_path / "localappdata")}
+    env = sandbox_env(tmp_path)
     if cache is not None:
         env["CMDR_CACHE_DIR"] = str(cache)
     factory = (fake or FakeArchidekt()).client
@@ -78,6 +87,22 @@ def test_no_arguments_prints_usage_and_exits_2(tmp_path: Path) -> None:
 def test_version(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert run(["--version"], tmp_path).code == 0
     assert capsys.readouterr().out == f"cmdr {__version__}\n"
+
+
+def test_the_help_names_this_systems_config_cache_and_secret_store(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert run(["--help"], tmp_path).code == 0
+    text = " ".join(capsys.readouterr().out.split())
+    if sys.platform == "win32":
+        assert r"(default %APPDATA%\Commander\config.toml)" in text
+        assert r"kept in %LOCALAPPDATA%\Commander (or CMDR_CACHE_DIR)" in text
+        assert "login token in Windows Credential Manager, never" in text
+    else:
+        config = "$XDG_CONFIG_HOME/commander/config.toml, else ~/.config/commander/config.toml"
+        assert f"(default {config})" in text
+        assert "kept in $XDG_CACHE_HOME/commander, else ~/.cache/commander (or CMDR_CACHE_DIR)" in text
+        assert "login token in the desktop keyring (Secret Service), never" in text
 
 
 def test_missing_user_is_a_usage_error(tmp_path: Path) -> None:
@@ -1137,7 +1162,7 @@ def test_an_emoji_deck_name_survives_a_redirected_cp1252_stdout(
     # What a Windows pipe gives a process: the ANSI codepage, not a terminal.
     monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(raw_out, encoding="cp1252", write_through=True))
     monkeypatch.setattr(sys, "stderr", io.TextIOWrapper(raw_err, encoding="cp1252", write_through=True))
-    env = {"APPDATA": str(tmp_path / "appdata"), "LOCALAPPDATA": str(tmp_path / "localappdata")}
+    env = sandbox_env(tmp_path)
     code = main(["list", "--workspace", str(tmp_path / "decks")], env=env, now=lambda: NOW)
     assert code == 0
     assert "Sample 🎲 deck" in raw_out.getvalue().decode("utf-8")
@@ -1149,7 +1174,7 @@ def _broken_client() -> httpx.Client:
 
 def _sync_with_broken_client(tmp_path: Path, *flags: str) -> Run:
     out, err = io.StringIO(), io.StringIO()
-    env = {"APPDATA": str(tmp_path / "appdata"), "LOCALAPPDATA": str(tmp_path / "localappdata")}
+    env = sandbox_env(tmp_path)
     args = [*flags, "sync", "--user", "TESTER", "--workspace", str(tmp_path / "decks"), "--no-cards"]
     code = main(args, env=env, client_factory=_broken_client, stdout=out, stderr=err, now=lambda: NOW)
     return Run(code, out.getvalue(), err.getvalue())

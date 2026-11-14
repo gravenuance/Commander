@@ -71,6 +71,8 @@ from commander.config import (
     ENV_WORKSPACE,
     ConfigError,
     cache_dir,
+    cache_location_hint,
+    config_location_hint,
     config_path,
     environment,
     read_config,
@@ -78,7 +80,7 @@ from commander.config import (
     resolve_workspace,
     write_config,
 )
-from commander.credentials import CredentialError, KeyringTokenStore, TokenStore
+from commander.credentials import CredentialError, KeyringTokenStore, TokenStore, secret_store_name
 from commander.deckprofile import read_profile
 from commander.diff import DeckDiff
 from commander.ideas import NO_LONGER_MAKES_THE_CUT, ideas_summary
@@ -129,13 +131,13 @@ examples:
 
 _EPILOG = f"""\
 settings come from flags, then environment ({ENV_USER}, {ENV_WORKSPACE}, {ENV_CONFIG}),
-then the config file (default %APPDATA%\\Commander\\config.toml).
-card data from Scryfall is kept in %LOCALAPPDATA%\\Commander (or {ENV_CACHE}); `cmdr sync` refreshes it.
+then the config file (default {config_location_hint()}).
+card data from Scryfall is kept in {cache_location_hint()} (or {ENV_CACHE}); `cmdr sync` refreshes it.
 `cmdr bracket` and `cmdr suggest` ask Commander Spellbook about each deck and keep each answer there
 for 7 days.
 role targets for `cmdr suggest` (default {_DEFAULT_TARGETS_TEXT}) can be changed
 in a [targets] table in the config file.
-`cmdr login` keeps an Archidekt login token in Windows Credential Manager, never the password; `cmdr topdeck`
+`cmdr login` keeps an Archidekt login token in {secret_store_name()}, never the password; `cmdr topdeck`
 keeps your TopDeck.gg API key there too.
 exit codes: 0 success, 1 failure, 2 usage error, 130 interrupted.
 """
@@ -402,7 +404,7 @@ def _cmd_login(args: argparse.Namespace, ctx: Context) -> int:
         raise UsageError("no terminal to ask for the password on; pass --password-stdin")
     with ctx.client_factory() as http:
         ArchidektAuth(Fetcher(http), ctx.token_store).login(user, name, password)
-    print(f"signed in to Archidekt as {user}; the login is kept in Windows Credential Manager", file=ctx.out)
+    print(f"signed in to Archidekt as {user}; the login is kept in {secret_store_name()}", file=ctx.out)
     return EXIT_OK
 
 

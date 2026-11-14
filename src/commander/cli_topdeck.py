@@ -5,7 +5,7 @@ from collections.abc import Callable
 
 from commander.clibase import EXIT_OK, Context, UsageError
 from commander.config import cache_dir
-from commander.credentials import KeyringKeyStore, check_api_key
+from commander.credentials import KeyringKeyStore, check_api_key, secret_store_name
 from commander.metadata import topdeck_client
 from commander.topdeck import CREDIT, DEVELOPERS_URL, SITE_URL
 
@@ -14,7 +14,7 @@ _DESCRIPTION = f"""\
 The tournament lists in `cmdr meta`, `cmdr sync` and the app come from TopDeck.gg, whose API needs a free key
 for each user. Get yours at {DEVELOPERS_URL}, then run this and paste it when asked.
 
-TopDeck is asked whether it accepts the key before it is saved in Windows Credential Manager (service
+TopDeck is asked whether it accepts the key before it is saved in {secret_store_name()} (service
 "Commander (cmdr) TopDeck"). The key is never taken from the command line, where it would stay in the shell's
 history.
 """
@@ -45,7 +45,7 @@ def _cmd_topdeck(args: argparse.Namespace, ctx: Context) -> int:
             topdeck_client(http, ctx.pacer_factory, cache_dir(ctx.env), store).check_key(key)
     store.put(key)
     checked = "" if args.no_check else " (TopDeck accepted it)"
-    print(f"TopDeck key saved in Windows Credential Manager{checked}", file=ctx.out)
+    print(f"TopDeck key saved in {secret_store_name()}{checked}", file=ctx.out)
     print(f"{CREDIT}, {SITE_URL}", file=ctx.out)
     return EXIT_OK
 

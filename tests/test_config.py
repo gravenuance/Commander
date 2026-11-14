@@ -1,4 +1,5 @@
 import logging
+import sys
 from pathlib import Path
 
 import pytest
@@ -8,12 +9,17 @@ from commander.config import (
     ConfigError,
     FileConfig,
     MetaSettings,
+    cache_dir,
+    cache_location_hint,
+    config_location_hint,
     config_path,
+    default_config_path,
     forget_account,
     read_config,
     resolve_user,
     resolve_workspace,
     switch_account,
+    webview_dir,
     write_config,
 )
 
@@ -44,11 +50,86 @@ def test_rejects_invalid_usernames(user: str) -> None:
         resolve_user(user or None, {"CMDR_USER": user} if user else {}, NO_FILE)
 
 
-def test_config_path_order() -> None:
-    env = {"APPDATA": r"C:\Users\x\AppData\Roaming", "CMDR_CONFIG": "env.toml"}
-    assert config_path("flag.toml", env) == Path("flag.toml")
-    assert config_path(None, env) == Path("env.toml")
-    assert config_path(None, {"APPDATA": r"C:\Roaming"}) == Path(r"C:\Roaming") / "Commander" / "config.toml"
+WINDOWS = "win32"
+LINUX = "linux"
+HOME = Path("home") / "me"
+
+
+@pytest.mark.parametrize("platform", [WINDOWS, LINUX])
+def test_config_path_order_is_flag_then_environment_then_default(platform: str) -> None:
+    env = {"CMDR_CONFIG": "env.toml", "APPDATA": "roaming", "XDG_CONFIG_HOME": "/xdg"}
+    assert config_path("flag.toml", env, platform=platform, home=HOME) == Path("flag.toml")
+    assert config_path(None, env, platform=platform, home=HOME) == Path("env.toml")
+    assert config_path("", env, platform=platform, home=HOME) == Path("env.toml")
+    default = config_path(None, {}, platform=platform, home=HOME)
+    assert default == default_config_path({}, platform=platform, home=HOME)
+
+
+def test_windows_config_default_is_under_appdata_then_the_home_folder() -> None:
+    env = {"APPDATA": "roaming", "XDG_CONFIG_HOME": "/xdg"}
+    assert config_path(None, env, platform=WINDOWS, home=HOME) == Path("roaming/Commander/config.toml")
+    fallback = HOME / ".config" / "Commander" / "config.toml"
+    assert config_path(None, {}, platform=WINDOWS, home=HOME) == fallback
+
+
+def test_linux_config_default_follows_xdg_config_home_then_the_dot_config_folder() -> None:
+    env = {"XDG_CONFIG_HOME": "/xdg/config", "APPDATA": "roaming"}
+    assert config_path(None, env, platform=LINUX, home=HOME) == Path("/xdg/config/commander/config.toml")
+    assert config_path(None, {}, platform=LINUX, home=HOME) == HOME / ".config" / "commander" / "config.toml"
+
+
+@pytest.mark.parametrize("xdg", ["", "relative/config"])
+def test_linux_config_default_ignores_an_empty_or_relative_xdg_config_home(xdg: str) -> None:
+    path = config_path(None, {"XDG_CONFIG_HOME": xdg}, platform=LINUX, home=HOME)
+    assert path == HOME / ".config" / "commander" / "config.toml"
+
+
+@pytest.mark.parametrize("platform", [WINDOWS, LINUX])
+def test_cache_folder_override_beats_the_default(platform: str) -> None:
+    env = {"CMDR_CACHE_DIR": "cache-override", "LOCALAPPDATA": "local", "XDG_CACHE_HOME": "/xdg"}
+    assert cache_dir(env, platform=platform, home=HOME) == Path("cache-override")
+    assert cache_dir({**env, "CMDR_CACHE_DIR": ""}, platform=platform, home=HOME) == cache_dir(
+        {k: v for k, v in env.items() if k != "CMDR_CACHE_DIR"}, platform=platform, home=HOME
+    )
+
+
+def test_windows_cache_default_is_under_localappdata_then_the_home_folder() -> None:
+    env = {"LOCALAPPDATA": "local", "XDG_CACHE_HOME": "/xdg"}
+    assert cache_dir(env, platform=WINDOWS, home=HOME) == Path("local/Commander")
+    assert cache_dir({}, platform=WINDOWS, home=HOME) == HOME / ".cache" / "Commander"
+
+
+def test_linux_cache_default_follows_xdg_cache_home_then_the_dot_cache_folder() -> None:
+    env = {"XDG_CACHE_HOME": "/xdg/cache", "LOCALAPPDATA": "local"}
+    assert cache_dir(env, platform=LINUX, home=HOME) == Path("/xdg/cache/commander")
+    assert cache_dir({}, platform=LINUX, home=HOME) == HOME / ".cache" / "commander"
+
+
+@pytest.mark.parametrize("xdg", ["", "relative/cache"])
+def test_linux_cache_default_ignores_an_empty_or_relative_xdg_cache_home(xdg: str) -> None:
+    assert cache_dir({"XDG_CACHE_HOME": xdg}, platform=LINUX, home=HOME) == HOME / ".cache" / "commander"
+
+
+def test_the_window_profile_lives_in_the_cache_folder() -> None:
+    assert webview_dir({"CMDR_CACHE_DIR": "cache"}, platform=LINUX, home=HOME) == Path("cache/webview")
+    assert webview_dir({}, platform=LINUX, home=HOME) == HOME / ".cache" / "commander" / "webview"
+
+
+def test_the_help_text_names_each_systems_own_locations() -> None:
+    assert config_location_hint(WINDOWS) == r"%APPDATA%\Commander\config.toml"
+    assert cache_location_hint(WINDOWS) == r"%LOCALAPPDATA%\Commander"
+    assert config_location_hint(LINUX) == (
+        "$XDG_CONFIG_HOME/commander/config.toml, else ~/.config/commander/config.toml"
+    )
+    assert cache_location_hint(LINUX) == "$XDG_CACHE_HOME/commander, else ~/.cache/commander"
+
+
+def test_the_default_locations_follow_the_running_system(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", LINUX)
+    monkeypatch.setattr(Path, "home", lambda: HOME)
+    assert cache_dir({}) == HOME / ".cache" / "commander"
+    assert default_config_path({}) == HOME / ".config" / "commander" / "config.toml"
+    assert cache_location_hint() == "$XDG_CACHE_HOME/commander, else ~/.cache/commander"
 
 
 def test_write_then_read_round_trips(tmp_path: Path) -> None:

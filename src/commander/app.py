@@ -1,4 +1,5 @@
-"""The desktop app: one window over the deck boards, drawn by WebView2 through pywebview (ADR 0006).
+"""The desktop app: one window over the deck boards, drawn by WebView2 (Qt WebEngine on Linux) through
+pywebview (ADR 0006).
 
 The page is the HTML, CSS and JavaScript files in commander/web, inlined into one document, so no web server
 runs; the page calls Desk's methods directly through pywebview's bridge.
@@ -7,16 +8,25 @@ runs; the page calls Desk's methods directly through pywebview's bridge.
 import logging
 import platform
 import re
+import sys
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from importlib import resources
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from commander import __version__
 from commander.applog import install_file_log
 from commander.carddb import CARD_DB_FILE
-from commander.config import ConfigError, cache_dir, config_path, read_config, resolve_user, resolve_workspace
+from commander.config import (
+    ConfigError,
+    cache_dir,
+    config_path,
+    read_config,
+    resolve_user,
+    resolve_workspace,
+    webview_dir,
+)
 from commander.credentials import TokenStore
 from commander.desk import Desk, DeskSettings, warm_thread
 from commander.updates import remove_old_exe, running_exe
@@ -27,17 +37,24 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 WINDOW_TITLE = "Commander"
-WEBVIEW_FOLDER = "webview"
 _CSS_SLOT = "/*APP_CSS*/"
+_CSP_SCRIPTS = "script-src 'unsafe-inline'"
 # index.html lists the page scripts in the order they load; each tag is replaced by the file's text.
 _SCRIPT_TAG = re.compile(r'<script src="([a-z]+\.js)"></script>')
 
 
-def page_html() -> str:
-    """The app page with its stylesheet and scripts inlined."""
+def page_html(platform: str | None = None) -> str:
+    """The app page with its stylesheet and scripts inlined, for this system's window (`platform` is a
+    `sys.platform` value)."""
     web = resources.files("commander") / "web"
     html = (web / "index.html").read_text(encoding="utf-8")
     css = (web / "app.css").read_text(encoding="utf-8")
+    if html.count(_CSP_SCRIPTS) != 1:
+        raise ValueError("index.html must hold one script policy")
+    if (sys.platform if platform is None else platform) != "win32":
+        # pywebview's Qt backend builds the bridge's functions with `new Function`, which the policy refuses
+        # without this; the page loads nothing from outside (default-src 'none') and writes text nodes only.
+        html = html.replace(_CSP_SCRIPTS, f"{_CSP_SCRIPTS} 'unsafe-eval'")
     # Inlined text must not close its own element early.
     if "</style" in css.casefold():
         raise ValueError("app.css contains a closing tag of its own element")
@@ -90,7 +107,15 @@ def setup_logging(folder: Path, env: Mapping[str, str], settings: DeskSettings) 
     return path
 
 
-def run_app(desk: Desk, *, storage: Path, debug: bool = False) -> None:
+def window_backend(platform: str, env: Mapping[str, str]) -> Literal["qt"] | None:
+    """The pywebview backend to ask for: None lets it pick (WinForms and WebView2 on Windows, or the one
+    PYWEBVIEW_GUI names); on Linux it is Qt, which the dependencies bring, so GTK is not tried first."""
+    if platform == "win32" or env.get("PYWEBVIEW_GUI"):
+        return None
+    return "qt"
+
+
+def run_app(desk: Desk, *, storage: Path, debug: bool = False, gui: Literal["qt"] | None = None) -> None:
     """Open the window and block until it closes; the window keeps its profile (HTTP cache, page storage) in
     `storage`, so card images load from disk after their first view."""
     # pywebview loads .NET through pythonnet, which takes a moment; only the app pays for it.
@@ -120,9 +145,9 @@ def run_app(desk: Desk, *, storage: Path, debug: bool = False) -> None:
 
     window.events.closed += on_closed
     log.info("window opened")
-    # A packed exe unpacks its data to a folder, so the icon has a real path for WinForms to load.
+    # A packed exe unpacks its data to a folder, so the icon has a real path for the toolkit to load.
     with resources.as_file(resources.files("commander") / "web" / "commander.ico") as icon:
-        webview.start(debug=debug, private_mode=False, storage_path=str(storage), icon=str(icon))
+        webview.start(gui=gui, debug=debug, private_mode=False, storage_path=str(storage), icon=str(icon))
     log.info("window closed")
 
 
@@ -149,7 +174,7 @@ def launch(
         warm_up=warm_thread,
     )
     try:
-        run_app(desk, storage=cache_dir(env) / WEBVIEW_FOLDER, debug=debug)
+        run_app(desk, storage=webview_dir(env), debug=debug, gui=window_backend(sys.platform, env))
     finally:
         desk.close()
 

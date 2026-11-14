@@ -116,6 +116,8 @@ class BuyEngine:
     scan: Scan = scan
     solve_curve: Curve = solve_curve
     add_to_cart: AddToCart = add_to_cart
+    # Why this system cannot scan Cardmarket, in words for the page; None when it can.
+    unavailable: str | None = None
 
 
 class Tick(Enum):
@@ -372,6 +374,8 @@ class BuyService:
 
     def start(self) -> Json:
         """Begin a scan of the ticked decks' cards; it runs in the background and `status` follows it."""
+        if self._engine.unavailable:
+            raise BuyError(self._engine.unavailable)
         user = self._signed_in_user()
         wanted = self._wanted(self._rows(user))
         if not wanted:

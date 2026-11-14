@@ -1,16 +1,25 @@
 """Archidekt refresh tokens, the TopDeck API key and the Cardmarket session cookie in the OS secret store
-(Windows Credential Manager); never in a file."""
+(Windows Credential Manager, the desktop's Secret Service on Linux); never in a file."""
 
 from __future__ import annotations
 
 import importlib
 import json
 import logging
+import sys
 from dataclasses import dataclass, field
 from functools import cache
 from typing import Protocol, cast
 
 log = logging.getLogger(__name__)
+
+
+def secret_store_name(platform: str | None = None) -> str:
+    """What the user's secret store is called here, for messages."""
+    if (sys.platform if platform is None else platform) == "win32":
+        return "Windows Credential Manager"
+    return "the desktop keyring (Secret Service)"
+
 
 # keyring is imported inside the functions that use it: it and the Windows backend behind it take 100 ms to
 # load, which the app should not wait for before it has a window.

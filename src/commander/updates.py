@@ -102,9 +102,12 @@ def latest_release(fetcher: Fetcher) -> Release | None:
         raise UpdateError(f"unexpected release answer from GitHub: {error}") from error
 
 
-def running_exe() -> Path | None:
-    """The exe the app runs as; None when it runs from source, which updates through git instead."""
-    return Path(sys.executable) if getattr(sys, "frozen", False) else None
+def running_exe(platform: str | None = None) -> Path | None:
+    """The exe the app runs as; None when it runs from source, which updates through git instead, or off
+    Windows, where the releases hold no build to swap in (the page then only links to the release)."""
+    # Windows only: the release asset is Commander.exe, and a running exe is renamed aside to be replaced.
+    windows = (sys.platform if platform is None else platform) == "win32"
+    return Path(sys.executable) if windows and getattr(sys, "frozen", False) else None
 
 
 def old_exe(exe: Path) -> Path:

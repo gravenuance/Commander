@@ -6,6 +6,7 @@ import threading
 from collections.abc import Iterator
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
@@ -34,12 +35,11 @@ def restored_logging() -> Iterator[None]:
 def no_window_and_no_real_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Nothing here may open a window or a dialog, or read or write the user's real config and data."""
     for name, folder in (
-        ("APPDATA", "appdata"),
-        ("LOCALAPPDATA", "localappdata"),
+        ("CMDR_CONFIG", "config"),
         ("CMDR_CACHE_DIR", "cache"),
     ):
         monkeypatch.setenv(name, str(tmp_path / folder))
-    for name in ("CMDR_CONFIG", "CMDR_USER", "CMDR_WORKSPACE", "CMDR_LOG_LEVEL"):
+    for name in ("CMDR_USER", "CMDR_WORKSPACE", "CMDR_LOG_LEVEL"):
         monkeypatch.delenv(name, raising=False)
 
     def no_window(_desk: Desk, *, debug: bool = False) -> None:  # noqa: ARG001 - mirrors run_app
@@ -81,6 +81,22 @@ def test_a_startup_error_with_a_message_is_logged_and_shown(
     assert app_main.main() == 1
     assert shown == ["no deck folder"]
     assert "no deck folder" in (tmp_path / "cache" / "logs" / "commander.log").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("platform", "env", "expected"),
+    [
+        ("win32", {}, None),
+        ("win32", {"PYWEBVIEW_GUI": "qt"}, None),
+        ("linux", {}, "qt"),
+        ("linux", {"PYWEBVIEW_GUI": "gtk"}, None),
+        ("linux", {"PYWEBVIEW_GUI": ""}, "qt"),
+    ],
+)
+def test_the_window_backend_is_left_to_pywebview_except_qt_on_linux(
+    platform: str, env: dict[str, str], expected: Literal["qt"] | None
+) -> None:
+    assert app.window_backend(platform, env) == expected
 
 
 def test_setting_up_the_log_twice_keeps_one_file_handler(tmp_path: Path) -> None:

@@ -11,6 +11,7 @@ from __future__ import annotations
 import ctypes
 import importlib
 import logging
+import sys
 import threading
 import weakref
 from contextlib import contextmanager
@@ -48,6 +49,7 @@ type _Native = Any
 log = logging.getLogger(__name__)
 
 SCAN_WINDOW_TITLE = "Cardmarket scan"
+NEEDS_WINDOWS = "Scanning Cardmarket works on Windows only: it drives the WebView2 browser."
 
 _GWL_EXSTYLE = -20
 _WS_EX_APPWINDOW = 0x40000
@@ -356,16 +358,34 @@ def _load_user32() -> _Native:
     return user32
 
 
-def production_engine(client_factory: Callable[[], httpx.Client], cache: Path, now: Clock) -> BuyEngine:
-    """The real windows, session store and shipping tables (cached in `cache`) for the Buy screen."""
-    sessions = CardmarketSessionStore()
-    pane = CardmarketPane(Win32Ops(), _app_window)
+class _NoPane:
+    """Takes the page's reports of the pane's area where there is no window to cover."""
+
+    def set_area(self, area: PaneArea | None) -> None:
+        """Nothing to place."""
+
+
+def _no_scan_window(_handover: Handover) -> WebviewBrowser:
+    raise BrowserError(NEEDS_WINDOWS)
+
+
+def production_engine(
+    client_factory: Callable[[], httpx.Client], cache: Path, now: Clock, *, platform: str | None = None
+) -> BuyEngine:
+    """The real windows, session store and shipping tables (cached in `cache`) for the Buy screen. Off
+    Windows there is no scan window (it needs WebView2 and Win32), so the engine says so instead."""
 
     @contextmanager
     def shipping() -> Generator[RouteSource]:
         with client_factory() as http:
             yield CardmarketShipping(Fetcher(http), cache, now=now)
 
+    if (sys.platform if platform is None else platform) != "win32":
+        return BuyEngine(
+            open_browser=_no_scan_window, pane=_NoPane(), shipping=shipping, unavailable=NEEDS_WINDOWS
+        )
+    sessions = CardmarketSessionStore()
+    pane = CardmarketPane(Win32Ops(), _app_window)
     return BuyEngine(
         open_browser=lambda handover: open_scan_browser(sessions, handover, pane),
         pane=pane,

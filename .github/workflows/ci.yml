@@ -11,9 +11,14 @@ permissions:
 
 jobs:
   check:
-    # The app is Windows-only (Credential Manager, WebView2), so the checks run where it runs.
-    runs-on: windows-latest
-    timeout-minutes: 20
+    # The command line and the app's window run on both systems; only the Cardmarket scan and the in-place
+    # update are Windows-only, and the tests that need them skip elsewhere.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

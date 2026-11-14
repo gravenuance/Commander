@@ -7,7 +7,7 @@ import httpx
 import keyring.errors
 import pytest
 
-from conftest import TOPDECK_KEY, TOPDECK_SERVICE, FakeArchidekt, MemoryKeyring
+from conftest import SECRET_STORE, TOPDECK_KEY, TOPDECK_SERVICE, FakeArchidekt, MemoryKeyring
 from test_cli_apply import Terminal, run
 
 SECRET = (TOPDECK_SERVICE, "api-key")
@@ -36,7 +36,7 @@ def test_the_key_is_asked_for_checked_with_topdeck_and_saved(
     assert (result.code, result.err) == (0, "")
     assert result.prompts == ["TopDeck API key: "]
     assert result.out == (
-        "TopDeck key saved in Windows Credential Manager (TopDeck accepted it)\n"
+        f"TopDeck key saved in {SECRET_STORE} (TopDeck accepted it)\n"
         "Tournament data from TopDeck.gg, https://topdeck.gg\n"
     )
     assert empty_keyring.secrets == {SECRET: TOPDECK_KEY}
@@ -83,7 +83,7 @@ def test_no_check_saves_without_asking_topdeck(
     result = run(["topdeck", "--no-check"], home, archidekt, stdin=Terminal(), password="any-key")
     assert result.code == 0, result.err
     assert archidekt.topdeck.requests == []
-    assert result.out.startswith("TopDeck key saved in Windows Credential Manager\n")
+    assert result.out.startswith(f"TopDeck key saved in {SECRET_STORE}\n")
     assert empty_keyring.secrets == {SECRET: "any-key"}
 
 

@@ -1,6 +1,7 @@
 import importlib
 import json
 import logging
+import sys
 from collections.abc import Callable, Iterator
 
 import httpx
@@ -21,7 +22,7 @@ from commander.archidekt_edit import (
     parse_account_labels,
     parse_entry_states,
 )
-from commander.credentials import SERVICE, CredentialError, KeyringTokenStore
+from commander.credentials import SERVICE, CredentialError, KeyringTokenStore, secret_store_name
 from commander.net import MAX_RESPONSE_BYTES, Fetcher, NetworkError
 from conftest import (
     ACCESS_TOKEN,
@@ -378,6 +379,27 @@ def test_a_refresh_answered_with_400_shows_the_reason_not_expiry() -> None:
         ArchidektAuth(Fetcher(client), MemoryTokenStore({"tester": "r1"})).access_token("TESTER")
 
 
+def test_a_missing_keyring_backend_becomes_a_credential_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """What a Linux session without a Secret Service (a headless one) gets from keyring."""
+
+    def refuse(*_: object) -> None:
+        raise keyring.errors.NoKeyringError("No recommended backend was available.")
+
+    monkeypatch.setattr("keyring.set_password", refuse)
+    monkeypatch.setattr("keyring.get_password", refuse)
+
+    with pytest.raises(CredentialError, match="could not save the Archidekt login: No recommended backend"):
+        KeyringTokenStore().put("TESTER", "token")
+    with pytest.raises(CredentialError, match="could not read the saved Archidekt login: No recommended"):
+        KeyringTokenStore().get("TESTER")
+
+
+def test_the_secret_store_is_named_for_the_system() -> None:
+    assert secret_store_name("win32") == "Windows Credential Manager"
+    assert secret_store_name("linux") == "the desktop keyring (Secret Service)"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="the Windows backend's own error type exists only there")
 def test_keyring_backend_errors_become_credential_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     windows_error = importlib.import_module("win32ctypes.pywin32.pywintypes").error
 

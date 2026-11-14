@@ -3,6 +3,7 @@ import functools
 import gzip
 import json
 import shutil
+import sys
 import uuid
 from collections.abc import Callable, Iterator, Sequence
 from datetime import date, datetime
@@ -25,6 +26,11 @@ DECK_ID = 10000001
 # The day the made-up upcoming card `upcoming` is out; the tests' clocks stand a few days before it.
 OUT_DAY = date(2026, 10, 20)
 
+# What the messages call the secret store that `memory_keyring` stands in for.
+SECRET_STORE = (
+    "Windows Credential Manager" if sys.platform == "win32" else "the desktop keyring (Secret Service)"
+)
+
 type Json = dict[str, Any]
 type Handler = Callable[[httpx.Request], httpx.Response]
 
@@ -32,6 +38,14 @@ type Handler = Callable[[httpx.Request], httpx.Response]
 def load_fixture(name: str) -> Json:
     data: Json = json.loads((FIXTURES / name).read_text(encoding="utf-8"))
     return data
+
+
+def sandbox_env(base: Path) -> dict[str, str]:
+    """An environment that puts the config file and the cache folder under `base`, on any OS."""
+    return {
+        "CMDR_CONFIG": str(base / "appdata" / "Commander" / "config.toml"),
+        "CMDR_CACHE_DIR": str(base / "localappdata" / "Commander"),
+    }
 
 
 @pytest.fixture

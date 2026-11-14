@@ -10,6 +10,8 @@ dependencies = [
     "keyring==25.7.0",
     "numpy==2.5.4",
     "pywebview==6.2.1",
+    # Linux has no system web view in the wheel: Qt's brings the window, with no system packages for it.
+    "pywebview[qt]==6.2.1; sys_platform == 'linux'",
     "scipy==1.18.1",
     "tomlkit==0.15.2",
 ]
@@ -71,6 +73,9 @@ ignore = [
 include = ["src", "tests", "tools"]
 typeCheckingMode = "strict"
 pythonVersion = "3.13"
+# The Cardmarket window cover calls Win32 through ctypes, whose stubs exist only for Windows; checking as
+# Windows everywhere keeps the result the same on every machine.
+pythonPlatform = "Windows"
 venvPath = "."
 venv = ".venv"
 

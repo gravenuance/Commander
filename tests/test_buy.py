@@ -4,6 +4,7 @@ replaced by fakes (the real readers have their own tests); the solver and the ca
 import json
 import logging
 import re
+import sys
 import threading
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
@@ -341,14 +342,47 @@ def scanned(rig: Rig) -> Json:
     return rig.service.status()
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="the window cover calls user32")
 def test_the_production_engine_reads_shipping_through_the_cache_and_reports_the_pane_to_the_window_cover(
     tmp_path: Path,
 ) -> None:
     engine = production_engine(httpx.Client, tmp_path, lambda: NOW)
 
+    assert engine.unavailable is None
     assert isinstance(engine.pane, CardmarketPane)
     with engine.shipping() as shipping:
         assert isinstance(shipping, CardmarketShipping)
+
+
+def test_off_windows_the_production_engine_has_no_scan_window_but_still_reads_shipping(
+    tmp_path: Path,
+) -> None:
+    engine = production_engine(httpx.Client, tmp_path, lambda: NOW, platform="linux")
+
+    assert engine.unavailable == "Scanning Cardmarket works on Windows only: it drives the WebView2 browser."
+    engine.pane.set_area(PaneArea(1.0, 2.0, 3.0, 4.0, 1.0))
+    with engine.shipping() as shipping:
+        assert isinstance(shipping, CardmarketShipping)
+    with pytest.raises(BrowserError, match="works on Windows only"):
+        engine.open_browser(cast("Handover", None))
+
+
+def test_a_scan_is_refused_with_the_reason_where_the_system_cannot_open_the_window(rig: Rig) -> None:
+    unavailable = replace(rig.engine, unavailable="Scanning Cardmarket works on Windows only.")
+    service = BuyService(
+        store=BuyStore(rig.settings_path),
+        decks=lambda: rig.decks,
+        user=lambda: rig.user,
+        engine=unavailable,
+        card_db=rig.card_db,
+        background=lambda work: work(),
+    )
+
+    with pytest.raises(BuyError, match="works on Windows only"):
+        service.start()
+
+    assert rig.events == []
+    assert service.status()["phase"] == "idle"
 
 
 class TestTheCardsToBuy:

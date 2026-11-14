@@ -3,10 +3,11 @@
 import json
 import logging
 import os
+import sys
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import cast
 
 import tomlkit
@@ -24,6 +25,8 @@ ENV_USER = "CMDR_USER"
 ENV_WORKSPACE = "CMDR_WORKSPACE"
 ENV_CONFIG = "CMDR_CONFIG"
 ENV_CACHE = "CMDR_CACHE_DIR"
+# The app window's profile (HTTP cache, page storage) inside the cache folder.
+WEBVIEW_FOLDER = "webview"
 _USERNAME_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.")
 # TOML keys for the roles a target can be set for: "board wipe" is written board_wipe.
 TARGET_KEYS: Mapping[str, Role] = {role.value.replace(" ", "_"): role for role in ANALYZED_ROLES}
@@ -76,26 +79,81 @@ class FileConfig:
     workspaces: Mapping[str, Path] = field(default_factory=dict[str, Path])
 
 
-def default_config_path(env: Mapping[str, str]) -> Path:
-    appdata = env.get("APPDATA")
-    base = Path(appdata) if appdata else Path.home() / ".config"
-    return base / "Commander" / "config.toml"
+# Where the app keeps its files. Windows: %APPDATA%\Commander for settings, %LOCALAPPDATA%\Commander for
+# caches and logs. Elsewhere the XDG base directories, in a lower-case folder. `platform` (a `sys.platform`
+# value) and `home` default to the running system and user; tests give both, with the environment.
+def default_config_path(
+    env: Mapping[str, str], *, platform: str | None = None, home: Path | None = None
+) -> Path:
+    folder = _app_folder(
+        env, windows_var="APPDATA", xdg_var="XDG_CONFIG_HOME", dot_dir=".config", platform=platform, home=home
+    )
+    return folder / "config.toml"
 
 
-def cache_dir(env: Mapping[str, str]) -> Path:
+def cache_dir(env: Mapping[str, str], *, platform: str | None = None, home: Path | None = None) -> Path:
     if env.get(ENV_CACHE):
         return Path(env[ENV_CACHE])
-    local = env.get("LOCALAPPDATA")
-    base = Path(local) if local else Path.home() / ".cache"
-    return base / "Commander"
+    return _app_folder(
+        env,
+        windows_var="LOCALAPPDATA",
+        xdg_var="XDG_CACHE_HOME",
+        dot_dir=".cache",
+        platform=platform,
+        home=home,
+    )
 
 
-def config_path(flag: str | None, env: Mapping[str, str]) -> Path:
+def webview_dir(env: Mapping[str, str], *, platform: str | None = None, home: Path | None = None) -> Path:
+    return cache_dir(env, platform=platform, home=home) / WEBVIEW_FOLDER
+
+
+def config_path(
+    flag: str | None, env: Mapping[str, str], *, platform: str | None = None, home: Path | None = None
+) -> Path:
     if flag:
         return Path(flag)
     if env.get(ENV_CONFIG):
         return Path(env[ENV_CONFIG])
-    return default_config_path(env)
+    return default_config_path(env, platform=platform, home=home)
+
+
+def config_location_hint(platform: str | None = None) -> str:
+    """The default config file as `--help` and the tools' help name it."""
+    if _is_windows(platform):
+        return "%APPDATA%\\Commander\\config.toml"
+    return "$XDG_CONFIG_HOME/commander/config.toml, else ~/.config/commander/config.toml"
+
+
+def cache_location_hint(platform: str | None = None) -> str:
+    """The default cache folder as `--help` and the tools' help name it."""
+    if _is_windows(platform):
+        return "%LOCALAPPDATA%\\Commander"
+    return "$XDG_CACHE_HOME/commander, else ~/.cache/commander"
+
+
+def _is_windows(platform: str | None) -> bool:
+    return (sys.platform if platform is None else platform) == "win32"
+
+
+def _app_folder(
+    env: Mapping[str, str],
+    *,
+    windows_var: str,
+    xdg_var: str,
+    dot_dir: str,
+    platform: str | None,
+    home: Path | None,
+) -> Path:
+    """The app's folder under the system's base for it, falling back to a dot folder in the home folder."""
+    windows = _is_windows(platform)
+    given = env.get(windows_var if windows else xdg_var)
+    # The XDG specification has an empty or relative value ignored.
+    if given and (windows or PurePosixPath(given).is_absolute()):
+        base = Path(given)
+    else:
+        base = (Path.home() if home is None else home) / dot_dir
+    return base / ("Commander" if windows else "commander")
 
 
 def read_config(path: Path) -> FileConfig:

@@ -183,6 +183,16 @@ def test_page_inlines_its_stylesheet_and_scripts() -> None:
     assert ".innerHTML" not in html
 
 
+def test_the_page_allows_string_evaluation_only_for_the_window_that_needs_it() -> None:
+    windows = page_html("win32")
+    linux = page_html("linux")
+    assert "default-src 'none'; img-src https://cards.scryfall.io; style-src 'unsafe-inline'; " in windows
+    assert "script-src 'unsafe-inline'\"" in windows
+    assert "unsafe-eval" not in windows
+    assert "script-src 'unsafe-inline' 'unsafe-eval'\"" in linux
+    assert linux.replace(" 'unsafe-eval'", "") == windows
+
+
 def test_every_script_file_is_inlined_into_the_page() -> None:
     html = page_html()
     scripts = sorted(WEB.glob("*.js"))
@@ -1849,7 +1859,8 @@ def test_the_gather_opens_only_meta_files_a_save_is_seen_for_and_never_lists_the
 
     def spy_listing(original: Callable[..., Any]) -> Callable[..., Any]:
         def listing(target: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
-            if Path(target) == folder:
+            # POSIX listings also take an open directory's descriptor, which names no folder.
+            if not isinstance(target, int) and Path(target) == folder:
                 listed.append(str(target))
             return original(target, *args, **kwargs)
 
@@ -2264,10 +2275,14 @@ def test_unexpected_failures_are_logged_not_raised(desk: Desk, monkeypatch: pyte
 
 
 def test_settings_without_a_username_still_open(tmp_path: Path) -> None:
-    env = {"APPDATA": str(tmp_path), "LOCALAPPDATA": str(tmp_path), "CMDR_WORKSPACE": str(tmp_path / "decks")}
+    env = {
+        "CMDR_CONFIG": str(tmp_path / "config.toml"),
+        "CMDR_CACHE_DIR": str(tmp_path / "cache"),
+        "CMDR_WORKSPACE": str(tmp_path / "decks"),
+    }
     settings = desk_settings(env, config=None, workspace=None, user=None)
     assert (settings.workspace, settings.user) == (tmp_path / "decks", None)
-    assert settings.card_db == tmp_path / "Commander" / CARD_DB_FILE
+    assert settings.card_db == tmp_path / "cache" / CARD_DB_FILE
 
 
 def test_the_meta_panel_reads_the_cache_without_building_an_http_client(

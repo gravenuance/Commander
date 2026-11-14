@@ -19,13 +19,24 @@ anyway"). Check the download against `SHA256SUMS.txt` from the same release
 Once installed, the app checks GitHub for a newer release each time it starts. When one is out, a notice at
 the foot of the deck list links to its notes and offers *Update and restart*: the app downloads the new exe,
 checks it against the release's `SHA256SUMS.txt`, puts it in place of the running one (which stays beside it
-as `Commander.exe.old` until the next start removes it) and restarts. Run from source, the notice only links
-to the release ([ADR 0059](docs/adr/0059-update-the-app-from-github-releases.md)).
+as `Commander.exe.old` until the next start removes it) and restarts. Run from source, or on Linux, the
+notice only links to the release ([ADR 0059](docs/adr/0059-update-the-app-from-github-releases.md)).
+
+There is no download for Linux yet: run it from source (below), or build the app with the steps under
+[Desktop app](#desktop-app).
 
 ## Requirements
 
 - Python 3.13 and [uv](https://docs.astral.sh/uv/)
-- Windows (other platforms should work but are untested)
+- Windows 11, or Linux (developed on Ubuntu 26.04; the command line needs nothing else)
+- The desktop app on Linux needs the libraries Qt's web engine loads from the system. On Ubuntu:
+  `sudo apt install libnss3 libnspr4 libasound2t64 libxkbfile1 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1
+  libxcb-shape0 libxcb-xkb1 libxkbcommon-x11-0 libxcb-image0 libxcb-render-util0 libxcb-util1`. PyQt6 and its
+  web engine themselves come with `uv sync`; no GTK is needed.
+- Logins and keys (`cmdr login`, `cmdr topdeck`) go to the system's secret store: Windows Credential Manager,
+  or on Linux the desktop's Secret Service (GNOME Keyring or KWallet). A session without one (a bare SSH login
+  or container) cannot save them; `cmdr` says so and the commands that need a login fail with that message.
+- The Cardmarket Buy screen needs Windows (it drives WebView2); on Linux it says so instead of scanning.
 
 ## Build
 
@@ -33,7 +44,8 @@ to the release ([ADR 0059](docs/adr/0059-update-the-app-from-github-releases.md)
 uv sync
 ```
 
-This creates `.venv` with the exact versions pinned in `uv.lock`.
+This creates `.venv` with the exact versions pinned in `uv.lock` (on Linux it adds PyQt6 for the app's
+window).
 
 ## Run
 
@@ -136,7 +148,7 @@ that differs from the Archidekt bracket, or a deck set above everything its card
 3-4 estimate), gets a note without cards. If Spellbook's tag ever differs from what its rules give, the note
 says the causes may be incomplete.
 
-Each answer is kept for 7 days in `%LOCALAPPDATA%\Commander\spellbook`, and asked again sooner when the deck's
+Each answer is kept for 7 days in the `spellbook` folder of the cache folder ([Settings](#settings)), and asked again sooner when the deck's
 cards change or with `--refresh`. If Spellbook cannot be reached, an older answer for the same cards is
 shown with a warning; with none, the estimate shows as unavailable and `bracket` exits with 1.
 
@@ -285,7 +297,8 @@ tournaments come from.
 TopDeck.gg's API needs a free key for each user. Issue yours at [topdeck.gg/developers](https://topdeck.gg/developers),
 then either press **TopDeck** at the foot of the app's deck list (paste the key, **Test key**, **Save key**) or
 run `uv run cmdr topdeck` and paste it when asked. TopDeck is asked whether it takes the key before it is
-saved in Windows Credential Manager (service `Commander (cmdr) TopDeck`, user `api-key`); it never goes on a
+saved in the system secret store (Windows Credential Manager, or the desktop keyring on Linux; service
+`Commander (cmdr) TopDeck`, user `api-key`); it never goes on a
 command line, into a file or into the log. `cmdr topdeck --key-stdin` reads it from stdin for scripts,
 `--no-check` saves it without asking TopDeck, and `--remove` forgets it. If TopDeck is busy when it is asked,
 the check stops at once and says how long to wait ("TopDeck is busy; try again in 30 s").
@@ -516,7 +529,7 @@ and carries on; if every source for a deck fails, its board stays as it was and 
 
 Every deck's ideas are read at once, and Archidekt's requests go out in an order: the deck open in the app
 first and the rest by how often you open them: each open adds 1 to a deck's score, and a score halves every 30
-days. The scores are kept in `views.json` in `%LOCALAPPDATA%\Commander`, on your machine only; delete the file
+days. The scores are kept in `views.json` in the cache folder, on your machine only; delete the file
 to start again from the folder order. A deck you open while a sync runs moves to the front of the requests
 still waiting, and its ideas are merged first when several are ready. The app opens no deck by itself, so the
 main area stays blank until you pick one, and with none picked Sync goes by the scores alone.
@@ -541,7 +554,7 @@ the rest; `cmdr board --help` lists them.
 
 The app works for any Archidekt account ([ADR 0023](docs/adr/0023-accounts-and-sync-in-the-app.md)).
 Without one it opens on **Sign in to Archidekt**: the username and password go to Archidekt's login only,
-and the login token is kept in Windows Credential Manager, as `cmdr login` keeps it. Each account has its
+and the login token is kept in the system secret store, as `cmdr login` keeps it. Each account has its
 own deck folder, remembered in the config's `[workspaces]` table. Your own keeps the folder `cmdr init` set,
 and a new account gets a sibling folder named `decks-<username>`, or `Documents\Commander\decks-<username>`
 when no folder was set. Signing in as a new account syncs its decks at once. The foot of the deck list shows
@@ -700,10 +713,12 @@ base against Frank Karsten's published numbers
 The window follows changes made with the CLI or by Claude within a couple of seconds. The rail on the
 right opens the open deck's activity and mana base; it is hidden while no deck is open.
 
-The app draws its page with Microsoft Edge WebView2, part of Windows 11, through
-[pywebview](https://pywebview.flowrl.com); it opens no network port. It logs to
-`%LOCALAPPDATA%\Commander\logs\commander.log` (`CMDR_LOG_LEVEL=DEBUG` for more), and `--debug` allows
-the web inspector.
+The app draws its page with Microsoft Edge WebView2, part of Windows 11, or on Linux with Qt's web engine
+(PyQt6), through [pywebview](https://pywebview.flowrl.com); it opens no network port. It logs to `logs/commander.log`
+in the cache folder (`CMDR_LOG_LEVEL=DEBUG` for more; [Settings](#settings) names the folder), and `--debug`
+allows the web inspector. Set `PYWEBVIEW_GUI=gtk` to use GTK on Linux instead, if PyGObject and WebKitGTK are
+installed for the Python that runs it. Two things work on Windows only: the Cardmarket Buy screen, and
+*Update and restart*.
 
 To build a single `Commander.exe` that needs no Python:
 
@@ -714,6 +729,17 @@ uv run --group build pyinstaller --noconfirm --clean --onefile --windowed --name
 The exe lands in `dist/`. It is not code-signed, so Windows SmartScreen warns the first time it runs;
 choose **More info**, then **Run anyway**. It reads the same config, decks and login as `cmdr`.
 See [ADR 0006](docs/adr/0006-deck-boards-and-desktop-app.md).
+
+On Linux the same build makes one executable of about 280 MB (Qt's web engine is most of it), which still
+needs the system libraries listed under [Requirements](#requirements); `:` separates the `--add-data` paths
+and there is no icon or version resource:
+
+```sh
+uv run --group build pyinstaller --noconfirm --clean --onefile --name commander-linux-x64 --add-data "src/commander/web:commander/web" src/commander/app_main.py
+```
+
+It lands in `dist/` too, and has no release download or self-update. To run from source instead:
+`uv run cmdr app`. See [ADR 0068](docs/adr/0068-run-on-linux.md).
 
 ### Changing decks
 
@@ -759,7 +785,7 @@ on Archidekt. `apply -` reads the plan from stdin, and `--json` prints the resul
 
 A card a save brings into the deck gets the Archidekt label "Don't Have"; see [Cards to get](#cards-to-get).
 
-`cmdr login` keeps only Archidekt's login token in Windows Credential Manager (under
+`cmdr login` keeps only Archidekt's login token in the system secret store (under
 `Commander (cmdr) Archidekt`), never your password. When the token expires, `apply --save` asks you to run
 `cmdr login` again; `cmdr logout` removes it. For scripts, `cmdr login --password-stdin` reads the password
 from stdin.
@@ -787,7 +813,7 @@ one copy; a new price limit is applied to the last scan without scanning again
 The scan needs you signed in to Cardmarket. When it reaches a page that asks for a sign-in, or for
 Cloudflare's check, the scan window appears over the Buy screen and the progress line says which; do it
 there, as in a browser, and the scan carries on. The app never sees your password. It keeps Cardmarket's
-session cookie in Windows Credential Manager (under `Commander (cmdr) Cardmarket`), so the next scan usually
+session cookie in the system secret store (under `Commander (cmdr) Cardmarket`), so the next scan usually
 needs no sign-in; signing out of the app removes it.
 
 Pick a package and press "Add to cart" to put it in your Cardmarket cart. A confirmation lists every card,
@@ -880,13 +906,16 @@ defaults.
 |---|---|---|---|---|
 | Archidekt username | `--user` | `CMDR_USER` | `user` | none (required) |
 | Deck folder | `--workspace` | `CMDR_WORKSPACE` | `workspace` | none (required) |
-| Config file | `--config` | `CMDR_CONFIG` | n/a | `%APPDATA%\Commander\config.toml` |
-| Cache folder: card data, meta answers, other players' decks, view scores (`views.json`), logs, the app window's profile (`webview`, with the card images) | n/a | `CMDR_CACHE_DIR` | n/a | `%LOCALAPPDATA%\Commander` |
+| Config file | `--config` | `CMDR_CONFIG` | n/a | Windows: `%APPDATA%\Commander\config.toml`. Linux: `$XDG_CONFIG_HOME/commander/config.toml`, else `~/.config/commander/config.toml` |
+| Cache folder: card data, meta answers, other players' decks, view scores (`views.json`), logs, the app window's profile (`webview`, with the card images) | n/a | `CMDR_CACHE_DIR` | n/a | Windows: `%LOCALAPPDATA%\Commander`. Linux: `$XDG_CACHE_HOME/commander`, else `~/.cache/commander` |
 | Role targets for `suggest` | n/a | n/a | `[targets]` table | ramp 10, draw 10, removal 8, board_wipe 2 |
 | Sample sizes for `meta` and `sync` | n/a | n/a | `[meta]` table | 60 days, events of 16+, up to 60 Archidekt decks (a quarter of that for an alike commander), 10 commanders, 30 lists each |
-| Archidekt login for `apply --save`, and for `sync` to read private and unlisted decks | `cmdr login` | n/a | n/a | none; the token is kept in Windows Credential Manager |
-| TopDeck.gg API key for the tournament lists | `cmdr topdeck`, or the app's TopDeck button | n/a | n/a | none; the key is kept in Windows Credential Manager |
+| Archidekt login for `apply --save`, and for `sync` to read private and unlisted decks | `cmdr login` | n/a | n/a | none; the token is kept in Windows Credential Manager, or on Linux the desktop keyring (Secret Service) |
+| TopDeck.gg API key for the tournament lists | `cmdr topdeck`, or the app's TopDeck button | n/a | n/a | none; the key is kept in Windows Credential Manager, or on Linux the desktop keyring (Secret Service) |
 | App log detail | n/a | `CMDR_LOG_LEVEL` | n/a | `INFO` |
+
+On Linux, an empty or relative `XDG_CONFIG_HOME` or `XDG_CACHE_HOME` is ignored, as the XDG base directory
+specification says. `cmdr --help` names the locations in use on your system.
 
 ## Test
 
@@ -897,18 +926,21 @@ npx --yes pyright@1.1.414
 uv run pytest
 ```
 
-Tests use recorded fixture data and never touch the network.
+Tests use recorded fixture data and never touch the network. They run on Windows and on Linux (CI runs both);
+the tests of the Win32 window cover are skipped off Windows, and the page tests need `node` on `PATH`. On
+Linux, run `uv run pytest` after `uv sync`; the window's system libraries are not needed, as no test opens
+one.
 
 ## External services
 
 | Service | Used for | Notes |
 |---|---|---|
 | GitHub (`api.github.com/repos/gravenuance/Commander/releases/latest`; release files from `github.com`, served by `release-assets.githubusercontent.com`) | The app's check for a newer version, and its download | One unauthenticated request each time the app starts (GitHub allows 60 an hour without a sign-in); the exe and `SHA256SUMS.txt` are downloaded only when you click *Update and restart*. See [ADR 0059](docs/adr/0059-update-the-app-from-github-releases.md). |
-| Archidekt (`archidekt.com/api`) | Reading decks; changing them with `apply --save` | Public decks need no login; changes, and `sync` of your private and unlisted decks, need `cmdr login`, whose token lives in Windows Credential Manager and is refreshed on each save and each sync. The API is undocumented, so every response's shape is checked and a clear message names what changed. A save makes a handful of requests, never retried. Its written terms forbid automated requests; its co-founder has said on its forum that the API is open to use. See [ADR 0004](docs/adr/0004-deck-changes-through-archidekts-site-api.md). |
+| Archidekt (`archidekt.com/api`) | Reading decks; changing them with `apply --save` | Public decks need no login; changes, and `sync` of your private and unlisted decks, need `cmdr login`, whose token lives in the system secret store and is refreshed on each save and each sync. The API is undocumented, so every response's shape is checked and a clear message names what changed. A save makes a handful of requests, never retried. Its written terms forbid automated requests; its co-founder has said on its forum that the API is open to use. See [ADR 0004](docs/adr/0004-deck-changes-through-archidekts-site-api.md). |
 | Scryfall (`api.scryfall.com/bulk-data`, `/sets` and `/cards/search`, files on `data.scryfall.io`; card images from `cards.scryfall.io` in the app) | Card facts, rules text, EUR prices, Tagger tags for roles and profiles, card art, previews of upcoming sets | One API call per `sync` for the set list, and one for the file list when the card data is rebuilt (weekly, or when a new set has come out); the files themselves have no rate limit. While a set is upcoming, one card search per set and page of 175 cards, at most once a day, 200 ms apart (Scryfall asks for no more than 10 requests a second; [ADR 0055](docs/adr/0055-show-upcoming-cards-that-fit-a-deck.md)), then the file list and the day's Oracle Tags file (about 6 MB) for the previews' tags ([ADR 0058](docs/adr/0058-previews-ranked-by-weight-conflict-and-need.md)). Scryfall updates prices once a day and asks for bulk files rather than per-card calls for lookups like these. The app keeps the card images it has loaded in its window profile on disk, so each is fetched once. Tag data is community-maintained and can change. See [ADR 0001](docs/adr/0001-scryfall-bulk-card-data.md). |
 | Commander Spellbook (`backend.commanderspellbook.com`: `estimate-bracket`, `find-my-combos`) | Bracket estimates, combos, and combos one card short | One request per deck and command, at most four at a time, and none while a cached answer is under 7 days old. Spellbook asks tools to name themselves in the User-Agent, keep to a few calls per user action, stay under about 80 requests a minute, handle 429, and credit and link back to commanderspellbook.com, which `bracket` and `suggest` do in their output. Only card names and quantities are sent. See [ADR 0002](docs/adr/0002-bracket-estimates-from-commander-spellbook.md) and [ADR 0003](docs/adr/0003-suggestions-from-spellbook-and-scryfall.md). |
 | Archidekt deck search (`archidekt.com/api/decks/v3/`) | Other players' popular recent decks for `meta` and `sync`'s ideas | Searches and deck reads 6 s apart, after a 429 a pause of at least a minute, and a second 429 ends Archidekt for the run; at most 5 search pages (60 decks each) per bracket and `peer_decks` (60) deck reads for a deck's own commander; 3 pages and a quarter of that (15) for each alike commander; and, for decks that search by tag, 2 pages and 10 reads for each of the deck's 3 main tags. Each search answer is refreshed every third day (staggered per commander or tag), by a new search by views, and each deck read until its owner edits it. Your own decks are left out. Under the same informal permission as the rest of Archidekt's API (ADR 0004). See [ADR 0027](docs/adr/0027-reading-other-players-archidekt-decks.md), [ADR 0048](docs/adr/0048-pace-archidekt-by-its-own-limits.md), [ADR 0050](docs/adr/0050-search-archidekt-by-view-count.md) and [ADR 0053](docs/adr/0053-search-less-for-alike-commanders-and-deck-tags.md). |
 | Moxfield (`api2.moxfield.com`: `/v2/cards/search`, `/v2/decks/search`, `/v3/decks/all/<id>`) | Other players' popular recent public decks, beside Archidekt's, for `meta` and `sync`'s ideas | No public API: this is the undocumented one Moxfield's site uses, and its `robots.txt` disallows it; the owner chose to use it, identified as cmdr, public decks only, no login. The same rules as the Archidekt deck search, counted separately: 6 s apart on its own pacer, 5 search pages (60 decks) per bracket and `peer_decks` reads for the deck's commander, 3 pages and a quarter of the reads per alike commander, no tag search; one card lookup per search refresh. Cached the same way. A 403 or a challenge page on the card lookup or a search ends Moxfield for the run and `sync` warns once (a refused single deck is skipped); nothing works around it, and if Moxfield keeps refusing or asks us to stop, the source is removed. See [ADR 0066](docs/adr/0066-moxfield-peer-decks-beside-archidekt.md). |
-| TopDeck.gg (`topdeck.gg/api/v2/tournaments`) | Commander tournaments with decklists, for the commander's lists and the most-played commanders in `meta` and `sync`'s ideas | A free key for each user (`cmdr topdeck`, or the app), sent in the `Authorization` header and kept in Windows Credential Manager; it does not expire unless TopDeck revokes it. 100 requests a minute, fewer for bulk queries: events of 16+ players are asked for seven days at a time, 12 s apart (a 429 is waited out for the `Retry-After` it names), only for days not seen yet, and kept per event in the cache folder; malformed events and decks are skipped and logged. Player names and ids are dropped as the answer is read. Any output that shows the data credits and links TopDeck.gg, as its terms ask. See [ADR 0047](docs/adr/0047-tournament-lists-from-topdeck-with-a-key-per-user.md). |
+| TopDeck.gg (`topdeck.gg/api/v2/tournaments`) | Commander tournaments with decklists, for the commander's lists and the most-played commanders in `meta` and `sync`'s ideas | A free key for each user (`cmdr topdeck`, or the app), sent in the `Authorization` header and kept in the system secret store; it does not expire unless TopDeck revokes it. 100 requests a minute, fewer for bulk queries: events of 16+ players are asked for seven days at a time, 12 s apart (a 429 is waited out for the `Retry-After` it names), only for days not seen yet, and kept per event in the cache folder; malformed events and decks are skipped and logged. Player names and ids are dropped as the answer is read. Any output that shows the data credits and links TopDeck.gg, as its terms ask. See [ADR 0047](docs/adr/0047-tournament-lists-from-topdeck-with-a-key-per-user.md). |
 | Commander Spellbook (`find-my-combos`, for `meta`) | The combos the most-played commanders' lists run | One request per meta commander, 1 s apart, cached for 7 days. |
 | EDHREC (via Scryfall's `edhrec_rank`) | Popularity ranks for `suggest` | Never contacted: the rank comes inside Scryfall's bulk files. EDHREC's terms forbid automated requests to its site. |

@@ -13,9 +13,10 @@ A card is `NAME` or `NAME=QUANTITY`; `--file` takes lines as `cmdr toget --cardm
 (`<quantity> <name>`).
 
 Sign in through the app's Buy screen first: this tool has no sign-in handover, so a signed-out session
-fails with `SignedOut`. `--profile` must be the app's Cardmarket storage folder
-(`%LOCALAPPDATA%/Commander/webview`), and the app must be closed, as it holds that folder. To save the pages
-it loads for test fixtures, use `tools/cardmarket_scan.py --save-pages`.
+fails with `SignedOut`. `--profile` must be the app's Cardmarket storage folder (`webview`, in the cache
+folder that `cmdr --help` names; `--help` here prints the one in use), and the app must be closed, as it
+holds that folder. The sync runs on Windows only: it drives WebView2. To save the pages it loads for test
+fixtures, use `tools/cardmarket_scan.py --save-pages`.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from commander.cmpages import Condition, PageError
 from commander.cmscan import ENGLISH
 from commander.cmsession import BrowserError, WebviewBrowser
 from commander.cmwants import APP_LIST_NAME, WantsCancelled, WantsProgress, WantsSync, sync_wants
+from commander.config import environment, webview_dir
 from commander.credentials import CardmarketSessionStore, CredentialError
 from commander.sellersolve import WantedCard
 
@@ -118,6 +120,11 @@ def run_sync(status: Window, args: argparse.Namespace, cancel: threading.Event) 
                     print(f"could not close a window: {error!r}", file=sys.stderr)
 
 
+def _here() -> str:
+    """The app's storage folder on this machine, as argparse help text."""
+    return str(webview_dir(environment())).replace("%", "%%")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument("cards", nargs="*", metavar="CARD", help="NAME or NAME=QUANTITY")
@@ -126,7 +133,7 @@ def main() -> int:
         "--profile",
         type=Path,
         required=True,
-        help="the app's Cardmarket storage folder, %%LOCALAPPDATA%%/Commander/webview",
+        help=f"the app's Cardmarket storage folder; here {_here()}",
     )
     parser.add_argument(
         "--language",

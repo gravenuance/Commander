@@ -21,6 +21,8 @@ from commander.cmsession import BrowserError, LoadTimeout
 if TYPE_CHECKING:
     from webview import Window
 
+pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Win32Ops calls user32's last error")
+
 AREA = PaneArea(24.0, 120.0, 800.0, 420.0, 1.0)
 MAIN_HWND = 1000
 SCAN_HWND = 2000

@@ -25,6 +25,7 @@ from commander.updates import (
     parse_version,
     remove_old_exe,
     restart,
+    running_exe,
 )
 from conftest import FakeArchidekt, Json, MemoryTokenStore, load_fixture
 from test_desk import NOW, fake, settings
@@ -428,3 +429,11 @@ def test_no_update_while_a_sync_runs(settings: DeskSettings, exe: Path) -> None:
     assert desk.install_update() == {"error": "Wait for the sync to finish, then update."}
     assert (restarted, closed) == ([], [])
     assert exe.read_bytes() == OLD_EXE
+
+
+def test_only_a_packed_windows_app_installs_updates_itself(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    assert running_exe("win32") == Path(sys.executable)
+    assert running_exe("linux") is None
+    monkeypatch.setattr(sys, "frozen", False, raising=False)
+    assert running_exe("win32") is None

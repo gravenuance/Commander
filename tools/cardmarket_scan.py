@@ -10,8 +10,9 @@ WebView2 holding the profile and the next start shows a white page.
     uv run python -X utf8 tools/cardmarket_scan.py --profile <folder> --save-pages <dir> --visit <url> ...
 
 Sign in through the app's Buy screen first: this tool has no sign-in handover, so a signed-out session
-fails with `SignedOut`. `--profile` must be the app's Cardmarket storage folder
-(`%LOCALAPPDATA%/Commander/webview`), and the app must be closed, as it holds that folder.
+fails with `SignedOut`. `--profile` must be the app's Cardmarket storage folder (`webview`, in the cache
+folder that `cmdr --help` names; `--help` here prints the one in use), and the app must be closed, as it
+holds that folder. The scan runs on Windows only: it drives WebView2.
 
 `--visit` loads more Cardmarket pages after the scan (or instead of it, when no card is named), at the scan's
 pace. `--save-pages` writes every page the tool loads to the folder as numbered HTML, for making test
@@ -43,6 +44,7 @@ from commander.cmscan import (
     scan,
 )
 from commander.cmsession import BrowserError, WebviewBrowser, on_cardmarket
+from commander.config import environment, webview_dir
 from commander.credentials import CardmarketSessionStore, CredentialError
 from commander.sellersolve import WantedCard
 
@@ -151,6 +153,11 @@ def run_scan(status: Window, args: argparse.Namespace, cancel: threading.Event) 
                     print(f"could not close a window: {error!r}", file=sys.stderr)
 
 
+def _here() -> str:
+    """The app's storage folder on this machine, as argparse help text."""
+    return str(webview_dir(environment())).replace("%", "%%")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument("cards", nargs="*", metavar="CARD", help="card names, as the wants list names them")
@@ -158,7 +165,7 @@ def main() -> int:
         "--profile",
         type=Path,
         required=True,
-        help="the app's Cardmarket storage folder, %%LOCALAPPDATA%%/Commander/webview",
+        help=f"the app's Cardmarket storage folder; here {_here()}",
     )
     parser.add_argument("--wants-list", type=int, help="the wants list id; without it there is no pass 2")
     parser.add_argument(
