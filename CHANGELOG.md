@@ -13,6 +13,10 @@
   says the scan works on Windows only, and the update notice links to the release.
 - On Linux a new account's deck folder goes under the Documents folder the desktop names, and a window that
   cannot open (missing Qt libraries, no display) is reported on stderr and as a notification, not silently.
+- `cmdr-mcp`, an MCP server over stdio that gives an AI client the `cmdr` commands as tools: reads marked
+  read-only, board and profile changes as writes, and saving to Archidekt marked destructive. `sync` and `meta`
+  run as background jobs with progress; logins, keys and the app are never tools. `CommanderMcp.spec` builds a
+  one-folder exe of it (ADR 0069).
 
 ### Changed
 - `cmdr --help`, `cmdr login` and `cmdr topdeck` name the config folder, cache folder and secret store of the

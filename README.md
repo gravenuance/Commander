@@ -900,6 +900,41 @@ says why:
 
 Those decks stay as they are and are not reported as disappeared; run `cmdr login` again to update them.
 
+### MCP server
+
+`cmdr-mcp` is an [MCP](https://modelcontextprotocol.io) server over stdio that gives an AI client the commands
+above as tools ([ADR 0069](docs/adr/0069-mcp-server-over-the-cli.md)). Each tool runs the matching `cmdr`
+command in the server's own process, so it reads the same config, workspace and card data, and a failed command
+is a tool error with the `cmdr: ...` message. Run it from source with `uv run cmdr-mcp` (or
+`uv run python -m commander.mcp`), and point the client at that command:
+
+```json
+{ "mcpServers": { "commander": { "command": "uv", "args": ["run", "--project", "<repo>", "cmdr-mcp"] } } }
+```
+
+Windows builds a one-folder `cmdr-mcp.exe` for clients that start servers from an executable
+(`uv sync --group build`, then `uv run --group build pyinstaller --noconfirm --clean CommanderMcp.spec`; it
+lands in `dist/CommanderMcp/`).
+
+| Tools | What they do | Client hint |
+|---|---|---|
+| `list_decks`, `analyze`, `price`, `card`, `tags`, `tokens`, `profile`, `board_show`, `board_log`, `toget_list` | Read the saved decks and the card data | read-only |
+| `bracket`, `suggest`, `board_plan`, `board_commit_preview`, `apply_preview` | Read, asking Commander Spellbook or Archidekt where an answer is not cached; change nothing | read-only |
+| `board_add`, `board_research`, `board_decide`, `board_count`, `board_remove`, `suggest_to_board`, `profile_init` | Change a deck's board or profile on this machine, as `claude` | writes |
+| `start_sync`, `start_meta`, `meta_to_board`, `job_status` | Background jobs (below) | writes, read-only |
+| `board_commit_save`, `apply_save`, `toget_mark` | Change your real decks on Archidekt (a snapshot first for the saves) | destructive |
+
+`cmdr login`, `logout`, `topdeck`, `init`, `app` and `toget --cardmarket` are not tools, and no tool takes a
+password, a key or a path to other files: sign in once from a terminal. `sync` and `meta` take minutes, so
+`start_sync`, `start_meta` and `meta_to_board` return a job id at once and `job_status` reports its progress
+and result (`wait_seconds` holds the call and sends MCP progress notifications). One job runs at a time, and
+while it does every other tool answers that it is busy. Deck and card names and notes come from other sites
+and people: the tool descriptions say to treat them as data, and control characters are stripped from every
+answer.
+
+The server's log is `commander-mcp.log` in the `logs` folder of the cache folder (`CMDR_LOG_LEVEL=DEBUG` for
+more); stdout carries only the protocol.
+
 ### Settings
 
 Settings resolve in this order: command-line flags, then environment variables, then the config file, then
