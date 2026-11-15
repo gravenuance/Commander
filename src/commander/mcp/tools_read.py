@@ -5,9 +5,9 @@ Each tool's docstring is its description. `deck` is a deck id or part of its nam
 from mcp.server.mcpserver import MCPServer
 
 from commander.mcp.argv import optional_deck, suggest_options
-from commander.mcp.hints import READS, register_tools
+from commander.mcp.hints import READS, READS_THE_SITES, register_tools
 from commander.mcp.session import Session, ToolResult
-from commander.mcp.text import ArgumentError, flag, name_arg
+from commander.mcp.text import ArgumentError, flag, name_arg, plan_text
 
 MAX_CARDS_PER_LOOKUP = 20
 
@@ -32,9 +32,10 @@ class ReadTools:
             self.toget_list,
             self.bracket,
             self.suggest,
-            self.board_plan,
-            self.board_commit_preview,
-            self.apply_preview,
+        )
+        # These read the user's own decks from Archidekt, with their token, on every call.
+        register_tools(
+            server, READS_THE_SITES, self.board_plan, self.board_commit_preview, self.apply_preview
         )
 
     def list_decks(self) -> ToolResult:
@@ -129,4 +130,4 @@ class ReadTools:
         warnings, problems and the bracket after. plan_toml is the plan file's text, for example
         deck = "magda", add = ["Arcane Signet"], remove = ["Disruptor Flute", {name = "Mountain", keep = 5}].
         Changes nothing."""
-        return self._session.json_call(["apply", "--json", "-"], stdin=plan_toml)
+        return self._session.json_call(["apply", "--json", "-"], stdin=plan_text(plan_toml))

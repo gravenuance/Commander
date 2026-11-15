@@ -13,6 +13,8 @@ _DROPPED = frozenset(chr(code) for code in (*range(0x202A, 0x202F), *range(0x206
 
 MAX_NAME_CHARS = 200
 MAX_TEXT_CHARS = 2000
+# A plan of 100 cards to add and 100 to remove is about 10,000 characters; this leaves room for comments.
+MAX_PLAN_CHARS = 50_000
 
 
 class ArgumentError(ToolError):
@@ -57,6 +59,13 @@ def free_text(value: str, what: str, *, limit: int = MAX_TEXT_CHARS) -> str:
         raise ArgumentError(f"{what} is longer than {limit} characters")
     if any(unicodedata.category(char) == "Cc" for char in value):
         raise ArgumentError(f"{what} holds control characters")
+    return value
+
+
+def plan_text(value: str) -> str:
+    """The text of a plan file, bounded; unlike free text it keeps its newlines and tabs."""
+    if len(value) > MAX_PLAN_CHARS:
+        raise ArgumentError(f"plan_toml is longer than {MAX_PLAN_CHARS} characters")
     return value
 
 

@@ -121,6 +121,48 @@ def test_a_second_job_and_every_other_command_are_refused_while_one_runs(
     assert tools.read.list_decks()["warnings"] == []
 
 
+def test_a_command_that_passed_the_busy_check_before_a_job_started_still_answers_busy(
+    home: Path, fake: FakeArchidekt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sync_decks(home, fake)
+    gate = Gate(fake)
+    tools = Tools.over(make_session(home, fake, client_factory=gate))
+    first = tools.jobs.start_sync(dry_run=True, no_cards=True, no_ideas=True)
+    assert gate.entered.wait(30)
+    # The tool's first look at the board happened just before the job was queued: it saw no job.
+    running = tools.session.jobs.running
+    looked = threading.Event()
+
+    def running_after_the_first_look() -> Job | None:
+        if looked.is_set():
+            return running()
+        looked.set()
+        return None
+
+    monkeypatch.setattr(tools.session.jobs, "running", running_after_the_first_look)
+    answers: list[BaseException] = []
+
+    def call() -> None:
+        try:
+            tools.read.list_decks()
+        except ToolError as refused:
+            answers.append(refused)
+
+    caller = threading.Thread(target=call)
+    caller.start()
+    caller.join(5)
+    blocked = caller.is_alive()
+    gate.release.set()
+    caller.join(30)
+
+    assert not blocked, "the call waited for the whole job instead of answering busy"
+    assert [str(a) for a in answers] == [
+        f"busy: the sync job {first['id']} is running and holds every deck file; "
+        "wait for job_status to report it done, then ask again"
+    ]
+    assert finished(tools, first)["state"] == "done"
+
+
 def test_an_unknown_job_id_is_a_tool_error(home: Path, fake: FakeArchidekt) -> None:
     tools = Tools.over(make_session(home, fake))
 

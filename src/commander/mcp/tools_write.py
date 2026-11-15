@@ -8,10 +8,15 @@ from typing import Literal
 from mcp.server.mcpserver import MCPServer
 
 from commander.mcp.argv import suggest_options
-from commander.mcp.hints import WRITES_ARCHIDEKT, WRITES_LOCAL, register_tools
+from commander.mcp.hints import (
+    WRITES_ARCHIDEKT,
+    WRITES_LOCAL,
+    WRITES_LOCAL_AFTER_ASKING_THE_SITES,
+    register_tools,
+)
 from commander.mcp.jobs import JobKind, JobView
 from commander.mcp.session import Session, ToolResult
-from commander.mcp.text import ArgumentError, flag, free_text, name_arg
+from commander.mcp.text import ArgumentError, flag, free_text, name_arg, plan_text
 
 MAX_COPIES = 99
 MAX_REPLACEMENTS = 10
@@ -41,10 +46,9 @@ class LocalWriteTools:
             self.board_decide,
             self.board_count,
             self.board_remove,
-            self.suggest_to_board,
-            self.meta_to_board,
             self.profile_init,
         )
+        register_tools(server, WRITES_LOCAL_AFTER_ASKING_THE_SITES, self.suggest_to_board, self.meta_to_board)
 
     def board_add(
         self, deck: str, card: str, reason: str = "", replace: list[str] | None = None
@@ -163,7 +167,7 @@ class RemoteWriteTools:
         """SAVES a plan's changes to the user's real deck on Archidekt, after a snapshot there, then reads
         the deck back. Preview it with apply_preview first, and save only on the user's say-so. plan_toml is
         the plan file's text."""
-        return self._session.json_call(["apply", "--json", "--save", "-"], stdin=plan_toml)
+        return self._session.json_call(["apply", "--json", "--save", "-"], stdin=plan_text(plan_toml))
 
     def toget_mark(self, deck: str, card: str, step: Literal["ordered", "arrived"]) -> ToolResult:
         """Label a card of the user's real deck on Archidekt as ordered (label Getting) or arrived (no

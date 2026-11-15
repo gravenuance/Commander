@@ -351,6 +351,33 @@ def test_a_save_without_a_login_is_refused_and_writes_nothing(tools: Tools, fake
     assert deck_changes(fake) == []
 
 
+def test_a_plan_over_fifty_thousand_characters_is_refused_before_cmdr_reads_it(
+    tools: Tools, fake: FakeArchidekt, memory_keyring: MemoryKeyring
+) -> None:
+    signed_in(memory_keyring)
+    too_long = PLAN + "#" * (50_000 - len(PLAN) + 1)
+
+    with pytest.raises(ToolError, match="plan_toml is longer than 50000 characters"):
+        tools.read.apply_preview(too_long)
+    with pytest.raises(ToolError, match="plan_toml is longer than 50000 characters"):
+        tools.remote.apply_save(too_long)
+
+    assert deck_changes(fake) == []
+
+
+def test_a_plan_of_exactly_the_limit_with_newlines_and_tabs_is_read(
+    tools: Tools, memory_keyring: MemoryKeyring
+) -> None:
+    signed_in(memory_keyring)
+    padding = 50_000 - len(PLAN) - 3
+    plan = f"{PLAN}#\t{'#' * padding}\n"
+    assert len(plan) == 50_000
+
+    preview = document(tools.read.apply_preview(plan))
+
+    assert [c["name"] for c in preview["changes"]] == ["Disruptor Flute", "Mountain", "Arcane Signet"]
+
+
 def test_toget_mark_labels_the_card_on_archidekt(
     tools: Tools, fake: FakeArchidekt, memory_keyring: MemoryKeyring
 ) -> None:

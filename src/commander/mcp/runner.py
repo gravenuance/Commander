@@ -72,6 +72,16 @@ class Runner:
         with self._turn:
             yield
 
+    @contextmanager
+    def try_exclusive(self, wait_seconds: float) -> Generator[bool]:
+        """Wait up to the time for the turn; yields whether it is held, and releases it on exit if so."""
+        held = self._turn.acquire(timeout=wait_seconds)
+        try:
+            yield held
+        finally:
+            if held:
+                self._turn.release()
+
     def execute(self, argv: list[str], *, stdin: bytes = b"", err: io.StringIO | None = None) -> Outcome:
         """Run the command; the caller holds `exclusive()`. `err` is where stderr goes, default a buffer."""
         out = io.StringIO()

@@ -8,10 +8,15 @@ from mcp_types import ToolAnnotations
 
 # Reads the user's local decks and caches; the sites are asked only on a cache miss. Safe to pre-approve.
 READS = ToolAnnotations(read_only_hint=True, destructive_hint=False, open_world_hint=False)
-# Reads that go to the network on a miss or, for a job, always (still writes only caches).
+# Reads that go to the network on a miss or, for a job or a read of the user's own Archidekt decks, always
+# (still writes only caches).
 READS_THE_SITES = ToolAnnotations(read_only_hint=True, destructive_hint=False, open_world_hint=True)
 # Writes the user's local files (boards, profiles, deck folders) and nothing on Archidekt.
 WRITES_LOCAL = ToolAnnotations(read_only_hint=False, destructive_hint=False, open_world_hint=False)
+# Writes local files from what a site answers on every call; asks the sites, writes nothing on them.
+WRITES_LOCAL_AFTER_ASKING_THE_SITES = ToolAnnotations(
+    read_only_hint=False, destructive_hint=False, open_world_hint=True
+)
 WRITES_LOCAL_FROM_THE_SITES = ToolAnnotations(
     read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=True
 )

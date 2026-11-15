@@ -90,6 +90,36 @@ def test_the_server_lists_exactly_these_tools_with_these_hints(home: Path, fake:
         assert not inputs & FORBIDDEN_INPUTS, name
 
 
+# Tools that go to a site on every call, with the user's token or not, and so say open world.
+OPEN_WORLD = {
+    "board_plan",
+    "board_commit_preview",
+    "apply_preview",
+    "suggest_to_board",
+    "meta_to_board",
+    "start_sync",
+    "start_meta",
+    "board_commit_save",
+    "apply_save",
+    "toget_mark",
+}
+
+
+def test_the_tools_that_reach_a_site_every_call_say_open_world(home: Path, fake: FakeArchidekt) -> None:
+    async def scenario() -> dict[str, bool | None]:
+        async with Client(build_server(make_session(home, fake))) as client:
+            listed = await client.list_tools()
+            return {
+                tool.name: tool.annotations.open_world_hint if tool.annotations else None
+                for tool in listed.tools
+            }
+
+    hints = anyio.run(scenario)
+
+    assert {name for name, open_world in hints.items() if open_world} == OPEN_WORLD
+    assert all(open_world is False for name, open_world in hints.items() if name not in OPEN_WORLD)
+
+
 def test_a_tool_answers_with_its_data_and_warnings(home: Path, fake: FakeArchidekt) -> None:
     sync_decks(home, fake)
 

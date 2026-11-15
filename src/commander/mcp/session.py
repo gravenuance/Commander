@@ -13,6 +13,7 @@ MAX_WARNINGS = 20
 MAX_WARNING_CHARS = 500
 MAX_ERROR_CHARS = 4000
 MAX_ERROR_OUTPUT_CHARS = 8000
+TURN_POLL_SECONDS = 0.05
 
 
 class ToolResult(TypedDict):
@@ -55,14 +56,19 @@ class Session:
             raise ToolError(str(unknown)) from None
 
     def _run(self, argv: list[str], stdin: str) -> Outcome:
-        running = self.jobs.running()
-        if running is not None:
-            raise ToolError(
-                f"busy: the {running.kind.value} job {running.id} is running and holds every deck file; "
-                "wait for job_status to report it done, then ask again"
-            )
-        with self._runner.exclusive():
-            outcome = self._runner.execute(argv, stdin=stdin.encode("utf-8"))
+        # A job can be queued while this call waits for its turn, and then holds the turn for minutes, so the
+        # board is looked at again each time the wait runs out rather than once before it.
+        while True:
+            running = self.jobs.running()
+            if running is not None:
+                raise ToolError(
+                    f"busy: the {running.kind.value} job {running.id} is running and holds every deck file; "
+                    "wait for job_status to report it done, then ask again"
+                )
+            with self._runner.try_exclusive(TURN_POLL_SECONDS) as held:
+                if held:
+                    outcome = self._runner.execute(argv, stdin=stdin.encode("utf-8"))
+                    break
         if outcome.code != 0:
             raise ToolError(_failure(outcome))
         return outcome
