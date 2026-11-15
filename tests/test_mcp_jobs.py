@@ -1,6 +1,7 @@
 """The MCP background jobs: sync and meta start at once, run one at a time and are polled by id."""
 
 import copy
+import logging
 import threading
 from pathlib import Path
 from typing import cast
@@ -9,6 +10,7 @@ import httpx
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
 
+from commander.background import in_background
 from commander.board import Origin, read_board
 from commander.mcp import jobs as jobs_module
 from commander.mcp import runner as runner_module
@@ -156,11 +158,37 @@ def test_a_command_that_passed_the_busy_check_before_a_job_started_still_answers
     caller.join(30)
 
     assert not blocked, "the call waited for the whole job instead of answering busy"
-    assert [str(a) for a in answers] == [
+    busy = (
         f"busy: the sync job {first['id']} is running and holds every deck file; "
         "wait for job_status to report it done, then ask again"
-    ]
+    )
+    assert [str(a) for a in answers] == [busy]
     assert finished(tools, first)["state"] == "done"
+
+
+def test_a_warning_logged_by_another_thread_during_a_job_is_not_the_jobs_warning(
+    home: Path, fake: FakeArchidekt
+) -> None:
+    sync_decks(home, fake)
+    log = logging.getLogger("mcp.server")
+
+    def stray_thread() -> None:
+        # What the SDK's and httpx's own threads do meanwhile.
+        other = threading.Thread(target=lambda: log.warning("from the SDK"))
+        other.start()
+        other.join(30)
+
+    def noisy_client() -> httpx.Client:
+        # The command's own worker threads keep what the job started, so their warnings stay.
+        in_background(lambda: log.warning("from the command's worker"), name="test-worker").result(30)
+        stray_thread()
+        return fake.client()
+
+    tools = Tools.over(make_session(home, fake, client_factory=noisy_client))
+
+    done = finished(tools, tools.jobs.start_sync(dry_run=True, no_cards=True, no_ideas=True))
+
+    assert (done["state"], done["warnings"]) == ("done", ["WARNING: from the command's worker"])
 
 
 def test_an_unknown_job_id_is_a_tool_error(home: Path, fake: FakeArchidekt) -> None:

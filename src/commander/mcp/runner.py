@@ -7,6 +7,7 @@ import threading
 import time
 from collections.abc import Generator, Mapping
 from contextlib import contextmanager, redirect_stdout
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -20,8 +21,29 @@ log = logging.getLogger(__name__)
 MAX_LOGGED_STDERR = 1000
 
 
-class ProgressSink(io.StringIO):
-    """A stderr that looks like a terminal, so `cmdr` prints its progress lines, and can be read meanwhile."""
+# The stderr of the command whose code is running in this context, which worker threads it starts inherit.
+_running_for: ContextVar["CommandStderr | None"] = ContextVar("cmdr_mcp_running_for", default=None)
+
+
+class CommandStderr(io.StringIO):
+    """What a command writes to stderr, and can be read meanwhile.
+
+    `main` points the root logger at it, so while the command runs every thread's log records would land
+    here, the SDK's and httpx's included. Writes from code the command did not start are dropped then.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.running = False
+
+    def write(self, s: str, /) -> int:
+        if self.running and _running_for.get() is not self:
+            return len(s)
+        return super().write(s)
+
+
+class ProgressSink(CommandStderr):
+    """A stderr that looks like a terminal, so `cmdr` prints its progress lines."""
 
     def isatty(self) -> bool:
         return True
@@ -82,13 +104,13 @@ class Runner:
             if held:
                 self._turn.release()
 
-    def execute(self, argv: list[str], *, stdin: bytes = b"", err: io.StringIO | None = None) -> Outcome:
+    def execute(self, argv: list[str], *, stdin: bytes = b"", err: CommandStderr | None = None) -> Outcome:
         """Run the command; the caller holds `exclusive()`. `err` is where stderr goes, default a buffer."""
         out = io.StringIO()
-        sink = err if err is not None else io.StringIO()
+        sink = err if err is not None else CommandStderr()
         started = time.monotonic()
         # stdout carries the protocol: a stray print anywhere under main lands on stderr instead.
-        with _root_logging_kept(), redirect_stdout(sys.stderr):
+        with _root_logging_kept(), redirect_stdout(sys.stderr), _owning(sink):
             code = main(
                 argv,
                 env=self._services.env,
@@ -112,6 +134,17 @@ class Runner:
         if code != 0 and outcome.err.strip():
             log.warning("cmdr %s said: %s", argv[0], outcome.err.strip()[:MAX_LOGGED_STDERR])
         return outcome
+
+
+@contextmanager
+def _owning(sink: CommandStderr) -> Generator[None]:
+    token = _running_for.set(sink)
+    sink.running = True
+    try:
+        yield
+    finally:
+        sink.running = False
+        _running_for.reset(token)
 
 
 @contextmanager
