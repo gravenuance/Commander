@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.10.0 - 2026-11-15
+
 ### Added
 - Commander runs on Linux (developed on Ubuntu): the command line and the app. Settings go to
   `$XDG_CONFIG_HOME/commander/config.toml` and everything else (card data, answers, logs, the window's
