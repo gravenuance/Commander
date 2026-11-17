@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+- `src/commander/web/commander.png`, the 256 px image of `commander.ico`, for Linux app menus, which cannot
+  show an .ico.
+
 ## 1.10.0 - 2026-11-15
 
 ### Added
