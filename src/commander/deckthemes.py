@@ -232,7 +232,7 @@ def spec_key(spec: ThemeSpec) -> SpecKey:
     return tuple(frozenset(v.casefold() for v in part) for part in (spec.types, spec.keywords, spec.tags))
 
 
-def derive_themes(deck: Deck, db: CardDb, rules: CoverRules = CoverRules()) -> DeckThemes:  # noqa: B008 — frozen, so one shared default is safe
+def derive_themes(deck: Deck, db: CardDb, rules: CoverRules = CoverRules()) -> DeckThemes:
     themes: list[DerivedTheme] = []
     unmatched: list[str] = []
     broad: list[str] = []

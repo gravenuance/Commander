@@ -93,7 +93,7 @@ def sync_decks(
     dry_run: bool = False,
     on_progress: Callable[[str], None] = lambda _: None,
     warn: Callable[[str], None] = lambda _: None,
-    watch: PullWatch = PullWatch(),  # noqa: B008 — frozen, so one shared default is safe
+    watch: PullWatch = PullWatch(),
     only: frozenset[int] | None = None,
 ) -> list[SyncResult]:
     """Fetch decks whose Archidekt edit time moved (or all, with force) and save them unless dry_run.

@@ -9,7 +9,7 @@ dependencies = [
     "httpx==0.28.1",
     "keyring==25.7.0",
     "mcp==2.3.0",
-    "numpy==2.5.4",
+    "numpy==2.5.5",
     "pywebview==6.2.1",
     # Linux: Qt and its web engine (PyQt6 wheels) draw the window; the system still supplies the libraries the
     # engine loads (README, Requirements).
@@ -31,7 +31,7 @@ build = [
 ]
 dev = [
     "pytest==9.2.0",
-    "ruff==0.17.3",
+    "ruff==0.17.5",
 ]
 
 [build-system]

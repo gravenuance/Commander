@@ -160,7 +160,7 @@ def run_sync(
     workspace: Workspace,
     user: str,
     settings: MetaSettings,
-    options: SyncOptions = SyncOptions(),  # noqa: B008 — frozen, so one shared default is safe
+    options: SyncOptions = SyncOptions(),
     *,
     priority: FetchPriority | None = None,
     on_deck: DeckProgress | None = None,
