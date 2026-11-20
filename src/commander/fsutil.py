@@ -1,11 +1,16 @@
 import logging
 import os
+import stat
 import tempfile
 import time
 from collections.abc import Callable, Iterable
 from pathlib import Path
 
+from commander.osinfo import is_windows
+
 log = logging.getLogger(__name__)
+
+PRIVATE_FOLDER_MODE = 0o700
 
 # Windows refuses to replace a file another process has open; they let go within moments.
 REPLACE_ATTEMPTS = 5
@@ -25,6 +30,17 @@ def write_text_atomic(path: Path, text: str) -> None:
     except BaseException:
         temp.unlink(missing_ok=True)
         raise
+
+
+def ensure_private_folder(path: Path) -> None:
+    """Create the folder if missing, and on Linux and macOS make it owner-only, so cookies and page storage
+    inside it stay unreadable to other users; Windows folders already inherit their owner-only access."""
+    path.mkdir(parents=True, exist_ok=True)
+    if is_windows():
+        return
+    # Not mkdir(mode=): the umask only narrows it, and it skips a folder that already exists.
+    if stat.S_IMODE(path.stat().st_mode) & 0o077:
+        path.chmod(PRIVATE_FOLDER_MODE)
 
 
 def files_stamp(folder: Path, names: Iterable[str]) -> str:

@@ -29,6 +29,7 @@ from commander.config import (
 )
 from commander.credentials import TokenStore
 from commander.desk import Desk, DeskSettings, warm_thread
+from commander.fsutil import ensure_private_folder
 from commander.osinfo import is_linux
 from commander.updates import remove_old_exe, running_exe
 
@@ -191,6 +192,9 @@ def launch(
     settings = desk_settings(env, config=config, workspace=workspace, user=user)
     setup_logging(cache_dir(env), env, settings)
     remove_old_exe(running_exe())
+    # Holds Cardmarket cookies and page storage; Qt WebEngine makes its subfolders inside it.
+    storage = webview_dir(env)
+    ensure_private_folder(storage)
     desk = Desk(
         settings,
         client_factory=client_factory,
@@ -200,7 +204,7 @@ def launch(
         warm_up=warm_thread,
     )
     try:
-        run_app(desk, storage=webview_dir(env), debug=debug, gui=window_backend(env))
+        run_app(desk, storage=storage, debug=debug, gui=window_backend(env))
     finally:
         desk.close()
 

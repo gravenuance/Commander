@@ -8,6 +8,8 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from types import TracebackType
 
+from commander.fsutil import ensure_private_folder
+
 log = logging.getLogger(__name__)
 
 LOG_FILE = "commander.log"
@@ -18,6 +20,8 @@ ENV_LOG_LEVEL = "CMDR_LOG_LEVEL"
 
 def install_file_log(folder: Path, env: Mapping[str, str]) -> Path:
     """Log to folder/logs/commander.log (rotating) and record unhandled exceptions; safe to call twice."""
+    # The first thing the app creates in its cache folder, which also holds the window profile.
+    ensure_private_folder(folder)
     logs = folder / "logs"
     logs.mkdir(parents=True, exist_ok=True)
     path = logs / LOG_FILE
