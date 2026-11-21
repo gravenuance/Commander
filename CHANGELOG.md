@@ -6,6 +6,10 @@
 - `src/commander/web/commander.png`, the 256 px image of `commander.ico`, for Linux app menus, which cannot
   show an .ico.
 
+### Fixed
+- On Linux the app's cache folder and the window profile inside it (Cardmarket cookies and page storage) are
+  now owner-only (mode 0700), also when an earlier version had created them readable by other users.
+
 ## 1.10.0 - 2026-11-15
 
 ### Added

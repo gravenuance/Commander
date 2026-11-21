@@ -2,15 +2,18 @@
 
 import ctypes
 import logging
+import os
 import shutil
+import stat
 import subprocess
 import sys
 import threading
 import types
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Self, cast
+from typing import TYPE_CHECKING, Self, cast
 
 import pytest
 
@@ -18,6 +21,11 @@ from commander import app, app_main
 from commander.carddb import CARD_DB_FILE
 from commander.config import ConfigError
 from commander.desk import Desk, DeskSettings
+
+if TYPE_CHECKING:
+    import httpx
+
+    from commander.credentials import TokenStore
 
 # The functions the autouse fixture below replaces, kept to test them.
 _real_run_app = app.run_app
@@ -298,6 +306,33 @@ def test_a_notification_that_cannot_start_is_logged_and_the_error_still_reaches_
 
     assert capsys.readouterr().err == "Commander: no display\n"
     assert "could not show the error with notify-send: no such program" in caplog.text
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows has no POSIX folder modes")
+def test_the_cache_and_the_window_profile_folders_are_owner_only_when_the_window_opens(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The profile holds Cardmarket cookies and page storage; Qt WebEngine makes its subfolders inside it."""
+    previous = os.umask(0o022)
+    try:
+        opened: list[Path] = []
+
+        def record(_desk: Desk, *, storage: Path, **_kwargs: object) -> None:
+            opened.append(storage)
+
+        monkeypatch.setattr(app, "run_app", record)
+        app.launch(
+            {"CMDR_CONFIG": str(tmp_path / "config"), "CMDR_CACHE_DIR": str(tmp_path / "cache")},
+            client_factory=lambda: cast("httpx.Client", object()),
+            token_store=cast("TokenStore", object()),
+            now=lambda: datetime(2026, 11, 20, tzinfo=UTC),
+        )
+    finally:
+        os.umask(previous)
+
+    assert opened == [tmp_path / "cache" / "webview"]
+    for folder in (tmp_path / "cache", tmp_path / "cache" / "webview"):
+        assert stat.S_IMODE(folder.stat().st_mode) == 0o700
 
 
 def test_setting_up_the_log_twice_keeps_one_file_handler(tmp_path: Path) -> None:
