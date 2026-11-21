@@ -55,6 +55,32 @@ def test_a_private_folder_is_left_as_it_is_when_asked_again(tmp_path: Path) -> N
     assert mode_of(folder) == 0o700
 
 
+@on_posix_only
+def test_a_folder_that_lost_its_owner_bits_is_made_usable_again(tmp_path: Path) -> None:
+    folder = tmp_path / "webview"
+    folder.mkdir()
+    folder.chmod(0o600)
+    ensure_private_folder(folder)
+    assert mode_of(folder) == 0o700
+
+
+@on_posix_only
+@pytest.mark.usefixtures("common_umask")
+def test_a_folder_that_refuses_the_mode_change_is_logged_and_the_app_carries_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    folder = tmp_path / "webview"
+
+    def refuse(_path: Path, _mode: int) -> None:
+        raise PermissionError("not yours")
+
+    monkeypatch.setattr(Path, "chmod", refuse)
+    with caplog.at_level("WARNING", logger="commander.fsutil"):
+        ensure_private_folder(folder)
+    assert folder.is_dir()
+    assert f"could not make {folder} owner-only: not yours" in caplog.text
+
+
 def test_a_private_folder_exists_afterwards_on_every_system(tmp_path: Path) -> None:
     folder = tmp_path / "a" / "b"
     ensure_private_folder(folder)

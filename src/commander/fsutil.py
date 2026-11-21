@@ -34,13 +34,18 @@ def write_text_atomic(path: Path, text: str) -> None:
 
 def ensure_private_folder(path: Path) -> None:
     """Create the folder if missing, and on Linux and macOS make it owner-only, so cookies and page storage
-    inside it stay unreadable to other users; Windows folders already inherit their owner-only access."""
+    inside it stay unreadable to other users; Windows folders already inherit their owner-only access. A
+    folder that refuses the change is logged, not fatal: the app still has to start."""
     path.mkdir(parents=True, exist_ok=True)
     if is_windows():
         return
     # Not mkdir(mode=): the umask only narrows it, and it skips a folder that already exists.
-    if stat.S_IMODE(path.stat().st_mode) & 0o077:
+    if stat.S_IMODE(path.stat().st_mode) == PRIVATE_FOLDER_MODE:
+        return
+    try:
         path.chmod(PRIVATE_FOLDER_MODE)
+    except OSError as error:
+        log.warning("could not make %s owner-only: %s", path, error)
 
 
 def files_stamp(folder: Path, names: Iterable[str]) -> str:
