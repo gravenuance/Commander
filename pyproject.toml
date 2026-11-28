@@ -15,7 +15,7 @@ dependencies = [
     # engine loads (README, Requirements).
     "pywebview[qt]==6.2.1; sys_platform == 'linux'",
     "scipy==1.18.1",
-    "tomlkit==0.15.2",
+    "tomlkit==0.15.3",
 ]
 
 [project.scripts]
@@ -31,7 +31,7 @@ build = [
 ]
 dev = [
     "pytest==9.2.0",
-    "ruff==0.17.5",
+    "ruff==0.17.6",
 ]
 
 [build-system]
